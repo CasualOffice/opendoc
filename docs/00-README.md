@@ -47,6 +47,7 @@ The runtime is not a UI toolkit and is not a DOCX-only editor. It is a determini
 22. `22-NORMALIZED-SCHEMA-V0.md` — first normalized-model contract.
 23. `23-DOCX-FIXTURE-CORPUS.md` — fixture rights, metadata, and comparison policy.
 24. `24-TRANSACTION-SEMANTICS.md` — edit, mapping, inverse, and history semantics.
+25. `25-NORMALIZED-SNAPSHOT-IO.md` — strict bounded JSON load/export contract.
 
 ## Recommended project names
 

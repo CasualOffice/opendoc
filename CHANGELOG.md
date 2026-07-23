@@ -16,6 +16,9 @@ OpenDoc will use semantic versioning when its public package line begins.
   SDK snapshot facade, and stable error codes.
 - Grapheme-range deletion, paragraph split/join, semantic inverses, complete
   operation mapping, and revisioned undo/redo.
+- Strict bounded normalized schema v0 JSON loading, deterministic export,
+  semantic resource limits, redacted failures, and imported-ID collision
+  avoidance.
 
 ### Security
 

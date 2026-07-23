@@ -142,6 +142,18 @@ document snapshot for every edit.
 **Consequence:** every new mutating operation must define mapping and inverse
 behavior before implementation.
 
+## ADR-018 — Strict bounded normalized JSON v0
+
+**Decision:** Normalized JSON loading rejects unknown fields, validates a
+pre-parse byte limit and post-parse semantic limits, and returns a session only
+after full invariant validation.
+
+**Why:** generic deserialization is not a sufficient security or compatibility
+boundary.
+
+**Consequence:** schema evolution requires an explicit versioned migration path;
+v0 does not silently accept future fields.
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;

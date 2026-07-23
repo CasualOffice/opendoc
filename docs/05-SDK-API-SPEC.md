@@ -6,6 +6,7 @@ The broad interfaces below describe the intended v1 facade and are not all
 implemented. Current executable support is limited to blank-document creation,
 immutable snapshots, grapheme-aware text insertion/deletion, paragraph
 split/join, undo/redo, revision checks, position mapping, and stable SDK errors.
+Strict bounded normalized schema v0 JSON load/export is also implemented.
 
 ## Phase 0 Implemented Subset
 
@@ -52,6 +53,16 @@ session.redo(expected_revision)?;
 
 Each successful call returns a `TransactionResult` with the committed revision
 and ordered mapping steps.
+
+Normalized JSON sessions use:
+
+```rust
+let session = engine.open_normalized_json(
+    bytes,
+    OpenNormalizedOptions::default(),
+)?;
+let deterministic_bytes = session.export_normalized_json()?;
+```
 
 ## 1. Target API layers
 

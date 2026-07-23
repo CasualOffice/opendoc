@@ -86,13 +86,7 @@ impl Engine {
 
     /// Creates a blank document session at revision zero.
     pub fn create_blank(&self) -> Result<DocumentSession, SdkError> {
-        let document_sequence = next_counter(&self.next_document, "document")?;
-        let session_id = SessionId(next_counter(&self.next_session, "session")?);
-        let namespace = self
-            .config
-            .id_namespace
-            .checked_add(document_sequence - 1)
-            .ok_or_else(|| SdkError::internal("document namespace is exhausted"))?;
+        let (session_id, namespace) = self.allocate_session_identity()?;
 
         let mut ids = model::IdGenerator::new(namespace);
         let document_id = ids
@@ -103,8 +97,28 @@ impl Engine {
             .map_err(|_| SdkError::internal("paragraph ID allocation failed"))?;
         let document = model::Document::blank(document_id, paragraph_id)
             .map_err(|_| SdkError::internal("blank document construction failed"))?;
+        Ok(self.session_from_document(session_id, namespace, document))
+    }
 
-        Ok(DocumentSession {
+    /// Opens strict, bounded normalized schema v0 JSON at revision zero.
+    pub fn open_normalized_json(
+        &self,
+        bytes: &[u8],
+        options: OpenNormalizedOptions,
+    ) -> Result<DocumentSession, SdkError> {
+        let document = model::Document::from_json(bytes, options.limits.to_internal())
+            .map_err(map_snapshot_error)?;
+        let (session_id, namespace) = self.allocate_session_identity()?;
+        Ok(self.session_from_document(session_id, namespace, document))
+    }
+
+    fn session_from_document(
+        &self,
+        session_id: SessionId,
+        namespace: u64,
+        document: model::Document,
+    ) -> DocumentSession {
+        DocumentSession {
             id: session_id,
             state: Arc::new(RwLock::new(SessionState {
                 document,
@@ -114,8 +128,70 @@ impl Engine {
             })),
             next_transaction: Arc::clone(&self.next_transaction),
             node_namespace: namespace,
-            next_node: Arc::new(AtomicU64::new(3)),
-        })
+            next_node: Arc::new(AtomicU64::new(1)),
+        }
+    }
+
+    fn allocate_session_identity(&self) -> Result<(SessionId, u64), SdkError> {
+        let document_sequence = next_counter(&self.next_document, "document")?;
+        let session_id = SessionId(next_counter(&self.next_session, "session")?);
+        let namespace = self
+            .config
+            .id_namespace
+            .checked_add(document_sequence - 1)
+            .ok_or_else(|| SdkError::internal("document namespace is exhausted"))?;
+        Ok((session_id, namespace))
+    }
+}
+
+/// Options controlling normalized schema v0 loading.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct OpenNormalizedOptions {
+    /// Resource limits for the input and parsed model.
+    pub limits: NormalizedSnapshotLimits,
+}
+
+/// Host-configurable normalized snapshot resource limits.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NormalizedSnapshotLimits {
+    /// Maximum input JSON bytes checked before parsing.
+    pub max_input_bytes: usize,
+    /// Maximum body blocks.
+    pub max_blocks: usize,
+    /// Maximum Unicode scalar values across text.
+    pub max_unicode_scalar_values: usize,
+    /// Maximum UTF-8 bytes in one text run.
+    pub max_text_run_bytes: usize,
+    /// Maximum extension map entries.
+    pub max_extension_entries: usize,
+    /// Maximum aggregate extension payload bytes.
+    pub max_extension_bytes: usize,
+}
+
+impl NormalizedSnapshotLimits {
+    fn to_internal(self) -> model::SnapshotLimits {
+        model::SnapshotLimits {
+            max_input_bytes: self.max_input_bytes,
+            max_blocks: self.max_blocks,
+            max_unicode_scalar_values: self.max_unicode_scalar_values,
+            max_text_run_bytes: self.max_text_run_bytes,
+            max_extension_entries: self.max_extension_entries,
+            max_extension_bytes: self.max_extension_bytes,
+        }
+    }
+}
+
+impl Default for NormalizedSnapshotLimits {
+    fn default() -> Self {
+        let limits = model::SnapshotLimits::default();
+        Self {
+            max_input_bytes: limits.max_input_bytes,
+            max_blocks: limits.max_blocks,
+            max_unicode_scalar_values: limits.max_unicode_scalar_values,
+            max_text_run_bytes: limits.max_text_run_bytes,
+            max_extension_entries: limits.max_extension_entries,
+            max_extension_bytes: limits.max_extension_bytes,
+        }
     }
 }
 
@@ -520,6 +596,15 @@ impl DocumentSession {
         Ok(snapshot_from_internal(&state.document, state.revision))
     }
 
+    /// Exports the committed normalized document as deterministic compact JSON.
+    pub fn export_normalized_json(&self) -> Result<Vec<u8>, SdkError> {
+        let state = self
+            .state
+            .read()
+            .map_err(|_| SdkError::internal("session state lock is poisoned"))?;
+        state.document.to_json().map_err(map_snapshot_error)
+    }
+
     /// Inserts text through one atomic transaction.
     pub fn insert_text(&self, request: InsertTextRequest) -> Result<TransactionResult, SdkError> {
         let position = request.at.to_internal()?;
@@ -549,9 +634,7 @@ impl DocumentSession {
         &self,
         request: SplitParagraphRequest,
     ) -> Result<TransactionResult, SdkError> {
-        let node_counter = next_counter(&self.next_node, "node")?;
-        let new_id = model::NodeId::from_parts(self.node_namespace, node_counter)
-            .map_err(|_| SdkError::internal("node ID allocation failed"))?;
+        let new_id = self.allocate_node_id()?;
         self.apply_forward(
             request.base_revision,
             vec![transaction::Operation::SplitParagraph {
@@ -663,6 +746,21 @@ impl DocumentSession {
             transaction::RevisionId::new(base_revision.get()),
             operations,
         ))
+    }
+
+    fn allocate_node_id(&self) -> Result<model::NodeId, SdkError> {
+        loop {
+            let node_counter = next_counter(&self.next_node, "node")?;
+            let candidate = model::NodeId::from_parts(self.node_namespace, node_counter)
+                .map_err(|_| SdkError::internal("node ID allocation failed"))?;
+            let state = self
+                .state
+                .read()
+                .map_err(|_| SdkError::internal("session state lock is poisoned"))?;
+            if !state.document.has_node_id(candidate) {
+                return Ok(candidate);
+            }
+        }
     }
 }
 
@@ -824,6 +922,45 @@ fn stale_revision_error(expected: Revision, actual: transaction::RevisionId) -> 
     .with_context("actual_revision", actual.get().to_string())
 }
 
+fn map_snapshot_error(error: model::SnapshotError) -> SdkError {
+    match error {
+        model::SnapshotError::InvalidLimitConfiguration {
+            limit,
+            value,
+            hard_ceiling,
+        } => SdkError::new(
+            ErrorCode::InvalidConfiguration,
+            ErrorSeverity::Error,
+            "normalized snapshot limit exceeds the runtime hard ceiling",
+        )
+        .with_context("limit_name", limit)
+        .with_context("limit_value", value.to_string())
+        .with_context("hard_ceiling", hard_ceiling.to_string()),
+        model::SnapshotError::LimitExceeded {
+            limit,
+            observed,
+            allowed,
+        } => SdkError::new(
+            ErrorCode::ResourceLimit,
+            ErrorSeverity::Error,
+            "normalized snapshot resource limit exceeded",
+        )
+        .with_context("limit_name", limit)
+        .with_context("observed_value", observed.to_string())
+        .with_context("limit_value", allowed.to_string()),
+        model::SnapshotError::MalformedJson | model::SnapshotError::InvalidModel(_) => {
+            SdkError::new(
+                ErrorCode::MalformedDocument,
+                ErrorSeverity::Error,
+                "normalized document is malformed or violates schema v0",
+            )
+        }
+        model::SnapshotError::Serialization => {
+            SdkError::internal("normalized document serialization failed")
+        }
+    }
+}
+
 /// Stable public error code.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ErrorCode {
@@ -831,6 +968,10 @@ pub enum ErrorCode {
     InvalidArgument,
     /// `ODC-0002`.
     InvalidConfiguration,
+    /// `ODC-1001`.
+    MalformedDocument,
+    /// `ODC-1003`.
+    ResourceLimit,
     /// `ODC-2001`.
     StaleRevision,
     /// `ODC-2002`.
@@ -854,6 +995,8 @@ impl ErrorCode {
         match self {
             Self::InvalidArgument => "ODC-0001",
             Self::InvalidConfiguration => "ODC-0002",
+            Self::MalformedDocument => "ODC-1001",
+            Self::ResourceLimit => "ODC-1003",
             Self::StaleRevision => "ODC-2001",
             Self::InvalidPosition => "ODC-2002",
             Self::EmptyTransaction => "ODC-2003",
@@ -1193,5 +1336,76 @@ mod tests {
 
         assert_eq!(error.code().as_str(), "ODC-2002");
         assert_eq!(session.snapshot().unwrap(), before);
+    }
+
+    #[test]
+    fn normalized_json_load_export_and_node_allocation_are_deterministic() {
+        let json = br#"{"schemaVersion":0,"documentId":"00000000000000010000000000000001","body":[{"type":"paragraph","id":"00000000000000010000000000000002","inlines":[{"type":"text","text":"loaded","marks":[]}]}],"extensions":{}}"#;
+        let engine = Engine::new(EngineConfig::default()).unwrap();
+        let session = engine
+            .open_normalized_json(json, OpenNormalizedOptions::default())
+            .unwrap();
+        assert_eq!(session.export_normalized_json().unwrap(), json);
+        let snapshot = session.snapshot().unwrap();
+        assert_eq!(snapshot.revision, Revision::new(0));
+
+        let split = session
+            .split_paragraph(SplitParagraphRequest {
+                base_revision: snapshot.revision,
+                at: Position {
+                    node: initial_paragraph(&snapshot),
+                    grapheme_offset: 6,
+                    affinity: Affinity::After,
+                },
+            })
+            .unwrap();
+        let generated = match &split.position_map.steps()[0] {
+            MappingStep::Split { new_node, .. } => new_node,
+            other => panic!("unexpected mapping step: {other:?}"),
+        };
+        assert_eq!(generated.as_str(), "00000000000000010000000000000003");
+    }
+
+    #[test]
+    fn normalized_json_errors_are_stable_and_redacted() {
+        let malformed = br#"{
+            "schemaVersion":0,
+            "documentId":"00000000000000010000000000000001",
+            "body":[{"type":"paragraph","id":"00000000000000010000000000000002","inlines":[]}],
+            "extensions":{},
+            "secret":"do-not-expose"
+        }"#;
+        let engine = Engine::new(EngineConfig::default()).unwrap();
+        let malformed_error = engine
+            .open_normalized_json(malformed, OpenNormalizedOptions::default())
+            .unwrap_err();
+        assert_eq!(malformed_error.code().as_str(), "ODC-1001");
+        assert!(!malformed_error.to_string().contains("do-not-expose"));
+
+        let options = OpenNormalizedOptions {
+            limits: NormalizedSnapshotLimits {
+                max_input_bytes: malformed.len() - 1,
+                ..NormalizedSnapshotLimits::default()
+            },
+        };
+        let limit_error = engine.open_normalized_json(malformed, options).unwrap_err();
+        assert_eq!(limit_error.code().as_str(), "ODC-1003");
+        assert_eq!(
+            limit_error.context().get("limit_name").map(String::as_str),
+            Some("input_json_bytes")
+        );
+
+        let configuration_error = engine
+            .open_normalized_json(
+                b"{}",
+                OpenNormalizedOptions {
+                    limits: NormalizedSnapshotLimits {
+                        max_input_bytes: 256 * 1024 * 1024 + 1,
+                        ..NormalizedSnapshotLimits::default()
+                    },
+                },
+            )
+            .unwrap_err();
+        assert_eq!(configuration_error.code().as_str(), "ODC-0002");
     }
 }

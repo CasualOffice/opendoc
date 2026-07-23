@@ -2,6 +2,7 @@
 
 **Status:** Accepted for Phase 0 implementation
 **Schema status:** Experimental, pre-compatibility
+**Implementation:** Initial paragraph/text/mark subset complete
 **Last updated:** 2026-07-24
 **Tracker:** F-008, P0-001
 
@@ -133,6 +134,13 @@ control that requires another operation.
 
 Canonical CBOR is deferred until its exact encoding profile and golden vectors
 are accepted in an ADR.
+
+## Implemented I/O
+
+The initial implementation provides strict bounded compact JSON load/export.
+Unknown fields, duplicate marks, duplicate extension keys, malformed IDs,
+unsupported versions, invariant failures, and configured resource-limit
+violations are rejected. See `25-NORMALIZED-SNAPSHOT-IO.md`.
 
 ## Validation and Failure
 

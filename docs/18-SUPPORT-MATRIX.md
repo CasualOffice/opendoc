@@ -58,7 +58,7 @@ report.
 
 | Format/capability | v1 target | Current status |
 | --- | --- | --- |
-| Normalized JSON snapshot | Yes | Schema v0 designed; initial subset follows. |
+| Normalized JSON snapshot | Yes | Strict bounded schema v0 load/export implemented. |
 | Canonical normalized CBOR | Yes | Designed, not implemented. |
 | DOCX import/export | Yes | Designed, not implemented. |
 | TXT import/export | Yes | Planned as a simple conformance path. |
