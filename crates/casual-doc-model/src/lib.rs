@@ -222,6 +222,78 @@ impl Paragraph {
         text: String,
         marks: BTreeSet<Mark>,
     ) -> Result<(), ModelError> {
+        self.insert_runs(grapheme_offset, vec![TextRun::new(text, marks)?])
+    }
+
+    /// Inserts marked runs at an extended-grapheme boundary.
+    pub fn insert_runs(
+        &mut self,
+        grapheme_offset: usize,
+        runs: Vec<TextRun>,
+    ) -> Result<(), ModelError> {
+        if runs.is_empty() {
+            return Err(ModelError::EmptyTextRun);
+        }
+        self.split_inline_boundary(grapheme_offset)?;
+        let index = self.boundary_index(grapheme_offset)?;
+        self.inlines
+            .splice(index..index, runs.into_iter().map(InlineNode::Text));
+        self.normalize_runs();
+        Ok(())
+    }
+
+    /// Deletes a non-empty grapheme range and returns its exact marked runs.
+    pub fn delete_range(&mut self, start: usize, end: usize) -> Result<Vec<TextRun>, ModelError> {
+        if start >= end {
+            return Err(ModelError::InvalidGraphemeRange { start, end });
+        }
+        let paragraph_len = self.grapheme_len();
+        if end > paragraph_len {
+            return Err(ModelError::InvalidGraphemeOffset {
+                offset: end,
+                length: paragraph_len,
+            });
+        }
+        self.split_inline_boundary(start)?;
+        self.split_inline_boundary(end)?;
+        let start_index = self.boundary_index(start)?;
+        let end_index = self.boundary_index(end)?;
+        let removed = self
+            .inlines
+            .drain(start_index..end_index)
+            .map(|inline| match inline {
+                InlineNode::Text(run) => run,
+            })
+            .collect();
+        self.normalize_runs();
+        Ok(removed)
+    }
+
+    /// Splits this paragraph and returns the new trailing paragraph.
+    pub fn split_off(
+        &mut self,
+        grapheme_offset: usize,
+        new_id: NodeId,
+    ) -> Result<Self, ModelError> {
+        self.split_inline_boundary(grapheme_offset)?;
+        let index = self.boundary_index(grapheme_offset)?;
+        let inlines = self.inlines.drain(index..).collect();
+        self.normalize_runs();
+        let mut trailing = Self {
+            id: new_id,
+            inlines,
+        };
+        trailing.normalize_runs();
+        Ok(trailing)
+    }
+
+    /// Appends another paragraph's inline content and normalizes the boundary.
+    pub fn append_paragraph(&mut self, mut other: Self) {
+        self.inlines.append(&mut other.inlines);
+        self.normalize_runs();
+    }
+
+    fn split_inline_boundary(&mut self, grapheme_offset: usize) -> Result<(), ModelError> {
         let paragraph_len = self.grapheme_len();
         if grapheme_offset > paragraph_len {
             return Err(ModelError::InvalidGraphemeOffset {
@@ -229,53 +301,53 @@ impl Paragraph {
                 length: paragraph_len,
             });
         }
-        if text.is_empty() {
-            return Err(ModelError::EmptyTextRun);
-        }
-
-        if self.inlines.is_empty() {
-            self.inlines.push(InlineNode::Text(TextRun { text, marks }));
-            return Ok(());
-        }
 
         let mut traversed = 0;
         for index in 0..self.inlines.len() {
+            if grapheme_offset == traversed {
+                return Ok(());
+            }
             let InlineNode::Text(run) = &self.inlines[index];
             let run_graphemes = run.text.graphemes(true).count();
-            if grapheme_offset > traversed + run_graphemes {
-                traversed += run_graphemes;
-                continue;
+            let run_end = traversed + run_graphemes;
+            if grapheme_offset < run_end {
+                let local_offset = grapheme_offset - traversed;
+                let split_byte = grapheme_boundary_byte(&run.text, local_offset);
+                let before = run.text[..split_byte].to_owned();
+                let after = run.text[split_byte..].to_owned();
+                let marks = run.marks.clone();
+                self.inlines.splice(
+                    index..=index,
+                    [
+                        InlineNode::Text(TextRun {
+                            text: before,
+                            marks: marks.clone(),
+                        }),
+                        InlineNode::Text(TextRun { text: after, marks }),
+                    ],
+                );
+                return Ok(());
             }
-
-            let local_offset = grapheme_offset - traversed;
-            let split_byte = grapheme_boundary_byte(&run.text, local_offset);
-            let before = run.text[..split_byte].to_owned();
-            let after = run.text[split_byte..].to_owned();
-            let existing_marks = run.marks.clone();
-
-            let mut replacement = Vec::with_capacity(3);
-            if !before.is_empty() {
-                replacement.push(InlineNode::Text(TextRun {
-                    text: before,
-                    marks: existing_marks.clone(),
-                }));
-            }
-            replacement.push(InlineNode::Text(TextRun { text, marks }));
-            if !after.is_empty() {
-                replacement.push(InlineNode::Text(TextRun {
-                    text: after,
-                    marks: existing_marks,
-                }));
-            }
-
-            self.inlines.splice(index..=index, replacement);
-            self.normalize_runs();
-            return Ok(());
+            traversed = run_end;
         }
+        Ok(())
+    }
 
+    fn boundary_index(&self, grapheme_offset: usize) -> Result<usize, ModelError> {
+        let mut traversed = 0;
+        for (index, inline) in self.inlines.iter().enumerate() {
+            if grapheme_offset == traversed {
+                return Ok(index);
+            }
+            let InlineNode::Text(run) = inline;
+            traversed += run.text.graphemes(true).count();
+        }
+        if grapheme_offset == traversed {
+            return Ok(self.inlines.len());
+        }
         Err(ModelError::InvalidGraphemeOffset {
             offset: grapheme_offset,
-            length: paragraph_len,
+            length: traversed,
         })
     }
 
@@ -383,6 +455,61 @@ impl Document {
         })
     }
 
+    /// Splits a paragraph and inserts the new paragraph immediately after it.
+    pub fn split_paragraph(
+        &mut self,
+        paragraph_id: NodeId,
+        grapheme_offset: usize,
+        new_id: NodeId,
+    ) -> Result<(), ModelError> {
+        if self.contains_id(new_id) {
+            return Err(ModelError::DuplicateNodeId(new_id));
+        }
+        let index = self
+            .paragraph_index(paragraph_id)
+            .ok_or(ModelError::UnknownParagraph(paragraph_id))?;
+        let trailing = match &mut self.body[index] {
+            BlockNode::Paragraph(paragraph) => paragraph.split_off(grapheme_offset, new_id)?,
+        };
+        self.body.insert(index + 1, BlockNode::Paragraph(trailing));
+        Ok(())
+    }
+
+    /// Joins two adjacent paragraphs and returns the join grapheme boundary.
+    pub fn join_paragraphs(&mut self, first: NodeId, second: NodeId) -> Result<u32, ModelError> {
+        let first_index = self
+            .paragraph_index(first)
+            .ok_or(ModelError::UnknownParagraph(first))?;
+        let second_index = self
+            .paragraph_index(second)
+            .ok_or(ModelError::UnknownParagraph(second))?;
+        if second_index != first_index + 1 {
+            return Err(ModelError::ParagraphsNotAdjacent { first, second });
+        }
+
+        let boundary = u32::try_from(
+            self.paragraph(first)
+                .ok_or(ModelError::UnknownParagraph(first))?
+                .grapheme_len(),
+        )
+        .map_err(|_| ModelError::GraphemeCountOverflow(first))?;
+        let BlockNode::Paragraph(trailing) = self.body.remove(second_index);
+        match &mut self.body[first_index] {
+            BlockNode::Paragraph(paragraph) => paragraph.append_paragraph(trailing),
+        }
+        Ok(boundary)
+    }
+
+    fn contains_id(&self, id: NodeId) -> bool {
+        self.document_id == id || self.paragraph(id).is_some()
+    }
+
+    fn paragraph_index(&self, id: NodeId) -> Option<usize> {
+        self.body.iter().position(|block| match block {
+            BlockNode::Paragraph(paragraph) => paragraph.id == id,
+        })
+    }
+
     /// Validates all schema v0 invariants.
     pub fn validate(&self) -> Result<(), ModelError> {
         if self.schema_version != SCHEMA_VERSION {
@@ -452,6 +579,24 @@ pub enum ModelError {
         /// Paragraph grapheme length.
         length: usize,
     },
+    /// A grapheme range was empty or reversed.
+    InvalidGraphemeRange {
+        /// Start boundary.
+        start: usize,
+        /// End boundary.
+        end: usize,
+    },
+    /// A paragraph ID did not resolve.
+    UnknownParagraph(NodeId),
+    /// Two paragraphs were not adjacent in the required order.
+    ParagraphsNotAdjacent {
+        /// First requested paragraph.
+        first: NodeId,
+        /// Second requested paragraph.
+        second: NodeId,
+    },
+    /// A paragraph length exceeded public position representation.
+    GraphemeCountOverflow(NodeId),
 }
 
 impl fmt::Display for ModelError {
@@ -473,6 +618,22 @@ impl fmt::Display for ModelError {
                 write!(
                     formatter,
                     "grapheme offset {offset} exceeds length {length}"
+                )
+            }
+            Self::InvalidGraphemeRange { start, end } => {
+                write!(formatter, "grapheme range {start}..{end} is invalid")
+            }
+            Self::UnknownParagraph(id) => write!(formatter, "paragraph {id} does not exist"),
+            Self::ParagraphsNotAdjacent { first, second } => {
+                write!(
+                    formatter,
+                    "paragraphs {first} and {second} are not adjacent"
+                )
+            }
+            Self::GraphemeCountOverflow(id) => {
+                write!(
+                    formatter,
+                    "paragraph {id} exceeds addressable grapheme count"
                 )
             }
         }

@@ -4,8 +4,8 @@
 
 The broad interfaces below describe the intended v1 facade and are not all
 implemented. Current executable support is limited to blank-document creation,
-immutable snapshots, grapheme-aware text insertion, revision checks, position
-mapping, and stable SDK errors.
+immutable snapshots, grapheme-aware text insertion/deletion, paragraph
+split/join, undo/redo, revision checks, position mapping, and stable SDK errors.
 
 ## Phase 0 Implemented Subset
 
@@ -39,6 +39,19 @@ assert_eq!(result.revision.get(), 1);
 
 The SDK owns its public IDs, positions, snapshots, marks, and errors. Internal
 model and transaction types are not re-exported.
+
+The additional implemented editing methods are:
+
+```rust
+session.delete_range(DeleteRangeRequest { /* ... */ })?;
+session.split_paragraph(SplitParagraphRequest { /* ... */ })?;
+session.join_paragraphs(JoinParagraphRequest { /* ... */ })?;
+session.undo(expected_revision)?;
+session.redo(expected_revision)?;
+```
+
+Each successful call returns a `TransactionResult` with the committed revision
+and ordered mapping steps.
 
 ## 1. Target API layers
 

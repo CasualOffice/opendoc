@@ -33,15 +33,15 @@ Update this file whenever work begins, changes scope, or finishes.
 | F-009 | DOCX fixture corpus plan | Done | Corpus manifest format and source policy defined. | `23-DOCX-FIXTURE-CORPUS.md`. |
 | F-010 | Competitive analysis pass 1 | Done | Findings recorded in `12-COMPETITIVE-ANALYSIS.md`. | Primary sources checked 2026-07-24. |
 | P0-001 | Deterministic model transaction slice | Done | Blank document, grapheme-aware insertion, atomic transaction, snapshots, and tests. | Native, WASM, MSRV, docs, lint, and policy gates pass. |
-| P0-002 | Transaction semantics design | Not started | Insert, delete, split, join, mapping, inverse, and history semantics accepted. | Next design milestone. |
-| P0-003 | Normalized snapshot loading | Not started | Strict schema v0 JSON load, validation, limits, and deterministic round trip. | Requires input-boundary design. |
+| P0-002 | Transaction semantics and history | Done | Insert, delete, split, join, mapping, inverse, and history semantics accepted and implemented. | 17 unit tests plus SDK doc test; native/WASM/MSRV gates pass. |
+| P0-003 | Normalized snapshot loading | Designing | Strict schema v0 JSON load, validation, limits, and deterministic round trip. | Input-boundary design next. |
 | P0-004 | Selection foundation | Not started | Caret/range invariants and position mapping implemented. | Follows transaction semantics. |
 
 ## Active Work
 
 | ID | Title | Owner | Status | Links |
 | --- | --- | --- | --- | --- |
-| P0-002 | Transaction semantics design | Codex | Designing | Design note to be added before the next operation set. |
+| P0-003 | Normalized snapshot loading | Codex | Designing | Design note required before loader implementation. |
 
 ## Completed Work
 
@@ -50,6 +50,7 @@ Update this file whenever work begins, changes scope, or finishes.
 | F-001 | Repository bootstrap docs | 2026-07-24 | Added root docs, MIT license, agent instructions, process docs, CI gates, tracker, competitive analysis, UX/bug hunting, and docs maintenance. |
 | F-002-F-010 | Foundation design batch | 2026-07-24 | Finalized glossary, support, CI, workspace, errors, limits, schema v0, fixture corpus, ADRs, and competitive pass 1. |
 | P0-001 | Deterministic model transaction slice | 2026-07-24 | Added three-crate Rust workspace, atomic grapheme insertion, public snapshots/errors, 10 unit tests, doc test, WASM/MSRV checks, and CI/security policy. |
+| P0-002 | Transaction semantics and history | 2026-07-24 | Added delete/split/join operations, mapping steps, semantic inverses, SDK undo/redo, stable history error, and atomicity coverage. |
 
 ## Open Questions
 

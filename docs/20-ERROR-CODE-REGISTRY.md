@@ -46,6 +46,7 @@ Cancellation is an expected non-fatal error, not a warning or panic.
 | `ODC-2003` | `empty_transaction` | error | A transaction contains no effective operations. |
 | `ODC-2004` | `invalid_text_input` | error | Text contains a control requiring a different structural command. |
 | `ODC-2005` | `invariant_violation` | fatal | Committed or imported model state violates a required invariant. |
+| `ODC-2006` | `history_empty` | error | The requested undo or redo stack has no entry. |
 | `ODC-3001` | `resource_unavailable` | error | A required font, image, or host resource is unavailable. |
 | `ODC-4001` | `layout_failed` | error | Layout could not complete for the requested content/configuration. |
 | `ODC-5001` | `render_failed` | error | A renderer failed without invalidating document state. |

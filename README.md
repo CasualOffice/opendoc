@@ -54,16 +54,17 @@ The runtime must provide:
 - [Parser and Resource Limits](docs/21-PARSER-LIMITS.md)
 - [Normalized Schema v0](docs/22-NORMALIZED-SCHEMA-V0.md)
 - [DOCX Fixture Corpus Plan](docs/23-DOCX-FIXTURE-CORPUS.md)
+- [Transaction Semantics](docs/24-TRANSACTION-SEMANTICS.md)
 
 ## Repository Status
 
 Status: Phase 0 foundation implementation.
 
-The first executable slice provides a normalized blank document, stable node
-identity, grapheme-aware text insertion through atomic transactions,
-revision-aware snapshots, position mapping, and stable SDK errors. It does not
-yet claim DOCX, layout, rendering, selection, collaboration, or persistence
-support.
+The current Phase 0 runtime provides normalized blank documents, stable node
+identity, grapheme-aware text insertion/deletion, paragraph split/join,
+operation inverses, undo/redo, revision-aware snapshots, position mapping, and
+stable SDK errors. It does not yet claim DOCX, layout, rendering, selection,
+collaboration, or persistence support.
 
 ## Development
 

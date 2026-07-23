@@ -109,8 +109,12 @@ impl Engine {
             state: Arc::new(RwLock::new(SessionState {
                 document,
                 revision: transaction::RevisionId::new(0),
+                undo_stack: Vec::new(),
+                redo_stack: Vec::new(),
             })),
             next_transaction: Arc::clone(&self.next_transaction),
+            node_namespace: namespace,
+            next_node: Arc::new(AtomicU64::new(3)),
         })
     }
 }
@@ -228,6 +232,25 @@ impl Position {
     }
 }
 
+/// A public ordered text range.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Range {
+    /// Inclusive start boundary.
+    pub start: Position,
+    /// Exclusive end boundary.
+    pub end: Position,
+}
+
+impl Range {
+    fn to_internal(&self) -> Result<transaction::Range, SdkError> {
+        Ok(transaction::Range {
+            start: self.start.to_internal()?,
+            end: self.end.to_internal()?,
+        })
+    }
+}
+
 /// Inline marks accepted by the initial insertion command.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -275,6 +298,35 @@ pub struct InsertTextRequest {
     pub marks: BTreeSet<Mark>,
 }
 
+/// Request to delete a non-empty range inside one paragraph.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeleteRangeRequest {
+    /// Revision against which the host constructed the request.
+    pub base_revision: Revision,
+    /// Range to delete.
+    pub range: Range,
+}
+
+/// Request to split one paragraph at a grapheme boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SplitParagraphRequest {
+    /// Revision against which the host constructed the request.
+    pub base_revision: Revision,
+    /// Split boundary in the original paragraph.
+    pub at: Position,
+}
+
+/// Request to join two adjacent paragraphs in document order.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JoinParagraphRequest {
+    /// Revision against which the host constructed the request.
+    pub base_revision: Revision,
+    /// Paragraph retaining its identity.
+    pub first: NodeId,
+    /// Adjacent paragraph removed by the join.
+    pub second: NodeId,
+}
+
 /// Immutable document snapshot returned to hosts.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -320,15 +372,107 @@ pub enum InlineSnapshot {
     },
 }
 
-/// One public insertion mapping step.
+/// One public deterministic position-mapping step.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct InsertionMap {
-    /// Paragraph containing the insertion.
-    pub node: NodeId,
-    /// Boundary before insertion.
-    pub at: u32,
-    /// Number of inserted graphemes.
-    pub graphemes: u32,
+pub enum MappingStep {
+    /// Text insertion.
+    Insert {
+        /// Paragraph containing the insertion.
+        node: NodeId,
+        /// Boundary before insertion.
+        at: u32,
+        /// Number of inserted graphemes.
+        graphemes: u32,
+    },
+    /// Text deletion.
+    Delete {
+        /// Paragraph containing the deletion.
+        node: NodeId,
+        /// Inclusive deletion start.
+        start: u32,
+        /// Exclusive deletion end.
+        end: u32,
+    },
+    /// Paragraph split.
+    Split {
+        /// Original paragraph.
+        original: NodeId,
+        /// New trailing paragraph.
+        new_node: NodeId,
+        /// Split boundary in the original.
+        at: u32,
+    },
+    /// Adjacent paragraph join.
+    Join {
+        /// Paragraph retaining identity.
+        first: NodeId,
+        /// Removed paragraph.
+        second: NodeId,
+        /// Former end of the first paragraph.
+        at: u32,
+    },
+}
+
+/// Ordered position map returned by a committed transaction.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PositionMap {
+    steps: Vec<MappingStep>,
+}
+
+impl PositionMap {
+    /// Returns mapping steps in transaction order.
+    #[must_use]
+    pub fn steps(&self) -> &[MappingStep] {
+        &self.steps
+    }
+
+    /// Maps a host position through every transaction step.
+    #[must_use]
+    pub fn map(&self, mut position: Position) -> Position {
+        for step in &self.steps {
+            match step {
+                MappingStep::Insert {
+                    node,
+                    at,
+                    graphemes,
+                } if position.node == *node => {
+                    if position.grapheme_offset > *at
+                        || (position.grapheme_offset == *at && position.affinity == Affinity::After)
+                    {
+                        position.grapheme_offset =
+                            position.grapheme_offset.saturating_add(*graphemes);
+                    }
+                }
+                MappingStep::Delete { node, start, end } if position.node == *node => {
+                    if position.grapheme_offset > *start {
+                        position.grapheme_offset = if position.grapheme_offset < *end {
+                            *start
+                        } else {
+                            position.grapheme_offset - (*end - *start)
+                        };
+                    }
+                }
+                MappingStep::Split {
+                    original,
+                    new_node,
+                    at,
+                } if position.node == *original => {
+                    if position.grapheme_offset > *at
+                        || (position.grapheme_offset == *at && position.affinity == Affinity::After)
+                    {
+                        position.node = new_node.clone();
+                        position.grapheme_offset -= *at;
+                    }
+                }
+                MappingStep::Join { first, second, at } if position.node == *second => {
+                    position.node = first.clone();
+                    position.grapheme_offset = position.grapheme_offset.saturating_add(*at);
+                }
+                _ => {}
+            }
+        }
+        position
+    }
 }
 
 /// Result of a successful editing command.
@@ -336,8 +480,8 @@ pub struct InsertionMap {
 pub struct TransactionResult {
     /// Committed revision.
     pub revision: Revision,
-    /// Position mapping steps in operation order.
-    pub insertions: Vec<InsertionMap>,
+    /// Position mapping from the prior revision.
+    pub position_map: PositionMap,
     /// Number of operations committed.
     pub operations_applied: usize,
 }
@@ -346,6 +490,8 @@ pub struct TransactionResult {
 struct SessionState {
     document: model::Document,
     revision: transaction::RevisionId,
+    undo_stack: Vec<Vec<transaction::Operation>>,
+    redo_stack: Vec<Vec<transaction::Operation>>,
 }
 
 /// Thread-safe live document session.
@@ -354,6 +500,8 @@ pub struct DocumentSession {
     id: SessionId,
     state: Arc<RwLock<SessionState>>,
     next_transaction: Arc<AtomicU64>,
+    node_namespace: u64,
+    next_node: Arc<AtomicU64>,
 }
 
 impl DocumentSession {
@@ -376,44 +524,195 @@ impl DocumentSession {
     pub fn insert_text(&self, request: InsertTextRequest) -> Result<TransactionResult, SdkError> {
         let position = request.at.to_internal()?;
         let marks = request.marks.into_iter().map(Mark::to_internal).collect();
-        let transaction_counter = next_counter(&self.next_transaction, "transaction")?;
-        let transaction_id = transaction::TransactionId::new(
-            (u128::from(self.id.get()) << 64) | u128::from(transaction_counter),
-        );
-        let edit = transaction::Transaction::new(
-            transaction_id,
-            transaction::RevisionId::new(request.base_revision.get()),
+        self.apply_forward(
+            request.base_revision,
             vec![transaction::Operation::InsertText {
                 at: position,
                 text: request.text,
                 marks,
             }],
-        );
+        )
+    }
 
-        let mut state = self
-            .state
-            .write()
-            .map_err(|_| SdkError::internal("session state lock is poisoned"))?;
+    /// Deletes a non-empty range inside one paragraph.
+    pub fn delete_range(&self, request: DeleteRangeRequest) -> Result<TransactionResult, SdkError> {
+        self.apply_forward(
+            request.base_revision,
+            vec![transaction::Operation::DeleteRange {
+                range: request.range.to_internal()?,
+            }],
+        )
+    }
+
+    /// Splits a paragraph and allocates a stable ID for the trailing paragraph.
+    pub fn split_paragraph(
+        &self,
+        request: SplitParagraphRequest,
+    ) -> Result<TransactionResult, SdkError> {
+        let node_counter = next_counter(&self.next_node, "node")?;
+        let new_id = model::NodeId::from_parts(self.node_namespace, node_counter)
+            .map_err(|_| SdkError::internal("node ID allocation failed"))?;
+        self.apply_forward(
+            request.base_revision,
+            vec![transaction::Operation::SplitParagraph {
+                at: request.at.to_internal()?,
+                new_id,
+            }],
+        )
+    }
+
+    /// Joins two adjacent paragraphs in document order.
+    pub fn join_paragraphs(
+        &self,
+        request: JoinParagraphRequest,
+    ) -> Result<TransactionResult, SdkError> {
+        self.apply_forward(
+            request.base_revision,
+            vec![transaction::Operation::JoinParagraph {
+                first: request.first.to_internal()?,
+                second: request.second.to_internal()?,
+            }],
+        )
+    }
+
+    /// Undoes the latest local history entry as a new transaction.
+    pub fn undo(&self, base_revision: Revision) -> Result<TransactionResult, SdkError> {
+        self.apply_history(base_revision, HistoryDirection::Undo)
+    }
+
+    /// Redoes the latest locally undone history entry as a new transaction.
+    pub fn redo(&self, base_revision: Revision) -> Result<TransactionResult, SdkError> {
+        self.apply_history(base_revision, HistoryDirection::Redo)
+    }
+
+    fn apply_forward(
+        &self,
+        base_revision: Revision,
+        operations: Vec<transaction::Operation>,
+    ) -> Result<TransactionResult, SdkError> {
+        let mut state = self.lock_state()?;
+        let edit = self.transaction(base_revision, operations)?;
         let commit = transaction::apply(&state.document, state.revision, &edit)
             .map_err(map_transaction_error)?;
+        let result = transaction_result(&commit);
+        state.document = commit.document;
+        state.revision = commit.revision;
+        state.undo_stack.push(commit.inverse_operations);
+        state.redo_stack.clear();
+        Ok(result)
+    }
+
+    fn apply_history(
+        &self,
+        base_revision: Revision,
+        direction: HistoryDirection,
+    ) -> Result<TransactionResult, SdkError> {
+        let mut state = self.lock_state()?;
+        if base_revision.get() != state.revision.get() {
+            return Err(stale_revision_error(base_revision, state.revision));
+        }
+        let operations = match direction {
+            HistoryDirection::Undo => state.undo_stack.last(),
+            HistoryDirection::Redo => state.redo_stack.last(),
+        }
+        .cloned()
+        .ok_or_else(|| {
+            SdkError::new(
+                ErrorCode::HistoryEmpty,
+                ErrorSeverity::Error,
+                "requested history stack is empty",
+            )
+        })?;
+        let edit = self.transaction(base_revision, operations)?;
+        let commit = transaction::apply(&state.document, state.revision, &edit)
+            .map_err(map_transaction_error)?;
+        let result = transaction_result(&commit);
 
         state.document = commit.document;
         state.revision = commit.revision;
+        match direction {
+            HistoryDirection::Undo => {
+                state.undo_stack.pop();
+                state.redo_stack.push(commit.inverse_operations);
+            }
+            HistoryDirection::Redo => {
+                state.redo_stack.pop();
+                state.undo_stack.push(commit.inverse_operations);
+            }
+        }
+        Ok(result)
+    }
 
-        Ok(TransactionResult {
-            revision: Revision(commit.revision.get()),
-            insertions: commit
+    fn lock_state(&self) -> Result<std::sync::RwLockWriteGuard<'_, SessionState>, SdkError> {
+        self.state
+            .write()
+            .map_err(|_| SdkError::internal("session state lock is poisoned"))
+    }
+
+    fn transaction(
+        &self,
+        base_revision: Revision,
+        operations: Vec<transaction::Operation>,
+    ) -> Result<transaction::Transaction, SdkError> {
+        let counter = next_counter(&self.next_transaction, "transaction")?;
+        let id = transaction::TransactionId::new(
+            (u128::from(self.id.get()) << 64) | u128::from(counter),
+        );
+        Ok(transaction::Transaction::new(
+            id,
+            transaction::RevisionId::new(base_revision.get()),
+            operations,
+        ))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HistoryDirection {
+    Undo,
+    Redo,
+}
+
+fn transaction_result(commit: &transaction::Commit) -> TransactionResult {
+    TransactionResult {
+        revision: Revision(commit.revision.get()),
+        position_map: PositionMap {
+            steps: commit
                 .position_map
-                .insertions()
+                .steps()
                 .iter()
-                .map(|step| InsertionMap {
-                    node: NodeId::from_internal(step.node),
-                    at: step.at,
-                    graphemes: step.graphemes,
+                .map(|step| match *step {
+                    transaction::MappingStep::Insert {
+                        node,
+                        at,
+                        graphemes,
+                    } => MappingStep::Insert {
+                        node: NodeId::from_internal(node),
+                        at,
+                        graphemes,
+                    },
+                    transaction::MappingStep::Delete { node, start, end } => MappingStep::Delete {
+                        node: NodeId::from_internal(node),
+                        start,
+                        end,
+                    },
+                    transaction::MappingStep::Split {
+                        original,
+                        new_node,
+                        at,
+                    } => MappingStep::Split {
+                        original: NodeId::from_internal(original),
+                        new_node: NodeId::from_internal(new_node),
+                        at,
+                    },
+                    transaction::MappingStep::Join { first, second, at } => MappingStep::Join {
+                        first: NodeId::from_internal(first),
+                        second: NodeId::from_internal(second),
+                        at,
+                    },
                 })
                 .collect(),
-            operations_applied: commit.operations_applied,
-        })
+        },
+        operations_applied: commit.operations_applied,
     }
 }
 
@@ -475,6 +774,25 @@ fn map_transaction_error(error: transaction::TransactionError) -> SdkError {
         )
         .with_context("node_id", node.to_string())
         .with_context("grapheme_offset", offset.to_string()),
+        transaction::TransactionError::InvalidRange {
+            start_node,
+            start,
+            end_node,
+            end,
+        } => SdkError::new(
+            ErrorCode::InvalidPosition,
+            ErrorSeverity::Error,
+            "range is not valid for this operation",
+        )
+        .with_context("start_node_id", start_node.to_string())
+        .with_context("start_offset", start.to_string())
+        .with_context("end_node_id", end_node.to_string())
+        .with_context("end_offset", end.to_string()),
+        transaction::TransactionError::InvalidStructure => SdkError::new(
+            ErrorCode::InvalidPosition,
+            ErrorSeverity::Error,
+            "paragraph structure does not satisfy the operation",
+        ),
         transaction::TransactionError::InvalidTextInput => SdkError::new(
             ErrorCode::InvalidTextInput,
             ErrorSeverity::Error,
@@ -485,11 +803,25 @@ fn map_transaction_error(error: transaction::TransactionError) -> SdkError {
             ErrorSeverity::Error,
             "inserted text exceeds the supported length",
         ),
-        transaction::TransactionError::RevisionExhausted
-        | transaction::TransactionError::Model(_) => {
-            SdkError::internal("transaction application failed an internal invariant")
+        transaction::TransactionError::RevisionExhausted => {
+            SdkError::internal("session revision is exhausted")
         }
+        transaction::TransactionError::Model(_) => SdkError::new(
+            ErrorCode::InvariantViolation,
+            ErrorSeverity::Fatal,
+            "transaction application failed a document invariant",
+        ),
     }
+}
+
+fn stale_revision_error(expected: Revision, actual: transaction::RevisionId) -> SdkError {
+    SdkError::new(
+        ErrorCode::StaleRevision,
+        ErrorSeverity::Error,
+        "transaction base revision does not match the session",
+    )
+    .with_context("expected_revision", expected.get().to_string())
+    .with_context("actual_revision", actual.get().to_string())
 }
 
 /// Stable public error code.
@@ -507,6 +839,10 @@ pub enum ErrorCode {
     EmptyTransaction,
     /// `ODC-2004`.
     InvalidTextInput,
+    /// `ODC-2005`.
+    InvariantViolation,
+    /// `ODC-2006`.
+    HistoryEmpty,
     /// `ODC-9001`.
     Internal,
 }
@@ -522,6 +858,8 @@ impl ErrorCode {
             Self::InvalidPosition => "ODC-2002",
             Self::EmptyTransaction => "ODC-2003",
             Self::InvalidTextInput => "ODC-2004",
+            Self::InvariantViolation => "ODC-2005",
+            Self::HistoryEmpty => "ODC-2006",
             Self::Internal => "ODC-9001",
         }
     }
@@ -609,6 +947,22 @@ mod tests {
         }
     }
 
+    fn paragraph(snapshot: &DocumentSnapshot, index: usize) -> &ParagraphSnapshot {
+        match &snapshot.body[index] {
+            BlockSnapshot::Paragraph(paragraph) => paragraph,
+        }
+    }
+
+    fn paragraph_text(snapshot: &DocumentSnapshot, index: usize) -> String {
+        paragraph(snapshot, index)
+            .inlines
+            .iter()
+            .map(|inline| match inline {
+                InlineSnapshot::Text { text, .. } => text.as_str(),
+            })
+            .collect()
+    }
+
     #[test]
     fn blank_insert_snapshot_is_end_to_end() {
         let engine = Engine::new(EngineConfig { id_namespace: 9 }).unwrap();
@@ -630,7 +984,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(result.revision, Revision::new(1));
-        assert_eq!(result.insertions[0].graphemes, 9);
+        assert!(matches!(
+            result.position_map.steps()[0],
+            MappingStep::Insert { graphemes: 9, .. }
+        ));
         assert_eq!(
             serde_json::to_value(session.snapshot().unwrap()).unwrap(),
             serde_json::json!({
@@ -694,5 +1051,147 @@ mod tests {
 
         assert_eq!(error.code().as_str(), "ODC-2002");
         assert_eq!(session.snapshot().unwrap(), snapshot);
+    }
+
+    #[test]
+    fn split_delete_undo_and_redo_are_revisioned() {
+        let engine = Engine::new(EngineConfig::default()).unwrap();
+        let session = engine.create_blank().unwrap();
+        let blank = session.snapshot().unwrap();
+        let first = initial_paragraph(&blank);
+        session
+            .insert_text(InsertTextRequest {
+                base_revision: blank.revision,
+                at: Position {
+                    node: first.clone(),
+                    grapheme_offset: 0,
+                    affinity: Affinity::After,
+                },
+                text: "abCD".to_owned(),
+                marks: BTreeSet::new(),
+            })
+            .unwrap();
+
+        let split = session
+            .split_paragraph(SplitParagraphRequest {
+                base_revision: Revision::new(1),
+                at: Position {
+                    node: first.clone(),
+                    grapheme_offset: 2,
+                    affinity: Affinity::After,
+                },
+            })
+            .unwrap();
+        let second = match &split.position_map.steps()[0] {
+            MappingStep::Split { new_node, .. } => new_node.clone(),
+            other => panic!("unexpected mapping step: {other:?}"),
+        };
+        let after_split = session.snapshot().unwrap();
+        assert_eq!(paragraph_text(&after_split, 0), "ab");
+        assert_eq!(paragraph_text(&after_split, 1), "CD");
+
+        session
+            .delete_range(DeleteRangeRequest {
+                base_revision: Revision::new(2),
+                range: Range {
+                    start: Position {
+                        node: second.clone(),
+                        grapheme_offset: 0,
+                        affinity: Affinity::Before,
+                    },
+                    end: Position {
+                        node: second,
+                        grapheme_offset: 1,
+                        affinity: Affinity::After,
+                    },
+                },
+            })
+            .unwrap();
+        assert_eq!(paragraph_text(&session.snapshot().unwrap(), 1), "D");
+
+        session.undo(Revision::new(3)).unwrap();
+        assert_eq!(paragraph_text(&session.snapshot().unwrap(), 1), "CD");
+        session.undo(Revision::new(4)).unwrap();
+        let joined = session.snapshot().unwrap();
+        assert_eq!(joined.body.len(), 1);
+        assert_eq!(paragraph_text(&joined, 0), "abCD");
+
+        session.redo(Revision::new(5)).unwrap();
+        assert_eq!(session.snapshot().unwrap().body.len(), 2);
+        session.redo(Revision::new(6)).unwrap();
+        let redone = session.snapshot().unwrap();
+        assert_eq!(paragraph_text(&redone, 0), "ab");
+        assert_eq!(paragraph_text(&redone, 1), "D");
+        assert_eq!(redone.revision, Revision::new(7));
+    }
+
+    #[test]
+    fn failed_history_action_preserves_state() {
+        let engine = Engine::new(EngineConfig::default()).unwrap();
+        let session = engine.create_blank().unwrap();
+        let before = session.snapshot().unwrap();
+
+        let error = session.undo(before.revision).unwrap_err();
+
+        assert_eq!(error.code().as_str(), "ODC-2006");
+        assert_eq!(session.snapshot().unwrap(), before);
+    }
+
+    #[test]
+    fn stale_undo_does_not_consume_history() {
+        let engine = Engine::new(EngineConfig::default()).unwrap();
+        let session = engine.create_blank().unwrap();
+        let blank = session.snapshot().unwrap();
+        session
+            .insert_text(InsertTextRequest {
+                base_revision: blank.revision,
+                at: Position {
+                    node: initial_paragraph(&blank),
+                    grapheme_offset: 0,
+                    affinity: Affinity::After,
+                },
+                text: "history".to_owned(),
+                marks: BTreeSet::new(),
+            })
+            .unwrap();
+
+        let error = session.undo(Revision::new(0)).unwrap_err();
+        assert_eq!(error.code().as_str(), "ODC-2001");
+        session.undo(Revision::new(1)).unwrap();
+        assert_eq!(paragraph_text(&session.snapshot().unwrap(), 0), "");
+    }
+
+    #[test]
+    fn reversed_join_is_rejected_atomically() {
+        let engine = Engine::new(EngineConfig::default()).unwrap();
+        let session = engine.create_blank().unwrap();
+        let blank = session.snapshot().unwrap();
+        let first = initial_paragraph(&blank);
+        let split = session
+            .split_paragraph(SplitParagraphRequest {
+                base_revision: blank.revision,
+                at: Position {
+                    node: first.clone(),
+                    grapheme_offset: 0,
+                    affinity: Affinity::After,
+                },
+            })
+            .unwrap();
+        let second = match &split.position_map.steps()[0] {
+            MappingStep::Split { new_node, .. } => new_node.clone(),
+            other => panic!("unexpected mapping step: {other:?}"),
+        };
+        let before = session.snapshot().unwrap();
+
+        let error = session
+            .join_paragraphs(JoinParagraphRequest {
+                base_revision: before.revision,
+                first: second,
+                second: first,
+            })
+            .unwrap_err();
+
+        assert_eq!(error.code().as_str(), "ODC-2002");
+        assert_eq!(session.snapshot().unwrap(), before);
     }
 }

@@ -14,6 +14,8 @@ OpenDoc will use semantic versioning when its public package line begins.
   CI contract.
 - Initial normalized model, atomic text-insertion transaction, position mapping,
   SDK snapshot facade, and stable error codes.
+- Grapheme-range deletion, paragraph split/join, semantic inverses, complete
+  operation mapping, and revisioned undo/redo.
 
 ### Security
 

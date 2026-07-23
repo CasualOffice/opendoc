@@ -131,6 +131,17 @@ untrusted input.
 **Consequence:** parser implementations must expose limit accounting and
 boundary tests from their first merge.
 
+## ADR-017 — Semantic inverse operations
+
+**Decision:** Transactions generate operation-level inverses against a working
+document; session history stores forward/inverse operation lists.
+
+**Why:** undo must preserve exact marked content without retaining a full
+document snapshot for every edit.
+
+**Consequence:** every new mutating operation must define mapping and inverse
+behavior before implementation.
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;
