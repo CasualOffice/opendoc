@@ -2,6 +2,7 @@
 members = [
     "crates/casual-doc-model",
     "crates/casual-doc-sdk",
+    "crates/casual-doc-selection",
     "crates/casual-doc-transaction",
 ]
 resolver = "3"
@@ -16,6 +17,7 @@ authors = ["CasualOffice contributors"]
 
 [workspace.dependencies]
 casual-doc-model = { path = "crates/casual-doc-model", version = "=0.0.1" }
+casual-doc-selection = { path = "crates/casual-doc-selection", version = "=0.0.1" }
 casual-doc-transaction = { path = "crates/casual-doc-transaction", version = "=0.0.1" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.145"

@@ -19,6 +19,8 @@ OpenDoc will use semantic versioning when its public package line begins.
 - Strict bounded normalized schema v0 JSON loading, deterministic export,
   semantic resource limits, redacted failures, and imported-ID collision
   avoidance.
+- Canonical directed session selection with revision validation, grapheme-safe
+  endpoints, and atomic mapping through edits, undo, and redo.
 
 ### Security
 

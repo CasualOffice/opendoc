@@ -41,6 +41,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 use casual_doc_model as model;
+use casual_doc_selection as selection;
 use casual_doc_transaction as transaction;
 use serde::{Deserialize, Serialize};
 
@@ -97,7 +98,7 @@ impl Engine {
             .map_err(|_| SdkError::internal("paragraph ID allocation failed"))?;
         let document = model::Document::blank(document_id, paragraph_id)
             .map_err(|_| SdkError::internal("blank document construction failed"))?;
-        Ok(self.session_from_document(session_id, namespace, document))
+        self.session_from_document(session_id, namespace, document)
     }
 
     /// Opens strict, bounded normalized schema v0 JSON at revision zero.
@@ -109,7 +110,7 @@ impl Engine {
         let document = model::Document::from_json(bytes, options.limits.to_internal())
             .map_err(map_snapshot_error)?;
         let (session_id, namespace) = self.allocate_session_identity()?;
-        Ok(self.session_from_document(session_id, namespace, document))
+        self.session_from_document(session_id, namespace, document)
     }
 
     fn session_from_document(
@@ -117,19 +118,22 @@ impl Engine {
         session_id: SessionId,
         namespace: u64,
         document: model::Document,
-    ) -> DocumentSession {
-        DocumentSession {
+    ) -> Result<DocumentSession, SdkError> {
+        let selection = selection::TextSelection::default_for(&document)
+            .map_err(map_initial_selection_error)?;
+        Ok(DocumentSession {
             id: session_id,
             state: Arc::new(RwLock::new(SessionState {
                 document,
                 revision: transaction::RevisionId::new(0),
+                selection,
                 undo_stack: Vec::new(),
                 redo_stack: Vec::new(),
             })),
             next_transaction: Arc::clone(&self.next_transaction),
             node_namespace: namespace,
             next_node: Arc::new(AtomicU64::new(1)),
-        }
+        })
     }
 
     fn allocate_session_identity(&self) -> Result<(SessionId, u64), SdkError> {
@@ -284,6 +288,13 @@ impl Affinity {
             Self::After => transaction::Affinity::After,
         }
     }
+
+    fn from_internal(affinity: transaction::Affinity) -> Self {
+        match affinity {
+            transaction::Affinity::Before => Self::Before,
+            transaction::Affinity::After => Self::After,
+        }
+    }
 }
 
 /// Public text position at an extended-grapheme boundary.
@@ -305,6 +316,40 @@ impl Position {
             grapheme_offset: self.grapheme_offset,
             affinity: self.affinity.to_internal(),
         })
+    }
+
+    fn from_internal(position: transaction::Position) -> Self {
+        Self {
+            node: NodeId::from_internal(position.node),
+            grapheme_offset: position.grapheme_offset,
+            affinity: Affinity::from_internal(position.affinity),
+        }
+    }
+}
+
+/// Directed logical text selection returned by a document session.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SelectionSnapshot {
+    /// Endpoint where the selection began.
+    pub anchor: Position,
+    /// Active selection endpoint.
+    pub focus: Position,
+}
+
+impl SelectionSnapshot {
+    /// Returns whether anchor and focus resolve to the same logical boundary.
+    #[must_use]
+    pub fn is_collapsed(&self) -> bool {
+        self.anchor.node == self.focus.node
+            && self.anchor.grapheme_offset == self.focus.grapheme_offset
+    }
+
+    fn from_internal(selection: selection::TextSelection) -> Self {
+        Self {
+            anchor: Position::from_internal(selection.anchor()),
+            focus: Position::from_internal(selection.focus()),
+        }
     }
 }
 
@@ -401,6 +446,15 @@ pub struct JoinParagraphRequest {
     pub first: NodeId,
     /// Adjacent paragraph removed by the join.
     pub second: NodeId,
+}
+
+/// Request to replace session selection without mutating the document.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SetSelectionRequest {
+    /// Revision against which the host resolved both endpoints.
+    pub base_revision: Revision,
+    /// Directed logical text selection.
+    pub selection: SelectionSnapshot,
 }
 
 /// Immutable document snapshot returned to hosts.
@@ -566,6 +620,7 @@ pub struct TransactionResult {
 struct SessionState {
     document: model::Document,
     revision: transaction::RevisionId,
+    selection: selection::TextSelection,
     undo_stack: Vec<Vec<transaction::Operation>>,
     redo_stack: Vec<Vec<transaction::Operation>>,
 }
@@ -594,6 +649,29 @@ impl DocumentSession {
             .read()
             .map_err(|_| SdkError::internal("session state lock is poisoned"))?;
         Ok(snapshot_from_internal(&state.document, state.revision))
+    }
+
+    /// Returns the current directed logical selection.
+    pub fn selection(&self) -> Result<SelectionSnapshot, SdkError> {
+        let state = self
+            .state
+            .read()
+            .map_err(|_| SdkError::internal("session state lock is poisoned"))?;
+        Ok(SelectionSnapshot::from_internal(state.selection))
+    }
+
+    /// Replaces selection after validating its revision and document positions.
+    pub fn set_selection(&self, request: SetSelectionRequest) -> Result<(), SdkError> {
+        let anchor = request.selection.anchor.to_internal()?;
+        let focus = request.selection.focus.to_internal()?;
+        let mut state = self.lock_state()?;
+        if request.base_revision.get() != state.revision.get() {
+            return Err(stale_revision_error(request.base_revision, state.revision));
+        }
+        let selection = selection::TextSelection::new(&state.document, anchor, focus)
+            .map_err(map_requested_selection_error)?;
+        state.selection = selection;
+        Ok(())
     }
 
     /// Exports the committed normalized document as deterministic compact JSON.
@@ -678,8 +756,13 @@ impl DocumentSession {
         let commit = transaction::apply(&state.document, state.revision, &edit)
             .map_err(map_transaction_error)?;
         let result = transaction_result(&commit);
+        let mapped_selection = state
+            .selection
+            .mapped(&commit.position_map, &commit.document)
+            .map_err(map_mapped_selection_error)?;
         state.document = commit.document;
         state.revision = commit.revision;
+        state.selection = mapped_selection;
         state.undo_stack.push(commit.inverse_operations);
         state.redo_stack.clear();
         Ok(result)
@@ -710,9 +793,14 @@ impl DocumentSession {
         let commit = transaction::apply(&state.document, state.revision, &edit)
             .map_err(map_transaction_error)?;
         let result = transaction_result(&commit);
+        let mapped_selection = state
+            .selection
+            .mapped(&commit.position_map, &commit.document)
+            .map_err(map_mapped_selection_error)?;
 
         state.document = commit.document;
         state.revision = commit.revision;
+        state.selection = mapped_selection;
         match direction {
             HistoryDirection::Undo => {
                 state.undo_stack.pop();
@@ -916,10 +1004,49 @@ fn stale_revision_error(expected: Revision, actual: transaction::RevisionId) -> 
     SdkError::new(
         ErrorCode::StaleRevision,
         ErrorSeverity::Error,
-        "transaction base revision does not match the session",
+        "base revision does not match the session",
     )
     .with_context("expected_revision", expected.get().to_string())
     .with_context("actual_revision", actual.get().to_string())
+}
+
+fn map_requested_selection_error(error: selection::SelectionError) -> SdkError {
+    match error {
+        selection::SelectionError::InvalidPosition { node, offset } => SdkError::new(
+            ErrorCode::InvalidPosition,
+            ErrorSeverity::Error,
+            "selection endpoint does not resolve to a valid grapheme boundary",
+        )
+        .with_context("node_id", node.to_string())
+        .with_context("grapheme_offset", offset.to_string()),
+        selection::SelectionError::EmptyDocument => SdkError::new(
+            ErrorCode::InvalidPosition,
+            ErrorSeverity::Error,
+            "selection requires a document paragraph",
+        ),
+        selection::SelectionError::OffsetOverflow { node } => SdkError::new(
+            ErrorCode::InvalidPosition,
+            ErrorSeverity::Error,
+            "selection endpoint exceeds the supported offset range",
+        )
+        .with_context("node_id", node.to_string()),
+    }
+}
+
+fn map_initial_selection_error(_error: selection::SelectionError) -> SdkError {
+    SdkError::new(
+        ErrorCode::InvariantViolation,
+        ErrorSeverity::Fatal,
+        "validated document could not produce an initial selection",
+    )
+}
+
+fn map_mapped_selection_error(_error: selection::SelectionError) -> SdkError {
+    SdkError::new(
+        ErrorCode::InvariantViolation,
+        ErrorSeverity::Fatal,
+        "transaction produced an invalid mapped selection",
+    )
 }
 
 fn map_snapshot_error(error: model::SnapshotError) -> SdkError {
@@ -1106,6 +1233,14 @@ mod tests {
             .collect()
     }
 
+    fn position(node: NodeId, grapheme_offset: u32, affinity: Affinity) -> Position {
+        Position {
+            node,
+            grapheme_offset,
+            affinity,
+        }
+    }
+
     #[test]
     fn blank_insert_snapshot_is_end_to_end() {
         let engine = Engine::new(EngineConfig { id_namespace: 9 }).unwrap();
@@ -1148,6 +1283,179 @@ mod tests {
                 }]
             })
         );
+    }
+
+    #[test]
+    fn selection_only_update_preserves_revision_and_redo_history() {
+        let engine = Engine::new(EngineConfig::default()).unwrap();
+        let session = engine.create_blank().unwrap();
+        let blank = session.snapshot().unwrap();
+        let paragraph = initial_paragraph(&blank);
+        let initial = session.selection().unwrap();
+        assert!(initial.is_collapsed());
+        assert_eq!(
+            initial.anchor,
+            position(paragraph.clone(), 0, Affinity::After)
+        );
+
+        session
+            .insert_text(InsertTextRequest {
+                base_revision: blank.revision,
+                at: initial.anchor,
+                text: "ab".to_owned(),
+                marks: BTreeSet::new(),
+            })
+            .unwrap();
+        assert_eq!(session.selection().unwrap().focus.grapheme_offset, 2);
+        session.undo(Revision::new(1)).unwrap();
+
+        let before_selection_change = session.snapshot().unwrap();
+        let before_affinity = position(paragraph.clone(), 0, Affinity::Before);
+        session
+            .set_selection(SetSelectionRequest {
+                base_revision: before_selection_change.revision,
+                selection: SelectionSnapshot {
+                    anchor: before_affinity.clone(),
+                    focus: before_affinity.clone(),
+                },
+            })
+            .unwrap();
+
+        assert_eq!(session.snapshot().unwrap(), before_selection_change);
+        assert_eq!(
+            session.selection().unwrap(),
+            SelectionSnapshot {
+                anchor: before_affinity.clone(),
+                focus: before_affinity,
+            }
+        );
+        session.redo(Revision::new(2)).unwrap();
+        assert_eq!(paragraph_text(&session.snapshot().unwrap(), 0), "ab");
+        assert_eq!(session.selection().unwrap().focus.grapheme_offset, 0);
+    }
+
+    #[test]
+    fn stale_and_invalid_selection_updates_preserve_selection() {
+        let engine = Engine::new(EngineConfig::default()).unwrap();
+        let session = engine.create_blank().unwrap();
+        let snapshot = session.snapshot().unwrap();
+        let paragraph = initial_paragraph(&snapshot);
+        let before = session.selection().unwrap();
+        let invalid = SelectionSnapshot {
+            anchor: position(paragraph.clone(), 1, Affinity::After),
+            focus: position(paragraph, 1, Affinity::Before),
+        };
+
+        let stale = session
+            .set_selection(SetSelectionRequest {
+                base_revision: Revision::new(1),
+                selection: invalid.clone(),
+            })
+            .unwrap_err();
+        assert_eq!(stale.code(), ErrorCode::StaleRevision);
+        assert_eq!(session.selection().unwrap(), before);
+
+        let invalid_position = session
+            .set_selection(SetSelectionRequest {
+                base_revision: snapshot.revision,
+                selection: invalid,
+            })
+            .unwrap_err();
+        assert_eq!(invalid_position.code(), ErrorCode::InvalidPosition);
+        assert_eq!(session.selection().unwrap(), before);
+        assert_eq!(session.snapshot().unwrap(), snapshot);
+    }
+
+    #[test]
+    fn directed_selection_maps_through_structural_edits_and_history() {
+        let engine = Engine::new(EngineConfig::default()).unwrap();
+        let session = engine.create_blank().unwrap();
+        let blank = session.snapshot().unwrap();
+        let first = initial_paragraph(&blank);
+        session
+            .insert_text(InsertTextRequest {
+                base_revision: blank.revision,
+                at: position(first.clone(), 0, Affinity::After),
+                text: "abCD".to_owned(),
+                marks: BTreeSet::new(),
+            })
+            .unwrap();
+        assert_eq!(session.selection().unwrap().focus.grapheme_offset, 4);
+
+        session
+            .set_selection(SetSelectionRequest {
+                base_revision: Revision::new(1),
+                selection: SelectionSnapshot {
+                    anchor: position(first.clone(), 1, Affinity::Before),
+                    focus: position(first.clone(), 3, Affinity::After),
+                },
+            })
+            .unwrap();
+        let split = session
+            .split_paragraph(SplitParagraphRequest {
+                base_revision: Revision::new(1),
+                at: position(first.clone(), 2, Affinity::After),
+            })
+            .unwrap();
+        let second = match &split.position_map.steps()[0] {
+            MappingStep::Split { new_node, .. } => new_node.clone(),
+            other => panic!("unexpected mapping step: {other:?}"),
+        };
+        let after_split = session.selection().unwrap();
+        assert_eq!(
+            after_split.anchor,
+            position(first.clone(), 1, Affinity::Before)
+        );
+        assert_eq!(
+            after_split.focus,
+            position(second.clone(), 1, Affinity::After)
+        );
+        session
+            .set_selection(SetSelectionRequest {
+                base_revision: Revision::new(2),
+                selection: after_split.clone(),
+            })
+            .unwrap();
+        assert_eq!(session.selection().unwrap(), after_split);
+
+        session
+            .delete_range(DeleteRangeRequest {
+                base_revision: Revision::new(2),
+                range: Range {
+                    start: position(second.clone(), 0, Affinity::Before),
+                    end: position(second.clone(), 1, Affinity::After),
+                },
+            })
+            .unwrap();
+        assert_eq!(
+            session.selection().unwrap().focus,
+            position(second.clone(), 0, Affinity::After)
+        );
+
+        session
+            .join_paragraphs(JoinParagraphRequest {
+                base_revision: Revision::new(3),
+                first: first.clone(),
+                second: second.clone(),
+            })
+            .unwrap();
+        assert_eq!(
+            session.selection().unwrap().focus,
+            position(first.clone(), 2, Affinity::After)
+        );
+
+        session.undo(Revision::new(4)).unwrap();
+        assert_eq!(
+            session.selection().unwrap().focus,
+            position(second, 0, Affinity::After)
+        );
+        session.redo(Revision::new(5)).unwrap();
+        let after_redo = session.selection().unwrap();
+        assert_eq!(
+            after_redo.anchor,
+            position(first.clone(), 1, Affinity::Before)
+        );
+        assert_eq!(after_redo.focus, position(first, 2, Affinity::After));
     }
 
     #[test]
@@ -1348,6 +1656,13 @@ mod tests {
         assert_eq!(session.export_normalized_json().unwrap(), json);
         let snapshot = session.snapshot().unwrap();
         assert_eq!(snapshot.revision, Revision::new(0));
+        assert_eq!(
+            session.selection().unwrap(),
+            SelectionSnapshot {
+                anchor: position(initial_paragraph(&snapshot), 0, Affinity::After),
+                focus: position(initial_paragraph(&snapshot), 0, Affinity::After),
+            }
+        );
 
         let split = session
             .split_paragraph(SplitParagraphRequest {

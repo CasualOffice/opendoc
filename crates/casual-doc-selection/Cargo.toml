@@ -1,6 +1,6 @@
 [package]
-name = "casual-doc-sdk"
-description = "Public Rust facade for the OpenDoc document runtime"
+name = "casual-doc-selection"
+description = "Internal logical selection engine for OpenDoc"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,12 +11,7 @@ publish = false
 
 [dependencies]
 casual-doc-model.workspace = true
-casual-doc-selection.workspace = true
 casual-doc-transaction.workspace = true
-serde.workspace = true
-
-[dev-dependencies]
-serde_json.workspace = true
 
 [lints]
 workspace = true

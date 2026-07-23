@@ -154,6 +154,18 @@ boundary.
 **Consequence:** schema evolution requires an explicit versioned migration path;
 v0 does not silently accept future fields.
 
+## ADR-019 — Selection is mapped session state
+
+**Decision:** Canonical logical selection lives in the session, is validated
+against the normalized document, and is mapped atomically through every
+transaction without incrementing document revision for selection-only changes.
+
+**Why:** commands, history, IME, hit testing, and collaboration need one
+engine-owned selection contract independent of host UI.
+
+**Consequence:** selection is not part of normalized document serialization and
+the session commit path must validate mapped endpoints before publication.
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;

@@ -45,10 +45,17 @@ Only three crates are created in the first slice:
 Layout, scene, OOXML, renderer, selection, collaboration, FFI, WASM, and plugin
 crates are added when their first tested behavior is implemented.
 
+The first incremental expansion adds `casual-doc-selection` for P0-004. It owns
+validated directed selections and maps them through transaction position maps;
+the SDK remains the public boundary.
+
 ## Dependency Direction
 
 ```text
 casual-doc-sdk
+    -> casual-doc-selection
+        -> casual-doc-transaction
+        -> casual-doc-model
     -> casual-doc-transaction
         -> casual-doc-model
     -> casual-doc-model

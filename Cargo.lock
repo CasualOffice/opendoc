@@ -16,9 +16,18 @@ name = "casual-doc-sdk"
 version = "0.0.1"
 dependencies = [
  "casual-doc-model",
+ "casual-doc-selection",
  "casual-doc-transaction",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "casual-doc-selection"
+version = "0.0.1"
+dependencies = [
+ "casual-doc-model",
+ "casual-doc-transaction",
 ]
 
 [[package]]

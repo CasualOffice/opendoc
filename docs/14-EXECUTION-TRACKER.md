@@ -35,13 +35,14 @@ Update this file whenever work begins, changes scope, or finishes.
 | P0-001 | Deterministic model transaction slice | Done | Blank document, grapheme-aware insertion, atomic transaction, snapshots, and tests. | Native, WASM, MSRV, docs, lint, and policy gates pass. |
 | P0-002 | Transaction semantics and history | Done | Insert, delete, split, join, mapping, inverse, and history semantics accepted and implemented. | 17 unit tests plus SDK doc test; native/WASM/MSRV gates pass. |
 | P0-003 | Normalized snapshot loading | Done | Strict schema v0 JSON load, validation, limits, and deterministic round trip. | 25 unit tests plus SDK doc test; native/WASM/MSRV gates pass. |
-| P0-004 | Selection foundation | Designing | Caret/range invariants and position mapping implemented. | Transaction mapping is ready; selection design next. |
+| P0-004 | Selection foundation | Done | Caret/range invariants and position mapping implemented. | 31 unit tests plus SDK doc test; native/WASM/MSRV gates pass. |
+| P0-005 | Runtime event foundation | Designing | Ordered transaction and selection events with safe subscription lifecycle. | Design required before implementation. |
 
 ## Active Work
 
 | ID | Title | Owner | Status | Links |
 | --- | --- | --- | --- | --- |
-| P0-004 | Selection foundation | Codex | Designing | Design note required before selection implementation. |
+| P0-005 | Runtime event foundation | Codex | Designing | Tracker opened; design note required before implementation. |
 
 ## Completed Work
 
@@ -52,6 +53,7 @@ Update this file whenever work begins, changes scope, or finishes.
 | P0-001 | Deterministic model transaction slice | 2026-07-24 | Added three-crate Rust workspace, atomic grapheme insertion, public snapshots/errors, 10 unit tests, doc test, WASM/MSRV checks, and CI/security policy. |
 | P0-002 | Transaction semantics and history | 2026-07-24 | Added delete/split/join operations, mapping steps, semantic inverses, SDK undo/redo, stable history error, and atomicity coverage. |
 | P0-003 | Normalized snapshot loading | 2026-07-24 | Added strict bounded JSON v0 load/export, semantic limits, duplicate/unknown rejection, redacted SDK errors, and collision-safe imported editing. |
+| P0-004 | Selection foundation | 2026-07-24 | Added canonical directed session selection, strict revision/position validation, atomic edit/history mapping, and a fourth focused workspace crate. |
 
 ## Open Questions
 

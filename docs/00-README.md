@@ -48,6 +48,7 @@ The runtime is not a UI toolkit and is not a DOCX-only editor. It is a determini
 23. `23-DOCX-FIXTURE-CORPUS.md` — fixture rights, metadata, and comparison policy.
 24. `24-TRANSACTION-SEMANTICS.md` — edit, mapping, inverse, and history semantics.
 25. `25-NORMALIZED-SNAPSHOT-IO.md` — strict bounded JSON load/export contract.
+26. `26-SELECTION-FOUNDATION.md` — caret/range state and transaction mapping.
 
 ## Recommended project names
 

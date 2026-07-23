@@ -6,7 +6,8 @@ The broad interfaces below describe the intended v1 facade and are not all
 implemented. Current executable support is limited to blank-document creation,
 immutable snapshots, grapheme-aware text insertion/deletion, paragraph
 split/join, undo/redo, revision checks, position mapping, and stable SDK errors.
-Strict bounded normalized schema v0 JSON load/export is also implemented.
+Strict bounded normalized schema v0 JSON load/export and canonical mapped
+session selection are also implemented.
 
 ## Phase 0 Implemented Subset
 
@@ -15,6 +16,7 @@ use std::collections::BTreeSet;
 
 use casual_doc_sdk::{
     Affinity, BlockSnapshot, Engine, EngineConfig, InsertTextRequest, Position,
+    SelectionSnapshot, SetSelectionRequest,
 };
 
 let engine = Engine::new(EngineConfig::default())?;
@@ -36,6 +38,15 @@ let result = session.insert_text(InsertTextRequest {
 })?;
 
 assert_eq!(result.revision.get(), 1);
+
+let selection = session.selection()?;
+session.set_selection(SetSelectionRequest {
+    base_revision: result.revision,
+    selection: SelectionSnapshot {
+        anchor: selection.anchor,
+        focus: selection.focus,
+    },
+})?;
 ```
 
 The SDK owns its public IDs, positions, snapshots, marks, and errors. Internal
@@ -186,8 +197,8 @@ impl DocumentSession {
         command: impl Into<CommandId>,
     ) -> Result<CommandState, SdkError>;
 
-    pub fn selection(&self) -> SelectionSnapshot;
-    pub fn set_selection(&self, selection: Selection) -> Result<(), SdkError>;
+    pub fn selection(&self) -> Result<SelectionSnapshot, SdkError>;
+    pub fn set_selection(&self, request: SetSelectionRequest) -> Result<(), SdkError>;
 
     pub fn handle_key(&self, event: KeyEvent) -> Result<InputResult, SdkError>;
     pub fn handle_pointer(&self, event: PointerEvent) -> Result<InputResult, SdkError>;
