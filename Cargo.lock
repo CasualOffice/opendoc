@@ -141,6 +141,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "opendoc-benchmark"
+version = "0.0.1"
+dependencies = [
+ "casual-doc-ooxml",
+ "casual-doc-sdk",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
