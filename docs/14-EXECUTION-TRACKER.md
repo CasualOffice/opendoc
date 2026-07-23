@@ -44,7 +44,7 @@ Update this file whenever work begins, changes scope, or finishes.
 
 | ID | Title | Owner | Status | Links |
 | --- | --- | --- | --- | --- |
-| P0-008 | Phase 0 corpus and evidence closure | Codex | Designing | Close remaining corpus, baseline-status, and exit-gate evidence without claiming unimplemented rendering. |
+| P0-008 | Phase 0 corpus and evidence closure | Codex | Ready | Design accepted in `30-PHASE-0-CLOSURE-DESIGN.md`; implement corpus, fuzzing, and exit report. |
 
 ## Completed Work
 

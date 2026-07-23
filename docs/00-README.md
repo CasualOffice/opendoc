@@ -52,6 +52,7 @@ The runtime is not a UI toolkit and is not a DOCX-only editor. It is a determini
 27. `27-RUNTIME-EVENT-FOUNDATION.md` — ordered bounded session event delivery.
 28. `28-DOCX-PACKAGE-READER.md` — bounded ZIP package admission and part reads.
 29. `29-BENCHMARK-AND-BASELINE-HARNESS.md` — reproducible timing and report contract.
+30. `30-PHASE-0-CLOSURE-DESIGN.md` — corpus, fuzzing, and exit-evidence closure.
 
 ## Recommended project names
 

@@ -203,6 +203,31 @@ not provide stable enough timing for a production regression gate.
 future dedicated-runner workflow is required before timing regressions become a
 blocking repository check.
 
+## ADR-023 — Align baseline evidence with capability ownership
+
+**Decision:** Phase 0 establishes baseline schemas, policies, implemented-path
+reports, and readiness status. Visual baselines begin with the Phase 1 renderer;
+semantic DOCX round-trip baselines begin with the Phase 2 writer.
+
+**Why:** a visual snapshot without an OpenDoc renderer and a round trip without
+an importer/writer are placeholder artifacts, not compatibility evidence.
+
+**Consequence:** the Phase 0 exit report names those later owners explicitly and
+cannot imply layout, rendering, or save support.
+
+## ADR-024 — Isolate and continuously build parser fuzz targets
+
+**Decision:** Keep `cargo-fuzz` targets in an independently locked `fuzz/`
+workspace, compile them on pull requests, and execute bounded seeded campaigns
+in scheduled security CI.
+
+**Why:** parser fuzz dependencies require nightly instrumentation and do not
+belong in the product/MSRV graph, while build-only review gates avoid random
+pull-request failures.
+
+**Consequence:** fuzz crashes become minimized regression fixtures; scheduled
+campaign limits and dependency pins are reviewed repository policy.
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;

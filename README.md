@@ -60,6 +60,7 @@ The runtime must provide:
 - [Runtime Event Foundation](docs/27-RUNTIME-EVENT-FOUNDATION.md)
 - [DOCX Package Reader](docs/28-DOCX-PACKAGE-READER.md)
 - [Benchmark and Baseline Harness](docs/29-BENCHMARK-AND-BASELINE-HARNESS.md)
+- [Phase 0 Closure Design](docs/30-PHASE-0-CLOSURE-DESIGN.md)
 
 ## Repository Status
 
