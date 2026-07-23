@@ -1,0 +1,36 @@
+name: Design proposal
+description: Propose a production capability or architecture change.
+title: "[Design]: "
+labels:
+  - status:needs-design
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Required outcome
+      description: Describe the user or integrator result, not only an implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints
+      description: Include compatibility, determinism, security, performance, and platform constraints.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Research and evidence
+      description: Link specifications, fixtures, competitor behavior, or measurements.
+  - type: textarea
+    id: design
+    attributes:
+      label: Proposed design
+      description: Describe boundaries, failure behavior, tests, migration, and alternatives.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance gates
+    validations:
+      required: true

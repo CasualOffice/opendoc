@@ -47,12 +47,35 @@ The runtime must provide:
 - [Execution Tracker](docs/14-EXECUTION-TRACKER.md)
 - [CI and Release Gates](docs/15-CI-AND-RELEASE-GATES.md)
 - [Documentation Maintenance](docs/16-DOCUMENTATION-MAINTENANCE.md)
+- [Project Glossary](docs/17-GLOSSARY.md)
+- [Support Matrix](docs/18-SUPPORT-MATRIX.md)
+- [Workspace Scaffold Design](docs/19-WORKSPACE-SCAFFOLD-DESIGN.md)
+- [Error Code Registry](docs/20-ERROR-CODE-REGISTRY.md)
+- [Parser and Resource Limits](docs/21-PARSER-LIMITS.md)
+- [Normalized Schema v0](docs/22-NORMALIZED-SCHEMA-V0.md)
+- [DOCX Fixture Corpus Plan](docs/23-DOCX-FIXTURE-CORPUS.md)
 
 ## Repository Status
 
-Status: design and foundation phase.
+Status: Phase 0 foundation implementation.
 
-Implementation should not begin casually. Any substantial build work should start with an approved design note, an ADR when architectural, and an updated tracker entry.
+The first executable slice provides a normalized blank document, stable node
+identity, grapheme-aware text insertion through atomic transactions,
+revision-aware snapshots, position mapping, and stable SDK errors. It does not
+yet claim DOCX, layout, rendering, selection, collaboration, or persistence
+support.
+
+## Development
+
+The workspace uses Rust 1.96.0 with an MSRV of 1.85.0.
+
+```sh
+cargo test --workspace --all-features --locked
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+```
+
+See [Contributing](CONTRIBUTING.md), [Security](SECURITY.md), and
+[Governance](GOVERNANCE.md).
 
 ## License
 

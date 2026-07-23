@@ -68,6 +68,69 @@
 
 **Why:** system font availability otherwise causes layout variation.
 
+## ADR-011 — Progressive workspace boundaries
+
+**Decision:** Start with `casual-doc-model`, `casual-doc-transaction`, and
+`casual-doc-sdk`; add later HLD crates only with their first tested behavior.
+
+**Why:** crate boundaries should represent proven ownership and dependency
+direction, not placeholders.
+
+**Consequence:** the HLD remains the target structure, while the physical
+workspace grows incrementally.
+
+## ADR-012 — Rust 2024 with an explicit MSRV
+
+**Decision:** Use Rust edition 2024, resolver 3, and MSRV Rust 1.85.0.
+
+**Why:** edition 2024 is the current language baseline and an explicit MSRV makes
+consumer compatibility testable.
+
+**Consequence:** raising MSRV requires an ADR update, CI change, and release note.
+
+## ADR-013 — SDK-owned public value objects
+
+**Decision:** The SDK facade defines host-facing IDs, positions, snapshots, and
+errors instead of re-exporting internal crate types.
+
+**Why:** internal crates must evolve without making representation details part
+of the consumer compatibility contract.
+
+**Consequence:** the facade performs explicit, tested conversions at its
+boundary.
+
+## ADR-014 — Grapheme-boundary runtime positions
+
+**Decision:** Runtime text positions are local extended-grapheme boundaries plus
+affinity, not UTF-8 byte offsets or global UTF-16 indexes.
+
+**Why:** caret and selection behavior must not split user-perceived characters.
+
+**Consequence:** import/export and language bindings must convert their native
+offset conventions explicitly.
+
+## ADR-015 — Stable string error registry
+
+**Decision:** Public errors use non-recycled `ODC-NNNN` string codes with
+severity and redacted structured context.
+
+**Why:** string codes remain stable across Rust, WASM, C ABI, logs, and support
+workflows.
+
+**Consequence:** internal error variants are mapped at the SDK boundary and
+cannot leak as a public compatibility contract.
+
+## ADR-016 — Bounded parsing is mandatory
+
+**Decision:** All format parsers enforce configured defaults and non-bypassable
+hard ceilings before or during resource consumption.
+
+**Why:** document packages, XML, images, fonts, and extension payloads are
+untrusted input.
+
+**Consequence:** parser implementations must expose limit accounting and
+boundary tests from their first merge.
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;
@@ -75,6 +138,6 @@
 - internal text storage: rope, piece tree, or chunked sequence;
 - collaboration operation model;
 - PDF generation backend;
-- schema format: canonical CBOR details;
+- schema format: canonical CBOR encoding profile and golden vectors;
 - plugin ABI stability;
 - whether layout uses fixed-point units internally.

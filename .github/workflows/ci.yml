@@ -1,0 +1,176 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  format:
+    name: format
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.96.0
+          components: rustfmt
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  lint:
+    name: lint
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.96.0
+          components: clippy
+      - name: Restore Cargo cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+  test:
+    name: test
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.96.0
+      - name: Restore Cargo cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Run workspace tests
+        run: cargo test --workspace --all-features --locked
+      - name: Run documentation tests
+        run: cargo test --doc --workspace --all-features --locked
+
+  docs:
+    name: docs
+    runs-on: ubuntu-24.04
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.96.0
+      - name: Restore Cargo cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Build API documentation
+        run: cargo doc --workspace --all-features --no-deps --locked
+
+  wasm:
+    name: wasm
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.96.0
+          targets: wasm32-unknown-unknown
+      - name: Restore Cargo cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Check WASM-compatible foundation
+        run: cargo check --workspace --all-features --locked --target wasm32-unknown-unknown
+
+  platform:
+    name: platform (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS-arm64
+            os: macos-15
+            toolchain: 1.96.0
+            command: cargo test --workspace --all-features --locked
+          - name: Windows-x64
+            os: windows-2025
+            toolchain: 1.96.0
+            command: cargo test --workspace --all-features --locked
+          - name: MSRV
+            os: ubuntu-24.04
+            toolchain: 1.85.0
+            command: cargo check --workspace --all-targets --all-features --locked
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: ${{ matrix.toolchain }}
+      - name: Restore Cargo cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Check platform
+        run: ${{ matrix.command }}
+
+  dependency-policy:
+    name: dependency-policy
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.96.0
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@7572810d7dd469b651bb7793945692cf78da5dd7
+        with:
+          tool: cargo-deny@0.20.2
+          fallback: none
+      - name: Check dependency licenses, versions, and sources
+        run: cargo deny --locked check bans licenses sources
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@7572810d7dd469b651bb7793945692cf78da5dd7
+        with:
+          tool: cargo-audit@0.22.2
+          fallback: none
+      - name: Check RustSec advisories
+        run: cargo audit --deny warnings
+
+  repository-policy:
+    name: repository-policy
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.96.0
+      - name: Validate locked workspace metadata
+        run: cargo metadata --locked --format-version 1 --no-deps > /dev/null
+      - name: Reject merge-conflict markers
+        shell: bash
+        run: |
+          if git grep -nE '^(<<<<<<<|=======|>>>>>>>)'; then
+            exit 1
+          fi

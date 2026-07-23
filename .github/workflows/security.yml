@@ -1,0 +1,38 @@
+name: Security
+
+on:
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rustsec:
+    name: rustsec
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@7572810d7dd469b651bb7793945692cf78da5dd7
+        with:
+          tool: cargo-audit@0.22.2
+          fallback: none
+      - name: Check RustSec advisories
+        run: cargo audit --deny warnings
+
+  dependency-policy:
+    name: dependency-policy
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@7572810d7dd469b651bb7793945692cf78da5dd7
+        with:
+          tool: cargo-deny@0.20.2
+          fallback: none
+      - name: Check all dependency policies
+        run: cargo deny --locked check

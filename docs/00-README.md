@@ -1,10 +1,10 @@
 # Casual Docs Runtime & SDK — Architecture Blueprint
 
-**Status:** Draft v0.1  
-**Audience:** CasualOffice maintainers, SDK contributors, platform integrators  
-**Primary implementation:** Rust  
-**Primary hosts:** Tauri desktop, WebAssembly/web, headless/server  
-**License target:** Apache-2.0
+**Status:** Draft v0.1
+**Audience:** CasualOffice maintainers, SDK contributors, platform integrators
+**Primary implementation:** Rust
+**Primary hosts:** Tauri desktop, WebAssembly/web, headless/server
+**License:** MIT
 
 ## Purpose
 
@@ -32,11 +32,25 @@ The runtime is not a UI toolkit and is not a DOCX-only editor. It is a determini
 7. `07-QUALITY-SECURITY-AND-COMPATIBILITY.md` — testing, performance, security, compatibility, and release criteria.
 8. `08-ADR-REGISTER.md` — initial architecture decisions.
 9. `09-REPOSITORY-AND-CONTRIBUTION.md` — proposed repository structure and engineering workflow.
+10. `10-PROJECT-GOAL-AND-STANDARDS.md` — production goal and non-negotiable standards.
+11. `11-DESIGN-FIRST-PROCESS.md` — required research, design, tracking, and delivery flow.
+12. `12-COMPETITIVE-ANALYSIS.md` — current product and SDK comparison.
+13. `13-UX-AND-BUG-HUNTING.md` — UX review areas and defect policy.
+14. `14-EXECUTION-TRACKER.md` — current project execution state.
+15. `15-CI-AND-RELEASE-GATES.md` — automated quality and release gates.
+16. `16-DOCUMENTATION-MAINTENANCE.md` — documentation ownership and freshness.
+17. `17-GLOSSARY.md` — canonical project terminology.
+18. `18-SUPPORT-MATRIX.md` — platform, host, format, and feature targets.
+19. `19-WORKSPACE-SCAFFOLD-DESIGN.md` — accepted initial Rust workspace.
+20. `20-ERROR-CODE-REGISTRY.md` — stable public error taxonomy.
+21. `21-PARSER-LIMITS.md` — bounded parsing and resource policy.
+22. `22-NORMALIZED-SCHEMA-V0.md` — first normalized-model contract.
+23. `23-DOCX-FIXTURE-CORPUS.md` — fixture rights, metadata, and comparison policy.
 
 ## Recommended project names
 
 - Product/runtime: **Casual Document Runtime**
-- Rust workspace: `casual-docs-runtime`
+- Rust workspace repository: `opendoc`
 - Core crate: `casual_doc`
 - Public SDK facade: `casual_doc_sdk`
 - Native renderer: `casual_doc_renderer`

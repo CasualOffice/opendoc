@@ -1,6 +1,46 @@
 # SDK API Specification
 
-## 1. API layers
+**Status:** Target v1 API with an implemented Phase 0 subset
+
+The broad interfaces below describe the intended v1 facade and are not all
+implemented. Current executable support is limited to blank-document creation,
+immutable snapshots, grapheme-aware text insertion, revision checks, position
+mapping, and stable SDK errors.
+
+## Phase 0 Implemented Subset
+
+```rust
+use std::collections::BTreeSet;
+
+use casual_doc_sdk::{
+    Affinity, BlockSnapshot, Engine, EngineConfig, InsertTextRequest, Position,
+};
+
+let engine = Engine::new(EngineConfig::default())?;
+let session = engine.create_blank()?;
+let snapshot = session.snapshot()?;
+let paragraph = match &snapshot.body[0] {
+    BlockSnapshot::Paragraph(paragraph) => paragraph.id.clone(),
+};
+
+let result = session.insert_text(InsertTextRequest {
+    base_revision: snapshot.revision,
+    at: Position {
+        node: paragraph,
+        grapheme_offset: 0,
+        affinity: Affinity::After,
+    },
+    text: "Hello".to_owned(),
+    marks: BTreeSet::new(),
+})?;
+
+assert_eq!(result.revision.get(), 1);
+```
+
+The SDK owns its public IDs, positions, snapshots, marks, and errors. Internal
+model and transaction types are not re-exported.
+
+## 1. Target API layers
 
 ### Rust native API
 

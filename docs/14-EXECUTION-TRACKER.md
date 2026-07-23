@@ -23,31 +23,36 @@ Update this file whenever work begins, changes scope, or finishes.
 | ID | Workstream | Status | Acceptance Gate | Notes |
 | --- | --- | --- | --- | --- |
 | F-001 | Repository bootstrap docs | Done | Root docs, agent docs, license, process docs added. | Initial setup complete. |
-| F-002 | Project glossary | Not started | Common terms defined and linked from README. | Required before implementation. |
-| F-003 | Support matrix | Not started | OS/WASM/headless targets documented. | Required for CI planning. |
-| F-004 | CI design | Not started | Required checks and platforms documented. | See `15-CI-AND-RELEASE-GATES.md`. |
-| F-005 | Workspace scaffold design | Not started | Rust workspace layout finalized. | Based on HLD. |
-| F-006 | Error code registry | Not started | Stable initial error taxonomy. | Needed before public API. |
-| F-007 | Parser limits spec | Not started | ZIP/XML/image/package limits specified. | Security gate. |
-| F-008 | Normalized schema v0 design | Not started | Model primitives and serialization draft accepted. | Blocks parser work. |
-| F-009 | DOCX fixture corpus plan | Not started | Corpus manifest format and source policy defined. | Blocks fidelity gates. |
-| F-010 | Competitive analysis pass 1 | Not started | Findings recorded in `12-COMPETITIVE-ANALYSIS.md`. | Required before UX baseline. |
+| F-002 | Project glossary | Done | Common terms defined and linked from README. | `17-GLOSSARY.md`. |
+| F-003 | Support matrix | Done | OS/WASM/headless targets documented. | `18-SUPPORT-MATRIX.md`. |
+| F-004 | CI design | Done | Required checks and platforms documented. | `15-CI-AND-RELEASE-GATES.md`. |
+| F-005 | Workspace scaffold design | Done | Rust workspace layout finalized. | `19-WORKSPACE-SCAFFOLD-DESIGN.md`. |
+| F-006 | Error code registry | Done | Stable initial error taxonomy. | `20-ERROR-CODE-REGISTRY.md`. |
+| F-007 | Parser limits spec | Done | ZIP/XML/image/package limits specified. | `21-PARSER-LIMITS.md`. |
+| F-008 | Normalized schema v0 design | Done | Model primitives and serialization draft accepted. | `22-NORMALIZED-SCHEMA-V0.md`. |
+| F-009 | DOCX fixture corpus plan | Done | Corpus manifest format and source policy defined. | `23-DOCX-FIXTURE-CORPUS.md`. |
+| F-010 | Competitive analysis pass 1 | Done | Findings recorded in `12-COMPETITIVE-ANALYSIS.md`. | Primary sources checked 2026-07-24. |
+| P0-001 | Deterministic model transaction slice | Done | Blank document, grapheme-aware insertion, atomic transaction, snapshots, and tests. | Native, WASM, MSRV, docs, lint, and policy gates pass. |
+| P0-002 | Transaction semantics design | Not started | Insert, delete, split, join, mapping, inverse, and history semantics accepted. | Next design milestone. |
+| P0-003 | Normalized snapshot loading | Not started | Strict schema v0 JSON load, validation, limits, and deterministic round trip. | Requires input-boundary design. |
+| P0-004 | Selection foundation | Not started | Caret/range invariants and position mapping implemented. | Follows transaction semantics. |
 
 ## Active Work
 
 | ID | Title | Owner | Status | Links |
 | --- | --- | --- | --- | --- |
-| F-001 | Repository bootstrap docs | Codex | Done | README, CONTRIBUTING, LICENSE, AGENTS, numbered docs. |
+| P0-002 | Transaction semantics design | Codex | Designing | Design note to be added before the next operation set. |
 
 ## Completed Work
 
 | ID | Title | Completed | Notes |
 | --- | --- | --- | --- |
 | F-001 | Repository bootstrap docs | 2026-07-24 | Added root docs, MIT license, agent instructions, process docs, CI gates, tracker, competitive analysis, UX/bug hunting, and docs maintenance. |
+| F-002-F-010 | Foundation design batch | 2026-07-24 | Finalized glossary, support, CI, workspace, errors, limits, schema v0, fixture corpus, ADRs, and competitive pass 1. |
+| P0-001 | Deterministic model transaction slice | 2026-07-24 | Added three-crate Rust workspace, atomic grapheme insertion, public snapshots/errors, 10 unit tests, doc test, WASM/MSRV checks, and CI/security policy. |
 
 ## Open Questions
 
-- What exact repository/package name should be used for the Rust workspace?
-- Should the initial license remain MIT through first release, or move to Apache-2.0 later?
-- Which CI provider and release channels should be treated as authoritative?
+- Should the crate family retain the `casual-doc-*` names if public package-name availability later requires a change?
+- Should a second permissive license be considered before the first public package release?
 - Which fixed font set should be used for deterministic layout baselines?
