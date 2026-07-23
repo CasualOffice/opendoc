@@ -34,7 +34,7 @@
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::error::Error;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -129,6 +129,7 @@ impl Engine {
                 selection,
                 undo_stack: Vec::new(),
                 redo_stack: Vec::new(),
+                events: EventJournal::default(),
             })),
             next_transaction: Arc::clone(&self.next_transaction),
             node_namespace: namespace,
@@ -616,6 +617,156 @@ pub struct TransactionResult {
     pub operations_applied: usize,
 }
 
+/// Number of recent runtime events retained by each Phase 0 session.
+pub const EVENT_JOURNAL_CAPACITY: usize = 256;
+
+/// Session-local monotonic runtime event identity.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct EventSequence(u64);
+
+impl EventSequence {
+    /// Returns the numeric event sequence.
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+/// Source of a committed transaction event.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TransactionOrigin {
+    /// A normal forward editing request.
+    Forward,
+    /// An undo history request.
+    Undo,
+    /// A redo history request.
+    Redo,
+}
+
+/// Reason that canonical session selection changed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SelectionChangeReason {
+    /// A host explicitly replaced selection.
+    Explicit,
+    /// A forward transaction mapped selection.
+    Transaction,
+    /// An undo transaction mapped selection.
+    Undo,
+    /// A redo transaction mapped selection.
+    Redo,
+}
+
+/// Payload emitted after one transaction commits.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TransactionCommittedEvent {
+    /// Committed transaction result.
+    pub result: TransactionResult,
+    /// Source of the transaction.
+    pub origin: TransactionOrigin,
+}
+
+/// Payload emitted after canonical selection changes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SelectionChangedEvent {
+    /// Document revision against which the selection resolves.
+    pub revision: Revision,
+    /// Complete directed selection after the change.
+    pub selection: SelectionSnapshot,
+    /// Cause of the selection transition.
+    pub reason: SelectionChangeReason,
+}
+
+/// Runtime notification emitted by a document session.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RuntimeEvent {
+    /// A document transaction committed.
+    TransactionCommitted(TransactionCommittedEvent),
+    /// Canonical session selection changed.
+    SelectionChanged(SelectionChangedEvent),
+}
+
+/// Runtime event paired with its session-local sequence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SequencedEvent {
+    /// Strictly increasing event sequence.
+    pub sequence: EventSequence,
+    /// Typed event payload.
+    pub event: RuntimeEvent,
+}
+
+/// One non-blocking subscription read.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct EventBatch {
+    /// Number of events no longer retained before this batch.
+    pub dropped_events: u64,
+    /// Ordered retained events, limited by the drain request.
+    pub events: Vec<SequencedEvent>,
+}
+
+#[derive(Debug)]
+struct EventJournal {
+    next_sequence: u64,
+    retained: VecDeque<SequencedEvent>,
+}
+
+impl Default for EventJournal {
+    fn default() -> Self {
+        Self {
+            next_sequence: 1,
+            retained: VecDeque::with_capacity(EVENT_JOURNAL_CAPACITY),
+        }
+    }
+}
+
+impl EventJournal {
+    fn append(&mut self, events: Vec<RuntimeEvent>) -> Result<(), SdkError> {
+        let count = u64::try_from(events.len())
+            .map_err(|_| SdkError::internal("runtime event count exceeds sequence capacity"))?;
+        let next_sequence = self
+            .next_sequence
+            .checked_add(count)
+            .ok_or_else(|| SdkError::internal("runtime event sequence is exhausted"))?;
+
+        for (sequence, event) in (self.next_sequence..next_sequence).zip(events) {
+            if self.retained.len() == EVENT_JOURNAL_CAPACITY {
+                self.retained.pop_front();
+            }
+            self.retained.push_back(SequencedEvent {
+                sequence: EventSequence(sequence),
+                event,
+            });
+        }
+        self.next_sequence = next_sequence;
+        Ok(())
+    }
+
+    fn read_from(&self, cursor: u64, max_events: usize) -> (EventBatch, u64) {
+        let earliest = self
+            .retained
+            .front()
+            .map_or(self.next_sequence, |event| event.sequence.get());
+        let dropped_events = earliest.saturating_sub(cursor);
+        let effective_cursor = cursor.max(earliest);
+        let events: Vec<_> = self
+            .retained
+            .iter()
+            .filter(|event| event.sequence.get() >= effective_cursor)
+            .take(max_events)
+            .cloned()
+            .collect();
+        let next_cursor = events.last().map_or(effective_cursor, |event| {
+            event.sequence.get().saturating_add(1)
+        });
+        (
+            EventBatch {
+                dropped_events,
+                events,
+            },
+            next_cursor,
+        )
+    }
+}
+
 #[derive(Debug)]
 struct SessionState {
     document: model::Document,
@@ -623,6 +774,34 @@ struct SessionState {
     selection: selection::TextSelection,
     undo_stack: Vec<Vec<transaction::Operation>>,
     redo_stack: Vec<Vec<transaction::Operation>>,
+    events: EventJournal,
+}
+
+/// Future-only cursor over one session's bounded runtime event journal.
+#[derive(Debug)]
+pub struct Subscription {
+    state: Arc<RwLock<SessionState>>,
+    next_sequence: u64,
+}
+
+impl Subscription {
+    /// Drains at most `max_events` without blocking.
+    pub fn drain(&mut self, max_events: usize) -> Result<EventBatch, SdkError> {
+        if max_events == 0 {
+            return Err(SdkError::new(
+                ErrorCode::InvalidArgument,
+                ErrorSeverity::Error,
+                "event drain size must be greater than zero",
+            ));
+        }
+        let state = self
+            .state
+            .read()
+            .map_err(|_| SdkError::internal("session state lock is poisoned"))?;
+        let (batch, next_sequence) = state.events.read_from(self.next_sequence, max_events);
+        self.next_sequence = next_sequence;
+        Ok(batch)
+    }
 }
 
 /// Thread-safe live document session.
@@ -660,6 +839,19 @@ impl DocumentSession {
         Ok(SelectionSnapshot::from_internal(state.selection))
     }
 
+    /// Subscribes to events emitted after this call.
+    pub fn subscribe(&self) -> Result<Subscription, SdkError> {
+        let state = self
+            .state
+            .read()
+            .map_err(|_| SdkError::internal("session state lock is poisoned"))?;
+        let next_sequence = state.events.next_sequence;
+        Ok(Subscription {
+            state: Arc::clone(&self.state),
+            next_sequence,
+        })
+    }
+
     /// Replaces selection after validating its revision and document positions.
     pub fn set_selection(&self, request: SetSelectionRequest) -> Result<(), SdkError> {
         let anchor = request.selection.anchor.to_internal()?;
@@ -670,6 +862,15 @@ impl DocumentSession {
         }
         let selection = selection::TextSelection::new(&state.document, anchor, focus)
             .map_err(map_requested_selection_error)?;
+        if state.selection == selection {
+            return Ok(());
+        }
+        let event = RuntimeEvent::SelectionChanged(SelectionChangedEvent {
+            revision: Revision(state.revision.get()),
+            selection: SelectionSnapshot::from_internal(selection),
+            reason: SelectionChangeReason::Explicit,
+        });
+        state.events.append(vec![event])?;
         state.selection = selection;
         Ok(())
     }
@@ -760,6 +961,20 @@ impl DocumentSession {
             .selection
             .mapped(&commit.position_map, &commit.document)
             .map_err(map_mapped_selection_error)?;
+        let mut events = vec![RuntimeEvent::TransactionCommitted(
+            TransactionCommittedEvent {
+                result: result.clone(),
+                origin: TransactionOrigin::Forward,
+            },
+        )];
+        if state.selection != mapped_selection {
+            events.push(RuntimeEvent::SelectionChanged(SelectionChangedEvent {
+                revision: result.revision,
+                selection: SelectionSnapshot::from_internal(mapped_selection),
+                reason: SelectionChangeReason::Transaction,
+            }));
+        }
+        state.events.append(events)?;
         state.document = commit.document;
         state.revision = commit.revision;
         state.selection = mapped_selection;
@@ -797,6 +1012,24 @@ impl DocumentSession {
             .selection
             .mapped(&commit.position_map, &commit.document)
             .map_err(map_mapped_selection_error)?;
+        let (origin, selection_reason) = match direction {
+            HistoryDirection::Undo => (TransactionOrigin::Undo, SelectionChangeReason::Undo),
+            HistoryDirection::Redo => (TransactionOrigin::Redo, SelectionChangeReason::Redo),
+        };
+        let mut events = vec![RuntimeEvent::TransactionCommitted(
+            TransactionCommittedEvent {
+                result: result.clone(),
+                origin,
+            },
+        )];
+        if state.selection != mapped_selection {
+            events.push(RuntimeEvent::SelectionChanged(SelectionChangedEvent {
+                revision: result.revision,
+                selection: SelectionSnapshot::from_internal(mapped_selection),
+                reason: selection_reason,
+            }));
+        }
+        state.events.append(events)?;
 
         state.document = commit.document;
         state.revision = commit.revision;
@@ -1456,6 +1689,208 @@ mod tests {
             position(first.clone(), 1, Affinity::Before)
         );
         assert_eq!(after_redo.focus, position(first, 2, Affinity::After));
+    }
+
+    #[test]
+    fn independent_subscriptions_receive_ordered_transaction_and_selection_events() {
+        let engine = Engine::new(EngineConfig::default()).unwrap();
+        let session = engine.create_blank().unwrap();
+        let blank = session.snapshot().unwrap();
+        let mut first_subscription = session.subscribe().unwrap();
+        let mut second_subscription = session.subscribe().unwrap();
+
+        session
+            .insert_text(InsertTextRequest {
+                base_revision: blank.revision,
+                at: position(initial_paragraph(&blank), 0, Affinity::After),
+                text: "A".to_owned(),
+                marks: BTreeSet::new(),
+            })
+            .unwrap();
+
+        let first_batch = first_subscription.drain(8).unwrap();
+        let second_batch = second_subscription.drain(8).unwrap();
+        assert_eq!(first_batch, second_batch);
+        assert_eq!(first_batch.dropped_events, 0);
+        assert_eq!(first_batch.events.len(), 2);
+        assert_eq!(first_batch.events[0].sequence.get(), 1);
+        assert_eq!(first_batch.events[1].sequence.get(), 2);
+        match &first_batch.events[0].event {
+            RuntimeEvent::TransactionCommitted(event) => {
+                assert_eq!(event.origin, TransactionOrigin::Forward);
+                assert_eq!(event.result.revision, Revision::new(1));
+                assert_eq!(event.result.operations_applied, 1);
+            }
+            other => panic!("unexpected first event: {other:?}"),
+        }
+        match &first_batch.events[1].event {
+            RuntimeEvent::SelectionChanged(event) => {
+                assert_eq!(event.reason, SelectionChangeReason::Transaction);
+                assert_eq!(event.revision, Revision::new(1));
+                assert_eq!(event.selection.focus.grapheme_offset, 1);
+            }
+            other => panic!("unexpected second event: {other:?}"),
+        }
+        assert!(first_subscription.drain(8).unwrap().events.is_empty());
+        let mut late_subscription = session.subscribe().unwrap();
+        assert!(late_subscription.drain(8).unwrap().events.is_empty());
+    }
+
+    #[test]
+    fn explicit_selection_events_preserve_revision_and_suppress_no_op_updates() {
+        let engine = Engine::new(EngineConfig::default()).unwrap();
+        let session = engine.create_blank().unwrap();
+        let snapshot = session.snapshot().unwrap();
+        let paragraph = initial_paragraph(&snapshot);
+        let mut subscription = session.subscribe().unwrap();
+        let initial = session.selection().unwrap();
+
+        session
+            .set_selection(SetSelectionRequest {
+                base_revision: snapshot.revision,
+                selection: initial,
+            })
+            .unwrap();
+        assert!(subscription.drain(8).unwrap().events.is_empty());
+
+        let changed = SelectionSnapshot {
+            anchor: position(paragraph.clone(), 0, Affinity::Before),
+            focus: position(paragraph, 0, Affinity::Before),
+        };
+        session
+            .set_selection(SetSelectionRequest {
+                base_revision: snapshot.revision,
+                selection: changed.clone(),
+            })
+            .unwrap();
+        let batch = subscription.drain(8).unwrap();
+        assert_eq!(batch.events.len(), 1);
+        match &batch.events[0].event {
+            RuntimeEvent::SelectionChanged(event) => {
+                assert_eq!(event.reason, SelectionChangeReason::Explicit);
+                assert_eq!(event.revision, Revision::new(0));
+                assert_eq!(event.selection, changed);
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+        assert_eq!(session.snapshot().unwrap().revision, Revision::new(0));
+    }
+
+    #[test]
+    fn history_events_identify_undo_and_redo_causes() {
+        let engine = Engine::new(EngineConfig::default()).unwrap();
+        let session = engine.create_blank().unwrap();
+        let blank = session.snapshot().unwrap();
+        let mut subscription = session.subscribe().unwrap();
+        session
+            .insert_text(InsertTextRequest {
+                base_revision: blank.revision,
+                at: position(initial_paragraph(&blank), 0, Affinity::After),
+                text: "history".to_owned(),
+                marks: BTreeSet::new(),
+            })
+            .unwrap();
+        subscription.drain(8).unwrap();
+
+        session.undo(Revision::new(1)).unwrap();
+        let undo = subscription.drain(8).unwrap();
+        assert!(matches!(
+            &undo.events[0].event,
+            RuntimeEvent::TransactionCommitted(TransactionCommittedEvent {
+                origin: TransactionOrigin::Undo,
+                ..
+            })
+        ));
+        assert!(matches!(
+            &undo.events[1].event,
+            RuntimeEvent::SelectionChanged(SelectionChangedEvent {
+                reason: SelectionChangeReason::Undo,
+                ..
+            })
+        ));
+
+        session.redo(Revision::new(2)).unwrap();
+        let redo = subscription.drain(8).unwrap();
+        assert!(matches!(
+            &redo.events[0].event,
+            RuntimeEvent::TransactionCommitted(TransactionCommittedEvent {
+                origin: TransactionOrigin::Redo,
+                ..
+            })
+        ));
+        assert!(matches!(
+            &redo.events[1].event,
+            RuntimeEvent::SelectionChanged(SelectionChangedEvent {
+                reason: SelectionChangeReason::Redo,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn slow_subscription_reports_exact_bounded_event_gap() {
+        let engine = Engine::new(EngineConfig::default()).unwrap();
+        let session = engine.create_blank().unwrap();
+        let snapshot = session.snapshot().unwrap();
+        let paragraph = initial_paragraph(&snapshot);
+        let mut subscription = session.subscribe().unwrap();
+
+        for index in 0..300 {
+            let affinity = if index % 2 == 0 {
+                Affinity::Before
+            } else {
+                Affinity::After
+            };
+            let endpoint = position(paragraph.clone(), 0, affinity);
+            session
+                .set_selection(SetSelectionRequest {
+                    base_revision: snapshot.revision,
+                    selection: SelectionSnapshot {
+                        anchor: endpoint.clone(),
+                        focus: endpoint,
+                    },
+                })
+                .unwrap();
+        }
+
+        let batch = subscription.drain(usize::MAX).unwrap();
+        assert_eq!(batch.dropped_events, 44);
+        assert_eq!(batch.events.len(), EVENT_JOURNAL_CAPACITY);
+        assert_eq!(batch.events[0].sequence.get(), 45);
+        assert_eq!(batch.events[255].sequence.get(), 300);
+    }
+
+    #[test]
+    fn invalid_drain_and_event_sequence_exhaustion_are_atomic() {
+        let engine = Engine::new(EngineConfig::default()).unwrap();
+        let session = engine.create_blank().unwrap();
+        let blank = session.snapshot().unwrap();
+        let paragraph = initial_paragraph(&blank);
+        let mut subscription = session.subscribe().unwrap();
+
+        let drain_error = subscription.drain(0).unwrap_err();
+        assert_eq!(drain_error.code(), ErrorCode::InvalidArgument);
+
+        {
+            let mut state = session.lock_state().unwrap();
+            state.events.next_sequence = u64::MAX - 1;
+        }
+        let before_selection = session.selection().unwrap();
+        let error = session
+            .insert_text(InsertTextRequest {
+                base_revision: blank.revision,
+                at: position(paragraph, 0, Affinity::After),
+                text: "A".to_owned(),
+                marks: BTreeSet::new(),
+            })
+            .unwrap_err();
+
+        assert_eq!(error.code(), ErrorCode::Internal);
+        assert_eq!(session.snapshot().unwrap(), blank);
+        assert_eq!(session.selection().unwrap(), before_selection);
+        let state = session.state.read().unwrap();
+        assert!(state.events.retained.is_empty());
+        assert_eq!(state.events.next_sequence, u64::MAX - 1);
     }
 
     #[test]

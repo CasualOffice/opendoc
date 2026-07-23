@@ -166,6 +166,18 @@ engine-owned selection contract independent of host UI.
 **Consequence:** selection is not part of normalized document serialization and
 the session commit path must validate mapped endpoints before publication.
 
+## ADR-020 — Events begin as a bounded session journal
+
+**Decision:** Record SDK-owned events in a bounded, sequence-ordered session
+journal and expose synchronous future-only polling before adding callback,
+async, or language-specific bridges.
+
+**Why:** one canonical journal makes mutation ordering, lag detection, memory
+bounds, and callback lock safety explicit across every future transport.
+
+**Consequence:** slow consumers receive an exact dropped-event count and must
+refresh snapshots; the Phase 0 journal retains the latest 256 events.
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;

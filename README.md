@@ -57,6 +57,7 @@ The runtime must provide:
 - [Transaction Semantics](docs/24-TRANSACTION-SEMANTICS.md)
 - [Normalized Snapshot I/O](docs/25-NORMALIZED-SNAPSHOT-IO.md)
 - [Selection Foundation](docs/26-SELECTION-FOUNDATION.md)
+- [Runtime Event Foundation](docs/27-RUNTIME-EVENT-FOUNDATION.md)
 
 ## Repository Status
 
@@ -66,8 +67,9 @@ The current Phase 0 runtime provides normalized blank documents, stable node
 identity, grapheme-aware text insertion/deletion, paragraph split/join,
 operation inverses, undo/redo, revision-aware snapshots, position mapping, and
 stable SDK errors. Strict bounded normalized JSON v0 load/export and canonical
-directed selection mapped through every edit are also available. It does not yet
-claim DOCX, layout, rendering, collaboration, or persistent history support.
+directed selection mapped through every edit are also available, with bounded
+sequence-ordered transaction and selection events. It does not yet claim DOCX,
+layout, rendering, collaboration, or persistent history support.
 
 ## Development
 

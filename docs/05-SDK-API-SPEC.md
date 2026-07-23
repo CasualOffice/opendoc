@@ -7,7 +7,8 @@ implemented. Current executable support is limited to blank-document creation,
 immutable snapshots, grapheme-aware text insertion/deletion, paragraph
 split/join, undo/redo, revision checks, position mapping, and stable SDK errors.
 Strict bounded normalized schema v0 JSON load/export and canonical mapped
-session selection are also implemented.
+session selection are also implemented. A bounded synchronous journal exposes
+ordered transaction and selection events.
 
 ## Phase 0 Implemented Subset
 
@@ -55,11 +56,13 @@ model and transaction types are not re-exported.
 The additional implemented editing methods are:
 
 ```rust
+let mut subscription = session.subscribe()?;
 session.delete_range(DeleteRangeRequest { /* ... */ })?;
 session.split_paragraph(SplitParagraphRequest { /* ... */ })?;
 session.join_paragraphs(JoinParagraphRequest { /* ... */ })?;
 session.undo(expected_revision)?;
 session.redo(expected_revision)?;
+let batch = subscription.drain(64)?;
 ```
 
 Each successful call returns a `TransactionResult` with the committed revision
@@ -303,9 +306,14 @@ Never expose internal pointers without lifetime-safe wrappers.
 
 ## 9. Event delivery
 
-Event subscriptions support:
+The implemented Phase 0 transport is a future-only synchronous subscription over
+a 256-event bounded journal. Each `SequencedEvent` has a session-local sequence.
+`EventBatch::dropped_events` reports exact lag instead of silently skipping
+events. Transaction events precede any selection event caused by the same
+commit.
 
-- synchronous queue polling;
+The target v1 adapters additionally support:
+
 - async stream;
 - callback;
 - JavaScript EventTarget-style bridge.

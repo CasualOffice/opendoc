@@ -93,7 +93,7 @@ Selection changes:
 - return `ODC-2002` when invalid;
 - do not increment revision;
 - do not add or clear undo/redo history;
-- will emit a selection event when the event bus exists.
+- emit `SelectionChanged` only when canonical selection actually changes.
 
 ## Transaction Mapping
 

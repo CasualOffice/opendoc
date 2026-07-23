@@ -21,6 +21,8 @@ OpenDoc will use semantic versioning when its public package line begins.
   avoidance.
 - Canonical directed session selection with revision validation, grapheme-safe
   endpoints, and atomic mapping through edits, undo, and redo.
+- Bounded future-only runtime event subscriptions with stable sequencing,
+  transaction/selection causes, independent cursors, and explicit lag gaps.
 
 ### Security
 
