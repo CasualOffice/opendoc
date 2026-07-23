@@ -5,7 +5,7 @@ documents from the sibling study repository, customer data, or third-party
 vendor suites into this directory without the rights review required by
 `docs/23-DOCX-FIXTURE-CORPUS.md`.
 
-Regenerate the initial package fixtures from the repository root:
+Regenerate the package fixtures from the repository root:
 
 ```sh
 cargo run -p casual-doc-ooxml --example generate_fixtures --locked

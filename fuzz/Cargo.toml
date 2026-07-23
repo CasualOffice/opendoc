@@ -1,0 +1,25 @@
+[package]
+name = "opendoc-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+rust-version = "1.85.0"
+license = "MIT"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+casual-doc-ooxml = { path = "../crates/casual-doc-ooxml", version = "=0.0.1" }
+libfuzzer-sys = "=0.4.13"
+
+[[bin]]
+name = "docx_package"
+path = "fuzz_targets/docx_package.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]
+resolver = "3"

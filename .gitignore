@@ -1,5 +1,9 @@
 .DS_Store
 target/
+fuzz/artifacts/
+fuzz/corpus/
+fuzz/coverage/
+fuzz/target/
 dist/
 node_modules/
 .idea/

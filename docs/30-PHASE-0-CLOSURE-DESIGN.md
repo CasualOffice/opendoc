@@ -3,6 +3,7 @@
 **Status:** Accepted for implementation
 **Decision date:** 2026-07-24
 **Tracker:** P0-008
+**Implementation:** In review
 
 ## Outcome
 

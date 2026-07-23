@@ -32,13 +32,15 @@ Every pull request and push to `main` runs required checks with stable job names
 - `lint`;
 - `test`;
 - `benchmark-smoke`;
+- `fuzz-build`;
 - `docs`;
 - `wasm`;
 - `platform`;
 - `dependency-policy`;
 - `repository-policy`.
 
-Scheduled CI adds dependency advisories and future fuzz/corpus smoke tests.
+Scheduled CI adds dependency advisories and a bounded seeded DOCX package fuzz
+campaign.
 Release workflows are separate and receive no write permission during pull
 request validation.
 
@@ -74,9 +76,9 @@ cargo build --target wasm32-unknown-unknown
 cargo test --workspace --locked
 ```
 
-Additional gates should be added as crates appear:
+Additional gates should be added as capabilities appear:
 
-- parser fuzz smoke;
+- structure-aware XML and relationship fuzzing;
 - snapshot serialization tests;
 - DOCX corpus import tests;
 - round-trip tests;
@@ -131,8 +133,8 @@ Additional gates should be added as crates appear:
 | WASM build | Implemented | Foundation crates compile for `wasm32-unknown-unknown`. |
 | Platform/MSRV | Implemented | macOS 15 ARM64, Windows 2025 x64, and Rust 1.85 checks. |
 | Dependency policy | Implemented | Licenses, sources, versions, and RustSec advisories. |
-| Fuzzing | Not started | Add parser fuzz targets. |
-| Corpus tests | Initial package corpus implemented | Five generated package/security fixtures run in workspace tests; semantic and visual layers remain pending. |
+| Fuzzing | Initial package target implemented | Pull requests compile the independently locked target; scheduled security CI runs a bounded seeded campaign. |
+| Corpus tests | Phase 0 package corpus implemented | Seven generated package/security fixtures run in workspace tests; semantic and visual layers remain pending. |
 | Visual regression | Not started | Requires renderer and fixed fonts. |
 | Benchmarking | Initial harness implemented | Package/model smoke is required; named-environment comparison is manual until a controlled runner is provisioned. |
 | Release artifacts | Not started | Define before beta. |

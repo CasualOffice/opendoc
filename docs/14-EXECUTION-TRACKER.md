@@ -39,12 +39,13 @@ Update this file whenever work begins, changes scope, or finishes.
 | P0-005 | Runtime event foundation | Done | Ordered transaction and selection events with safe subscription lifecycle. | 36 unit tests plus SDK doc test; bounded lag and atomic failure gates pass. |
 | P0-006 | DOCX package reader | Done | Security-bounded ZIP admission, metadata, part reads, and generated package fixtures. | 44 unit tests plus SDK doc test; native/WASM/MSRV and parser-policy gates pass. |
 | P0-007 | Benchmark and baseline harness | Done | Reproducible package/model timing, reports, and regression thresholds. | 50 unit tests plus SDK doc test; baseline comparison, native/WASM/MSRV, and CI smoke gates pass. |
+| P0-008 | Phase 0 corpus and evidence closure | In review | Seven generated fixtures, fuzz infrastructure, and linked exit evidence. | Local corpus/fuzz/policy gates pass; final committed-source CI pending. |
 
 ## Active Work
 
 | ID | Title | Owner | Status | Links |
 | --- | --- | --- | --- | --- |
-| P0-008 | Phase 0 corpus and evidence closure | Codex | Ready | Design accepted in `30-PHASE-0-CLOSURE-DESIGN.md`; implement corpus, fuzzing, and exit report. |
+| P0-008 | Phase 0 corpus and evidence closure | Codex | In review | Corpus and fuzzing implemented; exact committed-source CI and exit report remain. |
 
 ## Completed Work
 

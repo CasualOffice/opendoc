@@ -4,11 +4,12 @@
 **Last updated:** 2026-07-24
 **Tracker:** F-009
 
-The initial repository-owned package/security batch is implemented under
-`fixtures/generated/` with SHA-256 records in `fixtures/manifest.json`.
-The minimal package also drives the first package performance baseline.
-Semantic, round-trip, visual, and broad performance corpus layers remain
-pending.
+The seven-fixture repository-owned Phase 0 package/security batch is implemented
+under `fixtures/generated/` with SHA-256 records in
+`fixtures/manifest.json`. It includes mixed Unicode and an unknown safe package
+part; the minimal package also drives the first performance baseline. Semantic,
+round-trip, visual, and broad performance layers begin with their owning
+capabilities under ADR-023.
 
 ## Purpose
 
@@ -107,7 +108,7 @@ Golden files are never updated solely to make tests green. An update requires:
 
 ## First Corpus Batch
 
-Before the first DOCX parser merge, create:
+The Phase 0 package batch contains:
 
 - one minimal valid blank DOCX;
 - one paragraph with mixed Unicode and marks;
@@ -117,3 +118,5 @@ Before the first DOCX parser merge, create:
 - one deterministic package-order fixture.
 
 The generator source belongs in the repository so fixtures can be reproduced.
+The unknown-safe-part fixture proves enumeration and byte-exact reads in Phase
+0. Preservation through a semantic edit/save cycle remains a Phase 2 assertion.

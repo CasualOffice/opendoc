@@ -156,6 +156,8 @@ repository or customer document is copied.
 The first package-reader batch covers:
 
 - minimal valid DOCX;
+- mixed-Unicode document XML;
+- unknown safe package-part enumeration and exact read;
 - traversal rejection;
 - high-expansion rejection;
 - duplicate part rejection;
@@ -174,5 +176,5 @@ blocked on the XML and model-mapping slices.
 - actual part reads remain bounded and return no partial bytes;
 - admission and decompression cancellation return no partial result;
 - error text does not include document content;
-- generated fixtures have manifest checksums and source;
+- all seven generated fixtures have manifest checksums and source;
 - native, Windows, macOS, WASM, MSRV, docs, lint, audit, and policy gates pass.

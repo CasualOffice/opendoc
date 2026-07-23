@@ -779,6 +779,17 @@ mod tests {
     const CONTENT_TYPES: &[u8] = br#"<?xml version="1.0"?><Types/>"#;
     const ROOT_RELATIONSHIPS: &[u8] = br#"<?xml version="1.0"?><Relationships/>"#;
     const DOCUMENT: &[u8] = br#"<?xml version="1.0"?><w:document/>"#;
+    const MIXED_UNICODE_DOCUMENT: &str = concat!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+        "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">",
+        "<w:body><w:p><w:r><w:t xml:space=\"preserve\">",
+        "Cafe\u{0301} | \u{0939}\u{093f}\u{0928}\u{094d}\u{0926}\u{0940} | ",
+        "\u{0627}\u{0644}\u{0639}\u{0631}\u{0628}\u{064a}\u{0629} | ",
+        "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}\u{200d}\u{1f466}",
+        "</w:t></w:r></w:p></w:body></w:document>",
+    );
+    const UNKNOWN_SAFE_PART: &[u8] =
+        br#"<custom xmlns="urn:opendoc:fixture"><value>preserve-me</value></custom>"#;
 
     fn package(entries: &[(&str, &[u8], CompressionMethod)]) -> Vec<u8> {
         let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
@@ -1085,6 +1096,26 @@ mod tests {
         let minimal = include_bytes!("../../../fixtures/generated/minimal-valid.docx");
         let mut package = DocxPackage::open(minimal, PackageLimits::default()).unwrap();
         assert_eq!(package.read_part(DOCUMENT_PART).unwrap(), DOCUMENT);
+
+        let mixed_unicode = include_bytes!("../../../fixtures/generated/mixed-unicode.docx");
+        let mut package = DocxPackage::open(mixed_unicode, PackageLimits::default()).unwrap();
+        assert_eq!(
+            package.read_part(DOCUMENT_PART).unwrap(),
+            MIXED_UNICODE_DOCUMENT.as_bytes()
+        );
+
+        let unknown_safe = include_bytes!("../../../fixtures/generated/unknown-safe-part.docx");
+        let mut package = DocxPackage::open(unknown_safe, PackageLimits::default()).unwrap();
+        assert!(
+            package
+                .entries()
+                .iter()
+                .any(|entry| entry.part_name == "customXml/item1.xml")
+        );
+        assert_eq!(
+            package.read_part("customXml/item1.xml").unwrap(),
+            UNKNOWN_SAFE_PART
+        );
 
         let traversal = include_bytes!("../../../fixtures/generated/path-traversal.docx");
         assert_eq!(

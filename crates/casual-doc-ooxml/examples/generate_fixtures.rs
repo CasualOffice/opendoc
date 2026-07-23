@@ -8,12 +8,39 @@ use zip::{CompressionMethod, ZipWriter};
 const CONTENT_TYPES: &[u8] = br#"<?xml version="1.0"?><Types/>"#;
 const ROOT_RELATIONSHIPS: &[u8] = br#"<?xml version="1.0"?><Relationships/>"#;
 const DOCUMENT: &[u8] = br#"<?xml version="1.0"?><w:document/>"#;
+const MIXED_UNICODE_DOCUMENT: &str = concat!(
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+    "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">",
+    "<w:body><w:p><w:r><w:t xml:space=\"preserve\">",
+    "Cafe\u{0301} | \u{0939}\u{093f}\u{0928}\u{094d}\u{0926}\u{0940} | ",
+    "\u{0627}\u{0644}\u{0639}\u{0631}\u{0628}\u{064a}\u{0629} | ",
+    "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}\u{200d}\u{1f466}",
+    "</w:t></w:r></w:p></w:body></w:document>",
+);
+const UNKNOWN_SAFE_PART: &[u8] =
+    br#"<custom xmlns="urn:opendoc:fixture"><value>preserve-me</value></custom>"#;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/generated");
     fs::create_dir_all(&output)?;
 
     fs::write(output.join("minimal-valid.docx"), minimal_package())?;
+
+    fs::write(
+        output.join("mixed-unicode.docx"),
+        package(&entries_with_document(MIXED_UNICODE_DOCUMENT.as_bytes()))?,
+    )?;
+
+    let mut unknown_safe = minimal_entries();
+    unknown_safe.push((
+        "customXml/item1.xml".to_owned(),
+        UNKNOWN_SAFE_PART.to_vec(),
+        CompressionMethod::Deflated,
+    ));
+    fs::write(
+        output.join("unknown-safe-part.docx"),
+        package(&unknown_safe)?,
+    )?;
 
     let mut traversal = minimal_entries();
     traversal.push((
@@ -53,10 +80,14 @@ fn minimal_package() -> Vec<u8> {
 }
 
 fn minimal_entries() -> Vec<(String, Vec<u8>, CompressionMethod)> {
+    entries_with_document(DOCUMENT)
+}
+
+fn entries_with_document(document: &[u8]) -> Vec<(String, Vec<u8>, CompressionMethod)> {
     vec![
         (
             "word/document.xml".to_owned(),
-            DOCUMENT.to_vec(),
+            document.to_vec(),
             CompressionMethod::Deflated,
         ),
         (

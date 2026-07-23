@@ -27,6 +27,10 @@ OpenDoc will use semantic versioning when its public package line begins.
   on-demand reads, and repository-owned package fixtures.
 - Reproducible package/model benchmark runner with typed reports,
   named-environment comparison, an initial Apple M4 baseline, and CI smoke.
+- Mixed-Unicode and unknown-safe-part DOCX fixtures with byte-exact package
+  coverage.
+- Independently locked DOCX package fuzz target, required pull-request build,
+  and bounded scheduled sanitizer campaign.
 
 ### Security
 
@@ -34,3 +38,5 @@ OpenDoc will use semantic versioning when its public package line begins.
 - Bounded parser and resource-limit specification.
 - ZIP entry, expansion, path, overlap, encryption, macro, and compression
   enforcement before DOCX package admission.
+- Nightly libFuzzer coverage for arbitrary package admission and verified part
+  reads without adding fuzz dependencies to the production workspace.

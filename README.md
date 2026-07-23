@@ -75,7 +75,9 @@ sequence-ordered transaction and selection events. Security-bounded DOCX ZIP
 inspection and on-demand part reads are implemented; DOCX semantic import,
 layout, rendering, collaboration, and persistent history are not yet claimed.
 The initial package/model benchmark runner, CI smoke gate, and named-environment
-baseline are also available.
+baseline are also available. Seven generated DOCX package/security fixtures and
+a bounded scheduled package-reader fuzz target close the Phase 0 input-safety
+foundation.
 
 ## Development
 

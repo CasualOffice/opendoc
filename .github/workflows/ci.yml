@@ -104,6 +104,26 @@ jobs:
             )
           ' target/benchmarks/ci-smoke.json
 
+  fuzz-build:
+    name: fuzz-build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install pinned nightly Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: nightly-2026-07-20
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@7572810d7dd469b651bb7793945692cf78da5dd7
+        with:
+          tool: cargo-fuzz@0.13.2
+          fallback: none
+      - name: Build DOCX package fuzz target
+        run: cargo +nightly-2026-07-20 fuzz build docx_package
+      - name: Verify fuzz lockfile remains unchanged
+        run: git diff --exit-code -- fuzz/Cargo.lock
+
   docs:
     name: docs
     runs-on: ubuntu-24.04
@@ -185,6 +205,10 @@ jobs:
           fallback: none
       - name: Check dependency licenses, versions, and sources
         run: cargo deny --locked check bans licenses sources
+      - name: Check fuzz dependency licenses, versions, and sources
+        run: >-
+          cargo deny --manifest-path fuzz/Cargo.toml --locked
+          check bans licenses sources
       - name: Install cargo-audit
         uses: taiki-e/install-action@7572810d7dd469b651bb7793945692cf78da5dd7
         with:
@@ -192,6 +216,8 @@ jobs:
           fallback: none
       - name: Check RustSec advisories
         run: cargo audit --deny warnings
+      - name: Check fuzz RustSec advisories
+        run: cargo audit --file fuzz/Cargo.lock --deny warnings
 
   repository-policy:
     name: repository-policy
@@ -207,10 +233,21 @@ jobs:
           toolchain: 1.96.0
       - name: Validate locked workspace metadata
         run: cargo metadata --locked --format-version 1 --no-deps > /dev/null
+      - name: Validate locked fuzz metadata
+        run: >-
+          cargo metadata --manifest-path fuzz/Cargo.toml --locked
+          --format-version 1 --no-deps > /dev/null
       - name: Verify fixture manifest checksums
         run: |
           jq -r '.fixtures[] | "\(.sha256)  fixtures/\(.path)"' fixtures/manifest.json \
             | sha256sum --check -
+      - name: Reject unmanifested or missing generated fixtures
+        run: |
+          jq -r '.fixtures[].path' fixtures/manifest.json | sort > "${RUNNER_TEMP}/manifest-paths"
+          for fixture in fixtures/generated/*; do
+            basename "${fixture}"
+          done | sed 's|^|generated/|' | sort > "${RUNNER_TEMP}/generated-paths"
+          diff -u "${RUNNER_TEMP}/manifest-paths" "${RUNNER_TEMP}/generated-paths"
       - name: Validate committed benchmark baselines
         run: |
           for report in benchmarks/baselines/*.json; do
