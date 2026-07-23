@@ -1,6 +1,84 @@
 # SDK API Specification
 
-## 1. API layers
+**Status:** Target v1 API with an implemented Phase 0 subset
+
+The broad interfaces below describe the intended v1 facade and are not all
+implemented. Current executable support is limited to blank-document creation,
+immutable snapshots, grapheme-aware text insertion/deletion, paragraph
+split/join, undo/redo, revision checks, position mapping, and stable SDK errors.
+Strict bounded normalized schema v0 JSON load/export and canonical mapped
+session selection are also implemented. A bounded synchronous journal exposes
+ordered transaction and selection events.
+
+## Phase 0 Implemented Subset
+
+```rust
+use std::collections::BTreeSet;
+
+use casual_doc_sdk::{
+    Affinity, BlockSnapshot, Engine, EngineConfig, InsertTextRequest, Position,
+    SelectionSnapshot, SetSelectionRequest,
+};
+
+let engine = Engine::new(EngineConfig::default())?;
+let session = engine.create_blank()?;
+let snapshot = session.snapshot()?;
+let paragraph = match &snapshot.body[0] {
+    BlockSnapshot::Paragraph(paragraph) => paragraph.id.clone(),
+};
+
+let result = session.insert_text(InsertTextRequest {
+    base_revision: snapshot.revision,
+    at: Position {
+        node: paragraph,
+        grapheme_offset: 0,
+        affinity: Affinity::After,
+    },
+    text: "Hello".to_owned(),
+    marks: BTreeSet::new(),
+})?;
+
+assert_eq!(result.revision.get(), 1);
+
+let selection = session.selection()?;
+session.set_selection(SetSelectionRequest {
+    base_revision: result.revision,
+    selection: SelectionSnapshot {
+        anchor: selection.anchor,
+        focus: selection.focus,
+    },
+})?;
+```
+
+The SDK owns its public IDs, positions, snapshots, marks, and errors. Internal
+model and transaction types are not re-exported.
+
+The additional implemented editing methods are:
+
+```rust
+let mut subscription = session.subscribe()?;
+session.delete_range(DeleteRangeRequest { /* ... */ })?;
+session.split_paragraph(SplitParagraphRequest { /* ... */ })?;
+session.join_paragraphs(JoinParagraphRequest { /* ... */ })?;
+session.undo(expected_revision)?;
+session.redo(expected_revision)?;
+let batch = subscription.drain(64)?;
+```
+
+Each successful call returns a `TransactionResult` with the committed revision
+and ordered mapping steps.
+
+Normalized JSON sessions use:
+
+```rust
+let session = engine.open_normalized_json(
+    bytes,
+    OpenNormalizedOptions::default(),
+)?;
+let deterministic_bytes = session.export_normalized_json()?;
+```
+
+## 1. Target API layers
 
 ### Rust native API
 
@@ -122,8 +200,8 @@ impl DocumentSession {
         command: impl Into<CommandId>,
     ) -> Result<CommandState, SdkError>;
 
-    pub fn selection(&self) -> SelectionSnapshot;
-    pub fn set_selection(&self, selection: Selection) -> Result<(), SdkError>;
+    pub fn selection(&self) -> Result<SelectionSnapshot, SdkError>;
+    pub fn set_selection(&self, request: SetSelectionRequest) -> Result<(), SdkError>;
 
     pub fn handle_key(&self, event: KeyEvent) -> Result<InputResult, SdkError>;
     pub fn handle_pointer(&self, event: PointerEvent) -> Result<InputResult, SdkError>;
@@ -228,9 +306,14 @@ Never expose internal pointers without lifetime-safe wrappers.
 
 ## 9. Event delivery
 
-Event subscriptions support:
+The implemented Phase 0 transport is a future-only synchronous subscription over
+a 256-event bounded journal. Each `SequencedEvent` has a session-local sequence.
+`EventBatch::dropped_events` reports exact lag instead of silently skipping
+events. Transaction events precede any selection event caused by the same
+commit.
 
-- synchronous queue polling;
+The target v1 adapters additionally support:
+
 - async stream;
 - callback;
 - JavaScript EventTarget-style bridge.

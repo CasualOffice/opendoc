@@ -7,14 +7,18 @@ Do not replace the existing editor in one release. Build the runtime as a parall
 ## Phase 0 — Foundation and extraction
 
 **Duration:** 3–5 weeks
+**Status:** Complete (2026-07-24)
+**Exit evidence:** `31-PHASE-0-EXIT-REPORT.md`
 
 Deliver:
 
 - new repository/workspace;
 - architecture decision records;
 - CI for macOS, Windows, Linux, WASM;
-- fixture corpus imported from current Casual Docs;
-- baseline round-trip and rendering snapshots;
+- repository-owned synthetic fixture corpus, with external imports requiring
+  explicit rights review;
+- baseline report schemas, implemented-path reports, and capability readiness
+  status;
 - performance benchmark harness;
 - license and contribution policy;
 - minimal normalized model;
@@ -24,8 +28,13 @@ Exit gate:
 
 - repeatable builds;
 - corpus manifest;
-- baseline reports available;
+- implemented-path baseline reports and future baseline ownership recorded;
 - no production integration yet.
+
+ADR-023 corrects the original dependency order: visual artifacts begin in Phase
+1 when the renderer exists, and semantic round-trip artifacts begin in Phase 2
+when the DOCX writer exists. Phase 0 does not create placeholder evidence for
+unimplemented capabilities.
 
 ## Phase 1 — Read-only runtime
 

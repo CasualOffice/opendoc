@@ -1,0 +1,19 @@
+[package]
+name = "opendoc-benchmark"
+description = "Reproducible benchmark and baseline runner for OpenDoc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+casual-doc-ooxml.workspace = true
+casual-doc-sdk.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

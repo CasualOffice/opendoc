@@ -1,0 +1,277 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  format:
+    name: format
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.96.0
+          components: rustfmt
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  lint:
+    name: lint
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.96.0
+          components: clippy
+      - name: Restore Cargo cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+  test:
+    name: test
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.96.0
+      - name: Restore Cargo cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Run workspace tests
+        run: cargo test --workspace --all-features --locked
+      - name: Run documentation tests
+        run: cargo test --doc --workspace --all-features --locked
+
+  benchmark-smoke:
+    name: benchmark-smoke
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.96.0
+      - name: Restore Cargo cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Run release benchmark smoke
+        run: >-
+          cargo run -p opendoc-benchmark --release --locked --
+          --smoke
+          --source-revision "${GITHUB_SHA}"
+          --source-state clean
+          --output target/benchmarks/ci-smoke.json
+      - name: Validate benchmark report
+        run: |
+          jq -e '
+            .schemaVersion == 1
+            and .mode == "smoke"
+            and .buildProfile == "release"
+            and (.cases | length == 4)
+            and ([.cases[].id] | sort) == ([
+              "docx.package_open.minimal",
+              "docx.part_read.document_xml",
+              "model.normalized_load.100_paragraphs",
+              "sdk.typing.100_graphemes"
+            ] | sort)
+            and all(.cases[];
+              .measuredSamples == 2
+              and .iterationsPerSample == 1
+              and (.outputChecksum | test("^[0-9a-f]{16}$"))
+            )
+          ' target/benchmarks/ci-smoke.json
+
+  fuzz-build:
+    name: fuzz-build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install pinned nightly Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: nightly-2026-07-20
+      - name: Install cargo-fuzz
+        run: >-
+          cargo +nightly-2026-07-20 install cargo-fuzz
+          --version 0.13.2
+          --locked
+      - name: Build DOCX package fuzz target
+        run: cargo +nightly-2026-07-20 fuzz build docx_package
+      - name: Verify fuzz lockfile remains unchanged
+        run: git diff --exit-code -- fuzz/Cargo.lock
+
+  docs:
+    name: docs
+    runs-on: ubuntu-24.04
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.96.0
+      - name: Restore Cargo cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Build API documentation
+        run: cargo doc --workspace --all-features --no-deps --locked
+
+  wasm:
+    name: wasm
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.96.0
+          targets: wasm32-unknown-unknown
+      - name: Restore Cargo cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Check WASM-compatible foundation
+        run: cargo check --workspace --all-features --locked --target wasm32-unknown-unknown
+
+  platform:
+    name: platform (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS-arm64
+            os: macos-15
+            toolchain: 1.96.0
+            command: cargo test --workspace --all-features --locked
+          - name: Windows-x64
+            os: windows-2025
+            toolchain: 1.96.0
+            command: cargo test --workspace --all-features --locked
+          - name: MSRV
+            os: ubuntu-24.04
+            toolchain: 1.85.0
+            command: cargo check --workspace --all-targets --all-features --locked
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: ${{ matrix.toolchain }}
+      - name: Restore Cargo cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Check platform
+        run: ${{ matrix.command }}
+
+  dependency-policy:
+    name: dependency-policy
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.96.0
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@7572810d7dd469b651bb7793945692cf78da5dd7
+        with:
+          tool: cargo-deny@0.20.2
+          fallback: none
+      - name: Check dependency licenses, versions, and sources
+        run: cargo deny --locked check bans licenses sources
+      - name: Check fuzz dependency licenses, versions, and sources
+        run: >-
+          cargo deny --manifest-path fuzz/Cargo.toml --locked
+          check bans licenses sources
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@7572810d7dd469b651bb7793945692cf78da5dd7
+        with:
+          tool: cargo-audit@0.22.2
+          fallback: none
+      - name: Check RustSec advisories
+        run: cargo audit --deny warnings
+      - name: Check fuzz RustSec advisories
+        run: cargo audit --file fuzz/Cargo.lock --deny warnings
+
+  repository-policy:
+    name: repository-policy
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.96.0
+      - name: Validate locked workspace metadata
+        run: cargo metadata --locked --format-version 1 --no-deps > /dev/null
+      - name: Validate locked fuzz metadata
+        run: >-
+          cargo metadata --manifest-path fuzz/Cargo.toml --locked
+          --format-version 1 --no-deps > /dev/null
+      - name: Verify fixture manifest checksums
+        run: |
+          jq -r '.fixtures[] | "\(.sha256)  fixtures/\(.path)"' fixtures/manifest.json \
+            | sha256sum --check -
+      - name: Reject unmanifested or missing generated fixtures
+        run: |
+          jq -r '.fixtures[].path' fixtures/manifest.json | sort > "${RUNNER_TEMP}/manifest-paths"
+          for fixture in fixtures/generated/*; do
+            basename "${fixture}"
+          done | sed 's|^|generated/|' | sort > "${RUNNER_TEMP}/generated-paths"
+          diff -u "${RUNNER_TEMP}/manifest-paths" "${RUNNER_TEMP}/generated-paths"
+      - name: Validate committed benchmark baselines
+        run: |
+          for report in benchmarks/baselines/*.json; do
+            jq -e '
+              .schemaVersion == 1
+              and .mode == "full"
+              and .buildProfile == "release"
+              and .sourceState == "clean"
+              and (.sourceRevision | test("^[0-9A-Za-z._-]{1,64}$"))
+              and (.environment.id | test("^[0-9A-Za-z._-]{1,64}$"))
+              and (.cases | length > 0)
+              and all(.cases[];
+                .measuredSamples > 0
+                and .iterationsPerSample > 0
+                and .medianNanosecondsPerIteration > 0
+                and .p95NanosecondsPerIteration > 0
+                and (.outputChecksum | test("^[0-9a-f]{16}$"))
+                and (.maxRegressionBasisPoints >= 0 and .maxRegressionBasisPoints <= 10000)
+              )
+            ' "${report}"
+          done
+      - name: Reject merge-conflict markers
+        shell: bash
+        run: |
+          if git grep -nE '^(<<<<<<<|=======|>>>>>>>)'; then
+            exit 1
+          fi

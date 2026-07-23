@@ -1,12 +1,12 @@
 # Repository and Contribution Plan
 
-## 1. Repository recommendation
+## 1. Repository decision
 
-Create a separate repository:
+The runtime is developed in the separate repository:
 
-`CasualOffice/document-runtime`
+`CasualOffice/opendoc`
 
-Do not initially place the Rust runtime inside `CasualOffice/docs`. The runtime has a broader product boundary, release lifecycle, issue taxonomy, and consumer ecosystem.
+Do not place the Rust runtime inside `CasualOffice/docs`. The runtime has a broader product boundary, release lifecycle, issue taxonomy, and consumer ecosystem.
 
 The existing `docs` repository becomes one host/consumer during migration.
 

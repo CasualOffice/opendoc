@@ -1,0 +1,49 @@
+[workspace]
+members = [
+    "crates/casual-doc-model",
+    "crates/casual-doc-ooxml",
+    "crates/casual-doc-sdk",
+    "crates/casual-doc-selection",
+    "crates/casual-doc-transaction",
+    "tools/opendoc-benchmark",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.85.0"
+license = "MIT"
+repository = "https://github.com/CasualOffice/opendoc"
+authors = ["CasualOffice contributors"]
+
+[workspace.dependencies]
+casual-doc-model = { path = "crates/casual-doc-model", version = "=0.0.1" }
+casual-doc-ooxml = { path = "crates/casual-doc-ooxml", version = "=0.0.1" }
+casual-doc-sdk = { path = "crates/casual-doc-sdk", version = "=0.0.1" }
+casual-doc-selection = { path = "crates/casual-doc-selection", version = "=0.0.1" }
+casual-doc-transaction = { path = "crates/casual-doc-transaction", version = "=0.0.1" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.145"
+unicode-segmentation = "1.13.3"
+zip = { version = "=7.0.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+[workspace.lints.rust]
+missing_debug_implementations = "warn"
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+dbg_macro = "deny"
+print_stderr = "warn"
+print_stdout = "warn"
+todo = "deny"
+unimplemented = "deny"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = "symbols"
+
+[profile.dev]
+debug = 1

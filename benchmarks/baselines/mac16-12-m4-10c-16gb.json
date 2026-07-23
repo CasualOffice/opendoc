@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "runnerVersion": "0.0.1",
+  "sourceRevision": "7581d68",
+  "sourceState": "clean",
+  "generatedAtUnixSeconds": 1784847312,
+  "buildProfile": "release",
+  "environment": {
+    "id": "mac16-12-m4-10c-16gb",
+    "operatingSystem": "macos",
+    "architecture": "aarch64",
+    "rustVersion": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+    "logicalCpus": 10
+  },
+  "mode": "full",
+  "cases": [
+    {
+      "id": "docx.package_open.minimal",
+      "workUnits": 3,
+      "warmupSamples": 3,
+      "measuredSamples": 15,
+      "iterationsPerSample": 500,
+      "outputChecksum": "435bfda17596079c",
+      "minimumNanosecondsPerIteration": 2502,
+      "medianNanosecondsPerIteration": 3044,
+      "p95NanosecondsPerIteration": 4688,
+      "maxRegressionBasisPoints": 2000,
+      "absoluteNoiseNanoseconds": 10000
+    },
+    {
+      "id": "docx.part_read.document_xml",
+      "workUnits": 34,
+      "warmupSamples": 3,
+      "measuredSamples": 15,
+      "iterationsPerSample": 500,
+      "outputChecksum": "a84de5674728b245",
+      "minimumNanosecondsPerIteration": 3192,
+      "medianNanosecondsPerIteration": 3666,
+      "p95NanosecondsPerIteration": 4674,
+      "maxRegressionBasisPoints": 2000,
+      "absoluteNoiseNanoseconds": 10000
+    },
+    {
+      "id": "model.normalized_load.100_paragraphs",
+      "workUnits": 100,
+      "warmupSamples": 3,
+      "measuredSamples": 15,
+      "iterationsPerSample": 100,
+      "outputChecksum": "ab544af67744bc22",
+      "minimumNanosecondsPerIteration": 48892,
+      "medianNanosecondsPerIteration": 49594,
+      "p95NanosecondsPerIteration": 49876,
+      "maxRegressionBasisPoints": 2000,
+      "absoluteNoiseNanoseconds": 50000
+    },
+    {
+      "id": "sdk.typing.100_graphemes",
+      "workUnits": 100,
+      "warmupSamples": 3,
+      "measuredSamples": 15,
+      "iterationsPerSample": 5,
+      "outputChecksum": "d09b0a92cce59776",
+      "minimumNanosecondsPerIteration": 310175,
+      "medianNanosecondsPerIteration": 313750,
+      "p95NanosecondsPerIteration": 318675,
+      "maxRegressionBasisPoints": 2000,
+      "absoluteNoiseNanoseconds": 500000
+    }
+  ]
+}

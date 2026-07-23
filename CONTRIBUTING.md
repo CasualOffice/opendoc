@@ -56,6 +56,26 @@ The default expectation is production quality:
 - fixtures for document compatibility work;
 - visual and structural regression coverage for layout/rendering work.
 
+## Local Checks
+
+The current foundation gate is:
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --all-features --locked
+cargo test --doc --workspace --all-features --locked
+cargo check --workspace --all-features --locked --target wasm32-unknown-unknown
+cargo doc --workspace --all-features --no-deps --locked
+```
+
+Dependency policy additionally uses:
+
+```sh
+cargo deny --locked check
+cargo audit --deny warnings
+```
+
 ## Commit Style
 
 Use short, factual commit messages. Conventional prefixes are preferred when useful:

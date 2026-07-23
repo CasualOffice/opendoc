@@ -1,0 +1,71 @@
+name: Bug report
+description: Report a reproducible runtime, compatibility, security, or SDK defect.
+title: "[Bug]: "
+labels:
+  - kind:bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not submit security vulnerabilities or confidential documents here.
+        Follow SECURITY.md for private reporting.
+  - type: dropdown
+    id: subsystem
+    attributes:
+      label: Subsystem
+      options:
+        - Model
+        - Transactions
+        - Selection or input
+        - Layout or pagination
+        - Rendering
+        - DOCX import or export
+        - WASM or FFI
+        - SDK
+        - CI or documentation
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - Critical - data loss, security, invalid save, or crash
+        - High - common workflow or serious fidelity failure
+        - Medium - visible defect or supported edge case
+        - Low - polish or minor mismatch
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide minimal deterministic steps and a rights-cleared fixture when relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OpenDoc revision/version, OS/target, host mode, fonts, and configuration.
+    validations:
+      required: true
+  - type: textarea
+    id: risk
+    attributes:
+      label: Data-loss, security, or compatibility risk
+    validations:
+      required: true

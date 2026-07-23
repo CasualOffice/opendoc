@@ -1,0 +1,18 @@
+[package]
+name = "casual-doc-model"
+description = "Internal normalized document model for OpenDoc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+unicode-segmentation.workspace = true
+
+[lints]
+workspace = true

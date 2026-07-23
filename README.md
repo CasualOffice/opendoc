@@ -47,12 +47,52 @@ The runtime must provide:
 - [Execution Tracker](docs/14-EXECUTION-TRACKER.md)
 - [CI and Release Gates](docs/15-CI-AND-RELEASE-GATES.md)
 - [Documentation Maintenance](docs/16-DOCUMENTATION-MAINTENANCE.md)
+- [Project Glossary](docs/17-GLOSSARY.md)
+- [Support Matrix](docs/18-SUPPORT-MATRIX.md)
+- [Workspace Scaffold Design](docs/19-WORKSPACE-SCAFFOLD-DESIGN.md)
+- [Error Code Registry](docs/20-ERROR-CODE-REGISTRY.md)
+- [Parser and Resource Limits](docs/21-PARSER-LIMITS.md)
+- [Normalized Schema v0](docs/22-NORMALIZED-SCHEMA-V0.md)
+- [DOCX Fixture Corpus Plan](docs/23-DOCX-FIXTURE-CORPUS.md)
+- [Transaction Semantics](docs/24-TRANSACTION-SEMANTICS.md)
+- [Normalized Snapshot I/O](docs/25-NORMALIZED-SNAPSHOT-IO.md)
+- [Selection Foundation](docs/26-SELECTION-FOUNDATION.md)
+- [Runtime Event Foundation](docs/27-RUNTIME-EVENT-FOUNDATION.md)
+- [DOCX Package Reader](docs/28-DOCX-PACKAGE-READER.md)
+- [Benchmark and Baseline Harness](docs/29-BENCHMARK-AND-BASELINE-HARNESS.md)
+- [Phase 0 Closure Design](docs/30-PHASE-0-CLOSURE-DESIGN.md)
+- [Phase 0 Exit Report](docs/31-PHASE-0-EXIT-REPORT.md)
 
 ## Repository Status
 
-Status: design and foundation phase.
+Status: Phase 0 foundation complete.
 
-Implementation should not begin casually. Any substantial build work should start with an approved design note, an ADR when architectural, and an updated tracker entry.
+The current Phase 0 runtime provides normalized blank documents, stable node
+identity, grapheme-aware text insertion/deletion, paragraph split/join,
+operation inverses, undo/redo, revision-aware snapshots, position mapping, and
+stable SDK errors. Strict bounded normalized JSON v0 load/export and canonical
+directed selection mapped through every edit are also available, with bounded
+sequence-ordered transaction and selection events. Security-bounded DOCX ZIP
+inspection and on-demand part reads are implemented; DOCX semantic import,
+layout, rendering, collaboration, and persistent history are not yet claimed.
+The initial package/model benchmark runner, CI smoke gate, and named-environment
+baseline are also available. Seven generated DOCX package/security fixtures and
+a bounded scheduled package-reader fuzz target close the Phase 0 input-safety
+foundation.
+
+## Development
+
+The workspace uses Rust 1.96.0 with an MSRV of 1.85.0.
+
+```sh
+cargo test --workspace --all-features --locked
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo run -p opendoc-benchmark --release --locked -- --smoke \
+  --output target/benchmarks/local-smoke.json
+```
+
+See [Contributing](CONTRIBUTING.md), [Security](SECURITY.md), and
+[Governance](GOVERNANCE.md).
 
 ## License
 
