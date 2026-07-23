@@ -190,6 +190,19 @@ and attack surface without helping DOCX compatibility.
 **Consequence:** upgrades require MSRV, WASM, license, advisory, malformed-input,
 and corpus review; OpenDoc still enforces its own path and expansion limits.
 
+## ADR-022 — Separate benchmark smoke from regression gates
+
+**Decision:** Run deterministic release-mode benchmark smoke on every pull
+request, but compare wall-clock performance only on a named controlled
+environment.
+
+**Why:** shared hosted runners can prove workload and report correctness but do
+not provide stable enough timing for a production regression gate.
+
+**Consequence:** baseline reports carry explicit environment identity, and a
+future dedicated-runner workflow is required before timing regressions become a
+blocking repository check.
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;

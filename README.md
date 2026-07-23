@@ -59,6 +59,7 @@ The runtime must provide:
 - [Selection Foundation](docs/26-SELECTION-FOUNDATION.md)
 - [Runtime Event Foundation](docs/27-RUNTIME-EVENT-FOUNDATION.md)
 - [DOCX Package Reader](docs/28-DOCX-PACKAGE-READER.md)
+- [Benchmark and Baseline Harness](docs/29-BENCHMARK-AND-BASELINE-HARNESS.md)
 
 ## Repository Status
 

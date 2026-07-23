@@ -38,13 +38,13 @@ Update this file whenever work begins, changes scope, or finishes.
 | P0-004 | Selection foundation | Done | Caret/range invariants and position mapping implemented. | 31 unit tests plus SDK doc test; native/WASM/MSRV gates pass. |
 | P0-005 | Runtime event foundation | Done | Ordered transaction and selection events with safe subscription lifecycle. | 36 unit tests plus SDK doc test; bounded lag and atomic failure gates pass. |
 | P0-006 | DOCX package reader | Done | Security-bounded ZIP admission, metadata, part reads, and generated package fixtures. | 44 unit tests plus SDK doc test; native/WASM/MSRV and parser-policy gates pass. |
-| P0-007 | Benchmark and baseline harness | Designing | Reproducible package/model timing, reports, and regression thresholds. | Design required before implementation. |
+| P0-007 | Benchmark and baseline harness | Ready | Reproducible package/model timing, reports, and regression thresholds. | Design accepted in `29-BENCHMARK-AND-BASELINE-HARNESS.md`; implementation may begin. |
 
 ## Active Work
 
 | ID | Title | Owner | Status | Links |
 | --- | --- | --- | --- | --- |
-| P0-007 | Benchmark and baseline harness | Codex | Designing | Tracker opened; design note required before implementation. |
+| P0-007 | Benchmark and baseline harness | Codex | Ready | Design accepted; implement runner, CI smoke, baseline, and report. |
 
 ## Completed Work
 
