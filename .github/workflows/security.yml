@@ -52,10 +52,10 @@ jobs:
         with:
           toolchain: nightly-2026-07-20
       - name: Install cargo-fuzz
-        uses: taiki-e/install-action@7572810d7dd469b651bb7793945692cf78da5dd7
-        with:
-          tool: cargo-fuzz@0.13.2
-          fallback: none
+        run: >-
+          cargo +nightly-2026-07-20 install cargo-fuzz
+          --version 0.13.2
+          --locked
       - name: Prepare disposable seed corpus
         run: |
           mkdir -p target/fuzz-corpus/docx_package
