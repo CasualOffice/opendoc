@@ -206,8 +206,8 @@ blocking repository check.
 ## ADR-023 — Align baseline evidence with capability ownership
 
 **Decision:** Phase 0 establishes baseline schemas, policies, implemented-path
-reports, and readiness status. Visual baselines begin with the Phase 1 renderer;
-semantic DOCX round-trip baselines begin with the Phase 2 writer.
+reports, and readiness status. Visual baselines begin with the Phase 1D
+renderer; semantic DOCX round-trip baselines begin with the Phase 2 writer.
 
 **Why:** a visual snapshot without an OpenDoc renderer and a round trip without
 an importer/writer are placeholder artifacts, not compatibility evidence.
@@ -227,6 +227,36 @@ pull-request failures.
 
 **Consequence:** fuzz crashes become minimized regression fixtures; scheduled
 campaign limits and dependency pins are reviewed repository policy.
+
+## ADR-025 — Decompose the read-only runtime into capability gates
+
+**Decision:** Replace the monolithic Phase 1 with Phase 1A semantic DOCX import,
+Phase 1B typography and paragraph layout, Phase 1C pagination and display list,
+and Phase 1D renderer and hit testing.
+
+**Why:** OOXML semantics, typography, pagination, and rendering have different
+failure modes, dependencies, fixtures, and evidence. Combining them hides
+causes, encourages placeholder integration, and makes compatibility claims
+ambiguous.
+
+**Consequence:** each stage has an independent exit report. Phase 1A cannot
+claim visual support, and UI or Tauri work cannot begin merely because semantic
+import succeeds.
+
+## ADR-026 — License the whole project under Apache-2.0
+
+**Decision:** License all repository-owned source, documentation, generated
+fixtures, and accepted contributions under Apache License 2.0, expressed with
+the SPDX identifier `Apache-2.0`.
+
+**Why:** Apache-2.0 provides explicit copyright and patent grants, patent
+termination terms, and established redistribution conditions appropriate for a
+widely embedded SDK. The policy is being established before outside
+contributions or public package releases.
+
+**Consequence:** package metadata, fixture provenance, contribution terms, and
+public documentation must consistently name Apache-2.0. Contributions are
+accepted under the same terms unless explicitly agreed otherwise.
 
 ## Pending ADRs
 

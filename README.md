@@ -2,7 +2,7 @@
 
 [![Status: Pre-release](https://img.shields.io/badge/status-pre--release-orange.svg)](docs/06-ROADMAP-AND-DELIVERY.md)
 [![Rust: 1.85+](https://img.shields.io/badge/rust-1.85%2B-black.svg?logo=rust)](rust-toolchain.toml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 OpenDoc is an open-source, deterministic document runtime written in Rust. It
 is being built for native, WebAssembly, and headless applications that need a
@@ -75,8 +75,10 @@ cargo test --workspace --all-features --locked
 ```
 
 The repository pins Rust 1.96.0 through `rust-toolchain.toml` and supports Rust
-1.85.0 as its minimum Rust version. The pinned toolchain also installs Clippy,
-rustfmt, and the WASM target.
+1.85.0 as its minimum Rust version. Every pull request runs the primary build,
+test, lint, docs, and WASM gates on the pinned development toolchain and a
+separate locked all-target check on Rust 1.85.0. The pinned toolchain also
+installs Clippy, rustfmt, and the WASM target.
 
 Run the primary local quality gates with:
 
@@ -87,6 +89,7 @@ cargo test --workspace --all-features --locked
 cargo test --doc --workspace --all-features --locked
 cargo check --workspace --all-features --locked \
   --target wasm32-unknown-unknown
+cargo +1.85.0 check --workspace --all-targets --all-features --locked
 RUSTDOCFLAGS="-D warnings" \
   cargo doc --workspace --all-features --no-deps --locked
 ```
@@ -126,7 +129,10 @@ on design:
 | Phase | Outcome | Status |
 | --- | --- | --- |
 | 0 | Runtime, model, package-safety, CI, corpus, and benchmark foundation | Complete |
-| 1 | Read-only DOCX import, layout, rendering, extraction, and hit testing | Design next |
+| 1A | Semantic DOCX import, normalized snapshots, and compatibility reports | Designing |
+| 1B | Typography and paragraph layout | Not started |
+| 1C | Pagination and backend-neutral display list | Not started |
+| 1D | Native/WASM rendering and hit testing | Not started |
 | 2 | Core editing SDK and DOCX save/reopen workflow | Planned |
 | 3 | Advanced office-document features | Planned |
 | 4 | Stable SDK surfaces and third-party embedding | Planned |
@@ -136,6 +142,24 @@ on design:
 Detailed deliverables and exit gates are maintained in the
 [roadmap](docs/06-ROADMAP-AND-DELIVERY.md). Work does not begin until its design
 is accepted and its tracker entry defines the verification gates.
+
+### Immediate Milestone
+
+The next milestone is deliberately limited to this end-to-end path:
+
+```text
+.docx
+  -> secure package reader
+  -> relationships and main document part
+  -> paragraphs, runs, styles, themes, numbering, sections, and media references
+  -> normalized OpenDoc model
+  -> deterministic semantic JSON snapshot
+  -> complete compatibility report
+```
+
+This milestone does not include typography, pagination, rendering, hit testing,
+UI, or Tauri integration. See the
+[proposed Phase 1A design](docs/32-PHASE-1A-SEMANTIC-DOCX-IMPORT-DESIGN.md).
 
 ## Documentation
 
@@ -151,6 +175,7 @@ is accepted and its tracker entry defines the verification gates.
 - [CI and release gates](docs/15-CI-AND-RELEASE-GATES.md)
 - [Support matrix](docs/18-SUPPORT-MATRIX.md)
 - [Phase 0 exit report](docs/31-PHASE-0-EXIT-REPORT.md)
+- [Proposed Phase 1A semantic import design](docs/32-PHASE-1A-SEMANTIC-DOCX-IMPORT-DESIGN.md)
 
 The numbered documents in `docs/` are the source of truth for accepted
 architecture, behavior, delivery status, and compatibility claims.
@@ -177,4 +202,4 @@ in public issues. Follow [SECURITY.md](SECURITY.md) and use
 
 ## License
 
-OpenDoc is available under the [MIT License](LICENSE).
+OpenDoc is available under the [Apache License 2.0](LICENSE).

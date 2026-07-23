@@ -18,21 +18,22 @@ not considered supported until its required CI and conformance gates pass.
 
 | Environment | Rust target | Planned tier | Current status |
 | --- | --- | --- | --- |
-| macOS Apple Silicon | `aarch64-apple-darwin` | Tier 1 | Workspace checks begin in Phase 0. |
+| macOS Apple Silicon | `aarch64-apple-darwin` | Tier 1 | Required workspace tests implemented. |
 | macOS Intel | `x86_64-apple-darwin` | Tier 2 | Compile coverage planned. |
-| Windows 64-bit | `x86_64-pc-windows-msvc` | Tier 1 | Workspace checks begin in Phase 0. |
-| Linux 64-bit glibc | `x86_64-unknown-linux-gnu` | Tier 1 | Workspace checks begin in Phase 0. |
+| Windows 64-bit | `x86_64-pc-windows-msvc` | Tier 1 | Required workspace tests implemented. |
+| Linux 64-bit glibc | `x86_64-unknown-linux-gnu` | Tier 1 | Required build, test, lint, docs, policy, and MSRV gates implemented. |
 | Linux ARM64 | `aarch64-unknown-linux-gnu` | Tier 2 | Planned after headless CLI exists. |
 
-The first release line uses Rust 2024 edition and an MSRV of Rust 1.85.0. Stable
-Rust is the development baseline. MSRV is checked separately and may only be
-raised through an ADR and a documented release note.
+The first release line uses Rust 2024 edition, pins Rust 1.96.0 for development,
+and supports Rust 1.85.0 as its MSRV. Every pull request checks both compiler
+boundaries. The MSRV may only be raised through an ADR and a documented release
+note.
 
 ## WebAssembly
 
 | Environment | Planned tier | Current status |
 | --- | --- | --- |
-| `wasm32-unknown-unknown`, core model/transactions | Tier 1 | Compile gate begins in Phase 0. |
+| `wasm32-unknown-unknown`, core model/transactions | Tier 1 | Required compile gate implemented. |
 | Browser SDK in current Chrome, Edge, Firefox, Safari | Tier 1 | Planned; no browser runtime exists yet. |
 | Browser worker execution | Tier 1 | Planned with WASM facade. |
 | WASM threads | Experimental | Requires host opt-in and cross-origin isolation. |
@@ -46,7 +47,7 @@ report.
 
 | Host mode | v1 target | Current status |
 | --- | --- | --- |
-| Rust library | Yes | Initial facade begins in Phase 0. |
+| Rust library | Yes | Initial pre-release facade implemented. |
 | Headless CLI/service | Yes | Planned. |
 | Tauri desktop | Yes | Planned reference host. |
 | Browser/WASM | Yes | Planned reference host. |
@@ -71,7 +72,7 @@ report.
 
 | Area | v1 expectation | Current status |
 | --- | --- | --- |
-| Paragraphs, marks, lists | Supported | Model foundation in progress. |
+| Paragraphs, marks, lists | Supported | Paragraph/text/mark model foundation implemented; list semantics are Phase 1A. |
 | Tables and merged cells | Supported | Designed, not implemented. |
 | Sections, headers, footers | Supported | Designed, not implemented. |
 | Images and anchors | Supported | Designed, not implemented. |

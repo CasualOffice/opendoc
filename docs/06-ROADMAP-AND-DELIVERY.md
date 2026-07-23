@@ -32,35 +32,106 @@ Exit gate:
 - no production integration yet.
 
 ADR-023 corrects the original dependency order: visual artifacts begin in Phase
-1 when the renderer exists, and semantic round-trip artifacts begin in Phase 2
+1D when the renderer exists, and semantic round-trip artifacts begin in Phase 2
 when the DOCX writer exists. Phase 0 does not create placeholder evidence for
 unimplemented capabilities.
 
-## Phase 1 — Read-only runtime
+ADR-025 decomposes the original read-only phase into four independently gated
+stages. Passing semantic import does not imply layout support, passing layout
+does not imply pagination, and passing pagination does not imply rendering or
+hit testing.
 
-**Duration:** 8–12 weeks
+## Phase 1A — Semantic DOCX import
+
+**Status:** Designing
+**Design:** `32-PHASE-1A-SEMANTIC-DOCX-IMPORT-DESIGN.md`
 
 Deliver:
 
-- core document model;
-- styles and numbering;
-- DOCX import;
-- text shaping;
-- paragraph layout;
-- basic tables;
-- pages;
-- display list;
-- native and web reference renderer;
-- outline/text extraction;
-- hit testing;
-- Tauri and browser read-only examples.
+- package content-type and relationship discovery;
+- main `document.xml` body import;
+- paragraphs and runs;
+- basic paragraph and run properties;
+- styles and themes;
+- numbering definitions and references;
+- section properties;
+- internal relationships and media references;
+- normalized semantic schema and deterministic JSON snapshots;
+- complete, deterministic unsupported-content and compatibility reports.
 
 Exit gate:
 
-- representative documents render;
-- 100-page benchmark meets read-only targets;
-- visual regression system operational;
-- no editing claim yet.
+- a rights-reviewed DOCX fixture loads through the bounded package reader into
+  the normalized model;
+- export produces a byte-deterministic semantic JSON snapshot;
+- every encountered unsupported or degraded construct is represented in the
+  compatibility report;
+- malformed, over-limit, externally targeted, or structurally inconsistent
+  input fails with typed, redacted diagnostics and no partial session;
+- no layout, pagination, rendering, editing, or save claim is made.
+
+## Phase 1B — Typography and paragraph layout
+
+**Status:** Not started
+
+Deliver:
+
+- font-provider abstraction;
+- script and language segmentation;
+- bidirectional text resolution;
+- shaping;
+- deterministic font fallback;
+- line breaking;
+- tabs and indentation;
+- paragraph metrics and fragments.
+
+Exit gate:
+
+- representative paragraphs produce deterministic line fragments and metrics
+  under a versioned fixed-font environment;
+- Unicode script, bidi, fallback, tab, and indentation fixtures pass;
+- no pagination or rendering claim is made.
+
+## Phase 1C — Pagination and display list
+
+**Status:** Not started
+
+Deliver:
+
+- pages and page ranges;
+- margins and section geometry;
+- paragraph fragmentation across pages;
+- backend-neutral display-list primitives;
+- visible-page and layout caches.
+
+Exit gate:
+
+- multi-section documents paginate deterministically;
+- page and fragmentation invariants pass on native and WASM targets;
+- cache invalidation and bounded-memory behavior are tested;
+- no renderer or pointer hit-testing claim is made.
+
+## Phase 1D — Renderer and hit testing
+
+**Status:** Not started
+
+Deliver:
+
+- native reference renderer;
+- WASM reference renderer;
+- pointer-to-position hit testing;
+- caret geometry;
+- fixed-font visual regression testing.
+
+Exit gate:
+
+- representative documents render on native and WASM reference backends;
+- fixed-font visual baselines pass within accepted tolerances;
+- pointer and caret geometry agree with layout positions;
+- a 100-page read-only benchmark meets the accepted target.
+
+UI shells and Tauri integration are not Phase 1 deliverables. They begin only
+after the runtime capabilities they consume have passed their own exit gates.
 
 ## Phase 2 — Core editing SDK
 
@@ -184,20 +255,20 @@ A solo implementation is possible but should be planned in years, not months. Th
 1. Create workspace and CI.
 2. Define support matrix.
 3. Catalogue current DOCX fixtures.
-4. Copy round-trip audit methodology.
+4. Define repository-owned compatibility audit methodology.
 5. Define normalized schema v0.
 6. Define IDs and position semantics.
 7. Define error codes.
 8. Add ZIP limits.
 9. Add XML limits.
-10. Parse package relationships.
-11. Parse document body.
-12. Parse paragraphs/runs.
-13. Parse styles.
-14. Parse numbering.
-15. Parse sections.
-16. Add normalized JSON debug export.
-17. Add deterministic snapshot tests.
+10. Design normalized schema v1 and compatibility reports.
+11. Parse package relationships.
+12. Parse document body.
+13. Parse paragraphs/runs and basic properties.
+14. Parse styles, themes, and numbering.
+15. Parse sections and media references.
+16. Emit deterministic normalized JSON and compatibility reports.
+17. Add deterministic semantic snapshot tests.
 18. Define font-provider interface.
 19. Select shaping stack.
 20. Shape a single run.
@@ -236,7 +307,8 @@ Mitigation: compatibility profiles, preservation bags, explicit warnings, corpus
 
 ### WASM performance and binary size
 
-Mitigation: feature flags, lazy codecs, binary event/display-list transport, profiling from phase 1.
+Mitigation: feature flags, lazy codecs, binary event/display-list transport,
+and profiling from the first affected Phase 1 stage.
 
 ### UI pressure bypassing architecture
 

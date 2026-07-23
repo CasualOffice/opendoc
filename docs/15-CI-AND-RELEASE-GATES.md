@@ -2,6 +2,8 @@
 
 **Status:** Accepted for Phase 0
 **CI provider:** GitHub Actions
+**Development toolchain:** Rust 1.96.0
+**MSRV:** Rust 1.85.0
 **Last updated:** 2026-07-24
 
 ## Purpose
@@ -53,6 +55,22 @@ workspace, so CI and security review operate on a reproducible graph.
 Repository policy also verifies every committed fixture against the SHA-256
 record in `fixtures/manifest.json`.
 
+## Rust Toolchain Policy
+
+Every pull request continuously checks both supported compiler boundaries:
+
+- Rust 1.96.0 runs formatting, strict Clippy, tests, documentation, WASM,
+  benchmark smoke, repository policy, and dependency policy;
+- Rust 1.85.0 runs a locked workspace check with all targets and features.
+
+The development toolchain catches current compiler and tooling behavior. The
+MSRV job prevents syntax, manifest, or dependency changes from silently raising
+the minimum compiler version. A change is not mergeable if either boundary
+fails.
+
+The MSRV may be raised only through an accepted ADR, updated support matrix,
+release note, and green replacement CI job.
+
 ## Target Matrix
 
 | Target | Required |
@@ -62,18 +80,20 @@ record in `fixtures/manifest.json`.
 | Linux | Yes |
 | `wasm32-unknown-unknown` | Yes |
 | Headless CLI/service | Yes |
+| Rust 1.96.0 development toolchain | Yes |
+| Rust 1.85.0 MSRV | Yes |
 
-## Future Rust Gates
+## Rust Gates
 
-Expected commands once the workspace exists:
+The core compiler checks are:
 
 ```sh
-cargo fmt --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
-cargo test --doc --workspace
-cargo build --target wasm32-unknown-unknown
-cargo test --workspace --locked
+cargo +1.96.0 fmt --all -- --check
+cargo +1.96.0 clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo +1.96.0 test --workspace --all-features --locked
+cargo +1.96.0 test --doc --workspace --all-features --locked
+cargo +1.96.0 check --workspace --all-features --locked --target wasm32-unknown-unknown
+cargo +1.85.0 check --workspace --all-targets --all-features --locked
 ```
 
 Additional gates should be added as capabilities appear:
@@ -131,7 +151,7 @@ Additional gates should be added as capabilities appear:
 | Linting | Implemented | Clippy denies warnings for all targets/features. |
 | Unit tests | Implemented | Native workspace and doc tests. |
 | WASM build | Implemented | Foundation crates compile for `wasm32-unknown-unknown`. |
-| Platform/MSRV | Implemented | macOS 15 ARM64, Windows 2025 x64, and Rust 1.85 checks. |
+| Platform/MSRV | Implemented | macOS 15 ARM64, Windows 2025 x64, pinned Rust 1.96, and Rust 1.85 checks run on every PR. |
 | Dependency policy | Implemented | Licenses, sources, versions, and RustSec advisories. |
 | Fuzzing | Initial package target implemented | Pull requests compile the independently locked target; scheduled security CI runs a bounded seeded campaign. |
 | Corpus tests | Phase 0 package corpus implemented | Seven generated package/security fixtures run in workspace tests; semantic and visual layers remain pending. |

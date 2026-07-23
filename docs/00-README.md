@@ -4,7 +4,7 @@
 **Audience:** CasualOffice maintainers, SDK contributors, platform integrators
 **Primary implementation:** Rust
 **Primary hosts:** Tauri desktop, WebAssembly/web, headless/server
-**License:** MIT
+**License:** Apache-2.0
 
 ## Purpose
 
@@ -54,6 +54,7 @@ The runtime is not a UI toolkit and is not a DOCX-only editor. It is a determini
 29. `29-BENCHMARK-AND-BASELINE-HARNESS.md` — reproducible timing and report contract.
 30. `30-PHASE-0-CLOSURE-DESIGN.md` — corpus, fuzzing, and exit-evidence closure.
 31. `31-PHASE-0-EXIT-REPORT.md` — accepted Phase 0 evidence and deferrals.
+32. `32-PHASE-1A-SEMANTIC-DOCX-IMPORT-DESIGN.md` — proposed semantic import and compatibility-report contract.
 
 ## Recommended project names
 
