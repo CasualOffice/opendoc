@@ -4,6 +4,9 @@
 **Last updated:** 2026-07-24
 **Tracker:** F-007
 
+Package ZIP limits are implemented by `casual-doc-ooxml` as of 2026-07-24.
+XML, relationship, image, font, and semantic limits remain implementation work.
+
 ## Security Position
 
 All document input is untrusted. Parsing is bounded before allocation or

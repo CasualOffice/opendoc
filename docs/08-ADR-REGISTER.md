@@ -178,6 +178,18 @@ bounds, and callback lock safety explicit across every future transport.
 **Consequence:** slow consumers receive an exact dropped-event count and must
 refresh snapshots; the Phase 0 journal retains the latest 256 events.
 
+## ADR-021 — Pin a minimal ZIP profile at the project MSRV
+
+**Decision:** Build the package reader on exactly `zip` 7.0.0 with default
+features disabled and only stored/Deflate DOCX input enabled.
+
+**Why:** the current `zip` release exceeds the project's Rust 1.85 MSRV, while
+7.0.0 supports Rust 1.83; encryption and unrelated codecs increase dependency
+and attack surface without helping DOCX compatibility.
+
+**Consequence:** upgrades require MSRV, WASM, license, advisory, malformed-input,
+and corpus review; OpenDoc still enforces its own path and expansion limits.
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;

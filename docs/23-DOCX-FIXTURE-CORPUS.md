@@ -4,6 +4,10 @@
 **Last updated:** 2026-07-24
 **Tracker:** F-009
 
+The initial repository-owned package/security batch is implemented under
+`fixtures/generated/` with SHA-256 records in `fixtures/manifest.json`.
+Semantic, round-trip, visual, and performance corpus layers remain pending.
+
 ## Purpose
 
 The corpus is the evidence behind compatibility claims. It covers semantic

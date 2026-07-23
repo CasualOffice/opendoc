@@ -47,6 +47,8 @@ action and Cargo updates reviewable.
 
 Rust dependencies use the committed `Cargo.lock`, even for this library
 workspace, so CI and security review operate on a reproducible graph.
+Repository policy also verifies every committed fixture against the SHA-256
+record in `fixtures/manifest.json`.
 
 ## Target Matrix
 

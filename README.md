@@ -58,6 +58,7 @@ The runtime must provide:
 - [Normalized Snapshot I/O](docs/25-NORMALIZED-SNAPSHOT-IO.md)
 - [Selection Foundation](docs/26-SELECTION-FOUNDATION.md)
 - [Runtime Event Foundation](docs/27-RUNTIME-EVENT-FOUNDATION.md)
+- [DOCX Package Reader](docs/28-DOCX-PACKAGE-READER.md)
 
 ## Repository Status
 
@@ -68,8 +69,9 @@ identity, grapheme-aware text insertion/deletion, paragraph split/join,
 operation inverses, undo/redo, revision-aware snapshots, position mapping, and
 stable SDK errors. Strict bounded normalized JSON v0 load/export and canonical
 directed selection mapped through every edit are also available, with bounded
-sequence-ordered transaction and selection events. It does not yet claim DOCX,
-layout, rendering, collaboration, or persistent history support.
+sequence-ordered transaction and selection events. Security-bounded DOCX ZIP
+inspection and on-demand part reads are implemented; DOCX semantic import,
+layout, rendering, collaboration, and persistent history are not yet claimed.
 
 ## Development
 

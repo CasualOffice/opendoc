@@ -168,6 +168,10 @@ jobs:
           toolchain: 1.96.0
       - name: Validate locked workspace metadata
         run: cargo metadata --locked --format-version 1 --no-deps > /dev/null
+      - name: Verify fixture manifest checksums
+        run: |
+          jq -r '.fixtures[] | "\(.sha256)  fixtures/\(.path)"' fixtures/manifest.json \
+            | sha256sum --check -
       - name: Reject merge-conflict markers
         shell: bash
         run: |

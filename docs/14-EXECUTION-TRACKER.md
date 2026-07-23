@@ -37,13 +37,14 @@ Update this file whenever work begins, changes scope, or finishes.
 | P0-003 | Normalized snapshot loading | Done | Strict schema v0 JSON load, validation, limits, and deterministic round trip. | 25 unit tests plus SDK doc test; native/WASM/MSRV gates pass. |
 | P0-004 | Selection foundation | Done | Caret/range invariants and position mapping implemented. | 31 unit tests plus SDK doc test; native/WASM/MSRV gates pass. |
 | P0-005 | Runtime event foundation | Done | Ordered transaction and selection events with safe subscription lifecycle. | 36 unit tests plus SDK doc test; bounded lag and atomic failure gates pass. |
-| P0-006 | Command foundation | Designing | Stable command IDs, query state, execution routing, and transaction integration. | Design required before implementation. |
+| P0-006 | DOCX package reader | Done | Security-bounded ZIP admission, metadata, part reads, and generated package fixtures. | 44 unit tests plus SDK doc test; native/WASM/MSRV and parser-policy gates pass. |
+| P0-007 | Benchmark and baseline harness | Designing | Reproducible package/model timing, reports, and regression thresholds. | Design required before implementation. |
 
 ## Active Work
 
 | ID | Title | Owner | Status | Links |
 | --- | --- | --- | --- | --- |
-| P0-006 | Command foundation | Codex | Designing | Tracker opened; design note required before implementation. |
+| P0-007 | Benchmark and baseline harness | Codex | Designing | Tracker opened; design note required before implementation. |
 
 ## Completed Work
 
@@ -56,6 +57,7 @@ Update this file whenever work begins, changes scope, or finishes.
 | P0-003 | Normalized snapshot loading | 2026-07-24 | Added strict bounded JSON v0 load/export, semantic limits, duplicate/unknown rejection, redacted SDK errors, and collision-safe imported editing. |
 | P0-004 | Selection foundation | 2026-07-24 | Added canonical directed session selection, strict revision/position validation, atomic edit/history mapping, and a fourth focused workspace crate. |
 | P0-005 | Runtime event foundation | 2026-07-24 | Added bounded future-only event subscriptions, stable sequence ordering, explicit lag gaps, transaction/selection causes, and atomic journal publication. |
+| P0-006 | DOCX package reader | 2026-07-24 | Added bounded ZIP preflight, safe path and codec policy, cancellable verified part reads, five generated fixtures, and CI checksum enforcement. |
 
 ## Open Questions
 

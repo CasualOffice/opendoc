@@ -23,8 +23,12 @@ OpenDoc will use semantic versioning when its public package line begins.
   endpoints, and atomic mapping through edits, undo, and redo.
 - Bounded future-only runtime event subscriptions with stable sequencing,
   transaction/selection causes, independent cursors, and explicit lag gaps.
+- Security-bounded DOCX ZIP admission, deterministic part metadata, cancellable
+  on-demand reads, and repository-owned package fixtures.
 
 ### Security
 
 - Dependency license/source/advisory checks.
 - Bounded parser and resource-limit specification.
+- ZIP entry, expansion, path, overlap, encryption, macro, and compression
+  enforcement before DOCX package admission.

@@ -50,6 +50,7 @@ The runtime is not a UI toolkit and is not a DOCX-only editor. It is a determini
 25. `25-NORMALIZED-SNAPSHOT-IO.md` — strict bounded JSON load/export contract.
 26. `26-SELECTION-FOUNDATION.md` — caret/range state and transaction mapping.
 27. `27-RUNTIME-EVENT-FOUNDATION.md` — ordered bounded session event delivery.
+28. `28-DOCX-PACKAGE-READER.md` — bounded ZIP package admission and part reads.
 
 ## Recommended project names
 

@@ -49,6 +49,10 @@ The first incremental expansion adds `casual-doc-selection` for P0-004. It owns
 validated directed selections and maps them through transaction position maps;
 the SDK remains the public boundary.
 
+P0-006 adds `casual-doc-ooxml` when its first bounded ZIP admission and part-read
+behavior is implemented. It remains independent of the SDK until OOXML mapping
+can produce a valid normalized document.
+
 ## Dependency Direction
 
 ```text
@@ -106,6 +110,8 @@ The first slice permits:
 
 - `serde` for explicit snapshot value serialization;
 - `unicode-segmentation` for grapheme-boundary semantics.
+- exactly `zip` 7.0.0 with minimal pure-Rust Deflate features for the
+  security-reviewed DOCX package boundary.
 
 Every added dependency requires:
 
