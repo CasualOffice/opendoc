@@ -39,13 +39,13 @@ Update this file whenever work begins, changes scope, or finishes.
 | P0-005 | Runtime event foundation | Done | Ordered transaction and selection events with safe subscription lifecycle. | 36 unit tests plus SDK doc test; bounded lag and atomic failure gates pass. |
 | P0-006 | DOCX package reader | Done | Security-bounded ZIP admission, metadata, part reads, and generated package fixtures. | 44 unit tests plus SDK doc test; native/WASM/MSRV and parser-policy gates pass. |
 | P0-007 | Benchmark and baseline harness | Done | Reproducible package/model timing, reports, and regression thresholds. | 50 unit tests plus SDK doc test; baseline comparison, native/WASM/MSRV, and CI smoke gates pass. |
-| P0-008 | Phase 0 corpus and evidence closure | In review | Seven generated fixtures, fuzz infrastructure, and linked exit evidence. | Local corpus/fuzz/policy gates pass; final committed-source CI pending. |
+| P0-008 | Phase 0 corpus and evidence closure | Done | Seven generated fixtures, fuzz infrastructure, and linked exit evidence. | Full acceptance matrix passed; see `31-PHASE-0-EXIT-REPORT.md`. |
 
 ## Active Work
 
 | ID | Title | Owner | Status | Links |
 | --- | --- | --- | --- | --- |
-| P0-008 | Phase 0 corpus and evidence closure | Codex | In review | Corpus and fuzzing implemented; exact committed-source CI and exit report remain. |
+| None | Phase 0 complete | — | Done | Phase 1 work requires an accepted design and tracker entry before implementation. |
 
 ## Completed Work
 
@@ -60,6 +60,7 @@ Update this file whenever work begins, changes scope, or finishes.
 | P0-005 | Runtime event foundation | 2026-07-24 | Added bounded future-only event subscriptions, stable sequence ordering, explicit lag gaps, transaction/selection causes, and atomic journal publication. |
 | P0-006 | DOCX package reader | 2026-07-24 | Added bounded ZIP preflight, safe path and codec policy, cancellable verified part reads, five generated fixtures, and CI checksum enforcement. |
 | P0-007 | Benchmark and baseline harness | 2026-07-24 | Added four deterministic release workloads, typed reports, named-environment regression comparison, an Apple M4 baseline, and required CI smoke. |
+| P0-008 | Phase 0 corpus and evidence closure | 2026-07-24 | Added two package fixtures, exact corpus policy, independently locked package-reader fuzzing, scheduled security coverage, and an accepted exit report backed by a green 12-check matrix. |
 
 ## Open Questions
 

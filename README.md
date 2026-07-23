@@ -61,10 +61,11 @@ The runtime must provide:
 - [DOCX Package Reader](docs/28-DOCX-PACKAGE-READER.md)
 - [Benchmark and Baseline Harness](docs/29-BENCHMARK-AND-BASELINE-HARNESS.md)
 - [Phase 0 Closure Design](docs/30-PHASE-0-CLOSURE-DESIGN.md)
+- [Phase 0 Exit Report](docs/31-PHASE-0-EXIT-REPORT.md)
 
 ## Repository Status
 
-Status: Phase 0 foundation implementation.
+Status: Phase 0 foundation complete.
 
 The current Phase 0 runtime provides normalized blank documents, stable node
 identity, grapheme-aware text insertion/deletion, paragraph split/join,

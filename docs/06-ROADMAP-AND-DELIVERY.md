@@ -7,6 +7,8 @@ Do not replace the existing editor in one release. Build the runtime as a parall
 ## Phase 0 — Foundation and extraction
 
 **Duration:** 3–5 weeks
+**Status:** Complete (2026-07-24)
+**Exit evidence:** `31-PHASE-0-EXIT-REPORT.md`
 
 Deliver:
 
