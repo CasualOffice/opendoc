@@ -38,13 +38,13 @@ Update this file whenever work begins, changes scope, or finishes.
 | P0-004 | Selection foundation | Done | Caret/range invariants and position mapping implemented. | 31 unit tests plus SDK doc test; native/WASM/MSRV gates pass. |
 | P0-005 | Runtime event foundation | Done | Ordered transaction and selection events with safe subscription lifecycle. | 36 unit tests plus SDK doc test; bounded lag and atomic failure gates pass. |
 | P0-006 | DOCX package reader | Done | Security-bounded ZIP admission, metadata, part reads, and generated package fixtures. | 44 unit tests plus SDK doc test; native/WASM/MSRV and parser-policy gates pass. |
-| P0-007 | Benchmark and baseline harness | Ready | Reproducible package/model timing, reports, and regression thresholds. | Design accepted in `29-BENCHMARK-AND-BASELINE-HARNESS.md`; implementation may begin. |
+| P0-007 | Benchmark and baseline harness | Done | Reproducible package/model timing, reports, and regression thresholds. | 50 unit tests plus SDK doc test; baseline comparison, native/WASM/MSRV, and CI smoke gates pass. |
 
 ## Active Work
 
 | ID | Title | Owner | Status | Links |
 | --- | --- | --- | --- | --- |
-| P0-007 | Benchmark and baseline harness | Codex | Ready | Design accepted; implement runner, CI smoke, baseline, and report. |
+| P0-008 | Phase 0 corpus and evidence closure | Codex | Designing | Close remaining corpus, baseline-status, and exit-gate evidence without claiming unimplemented rendering. |
 
 ## Completed Work
 
@@ -58,6 +58,7 @@ Update this file whenever work begins, changes scope, or finishes.
 | P0-004 | Selection foundation | 2026-07-24 | Added canonical directed session selection, strict revision/position validation, atomic edit/history mapping, and a fourth focused workspace crate. |
 | P0-005 | Runtime event foundation | 2026-07-24 | Added bounded future-only event subscriptions, stable sequence ordering, explicit lag gaps, transaction/selection causes, and atomic journal publication. |
 | P0-006 | DOCX package reader | 2026-07-24 | Added bounded ZIP preflight, safe path and codec policy, cancellable verified part reads, five generated fixtures, and CI checksum enforcement. |
+| P0-007 | Benchmark and baseline harness | 2026-07-24 | Added four deterministic release workloads, typed reports, named-environment regression comparison, an Apple M4 baseline, and required CI smoke. |
 
 ## Open Questions
 

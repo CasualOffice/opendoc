@@ -25,6 +25,8 @@ OpenDoc will use semantic versioning when its public package line begins.
   transaction/selection causes, independent cursors, and explicit lag gaps.
 - Security-bounded DOCX ZIP admission, deterministic part metadata, cancellable
   on-demand reads, and repository-owned package fixtures.
+- Reproducible package/model benchmark runner with typed reports,
+  named-environment comparison, an initial Apple M4 baseline, and CI smoke.
 
 ### Security
 

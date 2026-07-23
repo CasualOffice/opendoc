@@ -65,6 +65,45 @@ jobs:
       - name: Run documentation tests
         run: cargo test --doc --workspace --all-features --locked
 
+  benchmark-smoke:
+    name: benchmark-smoke
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.96.0
+      - name: Restore Cargo cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Run release benchmark smoke
+        run: >-
+          cargo run -p opendoc-benchmark --release --locked --
+          --smoke
+          --source-revision "${GITHUB_SHA}"
+          --source-state clean
+          --output target/benchmarks/ci-smoke.json
+      - name: Validate benchmark report
+        run: |
+          jq -e '
+            .schemaVersion == 1
+            and .mode == "smoke"
+            and .buildProfile == "release"
+            and (.cases | length == 4)
+            and ([.cases[].id] | sort) == ([
+              "docx.package_open.minimal",
+              "docx.part_read.document_xml",
+              "model.normalized_load.100_paragraphs",
+              "sdk.typing.100_graphemes"
+            ] | sort)
+            and all(.cases[];
+              .measuredSamples == 2
+              and .iterationsPerSample == 1
+              and (.outputChecksum | test("^[0-9a-f]{16}$"))
+            )
+          ' target/benchmarks/ci-smoke.json
+
   docs:
     name: docs
     runs-on: ubuntu-24.04
@@ -172,6 +211,27 @@ jobs:
         run: |
           jq -r '.fixtures[] | "\(.sha256)  fixtures/\(.path)"' fixtures/manifest.json \
             | sha256sum --check -
+      - name: Validate committed benchmark baselines
+        run: |
+          for report in benchmarks/baselines/*.json; do
+            jq -e '
+              .schemaVersion == 1
+              and .mode == "full"
+              and .buildProfile == "release"
+              and .sourceState == "clean"
+              and (.sourceRevision | test("^[0-9A-Za-z._-]{1,64}$"))
+              and (.environment.id | test("^[0-9A-Za-z._-]{1,64}$"))
+              and (.cases | length > 0)
+              and all(.cases[];
+                .measuredSamples > 0
+                and .iterationsPerSample > 0
+                and .medianNanosecondsPerIteration > 0
+                and .p95NanosecondsPerIteration > 0
+                and (.outputChecksum | test("^[0-9a-f]{16}$"))
+                and (.maxRegressionBasisPoints >= 0 and .maxRegressionBasisPoints <= 10000)
+              )
+            ' "${report}"
+          done
       - name: Reject merge-conflict markers
         shell: bash
         run: |

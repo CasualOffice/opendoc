@@ -6,7 +6,9 @@
 
 The initial repository-owned package/security batch is implemented under
 `fixtures/generated/` with SHA-256 records in `fixtures/manifest.json`.
-Semantic, round-trip, visual, and performance corpus layers remain pending.
+The minimal package also drives the first package performance baseline.
+Semantic, round-trip, visual, and broad performance corpus layers remain
+pending.
 
 ## Purpose
 

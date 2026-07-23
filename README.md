@@ -73,6 +73,8 @@ directed selection mapped through every edit are also available, with bounded
 sequence-ordered transaction and selection events. Security-bounded DOCX ZIP
 inspection and on-demand part reads are implemented; DOCX semantic import,
 layout, rendering, collaboration, and persistent history are not yet claimed.
+The initial package/model benchmark runner, CI smoke gate, and named-environment
+baseline are also available.
 
 ## Development
 
@@ -81,6 +83,8 @@ The workspace uses Rust 1.96.0 with an MSRV of 1.85.0.
 ```sh
 cargo test --workspace --all-features --locked
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo run -p opendoc-benchmark --release --locked -- --smoke \
+  --output target/benchmarks/local-smoke.json
 ```
 
 See [Contributing](CONTRIBUTING.md), [Security](SECURITY.md), and

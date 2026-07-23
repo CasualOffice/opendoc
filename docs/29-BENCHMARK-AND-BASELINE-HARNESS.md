@@ -3,7 +3,7 @@
 **Status:** Accepted for Phase 0
 **Decision date:** 2026-07-24
 **Tracker:** P0-007
-**Implementation:** Pending
+**Implementation:** Complete on 2026-07-24
 
 ## Outcome
 
@@ -153,7 +153,8 @@ The native runner supports:
 
 ```text
 opendoc-benchmark --smoke --output <path>
-opendoc-benchmark --environment-id <id> --source-revision <sha> --output <path>
+opendoc-benchmark --environment-id <id> --source-revision <sha> \
+  --source-state <clean|dirty> --output <path>
 opendoc-benchmark ... --compare <baseline> [--max-regression-percent <value>]
 ```
 
@@ -226,3 +227,13 @@ can add those workload IDs when the underlying capabilities exist.
 - release-mode benchmark smoke runs in pull-request CI;
 - one reviewed Phase 0 baseline and status report are committed;
 - native, Windows, macOS, WASM, MSRV, docs, lint, audit, and policy gates pass.
+
+## Implemented Baseline
+
+The initial report is
+`benchmarks/baselines/mac16-12-m4-10c-16gb.json`. Its generation environment and
+results are recorded in `benchmarks/reports/phase0-status.md`.
+
+The baseline covers only the four implemented package/model workloads. It is
+not evidence for DOCX semantic loading, pagination, rendering, save, memory, or
+the final product targets in `01-ORD.md`.

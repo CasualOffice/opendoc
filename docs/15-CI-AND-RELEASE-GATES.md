@@ -31,6 +31,7 @@ Every pull request and push to `main` runs required checks with stable job names
 - `format`;
 - `lint`;
 - `test`;
+- `benchmark-smoke`;
 - `docs`;
 - `wasm`;
 - `platform`;
@@ -131,9 +132,9 @@ Additional gates should be added as crates appear:
 | Platform/MSRV | Implemented | macOS 15 ARM64, Windows 2025 x64, and Rust 1.85 checks. |
 | Dependency policy | Implemented | Licenses, sources, versions, and RustSec advisories. |
 | Fuzzing | Not started | Add parser fuzz targets. |
-| Corpus tests | Not started | Requires fixture plan. |
+| Corpus tests | Initial package corpus implemented | Five generated package/security fixtures run in workspace tests; semantic and visual layers remain pending. |
 | Visual regression | Not started | Requires renderer and fixed fonts. |
-| Benchmarking | Not started | Requires benchmark harness. |
+| Benchmarking | Initial harness implemented | Package/model smoke is required; named-environment comparison is manual until a controlled runner is provisioned. |
 | Release artifacts | Not started | Define before beta. |
 
 ## Failure Policy
