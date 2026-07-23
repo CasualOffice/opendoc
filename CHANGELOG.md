@@ -8,6 +8,10 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ## Unreleased
 
+### Changed
+
+- Licensed the entire project under Apache License 2.0.
+
 ### Added
 
 - Production project foundation, design process, tracker, security policy, and

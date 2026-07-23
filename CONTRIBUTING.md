@@ -91,4 +91,6 @@ Use short, factual commit messages. Conventional prefixes are preferred when use
 
 ## License
 
-By contributing, you agree that your contribution is provided under the MIT license used by this repository.
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in OpenDoc is provided under the
+[Apache License 2.0](LICENSE), without additional terms or conditions.

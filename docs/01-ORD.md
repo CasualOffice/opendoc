@@ -267,7 +267,7 @@ The runtime provides structured diagnostics, timings, warnings, and optional tra
 - 95%+ pass rate on the defined DOCX corpus;
 - zero data-loss regressions in supported round-trip tags;
 - public SDK documentation and examples are sufficient to build a minimal editor;
-- stable beta API published under the repository's MIT license.
+- stable beta API published under the repository's Apache-2.0 license.
 
 ## 9. Acceptance definition for v1
 
