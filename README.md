@@ -1,99 +1,180 @@
-# Casual Document Runtime
+# OpenDoc
 
-Production-grade document runtime and SDK for CasualOffice.
+[![Status: Pre-release](https://img.shields.io/badge/status-pre--release-orange.svg)](docs/06-ROADMAP-AND-DELIVERY.md)
+[![Rust: 1.85+](https://img.shields.io/badge/rust-1.85%2B-black.svg?logo=rust)](rust-toolchain.toml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-This repository is the build target for a deterministic, embeddable document engine that can power native desktop, web, headless, and third-party document editing experiences. The source of truth for the current architecture is the `docs/` directory.
+OpenDoc is an open-source, deterministic document runtime written in Rust. It
+is being built for native, WebAssembly, and headless applications that need a
+shared document model, transactional editing, layout, rendering, and
+loss-aware document interchange.
 
-## Goal
+The project is developed by [CasualOffice](https://github.com/CasualOffice) as
+the future document engine for Casual Docs and as an embeddable SDK for other
+applications.
 
-Build a production-grade document runtime, not an MVP and not a side project.
+> [!IMPORTANT]
+> OpenDoc is in pre-release development. Phase 0 is complete, but the crates are
+> not published and the public API is not stable. Semantic DOCX import, layout,
+> rendering, save, and an end-user editor are not available yet.
 
-The runtime must provide:
+## Design Goals
 
-- a stable normalized document model;
-- transaction-based editing semantics;
-- deterministic layout and pagination;
-- backend-neutral rendering;
-- loss-aware DOCX import/export;
-- collaboration adapter hooks;
-- native, WebAssembly, and headless SDK surfaces;
-- security, compatibility, performance, and CI gates from the beginning.
+- **Deterministic behavior:** identical inputs and configuration should produce
+  identical model, layout, and serialization results.
+- **Transactional editing:** every mutation is validated, revisioned, mapped,
+  and applied atomically.
+- **Portable core:** the same runtime architecture targets Rust hosts,
+  `wasm32-unknown-unknown`, desktop applications, and headless services.
+- **Secure document handling:** untrusted packages are processed with explicit
+  entry, path, size, expansion, and resource limits.
+- **Loss-aware interoperability:** unsupported document content must be
+  preserved, rejected, or reported explicitly, never silently discarded.
+- **Host independence:** the runtime does not require a browser DOM, a UI
+  framework, a server, or a collaboration provider.
 
-## Working Principles
+## Current Capabilities
 
-- Design first.
-- Discuss and finalize design before implementation.
-- Create or update a tracker before execution.
-- Implement in small, reviewable slices.
-- Keep CI, tests, docs, and compatibility notes current.
-- Treat UX review, competitive analysis, and bug hunting as part of engineering, not as optional polish.
+Phase 0 establishes the tested runtime and package-safety foundation:
 
-## Documentation Map
+| Area | Available today |
+| --- | --- |
+| Document model | Deterministic paragraph and text model with stable node IDs |
+| Snapshot I/O | Strict, bounded normalized JSON schema v0 import and export |
+| Transactions | Grapheme-aware insert/delete, paragraph split/join, position mapping, and semantic inverses |
+| History | Revision-checked undo and redo |
+| Selection | Directed caret/range selection mapped through edits and history |
+| Runtime events | Bounded, ordered transaction and selection event subscriptions |
+| DOCX packages | Security-bounded ZIP admission, deterministic metadata, and verified on-demand part reads |
+| Engineering | Reproducible benchmarks, generated fixtures, dependency policy, and package-reader fuzzing |
+| Portability | Required CI on Linux, macOS ARM64, Windows x64, WASM, and Rust 1.85 MSRV |
 
-- [Architecture Blueprint](docs/00-README.md)
-- [Outcome Requirements](docs/01-ORD.md)
-- [Target Architecture](docs/02-ARCHITECTURE.md)
-- [High-Level Design](docs/03-HLD.md)
-- [Low-Level Design](docs/04-LLD.md)
-- [SDK API Specification](docs/05-SDK-API-SPEC.md)
-- [Roadmap and Delivery](docs/06-ROADMAP-AND-DELIVERY.md)
-- [Quality, Security, and Compatibility](docs/07-QUALITY-SECURITY-AND-COMPATIBILITY.md)
-- [ADR Register](docs/08-ADR-REGISTER.md)
-- [Repository and Contribution Plan](docs/09-REPOSITORY-AND-CONTRIBUTION.md)
-- [Project Goal and Standards](docs/10-PROJECT-GOAL-AND-STANDARDS.md)
-- [Design-First Delivery Process](docs/11-DESIGN-FIRST-PROCESS.md)
-- [Competitive Analysis](docs/12-COMPETITIVE-ANALYSIS.md)
-- [UX and Bug Hunting](docs/13-UX-AND-BUG-HUNTING.md)
-- [Execution Tracker](docs/14-EXECUTION-TRACKER.md)
-- [CI and Release Gates](docs/15-CI-AND-RELEASE-GATES.md)
-- [Documentation Maintenance](docs/16-DOCUMENTATION-MAINTENANCE.md)
-- [Project Glossary](docs/17-GLOSSARY.md)
-- [Support Matrix](docs/18-SUPPORT-MATRIX.md)
-- [Workspace Scaffold Design](docs/19-WORKSPACE-SCAFFOLD-DESIGN.md)
-- [Error Code Registry](docs/20-ERROR-CODE-REGISTRY.md)
-- [Parser and Resource Limits](docs/21-PARSER-LIMITS.md)
-- [Normalized Schema v0](docs/22-NORMALIZED-SCHEMA-V0.md)
-- [DOCX Fixture Corpus Plan](docs/23-DOCX-FIXTURE-CORPUS.md)
-- [Transaction Semantics](docs/24-TRANSACTION-SEMANTICS.md)
-- [Normalized Snapshot I/O](docs/25-NORMALIZED-SNAPSHOT-IO.md)
-- [Selection Foundation](docs/26-SELECTION-FOUNDATION.md)
-- [Runtime Event Foundation](docs/27-RUNTIME-EVENT-FOUNDATION.md)
-- [DOCX Package Reader](docs/28-DOCX-PACKAGE-READER.md)
-- [Benchmark and Baseline Harness](docs/29-BENCHMARK-AND-BASELINE-HARNESS.md)
-- [Phase 0 Closure Design](docs/30-PHASE-0-CLOSURE-DESIGN.md)
-- [Phase 0 Exit Report](docs/31-PHASE-0-EXIT-REPORT.md)
+The following capabilities are planned but are **not implemented**:
 
-## Repository Status
+- semantic WordprocessingML import;
+- styles, numbering, tables, sections, and images;
+- text shaping, pagination, layout, display lists, and rendering;
+- DOCX writing and semantic round-trip preservation;
+- browser, Tauri, C ABI, and npm distribution surfaces;
+- collaboration adapters and production application integration.
 
-Status: Phase 0 foundation complete.
+See the [Phase 0 exit report](docs/31-PHASE-0-EXIT-REPORT.md) for accepted
+evidence and the [support matrix](docs/18-SUPPORT-MATRIX.md) for the distinction
+between current and target support.
 
-The current Phase 0 runtime provides normalized blank documents, stable node
-identity, grapheme-aware text insertion/deletion, paragraph split/join,
-operation inverses, undo/redo, revision-aware snapshots, position mapping, and
-stable SDK errors. Strict bounded normalized JSON v0 load/export and canonical
-directed selection mapped through every edit are also available, with bounded
-sequence-ordered transaction and selection events. Security-bounded DOCX ZIP
-inspection and on-demand part reads are implemented; DOCX semantic import,
-layout, rendering, collaboration, and persistent history are not yet claimed.
-The initial package/model benchmark runner, CI smoke gate, and named-environment
-baseline are also available. Seven generated DOCX package/security fixtures and
-a bounded scheduled package-reader fuzz target close the Phase 0 input-safety
-foundation.
+## Getting Started
 
-## Development
-
-The workspace uses Rust 1.96.0 with an MSRV of 1.85.0.
+OpenDoc currently builds from source. Install
+[Rust](https://www.rust-lang.org/tools/install), then clone and test the
+workspace:
 
 ```sh
+git clone https://github.com/CasualOffice/opendoc.git
+cd opendoc
 cargo test --workspace --all-features --locked
+```
+
+The repository pins Rust 1.96.0 through `rust-toolchain.toml` and supports Rust
+1.85.0 as its minimum Rust version. The pinned toolchain also installs Clippy,
+rustfmt, and the WASM target.
+
+Run the primary local quality gates with:
+
+```sh
+cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-cargo run -p opendoc-benchmark --release --locked -- --smoke \
+cargo test --workspace --all-features --locked
+cargo test --doc --workspace --all-features --locked
+cargo check --workspace --all-features --locked \
+  --target wasm32-unknown-unknown
+RUSTDOCFLAGS="-D warnings" \
+  cargo doc --workspace --all-features --no-deps --locked
+```
+
+Run the deterministic benchmark smoke suite with:
+
+```sh
+cargo run -p opendoc-benchmark --release --locked -- \
+  --smoke \
   --output target/benchmarks/local-smoke.json
 ```
 
-See [Contributing](CONTRIBUTING.md), [Security](SECURITY.md), and
-[Governance](GOVERNANCE.md).
+CI additionally enforces dependency licenses and sources, RustSec advisories,
+fixture checksums, locked metadata, the platform matrix, and fuzz-target
+compilation.
+
+## Workspace
+
+| Package | Responsibility |
+| --- | --- |
+| `casual-doc-sdk` | Host-facing engine and document-session facade |
+| `casual-doc-model` | Normalized document values, IDs, invariants, and snapshot I/O |
+| `casual-doc-transaction` | Atomic operations, inverses, and position mapping |
+| `casual-doc-selection` | Logical caret/range validation and mapping |
+| `casual-doc-ooxml` | Security-bounded OOXML package inspection |
+| `opendoc-benchmark` | Reproducible workload and baseline reporting |
+| `opendoc-fuzz` | Independently locked package-reader fuzz targets |
+
+Internal crates are deliberately unpublished while architecture and public API
+contracts evolve.
+
+## Roadmap
+
+OpenDoc follows capability-gated delivery rather than feature claims based only
+on design:
+
+| Phase | Outcome | Status |
+| --- | --- | --- |
+| 0 | Runtime, model, package-safety, CI, corpus, and benchmark foundation | Complete |
+| 1 | Read-only DOCX import, layout, rendering, extraction, and hit testing | Design next |
+| 2 | Core editing SDK and DOCX save/reopen workflow | Planned |
+| 3 | Advanced office-document features | Planned |
+| 4 | Stable SDK surfaces and third-party embedding | Planned |
+| 5 | Collaboration adapters and product migration | Planned |
+| 6 | Stable 1.0 release | Planned |
+
+Detailed deliverables and exit gates are maintained in the
+[roadmap](docs/06-ROADMAP-AND-DELIVERY.md). Work does not begin until its design
+is accepted and its tracker entry defines the verification gates.
+
+## Documentation
+
+- [Architecture blueprint](docs/00-README.md)
+- [Outcome requirements](docs/01-ORD.md)
+- [Architecture](docs/02-ARCHITECTURE.md)
+- [SDK API specification](docs/05-SDK-API-SPEC.md)
+- [Roadmap and delivery](docs/06-ROADMAP-AND-DELIVERY.md)
+- [Quality, security, and compatibility](docs/07-QUALITY-SECURITY-AND-COMPATIBILITY.md)
+- [Architecture decision register](docs/08-ADR-REGISTER.md)
+- [Design-first delivery process](docs/11-DESIGN-FIRST-PROCESS.md)
+- [Execution tracker](docs/14-EXECUTION-TRACKER.md)
+- [CI and release gates](docs/15-CI-AND-RELEASE-GATES.md)
+- [Support matrix](docs/18-SUPPORT-MATRIX.md)
+- [Phase 0 exit report](docs/31-PHASE-0-EXIT-REPORT.md)
+
+The numbered documents in `docs/` are the source of truth for accepted
+architecture, behavior, delivery status, and compatibility claims.
+
+## Contributing
+
+Contributions are welcome through issues and pull requests. OpenDoc uses a
+design-first workflow for substantial behavior and architecture changes:
+
+1. Define the required outcome and constraints.
+2. Record relevant specifications, compatibility evidence, and alternatives.
+3. Discuss and accept the design.
+4. Create or update the execution tracker item.
+5. Implement with tests, documentation, and CI coverage.
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before starting work. Governance and
+decision ownership are documented in [GOVERNANCE.md](GOVERNANCE.md).
+
+## Security
+
+Do not report vulnerabilities, malicious fixtures, or confidential documents
+in public issues. Follow [SECURITY.md](SECURITY.md) and use
+[GitHub private vulnerability reporting](https://github.com/CasualOffice/opendoc/security/advisories/new).
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+OpenDoc is available under the [MIT License](LICENSE).
