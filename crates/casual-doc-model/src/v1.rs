@@ -628,6 +628,22 @@ pub struct Document {
 }
 
 impl Document {
+    /// Builds and validates a v1 document from constructed parts.
+    pub fn new(
+        document_id: NodeId,
+        body: Vec<BlockNode>,
+        definitions: Definitions,
+    ) -> Result<Self, ModelError> {
+        let document = Self {
+            schema_version: SCHEMA_VERSION_V1,
+            document_id,
+            body,
+            definitions,
+        };
+        document.validate()?;
+        Ok(document)
+    }
+
     /// Returns the schema version (always 1 for a valid v1 document).
     #[must_use]
     pub const fn schema_version(&self) -> u32 {

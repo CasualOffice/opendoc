@@ -120,6 +120,7 @@ compilation.
 | `casual-doc-transaction` | Atomic operations, inverses, and position mapping |
 | `casual-doc-selection` | Logical caret/range validation and mapping |
 | `casual-doc-ooxml` | Security-bounded OOXML package inspection |
+| `casual-doc-import` | WordprocessingML body import into the normalized model |
 | `opendoc-benchmark` | Reproducible workload and baseline reporting |
 | `opendoc-fuzz` | Independently locked package-reader fuzz targets |
 
