@@ -1073,3 +1073,92 @@ fn text_box_nesting_beyond_bound_is_rejected() {
         Err(ModelError::TextBoxNestingTooDeep(_))
     ));
 }
+
+// ---- schema v1 footnotes / endnotes --------------------------------------
+
+fn note_reference(id: NodeId, kind: NoteKind, note: NoteId) -> InlineNode {
+    InlineNode::NoteReference(NoteReference { id, kind, note })
+}
+
+fn document_with_footnote(
+    reference_kind: NoteKind,
+    ref_note: NoteId,
+    footnote_id: NoteId,
+) -> Result<Document, ModelError> {
+    let mut definitions = Definitions::default();
+    definitions.footnotes.insert(
+        footnote_id,
+        Note {
+            blocks: vec![paragraph_block(tid(30))],
+        },
+    );
+    let body = vec![BlockNode::Paragraph(Paragraph {
+        id: tid(1),
+        properties: ParagraphProperties::default(),
+        inlines: vec![note_reference(tid(2), reference_kind, ref_note)],
+    })];
+    Document::new(NoteId::new(tid(99)).node_id(), body, definitions)
+}
+
+#[test]
+fn footnote_reference_resolves_and_round_trips() {
+    let note = NoteId::new(tid(20));
+    let document = document_with_footnote(NoteKind::Footnote, note, note).unwrap();
+    let json = document.to_json().unwrap();
+    let reloaded = Document::from_json(&json, SnapshotLimits::default()).unwrap();
+    assert_eq!(document, reloaded);
+    assert_eq!(document.definitions().footnotes.len(), 1);
+}
+
+#[test]
+fn dangling_note_reference_is_rejected() {
+    let defined = NoteId::new(tid(20));
+    let missing = NoteId::new(tid(21));
+    assert!(matches!(
+        document_with_footnote(NoteKind::Footnote, missing, defined),
+        Err(ModelError::DanglingNoteRef(_))
+    ));
+}
+
+#[test]
+fn footnote_reference_does_not_resolve_against_endnotes() {
+    // A footnote-kind reference must resolve in `footnotes`, not `endnotes`.
+    let note = NoteId::new(tid(20));
+    let mut definitions = Definitions::default();
+    definitions.endnotes.insert(
+        note,
+        Note {
+            blocks: vec![paragraph_block(tid(30))],
+        },
+    );
+    let body = vec![BlockNode::Paragraph(Paragraph {
+        id: tid(1),
+        properties: ParagraphProperties::default(),
+        inlines: vec![note_reference(tid(2), NoteKind::Footnote, note)],
+    })];
+    assert!(matches!(
+        Document::new(tid(99), body, definitions),
+        Err(ModelError::DanglingNoteRef(_))
+    ));
+}
+
+#[test]
+fn duplicate_id_inside_a_note_is_rejected() {
+    let note = NoteId::new(tid(20));
+    let mut definitions = Definitions::default();
+    definitions.footnotes.insert(
+        note,
+        Note {
+            blocks: vec![paragraph_block(tid(1))], // collides with body paragraph id
+        },
+    );
+    let body = vec![BlockNode::Paragraph(Paragraph {
+        id: tid(1),
+        properties: ParagraphProperties::default(),
+        inlines: vec![note_reference(tid(2), NoteKind::Footnote, note)],
+    })];
+    assert!(matches!(
+        Document::new(tid(99), body, definitions),
+        Err(ModelError::DuplicateNodeId(_))
+    ));
+}

@@ -109,6 +109,8 @@ pub enum ModelError {
     EmptyTextBox(NodeId),
     /// A text box nested deeper than the supported bound (v1).
     TextBoxNestingTooDeep(NodeId),
+    /// A footnote/endnote reference did not resolve (v1).
+    DanglingNoteRef(NodeId),
 }
 
 impl fmt::Display for ModelError {
@@ -215,6 +217,9 @@ impl fmt::Display for ModelError {
                     formatter,
                     "text box {id} nests deeper than the supported bound"
                 )
+            }
+            Self::DanglingNoteRef(id) => {
+                write!(formatter, "note reference {id} does not resolve")
             }
         }
     }

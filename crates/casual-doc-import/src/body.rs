@@ -5,9 +5,9 @@ use std::collections::BTreeMap;
 use casual_doc_model::v1::{
     BlockNode, Break, BreakKind, Drawing, Extent, ExternalTarget, Field, Hyperlink,
     HyperlinkTarget, InlineNode, InternalTarget, MAX_EMU, MAX_FIELD_INSTRUCTION_BYTES,
-    MAX_TEXTBOX_DEPTH, MediaId, PageMargins, PageSize, Paragraph, ParagraphProperties, Run,
-    RunProperties, SectionBoundary, SectionColumns, SectionId, StyleKind, Tab, TextBox,
-    VerticalMerge,
+    MAX_TEXTBOX_DEPTH, MediaId, NoteId, NoteKind, NoteReference, PageMargins, PageSize, Paragraph,
+    ParagraphProperties, Run, RunProperties, SectionBoundary, SectionColumns, SectionId, StyleKind,
+    Tab, TextBox, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::Reader;
@@ -46,6 +46,11 @@ enum Segment {
     },
     /// A fully-built text box (its inner ids are already allocated).
     TextBox(TextBox),
+    /// A reference to a footnote or endnote definition.
+    NoteReference {
+        kind: NoteKind,
+        note: NoteId,
+    },
 }
 
 /// The content-building state suspended while parsing a text box's own content,
@@ -177,6 +182,19 @@ struct BodyParser<'a> {
     alt_stack: Vec<bool>,
     section: Option<SectionAccumulator>,
     sections: Vec<SectionBoundary>,
+    /// Body reference resolution: footnote source `w:id` -> deterministic id.
+    footnote_ids: &'a BTreeMap<String, NoteId>,
+    /// Body reference resolution: endnote source `w:id` -> deterministic id.
+    endnote_ids: &'a BTreeMap<String, NoteId>,
+    /// When set (`b"footnote"`/`b"endnote"`), the parser is reading a notes part
+    /// and treats each note element as a block container.
+    note_container: Option<&'static [u8]>,
+    /// The open note's source `w:id` and allocated id (note-container mode).
+    current_note: Option<(String, NoteId)>,
+    /// Whether the open note is a skipped separator/continuation note.
+    skip_note: bool,
+    /// Collected notes: (source `w:id`, allocated id, block content).
+    notes: Vec<(String, NoteId, Vec<BlockNode>)>,
 }
 
 /// Resolution tables the body parser consults while mapping constructs.
@@ -185,6 +203,72 @@ pub(crate) struct ParseInputs<'a> {
     pub numbering: &'a Numbering,
     pub media_index: &'a BTreeMap<String, MediaId>,
     pub hyperlink_rels: &'a BTreeMap<String, String>,
+    pub footnote_ids: &'a BTreeMap<String, NoteId>,
+    pub endnote_ids: &'a BTreeMap<String, NoteId>,
+}
+
+impl<'a> BodyParser<'a> {
+    fn build(
+        ids: &'a mut IdGenerator,
+        reporter: &'a mut Reporter,
+        inputs: &ParseInputs<'a>,
+        note_container: Option<&'static [u8]>,
+        config: ImportConfig,
+    ) -> Self {
+        BodyParser {
+            ids,
+            styles: inputs.styles,
+            numbering: inputs.numbering,
+            reporter,
+            config,
+            media_index: inputs.media_index,
+            hyperlink_rels: inputs.hyperlink_rels,
+            elements: 0,
+            depth: 0,
+            text_bytes: 0,
+            in_document: false,
+            in_body: false,
+            paragraph_open: false,
+            paragraph_id: None,
+            paragraph_properties: ParagraphProperties::default(),
+            ppr_depth: 0,
+            numpr_depth: 0,
+            pending_num_id: None,
+            pending_ilvl: 0,
+            run_open: false,
+            run_properties: RunProperties::default(),
+            rpr_depth: 0,
+            in_text: false,
+            text_buffer: String::new(),
+            drawing_depth: 0,
+            blipfill_depth: 0,
+            pending_embed: None,
+            pending_extent: None,
+            drawing_extra: false,
+            hyperlink: None,
+            hyperlink_depth: 0,
+            field: None,
+            field_depth: 0,
+            in_instr: false,
+            instr_buffer: String::new(),
+            tables: TableStack::default(),
+            tcpr_depth: 0,
+            suppressed_tbl_depth: 0,
+            segments: Vec::new(),
+            blocks: Vec::new(),
+            frames: Vec::new(),
+            mc_skip_depth: 0,
+            alt_stack: Vec::new(),
+            section: None,
+            sections: Vec::new(),
+            footnote_ids: inputs.footnote_ids,
+            endnote_ids: inputs.endnote_ids,
+            note_container,
+            current_note: None,
+            skip_note: false,
+            notes: Vec::new(),
+        }
+    }
 }
 
 /// Parses main-document body bytes into ordered block nodes, allocating ids.
@@ -195,60 +279,53 @@ pub(crate) fn parse<'a>(
     inputs: ParseInputs<'a>,
     config: ImportConfig,
 ) -> Result<(Vec<BlockNode>, Vec<SectionBoundary>), ImportError> {
-    let mut parser = BodyParser {
-        ids,
-        styles: inputs.styles,
-        numbering: inputs.numbering,
-        reporter,
-        config,
-        media_index: inputs.media_index,
-        hyperlink_rels: inputs.hyperlink_rels,
-        elements: 0,
-        depth: 0,
-        text_bytes: 0,
-        in_document: false,
-        in_body: false,
-        paragraph_open: false,
-        paragraph_id: None,
-        paragraph_properties: ParagraphProperties::default(),
-        ppr_depth: 0,
-        numpr_depth: 0,
-        pending_num_id: None,
-        pending_ilvl: 0,
-        run_open: false,
-        run_properties: RunProperties::default(),
-        rpr_depth: 0,
-        in_text: false,
-        text_buffer: String::new(),
-        drawing_depth: 0,
-        blipfill_depth: 0,
-        pending_embed: None,
-        pending_extent: None,
-        drawing_extra: false,
-        hyperlink: None,
-        hyperlink_depth: 0,
-        field: None,
-        field_depth: 0,
-        in_instr: false,
-        instr_buffer: String::new(),
-        tables: TableStack::default(),
-        tcpr_depth: 0,
-        suppressed_tbl_depth: 0,
-        segments: Vec::new(),
-        blocks: Vec::new(),
-        frames: Vec::new(),
-        mc_skip_depth: 0,
-        alt_stack: Vec::new(),
-        section: None,
-        sections: Vec::new(),
-    };
+    let mut parser = BodyParser::build(ids, reporter, &inputs, None, config);
     parser.run(xml)?;
     // Unwind any text box left open by malformed input so the true body root is
-    // restored (its content is committed, not stranded in a suspended frame).
+    // restored, then finish a paragraph the unwind may have re-opened so its
+    // content is committed, not stranded in a suspended frame.
     while !parser.frames.is_empty() {
         parser.exit_textbox()?;
     }
+    if parser.paragraph_open {
+        parser.finish_paragraph()?;
+    }
     Ok((parser.blocks, parser.sections))
+}
+
+/// Parses a notes part (`word/footnotes.xml` / `word/endnotes.xml`) into its
+/// notes, each keyed by its source `w:id` and allocated id in document order.
+/// `container` is `b"footnote"` or `b"endnote"`.
+pub(crate) fn parse_notes(
+    xml: &[u8],
+    ids: &mut IdGenerator,
+    reporter: &mut Reporter,
+    styles: &Styles,
+    numbering: &Numbering,
+    container: &'static [u8],
+    config: ImportConfig,
+) -> Result<Vec<(String, NoteId, Vec<BlockNode>)>, ImportError> {
+    // Notes resolve their own media/hyperlinks in a later slice; here they carry
+    // no media/hyperlink/note indexes (such refs inside a note are reported).
+    let empty_media = BTreeMap::new();
+    let empty_hyperlink = BTreeMap::new();
+    let empty_notes = BTreeMap::new();
+    let inputs = ParseInputs {
+        styles,
+        numbering,
+        media_index: &empty_media,
+        hyperlink_rels: &empty_hyperlink,
+        footnote_ids: &empty_notes,
+        endnote_ids: &empty_notes,
+    };
+    let mut parser = BodyParser::build(ids, reporter, &inputs, Some(container), config);
+    parser.run(xml)?;
+    while !parser.frames.is_empty() {
+        parser.exit_textbox()?;
+    }
+    // A note left open by malformed input still commits its content.
+    parser.close_note()?;
+    Ok(parser.notes)
 }
 
 impl BodyParser<'_> {
@@ -336,7 +413,14 @@ impl BodyParser<'_> {
         }
         match local {
             b"document" => self.in_document = true,
-            b"body" if self.in_document => self.in_body = true,
+            b"body" if self.in_document && self.note_container.is_none() => self.in_body = true,
+            // Notes-part mode: the `w:footnotes`/`w:endnotes` root enables
+            // reporting, and each note element is a block container.
+            b"footnotes" if self.note_container == Some(b"footnote") => self.in_document = true,
+            b"endnotes" if self.note_container == Some(b"endnote") => self.in_document = true,
+            _ if self.note_container == Some(local) && self.in_document => {
+                self.open_note(element)?;
+            }
             // Alternate content: select the first branch, skip (and report) the
             // rest so content is neither duplicated nor lost.
             b"AlternateContent" => self.alt_stack.push(false),
@@ -399,6 +483,29 @@ impl BodyParser<'_> {
             b"instrText" if self.run_open => {
                 self.in_instr = true;
                 self.instr_buffer.clear();
+            }
+            // Footnote/endnote references (inside a run) resolve to a note id.
+            b"footnoteReference" if self.run_open => {
+                match attribute_value(element, b"id")
+                    .and_then(|id| self.footnote_ids.get(&id).copied())
+                {
+                    Some(note) => self.push_segment(Segment::NoteReference {
+                        kind: NoteKind::Footnote,
+                        note,
+                    }),
+                    None => self.reporter.report(b"footnoteReference"),
+                }
+            }
+            b"endnoteReference" if self.run_open => {
+                match attribute_value(element, b"id")
+                    .and_then(|id| self.endnote_ids.get(&id).copied())
+                {
+                    Some(note) => self.push_segment(Segment::NoteReference {
+                        kind: NoteKind::Endnote,
+                        note,
+                    }),
+                    None => self.reporter.report(b"endnoteReference"),
+                }
             }
             // A complex field is delimited by field characters inside runs.
             b"fldChar" if self.run_open => {
@@ -471,10 +578,12 @@ impl BodyParser<'_> {
             }
             b"hlinkClick" | b"svgBlip" if self.drawing_depth > 0 => self.drawing_extra = true,
             // Only a true body-level `w:sectPr` is a document section; a `sectPr`
-            // inside a text box (frames non-empty) is not, so it is reported.
+            // inside a text box (frames non-empty) or a notes part is not, so it
+            // is reported instead of silently building a phantom/discarded section.
             b"sectPr"
                 if self.in_body
                     && self.frames.is_empty()
+                    && self.note_container.is_none()
                     && !self.paragraph_open
                     && self.ppr_depth == 0 =>
             {
@@ -634,6 +743,7 @@ impl BodyParser<'_> {
                 self.alt_stack.pop();
             }
             b"txbxContent" => self.exit_textbox()?,
+            _ if self.note_container == Some(local) => self.close_note()?,
             b"p" if self.paragraph_open => self.finish_paragraph()?,
             b"pPr" => self.ppr_depth = self.ppr_depth.saturating_sub(1),
             b"numPr" => {
@@ -873,6 +983,50 @@ impl BodyParser<'_> {
         Ok(())
     }
 
+    /// Opens a note (`w:footnote`/`w:endnote`) as a block container. Separator and
+    /// continuation-separator notes (a non-`normal` `w:type`) are presentation and
+    /// are skipped (reported). A content note allocates its id in document order.
+    fn open_note(&mut self, element: &BytesStart<'_>) -> Result<(), ImportError> {
+        self.close_note()?;
+        let is_content = attribute_value(element, b"type")
+            .map(|kind| kind == "normal")
+            .unwrap_or(true);
+        if !is_content {
+            self.skip_note = true;
+            self.reporter.report(self.note_container.unwrap_or(b"note"));
+            return Ok(());
+        }
+        self.skip_note = false;
+        let source_id = attribute_value(element, b"id").unwrap_or_default();
+        let note_id = NoteId::new(self.next_id()?);
+        self.current_note = Some((source_id, note_id));
+        self.in_body = true;
+        self.blocks.clear();
+        Ok(())
+    }
+
+    /// Closes the open note, committing its block content keyed by source `w:id`.
+    fn close_note(&mut self) -> Result<(), ImportError> {
+        if !self.skip_note && self.current_note.is_some() {
+            // Unwind open text boxes FIRST — each restores its enclosing
+            // paragraph — then finish that paragraph so its content (and the text
+            // box) is committed, not dropped.
+            while !self.frames.is_empty() {
+                self.exit_textbox()?;
+            }
+            if self.paragraph_open {
+                self.finish_paragraph()?;
+            }
+        }
+        self.in_body = false;
+        if let Some((source_id, note_id)) = self.current_note.take() {
+            let blocks = std::mem::take(&mut self.blocks);
+            self.notes.push((source_id, note_id, blocks));
+        }
+        self.skip_note = false;
+        Ok(())
+    }
+
     /// Routes a segment into the innermost open wrapper: an open field, then an
     /// open hyperlink, else the paragraph. Fields and hyperlinks never open
     /// inside one another, so at most one wrapper is ever open.
@@ -1099,6 +1253,10 @@ impl BodyParser<'_> {
             // A text box is already fully built (id and inner ids allocated while
             // parsing its content), so it converts directly.
             Segment::TextBox(text_box) => Ok(InlineNode::TextBox(text_box)),
+            Segment::NoteReference { kind, note } => {
+                let id = self.next_id()?;
+                Ok(InlineNode::NoteReference(NoteReference { id, kind, note }))
+            }
         }
     }
 }

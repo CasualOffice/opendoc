@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{BreakKind, MediaId, ParagraphProperties, RunProperties, Table};
+use super::{BreakKind, MediaId, NoteId, ParagraphProperties, RunProperties, Table};
 use crate::NodeId;
 
 /// OOXML `ST_PositiveCoordinate` upper bound, in English Metric Units (EMU).
@@ -142,6 +142,29 @@ pub struct TextBox {
     pub blocks: Vec<BlockNode>,
 }
 
+/// Whether a note reference points at a footnote or an endnote.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NoteKind {
+    /// A footnote.
+    Footnote,
+    /// An endnote.
+    Endnote,
+}
+
+/// An inline reference to a footnote or endnote definition (`w:footnoteReference`
+/// / `w:endnoteReference`). The referenced note's content is a definition.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NoteReference {
+    /// Stable identity.
+    pub id: NodeId,
+    /// Whether this references a footnote or an endnote.
+    pub kind: NoteKind,
+    /// The referenced note (resolves in `Definitions::footnotes`/`endnotes`).
+    pub note: NoteId,
+}
+
 /// Inline content supported by schema v1.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -160,6 +183,8 @@ pub enum InlineNode {
     Field(Field),
     /// An inline text box holding block content.
     TextBox(TextBox),
+    /// An inline reference to a footnote or endnote.
+    NoteReference(NoteReference),
 }
 
 impl InlineNode {
@@ -174,6 +199,7 @@ impl InlineNode {
             Self::Hyperlink(hyperlink) => hyperlink.id,
             Self::Field(field) => field.id,
             Self::TextBox(text_box) => text_box.id,
+            Self::NoteReference(note) => note.id,
         }
     }
 }
