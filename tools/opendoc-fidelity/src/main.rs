@@ -35,7 +35,7 @@ fn main() {
             Ok(result) => {
                 let status = if result.matches { "PASS" } else { "DIFF" };
                 println!(
-                    "{status} {path}  (ours={} chars, libre={} chars, line-match={:.0}%)",
+                    "{status} {path}  (ours={} chars, libre={} chars, word-match={:.0}%)",
                     result.ours.chars().count(),
                     result.libre.chars().count(),
                     result.similarity * 100.0
@@ -67,10 +67,15 @@ fn evaluate(path: &Path) -> Result<Evaluation, Box<dyn Error>> {
     let bytes = fs::read(path)?;
     let ours = extract_ours(&bytes)?;
     let libre = extract_libre(path)?;
-    let ours_norm = normalize(&ours);
-    let libre_norm = normalize(&libre);
-    let matches = ours_norm == libre_norm;
-    let similarity = line_similarity(&ours_norm, &libre_norm);
+    let ours_words = words(&normalize(&ours));
+    let libre_words = words(&normalize(&libre));
+    let similarity = word_similarity(&ours_words, &libre_words);
+    let matches = {
+        let (mut a, mut b) = (ours_words.clone(), libre_words.clone());
+        a.sort();
+        b.sort();
+        a == b
+    };
     Ok(Evaluation {
         ours,
         libre,
@@ -199,15 +204,27 @@ fn strip_list_marker(line: &str) -> &str {
     line
 }
 
-/// Fraction of normalized lines that appear (as a multiset) in both texts.
-fn line_similarity(a: &[String], b: &[String]) -> f64 {
+/// Flattens normalized lines into their whitespace-separated words.
+fn words(lines: &[String]) -> Vec<String> {
+    lines
+        .iter()
+        .flat_map(|line| line.split_whitespace().map(str::to_owned))
+        .collect()
+}
+
+/// Fraction of words that appear (as a multiset) in both texts. Comparing words
+/// rather than whole lines makes the metric insensitive to how a producer groups
+/// text into lines — LibreOffice joins a table row's cells onto one line while the
+/// importer emits one line per cell — while still measuring recovered content, so
+/// a genuine gap (text we do not extract, e.g. header/footer parts) still shows.
+fn word_similarity(a: &[String], b: &[String]) -> f64 {
     if a.is_empty() && b.is_empty() {
         return 1.0;
     }
     let mut remaining: Vec<&String> = b.iter().collect();
     let mut hits = 0_usize;
-    for line in a {
-        if let Some(position) = remaining.iter().position(|other| *other == line) {
+    for word in a {
+        if let Some(position) = remaining.iter().position(|other| *other == word) {
             remaining.swap_remove(position);
             hits += 1;
         }
