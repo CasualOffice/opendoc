@@ -1,8 +1,12 @@
 //! Main-document body parsing into v1 block nodes.
 
+use std::collections::BTreeMap;
+
 use casual_doc_model::v1::{
-    BlockNode, Break, BreakKind, InlineNode, PageMargins, PageSize, Paragraph, ParagraphProperties,
-    Run, RunProperties, SectionBoundary, SectionColumns, SectionId, StyleKind, Tab,
+    BlockNode, Break, BreakKind, Drawing, Extent, ExternalTarget, Hyperlink, HyperlinkTarget,
+    InlineNode, InternalTarget, MAX_EMU, MediaId, PageMargins, PageSize, Paragraph,
+    ParagraphProperties, Run, RunProperties, SectionBoundary, SectionColumns, SectionId, StyleKind,
+    Tab,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::Reader;
@@ -17,7 +21,7 @@ use crate::properties::{
 use crate::report::Reporter;
 use crate::styles::Styles;
 
-/// A run/tab/break segment before ids and normalization are assigned.
+/// A run/tab/break/drawing/hyperlink segment before ids and normalization.
 enum Segment {
     Run {
         properties: RunProperties,
@@ -25,6 +29,22 @@ enum Segment {
     },
     Tab,
     Break(BreakKind),
+    Drawing {
+        media: MediaId,
+        extent: Option<Extent>,
+    },
+    Hyperlink {
+        target: HyperlinkTarget,
+        tooltip: Option<String>,
+        children: Vec<Segment>,
+    },
+}
+
+/// A hyperlink being accumulated while inside a `w:hyperlink`.
+struct HyperlinkAccumulator {
+    target: HyperlinkTarget,
+    tooltip: Option<String>,
+    segments: Vec<Segment>,
 }
 
 /// Raw section geometry accumulated while inside a `w:sectPr`.
@@ -45,6 +65,10 @@ struct BodyParser<'a> {
     numbering: &'a Numbering,
     reporter: &'a mut Reporter,
     config: ImportConfig,
+    /// Resolution index: image relationship id -> the media table entry.
+    media_index: &'a BTreeMap<String, MediaId>,
+    /// Resolution index: hyperlink relationship id -> external target URL.
+    hyperlink_rels: &'a BTreeMap<String, String>,
     elements: u64,
     depth: u64,
     text_bytes: usize,
@@ -62,27 +86,43 @@ struct BodyParser<'a> {
     rpr_depth: u32,
     in_text: bool,
     text_buffer: String,
+    drawing_depth: u32,
+    blipfill_depth: u32,
+    pending_embed: Option<String>,
+    pending_extent: Option<Extent>,
+    drawing_extra: bool,
+    hyperlink: Option<HyperlinkAccumulator>,
+    hyperlink_depth: u32,
     segments: Vec<Segment>,
     paragraphs: Vec<Paragraph>,
     section: Option<SectionAccumulator>,
     sections: Vec<SectionBoundary>,
 }
 
+/// Resolution tables the body parser consults while mapping constructs.
+pub(crate) struct ParseInputs<'a> {
+    pub styles: &'a Styles,
+    pub numbering: &'a Numbering,
+    pub media_index: &'a BTreeMap<String, MediaId>,
+    pub hyperlink_rels: &'a BTreeMap<String, String>,
+}
+
 /// Parses main-document body bytes into ordered block nodes, allocating ids.
-pub(crate) fn parse(
+pub(crate) fn parse<'a>(
     xml: &[u8],
-    ids: &mut IdGenerator,
-    styles: &Styles,
-    numbering: &Numbering,
-    reporter: &mut Reporter,
+    ids: &'a mut IdGenerator,
+    reporter: &'a mut Reporter,
+    inputs: ParseInputs<'a>,
     config: ImportConfig,
 ) -> Result<(Vec<BlockNode>, Vec<SectionBoundary>), ImportError> {
     let mut parser = BodyParser {
         ids,
-        styles,
-        numbering,
+        styles: inputs.styles,
+        numbering: inputs.numbering,
         reporter,
         config,
+        media_index: inputs.media_index,
+        hyperlink_rels: inputs.hyperlink_rels,
         elements: 0,
         depth: 0,
         text_bytes: 0,
@@ -100,6 +140,13 @@ pub(crate) fn parse(
         rpr_depth: 0,
         in_text: false,
         text_buffer: String::new(),
+        drawing_depth: 0,
+        blipfill_depth: 0,
+        pending_embed: None,
+        pending_extent: None,
+        drawing_extra: false,
+        hyperlink: None,
+        hyperlink_depth: 0,
         segments: Vec::new(),
         paragraphs: Vec::new(),
         section: None,
@@ -232,8 +279,63 @@ impl BodyParser<'_> {
                 self.in_text = true;
                 self.text_buffer.clear();
             }
-            b"tab" if self.run_open => self.segments.push(Segment::Tab),
-            b"br" if self.run_open => self.segments.push(Segment::Break(break_kind(element))),
+            b"tab" if self.run_open => self.push_segment(Segment::Tab),
+            b"br" if self.run_open => {
+                let kind = break_kind(element);
+                self.push_segment(Segment::Break(kind));
+            }
+            b"hyperlink" if self.paragraph_open && !self.run_open => {
+                self.hyperlink_depth += 1;
+                if self.hyperlink_depth == 1 {
+                    match self.resolve_hyperlink_target(element) {
+                        Some((target, tooltip)) => {
+                            self.hyperlink = Some(HyperlinkAccumulator {
+                                target,
+                                tooltip,
+                                segments: Vec::new(),
+                            });
+                        }
+                        None => self.reporter.report(b"hyperlink"),
+                    }
+                } else {
+                    // A nested hyperlink is not modeled; its runs flatten into
+                    // the outer link and the nesting is reported.
+                    self.reporter.report(b"hyperlink");
+                }
+            }
+            b"drawing" if self.run_open => {
+                self.drawing_depth += 1;
+                if self.drawing_depth == 1 {
+                    self.pending_embed = None;
+                    self.pending_extent = None;
+                    self.drawing_extra = false;
+                    self.blipfill_depth = 0;
+                }
+            }
+            b"extent" if self.drawing_depth > 0 => {
+                if let (Some(cx), Some(cy)) = (attr_i64(element, b"cx"), attr_i64(element, b"cy")) {
+                    if (0..=MAX_EMU).contains(&cx) && (0..=MAX_EMU).contains(&cy) {
+                        self.pending_extent = Some(Extent {
+                            width_emu: cx,
+                            height_emu: cy,
+                        });
+                    }
+                }
+            }
+            b"blipFill" if self.drawing_depth > 0 => self.blipfill_depth += 1,
+            b"blip" if self.blipfill_depth > 0 && self.pending_embed.is_none() => {
+                self.pending_embed = attribute_value(element, b"embed");
+            }
+            // A floating anchor, alt text, click-link, or SVG dual-blip carries
+            // detail the model does not capture: flag it so a resolved drawing
+            // is still reported (degraded), never silently under-modeled.
+            b"anchor" if self.drawing_depth > 0 => self.drawing_extra = true,
+            b"docPr" if self.drawing_depth > 0 => {
+                if attribute_value(element, b"descr").is_some() {
+                    self.drawing_extra = true;
+                }
+            }
+            b"hlinkClick" | b"svgBlip" if self.drawing_depth > 0 => self.drawing_extra = true,
             b"sectPr" if self.in_body && !self.paragraph_open && self.ppr_depth == 0 => {
                 self.section = Some(SectionAccumulator::default());
             }
@@ -269,6 +371,10 @@ impl BodyParser<'_> {
                     self.reporter.report(local);
                 }
             }
+            // Known DrawingML scaffolding for an embedded picture is consumed
+            // silently; any OTHER element inside a drawing (e.g. a text box)
+            // still falls through to the report arm below — no silent loss.
+            _ if self.drawing_depth > 0 && is_drawing_scaffolding(local) => {}
             _ if self.in_document => self.reporter.report(local),
             _ => {}
         }
@@ -318,15 +424,61 @@ impl BodyParser<'_> {
                 self.in_text = false;
                 let text = std::mem::take(&mut self.text_buffer);
                 if !text.is_empty() {
-                    self.segments.push(Segment::Run {
-                        properties: self.run_properties.clone(),
-                        text,
-                    });
+                    let properties = self.run_properties.clone();
+                    self.push_segment(Segment::Run { properties, text });
                 }
+            }
+            b"blipFill" => self.blipfill_depth = self.blipfill_depth.saturating_sub(1),
+            b"drawing" if self.drawing_depth > 0 => {
+                self.drawing_depth -= 1;
+                if self.drawing_depth == 0 {
+                    self.commit_drawing();
+                }
+            }
+            b"hyperlink" if self.hyperlink_depth > 0 => {
+                if self.hyperlink_depth == 1 {
+                    if let Some(accumulator) = self.hyperlink.take() {
+                        let children = normalize_segments(accumulator.segments);
+                        if children.is_empty() {
+                            self.reporter.report(b"hyperlink");
+                        } else {
+                            // Commit to the parent stream: a hyperlink never nests.
+                            self.segments.push(Segment::Hyperlink {
+                                target: accumulator.target,
+                                tooltip: accumulator.tooltip,
+                                children,
+                            });
+                        }
+                    }
+                }
+                self.hyperlink_depth = self.hyperlink_depth.saturating_sub(1);
             }
             _ => {}
         }
         Ok(())
+    }
+
+    /// Commits the top-level drawing that just closed. A resolved embed becomes
+    /// a `Drawing` segment; an unresolved/dangling embed is reported and
+    /// dropped. A resolved drawing carrying unmodeled detail is also reported.
+    fn commit_drawing(&mut self) {
+        let extent = self.pending_extent.take();
+        let extra = self.drawing_extra;
+        match self.pending_embed.take() {
+            Some(embed) => match self.media_index.get(&embed) {
+                Some(media) => {
+                    if extra {
+                        self.reporter.report(b"drawing");
+                    }
+                    self.push_segment(Segment::Drawing {
+                        media: *media,
+                        extent,
+                    });
+                }
+                None => self.reporter.report(b"drawing"),
+            },
+            None => self.reporter.report(b"drawing"),
+        }
     }
 
     fn build_section(&mut self, accumulator: SectionAccumulator) -> Result<(), ImportError> {
@@ -353,10 +505,66 @@ impl BodyParser<'_> {
         Ok(())
     }
 
+    /// Routes a segment into an open hyperlink if one is being accumulated, so
+    /// content (runs, tabs, breaks, drawings) inside a `w:hyperlink` is captured
+    /// by the link rather than the paragraph.
+    fn push_segment(&mut self, segment: Segment) {
+        match self.hyperlink.as_mut() {
+            Some(accumulator) => accumulator.segments.push(segment),
+            None => self.segments.push(segment),
+        }
+    }
+
+    /// Resolves a `w:hyperlink`'s target: an external URL through the
+    /// relationship graph (`r:id`) or an internal bookmark (`w:anchor`).
+    /// Returns `None` (report + flatten) when neither resolves in domain.
+    fn resolve_hyperlink_target(
+        &self,
+        element: &BytesStart<'_>,
+    ) -> Option<(HyperlinkTarget, Option<String>)> {
+        let tooltip = attribute_value(element, b"tooltip")
+            .filter(|value| !value.is_empty() && value.len() <= 255);
+        if let Some(relationship_id) = attribute_value(element, b"id") {
+            let url = self.hyperlink_rels.get(&relationship_id)?;
+            if url.is_empty() || url.len() > 2048 {
+                return None;
+            }
+            return Some((
+                HyperlinkTarget::External(ExternalTarget { url: url.clone() }),
+                tooltip,
+            ));
+        }
+        let anchor = attribute_value(element, b"anchor")?;
+        if anchor.is_empty() || anchor.len() > 255 {
+            return None;
+        }
+        Some((
+            HyperlinkTarget::Internal(InternalTarget { anchor }),
+            tooltip,
+        ))
+    }
+
     fn finish_paragraph(&mut self) -> Result<(), ImportError> {
         self.paragraph_open = false;
         self.ppr_depth = 0;
         self.run_open = false;
+        // Robustness: a `w:p` that closes with an open hyperlink is malformed;
+        // flush what was accumulated so nothing is dropped, then reset state.
+        if let Some(accumulator) = self.hyperlink.take() {
+            let children = normalize_segments(accumulator.segments);
+            if children.is_empty() {
+                self.reporter.report(b"hyperlink");
+            } else {
+                self.segments.push(Segment::Hyperlink {
+                    target: accumulator.target,
+                    tooltip: accumulator.tooltip,
+                    children,
+                });
+            }
+        }
+        self.hyperlink_depth = 0;
+        self.drawing_depth = 0;
+        self.blipfill_depth = 0;
         let paragraph_id = self
             .paragraph_id
             .take()
@@ -364,16 +572,7 @@ impl BodyParser<'_> {
         let normalized = normalize_segments(std::mem::take(&mut self.segments));
         let mut inlines = Vec::with_capacity(normalized.len());
         for segment in normalized {
-            let id = self.next_id()?;
-            inlines.push(match segment {
-                Segment::Run { properties, text } => InlineNode::Run(Run {
-                    id,
-                    properties,
-                    text,
-                }),
-                Segment::Tab => InlineNode::Tab(Tab { id }),
-                Segment::Break(kind) => InlineNode::Break(Break { id, kind }),
-            });
+            inlines.push(self.segment_to_inline(segment)?);
         }
         self.paragraphs.push(Paragraph {
             id: paragraph_id,
@@ -382,10 +581,112 @@ impl BodyParser<'_> {
         });
         Ok(())
     }
+
+    /// Assigns ids in document order (an opening tag before its children) and
+    /// builds the inline node. A hyperlink's own id precedes its children's.
+    fn segment_to_inline(&mut self, segment: Segment) -> Result<InlineNode, ImportError> {
+        match segment {
+            Segment::Run { properties, text } => {
+                let id = self.next_id()?;
+                Ok(InlineNode::Run(Run {
+                    id,
+                    properties,
+                    text,
+                }))
+            }
+            Segment::Tab => {
+                let id = self.next_id()?;
+                Ok(InlineNode::Tab(Tab { id }))
+            }
+            Segment::Break(kind) => {
+                let id = self.next_id()?;
+                Ok(InlineNode::Break(Break { id, kind }))
+            }
+            Segment::Drawing { media, extent } => {
+                let id = self.next_id()?;
+                Ok(InlineNode::Drawing(Drawing { id, media, extent }))
+            }
+            Segment::Hyperlink {
+                target,
+                tooltip,
+                children,
+            } => {
+                let id = self.next_id()?;
+                let mut inlines = Vec::with_capacity(children.len());
+                for child in children {
+                    inlines.push(self.segment_to_inline(child)?);
+                }
+                Ok(InlineNode::Hyperlink(Hyperlink {
+                    id,
+                    target,
+                    tooltip,
+                    inlines,
+                }))
+            }
+        }
+    }
 }
 
 fn attr_i32(element: &BytesStart<'_>, name: &[u8]) -> Option<i32> {
     attribute_value(element, name).and_then(|value| value.parse().ok())
+}
+
+fn attr_i64(element: &BytesStart<'_>, name: &[u8]) -> Option<i64> {
+    attribute_value(element, name).and_then(|value| value.parse().ok())
+}
+
+/// Whether a local element name is known DrawingML scaffolding for an embedded
+/// picture (consumed silently while inside a `w:drawing`). Anything not listed
+/// still reports, so genuinely unmodeled drawing content is never lost.
+fn is_drawing_scaffolding(local: &[u8]) -> bool {
+    matches!(
+        local,
+        b"inline"
+            | b"anchor"
+            | b"simplePos"
+            | b"positionH"
+            | b"positionV"
+            | b"posOffset"
+            | b"align"
+            | b"wrapNone"
+            | b"wrapSquare"
+            | b"wrapTight"
+            | b"wrapThrough"
+            | b"wrapTopAndBottom"
+            | b"wrapPolygon"
+            | b"start"
+            | b"lineTo"
+            | b"effectExtent"
+            | b"docPr"
+            | b"cNvGraphicFramePr"
+            | b"graphicFrameLocks"
+            | b"graphic"
+            | b"graphicData"
+            | b"pic"
+            | b"nvPicPr"
+            | b"cNvPr"
+            | b"cNvPicPr"
+            | b"picLocks"
+            | b"hlinkClick"
+            | b"spPr"
+            | b"xfrm"
+            | b"off"
+            | b"ext"
+            | b"prstGeom"
+            | b"avLst"
+            | b"custGeom"
+            | b"ln"
+            | b"noFill"
+            | b"solidFill"
+            | b"srgbClr"
+            | b"stretch"
+            | b"fillRect"
+            | b"srcRect"
+            | b"blipFill"
+            | b"blip"
+            | b"extLst"
+            | b"svgBlip"
+    )
 }
 
 fn normalize_segments(segments: Vec<Segment>) -> Vec<Segment> {

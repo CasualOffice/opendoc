@@ -69,9 +69,30 @@ mod tests {
     use super::*;
 
     use casual_doc_import::{ImportConfig, ImportMode, import_package};
+    use casual_doc_model::v1::{BlockNode, Document, InlineNode};
     use casual_doc_ooxml::{DocxPackage, PackageLimits};
     use zip::write::SimpleFileOptions;
     use zip::{CompressionMethod, ZipWriter};
+
+    /// Whether any inline node (recursing into hyperlinks) matches `predicate`.
+    fn any_inline(document: &Document, predicate: impl Fn(&InlineNode) -> bool + Copy) -> bool {
+        fn walk(inline: &InlineNode, predicate: impl Fn(&InlineNode) -> bool + Copy) -> bool {
+            if predicate(inline) {
+                return true;
+            }
+            if let InlineNode::Hyperlink(link) = inline {
+                return link.inlines.iter().any(|child| walk(child, predicate));
+            }
+            false
+        }
+        document.body().iter().any(|block| {
+            let BlockNode::Paragraph(paragraph) = block;
+            paragraph
+                .inlines
+                .iter()
+                .any(|inline| walk(inline, predicate))
+        })
+    }
 
     fn sample_package() -> Vec<u8> {
         let content_types = br#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
@@ -173,8 +194,13 @@ mod tests {
             let mut package = DocxPackage::open(original, PackageLimits::default()).unwrap();
             import_package(&mut package, config).unwrap()
         };
-        // The embedded image relationship is mapped into the media table.
+        // The embedded image relationship is mapped into the media table and
+        // the picture is modeled as a first-class inline drawing.
         assert!(!first.document.definitions().media.is_empty());
+        assert!(any_inline(&first.document, |inline| matches!(
+            inline,
+            InlineNode::Drawing(_)
+        )));
 
         let rebuilt = write_package(first.retained_source.as_ref().unwrap()).unwrap();
         let second = {
@@ -204,6 +230,11 @@ mod tests {
             let mut package = DocxPackage::open(original, PackageLimits::default()).unwrap();
             import_package(&mut package, config).unwrap()
         };
+        // The links are modeled as first-class inline hyperlinks.
+        assert!(any_inline(&first.document, |inline| matches!(
+            inline,
+            InlineNode::Hyperlink(_)
+        )));
         let rebuilt = write_package(first.retained_source.as_ref().unwrap()).unwrap();
         let second = {
             let mut package = DocxPackage::open(&rebuilt, PackageLimits::default()).unwrap();

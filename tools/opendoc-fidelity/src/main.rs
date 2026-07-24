@@ -87,15 +87,25 @@ fn extract_ours(bytes: &[u8]) -> Result<String, Box<dyn Error>> {
     for block in import.document.body() {
         let BlockNode::Paragraph(paragraph) = block;
         for inline in &paragraph.inlines {
-            match inline {
-                InlineNode::Run(run) => out.push_str(&run.text),
-                InlineNode::Tab(_) => out.push('\t'),
-                InlineNode::Break(_) => out.push('\n'),
-            }
+            push_inline_text(inline, &mut out);
         }
         out.push('\n');
     }
     Ok(out)
+}
+
+fn push_inline_text(inline: &InlineNode, out: &mut String) {
+    match inline {
+        InlineNode::Run(run) => out.push_str(&run.text),
+        InlineNode::Tab(_) => out.push('\t'),
+        InlineNode::Break(_) => out.push('\n'),
+        InlineNode::Drawing(_) => {}
+        InlineNode::Hyperlink(link) => {
+            for child in &link.inlines {
+                push_inline_text(child, out);
+            }
+        }
+    }
 }
 
 /// Extracts document text through LibreOffice headless conversion.

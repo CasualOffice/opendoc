@@ -42,7 +42,9 @@ pub use report::{CompatibilityEntry, CompatibilityReport, ModelOutcome, Retentio
 pub use retain::RetainedSource;
 
 use casual_doc_model::IdGenerator;
-use casual_doc_model::v1::{BlockNode, Definitions, Document, Paragraph, ParagraphProperties};
+use casual_doc_model::v1::{
+    BlockNode, Definitions, Document, MediaId, Paragraph, ParagraphProperties,
+};
 use casual_doc_ooxml::DocxPackage;
 
 use crate::media::MediaSource;
@@ -106,11 +108,25 @@ pub fn import_package(
         Some(part) => Some(package.read_part(&part).map_err(ImportError::Package)?),
         None => None,
     };
+    // External hyperlink targets, resolved through the main-document
+    // relationship graph (r:id -> URL), for first-class hyperlink modeling.
+    let hyperlink_rels: std::collections::BTreeMap<String, String> = package
+        .main_document_relationships()
+        .iter()
+        .filter(|relationship| relationship.relationship_type.ends_with("/hyperlink"))
+        .filter(|relationship| {
+            relationship.target_mode == casual_doc_ooxml::TargetMode::External
+                && !relationship.id.is_empty()
+        })
+        .map(|relationship| (relationship.id.clone(), relationship.target.clone()))
+        .collect();
+
     let mut import = import_with_sources(
         &document_bytes,
         styles_bytes.as_deref(),
         numbering_bytes.as_deref(),
         &media_sources,
+        &hyperlink_rels,
         config,
     )?;
 
@@ -139,7 +155,14 @@ pub fn import_package(
 
 /// Imports main-document WordprocessingML bytes (no styles) into a v1 document.
 pub fn import_main_document_xml(xml: &[u8], config: ImportConfig) -> Result<Import, ImportError> {
-    import_with_sources(xml, None, None, &[], config)
+    import_with_sources(
+        xml,
+        None,
+        None,
+        &[],
+        &std::collections::BTreeMap::new(),
+        config,
+    )
 }
 
 pub(crate) fn import_with_sources(
@@ -147,6 +170,7 @@ pub(crate) fn import_with_sources(
     styles_xml: Option<&[u8]>,
     numbering_xml: Option<&[u8]>,
     media_sources: &[MediaSource],
+    hyperlink_rels: &std::collections::BTreeMap<String, String>,
     config: ImportConfig,
 ) -> Result<Import, ImportError> {
     config.validate()?;
@@ -187,12 +211,25 @@ pub(crate) fn import_with_sources(
         Some(xml) => numbering::parse(xml, &mut ids, &mut reporter, config)?,
         None => Numbering::default(),
     };
+    // Media is built BEFORE the body so inline drawings can resolve their
+    // `r:embed` to a `MediaId` while parsing. Deterministic id order:
+    // document -> styles -> numbering -> media -> body -> empty-para fallback.
+    let media = media::build(media_sources, &mut ids, &mut reporter)?;
+    let media_index: std::collections::BTreeMap<String, MediaId> = media
+        .iter()
+        .map(|(id, reference)| (reference.relationship_id.clone(), *id))
+        .collect();
+
     let (mut body, sections) = body::parse(
         document_xml,
         &mut ids,
-        &styles,
-        &numbering,
         &mut reporter,
+        body::ParseInputs {
+            styles: &styles,
+            numbering: &numbering,
+            media_index: &media_index,
+            hyperlink_rels,
+        },
         config,
     )?;
     if body.is_empty() {
@@ -208,7 +245,6 @@ pub(crate) fn import_with_sources(
         }));
     }
 
-    let media = media::build(media_sources, &mut ids, &mut reporter)?;
     let (abstract_numbering, numbering_instances) = numbering.into_definitions();
     let definitions = Definitions {
         styles: styles.into_definitions(),

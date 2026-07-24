@@ -1,5 +1,6 @@
 use casual_doc_model::v1::{
-    Alignment, BlockNode, Break, BreakKind, Color, InlineNode, Paragraph, RgbColor, StyleKind,
+    Alignment, BlockNode, Break, BreakKind, Color, HyperlinkTarget, InlineNode, Paragraph,
+    RgbColor, StyleKind,
 };
 use casual_doc_ooxml::DocxPackage;
 
@@ -13,7 +14,15 @@ fn import(xml: &[u8]) -> Import {
 }
 
 fn import_with_styles(document: &[u8], styles: &[u8]) -> Import {
-    import_with_sources(document, Some(styles), None, &[], ImportConfig::default()).unwrap()
+    import_with_sources(
+        document,
+        Some(styles),
+        None,
+        &[],
+        &std::collections::BTreeMap::new(),
+        ImportConfig::default(),
+    )
+    .unwrap()
 }
 
 fn import_with_numbering(document: &[u8], numbering: &[u8]) -> Import {
@@ -22,6 +31,7 @@ fn import_with_numbering(document: &[u8], numbering: &[u8]) -> Import {
         None,
         Some(numbering),
         &[],
+        &std::collections::BTreeMap::new(),
         ImportConfig::default(),
     )
     .unwrap()
@@ -752,4 +762,163 @@ fn image_relationships_map_to_media_references() {
     assert_eq!(reference.relationship_id, "rId7");
     assert_eq!(reference.media_type, "image/png");
     assert_eq!(reference.part_name, "word/media/image1.png");
+}
+
+/// Builds a minimal admitted DOCX package from a main-document body, the
+/// main-document relationships, and any extra parts (e.g. a media binary).
+fn build_package(document: &[u8], document_rels: &[u8], extra: &[(&str, &[u8])]) -> Vec<u8> {
+    use std::io::{Cursor, Write};
+    use zip::write::SimpleFileOptions;
+    use zip::{CompressionMethod, ZipWriter};
+
+    let content_types = br#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+    let rels = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+
+    let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+    let mut write = |name: &str, bytes: &[u8]| {
+        writer
+            .start_file(
+                name,
+                SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
+            )
+            .unwrap();
+        writer.write_all(bytes).unwrap();
+    };
+    write("[Content_Types].xml", content_types);
+    write("_rels/.rels", rels);
+    write("word/document.xml", document);
+    write("word/_rels/document.xml.rels", document_rels);
+    for (name, bytes) in extra {
+        write(name, bytes);
+    }
+    writer.finish().unwrap().into_inner()
+}
+
+fn import_bytes(bytes: &[u8]) -> Import {
+    let mut package = DocxPackage::open(bytes, casual_doc_ooxml::PackageLimits::default()).unwrap();
+    import_package(&mut package, ImportConfig::default()).unwrap()
+}
+
+const IMAGE_REL: &[u8] = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+
+const DRAWING_INLINE: &str = r#"<w:drawing><wp:inline><wp:extent cx="9525" cy="19050"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>"#;
+
+#[test]
+fn inline_drawing_with_embed_maps_to_a_drawing_node() {
+    let document = format!(
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:r>{DRAWING_INLINE}</w:r></w:p></w:body></w:document>"#
+    );
+    let media = [("word/media/image1.png", b"PNGDATA".as_slice())];
+    let import = import_bytes(&build_package(document.as_bytes(), IMAGE_REL, &media));
+
+    let (media_id, _) = import.document.definitions().media.iter().next().unwrap();
+    let inlines = &paragraph(&import, 0).inlines;
+    assert_eq!(inlines.len(), 1);
+    let InlineNode::Drawing(drawing) = &inlines[0] else {
+        panic!("expected a drawing, got {:?}", inlines[0]);
+    };
+    assert_eq!(drawing.media, *media_id);
+    let extent = drawing.extent.expect("extent parsed");
+    assert_eq!(extent.width_emu, 9525);
+    assert_eq!(extent.height_emu, 19050);
+    // A resolved, fully-modeled inline drawing is mapped, not reported.
+    assert!(!features(&import).contains(&"drawing"));
+}
+
+#[test]
+fn drawing_with_a_dangling_embed_is_reported_and_dropped() {
+    // The blip references rId9, which has no relationship: no media, no node.
+    let document = r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:a="urn:a"><w:body><w:p><w:r><w:drawing><a:blip r:embed="rId9"/></w:drawing></w:r></w:p></w:body></w:document>"#;
+    let empty_rels = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>"#;
+    let import = import_bytes(&build_package(document.as_bytes(), empty_rels, &[]));
+
+    assert!(features(&import).contains(&"drawing"));
+    assert!(
+        paragraph(&import, 0)
+            .inlines
+            .iter()
+            .all(|inline| !matches!(inline, InlineNode::Drawing(_)))
+    );
+}
+
+const HYPERLINK_REL: &[u8] = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId8" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com/docs" TargetMode="External"/></Relationships>"#;
+
+#[test]
+fn external_hyperlink_maps_to_a_hyperlink_node() {
+    let document = r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r"><w:body><w:p><w:hyperlink r:id="rId8" w:tooltip="see docs"><w:r><w:t>docs</w:t></w:r></w:hyperlink></w:p></w:body></w:document>"#;
+    let import = import_bytes(&build_package(document.as_bytes(), HYPERLINK_REL, &[]));
+
+    let inlines = &paragraph(&import, 0).inlines;
+    assert_eq!(inlines.len(), 1);
+    let InlineNode::Hyperlink(link) = &inlines[0] else {
+        panic!("expected a hyperlink, got {:?}", inlines[0]);
+    };
+    assert_eq!(
+        link.target,
+        HyperlinkTarget::External(casual_doc_model::v1::ExternalTarget {
+            url: "https://example.com/docs".to_owned(),
+        })
+    );
+    assert_eq!(link.tooltip.as_deref(), Some("see docs"));
+    let InlineNode::Run(run) = &link.inlines[0] else {
+        panic!("expected a run child");
+    };
+    assert_eq!(run.text, "docs");
+    assert!(!features(&import).contains(&"hyperlink"));
+}
+
+#[test]
+fn internal_anchor_hyperlink_maps_to_a_hyperlink_node() {
+    let document = r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r"><w:body><w:p><w:hyperlink w:anchor="top"><w:r><w:t>top</w:t></w:r></w:hyperlink></w:p></w:body></w:document>"#;
+    let empty_rels = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>"#;
+    let import = import_bytes(&build_package(document.as_bytes(), empty_rels, &[]));
+
+    let InlineNode::Hyperlink(link) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected a hyperlink");
+    };
+    assert_eq!(
+        link.target,
+        HyperlinkTarget::Internal(casual_doc_model::v1::InternalTarget {
+            anchor: "top".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn unresolved_hyperlink_is_reported_and_its_text_flattened() {
+    // r:id="rId9" has no relationship: the link is reported, but its text is
+    // preserved as flat runs in the paragraph (never dropped).
+    let document = r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r"><w:body><w:p><w:hyperlink r:id="rId9"><w:r><w:t>orphan</w:t></w:r></w:hyperlink></w:p></w:body></w:document>"#;
+    let empty_rels = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>"#;
+    let import = import_bytes(&build_package(document.as_bytes(), empty_rels, &[]));
+
+    assert!(features(&import).contains(&"hyperlink"));
+    let inlines = &paragraph(&import, 0).inlines;
+    assert!(
+        inlines
+            .iter()
+            .all(|inline| !matches!(inline, InlineNode::Hyperlink(_)))
+    );
+    let InlineNode::Run(run) = &inlines[0] else {
+        panic!("expected the flattened run");
+    };
+    assert_eq!(run.text, "orphan");
+}
+
+#[test]
+fn image_inside_a_hyperlink_becomes_a_drawing_child() {
+    // Proves the push_segment router: a drawing inside a hyperlink is captured
+    // by the link, not the paragraph.
+    let document = format!(
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:hyperlink r:id="rId8"><w:r>{DRAWING_INLINE}</w:r></w:hyperlink></w:p></w:body></w:document>"#
+    );
+    // Two relationships: the hyperlink (rId8) and the image (rId7).
+    let rels = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId8" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com" TargetMode="External"/><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+    let media = [("word/media/image1.png", b"PNGDATA".as_slice())];
+    let import = import_bytes(&build_package(document.as_bytes(), rels, &media));
+
+    let InlineNode::Hyperlink(link) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected a hyperlink");
+    };
+    assert!(matches!(link.inlines[0], InlineNode::Drawing(_)));
 }
