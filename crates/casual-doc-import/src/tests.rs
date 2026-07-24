@@ -13,11 +13,18 @@ fn import(xml: &[u8]) -> Import {
 }
 
 fn import_with_styles(document: &[u8], styles: &[u8]) -> Import {
-    import_with_sources(document, Some(styles), None, ImportConfig::default()).unwrap()
+    import_with_sources(document, Some(styles), None, &[], ImportConfig::default()).unwrap()
 }
 
 fn import_with_numbering(document: &[u8], numbering: &[u8]) -> Import {
-    import_with_sources(document, None, Some(numbering), ImportConfig::default()).unwrap()
+    import_with_sources(
+        document,
+        None,
+        Some(numbering),
+        &[],
+        ImportConfig::default(),
+    )
+    .unwrap()
 }
 
 fn features(import: &Import) -> Vec<&str> {
@@ -704,4 +711,45 @@ fn body_level_section_geometry_is_mapped() {
     assert_eq!(section.columns.count, 2);
     // sectPr is now mapped, so it is no longer reported.
     assert!(!features(&import).contains(&"sectPr"));
+}
+
+#[test]
+fn image_relationships_map_to_media_references() {
+    use std::io::{Cursor, Write};
+    use zip::write::SimpleFileOptions;
+    use zip::{CompressionMethod, ZipWriter};
+
+    let content_types = br#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+    let rels = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+    let document_rels = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+    let document = br#"<?xml version="1.0"?><w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:drawing/></w:r></w:p></w:body></w:document>"#;
+
+    let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+    for (name, bytes) in [
+        ("[Content_Types].xml", content_types.as_slice()),
+        ("_rels/.rels", rels.as_slice()),
+        ("word/document.xml", document.as_slice()),
+        ("word/_rels/document.xml.rels", document_rels.as_slice()),
+        ("word/media/image1.png", b"PNGDATA".as_slice()),
+    ] {
+        writer
+            .start_file(
+                name,
+                SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
+            )
+            .unwrap();
+        writer.write_all(bytes).unwrap();
+    }
+    let package_bytes = writer.finish().unwrap().into_inner();
+
+    let mut package =
+        DocxPackage::open(&package_bytes, casual_doc_ooxml::PackageLimits::default()).unwrap();
+    let import = import_package(&mut package, ImportConfig::default()).unwrap();
+
+    let media = &import.document.definitions().media;
+    assert_eq!(media.len(), 1);
+    let (_, reference) = media.iter().next().unwrap();
+    assert_eq!(reference.relationship_id, "rId7");
+    assert_eq!(reference.media_type, "image/png");
+    assert_eq!(reference.part_name, "word/media/image1.png");
 }

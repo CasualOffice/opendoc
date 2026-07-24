@@ -6,13 +6,14 @@
 //! spacing) — plus the styles part (paragraph/character style definitions with
 //! `basedOn` inheritance, resolved `w:pStyle`/`w:rStyle` references) and the
 //! numbering part (abstract/instance definitions with resolved `w:numPr`
-//! references), and body-level section geometry (`w:sectPr` → page size,
-//! margins, columns) into a deterministic `v1::Document`. Every traversed
-//! construct that is not modeled is recorded in a bounded, deterministic
-//! compatibility report under the dual-axis disposition taxonomy
-//! (`35-DISPOSITION-TAXONOMY.md`); nothing is dropped silently. Tables (as
-//! structure), media, fields, headers/footers, per-paragraph section breaks,
-//! and tracked changes are reported, not yet modeled.
+//! references), body-level section geometry (`w:sectPr` → page size, margins,
+//! columns), and media references (image relationships → the media table, no
+//! bytes decoded) into a deterministic `v1::Document`. Every traversed construct
+//! that is not modeled is recorded in a bounded, deterministic compatibility
+//! report under the dual-axis disposition taxonomy (`35-DISPOSITION-TAXONOMY.md`);
+//! nothing is dropped silently. Tables (as structure), fields, headers/footers,
+//! per-paragraph section breaks, and tracked changes are reported, not yet
+//! modeled.
 //!
 //! Import runs in `Semantic` mode (report-and-drop) by default. `Retention`
 //! mode additionally keeps the original main-document bytes verbatim (the D5
@@ -26,6 +27,7 @@
 mod body;
 mod config;
 mod error;
+mod media;
 mod numbering;
 mod properties;
 mod report;
@@ -41,6 +43,7 @@ use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{BlockNode, Definitions, Document, Paragraph, ParagraphProperties};
 use casual_doc_ooxml::DocxPackage;
 
+use crate::media::MediaSource;
 use crate::numbering::Numbering;
 use crate::report::Reporter;
 use crate::styles::Styles;
@@ -72,6 +75,23 @@ pub fn import_package(
     };
     let styles_part = related_part("/styles");
     let numbering_part = related_part("/numbering");
+    let media_sources: Vec<MediaSource> = package
+        .main_document_relationships()
+        .iter()
+        .filter(|relationship| relationship.relationship_type.ends_with("/image"))
+        .filter_map(|relationship| {
+            let part = relationship.resolved_part.clone()?;
+            let media_type = package
+                .content_type(&part)
+                .map(str::to_owned)
+                .unwrap_or_else(|| "application/octet-stream".to_owned());
+            Some(MediaSource {
+                relationship_id: relationship.id.clone(),
+                media_type,
+                part_name: part,
+            })
+        })
+        .collect();
 
     let document_bytes = package
         .read_part(&main_part)
@@ -88,6 +108,7 @@ pub fn import_package(
         &document_bytes,
         styles_bytes.as_deref(),
         numbering_bytes.as_deref(),
+        &media_sources,
         config,
     )?;
 
@@ -116,13 +137,14 @@ pub fn import_package(
 
 /// Imports main-document WordprocessingML bytes (no styles) into a v1 document.
 pub fn import_main_document_xml(xml: &[u8], config: ImportConfig) -> Result<Import, ImportError> {
-    import_with_sources(xml, None, None, config)
+    import_with_sources(xml, None, None, &[], config)
 }
 
 pub(crate) fn import_with_sources(
     document_xml: &[u8],
     styles_xml: Option<&[u8]>,
     numbering_xml: Option<&[u8]>,
+    media_sources: &[MediaSource],
     config: ImportConfig,
 ) -> Result<Import, ImportError> {
     config.validate()?;
@@ -184,12 +206,14 @@ pub(crate) fn import_with_sources(
         }));
     }
 
+    let media = media::build(media_sources, &mut ids, &mut reporter)?;
     let (abstract_numbering, numbering_instances) = numbering.into_definitions();
     let definitions = Definitions {
         styles: styles.into_definitions(),
         abstract_numbering,
         numbering: numbering_instances,
         sections,
+        media,
         ..Definitions::default()
     };
     let document = Document::new(document_id, body, definitions).map_err(ImportError::Model)?;
