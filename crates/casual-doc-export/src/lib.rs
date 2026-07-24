@@ -151,6 +151,33 @@ mod tests {
     }
 
     #[test]
+    fn table_with_merged_cells_round_trips() {
+        // A table with a horizontal (gridSpan) and vertical (vMerge) merge.
+        // Round-trips today via Retention; groundwork for table modeling.
+        let original = include_bytes!("../../../fixtures/corpus/real-producer-table-merges.docx");
+        let config = ImportConfig {
+            mode: ImportMode::Retention,
+            ..ImportConfig::default()
+        };
+
+        let first = {
+            let mut package = DocxPackage::open(original, PackageLimits::default()).unwrap();
+            import_package(&mut package, config).unwrap()
+        };
+        let rebuilt = write_package(first.retained_source.as_ref().unwrap()).unwrap();
+        let second = {
+            let mut package = DocxPackage::open(&rebuilt, PackageLimits::default()).unwrap();
+            import_package(&mut package, config).unwrap()
+        };
+
+        assert_eq!(first.document, second.document);
+        assert_eq!(
+            second.retained_source.as_ref().unwrap().parts,
+            first.retained_source.as_ref().unwrap().parts
+        );
+    }
+
+    #[test]
     fn real_document_with_tables_and_lists_round_trips() {
         // A real LibreOffice .docx with tables, bullet/numbered lists, styles,
         // and numbering. Retention + reconstruction round-trips ALL of it —
