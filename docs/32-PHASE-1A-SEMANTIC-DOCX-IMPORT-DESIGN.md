@@ -1,9 +1,10 @@
 # Phase 1A Semantic DOCX Import Design
 
-**Status:** Proposed for discussion
-**Decision date:** Not accepted
+**Status:** Accepted (architecture-level) — 2026-07-24
+**Decision:** ADR-027; see `36-ADR-027-ACCEPTANCE-RECORD.md`
 **Tracker:** P1A-001
-**Implementation:** Not started
+**Implementation:** Read-path and schema-v1 slices unblocked; importer code still
+gated on the accepted normalized schema v1 and artifact schemas
 
 ## Outcome
 
@@ -14,8 +15,9 @@ atomic, deterministic import bundle containing:
 2. an immutable bounded source-package snapshot;
 3. source-to-model provenance;
 4. a typed preservation ledger; and
-5. a complete compatibility report for every unsupported, degraded, preserved,
-   blocked, or rejected construct encountered during import.
+5. a complete compatibility report carrying a `model_outcome` and a
+   `retention_outcome` per `35-DISPOSITION-TAXONOMY.md` for every non-fully-mapped
+   construct encountered during import.
 
 The first end-to-end path is:
 
@@ -177,6 +179,8 @@ The exact JSON shape remains a blocking design decision. It must provide:
   without decoding bytes;
 - deterministic import-generated node and definition IDs;
 - an explicit schema version and deterministic v0-to-v1 migration;
+- extended-grapheme-cluster offsets as the canonical text unit for positions and
+  provenance spans (ADR-014; ADR-027 D5), pinned before importer implementation;
 - strict rejection of unknown normalized-schema fields.
 
 OOXML element names, relationship IDs, and source part paths are provenance,
@@ -196,7 +200,10 @@ The exact schemas remain blocking design decisions. They must follow
 - the source snapshot records admitted parts, content types, relationships,
   hashes, retained safe bytes, and explicit non-retention dispositions;
 - provenance connects semantic owners and properties to source regions and
-  mapping-rule versions;
+  mapping-rule versions via a content-relative offset-span anchor (source part +
+  document-order block path + character-offset span over normalized paragraph
+  text + source `w:r` index), captured before run normalization and never a
+  mutable model node ID (see `36-ADR-027-ACCEPTANCE-RECORD.md` D5);
 - every preservation entry has a typed owner, anchor, source order, namespace
   context, byte accounting, invalidation scope, conflict policy, and planned
   save disposition;
@@ -214,7 +221,9 @@ contains:
 
 - stable warning or error code;
 - severity;
-- disposition: `preserved`, `degraded`, `omitted`, `blocked`, or `rejected`;
+- disposition on two axes per `35-DISPOSITION-TAXONOMY.md`: a `model_outcome`
+  (`mapped`, `degraded`, or `omitted`) and a `retention_outcome` (`preserved`,
+  `not-retained`, `blocked`, `rejected`, or `not-applicable`);
 - feature identifier;
 - source part;
 - structural location without document text;
@@ -224,16 +233,17 @@ contains:
 
 Completeness means that every admitted part and every traversed unsupported
 element, attribute, relationship, or markup-compatibility branch has an
-explicit disposition. Repeated equivalent findings may be aggregated only when
-the count and first bounded locations remain deterministic.
+explicit disposition on both axes of `35-DISPOSITION-TAXONOMY.md`. Repeated
+equivalent findings may be aggregated only when the count and first bounded
+locations remain deterministic.
 
 Entries are ordered by package part, source document order, stable code, and
 feature identifier. Reports contain no timestamps, local paths, random values,
 or document text.
 
-A `preserved` disposition is valid only when the report references a validated
-source-snapshot or preservation-ledger record. Emitting a warning without
-retaining the declared content is `omitted`, not `preserved`.
+A `preserved` retention outcome is valid only when the report references a
+validated source-snapshot or preservation-ledger record. Emitting a warning
+without retaining the declared content is `not-retained`, not `preserved`.
 
 ## Determinism
 
@@ -344,3 +354,10 @@ and compatibility notes.
   semantic profile;
 - internal `ImportBundle` and public SDK inspection/report API;
 - stable warning-code registry ownership.
+
+Each of these decisions is tracked to a chosen or pending option in the
+ADR-027 acceptance record (`36-ADR-027-ACCEPTANCE-RECORD.md`). The disposition
+wording is consolidated into a single proposed taxonomy in
+`35-DISPOSITION-TAXONOMY.md` (decision D3, accepted). Importer
+implementation is blocked until every acceptance-record decision is signed and
+the shipped-code reconciliations R1–R4 are resolved.

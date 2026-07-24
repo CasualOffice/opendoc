@@ -48,6 +48,12 @@
 
 **Why:** avoid unnecessary data loss.
 
+**Amended by ADR-027:** for imported OOXML document content, preservation is
+delivered by the typed preservation ledger and versioned mapping registry in
+`34-OOXML-FIDELITY-ARCHITECTURE.md`, not by generic extension bags. Extension
+bags may remain for normalized-model schema evolution but do not satisfy OOXML
+preservation.
+
 ## ADR-008 — Parallel migration, not one-shot rewrite
 
 **Decision:** Existing Casual Docs remains available while the runtime grows.
@@ -258,12 +264,48 @@ contributions or public package releases.
 public documentation must consistently name Apache-2.0. Contributions are
 accepted under the same terms unless explicitly agreed otherwise.
 
+## ADR-027 — OOXML fidelity: normalized model + bounded source artifacts
+
+**Decision:** Accepted 2026-07-24. Use a normalized OpenDoc model as the runtime
+source of truth, paired with a bounded immutable DOCX source snapshot, a
+provenance map, and a typed preservation ledger, all owned by one versioned
+import/export mapping registry. See `34-OOXML-FIDELITY-ARCHITECTURE.md` and the
+signed acceptance record `36-ADR-027-ACCEPTANCE-RECORD.md` (decisions D1–D11;
+reconciliations R1/R2/R4 resolved, R3 an open implementation task).
+
+**Why:** a WYSIWYG runtime needs editor-oriented semantics while production DOCX
+compatibility needs source distinctions and unsupported-but-safe content that
+normalization cannot represent; designing both directions before import prevents
+irreversible fidelity loss. Grounded in `33-` and `37-` competitor research.
+
+**Consequence:** amends ADR-007 (typed ledger + registry supersede generic
+extension bags for OOXML); adopts the dual-axis disposition taxonomy
+(`35-DISPOSITION-TAXONOMY.md`); provenance offset spans use grapheme units
+(ADR-014). Acceptance is architecture-level and does not skip the schema-v1 and
+artifact-schema deliverables that gate importer code.
+
+## ADR-028 — Streaming, namespace-aware XML parser dependency
+
+**Decision:** Accepted 2026-07-24. Adopt `quick-xml` as the OOXML XML reader for
+the DOCX read path, used in streaming (`Reader`) mode only.
+
+**Why:** relationship and document parsing need a bounded, namespace-aware,
+pull-based reader. `quick-xml` is pure-Rust, `#![forbid(unsafe)]`-compatible in
+our usage, has no proc-macro or network dependencies, builds on
+`wasm32-unknown-unknown`, and does not resolve DTDs or external entities.
+
+**Security requirements (mandatory):** no DTD processing, no entity/parameter
+expansion, no external-entity or network resolution; namespace-aware; depth-,
+count-, and byte-bounded via `21-PARSER-LIMITS.md`; cancellable; retained XML is
+treated as data and never reparsed under weaker settings. Added under the
+dependency policy in `deny.toml`.
+
+**Consequence:** satisfies the "separate dependency ADR before implementation"
+gate in docs 32 and 34; the parser is wrapped behind an internal bounded reader
+so limits and entity-disabling are enforced in one place.
+
 ## Pending ADRs
 
-- ADR-027 candidate: normalized runtime model paired with a bounded immutable
-  DOCX source snapshot, provenance map, typed preservation ledger, and one
-  versioned import/export mapping registry; see
-  `34-OOXML-FIDELITY-ARCHITECTURE.md`;
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;
 - native renderer: Skia, Vello, tiny-skia, wgpu custom, or hybrid;
 - internal text storage: rope, piece tree, or chunked sequence;

@@ -70,6 +70,15 @@ Later relationship parsing will resolve the office-document target instead of
 assuming `word/document.xml`. The Phase 0 restriction is explicit and may
 reject structurally valid packages with unusual office-document part names.
 
+> **Amendment (ADR-027 / R1, accepted 2026-07-24).** Phase 1A relaxes the
+> required set to `[Content_Types].xml` + `_rels/.rels` only, moving
+> main-document identification to a post-admission step that follows the
+> `officeDocument` package relationship (transitional or strict namespace) and
+> binds by content type, fail-closed. `word/document.xml` becomes an optional
+> fast-path heuristic. The Phase 0 three-part requirement above is superseded for
+> the Phase 1A read path; see `36-ADR-027-ACCEPTANCE-RECORD.md` (R1) and
+> `37-PHASE-1A-DECISION-RESEARCH.md`.
+
 ## Package Path Rules
 
 Raw entry names must be valid UTF-8 and no longer than the configured path-byte

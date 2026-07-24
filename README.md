@@ -185,6 +185,9 @@ UI, or Tauri integration. See the
 - [Proposed Phase 1A semantic import design](docs/32-PHASE-1A-SEMANTIC-DOCX-IMPORT-DESIGN.md)
 - [DOCX engine competitor research](docs/33-DOCX-ENGINE-COMPETITOR-RESEARCH.md)
 - [Proposed OOXML fidelity architecture](docs/34-OOXML-FIDELITY-ARCHITECTURE.md)
+- [Import disposition taxonomy](docs/35-DISPOSITION-TAXONOMY.md)
+- [ADR-027 acceptance record](docs/36-ADR-027-ACCEPTANCE-RECORD.md)
+- [Phase 1A decision research (Word/ONLYOFFICE/LibreOffice)](docs/37-PHASE-1A-DECISION-RESEARCH.md)
 
 The numbered documents in `docs/` are the source of truth for accepted
 architecture, behavior, delivery status, and compatibility claims.

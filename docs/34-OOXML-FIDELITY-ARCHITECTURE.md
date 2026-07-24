@@ -1,10 +1,11 @@
 # OOXML Fidelity Architecture
 
-**Status:** Proposed; not accepted
-**Candidate decision:** ADR-027
+**Status:** Accepted — 2026-07-24
+**Decision:** ADR-027 (accepted; see `36-ADR-027-ACCEPTANCE-RECORD.md`)
 **Tracker:** P1A-003
-**Research basis:** `33-DOCX-ENGINE-COMPETITOR-RESEARCH.md`
-**Implementation state:** Blocked pending design acceptance
+**Research basis:** `33-DOCX-ENGINE-COMPETITOR-RESEARCH.md`,
+`37-PHASE-1A-DECISION-RESEARCH.md`
+**Implementation state:** Unblocked for the schema-v1 and read-path slices
 
 ## Decision Required
 
@@ -59,7 +60,7 @@ Every compatibility claim must name the fidelity dimension it measures.
 | Edit fidelity | Supported edits invalidate and regenerate only intended source regions | Phase 2 |
 | Visual fidelity | Lines, pages, geometry, paint, and fonts compare within declared tolerances | Phases 1B-1D |
 | Behavioral fidelity | Fields, revisions, controls, macros, links, and producer behavior | Feature-specific |
-| Diagnostic fidelity | Every unsupported, degraded, blocked, omitted, or rejected construct is reported | Phase 1A |
+| Diagnostic fidelity | Every traversed construct carries both a model outcome and a retention outcome per `35-DISPOSITION-TAXONOMY.md` and is reported | Phase 1A |
 
 "Lossless" is prohibited in documentation and release claims unless the exact
 dimension, feature set, producer profile, edit class, and test corpus are named.
@@ -118,7 +119,9 @@ and future save planning:
 - internal and external relationships;
 - retained safe part bytes under per-part and aggregate limits;
 - producer and conformance observations when deterministically identifiable;
-- rejected, blocked, omitted, or non-retained part dispositions.
+- per-part retention outcomes (`preserved`, `not-retained`, `blocked`, or
+  `rejected`) per `35-DISPOSITION-TAXONOMY.md`; fully-mapped parts with no
+  unconsumed remainder (`not-applicable`) are not enumerated here.
 
 The snapshot is not exposed as mutable model state. Macros, signatures,
 external resources, encrypted content, malformed structures, and over-limit
@@ -151,7 +154,12 @@ spellings do not become semantic identity.
 Provenance connects normalized entities and properties to source regions
 without making those locations public identity. A record includes:
 
-- source part and stable structural path;
+- source part and a content-relative structural anchor — document-order path to
+  the owning block plus a character-offset span `(start, len)` over the owning
+  paragraph's normalized text, captured before run normalization; never a mutable
+  model node ID (see `36-ADR-027-ACCEPTANCE-RECORD.md` D5);
+- source `w:r` index and run-boundary offset marks recorded before the equal-mark
+  run-merge collapses them;
 - source range or event span where available;
 - mapping-rule ID and version;
 - normalized owner and property path;
@@ -188,8 +196,9 @@ rejected or omitted with diagnostics.
 
 The report says what OpenDoc understood and what it did with everything else.
 It references semantic and preservation records but is not the retained
-payload. A `preserved` disposition means a validated ledger or package-snapshot
-record exists; it cannot mean "warning emitted."
+payload. Every entry carries a model outcome and a retention outcome per
+`35-DISPOSITION-TAXONOMY.md`. A `preserved` retention outcome means a validated
+ledger or package-snapshot record exists; it cannot mean "warning emitted."
 
 ### 7. Mapping registry
 
@@ -234,14 +243,19 @@ documents or engine versions without explicit validation.
 
 Potential operating modes:
 
-| Mode | Retention | Intended use |
+| Mode | Retained data | Intended use |
 | --- | --- | --- |
 | Semantic | Model, report, minimum provenance | Read-only extraction where save is impossible |
-| Round-trip | Model, report, provenance, safe retained parts and ledger | Editing and future DOCX save |
-| Inspect | Round-trip data plus original admitted bytes within stricter policy | Auditing and exact no-op return |
+| Retention | Model, report, provenance, safe retained parts and ledger | Editing and future DOCX save |
+| Inspect | Retention data plus original admitted bytes within stricter policy | Auditing and exact no-op return |
+
+The mode is named `Retention` (not "Round-trip") because Phase 1A retains source
+detail for a future writer; it does not itself guarantee a lossless round trip.
 
 The public API must not silently downgrade a requested mode when a retention
-limit is exceeded.
+limit is exceeded. The overflow policy (fail-closed with a typed error versus a
+reported non-silent downgrade) is acceptance decision D4 in
+`36-ADR-027-ACCEPTANCE-RECORD.md`.
 
 ## Markup Compatibility
 
@@ -324,7 +338,12 @@ the original DOCX can be recreated.
 - Retained XML is data, never reparsed under weaker settings.
 - External relationships are metadata only and are never fetched implicitly.
 - Macros, OLE objects, ActiveX, signatures, custom XML, and embedded packages
-  have explicit policy entries before retention or export.
+  have explicit per-class policy entries (decision D9 in
+  `36-ADR-027-ACCEPTANCE-RECORD.md`) before retention or export: no class is ever
+  executed or activated; signatures are report-and-invalidate and never
+  preserved; and embedded OPC packages are bounded by a nested-package
+  recursion-depth guard in addition to the inflate-size and expansion-ratio
+  limits, enforced before retention.
 - Reports and errors omit document text, credentials, host paths, and unbounded
   source fragments.
 - Inspection APIs require explicit host authorization for retained raw bytes.
@@ -383,7 +402,11 @@ round-trip compatibility and cannot account for unsupported safe content.
 Rejected as the primary preservation design because they lack typed ownership,
 ordering, invalidation, security, and reverse-mapping contracts. Existing v0
 extension maps may remain for model-schema evolution but do not satisfy OOXML
-preservation.
+preservation. This amends accepted ADR-007 ("Preserve unsupported OOXML where
+safe" via extension bags and package-part preservation): for OOXML,
+preservation is delivered by the typed ledger and mapping registry defined here,
+not by generic extension bags. See the ADR-007 amendment note in
+`08-ADR-REGISTER.md`.
 
 ### Retain the original package only
 
@@ -414,7 +437,11 @@ constraints and create silent fidelity loss.
 
 ## Acceptance Decisions
 
-The following must be explicitly approved before implementation:
+The following ten items must be explicitly approved before implementation. Each
+is tracked to a chosen or pending option in `36-ADR-027-ACCEPTANCE-RECORD.md`,
+which numbers them D1, D2, and D4–D11 and inserts D3 (the disposition taxonomy,
+`35-DISPOSITION-TAXONOMY.md`) surfaced during reconciliation — eleven decisions
+in total. ADR-027 cannot be accepted while any remains pending.
 
 - normalized model remains the live source of truth;
 - `ImportBundle` dual-representation direction;
@@ -430,20 +457,34 @@ The following must be explicitly approved before implementation:
 
 ## Open Questions
 
-- Which original package bytes are retained by default in round-trip mode?
-- Is provenance embedded in the internal model storage or held in a sidecar
-  indexed by stable model IDs?
-- What canonical structural-path format survives streaming decode without
-  becoming a public contract?
-- Which preserved fragments require lexical bytes versus canonical XML events?
+The three provenance-anchoring questions below determine Phase 1A artifact
+golden bytes and are tracked as acceptance-blocking decision D5 in
+`36-ADR-027-ACCEPTANCE-RECORD.md`. D5 is **Accepted**
+(competitive research, high confidence; primary sources verified):
+
+- Provenance is a **sidecar** in the `ImportBundle` artifacts, not embedded in
+  model node storage, and its Tier-2 anchor is a content-relative offset span
+  over normalized paragraph text (plus source `w:r` index), not a model node ID —
+  so it survives split/join (via the transaction-layer position mapping) and the
+  equal-mark run-merge. Resolved and accepted (D5).
+- The canonical structural anchor is document-order-path + character-offset span,
+  derived from input order and normalized text (deterministic per R3), kept
+  internal to the versioned artifacts and not a public contract. Resolved by D5.
+- Which preserved fragments require lexical bytes versus canonical XML events
+  remains open per feature and is decided in the mapping registry (D6), not by
+  D5's anchor choice.
+
+The remaining questions stay non-blocking for architecture acceptance:
+
+- Which original package bytes are retained by default in Retention mode?
 - What is the first target profile: Transitional-only, Strict plus
-  Transitional, or a narrower declared subset?
+  Transitional, or a narrower declared subset? (Tracked as D8.)
 - Which unsupported owner edits block save in the first writer release?
 - How are digital signatures reported and invalidated without implying they can
-  be preserved after mutation?
+  be preserved after mutation? (Tracked as D9.)
 - Which parts may be copied unchanged and which must always be regenerated?
 
-## Candidate ADR-027
+## ADR-027 (accepted)
 
 **Decision:** Use a normalized OpenDoc model as the runtime source of truth and
 pair DOCX imports with a bounded immutable source snapshot, provenance map, and
@@ -458,4 +499,11 @@ prevents irreversible fidelity loss.
 **Consequence:** Phase 1A produces more than semantic JSON and requires explicit
 preservation limits, mapping rules, diagnostics, and future reverse mappings.
 The Phase 2 writer must use the same registry and may block saves that cannot be
-reconciled safely.
+reconciled safely. ADR-027 amends ADR-007: OOXML preservation uses the typed
+ledger and mapping registry, superseding generic extension bags for imported
+document content.
+
+**Acceptance:** ADR-027 is accepted only through the signed acceptance record in
+`36-ADR-027-ACCEPTANCE-RECORD.md`, which resolves each named Acceptance Decision
+to a chosen option and records the shipped-code reconciliations R1–R4.
+Acceptance is architecture-level and does not by itself unblock importer code.
