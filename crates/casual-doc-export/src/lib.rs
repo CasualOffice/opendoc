@@ -218,6 +218,35 @@ mod tests {
     }
 
     #[test]
+    fn document_with_header_and_footer_parts_round_trips() {
+        // Separate word/header1.xml and word/footer1.xml parts referenced from
+        // the section. Retention retains every part, so the header/footer parts
+        // round-trip byte-identically even before they are modeled.
+        let original = include_bytes!("../../../fixtures/corpus/real-producer-header-footer.docx");
+        let config = ImportConfig {
+            mode: ImportMode::Retention,
+            ..ImportConfig::default()
+        };
+
+        let first = {
+            let mut package = DocxPackage::open(original, PackageLimits::default()).unwrap();
+            import_package(&mut package, config).unwrap()
+        };
+        let parts = &first.retained_source.as_ref().unwrap().parts;
+        assert!(parts.contains_key("word/header1.xml"));
+        assert!(parts.contains_key("word/footer1.xml"));
+
+        let rebuilt = write_package(first.retained_source.as_ref().unwrap()).unwrap();
+        let second = {
+            let mut package = DocxPackage::open(&rebuilt, PackageLimits::default()).unwrap();
+            import_package(&mut package, config).unwrap()
+        };
+
+        assert_eq!(first.document, second.document);
+        assert_eq!(&second.retained_source.as_ref().unwrap().parts, parts);
+    }
+
+    #[test]
     fn semantic_mode_has_no_retained_parts() {
         let source = casual_doc_import::RetainedSource {
             main_document: Vec::new(),
