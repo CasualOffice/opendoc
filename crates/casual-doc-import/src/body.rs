@@ -4,9 +4,10 @@ use std::collections::BTreeMap;
 
 use casual_doc_model::v1::{
     BlockNode, Break, BreakKind, Drawing, Extent, ExternalTarget, Field, Hyperlink,
-    HyperlinkTarget, InlineNode, InternalTarget, MAX_EMU, MAX_FIELD_INSTRUCTION_BYTES, MediaId,
-    PageMargins, PageSize, Paragraph, ParagraphProperties, Run, RunProperties, SectionBoundary,
-    SectionColumns, SectionId, StyleKind, Tab, VerticalMerge,
+    HyperlinkTarget, InlineNode, InternalTarget, MAX_EMU, MAX_FIELD_INSTRUCTION_BYTES,
+    MAX_TEXTBOX_DEPTH, MediaId, PageMargins, PageSize, Paragraph, ParagraphProperties, Run,
+    RunProperties, SectionBoundary, SectionColumns, SectionId, StyleKind, Tab, TextBox,
+    VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::Reader;
@@ -43,6 +44,46 @@ enum Segment {
         instruction: String,
         children: Vec<Segment>,
     },
+    /// A fully-built text box (its inner ids are already allocated).
+    TextBox(TextBox),
+}
+
+/// The content-building state suspended while parsing a text box's own content,
+/// restored when the text box closes. A text box (`w:txbxContent`) carries a full
+/// block sequence, so parsing it requires a fresh paragraph/run/table context;
+/// suspending and restoring the enclosing context keeps the outer paragraph and
+/// the enclosing drawing (its image) intact.
+struct ContentFrame {
+    textbox_id: NodeId,
+    depth: u32,
+    paragraph_open: bool,
+    paragraph_id: Option<NodeId>,
+    paragraph_properties: ParagraphProperties,
+    ppr_depth: u32,
+    numpr_depth: u32,
+    pending_num_id: Option<String>,
+    pending_ilvl: u8,
+    run_open: bool,
+    run_properties: RunProperties,
+    rpr_depth: u32,
+    in_text: bool,
+    text_buffer: String,
+    drawing_depth: u32,
+    blipfill_depth: u32,
+    pending_embed: Option<String>,
+    pending_extent: Option<Extent>,
+    drawing_extra: bool,
+    hyperlink: Option<HyperlinkAccumulator>,
+    hyperlink_depth: u32,
+    field: Option<FieldAccumulator>,
+    field_depth: u32,
+    in_instr: bool,
+    instr_buffer: String,
+    tables: TableStack,
+    tcpr_depth: u32,
+    suppressed_tbl_depth: u32,
+    segments: Vec<Segment>,
+    blocks: Vec<BlockNode>,
 }
 
 /// A hyperlink being accumulated while inside a `w:hyperlink`.
@@ -127,6 +168,13 @@ struct BodyParser<'a> {
     suppressed_tbl_depth: u32,
     segments: Vec<Segment>,
     blocks: Vec<BlockNode>,
+    /// Suspended enclosing contexts, one per open text box.
+    frames: Vec<ContentFrame>,
+    /// Depth of an `mc:Choice`/`mc:Fallback` branch being skipped (a non-selected
+    /// alternate representation); while non-zero, all events are ignored.
+    mc_skip_depth: u32,
+    /// Per-`mc:AlternateContent` "a branch was already selected" flags.
+    alt_stack: Vec<bool>,
     section: Option<SectionAccumulator>,
     sections: Vec<SectionBoundary>,
 }
@@ -188,10 +236,18 @@ pub(crate) fn parse<'a>(
         suppressed_tbl_depth: 0,
         segments: Vec::new(),
         blocks: Vec::new(),
+        frames: Vec::new(),
+        mc_skip_depth: 0,
+        alt_stack: Vec::new(),
         section: None,
         sections: Vec::new(),
     };
     parser.run(xml)?;
+    // Unwind any text box left open by malformed input so the true body root is
+    // restored (its content is committed, not stranded in a suspended frame).
+    while !parser.frames.is_empty() {
+        parser.exit_textbox()?;
+    }
     Ok((parser.blocks, parser.sections))
 }
 
@@ -266,6 +322,12 @@ impl BodyParser<'_> {
     }
 
     fn on_start(&mut self, local: &[u8], element: &BytesStart<'_>) -> Result<(), ImportError> {
+        // While skipping a non-selected AlternateContent branch, ignore every
+        // element (counting depth so the matching close ends the skip).
+        if self.mc_skip_depth > 0 {
+            self.mc_skip_depth += 1;
+            return Ok(());
+        }
         self.elements += 1;
         if self.elements > self.config.max_elements {
             return Err(ImportError::LimitExceeded {
@@ -275,6 +337,21 @@ impl BodyParser<'_> {
         match local {
             b"document" => self.in_document = true,
             b"body" if self.in_document => self.in_body = true,
+            // Alternate content: select the first branch, skip (and report) the
+            // rest so content is neither duplicated nor lost.
+            b"AlternateContent" => self.alt_stack.push(false),
+            b"Choice" | b"Fallback" if !self.alt_stack.is_empty() => {
+                let selected = *self.alt_stack.last().expect("alt frame");
+                if selected {
+                    self.mc_skip_depth = 1;
+                    self.reporter.report(local);
+                } else {
+                    *self.alt_stack.last_mut().expect("alt frame") = true;
+                }
+            }
+            // A text box carries block content: parse it in a fresh, suspended
+            // context so its inner paragraphs do not corrupt the enclosing one.
+            b"txbxContent" => self.enter_textbox()?,
             b"p" if self.in_body
                 && !self.run_open
                 && self.ppr_depth == 0
@@ -393,7 +470,14 @@ impl BodyParser<'_> {
                 }
             }
             b"hlinkClick" | b"svgBlip" if self.drawing_depth > 0 => self.drawing_extra = true,
-            b"sectPr" if self.in_body && !self.paragraph_open && self.ppr_depth == 0 => {
+            // Only a true body-level `w:sectPr` is a document section; a `sectPr`
+            // inside a text box (frames non-empty) is not, so it is reported.
+            b"sectPr"
+                if self.in_body
+                    && self.frames.is_empty()
+                    && !self.paragraph_open
+                    && self.ppr_depth == 0 =>
+            {
                 self.section = Some(SectionAccumulator::default());
             }
             b"pgSz" if self.section.is_some() => {
@@ -539,9 +623,17 @@ impl BodyParser<'_> {
     }
 
     fn on_end(&mut self, local: &[u8]) -> Result<(), ImportError> {
+        if self.mc_skip_depth > 0 {
+            self.mc_skip_depth -= 1;
+            return Ok(());
+        }
         match local {
             b"document" => self.in_document = false,
             b"body" => self.in_body = false,
+            b"AlternateContent" => {
+                self.alt_stack.pop();
+            }
+            b"txbxContent" => self.exit_textbox()?,
             b"p" if self.paragraph_open => self.finish_paragraph()?,
             b"pPr" => self.ppr_depth = self.ppr_depth.saturating_sub(1),
             b"numPr" => {
@@ -686,6 +778,98 @@ impl BodyParser<'_> {
             page_margins,
             columns,
         });
+        Ok(())
+    }
+
+    /// Enters a text box: allocate its id (document order), then suspend the
+    /// enclosing content context so the box's own paragraphs/runs/tables build
+    /// into a fresh context and cannot corrupt the enclosing paragraph or drawing.
+    fn enter_textbox(&mut self) -> Result<(), ImportError> {
+        let textbox_id = self.next_id()?;
+        let depth = self.frames.len() as u32 + 1;
+        let frame = ContentFrame {
+            textbox_id,
+            depth,
+            paragraph_open: std::mem::take(&mut self.paragraph_open),
+            paragraph_id: self.paragraph_id.take(),
+            paragraph_properties: std::mem::take(&mut self.paragraph_properties),
+            ppr_depth: std::mem::take(&mut self.ppr_depth),
+            numpr_depth: std::mem::take(&mut self.numpr_depth),
+            pending_num_id: self.pending_num_id.take(),
+            pending_ilvl: std::mem::take(&mut self.pending_ilvl),
+            run_open: std::mem::take(&mut self.run_open),
+            run_properties: std::mem::take(&mut self.run_properties),
+            rpr_depth: std::mem::take(&mut self.rpr_depth),
+            in_text: std::mem::take(&mut self.in_text),
+            text_buffer: std::mem::take(&mut self.text_buffer),
+            drawing_depth: std::mem::take(&mut self.drawing_depth),
+            blipfill_depth: std::mem::take(&mut self.blipfill_depth),
+            pending_embed: self.pending_embed.take(),
+            pending_extent: self.pending_extent.take(),
+            drawing_extra: std::mem::take(&mut self.drawing_extra),
+            hyperlink: self.hyperlink.take(),
+            hyperlink_depth: std::mem::take(&mut self.hyperlink_depth),
+            field: self.field.take(),
+            field_depth: std::mem::take(&mut self.field_depth),
+            in_instr: std::mem::take(&mut self.in_instr),
+            instr_buffer: std::mem::take(&mut self.instr_buffer),
+            tables: std::mem::take(&mut self.tables),
+            tcpr_depth: std::mem::take(&mut self.tcpr_depth),
+            suppressed_tbl_depth: std::mem::take(&mut self.suppressed_tbl_depth),
+            segments: std::mem::take(&mut self.segments),
+            blocks: std::mem::take(&mut self.blocks),
+        };
+        self.frames.push(frame);
+        Ok(())
+    }
+
+    /// Exits a text box: finish its content, restore the enclosing context, and
+    /// route the built `TextBox` into the enclosing inline stream. A box that is
+    /// empty or nested past the bound is reported and dropped (never silent).
+    fn exit_textbox(&mut self) -> Result<(), ImportError> {
+        if self.paragraph_open {
+            self.finish_paragraph()?;
+        }
+        let blocks = std::mem::take(&mut self.blocks);
+        let Some(frame) = self.frames.pop() else {
+            return Ok(());
+        };
+        self.paragraph_open = frame.paragraph_open;
+        self.paragraph_id = frame.paragraph_id;
+        self.paragraph_properties = frame.paragraph_properties;
+        self.ppr_depth = frame.ppr_depth;
+        self.numpr_depth = frame.numpr_depth;
+        self.pending_num_id = frame.pending_num_id;
+        self.pending_ilvl = frame.pending_ilvl;
+        self.run_open = frame.run_open;
+        self.run_properties = frame.run_properties;
+        self.rpr_depth = frame.rpr_depth;
+        self.in_text = frame.in_text;
+        self.text_buffer = frame.text_buffer;
+        self.drawing_depth = frame.drawing_depth;
+        self.blipfill_depth = frame.blipfill_depth;
+        self.pending_embed = frame.pending_embed;
+        self.pending_extent = frame.pending_extent;
+        self.drawing_extra = frame.drawing_extra;
+        self.hyperlink = frame.hyperlink;
+        self.hyperlink_depth = frame.hyperlink_depth;
+        self.field = frame.field;
+        self.field_depth = frame.field_depth;
+        self.in_instr = frame.in_instr;
+        self.instr_buffer = frame.instr_buffer;
+        self.tables = frame.tables;
+        self.tcpr_depth = frame.tcpr_depth;
+        self.suppressed_tbl_depth = frame.suppressed_tbl_depth;
+        self.segments = frame.segments;
+        self.blocks = frame.blocks;
+        if blocks.is_empty() || frame.depth > MAX_TEXTBOX_DEPTH {
+            self.reporter.report(b"txbxContent");
+        } else {
+            self.push_segment(Segment::TextBox(TextBox {
+                id: frame.textbox_id,
+                blocks,
+            }));
+        }
         Ok(())
     }
 
@@ -912,6 +1096,9 @@ impl BodyParser<'_> {
                     inlines,
                 }))
             }
+            // A text box is already fully built (id and inner ids allocated while
+            // parsing its content), so it converts directly.
+            Segment::TextBox(text_box) => Ok(InlineNode::TextBox(text_box)),
         }
     }
 }

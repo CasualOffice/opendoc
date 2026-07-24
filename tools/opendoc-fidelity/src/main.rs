@@ -132,6 +132,7 @@ fn push_inline_text(inline: &InlineNode, out: &mut String) {
                 push_inline_text(child, out);
             }
         }
+        InlineNode::TextBox(text_box) => push_blocks_text(&text_box.blocks, out),
     }
 }
 

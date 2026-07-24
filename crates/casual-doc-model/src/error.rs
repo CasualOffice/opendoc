@@ -105,6 +105,10 @@ pub enum ModelError {
     TableNestingTooDeep(NodeId),
     /// A field was nested inside a hyperlink or another field (v1).
     NestedField(NodeId),
+    /// A text box had no block content (v1).
+    EmptyTextBox(NodeId),
+    /// A text box nested deeper than the supported bound (v1).
+    TextBoxNestingTooDeep(NodeId),
 }
 
 impl fmt::Display for ModelError {
@@ -204,6 +208,13 @@ impl fmt::Display for ModelError {
             }
             Self::NestedField(id) => {
                 write!(formatter, "field {id} is nested in a hyperlink or field")
+            }
+            Self::EmptyTextBox(id) => write!(formatter, "text box {id} has no block content"),
+            Self::TextBoxNestingTooDeep(id) => {
+                write!(
+                    formatter,
+                    "text box {id} nests deeper than the supported bound"
+                )
             }
         }
     }

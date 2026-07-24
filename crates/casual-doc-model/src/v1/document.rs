@@ -346,25 +346,35 @@ impl Document {
 
     fn validate_body(&self) -> Result<(), ModelError> {
         for block in &self.body {
-            self.validate_block(block, 0)?;
+            self.validate_block(block, 0, 0)?;
         }
         Ok(())
     }
 
-    /// Validates one block, recursing through table cells. `table_depth` is the
-    /// number of enclosing tables (0 at body level), used to bound nesting.
-    fn validate_block(&self, block: &BlockNode, table_depth: u32) -> Result<(), ModelError> {
+    /// Validates one block, recursing through table cells and text boxes.
+    /// `table_depth` bounds table nesting; `textbox_depth` bounds text-box nesting.
+    fn validate_block(
+        &self,
+        block: &BlockNode,
+        table_depth: u32,
+        textbox_depth: u32,
+    ) -> Result<(), ModelError> {
         match block {
             BlockNode::Paragraph(paragraph) => {
                 self.check_paragraph_property_refs(&paragraph.properties)?;
-                self.validate_inlines(&paragraph.inlines, paragraph.id, false)?;
+                self.validate_inlines(&paragraph.inlines, paragraph.id, false, textbox_depth)?;
             }
-            BlockNode::Table(table) => self.validate_table(table, table_depth)?,
+            BlockNode::Table(table) => self.validate_table(table, table_depth, textbox_depth)?,
         }
         Ok(())
     }
 
-    fn validate_table(&self, table: &Table, table_depth: u32) -> Result<(), ModelError> {
+    fn validate_table(
+        &self,
+        table: &Table,
+        table_depth: u32,
+        textbox_depth: u32,
+    ) -> Result<(), ModelError> {
         if table_depth + 1 > MAX_TABLE_DEPTH {
             return Err(ModelError::TableNestingTooDeep(table.id));
         }
@@ -391,23 +401,25 @@ impl Document {
                     check_domain((0..=31_680).contains(&width), "table.cell.width")?;
                 }
                 for nested in &cell.blocks {
-                    self.validate_block(nested, table_depth + 1)?;
+                    self.validate_block(nested, table_depth + 1, textbox_depth)?;
                 }
             }
         }
         Ok(())
     }
 
-    /// Validates one inline sequence. A drawing, hyperlink, or field is a hard
-    /// merge boundary (it resets adjacent-run tracking, like a tab or break).
+    /// Validates one inline sequence. A drawing, hyperlink, field, or text box is a
+    /// hard merge boundary (it resets adjacent-run tracking, like a tab or break).
     /// `in_wrapper` is set while validating a hyperlink's or field's own children,
     /// so a nested wrapper (hyperlink or field inside either) is rejected — this
-    /// bounds inline nesting to one wrapper level.
+    /// bounds inline nesting to one wrapper level. `textbox_depth` carries the
+    /// enclosing text-box nesting; a text box's blocks restart the table budget.
     fn validate_inlines(
         &self,
         inlines: &[InlineNode],
         owner: NodeId,
         in_wrapper: bool,
+        textbox_depth: u32,
     ) -> Result<(), ModelError> {
         let mut previous_run_properties: Option<&RunProperties> = None;
         for inline in inlines {
@@ -454,7 +466,7 @@ impl Document {
                     if link.inlines.is_empty() {
                         return Err(ModelError::EmptyHyperlink(link.id));
                     }
-                    self.validate_inlines(&link.inlines, link.id, true)?;
+                    self.validate_inlines(&link.inlines, link.id, true, textbox_depth)?;
                     previous_run_properties = None;
                 }
                 InlineNode::Field(field) => {
@@ -468,7 +480,24 @@ impl Document {
                     )?;
                     // A field's cached result may be empty; when present it is
                     // validated as leaf inlines (in_wrapper rejects any wrapper).
-                    self.validate_inlines(&field.inlines, field.id, true)?;
+                    self.validate_inlines(&field.inlines, field.id, true, textbox_depth)?;
+                    previous_run_properties = None;
+                }
+                InlineNode::TextBox(text_box) => {
+                    if textbox_depth + 1 > MAX_TEXTBOX_DEPTH {
+                        return Err(ModelError::TextBoxNestingTooDeep(text_box.id));
+                    }
+                    if text_box.blocks.is_empty() {
+                        return Err(ModelError::EmptyTextBox(text_box.id));
+                    }
+                    // A text box is a fresh block container: its table budget
+                    // restarts at 0, matching the importer (which gives each box a
+                    // fresh table stack). Threading the enclosing `table_depth`
+                    // here would reject documents the importer accepts and fail the
+                    // whole import. Text-box nesting bounds the recursion instead.
+                    for block in &text_box.blocks {
+                        self.validate_block(block, 0, textbox_depth + 1)?;
+                    }
                     previous_run_properties = None;
                 }
                 InlineNode::Tab(_) | InlineNode::Break(_) => {
@@ -510,7 +539,7 @@ fn accumulate_block_limits(
     match block {
         BlockNode::Paragraph(paragraph) => {
             for inline in &paragraph.inlines {
-                accumulate_inline_limits(inline, limits, scalar_values)?;
+                accumulate_inline_limits(inline, limits, blocks, scalar_values)?;
             }
         }
         BlockNode::Table(table) => {
@@ -536,11 +565,13 @@ fn accumulate_block_limits(
     Ok(())
 }
 
-/// Accounts one inline node against the text limits, recursing into hyperlink
-/// children so nested run text cannot smuggle past the bounds.
+/// Accounts one inline node against the text and block limits, recursing into
+/// hyperlink/field children and text-box blocks so nested content cannot smuggle
+/// past the bounds.
 fn accumulate_inline_limits(
     inline: &InlineNode,
     limits: SnapshotLimits,
+    blocks: &mut usize,
     scalar_values: &mut usize,
 ) -> Result<(), SnapshotError> {
     match inline {
@@ -556,7 +587,7 @@ fn accumulate_inline_limits(
         }
         InlineNode::Hyperlink(link) => {
             for child in &link.inlines {
-                accumulate_inline_limits(child, limits, scalar_values)?;
+                accumulate_inline_limits(child, limits, blocks, scalar_values)?;
             }
         }
         InlineNode::Field(field) => {
@@ -566,7 +597,12 @@ fn accumulate_inline_limits(
                 MAX_FIELD_INSTRUCTION_BYTES,
             )?;
             for child in &field.inlines {
-                accumulate_inline_limits(child, limits, scalar_values)?;
+                accumulate_inline_limits(child, limits, blocks, scalar_values)?;
+            }
+        }
+        InlineNode::TextBox(text_box) => {
+            for block in &text_box.blocks {
+                accumulate_block_limits(block, limits, blocks, scalar_values)?;
             }
         }
         InlineNode::Tab(_) | InlineNode::Break(_) | InlineNode::Drawing(_) => {}
@@ -607,19 +643,27 @@ fn record_block_ids(block: &BlockNode, ids: &mut BTreeSet<NodeId>) -> Result<(),
     Ok(())
 }
 
-/// Records an inline's id and, for a wrapper (hyperlink or field), its children's
-/// ids recursively.
+/// Records an inline's id and, for a wrapper (hyperlink or field) or a text box,
+/// its children's ids recursively.
 fn record_inline_ids(inline: &InlineNode, ids: &mut BTreeSet<NodeId>) -> Result<(), ModelError> {
     insert_id(ids, inline.id())?;
-    let children = match inline {
-        InlineNode::Hyperlink(link) => Some(&link.inlines),
-        InlineNode::Field(field) => Some(&field.inlines),
-        _ => None,
-    };
-    if let Some(children) = children {
-        for child in children {
-            record_inline_ids(child, ids)?;
+    match inline {
+        InlineNode::Hyperlink(link) => {
+            for child in &link.inlines {
+                record_inline_ids(child, ids)?;
+            }
         }
+        InlineNode::Field(field) => {
+            for child in &field.inlines {
+                record_inline_ids(child, ids)?;
+            }
+        }
+        InlineNode::TextBox(text_box) => {
+            for block in &text_box.blocks {
+                record_block_ids(block, ids)?;
+            }
+        }
+        _ => {}
     }
     Ok(())
 }

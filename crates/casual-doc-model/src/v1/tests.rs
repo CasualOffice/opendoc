@@ -982,3 +982,94 @@ fn duplicate_id_inside_a_field_result_is_rejected() {
         Err(ModelError::DuplicateNodeId(_))
     ));
 }
+
+// ---- schema v1 text boxes ------------------------------------------------
+
+fn textbox_paragraph(para_id: NodeId, text_box: TextBox) -> BlockNode {
+    BlockNode::Paragraph(Paragraph {
+        id: para_id,
+        properties: ParagraphProperties::default(),
+        inlines: vec![InlineNode::TextBox(text_box)],
+    })
+}
+
+#[test]
+fn text_box_with_block_content_validates_and_round_trips_json() {
+    let text_box = TextBox {
+        id: tid(10),
+        blocks: vec![paragraph_block(tid(11))],
+    };
+    let document = table_document(vec![textbox_paragraph(tid(1), text_box)]).unwrap();
+    let json = document.to_json().unwrap();
+    let reloaded = Document::from_json(&json, SnapshotLimits::default()).unwrap();
+    assert_eq!(document, reloaded);
+
+    let BlockNode::Paragraph(paragraph) = &document.body()[0] else {
+        panic!("expected a paragraph");
+    };
+    let InlineNode::TextBox(text_box) = &paragraph.inlines[0] else {
+        panic!("expected a text box");
+    };
+    assert_eq!(text_box.blocks.len(), 1);
+}
+
+#[test]
+fn empty_text_box_is_rejected() {
+    let text_box = TextBox {
+        id: tid(10),
+        blocks: Vec::new(),
+    };
+    assert!(matches!(
+        table_document(vec![textbox_paragraph(tid(1), text_box)]),
+        Err(ModelError::EmptyTextBox(_))
+    ));
+}
+
+#[test]
+fn duplicate_id_inside_a_text_box_is_rejected() {
+    let text_box = TextBox {
+        id: tid(10),
+        blocks: vec![paragraph_block(tid(10))], // inner paragraph id collides
+    };
+    assert!(matches!(
+        table_document(vec![textbox_paragraph(tid(1), text_box)]),
+        Err(ModelError::DuplicateNodeId(_))
+    ));
+}
+
+fn wrap_in_textboxes(depth: u32, counter: &mut u64) -> BlockNode {
+    if depth == 0 {
+        *counter += 1;
+        return paragraph_block(tid(*counter));
+    }
+    let inner = wrap_in_textboxes(depth - 1, counter);
+    *counter += 1;
+    let box_id = tid(*counter);
+    *counter += 1;
+    let para_id = tid(*counter);
+    BlockNode::Paragraph(Paragraph {
+        id: para_id,
+        properties: ParagraphProperties::default(),
+        inlines: vec![InlineNode::TextBox(TextBox {
+            id: box_id,
+            blocks: vec![inner],
+        })],
+    })
+}
+
+#[test]
+fn text_box_nesting_within_bound_validates() {
+    let mut counter = 0;
+    let block = wrap_in_textboxes(MAX_TEXTBOX_DEPTH, &mut counter);
+    assert!(table_document(vec![block]).is_ok());
+}
+
+#[test]
+fn text_box_nesting_beyond_bound_is_rejected() {
+    let mut counter = 0;
+    let block = wrap_in_textboxes(MAX_TEXTBOX_DEPTH + 1, &mut counter);
+    assert!(matches!(
+        table_document(vec![block]),
+        Err(ModelError::TextBoxNestingTooDeep(_))
+    ));
+}

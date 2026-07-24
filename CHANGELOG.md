@@ -14,6 +14,15 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Added
 
+- Semantic text boxes in schema v1: an additive `InlineNode::TextBox` holding
+  block content, imported from `w:txbxContent` (DrawingML `wps:txbx` or legacy
+  VML `v:textbox`). Fixes an audit-confirmed data-corruption blocker where a text
+  box's inner paragraph truncated the enclosing paragraph, mis-captured the boxed
+  text, and silently dropped the enclosing drawing's image. `mc:AlternateContent`
+  now selects a single branch (first `mc:Choice`, else `mc:Fallback`), so a
+  drawing expressed in both DrawingML and VML is no longer duplicated. Per-part
+  relationship resolution (`DocxPackage::part_relationships`) was added as the
+  foundation for images and links inside header/footer/footnote parts.
 - Semantic fields in schema v1: an additive `InlineNode::Field` (opaque
   instruction + cached-result inlines), imported from both `w:fldSimple` and
   complex `fldChar` begin/separate/end run sequences. Fields and hyperlinks are
