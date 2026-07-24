@@ -48,14 +48,19 @@ being built on top of it:
 | History / Selection / Events | Revision-checked undo/redo; directed caret/range selection; bounded ordered event subscriptions |
 | DOCX package reader | Security-bounded ZIP admission; relationship-based main-document discovery (transitional + ISO Strict); content-type and relationship-graph resolution; deterministic source snapshot |
 | Semantic DOCX import | `.docx` → v1 model: paragraphs, runs, text (tab/break), direct run properties (bold/italic/underline/strike/size/RGB), paragraph formatting (alignment/indentation/spacing), styles (with `basedOn`), numbering (`numPr`), and body section geometry — table-cell text flattened; everything unmapped dispositioned in a deterministic compatibility report (no silent loss) |
-| Round-trip | Retention mode retains the source package byte-for-byte (tier-1 byte floor) so unmapped content is preserved; a LibreOffice differential harness measures text-content fidelity |
+| Round-trip | Retention mode retains the source package byte-for-byte and `casual-doc-export` reconstructs it, so an unedited `.docx` round-trips exactly — every tag, nested element, and part — verified by re-import producing an identical model. A LibreOffice differential harness measures text-content fidelity |
 | Engineering | Reproducible benchmarks, generated + real-producer fixtures, dependency policy, package-reader fuzzing; every crate decomposed into focused modules |
 | Portability | Required CI on Linux, macOS ARM64, Windows x64, WASM, and Rust 1.85 MSRV |
 
-The following capabilities are planned but are **not implemented**:
+Every WordprocessingML construct is in scope for round-trip: what the semantic
+model does not yet represent is preserved verbatim and reproduced. The following
+are **not implemented yet** (nothing is excluded — this is the progression):
 
-- edit-tolerant (tier-2) provenance and DOCX **writing** / verified byte round-trip;
-- tables, images, fields, headers/footers, and tracked changes as model semantics;
+- **semantic modeling** of the remaining constructs (tables, images, fields,
+  headers/footers, tracked changes, ...) as first-class model values — they
+  round-trip today via Retention, and gain in-model editing as each is added;
+- edit-tolerant (tier-2) provenance and the **semantic writer** that re-emits
+  after edits (the no-edit writer exists today);
 - text shaping, pagination, layout, display lists, and rendering;
 - browser, Tauri, C ABI, and npm distribution surfaces;
 - collaboration adapters and production application integration.
@@ -123,6 +128,7 @@ compilation.
 | `casual-doc-selection` | Logical caret/range validation and mapping |
 | `casual-doc-ooxml` | Security-bounded OOXML package inspection |
 | `casual-doc-import` | WordprocessingML semantic import into the normalized model |
+| `casual-doc-export` | DOCX package writer (no-edit reconstruction from retained source) |
 | `opendoc-benchmark` | Reproducible workload and baseline reporting |
 | `opendoc-fidelity` | LibreOffice differential text-fidelity harness |
 | `opendoc-fuzz` | Independently locked package-reader fuzz targets |

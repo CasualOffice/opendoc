@@ -11,9 +11,11 @@
 //! bytes decoded) into a deterministic `v1::Document`. Every traversed construct
 //! that is not modeled is recorded in a bounded, deterministic compatibility
 //! report under the dual-axis disposition taxonomy (`35-DISPOSITION-TAXONOMY.md`);
-//! nothing is dropped silently. Tables (as structure), fields, headers/footers,
-//! per-paragraph section breaks, and tracked changes are reported, not yet
-//! modeled.
+//! nothing is dropped silently. Constructs not yet in the semantic model (tables
+//! as structure, fields, headers/footers, per-paragraph section breaks, tracked
+//! changes, ...) are still fully round-trippable: in `Retention` mode the source
+//! is preserved verbatim and reproduced by `casual-doc-export`. Semantic
+//! modeling of every construct is progressive; nothing is excluded.
 //!
 //! Import runs in `Semantic` mode (report-and-drop) by default. `Retention`
 //! mode additionally keeps the original main-document bytes verbatim (the D5
