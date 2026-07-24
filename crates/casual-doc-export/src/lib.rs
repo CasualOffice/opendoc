@@ -87,6 +87,9 @@ mod tests {
                 InlineNode::Field(field) => {
                     return field.inlines.iter().any(|child| walk(child, predicate));
                 }
+                InlineNode::TextBox(text_box) => {
+                    return walk_blocks(&text_box.blocks, predicate);
+                }
                 _ => {}
             }
             false

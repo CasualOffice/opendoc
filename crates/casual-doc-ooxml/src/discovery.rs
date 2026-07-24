@@ -26,7 +26,7 @@ const MAX_METADATA_XML_ELEMENTS: u64 = 10_000;
 const MAX_METADATA_XML_DEPTH: u64 = 64;
 
 /// Static diagnostic label for the main document's relationships part.
-const MAIN_DOCUMENT_RELS_LABEL: &str = "<main-document>/_rels/*.rels";
+const PART_RELS_LABEL: &str = "<part>/_rels/*.rels";
 
 pub(crate) fn discover_main_document(
     relationships_bytes: &[u8],
@@ -59,22 +59,24 @@ pub(crate) fn discover_main_document(
     Ok(resolved)
 }
 
-/// Resolves the main document's part-level relationships, classifying each as
-/// internal (with a resolved normalized part name) or external (never fetched).
-/// A main document with no `_rels` part has no relationships.
-pub(crate) fn resolve_main_document_relationships(
+/// Resolves any part's part-level relationships, classifying each as internal
+/// (with a resolved normalized part name) or external (never fetched). Targets
+/// resolve relative to the part's own directory, so an extra part (header,
+/// footer, footnotes) resolves its own media/hyperlink references. A part with
+/// no `_rels` part has no relationships.
+pub(crate) fn resolve_part_relationships(
     archive: &mut ZipArchive<Cursor<&[u8]>>,
     archive_indexes: &BTreeMap<String, usize>,
-    main_document_part: &str,
+    part: &str,
     cancellation: &CancellationToken,
 ) -> Result<Vec<DocumentRelationship>, PackageError> {
-    let rels_part = relationship_part_name(main_document_part);
+    let rels_part = relationship_part_name(part);
     let Some(&index) = archive_indexes.get(&rels_part) else {
         return Ok(Vec::new());
     };
     let bytes = read_indexed(archive, index, cancellation)?;
-    let relationships = parse_relationships(&bytes, MAIN_DOCUMENT_RELS_LABEL)?;
-    let base = parent_segments(main_document_part);
+    let relationships = parse_relationships(&bytes, PART_RELS_LABEL)?;
+    let base = parent_segments(part);
     let mut resolved: Vec<DocumentRelationship> = relationships
         .into_iter()
         .map(|relationship| {

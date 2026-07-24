@@ -1243,3 +1243,164 @@ fn orphan_instr_text_is_reported_not_silently_dropped() {
     let import = import(xml);
     assert!(features(&import).contains(&"instrText"));
 }
+
+// ---- text boxes and alternate content ------------------------------------
+
+fn tb_block_text(blocks: &[BlockNode]) -> String {
+    fn walk_blocks(blocks: &[BlockNode], out: &mut String) {
+        for block in blocks {
+            match block {
+                BlockNode::Paragraph(p) => p.inlines.iter().for_each(|i| walk_inline(i, out)),
+                BlockNode::Table(t) => t
+                    .rows
+                    .iter()
+                    .for_each(|r| r.cells.iter().for_each(|c| walk_blocks(&c.blocks, out))),
+            }
+        }
+    }
+    fn walk_inline(inline: &InlineNode, out: &mut String) {
+        match inline {
+            InlineNode::Run(r) => out.push_str(&r.text),
+            InlineNode::Hyperlink(l) => l.inlines.iter().for_each(|c| walk_inline(c, out)),
+            InlineNode::Field(f) => f.inlines.iter().for_each(|c| walk_inline(c, out)),
+            InlineNode::TextBox(b) => walk_blocks(&b.blocks, out),
+            _ => {}
+        }
+    }
+    let mut out = String::new();
+    walk_blocks(blocks, &mut out);
+    out
+}
+
+fn find_textbox(inlines: &[InlineNode]) -> Option<&casual_doc_model::v1::TextBox> {
+    inlines.iter().find_map(|inline| match inline {
+        InlineNode::TextBox(text_box) => Some(text_box),
+        _ => None,
+    })
+}
+
+#[test]
+fn drawingml_text_box_is_modeled_and_does_not_corrupt_the_paragraph() {
+    let xml = br#"<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps"><w:body>
+        <w:p>
+            <w:r><w:t>Before</w:t></w:r>
+            <w:r><w:drawing><wp:inline><a:graphic><a:graphicData><wps:wsp><wps:txbx>
+                <w:txbxContent><w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:txbxContent>
+            </wps:txbx></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>
+            <w:r><w:t>After</w:t></w:r>
+        </w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    assert_eq!(import.document.body().len(), 1);
+    let para = paragraph(&import, 0);
+    let outer: String = para
+        .inlines
+        .iter()
+        .filter_map(|i| match i {
+            InlineNode::Run(r) => Some(r.text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(outer, "BeforeAfter");
+    let text_box = find_textbox(&para.inlines).expect("text box modeled");
+    assert_eq!(tb_block_text(&text_box.blocks), "Boxed");
+}
+
+#[test]
+fn image_beside_a_text_box_in_the_same_drawing_is_not_dropped() {
+    let document = br#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps" xmlns:pic="urn:pic"><w:body>
+        <w:p><w:r><w:drawing><wp:inline><wp:extent cx="100" cy="100"/><a:graphic><a:graphicData><wps:wsp>
+            <a:blipFill><a:blip r:embed="rId7"/></a:blipFill>
+            <wps:txbx><w:txbxContent><w:p><w:r><w:t>Caption</w:t></w:r></w:p></w:txbxContent></wps:txbx>
+        </wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>
+    </w:body></w:document>"#;
+    let rels = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+    let media = [("word/media/image1.png", b"PNGDATA".as_slice())];
+    let import = import_bytes(&build_package(document, rels, &media));
+    let para = paragraph(&import, 0);
+    assert!(
+        para.inlines
+            .iter()
+            .any(|i| matches!(i, InlineNode::Drawing(_))),
+        "enclosing drawing image must survive"
+    );
+    let text_box = find_textbox(&para.inlines).expect("text box modeled");
+    assert_eq!(tb_block_text(&text_box.blocks), "Caption");
+}
+
+#[test]
+fn alternate_content_selects_one_branch_and_does_not_duplicate() {
+    let xml = br#"<w:document xmlns:w="urn:w" xmlns:mc="urn:mc" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps" xmlns:v="urn:v"><w:body>
+        <w:p><w:r><mc:AlternateContent>
+            <mc:Choice Requires="wps"><w:drawing><wp:inline><a:graphic><a:graphicData><wps:wsp><wps:txbx>
+                <w:txbxContent><w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:txbxContent>
+            </wps:txbx></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></mc:Choice>
+            <mc:Fallback><w:pict><v:shape><v:textbox>
+                <w:txbxContent><w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:txbxContent>
+            </v:textbox></v:shape></w:pict></mc:Fallback>
+        </mc:AlternateContent></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let para = paragraph(&import, 0);
+    let boxes = para
+        .inlines
+        .iter()
+        .filter(|i| matches!(i, InlineNode::TextBox(_)))
+        .count();
+    assert_eq!(
+        boxes, 1,
+        "alternate content must not duplicate the text box"
+    );
+    let text_box = find_textbox(&para.inlines).expect("text box modeled");
+    assert_eq!(tb_block_text(&text_box.blocks), "Boxed");
+    assert!(features(&import).contains(&"Fallback"));
+}
+
+#[test]
+fn deep_tables_with_a_text_box_of_tables_import_without_hard_failure() {
+    // Regression (review major): a text box restarts the table-depth budget in
+    // both importer and model, so tables outside and inside a box do not sum
+    // past the bound and abort the whole import.
+    let mut xml = String::from(
+        r#"<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps"><w:body>"#,
+    );
+    let outer = 20;
+    for _ in 0..outer {
+        xml.push_str("<w:tbl><w:tr><w:tc>");
+    }
+    xml.push_str("<w:p><w:r><w:drawing><wp:inline><a:graphic><a:graphicData><wps:wsp><wps:txbx><w:txbxContent>");
+    let inner = 13;
+    for _ in 0..inner {
+        xml.push_str("<w:tbl><w:tr><w:tc>");
+    }
+    xml.push_str("<w:p><w:r><w:t>deep</w:t></w:r></w:p>");
+    for _ in 0..inner {
+        xml.push_str("</w:tc></w:tr></w:tbl>");
+    }
+    xml.push_str("</w:txbxContent></wps:txbx></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>");
+    for _ in 0..outer {
+        xml.push_str("</w:tc></w:tr></w:tbl>");
+    }
+    xml.push_str("</w:body></w:document>");
+    // Must import successfully (no ImportError::Model from over-summed depth).
+    let import = import(xml.as_bytes());
+    assert!(!import.document.body().is_empty());
+}
+
+#[test]
+fn sect_pr_inside_a_text_box_is_not_a_document_section() {
+    // Regression (review minor): a bare sectPr inside a text box must not push a
+    // phantom SectionBoundary into the document's sections.
+    let xml = br#"<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps"><w:body>
+        <w:p><w:r><w:drawing><wp:inline><a:graphic><a:graphicData><wps:wsp><wps:txbx><w:txbxContent>
+            <w:sectPr><w:pgSz w:w="100" w:h="100"/></w:sectPr>
+            <w:p><w:r><w:t>x</w:t></w:r></w:p>
+        </w:txbxContent></wps:txbx></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    assert!(
+        import.document.definitions().sections.is_empty(),
+        "sectPr inside a text box must not create a document section"
+    );
+    assert!(features(&import).contains(&"sectPr"));
+}

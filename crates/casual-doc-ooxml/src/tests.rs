@@ -664,6 +664,62 @@ fn main_document_relationships_are_resolved_and_classified() {
 }
 
 #[test]
+fn part_relationships_resolve_an_extra_parts_own_image() {
+    // A header part with its own `_rels/header1.xml.rels` referencing an image;
+    // its relationships resolve relative to the header's directory (word/), so an
+    // image in a header is reachable independent of the main document's rels.
+    let content_types = format!(
+        "{CONTENT_TYPES_HEAD}<Default Extension=\"png\" ContentType=\"image/png\"/>\
+         <Override PartName=\"/word/document.xml\" ContentType=\"{MAIN_TYPE}\"/></Types>"
+    )
+    .into_bytes();
+    let root_rels = relationships(&office_document_relationship(
+        OFFICE_DOCUMENT_REL_TRANSITIONAL,
+        DOCUMENT_PART,
+        false,
+    ));
+    let header_rels: &[u8] = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/logo.png"/></Relationships>"#;
+    let entries: [(&str, &[u8], CompressionMethod); 6] = [
+        (
+            CONTENT_TYPES_PART,
+            content_types.as_slice(),
+            CompressionMethod::Stored,
+        ),
+        (
+            ROOT_RELATIONSHIPS_PART,
+            root_rels.as_slice(),
+            CompressionMethod::Stored,
+        ),
+        (DOCUMENT_PART, DOCUMENT, CompressionMethod::Deflated),
+        ("word/header1.xml", b"<hdr/>", CompressionMethod::Stored),
+        (
+            "word/_rels/header1.xml.rels",
+            header_rels,
+            CompressionMethod::Stored,
+        ),
+        ("word/media/logo.png", b"PNGDATA", CompressionMethod::Stored),
+    ];
+    let bytes = package(&entries);
+    let mut package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+
+    let header_relationships = package.part_relationships("word/header1.xml").unwrap();
+    assert_eq!(header_relationships.len(), 1);
+    assert_eq!(header_relationships[0].id, "rId1");
+    assert_eq!(header_relationships[0].target_mode, TargetMode::Internal);
+    assert_eq!(
+        header_relationships[0].resolved_part.as_deref(),
+        Some("word/media/logo.png")
+    );
+    // A part with no `_rels` companion resolves to no relationships.
+    assert!(
+        package
+            .part_relationships("word/footer1.xml")
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
 fn main_document_without_a_rels_part_has_no_relationships() {
     let content_types = content_types_for(DOCUMENT_PART, MAIN_TYPE);
     let root_rels = relationships(&office_document_relationship(

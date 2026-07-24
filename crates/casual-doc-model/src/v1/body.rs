@@ -127,6 +127,21 @@ pub struct Field {
     pub inlines: Vec<InlineNode>,
 }
 
+/// Maximum text-box nesting depth (a text box inside a text box inside ...).
+pub const MAX_TEXTBOX_DEPTH: u32 = 8;
+
+/// An inline text box holding block content (a DrawingML `wps:txbx` or a legacy
+/// VML `v:textbox`). A text box is inline-anchored but carries block-level
+/// content, so its `blocks` reuse the recursive block model.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TextBox {
+    /// Stable identity.
+    pub id: NodeId,
+    /// The text box's block content (non-empty; paragraphs and nested tables).
+    pub blocks: Vec<BlockNode>,
+}
+
 /// Inline content supported by schema v1.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -143,6 +158,8 @@ pub enum InlineNode {
     Hyperlink(Hyperlink),
     /// An inline field: an instruction and its cached result.
     Field(Field),
+    /// An inline text box holding block content.
+    TextBox(TextBox),
 }
 
 impl InlineNode {
@@ -156,6 +173,7 @@ impl InlineNode {
             Self::Drawing(drawing) => drawing.id,
             Self::Hyperlink(hyperlink) => hyperlink.id,
             Self::Field(field) => field.id,
+            Self::TextBox(text_box) => text_box.id,
         }
     }
 }

@@ -9,7 +9,7 @@ use zip::{CompressionMethod, ZipArchive};
 
 use crate::archive::CentralDirectory;
 use crate::contenttypes::ContentTypes;
-use crate::discovery::{discover_main_document, resolve_main_document_relationships};
+use crate::discovery::{discover_main_document, resolve_part_relationships};
 use crate::error::PackageError;
 use crate::limits::{PackageLimits, enforce_expansion_ratio, enforce_limit, usize_to_u64};
 use crate::path::{is_macro_part, normalize_package_path};
@@ -235,7 +235,7 @@ impl<'a> DocxPackage<'a> {
         )?;
         let main_document_part =
             discover_main_document(&relationships_bytes, &content_types, &archive_indexes)?;
-        let main_document_relationships = resolve_main_document_relationships(
+        let main_document_relationships = resolve_part_relationships(
             &mut archive,
             &archive_indexes,
             &main_document_part,
@@ -270,6 +270,32 @@ impl<'a> DocxPackage<'a> {
     #[must_use]
     pub fn main_document_relationships(&self) -> &[DocumentRelationship] {
         &self.main_document_relationships
+    }
+
+    /// Resolves an arbitrary admitted part's own relationships on demand, ordered
+    /// by id. Targets resolve relative to the part's directory, so an extra part
+    /// (header, footer, footnotes) resolves its own image and hyperlink
+    /// references. A part with no `_rels` companion has no relationships.
+    pub fn part_relationships(
+        &mut self,
+        part_name: &str,
+    ) -> Result<Vec<DocumentRelationship>, PackageError> {
+        self.part_relationships_with_cancellation(part_name, &CancellationToken::default())
+    }
+
+    /// Resolves an arbitrary admitted part's relationships while honoring
+    /// cancellation.
+    pub fn part_relationships_with_cancellation(
+        &mut self,
+        part_name: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Vec<DocumentRelationship>, PackageError> {
+        resolve_part_relationships(
+            &mut self.archive,
+            &self.archive_indexes,
+            part_name,
+            cancellation,
+        )
     }
 
     /// Builds the deterministic source-package snapshot (part manifest with
