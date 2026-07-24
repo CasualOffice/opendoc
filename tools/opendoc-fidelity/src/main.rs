@@ -155,7 +155,7 @@ fn strip_list_marker(line: &str) -> &str {
     }
     // Numeric/alpha markers: "<label>. " or "<label>) " where label is a short
     // run of digits or ascii letters (e.g. "1. ", "12) ", "a. ", "iv) ").
-    if let Some((label, rest)) = line.split_once(|c| c == '.' || c == ')') {
+    if let Some((label, rest)) = line.split_once(['.', ')']) {
         if !label.is_empty()
             && label.len() <= 4
             && label.chars().all(|c| c.is_ascii_alphanumeric())
