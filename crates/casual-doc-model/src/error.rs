@@ -80,6 +80,10 @@ pub enum ModelError {
         /// Stable property name.
         property: &'static str,
     },
+    /// A hyperlink had no inline content (v1).
+    EmptyHyperlink(NodeId),
+    /// A hyperlink was nested inside another hyperlink (v1).
+    NestedHyperlink(NodeId),
     /// A grapheme offset fell outside its node's text (v1).
     GraphemeOffsetOutOfRange {
         /// Owning node.
@@ -163,6 +167,10 @@ impl fmt::Display for ModelError {
             }
             Self::PropertyValueOutOfDomain { property } => {
                 write!(formatter, "property {property} value is out of domain")
+            }
+            Self::EmptyHyperlink(id) => write!(formatter, "hyperlink {id} has no inline content"),
+            Self::NestedHyperlink(id) => {
+                write!(formatter, "hyperlink {id} is nested in a hyperlink")
             }
             Self::GraphemeOffsetOutOfRange {
                 node,

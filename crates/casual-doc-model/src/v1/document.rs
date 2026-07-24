@@ -156,34 +156,27 @@ impl Document {
 
     fn validate_unique_ids(&self) -> Result<(), ModelError> {
         let mut ids = BTreeSet::new();
-        let mut record = |id: NodeId| -> Result<(), ModelError> {
-            if ids.insert(id) {
-                Ok(())
-            } else {
-                Err(ModelError::DuplicateNodeId(id))
-            }
-        };
-        record(self.document_id)?;
+        insert_id(&mut ids, self.document_id)?;
         for (id, _) in self.definitions.styles.iter() {
-            record(id.node_id())?;
+            insert_id(&mut ids, id.node_id())?;
         }
         for (id, _) in self.definitions.abstract_numbering.iter() {
-            record(id.node_id())?;
+            insert_id(&mut ids, id.node_id())?;
         }
         for (id, _) in self.definitions.numbering.iter() {
-            record(id.node_id())?;
+            insert_id(&mut ids, id.node_id())?;
         }
         for section in &self.definitions.sections {
-            record(section.id.node_id())?;
+            insert_id(&mut ids, section.id.node_id())?;
         }
         for (id, _) in self.definitions.media.iter() {
-            record(id.node_id())?;
+            insert_id(&mut ids, id.node_id())?;
         }
         for block in &self.body {
             let BlockNode::Paragraph(paragraph) = block;
-            record(paragraph.id)?;
+            insert_id(&mut ids, paragraph.id)?;
             for inline in &paragraph.inlines {
-                record(inline.id())?;
+                record_inline_ids(inline, &mut ids)?;
             }
         }
         Ok(())
@@ -359,25 +352,71 @@ impl Document {
         for block in &self.body {
             let BlockNode::Paragraph(paragraph) = block;
             self.check_paragraph_property_refs(&paragraph.properties)?;
-            let mut previous_run_properties: Option<&RunProperties> = None;
-            for inline in &paragraph.inlines {
-                match inline {
-                    InlineNode::Run(run) => {
-                        if run.text.is_empty() {
-                            return Err(ModelError::EmptyTextRun);
-                        }
-                        self.check_run_property_refs(&run.properties)?;
-                        let length = run.text.graphemes(true).count();
-                        u32::try_from(length)
-                            .map_err(|_| ModelError::GraphemeCountOverflow(run.id))?;
-                        if previous_run_properties == Some(&run.properties) {
-                            return Err(ModelError::AdjacentEquivalentTextRuns(paragraph.id));
-                        }
-                        previous_run_properties = Some(&run.properties);
+            self.validate_inlines(&paragraph.inlines, paragraph.id, false)?;
+        }
+        Ok(())
+    }
+
+    /// Validates one inline sequence. A drawing or hyperlink is a hard merge
+    /// boundary (it resets adjacent-run tracking, like a tab or break).
+    /// `in_hyperlink` is set while validating a hyperlink's own children, so a
+    /// nested hyperlink is rejected.
+    fn validate_inlines(
+        &self,
+        inlines: &[InlineNode],
+        owner: NodeId,
+        in_hyperlink: bool,
+    ) -> Result<(), ModelError> {
+        let mut previous_run_properties: Option<&RunProperties> = None;
+        for inline in inlines {
+            match inline {
+                InlineNode::Run(run) => {
+                    if run.text.is_empty() {
+                        return Err(ModelError::EmptyTextRun);
                     }
-                    InlineNode::Tab(_) | InlineNode::Break(_) => {
-                        previous_run_properties = None;
+                    self.check_run_property_refs(&run.properties)?;
+                    let length = run.text.graphemes(true).count();
+                    u32::try_from(length).map_err(|_| ModelError::GraphemeCountOverflow(run.id))?;
+                    if previous_run_properties == Some(&run.properties) {
+                        return Err(ModelError::AdjacentEquivalentTextRuns(owner));
                     }
+                    previous_run_properties = Some(&run.properties);
+                }
+                InlineNode::Drawing(drawing) => {
+                    if !self.definitions.media.contains_key(&drawing.media) {
+                        return Err(ModelError::DanglingMediaRef(drawing.media.node_id()));
+                    }
+                    if let Some(extent) = &drawing.extent {
+                        check_domain(
+                            (0..=MAX_EMU).contains(&extent.width_emu),
+                            "drawing.extent.width",
+                        )?;
+                        check_domain(
+                            (0..=MAX_EMU).contains(&extent.height_emu),
+                            "drawing.extent.height",
+                        )?;
+                    }
+                    previous_run_properties = None;
+                }
+                InlineNode::Hyperlink(link) => {
+                    if in_hyperlink {
+                        return Err(ModelError::NestedHyperlink(link.id));
+                    }
+                    check_hyperlink_target(&link.target)?;
+                    if let Some(tooltip) = &link.tooltip {
+                        check_domain(
+                            !tooltip.is_empty() && tooltip.len() <= 255,
+                            "hyperlink.tooltip",
+                        )?;
+                    }
+                    if link.inlines.is_empty() {
+                        return Err(ModelError::EmptyHyperlink(link.id));
+                    }
+                    self.validate_inlines(&link.inlines, link.id, true)?;
+                    previous_run_properties = None;
+                }
+                InlineNode::Tab(_) | InlineNode::Break(_) => {
+                    previous_run_properties = None;
                 }
             }
         }
@@ -390,16 +429,7 @@ impl Document {
         for block in &self.body {
             let BlockNode::Paragraph(paragraph) = block;
             for inline in &paragraph.inlines {
-                if let InlineNode::Run(run) = inline {
-                    enforce_limit("text_run_bytes", run.text.len(), limits.max_text_run_bytes)?;
-                    scalar_values = scalar_values.checked_add(run.text.chars().count()).ok_or(
-                        SnapshotError::LimitExceeded {
-                            limit: "unicode_scalar_values",
-                            observed: usize::MAX,
-                            allowed: limits.max_unicode_scalar_values,
-                        },
-                    )?;
-                }
+                accumulate_inline_limits(inline, limits, &mut scalar_values)?;
             }
         }
         enforce_limit(
@@ -407,6 +437,66 @@ impl Document {
             scalar_values,
             limits.max_unicode_scalar_values,
         )
+    }
+}
+
+/// Accounts one inline node against the text limits, recursing into hyperlink
+/// children so nested run text cannot smuggle past the bounds.
+fn accumulate_inline_limits(
+    inline: &InlineNode,
+    limits: SnapshotLimits,
+    scalar_values: &mut usize,
+) -> Result<(), SnapshotError> {
+    match inline {
+        InlineNode::Run(run) => {
+            enforce_limit("text_run_bytes", run.text.len(), limits.max_text_run_bytes)?;
+            *scalar_values = scalar_values.checked_add(run.text.chars().count()).ok_or(
+                SnapshotError::LimitExceeded {
+                    limit: "unicode_scalar_values",
+                    observed: usize::MAX,
+                    allowed: limits.max_unicode_scalar_values,
+                },
+            )?;
+        }
+        InlineNode::Hyperlink(link) => {
+            for child in &link.inlines {
+                accumulate_inline_limits(child, limits, scalar_values)?;
+            }
+        }
+        InlineNode::Tab(_) | InlineNode::Break(_) | InlineNode::Drawing(_) => {}
+    }
+    Ok(())
+}
+
+fn insert_id(ids: &mut BTreeSet<NodeId>, id: NodeId) -> Result<(), ModelError> {
+    if ids.insert(id) {
+        Ok(())
+    } else {
+        Err(ModelError::DuplicateNodeId(id))
+    }
+}
+
+/// Records an inline's id and, for a hyperlink, its children's ids recursively.
+fn record_inline_ids(inline: &InlineNode, ids: &mut BTreeSet<NodeId>) -> Result<(), ModelError> {
+    insert_id(ids, inline.id())?;
+    if let InlineNode::Hyperlink(link) = inline {
+        for child in &link.inlines {
+            record_inline_ids(child, ids)?;
+        }
+    }
+    Ok(())
+}
+
+fn check_hyperlink_target(target: &HyperlinkTarget) -> Result<(), ModelError> {
+    match target {
+        HyperlinkTarget::External(external) => check_domain(
+            !external.url.is_empty() && external.url.len() <= 2048,
+            "hyperlink.external.url",
+        ),
+        HyperlinkTarget::Internal(internal) => check_domain(
+            !internal.anchor.is_empty() && internal.anchor.len() <= 255,
+            "hyperlink.internal.anchor",
+        ),
     }
 }
 

@@ -391,6 +391,165 @@ fn migration_skips_ids_that_collide_with_preserved_paragraph_ids() {
     migrated.validate().unwrap();
 }
 
+const MEDIA_DEFS: &str = r#""definitions":{"media":{"0000000000000000000000000000000d":{"relationshipId":"rId1","mediaType":"image/png","partName":"word/media/x.png"}}}"#;
+
+fn roundtrips(json: &[u8]) {
+    let document = Document::from_json(json, SnapshotLimits::default()).unwrap();
+    let reexport = document.to_json().unwrap();
+    assert_eq!(
+        Document::from_json(&reexport, SnapshotLimits::default())
+            .unwrap()
+            .to_json()
+            .unwrap(),
+        reexport
+    );
+}
+
+#[test]
+fn drawing_with_and_without_extent_round_trips() {
+    let json = format!(
+        r#"{{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{{"type":"paragraph","id":"00000000000000030000000000000002","properties":{{}},
+              "inlines":[
+                {{"type":"drawing","id":"00000000000000030000000000000003","media":"0000000000000000000000000000000d","extent":{{"widthEmu":9525,"heightEmu":19050}}}},
+                {{"type":"drawing","id":"00000000000000030000000000000004","media":"0000000000000000000000000000000d"}}
+              ]}}],
+            {MEDIA_DEFS}}}"#
+    );
+    roundtrips(json.as_bytes());
+    // An absent extent emits no key.
+    let document = Document::from_json(json.as_bytes(), SnapshotLimits::default()).unwrap();
+    let text = String::from_utf8(document.to_json().unwrap()).unwrap();
+    assert!(text.contains(r#""media":"0000000000000000000000000000000d""#));
+    assert_eq!(text.matches("extent").count(), 1);
+}
+
+#[test]
+fn drawing_referencing_absent_media_is_rejected() {
+    let json = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{"type":"paragraph","id":"00000000000000030000000000000002","properties":{},
+              "inlines":[{"type":"drawing","id":"00000000000000030000000000000003","media":"0000000000000000000000000000000e"}]}],
+            "definitions":{}}"#;
+    assert!(matches!(
+        expect_invalid(json),
+        ModelError::DanglingMediaRef(_)
+    ));
+}
+
+#[test]
+fn drawing_extent_out_of_domain_is_rejected() {
+    let json = format!(
+        r#"{{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{{"type":"paragraph","id":"00000000000000030000000000000002","properties":{{}},
+              "inlines":[{{"type":"drawing","id":"00000000000000030000000000000003","media":"0000000000000000000000000000000d","extent":{{"widthEmu":27273042316901,"heightEmu":1}}}}]}}],
+            {MEDIA_DEFS}}}"#
+    );
+    assert!(matches!(
+        expect_invalid(json.as_bytes()),
+        ModelError::PropertyValueOutOfDomain {
+            property: "drawing.extent.width"
+        }
+    ));
+}
+
+#[test]
+fn drawing_between_equal_runs_is_accepted() {
+    let json = format!(
+        r#"{{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{{"type":"paragraph","id":"00000000000000030000000000000002","properties":{{}},
+              "inlines":[
+                {{"type":"run","id":"00000000000000030000000000000003","properties":{{}},"text":"a"}},
+                {{"type":"drawing","id":"00000000000000030000000000000005","media":"0000000000000000000000000000000d"}},
+                {{"type":"run","id":"00000000000000030000000000000004","properties":{{}},"text":"b"}}
+              ]}}],
+            {MEDIA_DEFS}}}"#
+    );
+    roundtrips(json.as_bytes());
+}
+
+#[test]
+fn hyperlink_targets_round_trip() {
+    let json = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{"type":"paragraph","id":"00000000000000030000000000000002","properties":{},
+              "inlines":[
+                {"type":"hyperlink","id":"00000000000000030000000000000003","target":{"type":"external","url":"https://example.com/docs"},"tooltip":"docs","inlines":[
+                  {"type":"run","id":"00000000000000030000000000000004","properties":{},"text":"the "},
+                  {"type":"run","id":"00000000000000030000000000000005","properties":{"bold":true},"text":"docs"}
+                ]},
+                {"type":"hyperlink","id":"00000000000000030000000000000006","target":{"type":"internal","anchor":"top"},"inlines":[
+                  {"type":"run","id":"00000000000000030000000000000007","properties":{},"text":"top"}
+                ]}
+              ]}],
+            "definitions":{}}"#;
+    roundtrips(json);
+    // An absent tooltip emits no key (only the external link declares one).
+    let document = Document::from_json(json, SnapshotLimits::default()).unwrap();
+    let text = String::from_utf8(document.to_json().unwrap()).unwrap();
+    assert_eq!(text.matches("tooltip").count(), 1);
+}
+
+#[test]
+fn empty_hyperlink_is_rejected() {
+    let json = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{"type":"paragraph","id":"00000000000000030000000000000002","properties":{},
+              "inlines":[{"type":"hyperlink","id":"00000000000000030000000000000003","target":{"type":"internal","anchor":"top"},"inlines":[]}]}],
+            "definitions":{}}"#;
+    assert!(matches!(
+        expect_invalid(json),
+        ModelError::EmptyHyperlink(_)
+    ));
+}
+
+#[test]
+fn nested_hyperlink_is_rejected() {
+    let json = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{"type":"paragraph","id":"00000000000000030000000000000002","properties":{},
+              "inlines":[{"type":"hyperlink","id":"00000000000000030000000000000003","target":{"type":"internal","anchor":"a"},"inlines":[
+                {"type":"hyperlink","id":"00000000000000030000000000000004","target":{"type":"internal","anchor":"b"},"inlines":[
+                  {"type":"run","id":"00000000000000030000000000000005","properties":{},"text":"x"}
+                ]}
+              ]}]}],
+            "definitions":{}}"#;
+    assert!(matches!(
+        expect_invalid(json),
+        ModelError::NestedHyperlink(_)
+    ));
+}
+
+#[test]
+fn hyperlink_child_id_collision_is_rejected() {
+    // A child run id equal to the paragraph id: proves record_inline_ids recurses.
+    let json = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{"type":"paragraph","id":"00000000000000030000000000000002","properties":{},
+              "inlines":[{"type":"hyperlink","id":"00000000000000030000000000000003","target":{"type":"internal","anchor":"a"},"inlines":[
+                {"type":"run","id":"00000000000000030000000000000002","properties":{},"text":"x"}
+              ]}]}],
+            "definitions":{}}"#;
+    assert!(matches!(
+        expect_invalid(json),
+        ModelError::DuplicateNodeId(_)
+    ));
+}
+
+#[test]
+fn over_domain_hyperlink_url_is_rejected() {
+    let long = "h".repeat(2049);
+    let json = format!(
+        r#"{{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{{"type":"paragraph","id":"00000000000000030000000000000002","properties":{{}},
+              "inlines":[{{"type":"hyperlink","id":"00000000000000030000000000000003","target":{{"type":"external","url":"{long}"}},"inlines":[
+                {{"type":"run","id":"00000000000000030000000000000004","properties":{{}},"text":"x"}}
+              ]}}]}}],
+            "definitions":{{}}}}"#
+    );
+    assert!(matches!(
+        expect_invalid(json.as_bytes()),
+        ModelError::PropertyValueOutOfDomain {
+            property: "hyperlink.external.url"
+        }
+    ));
+}
+
 fn document_with_paragraph_ids(document_id: NodeId, paragraph: crate::Paragraph) -> V0Document {
     let json = format!(
         "{{\"schemaVersion\":0,\"documentId\":\"{document_id}\",\"body\":[{}],\"extensions\":{{}}}}",
