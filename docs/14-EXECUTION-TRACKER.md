@@ -43,6 +43,13 @@ Update this file whenever work begins, changes scope, or finishes.
 | P0-007 | Benchmark and baseline harness | Done | Reproducible package/model timing, reports, and regression thresholds. | 50 unit tests plus SDK doc test; baseline comparison, native/WASM/MSRV, and CI smoke gates pass. |
 | P0-008 | Phase 0 corpus and evidence closure | Done | Seven generated fixtures, fuzz infrastructure, and linked exit evidence. | Full acceptance matrix passed; see `31-PHASE-0-EXIT-REPORT.md`. |
 
+## Maintenance
+
+| ID | Title | Owner | Status | Notes |
+| --- | --- | --- | --- | --- |
+| M-001 | Decompose god-files into modules | Claude Code | In progress | Owner directive: no god files. `casual-doc-model/src/v1.rs` (1574 lines) → `v1/` module (`ids`, `properties`, `body`, `definitions`, `document`, `migration`, `tests`), public API preserved via re-exports. Next: model `lib.rs` (v0), `ooxml/lib.rs`, `import/lib.rs`. |
+| M-002 | LibreOffice differential fidelity harness | Claude Code | Not started | Use `soffice --headless` as an oracle to compare import output vs LibreOffice for `.docx` fixtures (evaluation tool, not a CI unit-test dep). |
+
 ## Active Work
 
 | ID | Title | Owner | Status | Links |
