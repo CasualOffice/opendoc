@@ -95,6 +95,7 @@ impl Document {
         self.validate_media()?;
         self.validate_document_defaults()?;
         self.validate_notes()?;
+        self.validate_headers_footers()?;
         self.validate_body()?;
         Ok(())
     }
@@ -133,6 +134,20 @@ impl Document {
                 (1..=64).contains(&section.columns.count),
                 "section.column_count",
             )?;
+            for header in &section.headers {
+                if !self.definitions.headers.contains_key(&header.reference) {
+                    return Err(ModelError::DanglingHeaderFooterRef(
+                        header.reference.node_id(),
+                    ));
+                }
+            }
+            for footer in &section.footers {
+                if !self.definitions.footers.contains_key(&footer.reference) {
+                    return Err(ModelError::DanglingHeaderFooterRef(
+                        footer.reference.node_id(),
+                    ));
+                }
+            }
         }
         Ok(())
     }
@@ -182,6 +197,17 @@ impl Document {
         for (id, note) in self.definitions.endnotes.iter() {
             insert_id(&mut ids, id.node_id())?;
             for block in &note.blocks {
+                record_block_ids(block, &mut ids)?;
+            }
+        }
+        for (id, header_footer) in self
+            .definitions
+            .headers
+            .iter()
+            .chain(self.definitions.footers.iter())
+        {
+            insert_id(&mut ids, id.node_id())?;
+            for block in &header_footer.blocks {
                 record_block_ids(block, &mut ids)?;
             }
         }
@@ -547,6 +573,22 @@ impl Document {
         Ok(())
     }
 
+    /// Validates every header and footer's block content (a fresh block
+    /// container, like a note).
+    fn validate_headers_footers(&self) -> Result<(), ModelError> {
+        for (_, header_footer) in self
+            .definitions
+            .headers
+            .iter()
+            .chain(self.definitions.footers.iter())
+        {
+            for block in &header_footer.blocks {
+                self.validate_block(block, 0, 0)?;
+            }
+        }
+        Ok(())
+    }
+
     fn validate_snapshot_limits(&self, limits: SnapshotLimits) -> Result<(), SnapshotError> {
         let mut blocks = 0_usize;
         let mut scalar_values = 0_usize;
@@ -560,6 +602,16 @@ impl Document {
         }
         for (_, note) in self.definitions.endnotes.iter() {
             for block in &note.blocks {
+                accumulate_block_limits(block, limits, &mut blocks, &mut scalar_values)?;
+            }
+        }
+        for (_, header_footer) in self
+            .definitions
+            .headers
+            .iter()
+            .chain(self.definitions.footers.iter())
+        {
+            for block in &header_footer.blocks {
                 accumulate_block_limits(block, limits, &mut blocks, &mut scalar_values)?;
             }
         }

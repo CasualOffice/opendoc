@@ -3,8 +3,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    AbstractNumberingId, BlockNode, DefinitionMap, FontName, MediaId, NoteId, NumberingInstanceId,
-    ParagraphProperties, RunProperties, SectionId, StyleId, StyleKind,
+    AbstractNumberingId, BlockNode, DefinitionMap, FontName, HeaderFooterId, MediaId, NoteId,
+    NumberingInstanceId, ParagraphProperties, RunProperties, SectionId, StyleId, StyleKind,
 };
 
 /// A style definition (its id is the map key).
@@ -111,6 +111,28 @@ pub struct SectionColumns {
     pub count: u16,
 }
 
+/// Which page type a header or footer applies to.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeaderFooterKind {
+    /// The default header/footer.
+    Default,
+    /// The first-page header/footer.
+    First,
+    /// The even-page header/footer.
+    Even,
+}
+
+/// A section's reference to a header or footer definition for a page type.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HeaderFooterRef {
+    /// The page type this reference applies to.
+    pub kind: HeaderFooterKind,
+    /// The referenced header/footer (resolves in `Definitions`).
+    pub reference: HeaderFooterId,
+}
+
 /// One ordered section boundary.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -123,6 +145,22 @@ pub struct SectionBoundary {
     pub page_margins: PageMargins,
     /// Column layout.
     pub columns: SectionColumns,
+    /// Header references by page type (additive; omitted when empty).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub headers: Vec<HeaderFooterRef>,
+    /// Footer references by page type (additive; omitted when empty).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub footers: Vec<HeaderFooterRef>,
+}
+
+/// A header or footer definition (its id is the map key). Its content reuses the
+/// recursive block model; `blocks` may be empty.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HeaderFooter {
+    /// The header/footer's block content.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocks: Vec<BlockNode>,
 }
 
 /// Semantic theme references retained without embedding the theme.
@@ -186,6 +224,12 @@ pub struct Definitions {
     /// Endnote definitions by id. Additive: omitted when empty.
     #[serde(default, skip_serializing_if = "DefinitionMap::is_empty")]
     pub endnotes: DefinitionMap<NoteId, Note>,
+    /// Header definitions by id. Additive: omitted when empty.
+    #[serde(default, skip_serializing_if = "DefinitionMap::is_empty")]
+    pub headers: DefinitionMap<HeaderFooterId, HeaderFooter>,
+    /// Footer definitions by id. Additive: omitted when empty.
+    #[serde(default, skip_serializing_if = "DefinitionMap::is_empty")]
+    pub footers: DefinitionMap<HeaderFooterId, HeaderFooter>,
     /// Document-wide defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub document_defaults: Option<DocumentDefaults>,

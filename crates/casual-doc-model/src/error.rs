@@ -111,6 +111,8 @@ pub enum ModelError {
     TextBoxNestingTooDeep(NodeId),
     /// A footnote/endnote reference did not resolve (v1).
     DanglingNoteRef(NodeId),
+    /// A section's header/footer reference did not resolve (v1).
+    DanglingHeaderFooterRef(NodeId),
 }
 
 impl fmt::Display for ModelError {
@@ -220,6 +222,9 @@ impl fmt::Display for ModelError {
             }
             Self::DanglingNoteRef(id) => {
                 write!(formatter, "note reference {id} does not resolve")
+            }
+            Self::DanglingHeaderFooterRef(id) => {
+                write!(formatter, "header/footer reference {id} does not resolve")
             }
         }
     }

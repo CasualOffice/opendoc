@@ -3,11 +3,11 @@
 use std::collections::BTreeMap;
 
 use casual_doc_model::v1::{
-    BlockNode, Break, BreakKind, Drawing, Extent, ExternalTarget, Field, Hyperlink,
-    HyperlinkTarget, InlineNode, InternalTarget, MAX_EMU, MAX_FIELD_INSTRUCTION_BYTES,
-    MAX_TEXTBOX_DEPTH, MediaId, NoteId, NoteKind, NoteReference, PageMargins, PageSize, Paragraph,
-    ParagraphProperties, Run, RunProperties, SectionBoundary, SectionColumns, SectionId, StyleKind,
-    Tab, TextBox, VerticalMerge,
+    BlockNode, Break, BreakKind, Drawing, Extent, ExternalTarget, Field, HeaderFooterId,
+    HeaderFooterKind, HeaderFooterRef, Hyperlink, HyperlinkTarget, InlineNode, InternalTarget,
+    MAX_EMU, MAX_FIELD_INSTRUCTION_BYTES, MAX_TEXTBOX_DEPTH, MediaId, NoteId, NoteKind,
+    NoteReference, PageMargins, PageSize, Paragraph, ParagraphProperties, Run, RunProperties,
+    SectionBoundary, SectionColumns, SectionId, StyleKind, Tab, TextBox, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::Reader;
@@ -120,6 +120,8 @@ struct SectionAccumulator {
     margin_start: Option<i32>,
     margin_end: Option<i32>,
     columns: Option<u16>,
+    headers: Vec<HeaderFooterRef>,
+    footers: Vec<HeaderFooterRef>,
 }
 
 struct BodyParser<'a> {
@@ -195,6 +197,13 @@ struct BodyParser<'a> {
     skip_note: bool,
     /// Collected notes: (source `w:id`, allocated id, block content).
     notes: Vec<(String, NoteId, Vec<BlockNode>)>,
+    /// When set (`b"hdr"`/`b"ftr"`), the parser reads a header/footer part whose
+    /// root element is the single block container.
+    hf_root: Option<&'static [u8]>,
+    /// Section reference resolution: header relationship id -> definition id.
+    header_ids: &'a BTreeMap<String, HeaderFooterId>,
+    /// Section reference resolution: footer relationship id -> definition id.
+    footer_ids: &'a BTreeMap<String, HeaderFooterId>,
 }
 
 /// Resolution tables the body parser consults while mapping constructs.
@@ -205,6 +214,8 @@ pub(crate) struct ParseInputs<'a> {
     pub hyperlink_rels: &'a BTreeMap<String, String>,
     pub footnote_ids: &'a BTreeMap<String, NoteId>,
     pub endnote_ids: &'a BTreeMap<String, NoteId>,
+    pub header_ids: &'a BTreeMap<String, HeaderFooterId>,
+    pub footer_ids: &'a BTreeMap<String, HeaderFooterId>,
 }
 
 impl<'a> BodyParser<'a> {
@@ -267,6 +278,9 @@ impl<'a> BodyParser<'a> {
             current_note: None,
             skip_note: false,
             notes: Vec::new(),
+            hf_root: None,
+            header_ids: inputs.header_ids,
+            footer_ids: inputs.footer_ids,
         }
     }
 }
@@ -306,10 +320,11 @@ pub(crate) fn parse_notes(
     config: ImportConfig,
 ) -> Result<Vec<(String, NoteId, Vec<BlockNode>)>, ImportError> {
     // Notes resolve their own media/hyperlinks in a later slice; here they carry
-    // no media/hyperlink/note indexes (such refs inside a note are reported).
+    // no media/hyperlink/note/hf indexes (such refs inside a note are reported).
     let empty_media = BTreeMap::new();
     let empty_hyperlink = BTreeMap::new();
     let empty_notes = BTreeMap::new();
+    let empty_hf = BTreeMap::new();
     let inputs = ParseInputs {
         styles,
         numbering,
@@ -317,6 +332,8 @@ pub(crate) fn parse_notes(
         hyperlink_rels: &empty_hyperlink,
         footnote_ids: &empty_notes,
         endnote_ids: &empty_notes,
+        header_ids: &empty_hf,
+        footer_ids: &empty_hf,
     };
     let mut parser = BodyParser::build(ids, reporter, &inputs, Some(container), config);
     parser.run(xml)?;
@@ -326,6 +343,43 @@ pub(crate) fn parse_notes(
     // A note left open by malformed input still commits its content.
     parser.close_note()?;
     Ok(parser.notes)
+}
+
+/// Parses a header/footer part (`word/header1.xml` / `word/footer1.xml`) into its
+/// block content. `root` is `b"hdr"` or `b"ftr"`.
+pub(crate) fn parse_header_footer(
+    xml: &[u8],
+    ids: &mut IdGenerator,
+    reporter: &mut Reporter,
+    styles: &Styles,
+    numbering: &Numbering,
+    root: &'static [u8],
+    config: ImportConfig,
+) -> Result<Vec<BlockNode>, ImportError> {
+    let empty_media = BTreeMap::new();
+    let empty_hyperlink = BTreeMap::new();
+    let empty_notes = BTreeMap::new();
+    let empty_hf = BTreeMap::new();
+    let inputs = ParseInputs {
+        styles,
+        numbering,
+        media_index: &empty_media,
+        hyperlink_rels: &empty_hyperlink,
+        footnote_ids: &empty_notes,
+        endnote_ids: &empty_notes,
+        header_ids: &empty_hf,
+        footer_ids: &empty_hf,
+    };
+    let mut parser = BodyParser::build(ids, reporter, &inputs, None, config);
+    parser.hf_root = Some(root);
+    parser.run(xml)?;
+    while !parser.frames.is_empty() {
+        parser.exit_textbox()?;
+    }
+    if parser.paragraph_open {
+        parser.finish_paragraph()?;
+    }
+    Ok(parser.blocks)
 }
 
 impl BodyParser<'_> {
@@ -413,13 +467,23 @@ impl BodyParser<'_> {
         }
         match local {
             b"document" => self.in_document = true,
-            b"body" if self.in_document && self.note_container.is_none() => self.in_body = true,
+            b"body"
+                if self.in_document && self.note_container.is_none() && self.hf_root.is_none() =>
+            {
+                self.in_body = true;
+            }
             // Notes-part mode: the `w:footnotes`/`w:endnotes` root enables
             // reporting, and each note element is a block container.
             b"footnotes" if self.note_container == Some(b"footnote") => self.in_document = true,
             b"endnotes" if self.note_container == Some(b"endnote") => self.in_document = true,
             _ if self.note_container == Some(local) && self.in_document => {
                 self.open_note(element)?;
+            }
+            // A header/footer part's root (`w:hdr`/`w:ftr`) is its single block
+            // container: enable document reporting and block parsing.
+            _ if self.hf_root == Some(local) => {
+                self.in_document = true;
+                self.in_body = true;
             }
             // Alternate content: select the first branch, skip (and report) the
             // rest so content is neither duplicated nor lost.
@@ -578,12 +642,14 @@ impl BodyParser<'_> {
             }
             b"hlinkClick" | b"svgBlip" if self.drawing_depth > 0 => self.drawing_extra = true,
             // Only a true body-level `w:sectPr` is a document section; a `sectPr`
-            // inside a text box (frames non-empty) or a notes part is not, so it
-            // is reported instead of silently building a phantom/discarded section.
+            // inside a text box (frames non-empty), a notes part, or a
+            // header/footer part is not, so it is reported instead of silently
+            // building a phantom/discarded section (which would also burn an id).
             b"sectPr"
                 if self.in_body
                     && self.frames.is_empty()
                     && self.note_container.is_none()
+                    && self.hf_root.is_none()
                     && !self.paragraph_open
                     && self.ppr_depth == 0 =>
             {
@@ -609,6 +675,32 @@ impl BodyParser<'_> {
                 if let Some(section) = self.section.as_mut() {
                     section.columns =
                         attribute_value(element, b"num").and_then(|value| value.parse().ok());
+                }
+            }
+            b"headerReference" if self.section.is_some() => {
+                match attribute_value(element, b"id")
+                    .and_then(|id| self.header_ids.get(&id).copied())
+                {
+                    Some(reference) => {
+                        let kind = header_footer_kind(attribute_value(element, b"type").as_deref());
+                        if let Some(section) = self.section.as_mut() {
+                            section.headers.push(HeaderFooterRef { kind, reference });
+                        }
+                    }
+                    None => self.reporter.report(b"headerReference"),
+                }
+            }
+            b"footerReference" if self.section.is_some() => {
+                match attribute_value(element, b"id")
+                    .and_then(|id| self.footer_ids.get(&id).copied())
+                {
+                    Some(reference) => {
+                        let kind = header_footer_kind(attribute_value(element, b"type").as_deref());
+                        if let Some(section) = self.section.as_mut() {
+                            section.footers.push(HeaderFooterRef { kind, reference });
+                        }
+                    }
+                    None => self.reporter.report(b"footerReference"),
                 }
             }
             // Tables are the one nested block construct: cell paragraphs (and
@@ -887,6 +979,8 @@ impl BodyParser<'_> {
             page_size,
             page_margins,
             columns,
+            headers: accumulator.headers,
+            footers: accumulator.footers,
         });
         Ok(())
     }
@@ -1258,6 +1352,16 @@ impl BodyParser<'_> {
                 Ok(InlineNode::NoteReference(NoteReference { id, kind, note }))
             }
         }
+    }
+}
+
+/// Maps a `w:type` on a header/footer reference to its page kind (`default`
+/// otherwise).
+fn header_footer_kind(kind: Option<&str>) -> HeaderFooterKind {
+    match kind {
+        Some("first") => HeaderFooterKind::First,
+        Some("even") => HeaderFooterKind::Even,
+        _ => HeaderFooterKind::Default,
     }
 }
 

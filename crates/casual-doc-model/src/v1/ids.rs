@@ -55,6 +55,10 @@ id_newtype!(
     /// Stable identity of a footnote or endnote definition.
     NoteId
 );
+id_newtype!(
+    /// Stable identity of a header or footer definition.
+    HeaderFooterId
+);
 
 /// A duplicate-key-rejecting, deterministically-ordered id map.
 #[derive(Clone, Debug, Eq, PartialEq)]

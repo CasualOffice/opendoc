@@ -47,8 +47,8 @@ pub use retain::RetainedSource;
 
 use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
-    BlockNode, DefinitionMap, Definitions, Document, MediaId, Note, NoteId, Paragraph,
-    ParagraphProperties,
+    BlockNode, DefinitionMap, Definitions, Document, HeaderFooter, HeaderFooterId, MediaId, Note,
+    NoteId, Paragraph, ParagraphProperties,
 };
 use casual_doc_ooxml::DocxPackage;
 
@@ -123,6 +123,38 @@ pub fn import_package(
         Some(part) => Some(package.read_part(&part).map_err(ImportError::Package)?),
         None => None,
     };
+    // Header/footer parts: one per relationship, keyed by relationship id (the
+    // `r:id` a `w:sectPr` reference uses). Collect names first, then read.
+    let header_refs: Vec<(String, String)> = package
+        .main_document_relationships()
+        .iter()
+        .filter(|relationship| relationship.relationship_type.ends_with("/header"))
+        .filter_map(|relationship| {
+            Some((relationship.id.clone(), relationship.resolved_part.clone()?))
+        })
+        .collect();
+    let footer_refs: Vec<(String, String)> = package
+        .main_document_relationships()
+        .iter()
+        .filter(|relationship| relationship.relationship_type.ends_with("/footer"))
+        .filter_map(|relationship| {
+            Some((relationship.id.clone(), relationship.resolved_part.clone()?))
+        })
+        .collect();
+    let mut header_parts = Vec::new();
+    for (relationship_id, part) in header_refs {
+        header_parts.push((
+            relationship_id,
+            package.read_part(&part).map_err(ImportError::Package)?,
+        ));
+    }
+    let mut footer_parts = Vec::new();
+    for (relationship_id, part) in footer_refs {
+        footer_parts.push((
+            relationship_id,
+            package.read_part(&part).map_err(ImportError::Package)?,
+        ));
+    }
     // External hyperlink targets, resolved through the main-document
     // relationship graph (r:id -> URL), for first-class hyperlink modeling.
     let hyperlink_rels: std::collections::BTreeMap<String, String> = package
@@ -142,6 +174,8 @@ pub fn import_package(
         numbering_bytes.as_deref(),
         footnotes_bytes.as_deref(),
         endnotes_bytes.as_deref(),
+        &header_parts,
+        &footer_parts,
         &media_sources,
         &hyperlink_rels,
         config,
@@ -179,6 +213,8 @@ pub fn import_main_document_xml(xml: &[u8], config: ImportConfig) -> Result<Impo
         None,
         None,
         &[],
+        &[],
+        &[],
         &std::collections::BTreeMap::new(),
         config,
     )
@@ -214,6 +250,41 @@ fn build_notes(
     Ok((map, index))
 }
 
+/// A header/footer definition map plus its relationship-id -> id resolution index.
+type BuiltHeaderFooters = (
+    DefinitionMap<HeaderFooterId, HeaderFooter>,
+    std::collections::BTreeMap<String, HeaderFooterId>,
+);
+
+/// Parses each header/footer part into a `HeaderFooterId`-keyed definition map
+/// plus a relationship-id resolution index for section references. Each part's id
+/// precedes its content ids (document order); parts arrive in relationship-id
+/// order for determinism.
+#[allow(clippy::too_many_arguments)]
+fn build_header_footers(
+    parts: &[(String, Vec<u8>)],
+    root: &'static [u8],
+    styles: &Styles,
+    numbering: &Numbering,
+    ids: &mut IdGenerator,
+    reporter: &mut Reporter,
+    config: ImportConfig,
+) -> Result<BuiltHeaderFooters, ImportError> {
+    let mut map = DefinitionMap::default();
+    let mut index = std::collections::BTreeMap::new();
+    for (relationship_id, xml) in parts {
+        let node = ids
+            .next_id()
+            .map_err(|_| ImportError::LimitExceeded { limit: "node_ids" })?;
+        let hf_id = HeaderFooterId::new(node);
+        let blocks =
+            body::parse_header_footer(xml, ids, reporter, styles, numbering, root, config)?;
+        index.insert(relationship_id.clone(), hf_id);
+        map.insert(hf_id, HeaderFooter { blocks });
+    }
+    Ok((map, index))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn import_with_sources(
     document_xml: &[u8],
@@ -221,6 +292,8 @@ pub(crate) fn import_with_sources(
     numbering_xml: Option<&[u8]>,
     footnotes_xml: Option<&[u8]>,
     endnotes_xml: Option<&[u8]>,
+    header_parts: &[(String, Vec<u8>)],
+    footer_parts: &[(String, Vec<u8>)],
     media_sources: &[MediaSource],
     hyperlink_rels: &std::collections::BTreeMap<String, String>,
     config: ImportConfig,
@@ -272,8 +345,9 @@ pub(crate) fn import_with_sources(
         .map(|(id, reference)| (reference.relationship_id.clone(), *id))
         .collect();
 
-    // Notes are parsed BEFORE the body so an in-body reference resolves. Id order:
-    // document -> styles -> numbering -> media -> footnotes -> endnotes -> body.
+    // Extra parts are parsed BEFORE the body so in-body references resolve. Id
+    // order: document -> styles -> numbering -> media -> footnotes -> endnotes ->
+    // headers -> footers -> body.
     let (footnotes, footnote_ids) = build_notes(
         footnotes_xml,
         b"footnote",
@@ -292,6 +366,24 @@ pub(crate) fn import_with_sources(
         &mut reporter,
         config,
     )?;
+    let (headers, header_ids) = build_header_footers(
+        header_parts,
+        b"hdr",
+        &styles,
+        &numbering,
+        &mut ids,
+        &mut reporter,
+        config,
+    )?;
+    let (footers, footer_ids) = build_header_footers(
+        footer_parts,
+        b"ftr",
+        &styles,
+        &numbering,
+        &mut ids,
+        &mut reporter,
+        config,
+    )?;
 
     let (mut body, sections) = body::parse(
         document_xml,
@@ -304,6 +396,8 @@ pub(crate) fn import_with_sources(
             hyperlink_rels,
             footnote_ids: &footnote_ids,
             endnote_ids: &endnote_ids,
+            header_ids: &header_ids,
+            footer_ids: &footer_ids,
         },
         config,
     )?;
@@ -329,6 +423,8 @@ pub(crate) fn import_with_sources(
         media,
         footnotes,
         endnotes,
+        headers,
+        footers,
         ..Definitions::default()
     };
     let document = Document::new(document_id, body, definitions).map_err(ImportError::Model)?;
