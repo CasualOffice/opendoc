@@ -1,8 +1,9 @@
 //! Semantic WordprocessingML import into the normalized schema v1 model.
 //!
-//! This first slice maps the main document body — paragraphs, runs, text,
-//! explicit tabs and breaks, and direct run properties (bold, italic,
-//! underline, strike, size, RGB color) — into a deterministic `v1::Document`.
+//! This slice maps the main document body — paragraphs, runs, text, explicit
+//! tabs and breaks, direct run properties (bold, italic, underline, strike,
+//! size, RGB color), and direct paragraph formatting (alignment, indentation,
+//! spacing) — into a deterministic `v1::Document`.
 //! Every traversed construct that is not modeled is recorded in a bounded,
 //! deterministic compatibility report under the dual-axis disposition taxonomy
 //! (`35-DISPOSITION-TAXONOMY.md`); nothing is dropped silently. Styles,
@@ -17,8 +18,8 @@ use std::error::Error;
 use std::fmt;
 
 use casual_doc_model::v1::{
-    BlockNode, Break, BreakKind, Color, Definitions, Document, InlineNode, Paragraph,
-    ParagraphProperties, RgbColor, Run, RunProperties, Tab,
+    Alignment, BlockNode, Break, BreakKind, Color, Definitions, Document, Indentation, InlineNode,
+    Paragraph, ParagraphProperties, RgbColor, Run, RunProperties, Spacing, Tab,
 };
 use casual_doc_model::{IdGenerator, ModelError, NodeId};
 use casual_doc_ooxml::{DocxPackage, PackageError};
@@ -191,6 +192,10 @@ const HANDLED: &[&[u8]] = &[
     b"document",
     b"body",
     b"p",
+    b"pPr",
+    b"jc",
+    b"ind",
+    b"spacing",
     b"r",
     b"rPr",
     b"t",
@@ -216,6 +221,8 @@ struct Builder {
     in_body: bool,
     paragraph_open: bool,
     paragraph_id: Option<NodeId>,
+    in_paragraph_properties: bool,
+    paragraph_properties: ParagraphProperties,
     segments: Vec<Segment>,
     run_open: bool,
     run_properties: RunProperties,
@@ -240,6 +247,8 @@ impl Builder {
             in_body: false,
             paragraph_open: false,
             paragraph_id: None,
+            in_paragraph_properties: false,
+            paragraph_properties: ParagraphProperties::default(),
             segments: Vec::new(),
             run_open: false,
             run_properties: RunProperties::default(),
@@ -325,8 +334,12 @@ impl Builder {
             b"p" if self.in_body => {
                 self.paragraph_open = true;
                 self.paragraph_id = Some(self.next_id()?);
+                self.paragraph_properties = ParagraphProperties::default();
                 self.segments.clear();
                 self.run_open = false;
+            }
+            b"pPr" if self.paragraph_open && !self.run_open => {
+                self.in_paragraph_properties = true;
             }
             b"r" if self.paragraph_open => {
                 self.run_open = true;
@@ -342,6 +355,7 @@ impl Builder {
                 self.segments.push(Segment::Break(break_kind(element)));
             }
             _ if self.in_run_properties => self.apply_run_property(local, element),
+            _ if self.in_paragraph_properties => self.apply_paragraph_property(local, element),
             _ => {}
         }
         Ok(())
@@ -351,6 +365,7 @@ impl Builder {
         match local {
             b"body" => self.in_body = false,
             b"p" if self.paragraph_open => self.finish_paragraph()?,
+            b"pPr" => self.in_paragraph_properties = false,
             b"r" => self.run_open = false,
             b"rPr" => self.in_run_properties = false,
             b"t" if self.in_text => {
@@ -391,6 +406,45 @@ impl Builder {
         }
     }
 
+    fn apply_paragraph_property(
+        &mut self,
+        local: &[u8],
+        element: &quick_xml::events::BytesStart<'_>,
+    ) {
+        match local {
+            b"jc" => {
+                if let Some(alignment) = attribute_value(element, b"val")
+                    .as_deref()
+                    .and_then(alignment_from)
+                {
+                    self.paragraph_properties.alignment = Some(alignment);
+                }
+            }
+            b"ind" => {
+                let indentation = Indentation {
+                    start_twips: indent_attr(element, &[b"start", b"left"]),
+                    end_twips: indent_attr(element, &[b"end", b"right"]),
+                    first_line_twips: indent_attr(element, &[b"firstLine"]),
+                    hanging_twips: indent_attr(element, &[b"hanging"]),
+                };
+                if indentation != Indentation::default() {
+                    self.paragraph_properties.indentation = Some(indentation);
+                }
+            }
+            b"spacing" => {
+                let spacing = Spacing {
+                    before_twips: spacing_twips(element, b"before"),
+                    after_twips: spacing_twips(element, b"after"),
+                    line_percent: spacing_line_percent(element),
+                };
+                if spacing != Spacing::default() {
+                    self.paragraph_properties.spacing = Some(spacing);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn finish_paragraph(&mut self) -> Result<(), ImportError> {
         self.paragraph_open = false;
         let paragraph_id = self
@@ -414,7 +468,7 @@ impl Builder {
         }
         self.paragraphs.push(Paragraph {
             id: paragraph_id,
-            properties: ParagraphProperties::default(),
+            properties: std::mem::take(&mut self.paragraph_properties),
             inlines,
         });
         Ok(())
@@ -485,6 +539,49 @@ fn normalize_segments(segments: Vec<Segment>) -> Vec<Segment> {
         }
     }
     normalized
+}
+
+fn alignment_from(value: &str) -> Option<Alignment> {
+    match value {
+        "start" | "left" => Some(Alignment::Start),
+        "end" | "right" => Some(Alignment::End),
+        "center" => Some(Alignment::Center),
+        "both" | "distribute" | "justify" => Some(Alignment::Justify),
+        _ => None,
+    }
+}
+
+/// Reads the first present of `names` as an in-domain indentation twip value.
+fn indent_attr(element: &quick_xml::events::BytesStart<'_>, names: &[&[u8]]) -> Option<i32> {
+    for name in names {
+        if let Some(value) = attribute_value(element, name).and_then(|raw| raw.parse::<i32>().ok())
+        {
+            return (-31_680..=31_680).contains(&value).then_some(value);
+        }
+    }
+    None
+}
+
+fn spacing_twips(element: &quick_xml::events::BytesStart<'_>, name: &[u8]) -> Option<i32> {
+    attribute_value(element, name)
+        .and_then(|raw| raw.parse::<i32>().ok())
+        .filter(|value| (0..=31_680).contains(value))
+}
+
+/// Maps `w:spacing`'s `line`/`lineRule` to a percentage, only when the rule is
+/// the 240ths-based `auto` (the OOXML default). `atLeast`/`exact` are twips and
+/// are not representable as a percentage, so they are skipped.
+fn spacing_line_percent(element: &quick_xml::events::BytesStart<'_>) -> Option<u16> {
+    let line = attribute_value(element, b"line").and_then(|raw| raw.parse::<i64>().ok())?;
+    match attribute_value(element, b"lineRule").as_deref() {
+        None | Some("auto") => {
+            let percent = line.checked_mul(100)? / 240;
+            u16::try_from(percent)
+                .ok()
+                .filter(|value| (1..=10_000).contains(value))
+        }
+        _ => None,
+    }
 }
 
 fn break_kind(element: &quick_xml::events::BytesStart<'_>) -> BreakKind {
@@ -631,6 +728,54 @@ mod tests {
             assert_eq!(entry.model_outcome, ModelOutcome::Omitted);
             assert_eq!(entry.retention_outcome, RetentionOutcome::NotRetained);
         }
+    }
+
+    #[test]
+    fn paragraph_direct_formatting_is_mapped() {
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:pPr>
+                <w:jc w:val="center"/>
+                <w:ind w:left="720" w:right="360"/>
+                <w:spacing w:before="120" w:after="240" w:line="360" w:lineRule="auto"/>
+            </w:pPr><w:r><w:t>x</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let import = import(xml);
+        let props = &paragraph(&import, 0).properties;
+        assert_eq!(props.alignment, Some(Alignment::Center));
+        let indentation = props.indentation.unwrap();
+        assert_eq!(indentation.start_twips, Some(720));
+        assert_eq!(indentation.end_twips, Some(360));
+        let spacing = props.spacing.unwrap();
+        assert_eq!(spacing.before_twips, Some(120));
+        assert_eq!(spacing.after_twips, Some(240));
+        assert_eq!(spacing.line_percent, Some(150));
+        // jc/ind/spacing are mapped, so they are no longer reported.
+        let features: Vec<&str> = import
+            .report
+            .entries
+            .iter()
+            .map(|entry| entry.feature.as_str())
+            .collect();
+        assert!(!features.contains(&"jc"));
+        assert!(!features.contains(&"ind"));
+        assert!(!features.contains(&"spacing"));
+    }
+
+    #[test]
+    fn unmapped_paragraph_property_children_are_still_reported() {
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>x</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let import = import(xml);
+        assert!(
+            import
+                .report
+                .entries
+                .iter()
+                .any(|entry| entry.feature == "pStyle")
+        );
+        // No dangling style reference is emitted (styles are not mapped yet).
+        assert_eq!(paragraph(&import, 0).properties.style_ref, None);
     }
 
     #[test]
