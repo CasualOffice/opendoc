@@ -14,6 +14,9 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Added
 
+- Ruby phonetic guides (`w:ruby`) now keep their base text in document
+  order; the annotation (`w:rt`) is reported (its text was previously merged in
+  front of the base). No model change.
 - Images and external hyperlinks inside notes, headers, and footers are now
   modeled (previously reported): each extra part resolves its own image and
   hyperlink relationships, and the media table aggregates image relationships

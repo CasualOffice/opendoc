@@ -85,6 +85,7 @@ struct ContentFrame {
     field_depth: u32,
     in_instr: bool,
     instr_buffer: String,
+    ruby_annotation_depth: u32,
     tables: TableStack,
     tcpr_depth: u32,
     suppressed_tbl_depth: u32,
@@ -172,6 +173,9 @@ struct BodyParser<'a> {
     in_instr: bool,
     /// Buffer for the current `w:instrText` text.
     instr_buffer: String,
+    /// Nesting depth of open ruby annotations (`w:rt`), whose text is dropped;
+    /// a counter so a nested `w:rt` does not clear it early.
+    ruby_annotation_depth: u32,
     tables: TableStack,
     tcpr_depth: u32,
     /// Depth of nested tables refused past `MAX_TABLE_DEPTH`; while non-zero the
@@ -267,6 +271,7 @@ impl<'a> BodyParser<'a> {
             field_depth: 0,
             in_instr: false,
             instr_buffer: String::new(),
+            ruby_annotation_depth: 0,
             tables: TableStack::default(),
             tcpr_depth: 0,
             suppressed_tbl_depth: 0,
@@ -551,6 +556,9 @@ impl BodyParser<'_> {
                 self.in_text = true;
                 self.text_buffer.clear();
             }
+            // A ruby annotation's runs are the phonetic guide, not base text.
+            // A counter (not a flag) so a nested `w:rt` cannot clear it early.
+            b"rt" => self.ruby_annotation_depth += 1,
             b"instrText" if self.run_open => {
                 self.in_instr = true;
                 self.instr_buffer.clear();
@@ -883,10 +891,19 @@ impl BodyParser<'_> {
             b"t" if self.in_text => {
                 self.in_text = false;
                 let text = std::mem::take(&mut self.text_buffer);
-                if !text.is_empty() {
+                // A ruby annotation (`w:rt`) is a phonetic guide, not base text;
+                // its text is dropped (reported on `</w:rt>`) so the base reads in
+                // document order instead of being merged with the annotation.
+                if !text.is_empty() && self.ruby_annotation_depth == 0 {
                     let properties = self.run_properties.clone();
                     self.push_segment(Segment::Run { properties, text });
                 }
+            }
+            b"rt" if self.ruby_annotation_depth > 0 => {
+                self.ruby_annotation_depth -= 1;
+                // The annotation text is dropped; report that the ruby guide is
+                // not modeled (its base text is preserved in document order).
+                self.reporter.report(b"rt");
             }
             b"instrText" if self.in_instr => {
                 self.in_instr = false;
@@ -1058,6 +1075,7 @@ impl BodyParser<'_> {
             field: self.field.take(),
             field_depth: std::mem::take(&mut self.field_depth),
             in_instr: std::mem::take(&mut self.in_instr),
+            ruby_annotation_depth: std::mem::take(&mut self.ruby_annotation_depth),
             instr_buffer: std::mem::take(&mut self.instr_buffer),
             tables: std::mem::take(&mut self.tables),
             tcpr_depth: std::mem::take(&mut self.tcpr_depth),
@@ -1103,6 +1121,7 @@ impl BodyParser<'_> {
         self.field = frame.field;
         self.field_depth = frame.field_depth;
         self.in_instr = frame.in_instr;
+        self.ruby_annotation_depth = frame.ruby_annotation_depth;
         self.instr_buffer = frame.instr_buffer;
         self.tables = frame.tables;
         self.tcpr_depth = frame.tcpr_depth;
@@ -1314,6 +1333,9 @@ impl BodyParser<'_> {
         // pict left open across a paragraph flush cannot leak and defeat the next
         // picture's `imagedata` guard.
         self.pict_depth = 0;
+        // A ruby annotation never spans a paragraph; reset defensively so a
+        // malformed unclosed `w:rt` cannot suppress a later paragraph's text.
+        self.ruby_annotation_depth = 0;
         let paragraph_id = self
             .paragraph_id
             .take()
