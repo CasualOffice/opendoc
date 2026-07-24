@@ -315,26 +315,27 @@ pub(crate) fn parse<'a>(
 /// Parses a notes part (`word/footnotes.xml` / `word/endnotes.xml`) into its
 /// notes, each keyed by its source `w:id` and allocated id in document order.
 /// `container` is `b"footnote"` or `b"endnote"`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn parse_notes(
     xml: &[u8],
     ids: &mut IdGenerator,
     reporter: &mut Reporter,
     styles: &Styles,
     numbering: &Numbering,
+    media_index: &BTreeMap<String, MediaId>,
+    hyperlink_rels: &BTreeMap<String, String>,
     container: &'static [u8],
     config: ImportConfig,
 ) -> Result<Vec<(String, NoteId, Vec<BlockNode>)>, ImportError> {
-    // Notes resolve their own media/hyperlinks in a later slice; here they carry
-    // no media/hyperlink/note/hf indexes (such refs inside a note are reported).
-    let empty_media = BTreeMap::new();
-    let empty_hyperlink = BTreeMap::new();
+    // A note resolves its own part's media and hyperlink relationships; note
+    // references inside a note (rare) carry no index.
     let empty_notes = BTreeMap::new();
     let empty_hf = BTreeMap::new();
     let inputs = ParseInputs {
         styles,
         numbering,
-        media_index: &empty_media,
-        hyperlink_rels: &empty_hyperlink,
+        media_index,
+        hyperlink_rels,
         footnote_ids: &empty_notes,
         endnote_ids: &empty_notes,
         header_ids: &empty_hf,
@@ -352,24 +353,25 @@ pub(crate) fn parse_notes(
 
 /// Parses a header/footer part (`word/header1.xml` / `word/footer1.xml`) into its
 /// block content. `root` is `b"hdr"` or `b"ftr"`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn parse_header_footer(
     xml: &[u8],
     ids: &mut IdGenerator,
     reporter: &mut Reporter,
     styles: &Styles,
     numbering: &Numbering,
+    media_index: &BTreeMap<String, MediaId>,
+    hyperlink_rels: &BTreeMap<String, String>,
     root: &'static [u8],
     config: ImportConfig,
 ) -> Result<Vec<BlockNode>, ImportError> {
-    let empty_media = BTreeMap::new();
-    let empty_hyperlink = BTreeMap::new();
     let empty_notes = BTreeMap::new();
     let empty_hf = BTreeMap::new();
     let inputs = ParseInputs {
         styles,
         numbering,
-        media_index: &empty_media,
-        hyperlink_rels: &empty_hyperlink,
+        media_index,
+        hyperlink_rels,
         footnote_ids: &empty_notes,
         endnote_ids: &empty_notes,
         header_ids: &empty_hf,

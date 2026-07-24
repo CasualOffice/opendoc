@@ -115,16 +115,18 @@ pub fn import_package(
         Some(part) => Some(package.read_part(&part).map_err(ImportError::Package)?),
         None => None,
     };
-    let footnotes_bytes = match footnotes_part {
-        Some(part) => Some(package.read_part(&part).map_err(ImportError::Package)?),
+    // Each extra part (notes, headers, footers) carries its own image and
+    // external-hyperlink relationships, so images and links inside it are modeled.
+    let footnotes = match footnotes_part {
+        Some(part) => Some(resolve_part_sources(package, &part)?),
         None => None,
     };
-    let endnotes_bytes = match endnotes_part {
-        Some(part) => Some(package.read_part(&part).map_err(ImportError::Package)?),
+    let endnotes = match endnotes_part {
+        Some(part) => Some(resolve_part_sources(package, &part)?),
         None => None,
     };
-    // Header/footer parts: one per relationship, keyed by relationship id (the
-    // `r:id` a `w:sectPr` reference uses). Collect names first, then read.
+    // Header/footer parts: one per relationship, keyed by the `r:id` a `w:sectPr`
+    // reference uses. Collect (r:id, part name) first, then resolve each.
     let header_refs: Vec<(String, String)> = package
         .main_document_relationships()
         .iter()
@@ -143,17 +145,11 @@ pub fn import_package(
         .collect();
     let mut header_parts = Vec::new();
     for (relationship_id, part) in header_refs {
-        header_parts.push((
-            relationship_id,
-            package.read_part(&part).map_err(ImportError::Package)?,
-        ));
+        header_parts.push((relationship_id, resolve_part_sources(package, &part)?));
     }
     let mut footer_parts = Vec::new();
     for (relationship_id, part) in footer_refs {
-        footer_parts.push((
-            relationship_id,
-            package.read_part(&part).map_err(ImportError::Package)?,
-        ));
+        footer_parts.push((relationship_id, resolve_part_sources(package, &part)?));
     }
     // External hyperlink targets, resolved through the main-document
     // relationship graph (r:id -> URL), for first-class hyperlink modeling.
@@ -172,8 +168,8 @@ pub fn import_package(
         &document_bytes,
         styles_bytes.as_deref(),
         numbering_bytes.as_deref(),
-        footnotes_bytes.as_deref(),
-        endnotes_bytes.as_deref(),
+        footnotes.as_ref(),
+        endnotes.as_ref(),
         &header_parts,
         &footer_parts,
         &media_sources,
@@ -220,6 +216,48 @@ pub fn import_main_document_xml(xml: &[u8], config: ImportConfig) -> Result<Impo
     )
 }
 
+/// Reads an extra part and resolves its own image and external-hyperlink
+/// relationships (via the part's `_rels`), so content inside it can be modeled.
+fn resolve_part_sources(
+    package: &mut DocxPackage<'_>,
+    part_name: &str,
+) -> Result<PartSources, ImportError> {
+    let xml = package.read_part(part_name).map_err(ImportError::Package)?;
+    let relationships = package
+        .part_relationships(part_name)
+        .map_err(ImportError::Package)?;
+    let mut images = Vec::new();
+    for relationship in &relationships {
+        if relationship.relationship_type.ends_with("/image") {
+            if let Some(part) = relationship.resolved_part.clone() {
+                let media_type = package
+                    .content_type(&part)
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| "application/octet-stream".to_owned());
+                images.push(MediaSource {
+                    relationship_id: relationship.id.clone(),
+                    media_type,
+                    part_name: part,
+                });
+            }
+        }
+    }
+    let hyperlinks = relationships
+        .iter()
+        .filter(|relationship| relationship.relationship_type.ends_with("/hyperlink"))
+        .filter(|relationship| {
+            relationship.target_mode == casual_doc_ooxml::TargetMode::External
+                && !relationship.id.is_empty()
+        })
+        .map(|relationship| (relationship.id.clone(), relationship.target.clone()))
+        .collect();
+    Ok(PartSources {
+        xml,
+        images,
+        hyperlinks,
+    })
+}
+
 /// A note definition map plus its source-`w:id` -> id resolution index.
 type BuiltNotes = (
     DefinitionMap<NoteId, Note>,
@@ -227,21 +265,35 @@ type BuiltNotes = (
 );
 
 /// Parses a notes part into a `NoteId`-keyed definition map plus a source-`w:id`
-/// resolution index for in-body references. Missing part → empty.
+/// resolution index for in-body references. The note part's own image and
+/// hyperlink relationships are resolved so images/links inside a note are modeled.
+/// Missing part → empty.
 #[allow(clippy::too_many_arguments)]
 fn build_notes(
-    xml: Option<&[u8]>,
+    part: Option<&PartSources>,
     container: &'static [u8],
     styles: &Styles,
     numbering: &Numbering,
+    media: &mut DefinitionMap<MediaId, casual_doc_model::v1::MediaReference>,
     ids: &mut IdGenerator,
     reporter: &mut Reporter,
     config: ImportConfig,
 ) -> Result<BuiltNotes, ImportError> {
     let mut map = DefinitionMap::default();
     let mut index = std::collections::BTreeMap::new();
-    if let Some(xml) = xml {
-        let notes = body::parse_notes(xml, ids, reporter, styles, numbering, container, config)?;
+    if let Some(part) = part {
+        let media_index = media::build_into(&part.images, media, ids, reporter)?;
+        let notes = body::parse_notes(
+            &part.xml,
+            ids,
+            reporter,
+            styles,
+            numbering,
+            &media_index,
+            &part.hyperlinks,
+            container,
+            config,
+        )?;
         for (source_id, note_id, blocks) in notes {
             index.insert(source_id, note_id);
             map.insert(note_id, Note { blocks });
@@ -262,27 +314,49 @@ type BuiltHeaderFooters = (
 /// order for determinism.
 #[allow(clippy::too_many_arguments)]
 fn build_header_footers(
-    parts: &[(String, Vec<u8>)],
+    parts: &[(String, PartSources)],
     root: &'static [u8],
     styles: &Styles,
     numbering: &Numbering,
+    media: &mut DefinitionMap<MediaId, casual_doc_model::v1::MediaReference>,
     ids: &mut IdGenerator,
     reporter: &mut Reporter,
     config: ImportConfig,
 ) -> Result<BuiltHeaderFooters, ImportError> {
     let mut map = DefinitionMap::default();
     let mut index = std::collections::BTreeMap::new();
-    for (relationship_id, xml) in parts {
+    for (relationship_id, part) in parts {
+        // The header/footer id precedes its content ids; its media is added to
+        // the shared table just before parsing so its drawings resolve.
         let node = ids
             .next_id()
             .map_err(|_| ImportError::LimitExceeded { limit: "node_ids" })?;
         let hf_id = HeaderFooterId::new(node);
-        let blocks =
-            body::parse_header_footer(xml, ids, reporter, styles, numbering, root, config)?;
+        let media_index = media::build_into(&part.images, media, ids, reporter)?;
+        let blocks = body::parse_header_footer(
+            &part.xml,
+            ids,
+            reporter,
+            styles,
+            numbering,
+            &media_index,
+            &part.hyperlinks,
+            root,
+            config,
+        )?;
         index.insert(relationship_id.clone(), hf_id);
         map.insert(hf_id, HeaderFooter { blocks });
     }
     Ok((map, index))
+}
+
+/// An extra part's bytes plus its own resolved image and external-hyperlink
+/// relationships, so images and links inside a note/header/footer are modeled.
+#[derive(Default)]
+pub(crate) struct PartSources {
+    pub xml: Vec<u8>,
+    pub images: Vec<MediaSource>,
+    pub hyperlinks: std::collections::BTreeMap<String, String>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -290,10 +364,10 @@ pub(crate) fn import_with_sources(
     document_xml: &[u8],
     styles_xml: Option<&[u8]>,
     numbering_xml: Option<&[u8]>,
-    footnotes_xml: Option<&[u8]>,
-    endnotes_xml: Option<&[u8]>,
-    header_parts: &[(String, Vec<u8>)],
-    footer_parts: &[(String, Vec<u8>)],
+    footnotes: Option<&PartSources>,
+    endnotes: Option<&PartSources>,
+    header_parts: &[(String, PartSources)],
+    footer_parts: &[(String, PartSources)],
     media_sources: &[MediaSource],
     hyperlink_rels: &std::collections::BTreeMap<String, String>,
     config: ImportConfig,
@@ -336,32 +410,33 @@ pub(crate) fn import_with_sources(
         Some(xml) => numbering::parse(xml, &mut ids, &mut reporter, config)?,
         None => Numbering::default(),
     };
-    // Media is built BEFORE the body so inline drawings can resolve their
-    // `r:embed` to a `MediaId` while parsing. Deterministic id order:
-    // document -> styles -> numbering -> media -> body -> empty-para fallback.
-    let media = media::build(media_sources, &mut ids, &mut reporter)?;
-    let media_index: std::collections::BTreeMap<String, MediaId> = media
-        .iter()
-        .map(|(id, reference)| (reference.relationship_id.clone(), *id))
-        .collect();
+    // Media is built into one shared table BEFORE any body so drawings resolve
+    // their `r:embed`/`r:id` to a `MediaId` while parsing. The main document's
+    // images come first (identical to before), then each extra part's images are
+    // added and that part is parsed with its own relationship index — so an image
+    // inside a note/header/footer is modeled, and per-part relationship ids (which
+    // collide across parts) resolve independently. Deterministic id order:
+    // document -> styles -> numbering -> main media -> [footnotes media, content]
+    // -> [endnotes ...] -> [headers ...] -> [footers ...] -> body.
+    let mut media = DefinitionMap::default();
+    let media_index = media::build_into(media_sources, &mut media, &mut ids, &mut reporter)?;
 
-    // Extra parts are parsed BEFORE the body so in-body references resolve. Id
-    // order: document -> styles -> numbering -> media -> footnotes -> endnotes ->
-    // headers -> footers -> body.
-    let (footnotes, footnote_ids) = build_notes(
-        footnotes_xml,
+    let (footnotes_map, footnote_ids) = build_notes(
+        footnotes,
         b"footnote",
         &styles,
         &numbering,
+        &mut media,
         &mut ids,
         &mut reporter,
         config,
     )?;
-    let (endnotes, endnote_ids) = build_notes(
-        endnotes_xml,
+    let (endnotes_map, endnote_ids) = build_notes(
+        endnotes,
         b"endnote",
         &styles,
         &numbering,
+        &mut media,
         &mut ids,
         &mut reporter,
         config,
@@ -371,6 +446,7 @@ pub(crate) fn import_with_sources(
         b"hdr",
         &styles,
         &numbering,
+        &mut media,
         &mut ids,
         &mut reporter,
         config,
@@ -380,6 +456,7 @@ pub(crate) fn import_with_sources(
         b"ftr",
         &styles,
         &numbering,
+        &mut media,
         &mut ids,
         &mut reporter,
         config,
@@ -421,8 +498,8 @@ pub(crate) fn import_with_sources(
         numbering: numbering_instances,
         sections,
         media,
-        footnotes,
-        endnotes,
+        footnotes: footnotes_map,
+        endnotes: endnotes_map,
         headers,
         footers,
         ..Definitions::default()
