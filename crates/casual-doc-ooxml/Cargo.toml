@@ -10,6 +10,7 @@ authors.workspace = true
 publish = false
 
 [dependencies]
+quick-xml.workspace = true
 zip.workspace = true
 
 [lints]

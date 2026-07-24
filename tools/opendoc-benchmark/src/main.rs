@@ -425,7 +425,7 @@ USAGE:
                 id: "docx.package_open.minimal",
                 work_units: 3,
                 full_iterations: 500,
-                expected_unit_checksum: (3_u64 << 32) | 100,
+                expected_unit_checksum: (3_u64 << 32) | 760,
                 absolute_noise_nanoseconds: 10_000,
                 execute: package_open_minimal,
             },

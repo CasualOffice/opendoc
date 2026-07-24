@@ -10,11 +10,29 @@ use std::io::{Cursor, Read};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use quick_xml::Reader;
+use quick_xml::events::Event;
 use zip::{CompressionMethod, ZipArchive};
 
 const CONTENT_TYPES_PART: &str = "[Content_Types].xml";
 const ROOT_RELATIONSHIPS_PART: &str = "_rels/.rels";
-const DOCUMENT_PART: &str = "word/document.xml";
+
+/// OPC `officeDocument` relationship type in the transitional namespace.
+const OFFICE_DOCUMENT_REL_TRANSITIONAL: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument";
+/// OPC `officeDocument` relationship type in the ISO/IEC 29500 Strict namespace.
+const OFFICE_DOCUMENT_REL_STRICT: &str =
+    "http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument";
+/// Accepted WordprocessingML main-document content types (document and template).
+const MAIN_DOCUMENT_CONTENT_TYPES: [&str; 2] = [
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml",
+];
+/// Bound on element count for package-metadata XML (relationships, content types).
+const MAX_METADATA_XML_ELEMENTS: u64 = 10_000;
+/// Bound on element nesting depth for package-metadata XML.
+const MAX_METADATA_XML_DEPTH: u64 = 64;
+
 const LOCAL_FILE_SIGNATURE: &[u8; 4] = b"PK\x03\x04";
 const CENTRAL_FILE_SIGNATURE: &[u8; 4] = b"PK\x01\x02";
 const EOCD_SIGNATURE: &[u8; 4] = b"PK\x05\x06";
@@ -155,6 +173,7 @@ pub struct DocxPackage<'a> {
     entries: Vec<PackageEntry>,
     archive_indexes: BTreeMap<String, usize>,
     total_expanded_bytes: u64,
+    main_document_part: String,
 }
 
 impl<'a> DocxPackage<'a> {
@@ -257,19 +276,48 @@ impl<'a> DocxPackage<'a> {
             });
         }
 
-        for required in [CONTENT_TYPES_PART, ROOT_RELATIONSHIPS_PART, DOCUMENT_PART] {
+        // OPC fixes only these two well-known names. The main document is not
+        // required by a conventional path; it is discovered by relationship type
+        // below. (ADR-027 / R1; `word/document.xml` is only a producer
+        // convention.)
+        for required in [CONTENT_TYPES_PART, ROOT_RELATIONSHIPS_PART] {
             if !archive_indexes.contains_key(required) {
                 return Err(PackageError::MissingRequiredPart { part: required });
             }
         }
 
         entries.sort_by(|left, right| left.part_name.cmp(&right.part_name));
+
+        // Discover the main document through the package `officeDocument`
+        // relationship and bind it by content type. Fail-closed: any missing,
+        // ambiguous, dangling, or wrong-typed main document is a typed error.
+        let content_types_bytes = read_indexed(
+            &mut archive,
+            archive_indexes[CONTENT_TYPES_PART],
+            cancellation,
+        )?;
+        let content_types = ContentTypes::parse(&content_types_bytes)?;
+        let relationships_bytes = read_indexed(
+            &mut archive,
+            archive_indexes[ROOT_RELATIONSHIPS_PART],
+            cancellation,
+        )?;
+        let main_document_part =
+            discover_main_document(&relationships_bytes, &content_types, &archive_indexes)?;
+
         Ok(Self {
             archive,
             entries,
             archive_indexes,
             total_expanded_bytes,
+            main_document_part,
         })
+    }
+
+    /// Returns the normalized part name of the discovered main document.
+    #[must_use]
+    pub fn main_document_part(&self) -> &str {
+        &self.main_document_part
     }
 
     /// Returns deterministic part metadata ordered by normalized part name.
@@ -301,33 +349,261 @@ impl<'a> DocxPackage<'a> {
             .get(part_name)
             .copied()
             .ok_or(PackageError::PartNotFound)?;
-        let file = self
-            .archive
-            .by_index(index)
-            .map_err(|_| PackageError::PartReadFailed)?;
-        let declared_size = file.size();
-        let capacity = usize::try_from(declared_size).map_err(|_| PackageError::PartReadFailed)?;
-        let read_limit = declared_size
-            .checked_add(1)
-            .ok_or(PackageError::PartReadFailed)?;
-        let mut bytes = Vec::with_capacity(capacity);
-        let mut reader = file.take(read_limit);
-        let mut chunk = [0_u8; 64 * 1024];
-        loop {
-            cancellation.check()?;
-            let read = reader
-                .read(&mut chunk)
-                .map_err(|_| PackageError::PartReadFailed)?;
-            if read == 0 {
-                break;
-            }
-            bytes.extend_from_slice(&chunk[..read]);
-        }
-        if usize_to_u64(bytes.len()) != declared_size {
-            return Err(PackageError::PartReadFailed);
-        }
-        Ok(bytes)
+        read_indexed(&mut self.archive, index, cancellation)
     }
+}
+
+/// Reads and verifies one admitted part by archive index into owned bytes.
+fn read_indexed(
+    archive: &mut ZipArchive<Cursor<&[u8]>>,
+    index: usize,
+    cancellation: &CancellationToken,
+) -> Result<Vec<u8>, PackageError> {
+    cancellation.check()?;
+    let file = archive
+        .by_index(index)
+        .map_err(|_| PackageError::PartReadFailed)?;
+    let declared_size = file.size();
+    let capacity = usize::try_from(declared_size).map_err(|_| PackageError::PartReadFailed)?;
+    let read_limit = declared_size
+        .checked_add(1)
+        .ok_or(PackageError::PartReadFailed)?;
+    let mut bytes = Vec::with_capacity(capacity);
+    let mut reader = file.take(read_limit);
+    let mut chunk = [0_u8; 64 * 1024];
+    loop {
+        cancellation.check()?;
+        let read = reader
+            .read(&mut chunk)
+            .map_err(|_| PackageError::PartReadFailed)?;
+        if read == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&chunk[..read]);
+    }
+    if usize_to_u64(bytes.len()) != declared_size {
+        return Err(PackageError::PartReadFailed);
+    }
+    Ok(bytes)
+}
+
+/// One parsed OPC relationship (only the fields the reader needs).
+#[derive(Debug)]
+struct Relationship {
+    rel_type: String,
+    target: String,
+    external: bool,
+}
+
+/// Parsed `[Content_Types].xml` default and override mappings.
+#[derive(Debug, Default)]
+struct ContentTypes {
+    /// Lowercased extension to content type.
+    defaults: BTreeMap<String, String>,
+    /// Absolute part name (`/word/document.xml`) to content type.
+    overrides: BTreeMap<String, String>,
+}
+
+impl ContentTypes {
+    fn parse(bytes: &[u8]) -> Result<Self, PackageError> {
+        let mut this = Self::default();
+        for_each_metadata_element(bytes, CONTENT_TYPES_PART, |name, attribute| {
+            match name {
+                b"Default" => {
+                    let mut extension = None;
+                    let mut content_type = None;
+                    attribute(&mut |key, value| match key {
+                        b"Extension" => extension = Some(value.to_ascii_lowercase()),
+                        b"ContentType" => content_type = Some(value.to_owned()),
+                        _ => {}
+                    })?;
+                    if let (Some(extension), Some(content_type)) = (extension, content_type) {
+                        this.defaults.insert(extension, content_type);
+                    }
+                }
+                b"Override" => {
+                    let mut part_name = None;
+                    let mut content_type = None;
+                    attribute(&mut |key, value| match key {
+                        b"PartName" => part_name = Some(value.to_owned()),
+                        b"ContentType" => content_type = Some(value.to_owned()),
+                        _ => {}
+                    })?;
+                    if let (Some(part_name), Some(content_type)) = (part_name, content_type) {
+                        this.overrides.insert(part_name, content_type);
+                    }
+                }
+                _ => {}
+            }
+            Ok(())
+        })?;
+        Ok(this)
+    }
+
+    /// Resolves the content type of a normalized package part, if declared.
+    fn content_type_of(&self, part_name: &str) -> Option<&str> {
+        let absolute = format!("/{part_name}");
+        if let Some(content_type) = self.overrides.get(&absolute) {
+            return Some(content_type);
+        }
+        let extension = part_name.rsplit_once('.').map(|(_, ext)| ext)?;
+        self.defaults
+            .get(&extension.to_ascii_lowercase())
+            .map(String::as_str)
+    }
+}
+
+fn parse_relationships(bytes: &[u8]) -> Result<Vec<Relationship>, PackageError> {
+    let mut out = Vec::new();
+    for_each_metadata_element(bytes, ROOT_RELATIONSHIPS_PART, |name, attribute| {
+        if name == b"Relationship" {
+            let mut rel_type = None;
+            let mut target = None;
+            let mut external = false;
+            attribute(&mut |key, value| match key {
+                b"Type" => rel_type = Some(value.to_owned()),
+                b"Target" => target = Some(value.to_owned()),
+                b"TargetMode" => external = value.eq_ignore_ascii_case("External"),
+                _ => {}
+            })?;
+            if let (Some(rel_type), Some(target)) = (rel_type, target) {
+                out.push(Relationship {
+                    rel_type,
+                    target,
+                    external,
+                });
+            }
+        }
+        Ok(())
+    })?;
+    Ok(out)
+}
+
+fn is_office_document_type(rel_type: &str) -> bool {
+    rel_type == OFFICE_DOCUMENT_REL_TRANSITIONAL || rel_type == OFFICE_DOCUMENT_REL_STRICT
+}
+
+/// Resolves a root-relative OPC relationship target to a normalized part name,
+/// rejecting any target that escapes the package root.
+fn resolve_root_relative_target(target: &str) -> Option<String> {
+    if target.is_empty() || target.contains('\\') || target.contains('\0') {
+        return None;
+    }
+    let body = target.strip_prefix('/').unwrap_or(target);
+    let mut segments: Vec<&str> = Vec::new();
+    for segment in body.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                segments.pop()?;
+            }
+            other => segments.push(other),
+        }
+    }
+    if segments.is_empty() {
+        return None;
+    }
+    Some(segments.join("/"))
+}
+
+fn discover_main_document(
+    relationships_bytes: &[u8],
+    content_types: &ContentTypes,
+    archive_indexes: &BTreeMap<String, usize>,
+) -> Result<String, PackageError> {
+    let relationships = parse_relationships(relationships_bytes)?;
+    let office: Vec<&Relationship> = relationships
+        .iter()
+        .filter(|relationship| {
+            !relationship.external && is_office_document_type(&relationship.rel_type)
+        })
+        .collect();
+    match office.len() {
+        0 => return Err(PackageError::MissingMainDocument),
+        1 => {}
+        _ => return Err(PackageError::AmbiguousMainDocument),
+    }
+    let resolved =
+        resolve_root_relative_target(&office[0].target).ok_or(PackageError::UnsafePartName)?;
+    if !archive_indexes.contains_key(&resolved) {
+        return Err(PackageError::MissingMainDocument);
+    }
+    let content_type = content_types
+        .content_type_of(&resolved)
+        .ok_or(PackageError::UnsupportedMainDocumentType)?;
+    if !MAIN_DOCUMENT_CONTENT_TYPES.contains(&content_type) {
+        return Err(PackageError::UnsupportedMainDocumentType);
+    }
+    Ok(resolved)
+}
+
+/// Streams bounded, namespace-agnostic package-metadata XML, invoking `visit`
+/// for each element with its local name and an attribute accessor. DTDs and any
+/// non-predefined entity are rejected; depth and element counts are bounded.
+fn for_each_metadata_element(
+    bytes: &[u8],
+    part: &'static str,
+    mut visit: impl FnMut(
+        &[u8],
+        &mut dyn FnMut(&mut dyn FnMut(&[u8], &str)) -> Result<(), PackageError>,
+    ) -> Result<(), PackageError>,
+) -> Result<(), PackageError> {
+    let mut reader = Reader::from_reader(bytes);
+    let mut buffer = Vec::new();
+    let mut elements = 0_u64;
+    let mut depth = 0_u64;
+    let mut handle = |element: &quick_xml::events::BytesStart<'_>,
+                      elements: &mut u64|
+     -> Result<(), PackageError> {
+        *elements += 1;
+        if *elements > MAX_METADATA_XML_ELEMENTS {
+            return Err(PackageError::LimitExceeded {
+                limit: "metadata_xml_elements",
+                observed: *elements,
+                allowed: MAX_METADATA_XML_ELEMENTS,
+            });
+        }
+        let local_name = element.local_name();
+        let mut read_attributes = |sink: &mut dyn FnMut(&[u8], &str)| -> Result<(), PackageError> {
+            for attribute in element.attributes() {
+                let attribute =
+                    attribute.map_err(|_| PackageError::MalformedPackageXml { part })?;
+                // OPC relationship and content-type attribute values are plain
+                // ASCII/UTF-8 with no character entities; a value that fails
+                // UTF-8 or carries an unexpected entity fails closed downstream.
+                let value = core::str::from_utf8(attribute.value.as_ref())
+                    .map_err(|_| PackageError::MalformedPackageXml { part })?;
+                sink(attribute.key.local_name().as_ref(), value);
+            }
+            Ok(())
+        };
+        visit(local_name.as_ref(), &mut read_attributes)
+    };
+    loop {
+        let event = reader
+            .read_event_into(&mut buffer)
+            .map_err(|_| PackageError::MalformedPackageXml { part })?;
+        match event {
+            Event::Eof => break,
+            Event::DocType(_) => return Err(PackageError::MalformedPackageXml { part }),
+            Event::Start(element) => {
+                depth += 1;
+                if depth > MAX_METADATA_XML_DEPTH {
+                    return Err(PackageError::MalformedPackageXml { part });
+                }
+                handle(&element, &mut elements)?;
+            }
+            Event::Empty(element) => {
+                handle(&element, &mut elements)?;
+            }
+            Event::End(_) => {
+                depth = depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -716,6 +992,17 @@ pub enum PackageError {
         /// Required static part name.
         part: &'static str,
     },
+    /// Package-metadata XML (relationships or content types) is malformed.
+    MalformedPackageXml {
+        /// Static part name of the offending metadata part.
+        part: &'static str,
+    },
+    /// No `officeDocument` relationship resolves to an admitted main document.
+    MissingMainDocument,
+    /// More than one `officeDocument` relationship is present.
+    AmbiguousMainDocument,
+    /// The discovered main document does not carry a WordprocessingML type.
+    UnsupportedMainDocumentType,
     /// A requested admitted part does not exist.
     PartNotFound,
     /// A part could not be fully decompressed and verified.
@@ -757,6 +1044,18 @@ impl fmt::Display for PackageError {
             Self::MissingRequiredPart { part } => {
                 write!(formatter, "DOCX package is missing required part {part}")
             }
+            Self::MalformedPackageXml { part } => {
+                write!(formatter, "DOCX package metadata part {part} is malformed")
+            }
+            Self::MissingMainDocument => {
+                formatter.write_str("DOCX package has no resolvable main document relationship")
+            }
+            Self::AmbiguousMainDocument => {
+                formatter.write_str("DOCX package declares more than one main document")
+            }
+            Self::UnsupportedMainDocumentType => {
+                formatter.write_str("DOCX main document content type is unsupported")
+            }
             Self::PartNotFound => formatter.write_str("DOCX package part was not found"),
             Self::PartReadFailed => {
                 formatter.write_str("DOCX package part could not be fully verified")
@@ -776,8 +1075,9 @@ mod tests {
 
     use super::*;
 
-    const CONTENT_TYPES: &[u8] = br#"<?xml version="1.0"?><Types/>"#;
-    const ROOT_RELATIONSHIPS: &[u8] = br#"<?xml version="1.0"?><Relationships/>"#;
+    const DOCUMENT_PART: &str = "word/document.xml";
+    const CONTENT_TYPES: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+    const ROOT_RELATIONSHIPS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
     const DOCUMENT: &[u8] = br#"<?xml version="1.0"?><w:document/>"#;
     const MIXED_UNICODE_DOCUMENT: &str = concat!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
@@ -812,7 +1112,7 @@ mod tests {
             (
                 ROOT_RELATIONSHIPS_PART,
                 ROOT_RELATIONSHIPS,
-                CompressionMethod::Deflated,
+                CompressionMethod::Stored,
             ),
         ]
     }
@@ -1187,5 +1487,175 @@ mod tests {
 
         let malformed = PackageError::MalformedArchive.to_string();
         assert!(!malformed.contains("secret-document-text"));
+    }
+
+    const CONTENT_TYPES_HEAD: &str = concat!(
+        "<?xml version=\"1.0\"?>",
+        "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">",
+        "<Default Extension=\"rels\" ",
+        "ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>",
+    );
+    const MAIN_TYPE: &str =
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml";
+
+    fn content_types_for(part: &str, content_type: &str) -> Vec<u8> {
+        format!(
+            "{CONTENT_TYPES_HEAD}<Override PartName=\"/{part}\" ContentType=\"{content_type}\"/></Types>"
+        )
+        .into_bytes()
+    }
+
+    fn relationships(inner: &str) -> Vec<u8> {
+        format!(
+            "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">{inner}</Relationships>"
+        )
+        .into_bytes()
+    }
+
+    fn office_document_relationship(rel_type: &str, target: &str, external: bool) -> String {
+        let mode = if external {
+            " TargetMode=\"External\""
+        } else {
+            ""
+        };
+        format!("<Relationship Id=\"rId1\" Type=\"{rel_type}\" Target=\"{target}\"{mode}/>")
+    }
+
+    fn discovery_package(content_types: &[u8], rels: &[u8], main_part: &str) -> Vec<u8> {
+        package(&[
+            (CONTENT_TYPES_PART, content_types, CompressionMethod::Stored),
+            (ROOT_RELATIONSHIPS_PART, rels, CompressionMethod::Stored),
+            (main_part, DOCUMENT, CompressionMethod::Deflated),
+        ])
+    }
+
+    #[test]
+    fn main_document_is_discovered_at_a_non_conventional_path_without_word_document_xml() {
+        let content_types = content_types_for("word/primary.xml", MAIN_TYPE);
+        let rels = relationships(&office_document_relationship(
+            OFFICE_DOCUMENT_REL_TRANSITIONAL,
+            "word/primary.xml",
+            false,
+        ));
+        let bytes = discovery_package(&content_types, &rels, "word/primary.xml");
+        let package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+        assert_eq!(package.main_document_part(), "word/primary.xml");
+        assert!(
+            package
+                .entries()
+                .iter()
+                .all(|entry| entry.part_name != DOCUMENT_PART)
+        );
+    }
+
+    #[test]
+    fn strict_and_transitional_office_document_relationships_are_both_discovered() {
+        for rel_type in [OFFICE_DOCUMENT_REL_TRANSITIONAL, OFFICE_DOCUMENT_REL_STRICT] {
+            let content_types = content_types_for(DOCUMENT_PART, MAIN_TYPE);
+            let rels = relationships(&office_document_relationship(
+                rel_type,
+                DOCUMENT_PART,
+                false,
+            ));
+            let bytes = discovery_package(&content_types, &rels, DOCUMENT_PART);
+            let package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+            assert_eq!(package.main_document_part(), DOCUMENT_PART);
+        }
+    }
+
+    #[test]
+    fn missing_ambiguous_external_and_mistyped_main_documents_are_rejected() {
+        let content_types = content_types_for(DOCUMENT_PART, MAIN_TYPE);
+
+        let empty = relationships("");
+        assert_eq!(
+            DocxPackage::open(
+                &discovery_package(&content_types, &empty, DOCUMENT_PART),
+                PackageLimits::default()
+            )
+            .unwrap_err(),
+            PackageError::MissingMainDocument
+        );
+
+        let mut two =
+            office_document_relationship(OFFICE_DOCUMENT_REL_TRANSITIONAL, DOCUMENT_PART, false);
+        two.push_str(
+            "<Relationship Id=\"rId2\" \
+             Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" \
+             Target=\"word/other.xml\"/>",
+        );
+        assert_eq!(
+            DocxPackage::open(
+                &discovery_package(&content_types, &relationships(&two), DOCUMENT_PART),
+                PackageLimits::default()
+            )
+            .unwrap_err(),
+            PackageError::AmbiguousMainDocument
+        );
+
+        let external = relationships(&office_document_relationship(
+            OFFICE_DOCUMENT_REL_TRANSITIONAL,
+            "https://example.invalid/document.xml",
+            true,
+        ));
+        assert_eq!(
+            DocxPackage::open(
+                &discovery_package(&content_types, &external, DOCUMENT_PART),
+                PackageLimits::default()
+            )
+            .unwrap_err(),
+            PackageError::MissingMainDocument
+        );
+
+        let wrong_type = content_types_for(DOCUMENT_PART, "application/xml");
+        let rels = relationships(&office_document_relationship(
+            OFFICE_DOCUMENT_REL_TRANSITIONAL,
+            DOCUMENT_PART,
+            false,
+        ));
+        assert_eq!(
+            DocxPackage::open(
+                &discovery_package(&wrong_type, &rels, DOCUMENT_PART),
+                PackageLimits::default()
+            )
+            .unwrap_err(),
+            PackageError::UnsupportedMainDocumentType
+        );
+    }
+
+    #[test]
+    fn main_document_relationship_target_escaping_the_root_is_rejected() {
+        let content_types = content_types_for(DOCUMENT_PART, MAIN_TYPE);
+        let rels = relationships(&office_document_relationship(
+            OFFICE_DOCUMENT_REL_TRANSITIONAL,
+            "../escape.xml",
+            false,
+        ));
+        assert_eq!(
+            DocxPackage::open(
+                &discovery_package(&content_types, &rels, DOCUMENT_PART),
+                PackageLimits::default()
+            )
+            .unwrap_err(),
+            PackageError::UnsafePartName
+        );
+    }
+
+    #[test]
+    fn malformed_relationships_xml_is_rejected_without_leaking_text() {
+        let content_types = content_types_for(DOCUMENT_PART, MAIN_TYPE);
+        let malformed = b"<Relationships><Relationship secret-token".to_vec();
+        let error = DocxPackage::open(
+            &discovery_package(&content_types, &malformed, DOCUMENT_PART),
+            PackageLimits::default(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            PackageError::MalformedPackageXml {
+                part: ROOT_RELATIONSHIPS_PART
+            }
+        );
+        assert!(!error.to_string().contains("secret-token"));
     }
 }

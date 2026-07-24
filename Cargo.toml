@@ -23,6 +23,7 @@ casual-doc-ooxml = { path = "crates/casual-doc-ooxml", version = "=0.0.1" }
 casual-doc-sdk = { path = "crates/casual-doc-sdk", version = "=0.0.1" }
 casual-doc-selection = { path = "crates/casual-doc-selection", version = "=0.0.1" }
 casual-doc-transaction = { path = "crates/casual-doc-transaction", version = "=0.0.1" }
+quick-xml = { version = "0.41.0", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.145"
 unicode-segmentation = "1.13.3"

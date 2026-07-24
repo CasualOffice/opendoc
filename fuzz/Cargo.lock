@@ -18,6 +18,7 @@ checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
 name = "casual-doc-ooxml"
 version = "0.0.1"
 dependencies = [
+ "quick-xml",
  "zip",
 ]
 
@@ -145,6 +146,15 @@ version = "0.0.0"
 dependencies = [
  "casual-doc-ooxml",
  "libfuzzer-sys",
+]
+
+[[package]]
+name = "quick-xml"
+version = "0.41.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e660451e55124f798a69a5af3f49ccfbefbd41910eefd25caf2393e1f3473ec1"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]
