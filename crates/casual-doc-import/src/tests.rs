@@ -1854,3 +1854,68 @@ fn two_relationships_to_the_same_image_get_distinct_media_ids() {
         "one media entry per relationship (no dedup)"
     );
 }
+
+// ---- ruby (phonetic guides) ----------------------------------------------
+
+#[test]
+fn ruby_keeps_base_text_in_order_and_reports_the_annotation() {
+    // Audit fix: the base reads in document order; the annotation (phonetic
+    // guide) is dropped and reported, not merged before the base.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:t>A</w:t></w:r>
+             <w:r><w:ruby><w:rubyPr/>
+                 <w:rt><w:r><w:t>anno</w:t></w:r></w:rt>
+                 <w:rubyBase><w:r><w:t>base</w:t></w:r></w:rubyBase>
+             </w:ruby></w:r>
+             <w:r><w:t>B</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    // The paragraph reads "A" + "base" + "B" — annotation is not present/merged.
+    let text: String = paragraph(&import, 0)
+        .inlines
+        .iter()
+        .filter_map(|i| match i {
+            InlineNode::Run(r) => Some(r.text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(text, "AbaseB");
+    assert!(
+        !text.contains("anno"),
+        "annotation must not be modeled as base text"
+    );
+    assert!(
+        features(&import).contains(&"rt"),
+        "ruby annotation is reported"
+    );
+}
+
+#[test]
+fn nested_ruby_annotation_does_not_leak_base_text() {
+    // Regression (review): a nested w:rt (valid OOXML) must not clear the outer
+    // annotation early via a bool; a counter keeps all annotation text dropped.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:ruby>
+            <w:rt>
+                <w:r><w:ruby>
+                    <w:rt><w:r><w:t>inner</w:t></w:r></w:rt>
+                    <w:rubyBase><w:r><w:t>ib</w:t></w:r></w:rubyBase>
+                </w:ruby></w:r>
+                <w:r><w:t>outer-anno</w:t></w:r>
+            </w:rt>
+            <w:rubyBase><w:r><w:t>BASE</w:t></w:r></w:rubyBase>
+        </w:ruby></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let text: String = paragraph(&import, 0)
+        .inlines
+        .iter()
+        .filter_map(|i| match i {
+            InlineNode::Run(r) => Some(r.text.as_str()),
+            _ => None,
+        })
+        .collect();
+    // Only the outermost base is kept; no annotation fragment leaks in.
+    assert_eq!(text, "BASE");
+    assert!(!text.contains("anno") && !text.contains("inner") && !text.contains("ib"));
+}
