@@ -48,6 +48,7 @@ Update this file whenever work begins, changes scope, or finishes.
 | ID | Title | Owner | Status | Notes |
 | --- | --- | --- | --- | --- |
 | M-001 | Decompose god-files into modules | Claude Code | In progress | Owner directive: no god files. `casual-doc-model/src/v1.rs` (1574 lines) → `v1/` module (`ids`, `properties`, `body`, `definitions`, `document`, `migration`, `tests`), public API preserved via re-exports. Next: model `lib.rs` (v0), `ooxml/lib.rs`, `import/lib.rs`. |
+| M-003 | Fix casual-doc-import review findings (13 confirmed) | Claude Code | In progress | Adversarial review found 13 verified defects. Blockers: (a) basedOn cycle aborts import; (b) styles-part unmapped constructs never reported (report gated on in_body); (c) char-level w:spacing in rPr silently dropped (HANDLED name collision). Majors: nested rPr/pPr premature context exit drops formatting; w:sz out-of-domain aborts whole import; rStyle/pStyle bind without kind check; constructs outside body unreported; CDATA text dropped; report-entry count uncapped. Minors: pPr/rPr marks unreported; degraded-attribute detail unreported; out-of-context handled elements unreported. Fix + regression tests, then decompose the importer with corrected context-aware reporting. |
 | M-002 | LibreOffice differential fidelity harness | Claude Code | Not started | Use `soffice --headless` as an oracle to compare import output vs LibreOffice for `.docx` fixtures (evaluation tool, not a CI unit-test dep). |
 
 ## Active Work

@@ -14,7 +14,7 @@
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
@@ -259,6 +259,7 @@ struct Builder {
     paragraphs: Vec<Paragraph>,
     styles: DefinitionMap<StyleId, Style>,
     style_id_map: BTreeMap<String, StyleId>,
+    style_kinds: BTreeMap<StyleId, StyleKind>,
     unsupported: BTreeMap<String, u32>,
 }
 
@@ -287,6 +288,7 @@ impl Builder {
             paragraphs: Vec::new(),
             styles: DefinitionMap::default(),
             style_id_map: BTreeMap::new(),
+            style_kinds: BTreeMap::new(),
             unsupported: BTreeMap::new(),
         }
     }
@@ -388,14 +390,18 @@ impl Builder {
             b"br" if self.run_open => {
                 self.segments.push(Segment::Break(break_kind(element)));
             }
-            b"rStyle" if self.in_run_properties => match self.resolve_style(element) {
-                Some(style) => self.run_properties.style_ref = Some(style),
-                None => self.report(local),
-            },
-            b"pStyle" if self.in_paragraph_properties => match self.resolve_style(element) {
-                Some(style) => self.paragraph_properties.style_ref = Some(style),
-                None => self.report(local),
-            },
+            b"rStyle" if self.in_run_properties => {
+                match self.resolve_style(element, StyleKind::Character) {
+                    Some(style) => self.run_properties.style_ref = Some(style),
+                    None => self.report(local),
+                }
+            }
+            b"pStyle" if self.in_paragraph_properties => {
+                match self.resolve_style(element, StyleKind::Paragraph) {
+                    Some(style) => self.paragraph_properties.style_ref = Some(style),
+                    None => self.report(local),
+                }
+            }
             _ if self.in_run_properties => {
                 Self::apply_run_property(&mut self.run_properties, local, element);
             }
@@ -407,8 +413,16 @@ impl Builder {
         Ok(())
     }
 
-    fn resolve_style(&self, element: &quick_xml::events::BytesStart<'_>) -> Option<StyleId> {
-        attribute_value(element, b"val").and_then(|value| self.style_id_map.get(&value).copied())
+    /// Resolves a style reference, requiring the resolved style's kind to match
+    /// the reference site (paragraph for `w:pStyle`, character for `w:rStyle`).
+    fn resolve_style(
+        &self,
+        element: &quick_xml::events::BytesStart<'_>,
+        expected: StyleKind,
+    ) -> Option<StyleId> {
+        let value = attribute_value(element, b"val")?;
+        let id = self.style_id_map.get(&value).copied()?;
+        (self.style_kinds.get(&id) == Some(&expected)).then_some(id)
     }
 
     fn on_end(&mut self, local: &[u8]) -> Result<(), ImportError> {
@@ -445,7 +459,13 @@ impl Builder {
             b"u" => properties.underline = Some(value.as_deref() != Some("none")),
             b"strike" => properties.strike = Some(is_true(value.as_deref())),
             b"sz" => {
-                if let Some(size) = value.as_deref().and_then(|value| value.parse::<u32>().ok()) {
+                // Filter to the v1 domain so an out-of-range size degrades the
+                // property rather than aborting the whole import.
+                if let Some(size) = value
+                    .as_deref()
+                    .and_then(|value| value.parse::<u32>().ok())
+                    .filter(|size| (1..=65_534).contains(size))
+                {
                     properties.size_half_points = Some(size);
                 }
             }
@@ -553,6 +573,9 @@ impl Builder {
             kinds.insert(id, kind);
             assigned.push((id, style));
         }
+        // Resolve basedOn candidates, dropping dangling or kind-mismatched
+        // references with a report.
+        let mut resolved: Vec<(StyleId, StyleKind, Option<StyleId>, RawStyle)> = Vec::new();
         for (id, style) in assigned {
             let kind = kinds[&id];
             let based_on = match &style.based_on {
@@ -565,6 +588,39 @@ impl Builder {
                 },
                 None => None,
             };
+            resolved.push((id, kind, based_on, style));
+        }
+
+        // Break any basedOn cycle (a malformed styles part) by dropping the
+        // edge that closes it — the whole import must not abort on a bad chain.
+        let edges: BTreeMap<StyleId, StyleId> = resolved
+            .iter()
+            .filter_map(|(id, _, based_on, _)| based_on.map(|base| (*id, base)))
+            .collect();
+        let mut cyclic: BTreeSet<StyleId> = BTreeSet::new();
+        for &start in edges.keys() {
+            let mut visited = BTreeSet::new();
+            let mut current = start;
+            loop {
+                if !visited.insert(current) {
+                    cyclic.insert(current);
+                    break;
+                }
+                match edges.get(&current) {
+                    Some(&next) if !cyclic.contains(&next) => current = next,
+                    _ => break,
+                }
+            }
+        }
+
+        for (id, kind, based_on, style) in resolved {
+            let based_on = if cyclic.contains(&id) {
+                self.report(b"basedOn");
+                None
+            } else {
+                based_on
+            };
+            self.style_kinds.insert(id, kind);
             self.styles.insert(
                 id,
                 Style {
@@ -1157,6 +1213,53 @@ mod tests {
         let import = import_package(&mut package, ImportConfig::default()).unwrap();
         assert_eq!(import.document.definitions().styles.len(), 1);
         assert!(paragraph(&import, 0).properties.style_ref.is_some());
+    }
+
+    #[test]
+    fn based_on_cycle_does_not_abort_import() {
+        let styles = br#"<w:styles xmlns:w="urn:w">
+            <w:style w:type="paragraph" w:styleId="A"><w:basedOn w:val="B"/></w:style>
+            <w:style w:type="paragraph" w:styleId="B"><w:basedOn w:val="A"/></w:style>
+        </w:styles>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        // Import succeeds (the document validated, so the basedOn graph is
+        // acyclic) and the broken edge is reported.
+        let import = import_with_styles(document, styles);
+        assert_eq!(import.document.definitions().styles.len(), 2);
+        import.document.to_json().unwrap();
+        assert!(features(&import).contains(&"basedOn"));
+    }
+
+    #[test]
+    fn out_of_domain_run_size_degrades_instead_of_aborting() {
+        for size in ["0", "70000"] {
+            let xml = format!(
+                "<w:document xmlns:w=\"urn:w\"><w:body><w:p><w:r><w:rPr>\
+                 <w:sz w:val=\"{size}\"/></w:rPr><w:t>x</w:t></w:r></w:p></w:body></w:document>"
+            );
+            let import = import(xml.as_bytes());
+            let InlineNode::Run(run) = &paragraph(&import, 0).inlines[0] else {
+                panic!("expected run");
+            };
+            assert_eq!(run.text, "x");
+            assert_eq!(run.properties.size_half_points, None);
+        }
+    }
+
+    #[test]
+    fn run_style_reference_to_a_paragraph_style_is_rejected() {
+        let styles = br#"<w:styles xmlns:w="urn:w">
+            <w:style w:type="paragraph" w:styleId="Body"/>
+        </w:styles>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:r><w:rPr><w:rStyle w:val="Body"/></w:rPr><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        let import = import_with_styles(document, styles);
+        let InlineNode::Run(run) = &paragraph(&import, 0).inlines[0] else {
+            panic!("expected run");
+        };
+        assert_eq!(run.properties.style_ref, None);
+        assert!(features(&import).contains(&"rStyle"));
     }
 
     #[test]
