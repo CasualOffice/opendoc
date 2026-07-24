@@ -12,8 +12,10 @@ use serde::de::{self, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use unicode_segmentation::UnicodeSegmentation;
 
-/// The normalized document schema implemented by this crate.
+/// The normalized document schema implemented at the crate root (v0).
 pub const SCHEMA_VERSION: u32 = 0;
+
+pub mod v1;
 
 /// Stable identity of a logical document node.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -489,6 +491,12 @@ impl Document {
         self.contains_id(id)
     }
 
+    /// Returns whether the reserved v0 extension map is empty.
+    #[must_use]
+    pub fn extensions_is_empty(&self) -> bool {
+        self.extensions.0.is_empty()
+    }
+
     /// Returns an immutable paragraph by ID.
     #[must_use]
     pub fn paragraph(&self, id: NodeId) -> Option<&Paragraph> {
@@ -897,6 +905,48 @@ pub enum ModelError {
     },
     /// A paragraph length exceeded public position representation.
     GraphemeCountOverflow(NodeId),
+    /// A style, numbering, media, or section reference did not resolve (v1).
+    DanglingStyleRef(NodeId),
+    /// A paragraph numbering instance reference did not resolve (v1).
+    DanglingNumberingRef(NodeId),
+    /// A numbering instance's abstract reference did not resolve (v1).
+    DanglingAbstractNumberingRef(NodeId),
+    /// A media reference did not resolve (v1).
+    DanglingMediaRef(NodeId),
+    /// A section reference did not resolve (v1).
+    DanglingSectionRef(NodeId),
+    /// A numbering level was referenced but not defined (v1).
+    NumberingLevelUndefined {
+        /// Referencing node.
+        reference: NodeId,
+        /// Missing level.
+        level: u8,
+    },
+    /// A style `based_on` chain formed a cycle (v1).
+    StyleBasedOnCycle(NodeId),
+    /// A style inherited from a style of a different kind (v1).
+    StyleBasedOnKindMismatch {
+        /// The inheriting style.
+        style: NodeId,
+        /// The referenced base style.
+        based_on: NodeId,
+    },
+    /// A measured property value fell outside its declared domain (v1).
+    PropertyValueOutOfDomain {
+        /// Stable property name.
+        property: &'static str,
+    },
+    /// A grapheme offset fell outside its node's text (v1).
+    GraphemeOffsetOutOfRange {
+        /// Owning node.
+        node: NodeId,
+        /// Requested offset.
+        offset: u32,
+        /// Node grapheme length.
+        length: u32,
+    },
+    /// A v0 source with a non-empty extension map cannot migrate to v1.
+    UnsupportedV0Extensions,
 }
 
 impl fmt::Display for ModelError {
@@ -935,6 +985,51 @@ impl fmt::Display for ModelError {
                     formatter,
                     "paragraph {id} exceeds addressable grapheme count"
                 )
+            }
+            Self::DanglingStyleRef(id) => {
+                write!(formatter, "style reference {id} does not resolve")
+            }
+            Self::DanglingNumberingRef(id) => {
+                write!(formatter, "numbering reference {id} does not resolve")
+            }
+            Self::DanglingAbstractNumberingRef(id) => {
+                write!(
+                    formatter,
+                    "abstract numbering reference {id} does not resolve"
+                )
+            }
+            Self::DanglingMediaRef(id) => {
+                write!(formatter, "media reference {id} does not resolve")
+            }
+            Self::DanglingSectionRef(id) => {
+                write!(formatter, "section reference {id} does not resolve")
+            }
+            Self::NumberingLevelUndefined { reference, level } => {
+                write!(
+                    formatter,
+                    "numbering reference {reference} level {level} is undefined"
+                )
+            }
+            Self::StyleBasedOnCycle(id) => write!(formatter, "style {id} basedOn chain is cyclic"),
+            Self::StyleBasedOnKindMismatch { style, based_on } => {
+                write!(
+                    formatter,
+                    "style {style} inherits mismatched kind from {based_on}"
+                )
+            }
+            Self::PropertyValueOutOfDomain { property } => {
+                write!(formatter, "property {property} value is out of domain")
+            }
+            Self::GraphemeOffsetOutOfRange {
+                node,
+                offset,
+                length,
+            } => write!(
+                formatter,
+                "grapheme offset {offset} exceeds node {node} length {length}"
+            ),
+            Self::UnsupportedV0Extensions => {
+                formatter.write_str("v0 extension map cannot be represented in schema v1")
             }
         }
     }
