@@ -103,6 +103,8 @@ pub enum ModelError {
     EmptyTableCell(NodeId),
     /// A table nested deeper than the supported bound (v1).
     TableNestingTooDeep(NodeId),
+    /// A field was nested inside a hyperlink or another field (v1).
+    NestedField(NodeId),
 }
 
 impl fmt::Display for ModelError {
@@ -199,6 +201,9 @@ impl fmt::Display for ModelError {
                     formatter,
                     "table {id} nests deeper than the supported bound"
                 )
+            }
+            Self::NestedField(id) => {
+                write!(formatter, "field {id} is nested in a hyperlink or field")
             }
         }
     }

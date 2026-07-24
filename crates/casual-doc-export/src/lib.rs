@@ -80,8 +80,14 @@ mod tests {
             if predicate(inline) {
                 return true;
             }
-            if let InlineNode::Hyperlink(link) = inline {
-                return link.inlines.iter().any(|child| walk(child, predicate));
+            match inline {
+                InlineNode::Hyperlink(link) => {
+                    return link.inlines.iter().any(|child| walk(child, predicate));
+                }
+                InlineNode::Field(field) => {
+                    return field.inlines.iter().any(|child| walk(child, predicate));
+                }
+                _ => {}
             }
             false
         }

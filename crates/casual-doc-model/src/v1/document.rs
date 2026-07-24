@@ -398,15 +398,16 @@ impl Document {
         Ok(())
     }
 
-    /// Validates one inline sequence. A drawing or hyperlink is a hard merge
-    /// boundary (it resets adjacent-run tracking, like a tab or break).
-    /// `in_hyperlink` is set while validating a hyperlink's own children, so a
-    /// nested hyperlink is rejected.
+    /// Validates one inline sequence. A drawing, hyperlink, or field is a hard
+    /// merge boundary (it resets adjacent-run tracking, like a tab or break).
+    /// `in_wrapper` is set while validating a hyperlink's or field's own children,
+    /// so a nested wrapper (hyperlink or field inside either) is rejected — this
+    /// bounds inline nesting to one wrapper level.
     fn validate_inlines(
         &self,
         inlines: &[InlineNode],
         owner: NodeId,
-        in_hyperlink: bool,
+        in_wrapper: bool,
     ) -> Result<(), ModelError> {
         let mut previous_run_properties: Option<&RunProperties> = None;
         for inline in inlines {
@@ -440,7 +441,7 @@ impl Document {
                     previous_run_properties = None;
                 }
                 InlineNode::Hyperlink(link) => {
-                    if in_hyperlink {
+                    if in_wrapper {
                         return Err(ModelError::NestedHyperlink(link.id));
                     }
                     check_hyperlink_target(&link.target)?;
@@ -454,6 +455,20 @@ impl Document {
                         return Err(ModelError::EmptyHyperlink(link.id));
                     }
                     self.validate_inlines(&link.inlines, link.id, true)?;
+                    previous_run_properties = None;
+                }
+                InlineNode::Field(field) => {
+                    if in_wrapper {
+                        return Err(ModelError::NestedField(field.id));
+                    }
+                    check_domain(
+                        !field.instruction.is_empty()
+                            && field.instruction.len() <= MAX_FIELD_INSTRUCTION_BYTES,
+                        "field.instruction",
+                    )?;
+                    // A field's cached result may be empty; when present it is
+                    // validated as leaf inlines (in_wrapper rejects any wrapper).
+                    self.validate_inlines(&field.inlines, field.id, true)?;
                     previous_run_properties = None;
                 }
                 InlineNode::Tab(_) | InlineNode::Break(_) => {
@@ -544,6 +559,16 @@ fn accumulate_inline_limits(
                 accumulate_inline_limits(child, limits, scalar_values)?;
             }
         }
+        InlineNode::Field(field) => {
+            enforce_limit(
+                "field_instruction_bytes",
+                field.instruction.len(),
+                MAX_FIELD_INSTRUCTION_BYTES,
+            )?;
+            for child in &field.inlines {
+                accumulate_inline_limits(child, limits, scalar_values)?;
+            }
+        }
         InlineNode::Tab(_) | InlineNode::Break(_) | InlineNode::Drawing(_) => {}
     }
     Ok(())
@@ -582,11 +607,17 @@ fn record_block_ids(block: &BlockNode, ids: &mut BTreeSet<NodeId>) -> Result<(),
     Ok(())
 }
 
-/// Records an inline's id and, for a hyperlink, its children's ids recursively.
+/// Records an inline's id and, for a wrapper (hyperlink or field), its children's
+/// ids recursively.
 fn record_inline_ids(inline: &InlineNode, ids: &mut BTreeSet<NodeId>) -> Result<(), ModelError> {
     insert_id(ids, inline.id())?;
-    if let InlineNode::Hyperlink(link) = inline {
-        for child in &link.inlines {
+    let children = match inline {
+        InlineNode::Hyperlink(link) => Some(&link.inlines),
+        InlineNode::Field(field) => Some(&field.inlines),
+        _ => None,
+    };
+    if let Some(children) = children {
+        for child in children {
             record_inline_ids(child, ids)?;
         }
     }

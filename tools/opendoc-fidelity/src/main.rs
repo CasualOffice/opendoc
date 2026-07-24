@@ -121,6 +121,12 @@ fn push_inline_text(inline: &InlineNode, out: &mut String) {
                 push_inline_text(child, out);
             }
         }
+        InlineNode::Field(field) => {
+            // The field's cached result is the text a reader sees.
+            for child in &field.inlines {
+                push_inline_text(child, out);
+            }
+        }
     }
 }
 

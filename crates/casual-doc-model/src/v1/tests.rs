@@ -839,3 +839,146 @@ fn document_with_paragraph(paragraph: crate::Paragraph) -> V0Document {
     );
     V0Document::from_json(json.as_bytes(), SnapshotLimits::default()).unwrap()
 }
+
+// ---- schema v1 fields ----------------------------------------------------
+
+fn run_inline(id: NodeId, text: &str) -> InlineNode {
+    InlineNode::Run(Run {
+        id,
+        properties: RunProperties::default(),
+        text: text.to_owned(),
+    })
+}
+
+fn field_paragraph(field: Field) -> BlockNode {
+    BlockNode::Paragraph(Paragraph {
+        id: tid(1),
+        properties: ParagraphProperties::default(),
+        inlines: vec![InlineNode::Field(field)],
+    })
+}
+
+#[test]
+fn field_with_cached_result_validates_and_round_trips_json() {
+    let field = Field {
+        id: tid(10),
+        instruction: " PAGE ".to_owned(),
+        inlines: vec![run_inline(tid(11), "7")],
+    };
+    let document = table_document(vec![field_paragraph(field)]).unwrap();
+    let json = document.to_json().unwrap();
+    let reloaded = Document::from_json(&json, SnapshotLimits::default()).unwrap();
+    assert_eq!(document, reloaded);
+
+    let BlockNode::Paragraph(paragraph) = &document.body()[0] else {
+        panic!("expected a paragraph");
+    };
+    let InlineNode::Field(field) = &paragraph.inlines[0] else {
+        panic!("expected a field");
+    };
+    assert_eq!(field.instruction, " PAGE ");
+    assert_eq!(field.inlines.len(), 1);
+}
+
+#[test]
+fn field_with_empty_cached_result_is_valid() {
+    let field = Field {
+        id: tid(10),
+        instruction: " TIME ".to_owned(),
+        inlines: Vec::new(),
+    };
+    assert!(table_document(vec![field_paragraph(field)]).is_ok());
+}
+
+#[test]
+fn empty_field_instruction_is_rejected() {
+    let field = Field {
+        id: tid(10),
+        instruction: String::new(),
+        inlines: Vec::new(),
+    };
+    assert!(matches!(
+        table_document(vec![field_paragraph(field)]),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "field.instruction"
+        })
+    ));
+}
+
+#[test]
+fn field_inside_a_hyperlink_is_rejected() {
+    let inner_field = InlineNode::Field(Field {
+        id: tid(12),
+        instruction: " PAGE ".to_owned(),
+        inlines: Vec::new(),
+    });
+    let link = InlineNode::Hyperlink(Hyperlink {
+        id: tid(10),
+        target: HyperlinkTarget::Internal(InternalTarget {
+            anchor: "top".to_owned(),
+        }),
+        tooltip: None,
+        inlines: vec![inner_field],
+    });
+    let block = BlockNode::Paragraph(Paragraph {
+        id: tid(1),
+        properties: ParagraphProperties::default(),
+        inlines: vec![link],
+    });
+    assert!(matches!(
+        table_document(vec![block]),
+        Err(ModelError::NestedField(_))
+    ));
+}
+
+#[test]
+fn hyperlink_inside_a_field_is_rejected() {
+    let inner_link = InlineNode::Hyperlink(Hyperlink {
+        id: tid(12),
+        target: HyperlinkTarget::Internal(InternalTarget {
+            anchor: "top".to_owned(),
+        }),
+        tooltip: None,
+        inlines: vec![run_inline(tid(13), "x")],
+    });
+    let field = Field {
+        id: tid(10),
+        instruction: " REF a ".to_owned(),
+        inlines: vec![inner_link],
+    };
+    assert!(matches!(
+        table_document(vec![field_paragraph(field)]),
+        Err(ModelError::NestedHyperlink(_))
+    ));
+}
+
+#[test]
+fn nested_field_inside_a_field_is_rejected() {
+    let inner = InlineNode::Field(Field {
+        id: tid(12),
+        instruction: " PAGE ".to_owned(),
+        inlines: Vec::new(),
+    });
+    let field = Field {
+        id: tid(10),
+        instruction: " = ".to_owned(),
+        inlines: vec![inner],
+    };
+    assert!(matches!(
+        table_document(vec![field_paragraph(field)]),
+        Err(ModelError::NestedField(_))
+    ));
+}
+
+#[test]
+fn duplicate_id_inside_a_field_result_is_rejected() {
+    let field = Field {
+        id: tid(10),
+        instruction: " PAGE ".to_owned(),
+        inlines: vec![run_inline(tid(10), "7")], // run id collides with field id
+    };
+    assert!(matches!(
+        table_document(vec![field_paragraph(field)]),
+        Err(ModelError::DuplicateNodeId(_))
+    ));
+}

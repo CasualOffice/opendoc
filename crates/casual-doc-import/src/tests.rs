@@ -1069,3 +1069,177 @@ fn malformed_table_inside_a_paragraph_does_not_desync_the_stack() {
     assert!(nonempty_block_texts(&import).contains(&"keep".to_owned()));
     assert!(features(&import).contains(&"tbl"));
 }
+
+/// Recursively collects run text within an inline (into hyperlinks and fields).
+fn inline_text(inline: &InlineNode, out: &mut String) {
+    match inline {
+        InlineNode::Run(run) => out.push_str(&run.text),
+        InlineNode::Hyperlink(link) => link.inlines.iter().for_each(|c| inline_text(c, out)),
+        InlineNode::Field(field) => field.inlines.iter().for_each(|c| inline_text(c, out)),
+        _ => {}
+    }
+}
+
+#[test]
+fn simple_field_maps_instruction_and_cached_result() {
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:fldSimple w:instr=" PAGE "><w:r><w:t>7</w:t></w:r></w:fldSimple></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let InlineNode::Field(field) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected a field");
+    };
+    assert_eq!(field.instruction, " PAGE ");
+    let mut text = String::new();
+    field.inlines.iter().for_each(|c| inline_text(c, &mut text));
+    assert_eq!(text, "7");
+}
+
+#[test]
+fn complex_field_maps_instrtext_and_result_runs() {
+    // begin -> instrText -> separate -> result -> end, spread across runs.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p>
+            <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+            <w:r><w:instrText> REF _Ref1 \h </w:instrText></w:r>
+            <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+            <w:r><w:t>Section 2</w:t></w:r>
+            <w:r><w:fldChar w:fldCharType="end"/></w:r>
+        </w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let para = paragraph(&import, 0);
+    assert_eq!(para.inlines.len(), 1);
+    let InlineNode::Field(field) = &para.inlines[0] else {
+        panic!("expected a field");
+    };
+    assert_eq!(field.instruction, " REF _Ref1 \\h ");
+    let mut text = String::new();
+    field.inlines.iter().for_each(|c| inline_text(c, &mut text));
+    assert_eq!(text, "Section 2");
+}
+
+#[test]
+fn complex_field_without_separate_has_empty_result() {
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p>
+            <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+            <w:r><w:instrText> TIME </w:instrText></w:r>
+            <w:r><w:fldChar w:fldCharType="end"/></w:r>
+        </w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let InlineNode::Field(field) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected a field");
+    };
+    assert_eq!(field.instruction, " TIME ");
+    assert!(field.inlines.is_empty());
+}
+
+#[test]
+fn complex_field_missing_end_is_flushed_without_loss() {
+    // A begin/separate with no end (malformed): the field is flushed at paragraph
+    // close so its cached text is not dropped.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p>
+            <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+            <w:r><w:instrText> PAGE </w:instrText></w:r>
+            <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+            <w:r><w:t>3</w:t></w:r>
+        </w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let InlineNode::Field(field) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected a flushed field");
+    };
+    assert_eq!(field.instruction, " PAGE ");
+    let mut text = String::new();
+    field.inlines.iter().for_each(|c| inline_text(c, &mut text));
+    assert_eq!(text, "3");
+}
+
+#[test]
+fn field_inside_a_hyperlink_flattens_and_is_reported() {
+    // A field is not opened inside a hyperlink (wrapper-in-wrapper): its result
+    // text flattens into the hyperlink and the nesting is reported.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:hyperlink w:anchor="top">
+            <w:fldSimple w:instr=" PAGE "><w:r><w:t>9</w:t></w:r></w:fldSimple>
+        </w:hyperlink></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let InlineNode::Hyperlink(link) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected a hyperlink");
+    };
+    // No nested field: the "9" flattened into the link as a plain run.
+    assert!(
+        link.inlines
+            .iter()
+            .all(|inline| !matches!(inline, InlineNode::Field(_)))
+    );
+    let mut text = String::new();
+    link.inlines.iter().for_each(|c| inline_text(c, &mut text));
+    assert_eq!(text, "9");
+    assert!(features(&import).contains(&"fldSimple"));
+}
+
+#[test]
+fn complex_field_display_run_before_separate_is_not_lost() {
+    // Regression (adversarial review): a display run appearing before `separate`
+    // (or with a missing/duplicated delimiter) must not be silently dropped.
+    // Here `separate` is omitted, so "5" would previously vanish; it is now kept
+    // in the cached result.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p>
+            <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+            <w:r><w:instrText> PAGE </w:instrText></w:r>
+            <w:r><w:t>5</w:t></w:r>
+            <w:r><w:fldChar w:fldCharType="end"/></w:r>
+        </w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let InlineNode::Field(field) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected a field");
+    };
+    assert_eq!(field.instruction, " PAGE ");
+    let mut text = String::new();
+    field.inlines.iter().for_each(|c| inline_text(c, &mut text));
+    assert_eq!(text, "5", "pre-separate display text must be preserved");
+}
+
+#[test]
+fn nested_begin_keeps_cached_result_text() {
+    // A spurious extra `begin` raises the field depth; the cached result "5"
+    // must still be preserved (previously dropped because in_result stayed false).
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p>
+            <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+            <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+            <w:r><w:instrText>PAGE</w:instrText></w:r>
+            <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+            <w:r><w:t>5</w:t></w:r>
+            <w:r><w:fldChar w:fldCharType="end"/></w:r>
+            <w:r><w:fldChar w:fldCharType="end"/></w:r>
+        </w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    // Whatever the exact structure, the display text "5" must survive somewhere.
+    let mut text = String::new();
+    for inline in &paragraph(&import, 0).inlines {
+        inline_text(inline, &mut text);
+    }
+    assert!(text.contains('5'), "cached result text must not be lost");
+    // The nested begin is reported.
+    assert!(features(&import).contains(&"fldChar"));
+}
+
+#[test]
+fn orphan_instr_text_is_reported_not_silently_dropped() {
+    // An `instrText` with no enclosing field is field code we do not model; it
+    // must be reported (dispositioned), never silently discarded.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:instrText>MERGEFIELD Name</w:instrText></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    assert!(features(&import).contains(&"instrText"));
+}
