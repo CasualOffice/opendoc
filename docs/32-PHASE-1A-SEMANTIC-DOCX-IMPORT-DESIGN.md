@@ -7,11 +7,14 @@
 
 ## Outcome
 
-Load an admitted DOCX package into the normalized OpenDoc model and emit two
-deterministic artifacts:
+Load an admitted DOCX package into the normalized OpenDoc model and emit an
+atomic, deterministic import bundle containing:
 
-1. a semantic JSON snapshot; and
-2. a complete compatibility report for every unsupported, degraded, preserved,
+1. a semantic JSON snapshot;
+2. an immutable bounded source-package snapshot;
+3. source-to-model provenance;
+4. a typed preservation ledger; and
+5. a complete compatibility report for every unsupported, degraded, preserved,
    blocked, or rejected construct encountered during import.
 
 The first end-to-end path is:
@@ -23,13 +26,16 @@ The first end-to-end path is:
   -> main document part
   -> styles, themes, numbering, sections, and media references
   -> paragraphs, runs, and basic properties
-  -> normalized OpenDoc model
-  -> deterministic semantic JSON + compatibility report
+  -> mapping registry
+  -> normalized OpenDoc model + provenance + preservation ledger
+  -> deterministic semantic JSON + source snapshot + compatibility report
 ```
 
 Phase 1A validates whether the normalized model can represent useful
 WordprocessingML semantics before typography, pagination, rendering, or editor
-integration make model changes expensive.
+integration make model changes expensive. It does not implement DOCX writing,
+but each accepted mapping defines its reverse strategy and edit-invalidation
+scope before import code is accepted.
 
 ## Evidence
 
@@ -42,6 +48,11 @@ The design is based on:
   published fundamentals and markup-language reference as of 2026-07-24;
 - [Microsoft WordprocessingML paragraph documentation](https://learn.microsoft.com/en-us/office/open-xml/word/working-with-paragraphs);
 - [Microsoft OPC relationship overview](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/opc/open-packaging-conventions-overview).
+
+The competitor source study and proposed fidelity boundaries are:
+
+- `33-DOCX-ENGINE-COMPETITOR-RESEARCH.md`;
+- `34-OOXML-FIDELITY-ARCHITECTURE.md`.
 
 The importer follows relationship types and resolved targets. It does not
 assume that the main document or related parts use conventional ZIP paths.
@@ -60,6 +71,11 @@ It has no first-class representation for paragraph/run property values, style
 definitions, numbering, sections, themes, relationships, or media references.
 Import implementation cannot begin by squeezing these concepts into marks or
 opaque extensions.
+
+The v0 extension map is not an OOXML round-trip mechanism. It lacks typed
+source ownership, ordering, provenance, edit invalidation, conflict handling,
+and future save disposition. Phase 1A requires independent source snapshot,
+provenance, and preservation-ledger contracts.
 
 The first accepted Phase 1A design slice must define normalized schema v1,
 including deterministic v0-to-v1 migration and strict v1 JSON validation.
@@ -91,7 +107,11 @@ including deterministic v0-to-v1 migration and strict v1 JSON validation.
 ### Artifacts
 
 - normalized schema v1 semantic snapshot;
+- immutable bounded source-package snapshot;
+- deterministic source-to-model provenance;
+- typed preservation-ledger schema;
 - compatibility report schema v1;
+- versioned import and reverse-mapping registry;
 - repository-owned semantic golden fixtures;
 - stable importer errors and warning codes;
 - import correctness and bounded-work benchmarks.
@@ -105,7 +125,7 @@ including deterministic v0-to-v1 migration and strict v1 JSON validation.
 - native or WASM rendering;
 - hit testing and caret geometry;
 - UI, browser, or Tauri hosts;
-- DOCX writing or round-trip claims;
+- DOCX writer implementation or round-trip claims;
 - image decoding;
 - automatic external-resource fetching;
 - complete table, drawing, field, note, comment, tracked-change, or embedded
@@ -113,6 +133,11 @@ including deterministic v0-to-v1 migration and strict v1 JSON validation.
 
 Out-of-scope content must still be represented in the compatibility report and
 handled according to the accepted preservation policy.
+
+Writer implementation remains in Phase 2. Reverse mapping, dirty scope,
+invalidation, and unsupported-save disposition are in scope as design
+requirements because importer choices must not discard information that a
+future writer needs.
 
 ## Import Pipeline
 
@@ -125,12 +150,14 @@ handled according to the accepted preservation policy.
    targets.
 5. Parse theme, styles, and numbering definitions before resolving effective
    references from document content.
-6. Stream the main document in source order, producing bounded semantic builder
-   events.
-7. Validate style, numbering, section, and media references.
-8. Normalize IDs, property values, maps, and source-order arrays.
-9. Validate the complete schema v1 model.
-10. Emit the semantic snapshot and compatibility report atomically.
+6. Process markup compatibility and stream the main document in source order,
+   producing bounded source-shaped decoder events.
+7. Apply versioned mapping rules to build semantic state, provenance, typed
+   preservation entries, and diagnostics.
+8. Validate style, numbering, section, and media references.
+9. Normalize IDs, property values, maps, and source-order arrays.
+10. Validate the schema v1 model and every retained source artifact.
+11. Emit the import bundle atomically.
 
 No partially valid `DocumentSession` is returned. Inspection diagnostics may be
 returned with a failed import, but they cannot expose document text.
@@ -148,14 +175,37 @@ The exact JSON shape remains a blocking design decision. It must provide:
 - theme references needed to retain semantic color and font intent;
 - media references that identify relationship, media type, and package part
   without decoding bytes;
-- a bounded preservation area for unsupported source constructs;
 - deterministic import-generated node and definition IDs;
 - an explicit schema version and deterministic v0-to-v1 migration;
 - strict rejection of unknown normalized-schema fields.
 
 OOXML element names, relationship IDs, and source part paths are provenance,
-not normalized model identity. They are retained only when needed for
-compatibility reporting or future preservation.
+not normalized model identity. They are retained in separately versioned and
+bounded source artifacts when needed for diagnostics, preservation, or future
+save planning.
+
+Semantic JSON is the normalized model's deterministic diagnostic encoding. It
+is not the source document representation and cannot independently support a
+DOCX round-trip claim.
+
+## Fidelity Artifacts
+
+The exact schemas remain blocking design decisions. They must follow
+`34-OOXML-FIDELITY-ARCHITECTURE.md`:
+
+- the source snapshot records admitted parts, content types, relationships,
+  hashes, retained safe bytes, and explicit non-retention dispositions;
+- provenance connects semantic owners and properties to source regions and
+  mapping-rule versions;
+- every preservation entry has a typed owner, anchor, source order, namespace
+  context, byte accounting, invalidation scope, conflict policy, and planned
+  save disposition;
+- the mapping registry defines source vocabulary, semantic target, unconsumed
+  preservation, reverse mapping, dirty scope, security policy, fixtures, and
+  support state for each feature.
+
+These artifacts are internal unless a later SDK design deliberately exposes a
+bounded inspection view.
 
 ## Compatibility Report
 
@@ -181,6 +231,10 @@ Entries are ordered by package part, source document order, stable code, and
 feature identifier. Reports contain no timestamps, local paths, random values,
 or document text.
 
+A `preserved` disposition is valid only when the report references a validated
+source-snapshot or preservation-ledger record. Emitting a warning without
+retaining the declared content is `omitted`, not `preserved`.
+
 ## Determinism
 
 For identical package bytes, import options, and engine version:
@@ -190,8 +244,9 @@ For identical package bytes, import options, and engine version:
 - map serialization uses lexical key order;
 - semantic arrays preserve document order;
 - warning aggregation and ordering are stable;
-- semantic JSON and compatibility JSON are byte-identical across supported
-  native platforms and WASM.
+- source-snapshot manifests and retained-part hashes are stable;
+- semantic JSON, provenance, preservation ledger, and compatibility JSON are
+  byte-identical across supported native platforms and WASM.
 
 Package ZIP entry order must not change the result when package semantics are
 equivalent.
@@ -231,6 +286,7 @@ contains:
 Each successful fixture has:
 
 - expected semantic JSON;
+- expected provenance and preservation-ledger snapshots;
 - expected compatibility JSON;
 - package and generator provenance;
 - license and SHA-256;
@@ -243,13 +299,16 @@ Golden updates require a semantic diff and compatibility-impact review.
 Implementation begins only after this design and normalized schema v1 are
 accepted.
 
-1. Content types, package relationships, and part graph.
-2. Normalized schema v1 and v0 migration.
-3. Styles, document defaults, themes, and numbering.
-4. Main document paragraphs, runs, text, tabs, breaks, and basic properties.
-5. Sections and media references.
-6. Compatibility report and preservation accounting.
-7. End-to-end semantic fixtures, deterministic snapshots, fuzzing, and
+1. Fidelity architecture acceptance, artifact schemas, and mapping-registry
+   format.
+2. Content types, package relationships, source snapshot, and part graph.
+3. Normalized schema v1, v0 migration, and provenance.
+4. Markup compatibility and typed preservation ledger.
+5. Styles, document defaults, themes, and numbering.
+6. Main document paragraphs, runs, text, tabs, breaks, and basic properties.
+7. Sections and media references.
+8. Compatibility reporting and preservation accounting.
+9. End-to-end semantic fixtures, deterministic snapshots, fuzzing, and
    benchmarks.
 
 Each slice updates the tracker and adds its own parser limits, fixtures, tests,
@@ -257,10 +316,14 @@ and compatibility notes.
 
 ## Acceptance Gates
 
-- design and schema v1 are accepted before importer implementation;
+- fidelity architecture, mapping registry, artifact schemas, and normalized
+  schema v1 are accepted before importer implementation;
 - a rights-reviewed DOCX follows the complete package-to-model pipeline;
 - semantic and compatibility JSON are byte-deterministic;
 - every unsupported construct has an explicit deterministic disposition;
+- every `preserved` disposition references retained, bounded, validated data;
+- every imported semantic feature has a declared reverse mapping,
+  invalidation scope, and unsupported-save policy;
 - no external resource is fetched;
 - malformed and over-limit inputs return typed errors with no partial session;
 - reordered package entries do not change semantic output;
@@ -273,9 +336,11 @@ and compatibility notes.
 
 - exact normalized schema v1 shape and v0 migration API;
 - initial Strict versus Transitional conformance profile;
-- unsupported XML preservation representation and byte budget;
+- source snapshot, provenance, and preservation-ledger schemas and byte budgets;
+- mapping-registry format, ownership, versioning, and initial feature inventory;
+- markup-compatibility branch selection and retention rules;
 - streaming XML parser and namespace-processing dependency;
 - whether tables are rejected or preserved as opaque blocks in the first
   semantic profile;
-- public SDK import result and compatibility-report API;
+- internal `ImportBundle` and public SDK inspection/report API;
 - stable warning-code registry ownership.

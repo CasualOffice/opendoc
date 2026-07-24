@@ -62,6 +62,11 @@ See the [Phase 0 exit report](docs/31-PHASE-0-EXIT-REPORT.md) for accepted
 evidence and the [support matrix](docs/18-SUPPORT-MATRIX.md) for the distinction
 between current and target support.
 
+The current DOCX design keeps the normalized OpenDoc model as the future live
+editing source of truth while proposing bounded source provenance and typed
+preservation for fidelity. Semantic JSON is a deterministic model artifact, not
+a replacement for OOXML or a standalone round-trip guarantee.
+
 ## Getting Started
 
 OpenDoc currently builds from source. Install
@@ -159,7 +164,9 @@ The next milestone is deliberately limited to this end-to-end path:
 
 This milestone does not include typography, pagination, rendering, hit testing,
 UI, or Tauri integration. See the
-[proposed Phase 1A design](docs/32-PHASE-1A-SEMANTIC-DOCX-IMPORT-DESIGN.md).
+[proposed Phase 1A design](docs/32-PHASE-1A-SEMANTIC-DOCX-IMPORT-DESIGN.md), the
+[DOCX engine research](docs/33-DOCX-ENGINE-COMPETITOR-RESEARCH.md), and the
+[proposed OOXML fidelity architecture](docs/34-OOXML-FIDELITY-ARCHITECTURE.md).
 
 ## Documentation
 
@@ -176,6 +183,8 @@ UI, or Tauri integration. See the
 - [Support matrix](docs/18-SUPPORT-MATRIX.md)
 - [Phase 0 exit report](docs/31-PHASE-0-EXIT-REPORT.md)
 - [Proposed Phase 1A semantic import design](docs/32-PHASE-1A-SEMANTIC-DOCX-IMPORT-DESIGN.md)
+- [DOCX engine competitor research](docs/33-DOCX-ENGINE-COMPETITOR-RESEARCH.md)
+- [Proposed OOXML fidelity architecture](docs/34-OOXML-FIDELITY-ARCHITECTURE.md)
 
 The numbered documents in `docs/` are the source of truth for accepted
 architecture, behavior, delivery status, and compatibility claims.

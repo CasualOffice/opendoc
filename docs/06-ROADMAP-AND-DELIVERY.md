@@ -45,6 +45,8 @@ hit testing.
 
 **Status:** Designing
 **Design:** `32-PHASE-1A-SEMANTIC-DOCX-IMPORT-DESIGN.md`
+**Fidelity design:** `34-OOXML-FIDELITY-ARCHITECTURE.md`
+**Research:** `33-DOCX-ENGINE-COMPETITOR-RESEARCH.md`
 
 Deliver:
 
@@ -57,6 +59,10 @@ Deliver:
 - section properties;
 - internal relationships and media references;
 - normalized semantic schema and deterministic JSON snapshots;
+- immutable bounded source-package snapshot and source-to-model provenance;
+- typed preservation ledger with ownership, ordering, limits, and edit
+  invalidation;
+- versioned feature-mapping registry with import and future reverse rules;
 - complete, deterministic unsupported-content and compatibility reports.
 
 Exit gate:
@@ -66,6 +72,10 @@ Exit gate:
 - export produces a byte-deterministic semantic JSON snapshot;
 - every encountered unsupported or degraded construct is represented in the
   compatibility report;
+- every `preserved` disposition identifies retained data with an accepted
+  owner, anchor, security policy, and future save disposition;
+- every imported semantic feature has a declared reverse-mapping and dirty-scope
+  strategy even though writer implementation remains in Phase 2;
 - malformed, over-limit, externally targeted, or structurally inconsistent
   input fails with typed, redacted diagnostics and no partial session;
 - no layout, pagination, rendering, editing, or save claim is made.

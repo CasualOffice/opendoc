@@ -330,18 +330,23 @@ Memory limits may compact history or persist checkpoints.
 
 ## 15. DOCX preservation
 
-Each imported element can carry:
+The model's generic `ExtensionBag` is not the DOCX fidelity mechanism. Candidate
+ADR-027 defines separate, bounded source artifacts:
 
-```rust
-pub struct ExtensionBag {
-    pub namespaces: NamespaceMap,
-    pub unknown_attributes: Vec<PreservedAttribute>,
-    pub unknown_children: Vec<PreservedXml>,
-    pub package_parts: Vec<PreservedPartRef>,
-}
-```
+- immutable source package snapshot;
+- source-to-model provenance;
+- typed preservation ledger;
+- compatibility report;
+- versioned import and reverse-mapping registry.
 
-Preservation is only attempted when the engine can prove the fragment remains attached to a compatible semantic parent. Otherwise it emits a warning.
+Preservation is attempted only when the engine can prove the payload has a
+compatible semantic owner, stable anchor, source order, namespace context,
+security classification, byte budget, edit-invalidation scope, conflict policy,
+and future save disposition. Otherwise it omits, rejects, or blocks the content
+with an explicit diagnostic.
+
+The exact Rust structures are blocked on acceptance of
+`34-OOXML-FIDELITY-ARCHITECTURE.md`.
 
 ## 16. Events
 

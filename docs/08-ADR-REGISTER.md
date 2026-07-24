@@ -180,12 +180,12 @@ refresh snapshots; the Phase 0 journal retains the latest 256 events.
 
 ## ADR-021 — Pin a minimal ZIP profile at the project MSRV
 
-**Decision:** Build the package reader on exactly `zip` 7.0.0 with default
+**Decision:** Build the package reader on exactly `zip` 7.2.0 with default
 features disabled and only stored/Deflate DOCX input enabled.
 
-**Why:** the current `zip` release exceeds the project's Rust 1.85 MSRV, while
-7.0.0 supports Rust 1.83; encryption and unrelated codecs increase dependency
-and attack surface without helping DOCX compatibility.
+**Why:** `zip` 7.2.0 supports the project's Rust 1.85 MSRV; encryption and
+unrelated codecs increase dependency and attack surface without helping DOCX
+compatibility. This text is corrected to match the accepted locked dependency.
 
 **Consequence:** upgrades require MSRV, WASM, license, advisory, malformed-input,
 and corpus review; OpenDoc still enforces its own path and expansion limits.
@@ -260,6 +260,10 @@ accepted under the same terms unless explicitly agreed otherwise.
 
 ## Pending ADRs
 
+- ADR-027 candidate: normalized runtime model paired with a bounded immutable
+  DOCX source snapshot, provenance map, typed preservation ledger, and one
+  versioned import/export mapping registry; see
+  `34-OOXML-FIDELITY-ARCHITECTURE.md`;
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;
 - native renderer: Skia, Vello, tiny-skia, wgpu custom, or hybrid;
 - internal text storage: rope, piece tree, or chunked sequence;
