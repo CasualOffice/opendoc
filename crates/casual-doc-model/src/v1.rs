@@ -681,7 +681,66 @@ impl Document {
         self.validate_unique_ids()?;
         self.validate_styles()?;
         self.validate_numbering()?;
+        self.validate_sections()?;
+        self.validate_media()?;
+        self.validate_document_defaults()?;
         self.validate_body()?;
+        Ok(())
+    }
+
+    fn validate_document_defaults(&self) -> Result<(), ModelError> {
+        if let Some(defaults) = &self.definitions.document_defaults {
+            if let Some(properties) = &defaults.paragraph {
+                self.check_paragraph_property_refs(properties)?;
+            }
+            if let Some(properties) = &defaults.run {
+                self.check_run_property_refs(properties)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_sections(&self) -> Result<(), ModelError> {
+        for section in &self.definitions.sections {
+            check_domain(
+                (1..=31_680).contains(&section.page_size.width_twips),
+                "section.page_size.width",
+            )?;
+            check_domain(
+                (1..=31_680).contains(&section.page_size.height_twips),
+                "section.page_size.height",
+            )?;
+            for margin in [
+                section.page_margins.top_twips,
+                section.page_margins.bottom_twips,
+                section.page_margins.start_twips,
+                section.page_margins.end_twips,
+            ] {
+                check_domain((0..=31_680).contains(&margin), "section.page_margins")?;
+            }
+            check_domain(
+                (1..=64).contains(&section.columns.count),
+                "section.column_count",
+            )?;
+        }
+        Ok(())
+    }
+
+    fn validate_media(&self) -> Result<(), ModelError> {
+        for (_, media) in self.definitions.media.iter() {
+            check_domain(
+                !media.relationship_id.is_empty() && media.relationship_id.len() <= 255,
+                "media.relationship_id",
+            )?;
+            check_domain(
+                !media.media_type.is_empty() && media.media_type.len() <= 255,
+                "media.media_type",
+            )?;
+            check_domain(
+                !media.part_name.is_empty() && media.part_name.len() <= 1024,
+                "media.part_name",
+            )?;
+        }
         Ok(())
     }
 
@@ -763,15 +822,28 @@ impl Document {
     }
 
     fn validate_numbering(&self) -> Result<(), ModelError> {
-        for (_, instance) in self.definitions.numbering.iter() {
-            if !self
+        for (id, instance) in self.definitions.numbering.iter() {
+            let abstract_num = self
                 .definitions
                 .abstract_numbering
-                .contains_key(&instance.abstract_ref)
-            {
-                return Err(ModelError::DanglingAbstractNumberingRef(
+                .get(&instance.abstract_ref)
+                .ok_or(ModelError::DanglingAbstractNumberingRef(
                     instance.abstract_ref.node_id(),
-                ));
+                ))?;
+            for numbering_override in &instance.overrides {
+                if let Some(start) = numbering_override.start {
+                    check_domain(start <= 32_767, "numbering.override.start")?;
+                }
+                if !abstract_num
+                    .levels
+                    .iter()
+                    .any(|level| level.level == numbering_override.level)
+                {
+                    return Err(ModelError::NumberingLevelUndefined {
+                        reference: id.node_id(),
+                        level: numbering_override.level,
+                    });
+                }
             }
         }
         // Level domain: level start values.
@@ -941,6 +1013,9 @@ fn check_domain(condition: bool, property: &'static str) -> Result<(), ModelErro
 pub enum MigrationError {
     /// The v0 source failed its own invariants.
     InvalidSource(ModelError),
+    /// Migration produced an invalid v1 document (an internal defect, e.g. a
+    /// source run whose grapheme count exceeds `u32::MAX`).
+    ProducedInvalidV1(ModelError),
     /// The synthesized id space was exhausted.
     IdSpaceExhausted,
     /// The v0 source populated the extension map, which v1 cannot represent.
@@ -951,6 +1026,12 @@ impl fmt::Display for MigrationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidSource(error) => write!(formatter, "v0 source is invalid: {error}"),
+            Self::ProducedInvalidV1(error) => {
+                write!(
+                    formatter,
+                    "migration produced an invalid v1 document: {error}"
+                )
+            }
             Self::IdSpaceExhausted => formatter.write_str("synthesized node id space is exhausted"),
             Self::UnsupportedSourceExtensions => {
                 formatter.write_str("v0 source extension map cannot migrate to v1")
@@ -964,7 +1045,9 @@ impl std::error::Error for MigrationError {}
 impl From<MigrationError> for SnapshotError {
     fn from(error: MigrationError) -> Self {
         match error {
-            MigrationError::InvalidSource(model) => Self::InvalidModel(model),
+            MigrationError::InvalidSource(model) | MigrationError::ProducedInvalidV1(model) => {
+                Self::InvalidModel(model)
+            }
             MigrationError::IdSpaceExhausted => Self::LimitExceeded {
                 limit: "synthesized_node_ids",
                 observed: usize::MAX,
@@ -985,6 +1068,8 @@ impl Document {
     /// come from `ids` in canonical document order (skipping preserved ids).
     /// A v0 source with a populated extension map is rejected — never silently
     /// dropped. Output bytes are identical for a fixed `(source, ids seed)`.
+    /// Totality is conditioned on each v0 run's grapheme count fitting `u32`;
+    /// an over-long run yields `ProducedInvalidV1` rather than a wrong document.
     pub fn from_v0(source: &V0Document, ids: &mut IdGenerator) -> Result<Self, MigrationError> {
         source.validate().map_err(MigrationError::InvalidSource)?;
         if !source.extensions_is_empty() {
@@ -1024,7 +1109,9 @@ impl Document {
             body,
             definitions: Definitions::default(),
         };
-        document.validate().map_err(MigrationError::InvalidSource)?;
+        document
+            .validate()
+            .map_err(MigrationError::ProducedInvalidV1)?;
         Ok(document)
     }
 }
@@ -1277,6 +1364,182 @@ mod tests {
         let reexport = document.to_json().unwrap();
         let reloaded = Document::from_json(&reexport, SnapshotLimits::default()).unwrap();
         assert_eq!(reloaded.to_json().unwrap(), reexport);
+    }
+
+    fn expect_invalid(json: &[u8]) -> ModelError {
+        match Document::from_json(json, SnapshotLimits::default()) {
+            Err(SnapshotError::InvalidModel(error)) => error,
+            other => panic!("expected InvalidModel, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn document_defaults_properties_are_validated() {
+        let dangling = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{"type":"paragraph","id":"00000000000000030000000000000002","properties":{},"inlines":[]}],
+            "definitions":{"documentDefaults":{"paragraph":{"styleRef":"000000000000000000000000000000ff"}}}}"#;
+        assert!(matches!(
+            expect_invalid(dangling),
+            ModelError::DanglingStyleRef(_)
+        ));
+        let out_of_domain = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{"type":"paragraph","id":"00000000000000030000000000000002","properties":{},"inlines":[]}],
+            "definitions":{"documentDefaults":{"run":{"sizeHalfPoints":0}}}}"#;
+        assert!(matches!(
+            expect_invalid(out_of_domain),
+            ModelError::PropertyValueOutOfDomain {
+                property: "run.size_half_points"
+            }
+        ));
+    }
+
+    #[test]
+    fn numbering_overrides_are_validated() {
+        let base = |overrides: &str| {
+            format!(
+                "{{\"schemaVersion\":1,\"documentId\":\"00000000000000030000000000000001\",\
+                 \"body\":[{{\"type\":\"paragraph\",\"id\":\"00000000000000030000000000000002\",\"properties\":{{}},\"inlines\":[]}}],\
+                 \"definitions\":{{\"abstractNumbering\":{{\"0000000000000000000000000000000a\":{{\"levels\":[{{\"level\":0,\"start\":1}}]}}}},\
+                 \"numbering\":{{\"0000000000000000000000000000000b\":{{\"abstractRef\":\"0000000000000000000000000000000a\",\"overrides\":{overrides}}}}}}}}}"
+            ).into_bytes()
+        };
+        assert!(matches!(
+            expect_invalid(&base("[{\"level\":9,\"start\":1}]")),
+            ModelError::NumberingLevelUndefined { level: 9, .. }
+        ));
+        assert!(matches!(
+            expect_invalid(&base("[{\"level\":0,\"start\":60000}]")),
+            ModelError::PropertyValueOutOfDomain {
+                property: "numbering.override.start"
+            }
+        ));
+    }
+
+    #[test]
+    fn undefined_numbering_level_reference_is_rejected() {
+        let json = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{"type":"paragraph","id":"00000000000000030000000000000002",
+              "properties":{"numbering":{"instance":"0000000000000000000000000000000b","level":5}},"inlines":[]}],
+            "definitions":{"abstractNumbering":{"0000000000000000000000000000000a":{"levels":[{"level":0,"start":1}]}},
+              "numbering":{"0000000000000000000000000000000b":{"abstractRef":"0000000000000000000000000000000a"}}}}"#;
+        assert!(matches!(
+            expect_invalid(json),
+            ModelError::NumberingLevelUndefined { level: 5, .. }
+        ));
+    }
+
+    #[test]
+    fn section_geometry_domains_are_enforced() {
+        let json = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{"type":"paragraph","id":"00000000000000030000000000000002","properties":{},"inlines":[]}],
+            "definitions":{"sections":[{"id":"0000000000000000000000000000000c",
+              "pageSize":{"widthTwips":-1,"heightTwips":100},
+              "pageMargins":{"topTwips":0,"bottomTwips":0,"startTwips":0,"endTwips":0},
+              "columns":{"count":1}}]}}"#;
+        assert!(matches!(
+            expect_invalid(json),
+            ModelError::PropertyValueOutOfDomain {
+                property: "section.page_size.width"
+            }
+        ));
+    }
+
+    #[test]
+    fn media_reference_fields_are_validated() {
+        let json = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{"type":"paragraph","id":"00000000000000030000000000000002","properties":{},"inlines":[]}],
+            "definitions":{"media":{"0000000000000000000000000000000d":{"relationshipId":"rId1","mediaType":"","partName":"word/media/x.png"}}}}"#;
+        assert!(matches!(
+            expect_invalid(json),
+            ModelError::PropertyValueOutOfDomain {
+                property: "media.media_type"
+            }
+        ));
+    }
+
+    #[test]
+    fn duplicate_definition_map_key_is_rejected() {
+        let json = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{"type":"paragraph","id":"00000000000000030000000000000002","properties":{},"inlines":[]}],
+            "definitions":{"styles":{
+              "0000000000000000000000000000000a":{"kind":"paragraph"},
+              "0000000000000000000000000000000a":{"kind":"character"}
+            }}}"#;
+        assert_eq!(
+            Document::from_json(json, SnapshotLimits::default()),
+            Err(SnapshotError::MalformedJson)
+        );
+    }
+
+    #[test]
+    fn cross_table_duplicate_node_id_is_rejected() {
+        // A style key equal to the paragraph id.
+        let json = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{"type":"paragraph","id":"00000000000000030000000000000002","properties":{},"inlines":[]}],
+            "definitions":{"styles":{"00000000000000030000000000000002":{"kind":"paragraph"}}}}"#;
+        assert!(matches!(
+            expect_invalid(json),
+            ModelError::DuplicateNodeId(_)
+        ));
+    }
+
+    #[test]
+    fn empty_run_text_is_rejected() {
+        let json = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{"type":"paragraph","id":"00000000000000030000000000000002","properties":{},
+              "inlines":[{"type":"run","id":"00000000000000030000000000000003","properties":{},"text":""}]}],
+            "definitions":{}}"#;
+        assert!(matches!(expect_invalid(json), ModelError::EmptyTextRun));
+    }
+
+    #[test]
+    fn break_inlines_round_trip_and_separate_equal_runs() {
+        let json = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{"type":"paragraph","id":"00000000000000030000000000000002","properties":{},
+              "inlines":[
+                {"type":"run","id":"00000000000000030000000000000003","properties":{},"text":"a"},
+                {"type":"break","id":"00000000000000030000000000000005","kind":"page"},
+                {"type":"run","id":"00000000000000030000000000000004","properties":{},"text":"b"}
+              ]}],
+            "definitions":{}}"#;
+        let document = Document::from_json(json, SnapshotLimits::default()).unwrap();
+        let reexport = document.to_json().unwrap();
+        assert_eq!(
+            Document::from_json(&reexport, SnapshotLimits::default())
+                .unwrap()
+                .to_json()
+                .unwrap(),
+            reexport
+        );
+    }
+
+    #[test]
+    fn migration_skips_ids_that_collide_with_preserved_paragraph_ids() {
+        // Seed the IdGenerator in the same (namespace, counter) space as the
+        // preserved paragraph id so the first candidate collides and is skipped.
+        let mut paragraph = crate::Paragraph::empty(NodeId::from_parts(4, 1).unwrap());
+        paragraph
+            .insert_text(0, "x".to_owned(), BTreeSet::new())
+            .unwrap();
+        let source = document_with_paragraph_ids(NodeId::from_parts(4, 9).unwrap(), paragraph);
+
+        let migrated = Document::from_v0(&source, &mut IdGenerator::new(4)).unwrap();
+        let BlockNode::Paragraph(result) = &migrated.body()[0];
+        let InlineNode::Run(run) = &result.inlines[0] else {
+            panic!("expected a run");
+        };
+        // Candidate (4,1) collides with the preserved paragraph id, so the run
+        // receives (4,2); output re-validates and is deterministic.
+        assert_eq!(run.id, NodeId::from_parts(4, 2).unwrap());
+        migrated.validate().unwrap();
+    }
+
+    fn document_with_paragraph_ids(document_id: NodeId, paragraph: crate::Paragraph) -> V0Document {
+        let json = format!(
+            "{{\"schemaVersion\":0,\"documentId\":\"{document_id}\",\"body\":[{}],\"extensions\":{{}}}}",
+            serde_json::to_string(&crate::BlockNode::Paragraph(paragraph)).unwrap()
+        );
+        V0Document::from_json(json.as_bytes(), SnapshotLimits::default()).unwrap()
     }
 
     fn document_with_paragraph(paragraph: crate::Paragraph) -> V0Document {
