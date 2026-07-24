@@ -102,7 +102,28 @@ pub struct Hyperlink {
     /// A screen-tip, if declared (non-empty, at most 255 bytes).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tooltip: Option<String>,
-    /// The hyperlinked inline content (non-empty; never a nested hyperlink).
+    /// The hyperlinked inline content (non-empty; never a nested wrapper).
+    pub inlines: Vec<InlineNode>,
+}
+
+/// Maximum field-instruction length, in UTF-8 bytes.
+pub const MAX_FIELD_INSTRUCTION_BYTES: usize = 4096;
+
+/// An inline field: a retained instruction and its cached result.
+///
+/// A field's dynamic value is not evaluated; `instruction` is the opaque field
+/// code (`w:instr` / concatenated `w:instrText`) and `inlines` is the producer's
+/// cached result (the runs a reader last computed). `inlines` may be empty and,
+/// like a hyperlink, contains only leaf inlines — never a nested wrapper.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Field {
+    /// Stable identity.
+    pub id: NodeId,
+    /// The field instruction (non-empty, at most `MAX_FIELD_INSTRUCTION_BYTES`).
+    pub instruction: String,
+    /// The cached-result inline content (possibly empty; leaf inlines only).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inlines: Vec<InlineNode>,
 }
 
@@ -120,6 +141,8 @@ pub enum InlineNode {
     Drawing(Drawing),
     /// An inline hyperlink wrapping inline content.
     Hyperlink(Hyperlink),
+    /// An inline field: an instruction and its cached result.
+    Field(Field),
 }
 
 impl InlineNode {
@@ -132,6 +155,7 @@ impl InlineNode {
             Self::Break(node) => node.id,
             Self::Drawing(drawing) => drawing.id,
             Self::Hyperlink(hyperlink) => hyperlink.id,
+            Self::Field(field) => field.id,
         }
     }
 }

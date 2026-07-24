@@ -3,10 +3,10 @@
 use std::collections::BTreeMap;
 
 use casual_doc_model::v1::{
-    BlockNode, Break, BreakKind, Drawing, Extent, ExternalTarget, Hyperlink, HyperlinkTarget,
-    InlineNode, InternalTarget, MAX_EMU, MediaId, PageMargins, PageSize, Paragraph,
-    ParagraphProperties, Run, RunProperties, SectionBoundary, SectionColumns, SectionId, StyleKind,
-    Tab, VerticalMerge,
+    BlockNode, Break, BreakKind, Drawing, Extent, ExternalTarget, Field, Hyperlink,
+    HyperlinkTarget, InlineNode, InternalTarget, MAX_EMU, MAX_FIELD_INSTRUCTION_BYTES, MediaId,
+    PageMargins, PageSize, Paragraph, ParagraphProperties, Run, RunProperties, SectionBoundary,
+    SectionColumns, SectionId, StyleKind, Tab, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::Reader;
@@ -22,7 +22,7 @@ use crate::report::Reporter;
 use crate::styles::Styles;
 use crate::tables::TableStack;
 
-/// A run/tab/break/drawing/hyperlink segment before ids and normalization.
+/// A run/tab/break/drawing/hyperlink/field segment before ids and normalization.
 enum Segment {
     Run {
         properties: RunProperties,
@@ -39,12 +39,28 @@ enum Segment {
         tooltip: Option<String>,
         children: Vec<Segment>,
     },
+    Field {
+        instruction: String,
+        children: Vec<Segment>,
+    },
 }
 
 /// A hyperlink being accumulated while inside a `w:hyperlink`.
 struct HyperlinkAccumulator {
     target: HyperlinkTarget,
     tooltip: Option<String>,
+    segments: Vec<Segment>,
+}
+
+/// A field being accumulated (simple `w:fldSimple` or complex `fldChar`).
+struct FieldAccumulator {
+    /// The field instruction (`w:instr` or concatenated `w:instrText`).
+    instruction: String,
+    /// Whether we are past the `separate` boundary (collecting the cached
+    /// result). A simple field starts in the result state; a complex field
+    /// starts collecting its instruction.
+    in_result: bool,
+    /// Cached-result segments.
     segments: Vec<Segment>,
 }
 
@@ -94,6 +110,16 @@ struct BodyParser<'a> {
     drawing_extra: bool,
     hyperlink: Option<HyperlinkAccumulator>,
     hyperlink_depth: u32,
+    /// The open field, if any (simple or complex). Mutually exclusive with an
+    /// open hyperlink (a wrapper never opens inside another wrapper).
+    field: Option<FieldAccumulator>,
+    /// Nesting depth of `<w:fldSimple>` / complex `fldChar` fields, so a
+    /// missing/extra delimiter cannot desynchronize field commits.
+    field_depth: u32,
+    /// Whether we are inside a `w:instrText` (its text builds the instruction).
+    in_instr: bool,
+    /// Buffer for the current `w:instrText` text.
+    instr_buffer: String,
     tables: TableStack,
     tcpr_depth: u32,
     /// Depth of nested tables refused past `MAX_TABLE_DEPTH`; while non-zero the
@@ -153,6 +179,10 @@ pub(crate) fn parse<'a>(
         drawing_extra: false,
         hyperlink: None,
         hyperlink_depth: 0,
+        field: None,
+        field_depth: 0,
+        in_instr: false,
+        instr_buffer: String::new(),
         tables: TableStack::default(),
         tcpr_depth: 0,
         suppressed_tbl_depth: 0,
@@ -197,7 +227,7 @@ impl BodyParser<'_> {
                     self.on_end(element.local_name().as_ref())?;
                     self.depth = self.depth.saturating_sub(1);
                 }
-                Event::Text(text) if self.in_text => {
+                Event::Text(text) if self.in_text || self.in_instr => {
                     let raw = text.into_inner();
                     let raw =
                         std::str::from_utf8(raw.as_ref()).map_err(|_| ImportError::MalformedXml)?;
@@ -205,7 +235,7 @@ impl BodyParser<'_> {
                         quick_xml::escape::unescape(raw).map_err(|_| ImportError::MalformedXml)?;
                     self.push_text(decoded.as_ref())?;
                 }
-                Event::CData(cdata) if self.in_text => {
+                Event::CData(cdata) if self.in_text || self.in_instr => {
                     let raw = cdata.into_inner();
                     let text =
                         std::str::from_utf8(raw.as_ref()).map_err(|_| ImportError::MalformedXml)?;
@@ -225,7 +255,13 @@ impl BodyParser<'_> {
                 limit: "text_bytes",
             });
         }
-        self.text_buffer.push_str(text);
+        // Instruction text (inside `w:instrText`) builds the field code, not a
+        // display run; it counts against the same aggregate text bound.
+        if self.in_instr {
+            self.instr_buffer.push_str(text);
+        } else {
+            self.text_buffer.push_str(text);
+        }
         Ok(())
     }
 
@@ -283,12 +319,29 @@ impl BodyParser<'_> {
                 self.in_text = true;
                 self.text_buffer.clear();
             }
+            b"instrText" if self.run_open => {
+                self.in_instr = true;
+                self.instr_buffer.clear();
+            }
+            // A complex field is delimited by field characters inside runs.
+            b"fldChar" if self.run_open => {
+                match attribute_value(element, b"fldCharType").as_deref() {
+                    Some("begin") => self.begin_field(),
+                    Some("separate") => self.separate_field(),
+                    Some("end") => self.close_field(),
+                    _ => {}
+                }
+            }
+            // A simple field carries its instruction inline and wraps its result.
+            b"fldSimple" if self.paragraph_open && !self.run_open => {
+                self.open_simple_field(element);
+            }
             b"tab" if self.run_open => self.push_segment(Segment::Tab),
             b"br" if self.run_open => {
                 let kind = break_kind(element);
                 self.push_segment(Segment::Break(kind));
             }
-            b"hyperlink" if self.paragraph_open && !self.run_open => {
+            b"hyperlink" if self.paragraph_open && !self.run_open && self.field.is_none() => {
                 self.hyperlink_depth += 1;
                 if self.hyperlink_depth == 1 {
                     match self.resolve_hyperlink_target(element) {
@@ -523,6 +576,19 @@ impl BodyParser<'_> {
                     self.push_segment(Segment::Run { properties, text });
                 }
             }
+            b"instrText" if self.in_instr => {
+                self.in_instr = false;
+                let text = std::mem::take(&mut self.instr_buffer);
+                match self.field.as_mut() {
+                    // Append to the open field's instruction while collecting it.
+                    Some(field) if !field.in_result => field.instruction.push_str(&text),
+                    // Instruction text with no field collecting it (orphaned, or
+                    // after `separate`) is not modeled; report it (never silent).
+                    _ if !text.is_empty() => self.reporter.report(b"instrText"),
+                    _ => {}
+                }
+            }
+            b"fldSimple" if self.field_depth > 0 => self.close_field(),
             b"blipFill" => self.blipfill_depth = self.blipfill_depth.saturating_sub(1),
             b"drawing" if self.drawing_depth > 0 => {
                 self.drawing_depth -= 1;
@@ -623,13 +689,93 @@ impl BodyParser<'_> {
         Ok(())
     }
 
-    /// Routes a segment into an open hyperlink if one is being accumulated, so
-    /// content (runs, tabs, breaks, drawings) inside a `w:hyperlink` is captured
-    /// by the link rather than the paragraph.
+    /// Routes a segment into the innermost open wrapper: an open field, then an
+    /// open hyperlink, else the paragraph. Fields and hyperlinks never open
+    /// inside one another, so at most one wrapper is ever open.
+    ///
+    /// All display segments of an open field are captured into its cached result,
+    /// including any that arrive before `separate` — a well-formed field has none
+    /// there (the instruction is `w:instrText`, routed separately), so this only
+    /// preserves malformed pre-`separate` display content instead of dropping it.
     fn push_segment(&mut self, segment: Segment) {
+        if let Some(field) = self.field.as_mut() {
+            field.segments.push(segment);
+            return;
+        }
         match self.hyperlink.as_mut() {
             Some(accumulator) => accumulator.segments.push(segment),
             None => self.segments.push(segment),
+        }
+    }
+
+    /// Opens a complex field on a `fldChar begin`. A field nested in another
+    /// wrapper (field or hyperlink) is not modeled as structure; it is reported
+    /// and its result content flattens into the enclosing wrapper.
+    fn begin_field(&mut self) {
+        self.field_depth += 1;
+        if self.field_depth == 1 && self.field.is_none() && self.hyperlink.is_none() {
+            self.field = Some(FieldAccumulator {
+                instruction: String::new(),
+                in_result: false,
+                segments: Vec::new(),
+            });
+        } else {
+            self.reporter.report(b"fldChar");
+        }
+    }
+
+    /// Opens a simple `w:fldSimple` field (instruction inline, result as children).
+    fn open_simple_field(&mut self, element: &BytesStart<'_>) {
+        self.field_depth += 1;
+        if self.field_depth == 1 && self.field.is_none() && self.hyperlink.is_none() {
+            let instruction = attribute_value(element, b"instr").unwrap_or_default();
+            self.field = Some(FieldAccumulator {
+                instruction,
+                in_result: true,
+                segments: Vec::new(),
+            });
+        } else {
+            self.reporter.report(b"fldSimple");
+        }
+    }
+
+    /// Handles a `fldChar separate`: the outermost field switches to collecting
+    /// its cached result.
+    fn separate_field(&mut self) {
+        if self.field_depth == 1 {
+            if let Some(field) = self.field.as_mut() {
+                field.in_result = true;
+            }
+        }
+    }
+
+    /// Closes the outermost field on `fldChar end` or `</w:fldSimple>`, committing
+    /// it; inner (nested) delimiters only balance the depth counter.
+    fn close_field(&mut self) {
+        if self.field_depth == 1 {
+            self.commit_field();
+        }
+        self.field_depth = self.field_depth.saturating_sub(1);
+    }
+
+    /// Commits the open field. A valid instruction becomes a `Field` segment; an
+    /// empty or over-long instruction is reported and the cached-result content is
+    /// flattened into the enclosing stream so no display text is lost.
+    fn commit_field(&mut self) {
+        if let Some(field) = self.field.take() {
+            if field.instruction.is_empty() || field.instruction.len() > MAX_FIELD_INSTRUCTION_BYTES
+            {
+                self.reporter.report(b"fldChar");
+                for segment in field.segments {
+                    self.push_segment(segment);
+                }
+            } else {
+                let children = normalize_segments(field.segments);
+                self.push_segment(Segment::Field {
+                    instruction: field.instruction,
+                    children,
+                });
+            }
         }
     }
 
@@ -681,6 +827,12 @@ impl BodyParser<'_> {
             }
         }
         self.hyperlink_depth = 0;
+        // Robustness: a `w:p` that closes with an open field (missing `end`) is
+        // malformed; commit what was accumulated so its cached text is not lost.
+        self.commit_field();
+        self.field_depth = 0;
+        self.in_instr = false;
+        self.instr_buffer.clear();
         self.drawing_depth = 0;
         self.blipfill_depth = 0;
         let paragraph_id = self
@@ -742,6 +894,21 @@ impl BodyParser<'_> {
                     id,
                     target,
                     tooltip,
+                    inlines,
+                }))
+            }
+            Segment::Field {
+                instruction,
+                children,
+            } => {
+                let id = self.next_id()?;
+                let mut inlines = Vec::with_capacity(children.len());
+                for child in children {
+                    inlines.push(self.segment_to_inline(child)?);
+                }
+                Ok(InlineNode::Field(Field {
+                    id,
+                    instruction,
                     inlines,
                 }))
             }

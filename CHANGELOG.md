@@ -14,6 +14,12 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Added
 
+- Semantic fields in schema v1: an additive `InlineNode::Field` (opaque
+  instruction + cached-result inlines), imported from both `w:fldSimple` and
+  complex `fldChar` begin/separate/end run sequences. Fields and hyperlinks are
+  mutually-exclusive inline wrappers containing only leaf inlines; a
+  wrapper-in-wrapper is reported and flattened without losing display text.
+  Backward-compatible and additive; the v0→v1 migration is unchanged.
 - Semantic tables in schema v1: an additive `BlockNode::Table` (shared column
   grid, rows, cells holding recursive block content, `gridSpan`/`vMerge` cell
   merge geometry, depth-bounded), imported from `w:tbl` instead of flattening
