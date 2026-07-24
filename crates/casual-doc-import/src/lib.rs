@@ -71,7 +71,29 @@ pub fn import_package(
         Some(part) => Some(package.read_part(&part).map_err(ImportError::Package)?),
         None => None,
     };
-    import_with_sources(&document_bytes, styles_bytes.as_deref(), config)
+    let mut import = import_with_sources(&document_bytes, styles_bytes.as_deref(), config)?;
+
+    // In Retention mode, retain every admitted part verbatim (the package-level
+    // byte floor) so styles, media, and other parts can be reproduced too.
+    if let Some(retained) = import.retained_source.as_mut() {
+        let names: Vec<String> = package
+            .entries()
+            .iter()
+            .map(|entry| entry.part_name.clone())
+            .collect();
+        let mut total = 0_usize;
+        for name in names {
+            let bytes = package.read_part(&name).map_err(ImportError::Package)?;
+            total = total.saturating_add(bytes.len());
+            if total > config.max_text_bytes {
+                return Err(ImportError::LimitExceeded {
+                    limit: "retained_bytes",
+                });
+            }
+            retained.parts.insert(name, bytes);
+        }
+    }
+    Ok(import)
 }
 
 /// Imports main-document WordprocessingML bytes (no styles) into a v1 document.
@@ -97,6 +119,7 @@ pub(crate) fn import_with_sources(
             }
             Some(RetainedSource {
                 main_document: document_xml.to_vec(),
+                parts: std::collections::BTreeMap::new(),
             })
         }
         ImportMode::Semantic => None,

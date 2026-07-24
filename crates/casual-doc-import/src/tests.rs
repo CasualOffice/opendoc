@@ -510,3 +510,50 @@ fn retention_over_the_byte_ceiling_fails_closed() {
         })
     );
 }
+
+#[test]
+fn retention_mode_via_package_retains_all_parts_verbatim() {
+    use std::io::{Cursor, Write};
+    use zip::write::SimpleFileOptions;
+    use zip::{CompressionMethod, ZipWriter};
+
+    let content_types = br#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+    let rels = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+    let document = br#"<?xml version="1.0"?><w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>hi</w:t></w:r></w:p></w:body></w:document>"#;
+
+    let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+    for (name, bytes) in [
+        ("[Content_Types].xml", content_types.as_slice()),
+        ("_rels/.rels", rels.as_slice()),
+        ("word/document.xml", document.as_slice()),
+    ] {
+        writer
+            .start_file(
+                name,
+                SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
+            )
+            .unwrap();
+        writer.write_all(bytes).unwrap();
+    }
+    let package_bytes = writer.finish().unwrap().into_inner();
+
+    let mut package =
+        DocxPackage::open(&package_bytes, casual_doc_ooxml::PackageLimits::default()).unwrap();
+    let config = ImportConfig {
+        mode: ImportMode::Retention,
+        ..ImportConfig::default()
+    };
+    let import = import_package(&mut package, config).unwrap();
+    let retained = import.retained_source.unwrap();
+    assert_eq!(retained.main_document, document.to_vec());
+    // Every admitted part is retained byte-identically.
+    assert_eq!(
+        retained.parts.get("word/document.xml").map(Vec::as_slice),
+        Some(document.as_slice())
+    );
+    assert_eq!(
+        retained.parts.get("[Content_Types].xml").map(Vec::as_slice),
+        Some(content_types.as_slice())
+    );
+    assert!(retained.parts.contains_key("_rels/.rels"));
+}
