@@ -188,6 +188,7 @@ UI, or Tauri integration. See the
 - [Import disposition taxonomy](docs/35-DISPOSITION-TAXONOMY.md)
 - [ADR-027 acceptance record](docs/36-ADR-027-ACCEPTANCE-RECORD.md)
 - [Phase 1A decision research (Word/ONLYOFFICE/LibreOffice)](docs/37-PHASE-1A-DECISION-RESEARCH.md)
+- [Normalized schema v1 design](docs/38-NORMALIZED-SCHEMA-V1-DESIGN.md)
 
 The numbered documents in `docs/` are the source of truth for accepted
 architecture, behavior, delivery status, and compatibility claims.
