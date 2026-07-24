@@ -139,6 +139,31 @@ pub struct PackageEntry {
     pub compression: PartCompression,
 }
 
+/// Whether a relationship target is inside the package or an external URI.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TargetMode {
+    /// The target resolves to a part inside the package.
+    Internal,
+    /// The target is an external URI and is never fetched during import.
+    External,
+}
+
+/// One resolved relationship declared by the main document part.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DocumentRelationship {
+    /// Relationship identifier (`r:id`), empty if the source omitted it.
+    pub id: String,
+    /// Relationship type URI.
+    pub relationship_type: String,
+    /// Raw target as declared in the relationships part.
+    pub target: String,
+    /// Whether the target is internal or external.
+    pub target_mode: TargetMode,
+    /// Normalized package part name for a resolvable internal target; `None`
+    /// for external targets or internal targets that escape the package root.
+    pub resolved_part: Option<String>,
+}
+
 /// Thread-safe cancellation flag for package admission and part reads.
 #[derive(Clone, Debug, Default)]
 pub struct CancellationToken {
@@ -174,6 +199,8 @@ pub struct DocxPackage<'a> {
     archive_indexes: BTreeMap<String, usize>,
     total_expanded_bytes: u64,
     main_document_part: String,
+    content_types: ContentTypes,
+    main_document_relationships: Vec<DocumentRelationship>,
 }
 
 impl<'a> DocxPackage<'a> {
@@ -304,6 +331,12 @@ impl<'a> DocxPackage<'a> {
         )?;
         let main_document_part =
             discover_main_document(&relationships_bytes, &content_types, &archive_indexes)?;
+        let main_document_relationships = resolve_main_document_relationships(
+            &mut archive,
+            &archive_indexes,
+            &main_document_part,
+            cancellation,
+        )?;
 
         Ok(Self {
             archive,
@@ -311,6 +344,8 @@ impl<'a> DocxPackage<'a> {
             archive_indexes,
             total_expanded_bytes,
             main_document_part,
+            content_types,
+            main_document_relationships,
         })
     }
 
@@ -318,6 +353,19 @@ impl<'a> DocxPackage<'a> {
     #[must_use]
     pub fn main_document_part(&self) -> &str {
         &self.main_document_part
+    }
+
+    /// Returns the declared content type of a normalized package part, resolving
+    /// `[Content_Types].xml` overrides before extension defaults.
+    #[must_use]
+    pub fn content_type(&self, part_name: &str) -> Option<&str> {
+        self.content_types.content_type_of(part_name)
+    }
+
+    /// Returns the main document's resolved relationships, ordered by id.
+    #[must_use]
+    pub fn main_document_relationships(&self) -> &[DocumentRelationship] {
+        &self.main_document_relationships
     }
 
     /// Returns deterministic part metadata ordered by normalized part name.
@@ -390,6 +438,7 @@ fn read_indexed(
 /// One parsed OPC relationship (only the fields the reader needs).
 #[derive(Debug)]
 struct Relationship {
+    id: String,
     rel_type: String,
     target: String,
     external: bool,
@@ -453,14 +502,19 @@ impl ContentTypes {
     }
 }
 
-fn parse_relationships(bytes: &[u8]) -> Result<Vec<Relationship>, PackageError> {
+fn parse_relationships(
+    bytes: &[u8],
+    part: &'static str,
+) -> Result<Vec<Relationship>, PackageError> {
     let mut out = Vec::new();
-    for_each_metadata_element(bytes, ROOT_RELATIONSHIPS_PART, |name, attribute| {
+    for_each_metadata_element(bytes, part, |name, attribute| {
         if name == b"Relationship" {
+            let mut id = None;
             let mut rel_type = None;
             let mut target = None;
             let mut external = false;
             attribute(&mut |key, value| match key {
+                b"Id" => id = Some(value.to_owned()),
                 b"Type" => rel_type = Some(value.to_owned()),
                 b"Target" => target = Some(value.to_owned()),
                 b"TargetMode" => external = value.eq_ignore_ascii_case("External"),
@@ -468,6 +522,7 @@ fn parse_relationships(bytes: &[u8]) -> Result<Vec<Relationship>, PackageError> 
             })?;
             if let (Some(rel_type), Some(target)) = (rel_type, target) {
                 out.push(Relationship {
+                    id: id.unwrap_or_default(),
                     rel_type,
                     target,
                     external,
@@ -483,21 +538,24 @@ fn is_office_document_type(rel_type: &str) -> bool {
     rel_type == OFFICE_DOCUMENT_REL_TRANSITIONAL || rel_type == OFFICE_DOCUMENT_REL_STRICT
 }
 
-/// Resolves a root-relative OPC relationship target to a normalized part name,
-/// rejecting any target that escapes the package root.
-fn resolve_root_relative_target(target: &str) -> Option<String> {
+/// Resolves an OPC relationship target against a base directory (empty for the
+/// package root), returning a normalized part name, or `None` if the target is
+/// external-shaped, empty, or escapes the package root.
+fn resolve_relative_target(base: &[String], target: &str) -> Option<String> {
     if target.is_empty() || target.contains('\\') || target.contains('\0') {
         return None;
     }
-    let body = target.strip_prefix('/').unwrap_or(target);
-    let mut segments: Vec<&str> = Vec::new();
+    let (mut segments, body) = match target.strip_prefix('/') {
+        Some(absolute) => (Vec::new(), absolute),
+        None => (base.to_vec(), target),
+    };
     for segment in body.split('/') {
         match segment {
             "" | "." => {}
             ".." => {
                 segments.pop()?;
             }
-            other => segments.push(other),
+            other => segments.push(other.to_owned()),
         }
     }
     if segments.is_empty() {
@@ -506,12 +564,32 @@ fn resolve_root_relative_target(target: &str) -> Option<String> {
     Some(segments.join("/"))
 }
 
+/// Returns the directory segments of a normalized part name (empty at root).
+fn parent_segments(part: &str) -> Vec<String> {
+    match part.rsplit_once('/') {
+        Some((directory, _)) => directory.split('/').map(str::to_owned).collect(),
+        None => Vec::new(),
+    }
+}
+
+/// Returns the `_rels` part name that carries a part's relationships.
+fn relationship_part_name(part: &str) -> String {
+    let (directory, name) = match part.rsplit_once('/') {
+        Some((directory, name)) => (Some(directory), name),
+        None => (None, part),
+    };
+    match directory {
+        Some(directory) => format!("{directory}/_rels/{name}.rels"),
+        None => format!("_rels/{name}.rels"),
+    }
+}
+
 fn discover_main_document(
     relationships_bytes: &[u8],
     content_types: &ContentTypes,
     archive_indexes: &BTreeMap<String, usize>,
 ) -> Result<String, PackageError> {
-    let relationships = parse_relationships(relationships_bytes)?;
+    let relationships = parse_relationships(relationships_bytes, ROOT_RELATIONSHIPS_PART)?;
     let office: Vec<&Relationship> = relationships
         .iter()
         .filter(|relationship| {
@@ -524,7 +602,7 @@ fn discover_main_document(
         _ => return Err(PackageError::AmbiguousMainDocument),
     }
     let resolved =
-        resolve_root_relative_target(&office[0].target).ok_or(PackageError::UnsafePartName)?;
+        resolve_relative_target(&[], &office[0].target).ok_or(PackageError::UnsafePartName)?;
     if !archive_indexes.contains_key(&resolved) {
         return Err(PackageError::MissingMainDocument);
     }
@@ -534,6 +612,49 @@ fn discover_main_document(
     if !MAIN_DOCUMENT_CONTENT_TYPES.contains(&content_type) {
         return Err(PackageError::UnsupportedMainDocumentType);
     }
+    Ok(resolved)
+}
+
+/// Static diagnostic label for the main document's relationships part.
+const MAIN_DOCUMENT_RELS_LABEL: &str = "<main-document>/_rels/*.rels";
+
+/// Resolves the main document's part-level relationships, classifying each as
+/// internal (with a resolved normalized part name) or external (never fetched).
+/// A main document with no `_rels` part has no relationships.
+fn resolve_main_document_relationships(
+    archive: &mut ZipArchive<Cursor<&[u8]>>,
+    archive_indexes: &BTreeMap<String, usize>,
+    main_document_part: &str,
+    cancellation: &CancellationToken,
+) -> Result<Vec<DocumentRelationship>, PackageError> {
+    let rels_part = relationship_part_name(main_document_part);
+    let Some(&index) = archive_indexes.get(&rels_part) else {
+        return Ok(Vec::new());
+    };
+    let bytes = read_indexed(archive, index, cancellation)?;
+    let relationships = parse_relationships(&bytes, MAIN_DOCUMENT_RELS_LABEL)?;
+    let base = parent_segments(main_document_part);
+    let mut resolved: Vec<DocumentRelationship> = relationships
+        .into_iter()
+        .map(|relationship| {
+            let (target_mode, resolved_part) = if relationship.external {
+                (TargetMode::External, None)
+            } else {
+                (
+                    TargetMode::Internal,
+                    resolve_relative_target(&base, &relationship.target),
+                )
+            };
+            DocumentRelationship {
+                id: relationship.id,
+                relationship_type: relationship.rel_type,
+                target: relationship.target,
+                target_mode,
+                resolved_part,
+            }
+        })
+        .collect();
+    resolved.sort_by(|left, right| left.id.cmp(&right.id));
     Ok(resolved)
 }
 
@@ -1657,5 +1778,89 @@ mod tests {
             }
         );
         assert!(!error.to_string().contains("secret-token"));
+    }
+
+    #[test]
+    fn main_document_relationships_are_resolved_and_classified() {
+        let content_types = format!(
+            "{CONTENT_TYPES_HEAD}<Default Extension=\"png\" ContentType=\"image/png\"/>\
+             <Override PartName=\"/word/document.xml\" ContentType=\"{MAIN_TYPE}\"/></Types>"
+        )
+        .into_bytes();
+        let root_rels = relationships(&office_document_relationship(
+            OFFICE_DOCUMENT_REL_TRANSITIONAL,
+            DOCUMENT_PART,
+            false,
+        ));
+        let document_rels: &[u8] = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.invalid/" TargetMode="External"/><Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml" Target="../customXml/item1.xml"/><Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject" Target="../../escape.bin"/></Relationships>"#;
+        let entries: [(&str, &[u8], CompressionMethod); 7] = [
+            (
+                CONTENT_TYPES_PART,
+                content_types.as_slice(),
+                CompressionMethod::Stored,
+            ),
+            (
+                ROOT_RELATIONSHIPS_PART,
+                root_rels.as_slice(),
+                CompressionMethod::Stored,
+            ),
+            (DOCUMENT_PART, DOCUMENT, CompressionMethod::Deflated),
+            (
+                "word/_rels/document.xml.rels",
+                document_rels,
+                CompressionMethod::Stored,
+            ),
+            ("word/styles.xml", b"<styles/>", CompressionMethod::Stored),
+            (
+                "word/media/image1.png",
+                b"PNGDATA",
+                CompressionMethod::Stored,
+            ),
+            ("customXml/item1.xml", b"<x/>", CompressionMethod::Stored),
+        ];
+        let bytes = package(&entries);
+        let package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+
+        let relationships = package.main_document_relationships();
+        assert_eq!(relationships.len(), 5);
+        assert_eq!(relationships[0].id, "rId1");
+        assert_eq!(relationships[0].target_mode, TargetMode::Internal);
+        assert_eq!(
+            relationships[0].resolved_part.as_deref(),
+            Some("word/styles.xml")
+        );
+        assert_eq!(
+            relationships[1].resolved_part.as_deref(),
+            Some("word/media/image1.png")
+        );
+        assert_eq!(relationships[2].target_mode, TargetMode::External);
+        assert_eq!(relationships[2].resolved_part, None);
+        assert_eq!(
+            relationships[3].resolved_part.as_deref(),
+            Some("customXml/item1.xml")
+        );
+        // Internal target escaping the package root resolves to nothing.
+        assert_eq!(relationships[4].target_mode, TargetMode::Internal);
+        assert_eq!(relationships[4].resolved_part, None);
+
+        assert_eq!(package.content_type("word/document.xml"), Some(MAIN_TYPE));
+        assert_eq!(
+            package.content_type("word/media/image1.png"),
+            Some("image/png")
+        );
+        assert_eq!(package.content_type("word/unknown.dat"), None);
+    }
+
+    #[test]
+    fn main_document_without_a_rels_part_has_no_relationships() {
+        let content_types = content_types_for(DOCUMENT_PART, MAIN_TYPE);
+        let root_rels = relationships(&office_document_relationship(
+            OFFICE_DOCUMENT_REL_TRANSITIONAL,
+            DOCUMENT_PART,
+            false,
+        ));
+        let bytes = discovery_package(&content_types, &root_rels, DOCUMENT_PART);
+        let package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+        assert!(package.main_document_relationships().is_empty());
     }
 }
