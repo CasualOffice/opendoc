@@ -14,6 +14,12 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Added
 
+- Semantic headers and footers in schema v1: the `word/header*.xml` /
+  `word/footer*.xml` parts are parsed into additive `Definitions.headers` /
+  `footers` definitions (block content), and each `w:sectPr`
+  `w:headerReference`/`w:footerReference` becomes a `HeaderFooterRef` on the
+  section boundary (by page type: default/first/even). Additive: existing
+  snapshots and section boundaries serialize byte-identically.
 - Semantic footnotes and endnotes in schema v1: the `word/footnotes.xml` /
   `word/endnotes.xml` parts are parsed into additive `Definitions.footnotes` /
   `endnotes` note definitions (block content), and the in-body

@@ -1162,3 +1162,97 @@ fn duplicate_id_inside_a_note_is_rejected() {
         Err(ModelError::DuplicateNodeId(_))
     ));
 }
+
+// ---- schema v1 headers / footers -----------------------------------------
+
+fn valid_section(
+    id: NodeId,
+    headers: Vec<HeaderFooterRef>,
+    footers: Vec<HeaderFooterRef>,
+) -> SectionBoundary {
+    SectionBoundary {
+        id: SectionId::new(id),
+        page_size: PageSize {
+            width_twips: 12_240,
+            height_twips: 15_840,
+        },
+        page_margins: PageMargins {
+            top_twips: 1_440,
+            bottom_twips: 1_440,
+            start_twips: 1_440,
+            end_twips: 1_440,
+        },
+        columns: SectionColumns { count: 1 },
+        headers,
+        footers,
+    }
+}
+
+#[test]
+fn header_reference_resolves_and_round_trips() {
+    let header = HeaderFooterId::new(tid(20));
+    let mut definitions = Definitions::default();
+    definitions.headers.insert(
+        header,
+        HeaderFooter {
+            blocks: vec![paragraph_block(tid(30))],
+        },
+    );
+    definitions.sections.push(valid_section(
+        tid(40),
+        vec![HeaderFooterRef {
+            kind: HeaderFooterKind::Default,
+            reference: header,
+        }],
+        Vec::new(),
+    ));
+    let body = vec![paragraph_block(tid(1))];
+    let document = Document::new(tid(99), body, definitions).unwrap();
+    let json = document.to_json().unwrap();
+    let reloaded = Document::from_json(&json, SnapshotLimits::default()).unwrap();
+    assert_eq!(document, reloaded);
+    assert_eq!(document.definitions().headers.len(), 1);
+}
+
+#[test]
+fn dangling_header_reference_is_rejected() {
+    let missing = HeaderFooterId::new(tid(21));
+    let mut definitions = Definitions::default();
+    definitions.sections.push(valid_section(
+        tid(40),
+        vec![HeaderFooterRef {
+            kind: HeaderFooterKind::Default,
+            reference: missing,
+        }],
+        Vec::new(),
+    ));
+    assert!(matches!(
+        Document::new(tid(99), vec![paragraph_block(tid(1))], definitions),
+        Err(ModelError::DanglingHeaderFooterRef(_))
+    ));
+}
+
+#[test]
+fn header_reference_does_not_resolve_against_footers() {
+    // A header reference must resolve in `headers`, not `footers`.
+    let id = HeaderFooterId::new(tid(20));
+    let mut definitions = Definitions::default();
+    definitions.footers.insert(
+        id,
+        HeaderFooter {
+            blocks: vec![paragraph_block(tid(30))],
+        },
+    );
+    definitions.sections.push(valid_section(
+        tid(40),
+        vec![HeaderFooterRef {
+            kind: HeaderFooterKind::Default,
+            reference: id,
+        }],
+        Vec::new(),
+    ));
+    assert!(matches!(
+        Document::new(tid(99), vec![paragraph_block(tid(1))], definitions),
+        Err(ModelError::DanglingHeaderFooterRef(_))
+    ));
+}

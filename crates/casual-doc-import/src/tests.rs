@@ -21,6 +21,8 @@ fn import_with_styles(document: &[u8], styles: &[u8]) -> Import {
         None,
         None,
         &[],
+        &[],
+        &[],
         &std::collections::BTreeMap::new(),
         ImportConfig::default(),
     )
@@ -35,6 +37,8 @@ fn import_with_numbering(document: &[u8], numbering: &[u8]) -> Import {
         None,
         None,
         &[],
+        &[],
+        &[],
         &std::collections::BTreeMap::new(),
         ImportConfig::default(),
     )
@@ -48,6 +52,8 @@ fn import_with_notes(document: &[u8], footnotes: Option<&[u8]>, endnotes: Option
         None,
         footnotes,
         endnotes,
+        &[],
+        &[],
         &[],
         &std::collections::BTreeMap::new(),
         ImportConfig::default(),
@@ -1542,5 +1548,136 @@ fn stray_body_inside_a_notes_part_is_reported_not_silently_dropped() {
     let import = import_with_notes(document, Some(footnotes), None);
     // Only the real footnote is modeled; the stray body is reported.
     assert_eq!(import.document.definitions().footnotes.len(), 1);
+    assert!(features(&import).contains(&"body"));
+}
+
+// ---- headers / footers ---------------------------------------------------
+
+fn import_with_header_footer(
+    document: &[u8],
+    headers: &[(&str, &[u8])],
+    footers: &[(&str, &[u8])],
+) -> Import {
+    let headers: Vec<(String, Vec<u8>)> = headers
+        .iter()
+        .map(|(id, xml)| ((*id).to_owned(), xml.to_vec()))
+        .collect();
+    let footers: Vec<(String, Vec<u8>)> = footers
+        .iter()
+        .map(|(id, xml)| ((*id).to_owned(), xml.to_vec()))
+        .collect();
+    import_with_sources(
+        document,
+        None,
+        None,
+        None,
+        None,
+        &headers,
+        &footers,
+        &[],
+        &std::collections::BTreeMap::new(),
+        ImportConfig::default(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn header_reference_and_body_are_modeled() {
+    let document = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r"><w:body>
+        <w:p><w:r><w:t>Body.</w:t></w:r></w:p>
+        <w:sectPr><w:headerReference w:type="default" r:id="rId2"/>
+            <w:pgSz w:w="11906" w:h="16838"/></w:sectPr>
+    </w:body></w:document>"#;
+    let header = br#"<w:hdr xmlns:w="urn:w"><w:p><w:r><w:t>Page header</w:t></w:r></w:p></w:hdr>"#;
+    let import = import_with_header_footer(document, &[("rId2", header)], &[]);
+
+    // The header part is modeled and the section references it by kind.
+    assert_eq!(import.document.definitions().headers.len(), 1);
+    let section = &import.document.definitions().sections[0];
+    assert_eq!(section.headers.len(), 1);
+    assert_eq!(
+        section.headers[0].kind,
+        casual_doc_model::v1::HeaderFooterKind::Default
+    );
+    let hf = import
+        .document
+        .definitions()
+        .headers
+        .get(&section.headers[0].reference)
+        .expect("header definition resolves");
+    assert_eq!(tb_block_text(&hf.blocks), "Page header");
+}
+
+#[test]
+fn footer_reference_of_first_kind_is_modeled() {
+    let document = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r"><w:body>
+        <w:p><w:r><w:t>Body.</w:t></w:r></w:p>
+        <w:sectPr><w:footerReference w:type="first" r:id="rId3"/></w:sectPr>
+    </w:body></w:document>"#;
+    let footer = br#"<w:ftr xmlns:w="urn:w"><w:p><w:r><w:t>Footer</w:t></w:r></w:p></w:ftr>"#;
+    let import = import_with_header_footer(document, &[], &[("rId3", footer)]);
+    let section = &import.document.definitions().sections[0];
+    assert_eq!(section.footers.len(), 1);
+    assert_eq!(
+        section.footers[0].kind,
+        casual_doc_model::v1::HeaderFooterKind::First
+    );
+    let hf = import
+        .document
+        .definitions()
+        .footers
+        .get(&section.footers[0].reference)
+        .unwrap();
+    assert_eq!(tb_block_text(&hf.blocks), "Footer");
+}
+
+#[test]
+fn header_reference_to_a_missing_part_is_reported() {
+    let document = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r"><w:body>
+        <w:p><w:r><w:t>Body.</w:t></w:r></w:p>
+        <w:sectPr><w:headerReference w:type="default" r:id="rId9"/></w:sectPr>
+    </w:body></w:document>"#;
+    // No header part with rId9 is supplied.
+    let import = import_with_header_footer(document, &[], &[]);
+    let section = &import.document.definitions().sections[0];
+    assert!(section.headers.is_empty());
+    assert!(features(&import).contains(&"headerReference"));
+}
+
+#[test]
+fn real_producer_header_footer_fixture_models_both() {
+    // End-to-end on a real LibreOffice .docx: its sectPr references a header and
+    // a footer part, both of which are modeled with their content.
+    let bytes = include_bytes!("../../../fixtures/corpus/real-producer-header-footer.docx");
+    let mut package = DocxPackage::open(bytes, casual_doc_ooxml::PackageLimits::default()).unwrap();
+    let import = import_package(&mut package, ImportConfig::default()).unwrap();
+    let defs = import.document.definitions();
+    assert_eq!(defs.headers.len(), 1, "header part modeled");
+    assert_eq!(defs.footers.len(), 1, "footer part modeled");
+    // The body's section references them.
+    let section = defs.sections.last().expect("a section boundary");
+    assert!(!section.headers.is_empty(), "section references a header");
+    assert!(!section.footers.is_empty(), "section references a footer");
+}
+
+#[test]
+fn stray_sect_pr_and_body_inside_a_header_part_are_reported() {
+    // Regression (review): a stray w:sectPr / w:body inside a header part must be
+    // reported (not build a discarded phantom section or set in_body silently).
+    let document = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r"><w:body>
+        <w:p><w:r><w:t>Body.</w:t></w:r></w:p>
+        <w:sectPr><w:headerReference w:type="default" r:id="rId2"/></w:sectPr>
+    </w:body></w:document>"#;
+    let header = br#"<w:hdr xmlns:w="urn:w">
+        <w:p><w:r><w:t>H</w:t></w:r></w:p>
+        <w:sectPr><w:pgSz w:w="100" w:h="100"/></w:sectPr>
+        <w:body><w:p><w:r><w:t>orphan</w:t></w:r></w:p></w:body>
+    </w:hdr>"#;
+    let import = import_with_header_footer(document, &[("rId2", header)], &[]);
+    // The document has exactly one real section (the body's); the header's stray
+    // sectPr did not add a phantom one.
+    assert_eq!(import.document.definitions().sections.len(), 1);
+    // Both stray constructs are reported.
+    assert!(features(&import).contains(&"sectPr"));
     assert!(features(&import).contains(&"body"));
 }
