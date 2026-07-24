@@ -47,7 +47,8 @@ pub use retain::RetainedSource;
 
 use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
-    BlockNode, Definitions, Document, MediaId, Paragraph, ParagraphProperties,
+    BlockNode, DefinitionMap, Definitions, Document, MediaId, Note, NoteId, Paragraph,
+    ParagraphProperties,
 };
 use casual_doc_ooxml::DocxPackage;
 
@@ -83,6 +84,8 @@ pub fn import_package(
     };
     let styles_part = related_part("/styles");
     let numbering_part = related_part("/numbering");
+    let footnotes_part = related_part("/footnotes");
+    let endnotes_part = related_part("/endnotes");
     let media_sources: Vec<MediaSource> = package
         .main_document_relationships()
         .iter()
@@ -112,6 +115,14 @@ pub fn import_package(
         Some(part) => Some(package.read_part(&part).map_err(ImportError::Package)?),
         None => None,
     };
+    let footnotes_bytes = match footnotes_part {
+        Some(part) => Some(package.read_part(&part).map_err(ImportError::Package)?),
+        None => None,
+    };
+    let endnotes_bytes = match endnotes_part {
+        Some(part) => Some(package.read_part(&part).map_err(ImportError::Package)?),
+        None => None,
+    };
     // External hyperlink targets, resolved through the main-document
     // relationship graph (r:id -> URL), for first-class hyperlink modeling.
     let hyperlink_rels: std::collections::BTreeMap<String, String> = package
@@ -129,6 +140,8 @@ pub fn import_package(
         &document_bytes,
         styles_bytes.as_deref(),
         numbering_bytes.as_deref(),
+        footnotes_bytes.as_deref(),
+        endnotes_bytes.as_deref(),
         &media_sources,
         &hyperlink_rels,
         config,
@@ -163,16 +176,51 @@ pub fn import_main_document_xml(xml: &[u8], config: ImportConfig) -> Result<Impo
         xml,
         None,
         None,
+        None,
+        None,
         &[],
         &std::collections::BTreeMap::new(),
         config,
     )
 }
 
+/// A note definition map plus its source-`w:id` -> id resolution index.
+type BuiltNotes = (
+    DefinitionMap<NoteId, Note>,
+    std::collections::BTreeMap<String, NoteId>,
+);
+
+/// Parses a notes part into a `NoteId`-keyed definition map plus a source-`w:id`
+/// resolution index for in-body references. Missing part → empty.
+#[allow(clippy::too_many_arguments)]
+fn build_notes(
+    xml: Option<&[u8]>,
+    container: &'static [u8],
+    styles: &Styles,
+    numbering: &Numbering,
+    ids: &mut IdGenerator,
+    reporter: &mut Reporter,
+    config: ImportConfig,
+) -> Result<BuiltNotes, ImportError> {
+    let mut map = DefinitionMap::default();
+    let mut index = std::collections::BTreeMap::new();
+    if let Some(xml) = xml {
+        let notes = body::parse_notes(xml, ids, reporter, styles, numbering, container, config)?;
+        for (source_id, note_id, blocks) in notes {
+            index.insert(source_id, note_id);
+            map.insert(note_id, Note { blocks });
+        }
+    }
+    Ok((map, index))
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn import_with_sources(
     document_xml: &[u8],
     styles_xml: Option<&[u8]>,
     numbering_xml: Option<&[u8]>,
+    footnotes_xml: Option<&[u8]>,
+    endnotes_xml: Option<&[u8]>,
     media_sources: &[MediaSource],
     hyperlink_rels: &std::collections::BTreeMap<String, String>,
     config: ImportConfig,
@@ -224,6 +272,27 @@ pub(crate) fn import_with_sources(
         .map(|(id, reference)| (reference.relationship_id.clone(), *id))
         .collect();
 
+    // Notes are parsed BEFORE the body so an in-body reference resolves. Id order:
+    // document -> styles -> numbering -> media -> footnotes -> endnotes -> body.
+    let (footnotes, footnote_ids) = build_notes(
+        footnotes_xml,
+        b"footnote",
+        &styles,
+        &numbering,
+        &mut ids,
+        &mut reporter,
+        config,
+    )?;
+    let (endnotes, endnote_ids) = build_notes(
+        endnotes_xml,
+        b"endnote",
+        &styles,
+        &numbering,
+        &mut ids,
+        &mut reporter,
+        config,
+    )?;
+
     let (mut body, sections) = body::parse(
         document_xml,
         &mut ids,
@@ -233,6 +302,8 @@ pub(crate) fn import_with_sources(
             numbering: &numbering,
             media_index: &media_index,
             hyperlink_rels,
+            footnote_ids: &footnote_ids,
+            endnote_ids: &endnote_ids,
         },
         config,
     )?;
@@ -256,6 +327,8 @@ pub(crate) fn import_with_sources(
         numbering: numbering_instances,
         sections,
         media,
+        footnotes,
+        endnotes,
         ..Definitions::default()
     };
     let document = Document::new(document_id, body, definitions).map_err(ImportError::Model)?;

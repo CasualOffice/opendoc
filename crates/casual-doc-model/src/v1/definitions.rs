@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    AbstractNumberingId, DefinitionMap, FontName, MediaId, NumberingInstanceId,
+    AbstractNumberingId, BlockNode, DefinitionMap, FontName, MediaId, NoteId, NumberingInstanceId,
     ParagraphProperties, RunProperties, SectionId, StyleId, StyleKind,
 };
 
@@ -137,6 +137,17 @@ pub struct ThemeReferences {
     pub minor_font: Option<FontName>,
 }
 
+/// A footnote or endnote definition (its id is the map key). Its content reuses
+/// the recursive block model, so a note may hold paragraphs, tables, and text
+/// boxes. `blocks` may be empty.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Note {
+    /// The note's block content.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocks: Vec<BlockNode>,
+}
+
 /// A media reference (its id is the map key).
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -168,6 +179,13 @@ pub struct Definitions {
     /// Media references by id.
     #[serde(default)]
     pub media: DefinitionMap<MediaId, MediaReference>,
+    /// Footnote definitions by id. Additive: omitted when empty so existing
+    /// snapshots (which predate notes) serialize byte-identically.
+    #[serde(default, skip_serializing_if = "DefinitionMap::is_empty")]
+    pub footnotes: DefinitionMap<NoteId, Note>,
+    /// Endnote definitions by id. Additive: omitted when empty.
+    #[serde(default, skip_serializing_if = "DefinitionMap::is_empty")]
+    pub endnotes: DefinitionMap<NoteId, Note>,
     /// Document-wide defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub document_defaults: Option<DocumentDefaults>,

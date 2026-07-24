@@ -14,6 +14,14 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Added
 
+- Semantic footnotes and endnotes in schema v1: the `word/footnotes.xml` /
+  `word/endnotes.xml` parts are parsed into additive `Definitions.footnotes` /
+  `endnotes` note definitions (block content), and the in-body
+  `w:footnoteReference`/`w:endnoteReference` becomes an additive
+  `InlineNode::NoteReference` resolving to the note — closing the audit's
+  silent-drop of note body text. Additive: existing snapshots serialize
+  byte-identically (empty note maps are omitted). Note-part images/external
+  hyperlinks are reported (their modeling is a follow-up).
 - Semantic text boxes in schema v1: an additive `InlineNode::TextBox` holding
   block content, imported from `w:txbxContent` (DrawingML `wps:txbx` or legacy
   VML `v:textbox`). Fixes an audit-confirmed data-corruption blocker where a text

@@ -90,6 +90,13 @@ fn extract_ours(bytes: &[u8]) -> Result<String, Box<dyn Error>> {
     let import = import_package(&mut package, ImportConfig::default())?;
     let mut out = String::new();
     push_blocks_text(import.document.body(), &mut out);
+    // Footnote and endnote body text (LibreOffice's txt export includes it).
+    for (_, note) in import.document.definitions().footnotes.iter() {
+        push_blocks_text(&note.blocks, &mut out);
+    }
+    for (_, note) in import.document.definitions().endnotes.iter() {
+        push_blocks_text(&note.blocks, &mut out);
+    }
     Ok(out)
 }
 
@@ -133,6 +140,9 @@ fn push_inline_text(inline: &InlineNode, out: &mut String) {
             }
         }
         InlineNode::TextBox(text_box) => push_blocks_text(&text_box.blocks, out),
+        // A note reference renders as a mark/number, not source text; the note
+        // body text is appended separately from the definitions.
+        InlineNode::NoteReference(_) => {}
     }
 }
 
@@ -205,11 +215,22 @@ fn strip_list_marker(line: &str) -> &str {
     line
 }
 
-/// Flattens normalized lines into their whitespace-separated words.
+/// Flattens normalized lines into their whitespace-separated words, stripping
+/// footnote/endnote reference markers (auto-generated digits LibreOffice glues to
+/// a word, e.g. "paragraph.1"). Digits are removed from the edges of a *mixed*
+/// word only, so real numbers ("2024") and standalone tokens are preserved.
 fn words(lines: &[String]) -> Vec<String> {
     lines
         .iter()
-        .flat_map(|line| line.split_whitespace().map(str::to_owned))
+        .flat_map(|line| line.split_whitespace())
+        .map(|word| {
+            let trimmed = word.trim_matches(|c: char| c.is_ascii_digit());
+            if trimmed.is_empty() {
+                word.to_owned()
+            } else {
+                trimmed.to_owned()
+            }
+        })
         .collect()
 }
 

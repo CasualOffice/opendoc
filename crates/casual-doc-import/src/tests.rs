@@ -18,6 +18,8 @@ fn import_with_styles(document: &[u8], styles: &[u8]) -> Import {
         document,
         Some(styles),
         None,
+        None,
+        None,
         &[],
         &std::collections::BTreeMap::new(),
         ImportConfig::default(),
@@ -30,6 +32,22 @@ fn import_with_numbering(document: &[u8], numbering: &[u8]) -> Import {
         document,
         None,
         Some(numbering),
+        None,
+        None,
+        &[],
+        &std::collections::BTreeMap::new(),
+        ImportConfig::default(),
+    )
+    .unwrap()
+}
+
+fn import_with_notes(document: &[u8], footnotes: Option<&[u8]>, endnotes: Option<&[u8]>) -> Import {
+    import_with_sources(
+        document,
+        None,
+        None,
+        footnotes,
+        endnotes,
         &[],
         &std::collections::BTreeMap::new(),
         ImportConfig::default(),
@@ -1403,4 +1421,126 @@ fn sect_pr_inside_a_text_box_is_not_a_document_section() {
         "sectPr inside a text box must not create a document section"
     );
     assert!(features(&import).contains(&"sectPr"));
+}
+
+// ---- footnotes / endnotes ------------------------------------------------
+
+#[test]
+fn footnote_reference_and_body_are_modeled() {
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:t>Text</w:t></w:r><w:r><w:footnoteReference w:id="2"/></w:r></w:p>
+    </w:body></w:document>"#;
+    let footnotes = br#"<w:footnotes xmlns:w="urn:w">
+        <w:footnote w:id="-1" w:type="separator"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>
+        <w:footnote w:id="2"><w:p><w:r><w:t>The footnote body.</w:t></w:r></w:p></w:footnote>
+    </w:footnotes>"#;
+    let import = import_with_notes(document, Some(footnotes), None);
+
+    // The body run carries a note reference resolving to the footnote definition.
+    let note_ref = paragraph(&import, 0).inlines.iter().find_map(|i| match i {
+        InlineNode::NoteReference(n) => Some(n),
+        _ => None,
+    });
+    let note_ref = note_ref.expect("footnote reference modeled");
+    assert_eq!(note_ref.kind, casual_doc_model::v1::NoteKind::Footnote);
+    // The footnote definition holds its body text (the separator note is skipped).
+    assert_eq!(import.document.definitions().footnotes.len(), 1);
+    let note = import
+        .document
+        .definitions()
+        .footnotes
+        .get(&note_ref.note)
+        .expect("footnote definition resolves");
+    assert_eq!(tb_block_text(&note.blocks), "The footnote body.");
+}
+
+#[test]
+fn dangling_footnote_reference_is_reported_not_modeled() {
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:footnoteReference w:id="99"/></w:r></w:p>
+    </w:body></w:document>"#;
+    let footnotes = br#"<w:footnotes xmlns:w="urn:w">
+        <w:footnote w:id="2"><w:p><w:r><w:t>body</w:t></w:r></w:p></w:footnote>
+    </w:footnotes>"#;
+    let import = import_with_notes(document, Some(footnotes), None);
+    // The reference to a missing footnote id is reported, not modeled.
+    assert!(
+        !paragraph(&import, 0)
+            .inlines
+            .iter()
+            .any(|i| matches!(i, InlineNode::NoteReference(_)))
+    );
+    assert!(features(&import).contains(&"footnoteReference"));
+}
+
+#[test]
+fn endnote_reference_and_body_are_modeled() {
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:endnoteReference w:id="1"/></w:r></w:p>
+    </w:body></w:document>"#;
+    let endnotes = br#"<w:endnotes xmlns:w="urn:w">
+        <w:endnote w:id="1"><w:p><w:r><w:t>An endnote.</w:t></w:r></w:p></w:endnote>
+    </w:endnotes>"#;
+    let import = import_with_notes(document, None, Some(endnotes));
+    assert_eq!(import.document.definitions().endnotes.len(), 1);
+    let note_ref = paragraph(&import, 0)
+        .inlines
+        .iter()
+        .find_map(|i| match i {
+            InlineNode::NoteReference(n) => Some(n),
+            _ => None,
+        })
+        .expect("endnote reference modeled");
+    assert_eq!(note_ref.kind, casual_doc_model::v1::NoteKind::Endnote);
+    let note = import
+        .document
+        .definitions()
+        .endnotes
+        .get(&note_ref.note)
+        .unwrap();
+    assert_eq!(tb_block_text(&note.blocks), "An endnote.");
+}
+
+#[test]
+fn footnote_containing_a_text_box_preserves_its_content() {
+    // Regression (review major): closing a note must unwind text-box frames and
+    // finish the restored paragraph, so a note's text box content is not dropped.
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:footnoteReference w:id="1"/></w:r></w:p>
+    </w:body></w:document>"#;
+    let footnotes =
+        br#"<w:footnotes xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps">
+        <w:footnote w:id="1"><w:p>
+            <w:r><w:t>note </w:t></w:r>
+            <w:r><w:drawing><wp:inline><a:graphic><a:graphicData><wps:wsp><wps:txbx>
+                <w:txbxContent><w:p><w:r><w:t>boxed</w:t></w:r></w:p></w:txbxContent>
+            </wps:txbx></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>
+        </w:p></w:footnote>
+    </w:footnotes>"#;
+    let import = import_with_notes(document, Some(footnotes), None);
+    let note = import
+        .document
+        .definitions()
+        .footnotes
+        .iter()
+        .next()
+        .map(|(_, n)| n)
+        .expect("footnote");
+    // Both the note run text and the text box text survive.
+    assert_eq!(tb_block_text(&note.blocks), "note boxed");
+}
+
+#[test]
+fn stray_body_inside_a_notes_part_is_reported_not_silently_dropped() {
+    // Regression (review minor): a <w:body> in a notes part must not model then
+    // discard content; it is reported instead.
+    let document = br#"<w:document xmlns:w="urn:w"><w:body><w:p/></w:body></w:document>"#;
+    let footnotes = br#"<w:footnotes xmlns:w="urn:w">
+        <w:body><w:p><w:r><w:t>orphan</w:t></w:r></w:p></w:body>
+        <w:footnote w:id="1"><w:p><w:r><w:t>real</w:t></w:r></w:p></w:footnote>
+    </w:footnotes>"#;
+    let import = import_with_notes(document, Some(footnotes), None);
+    // Only the real footnote is modeled; the stray body is reported.
+    assert_eq!(import.document.definitions().footnotes.len(), 1);
+    assert!(features(&import).contains(&"body"));
 }

@@ -51,6 +51,10 @@ id_newtype!(
     /// Stable identity of a section boundary.
     SectionId
 );
+id_newtype!(
+    /// Stable identity of a footnote or endnote definition.
+    NoteId
+);
 
 /// A duplicate-key-rejecting, deterministically-ordered id map.
 #[derive(Clone, Debug, Eq, PartialEq)]

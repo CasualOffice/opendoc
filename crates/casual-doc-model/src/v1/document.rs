@@ -94,6 +94,7 @@ impl Document {
         self.validate_sections()?;
         self.validate_media()?;
         self.validate_document_defaults()?;
+        self.validate_notes()?;
         self.validate_body()?;
         Ok(())
     }
@@ -171,6 +172,18 @@ impl Document {
         }
         for (id, _) in self.definitions.media.iter() {
             insert_id(&mut ids, id.node_id())?;
+        }
+        for (id, note) in self.definitions.footnotes.iter() {
+            insert_id(&mut ids, id.node_id())?;
+            for block in &note.blocks {
+                record_block_ids(block, &mut ids)?;
+            }
+        }
+        for (id, note) in self.definitions.endnotes.iter() {
+            insert_id(&mut ids, id.node_id())?;
+            for block in &note.blocks {
+                record_block_ids(block, &mut ids)?;
+            }
         }
         for block in &self.body {
             record_block_ids(block, &mut ids)?;
@@ -500,9 +513,35 @@ impl Document {
                     }
                     previous_run_properties = None;
                 }
+                InlineNode::NoteReference(note) => {
+                    let resolved = match note.kind {
+                        NoteKind::Footnote => self.definitions.footnotes.contains_key(&note.note),
+                        NoteKind::Endnote => self.definitions.endnotes.contains_key(&note.note),
+                    };
+                    if !resolved {
+                        return Err(ModelError::DanglingNoteRef(note.note.node_id()));
+                    }
+                    previous_run_properties = None;
+                }
                 InlineNode::Tab(_) | InlineNode::Break(_) => {
                     previous_run_properties = None;
                 }
+            }
+        }
+        Ok(())
+    }
+
+    /// Validates every footnote and endnote's block content. A note is a fresh
+    /// block container (table/text-box depth restart at 0).
+    fn validate_notes(&self) -> Result<(), ModelError> {
+        for (_, note) in self.definitions.footnotes.iter() {
+            for block in &note.blocks {
+                self.validate_block(block, 0, 0)?;
+            }
+        }
+        for (_, note) in self.definitions.endnotes.iter() {
+            for block in &note.blocks {
+                self.validate_block(block, 0, 0)?;
             }
         }
         Ok(())
@@ -513,6 +552,16 @@ impl Document {
         let mut scalar_values = 0_usize;
         for block in &self.body {
             accumulate_block_limits(block, limits, &mut blocks, &mut scalar_values)?;
+        }
+        for (_, note) in self.definitions.footnotes.iter() {
+            for block in &note.blocks {
+                accumulate_block_limits(block, limits, &mut blocks, &mut scalar_values)?;
+            }
+        }
+        for (_, note) in self.definitions.endnotes.iter() {
+            for block in &note.blocks {
+                accumulate_block_limits(block, limits, &mut blocks, &mut scalar_values)?;
+            }
         }
         enforce_limit("body_blocks", blocks, limits.max_blocks)?;
         enforce_limit(
@@ -605,7 +654,10 @@ fn accumulate_inline_limits(
                 accumulate_block_limits(block, limits, blocks, scalar_values)?;
             }
         }
-        InlineNode::Tab(_) | InlineNode::Break(_) | InlineNode::Drawing(_) => {}
+        InlineNode::Tab(_)
+        | InlineNode::Break(_)
+        | InlineNode::Drawing(_)
+        | InlineNode::NoteReference(_) => {}
     }
     Ok(())
 }
