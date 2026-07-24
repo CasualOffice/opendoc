@@ -76,6 +76,11 @@ impl<K: Ord, V> Default for DefinitionMap<K, V> {
 }
 
 impl<K: Ord, V> DefinitionMap<K, V> {
+    /// Inserts an entry, returning any previous value for the key.
+    pub fn insert(&mut self, key: K, value: V) -> Option<V> {
+        self.0.insert(key, value)
+    }
+
     /// Returns the value for a key, if present.
     pub fn get(&self, key: &K) -> Option<&V> {
         self.0.get(key)

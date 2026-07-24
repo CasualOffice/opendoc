@@ -3,12 +3,13 @@
 //! This slice maps the main document body — paragraphs, runs, text, explicit
 //! tabs and breaks, direct run properties (bold, italic, underline, strike,
 //! size, RGB color), and direct paragraph formatting (alignment, indentation,
-//! spacing) — into a deterministic `v1::Document`.
-//! Every traversed construct that is not modeled is recorded in a bounded,
-//! deterministic compatibility report under the dual-axis disposition taxonomy
-//! (`35-DISPOSITION-TAXONOMY.md`); nothing is dropped silently. Styles,
-//! numbering, sections, tables (as structure), media, fields, and tracked
-//! changes are reported, not yet modeled.
+//! spacing) — plus the styles part (paragraph/character style definitions with
+//! `basedOn` inheritance, resolved `w:pStyle`/`w:rStyle` references) into a
+//! deterministic `v1::Document`. Every traversed construct that is not modeled
+//! is recorded in a bounded, deterministic compatibility report under the
+//! dual-axis disposition taxonomy (`35-DISPOSITION-TAXONOMY.md`); nothing is
+//! dropped silently. Numbering, sections, tables (as structure), media, fields,
+//! and tracked changes are reported, not yet modeled.
 
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]
@@ -18,8 +19,9 @@ use std::error::Error;
 use std::fmt;
 
 use casual_doc_model::v1::{
-    Alignment, BlockNode, Break, BreakKind, Color, Definitions, Document, Indentation, InlineNode,
-    Paragraph, ParagraphProperties, RgbColor, Run, RunProperties, Spacing, Tab,
+    Alignment, BlockNode, Break, BreakKind, Color, DefinitionMap, Definitions, Document,
+    Indentation, InlineNode, Paragraph, ParagraphProperties, RgbColor, Run, RunProperties, Spacing,
+    Style, StyleId, StyleKind, Tab,
 };
 use casual_doc_model::{IdGenerator, ModelError, NodeId};
 use casual_doc_ooxml::{DocxPackage, PackageError};
@@ -158,23 +160,46 @@ impl fmt::Display for ImportError {
 
 impl Error for ImportError {}
 
-/// Imports the main document of an admitted DOCX package into a v1 document.
+/// Imports the main document of an admitted DOCX package into a v1 document,
+/// resolving the styles part through the main document's relationship graph.
 pub fn import_package(
     package: &mut DocxPackage<'_>,
     config: ImportConfig,
 ) -> Result<Import, ImportError> {
     let main_part = package.main_document_part().to_owned();
-    let bytes = package
+    let styles_part = package
+        .main_document_relationships()
+        .iter()
+        .find(|relationship| relationship.relationship_type.ends_with("/styles"))
+        .and_then(|relationship| relationship.resolved_part.clone());
+
+    let document_bytes = package
         .read_part(&main_part)
         .map_err(ImportError::Package)?;
-    import_main_document_xml(&bytes, config)
+    let styles_bytes = match styles_part {
+        Some(part) => Some(package.read_part(&part).map_err(ImportError::Package)?),
+        None => None,
+    };
+    import_with_sources(&document_bytes, styles_bytes.as_deref(), config)
 }
 
-/// Imports main-document WordprocessingML bytes into a v1 document.
+/// Imports main-document WordprocessingML bytes (no styles) into a v1 document.
 pub fn import_main_document_xml(xml: &[u8], config: ImportConfig) -> Result<Import, ImportError> {
+    import_with_sources(xml, None, config)
+}
+
+fn import_with_sources(
+    document_xml: &[u8],
+    styles_xml: Option<&[u8]>,
+    config: ImportConfig,
+) -> Result<Import, ImportError> {
     config.validate()?;
     let mut builder = Builder::new(config);
-    builder.run(xml)?;
+    builder.begin()?;
+    if let Some(styles) = styles_xml {
+        builder.parse_styles(styles)?;
+    }
+    builder.run_body(document_xml)?;
     builder.finish()
 }
 
@@ -193,11 +218,13 @@ const HANDLED: &[&[u8]] = &[
     b"body",
     b"p",
     b"pPr",
+    b"pStyle",
     b"jc",
     b"ind",
     b"spacing",
     b"r",
     b"rPr",
+    b"rStyle",
     b"t",
     b"tab",
     b"br",
@@ -230,6 +257,8 @@ struct Builder {
     in_text: bool,
     text_buffer: String,
     paragraphs: Vec<Paragraph>,
+    styles: DefinitionMap<StyleId, Style>,
+    style_id_map: BTreeMap<String, StyleId>,
     unsupported: BTreeMap<String, u32>,
 }
 
@@ -256,6 +285,8 @@ impl Builder {
             in_text: false,
             text_buffer: String::new(),
             paragraphs: Vec::new(),
+            styles: DefinitionMap::default(),
+            style_id_map: BTreeMap::new(),
             unsupported: BTreeMap::new(),
         }
     }
@@ -266,10 +297,13 @@ impl Builder {
             .map_err(|_| ImportError::LimitExceeded { limit: "node_ids" })
     }
 
-    fn run(&mut self, xml: &[u8]) -> Result<(), ImportError> {
+    fn begin(&mut self) -> Result<(), ImportError> {
         let document_id = self.next_id()?;
         self.document_id = Some(document_id);
+        Ok(())
+    }
 
+    fn run_body(&mut self, xml: &[u8]) -> Result<(), ImportError> {
         let mut reader = Reader::from_reader(xml);
         let mut buffer = Vec::new();
         loop {
@@ -354,11 +388,27 @@ impl Builder {
             b"br" if self.run_open => {
                 self.segments.push(Segment::Break(break_kind(element)));
             }
-            _ if self.in_run_properties => self.apply_run_property(local, element),
-            _ if self.in_paragraph_properties => self.apply_paragraph_property(local, element),
+            b"rStyle" if self.in_run_properties => match self.resolve_style(element) {
+                Some(style) => self.run_properties.style_ref = Some(style),
+                None => self.report(local),
+            },
+            b"pStyle" if self.in_paragraph_properties => match self.resolve_style(element) {
+                Some(style) => self.paragraph_properties.style_ref = Some(style),
+                None => self.report(local),
+            },
+            _ if self.in_run_properties => {
+                Self::apply_run_property(&mut self.run_properties, local, element);
+            }
+            _ if self.in_paragraph_properties => {
+                Self::apply_paragraph_property(&mut self.paragraph_properties, local, element);
+            }
             _ => {}
         }
         Ok(())
+    }
+
+    fn resolve_style(&self, element: &quick_xml::events::BytesStart<'_>) -> Option<StyleId> {
+        attribute_value(element, b"val").and_then(|value| self.style_id_map.get(&value).copied())
     }
 
     fn on_end(&mut self, local: &[u8]) -> Result<(), ImportError> {
@@ -383,23 +433,25 @@ impl Builder {
         Ok(())
     }
 
-    fn apply_run_property(&mut self, local: &[u8], element: &quick_xml::events::BytesStart<'_>) {
+    fn apply_run_property(
+        properties: &mut RunProperties,
+        local: &[u8],
+        element: &quick_xml::events::BytesStart<'_>,
+    ) {
         let value = attribute_value(element, b"val");
         match local {
-            b"b" => self.run_properties.bold = Some(is_true(value.as_deref())),
-            b"i" => self.run_properties.italic = Some(is_true(value.as_deref())),
-            b"u" => {
-                self.run_properties.underline = Some(value.as_deref() != Some("none"));
-            }
-            b"strike" => self.run_properties.strike = Some(is_true(value.as_deref())),
+            b"b" => properties.bold = Some(is_true(value.as_deref())),
+            b"i" => properties.italic = Some(is_true(value.as_deref())),
+            b"u" => properties.underline = Some(value.as_deref() != Some("none")),
+            b"strike" => properties.strike = Some(is_true(value.as_deref())),
             b"sz" => {
                 if let Some(size) = value.as_deref().and_then(|value| value.parse::<u32>().ok()) {
-                    self.run_properties.size_half_points = Some(size);
+                    properties.size_half_points = Some(size);
                 }
             }
             b"color" => {
                 if let Some(rgb) = value.as_deref().and_then(parse_rgb) {
-                    self.run_properties.color = Some(Color::Rgb(rgb));
+                    properties.color = Some(Color::Rgb(rgb));
                 }
             }
             _ => {}
@@ -407,7 +459,7 @@ impl Builder {
     }
 
     fn apply_paragraph_property(
-        &mut self,
+        properties: &mut ParagraphProperties,
         local: &[u8],
         element: &quick_xml::events::BytesStart<'_>,
     ) {
@@ -417,7 +469,7 @@ impl Builder {
                     .as_deref()
                     .and_then(alignment_from)
                 {
-                    self.paragraph_properties.alignment = Some(alignment);
+                    properties.alignment = Some(alignment);
                 }
             }
             b"ind" => {
@@ -428,7 +480,7 @@ impl Builder {
                     hanging_twips: indent_attr(element, &[b"hanging"]),
                 };
                 if indentation != Indentation::default() {
-                    self.paragraph_properties.indentation = Some(indentation);
+                    properties.indentation = Some(indentation);
                 }
             }
             b"spacing" => {
@@ -438,7 +490,7 @@ impl Builder {
                     line_percent: spacing_line_percent(element),
                 };
                 if spacing != Spacing::default() {
-                    self.paragraph_properties.spacing = Some(spacing);
+                    properties.spacing = Some(spacing);
                 }
             }
             _ => {}
@@ -480,6 +532,52 @@ impl Builder {
         *counter = counter.saturating_add(1);
     }
 
+    /// Parses the styles part, allocating deterministic style ids in document
+    /// order and resolving `basedOn` inheritance (dropping dangling or
+    /// kind-mismatched references with a report).
+    fn parse_styles(&mut self, xml: &[u8]) -> Result<(), ImportError> {
+        let raw = parse_styles_xml(xml, self.max_elements, self.max_depth)?;
+        let mut kinds: BTreeMap<StyleId, StyleKind> = BTreeMap::new();
+        let mut assigned: Vec<(StyleId, RawStyle)> = Vec::new();
+        for style in raw {
+            let Some(kind) = style.kind else {
+                self.report(b"style");
+                continue;
+            };
+            if self.style_id_map.contains_key(&style.style_id) {
+                self.report(b"style");
+                continue;
+            }
+            let id = StyleId::new(self.next_id()?);
+            self.style_id_map.insert(style.style_id.clone(), id);
+            kinds.insert(id, kind);
+            assigned.push((id, style));
+        }
+        for (id, style) in assigned {
+            let kind = kinds[&id];
+            let based_on = match &style.based_on {
+                Some(name) => match self.style_id_map.get(name).copied() {
+                    Some(base) if kinds.get(&base) == Some(&kind) => Some(base),
+                    Some(_) | None => {
+                        self.report(b"basedOn");
+                        None
+                    }
+                },
+                None => None,
+            };
+            self.styles.insert(
+                id,
+                Style {
+                    kind,
+                    based_on,
+                    paragraph: style.paragraph,
+                    run: style.run,
+                },
+            );
+        }
+        Ok(())
+    }
+
     fn finish(mut self) -> Result<Import, ImportError> {
         let document_id = self.document_id.expect("document id was allocated");
         if self.paragraphs.is_empty() {
@@ -497,8 +595,11 @@ impl Builder {
             .into_iter()
             .map(BlockNode::Paragraph)
             .collect();
-        let document =
-            Document::new(document_id, body, Definitions::default()).map_err(ImportError::Model)?;
+        let definitions = Definitions {
+            styles: self.styles,
+            ..Definitions::default()
+        };
+        let document = Document::new(document_id, body, definitions).map_err(ImportError::Model)?;
 
         let entries = self
             .unsupported
@@ -514,6 +615,162 @@ impl Builder {
             document,
             report: CompatibilityReport { entries },
         })
+    }
+}
+
+/// A style parsed from the styles part before ids are assigned.
+struct RawStyle {
+    style_id: String,
+    kind: Option<StyleKind>,
+    based_on: Option<String>,
+    paragraph: Option<ParagraphProperties>,
+    run: Option<RunProperties>,
+}
+
+#[derive(Default)]
+struct StyleState {
+    style_id: String,
+    kind: Option<StyleKind>,
+    based_on: Option<String>,
+    paragraph: ParagraphProperties,
+    has_paragraph: bool,
+    run: RunProperties,
+    has_run: bool,
+    in_paragraph_properties: bool,
+    in_run_properties: bool,
+}
+
+/// Parses `word/styles.xml` into raw styles in document order (bounded, no DTD).
+fn parse_styles_xml(
+    xml: &[u8],
+    max_elements: u64,
+    max_depth: u64,
+) -> Result<Vec<RawStyle>, ImportError> {
+    let mut reader = Reader::from_reader(xml);
+    let mut buffer = Vec::new();
+    let mut styles = Vec::new();
+    let mut in_style = false;
+    let mut state = StyleState::default();
+    let mut elements = 0_u64;
+    let mut depth = 0_u64;
+
+    loop {
+        let event = reader
+            .read_event_into(&mut buffer)
+            .map_err(|_| ImportError::MalformedXml)?;
+        match event {
+            Event::Eof => break,
+            Event::DocType(_) => return Err(ImportError::MalformedXml),
+            Event::Start(element) => {
+                depth += 1;
+                if depth > max_depth {
+                    return Err(ImportError::LimitExceeded { limit: "xml_depth" });
+                }
+                elements += 1;
+                if elements > max_elements {
+                    return Err(ImportError::LimitExceeded {
+                        limit: "xml_elements",
+                    });
+                }
+                style_on_start(
+                    &mut in_style,
+                    &mut state,
+                    element.local_name().as_ref(),
+                    &element,
+                );
+            }
+            Event::Empty(element) => {
+                elements += 1;
+                if elements > max_elements {
+                    return Err(ImportError::LimitExceeded {
+                        limit: "xml_elements",
+                    });
+                }
+                let local = element.local_name();
+                style_on_start(&mut in_style, &mut state, local.as_ref(), &element);
+                style_on_end(&mut in_style, &mut state, local.as_ref(), &mut styles);
+            }
+            Event::End(element) => {
+                style_on_end(
+                    &mut in_style,
+                    &mut state,
+                    element.local_name().as_ref(),
+                    &mut styles,
+                );
+                depth = depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(styles)
+}
+
+fn style_on_start(
+    in_style: &mut bool,
+    state: &mut StyleState,
+    local: &[u8],
+    element: &quick_xml::events::BytesStart<'_>,
+) {
+    match local {
+        b"style" => {
+            *in_style = true;
+            *state = StyleState {
+                style_id: attribute_value(element, b"styleId").unwrap_or_default(),
+                kind: attribute_value(element, b"type")
+                    .as_deref()
+                    .and_then(style_kind_from),
+                ..StyleState::default()
+            };
+        }
+        b"basedOn" if *in_style => state.based_on = attribute_value(element, b"val"),
+        b"pPr" if *in_style && !state.in_run_properties => {
+            state.in_paragraph_properties = true;
+            state.has_paragraph = true;
+        }
+        b"rPr" if *in_style => {
+            state.in_run_properties = true;
+            state.has_run = true;
+        }
+        _ if state.in_run_properties => {
+            Builder::apply_run_property(&mut state.run, local, element);
+        }
+        _ if state.in_paragraph_properties => {
+            Builder::apply_paragraph_property(&mut state.paragraph, local, element);
+        }
+        _ => {}
+    }
+}
+
+fn style_on_end(
+    in_style: &mut bool,
+    state: &mut StyleState,
+    local: &[u8],
+    styles: &mut Vec<RawStyle>,
+) {
+    match local {
+        b"style" if *in_style => {
+            *in_style = false;
+            let finished = std::mem::take(state);
+            styles.push(RawStyle {
+                style_id: finished.style_id,
+                kind: finished.kind,
+                based_on: finished.based_on,
+                paragraph: finished.has_paragraph.then_some(finished.paragraph),
+                run: finished.has_run.then_some(finished.run),
+            });
+        }
+        b"pPr" => state.in_paragraph_properties = false,
+        b"rPr" => state.in_run_properties = false,
+        _ => {}
+    }
+}
+
+fn style_kind_from(value: &str) -> Option<StyleKind> {
+    match value {
+        "paragraph" => Some(StyleKind::Paragraph),
+        "character" => Some(StyleKind::Character),
+        _ => None,
     }
 }
 
@@ -626,6 +883,19 @@ mod tests {
 
     fn import(xml: &[u8]) -> Import {
         import_main_document_xml(xml, ImportConfig::default()).unwrap()
+    }
+
+    fn import_with_styles(document: &[u8], styles: &[u8]) -> Import {
+        import_with_sources(document, Some(styles), ImportConfig::default()).unwrap()
+    }
+
+    fn features(import: &Import) -> Vec<&str> {
+        import
+            .report
+            .entries
+            .iter()
+            .map(|entry| entry.feature.as_str())
+            .collect()
     }
 
     fn paragraph(import: &Import, index: usize) -> &Paragraph {
@@ -776,6 +1046,117 @@ mod tests {
         );
         // No dangling style reference is emitted (styles are not mapped yet).
         assert_eq!(paragraph(&import, 0).properties.style_ref, None);
+    }
+
+    #[test]
+    fn styles_are_mapped_and_paragraph_style_reference_resolves() {
+        let styles = br#"<w:styles xmlns:w="urn:w">
+            <w:style w:type="paragraph" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
+            <w:style w:type="paragraph" w:styleId="Heading1"><w:basedOn w:val="Normal"/>
+                <w:rPr><w:b/></w:rPr></w:style>
+        </w:styles>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>x</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let import = import_with_styles(document, styles);
+        let definitions = import.document.definitions();
+        assert_eq!(definitions.styles.len(), 2);
+
+        let style_ref = paragraph(&import, 0).properties.style_ref.unwrap();
+        let heading = definitions.styles.get(&style_ref).unwrap();
+        assert_eq!(heading.kind, StyleKind::Paragraph);
+        assert_eq!(heading.run.as_ref().unwrap().bold, Some(true));
+        let base = definitions.styles.get(&heading.based_on.unwrap()).unwrap();
+        assert_eq!(base.kind, StyleKind::Paragraph);
+        assert!(!features(&import).contains(&"pStyle"));
+    }
+
+    #[test]
+    fn dangling_paragraph_style_reference_is_reported_not_emitted() {
+        let styles = br#"<w:styles xmlns:w="urn:w"/>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:pPr><w:pStyle w:val="Missing"/></w:pPr><w:r><w:t>x</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let import = import_with_styles(document, styles);
+        assert_eq!(paragraph(&import, 0).properties.style_ref, None);
+        assert!(features(&import).contains(&"pStyle"));
+    }
+
+    #[test]
+    fn based_on_kind_mismatch_is_dropped_and_reported() {
+        let styles = br#"<w:styles xmlns:w="urn:w">
+            <w:style w:type="paragraph" w:styleId="H"><w:basedOn w:val="C"/></w:style>
+            <w:style w:type="character" w:styleId="C"/>
+        </w:styles>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:pPr><w:pStyle w:val="H"/></w:pPr><w:r><w:t>x</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let import = import_with_styles(document, styles);
+        let style_ref = paragraph(&import, 0).properties.style_ref.unwrap();
+        assert_eq!(
+            import
+                .document
+                .definitions()
+                .styles
+                .get(&style_ref)
+                .unwrap()
+                .based_on,
+            None
+        );
+        assert!(features(&import).contains(&"basedOn"));
+    }
+
+    #[test]
+    fn run_style_reference_resolves() {
+        let styles = br#"<w:styles xmlns:w="urn:w">
+            <w:style w:type="character" w:styleId="Strong"><w:rPr><w:b/></w:rPr></w:style>
+        </w:styles>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:r><w:rPr><w:rStyle w:val="Strong"/></w:rPr><w:t>x</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let import = import_with_styles(document, styles);
+        let InlineNode::Run(run) = &paragraph(&import, 0).inlines[0] else {
+            panic!("expected run");
+        };
+        assert!(run.properties.style_ref.is_some());
+        assert!(!features(&import).contains(&"rStyle"));
+    }
+
+    #[test]
+    fn end_to_end_with_styles_part() {
+        use std::io::{Cursor, Write};
+        use zip::write::SimpleFileOptions;
+        use zip::{CompressionMethod, ZipWriter};
+
+        let content_types = br#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+        let rels = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document_rels = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>"#;
+        let styles = br#"<w:styles xmlns:w="urn:w"><w:style w:type="paragraph" w:styleId="Heading1"><w:rPr><w:b/></w:rPr></w:style></w:styles>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Titled</w:t></w:r></w:p></w:body></w:document>"#;
+
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        for (name, bytes) in [
+            ("[Content_Types].xml", content_types.as_slice()),
+            ("_rels/.rels", rels.as_slice()),
+            ("word/document.xml", document.as_slice()),
+            ("word/_rels/document.xml.rels", document_rels.as_slice()),
+            ("word/styles.xml", styles.as_slice()),
+        ] {
+            writer
+                .start_file(
+                    name,
+                    SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
+                )
+                .unwrap();
+            writer.write_all(bytes).unwrap();
+        }
+        let package_bytes = writer.finish().unwrap().into_inner();
+
+        let mut package =
+            DocxPackage::open(&package_bytes, casual_doc_ooxml::PackageLimits::default()).unwrap();
+        let import = import_package(&mut package, ImportConfig::default()).unwrap();
+        assert_eq!(import.document.definitions().styles.len(), 1);
+        assert!(paragraph(&import, 0).properties.style_ref.is_some());
     }
 
     #[test]
