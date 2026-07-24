@@ -1,0 +1,18 @@
+[package]
+name = "opendoc-fidelity"
+description = "Differential text-fidelity harness comparing OpenDoc import against LibreOffice"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+casual-doc-import.workspace = true
+casual-doc-model.workspace = true
+casual-doc-ooxml.workspace = true
+
+[lints]
+workspace = true
