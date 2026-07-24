@@ -45,13 +45,22 @@ fn import_with_numbering(document: &[u8], numbering: &[u8]) -> Import {
     .unwrap()
 }
 
+fn part_sources(xml: &[u8]) -> crate::PartSources {
+    crate::PartSources {
+        xml: xml.to_vec(),
+        ..Default::default()
+    }
+}
+
 fn import_with_notes(document: &[u8], footnotes: Option<&[u8]>, endnotes: Option<&[u8]>) -> Import {
+    let footnotes = footnotes.map(part_sources);
+    let endnotes = endnotes.map(part_sources);
     import_with_sources(
         document,
         None,
         None,
-        footnotes,
-        endnotes,
+        footnotes.as_ref(),
+        endnotes.as_ref(),
         &[],
         &[],
         &[],
@@ -1558,13 +1567,13 @@ fn import_with_header_footer(
     headers: &[(&str, &[u8])],
     footers: &[(&str, &[u8])],
 ) -> Import {
-    let headers: Vec<(String, Vec<u8>)> = headers
+    let headers: Vec<(String, crate::PartSources)> = headers
         .iter()
-        .map(|(id, xml)| ((*id).to_owned(), xml.to_vec()))
+        .map(|(id, xml)| ((*id).to_owned(), part_sources(xml)))
         .collect();
-    let footers: Vec<(String, Vec<u8>)> = footers
+    let footers: Vec<(String, crate::PartSources)> = footers
         .iter()
-        .map(|(id, xml)| ((*id).to_owned(), xml.to_vec()))
+        .map(|(id, xml)| ((*id).to_owned(), part_sources(xml)))
         .collect();
     import_with_sources(
         document,
@@ -1720,4 +1729,128 @@ fn vml_pict_with_unresolved_image_is_reported() {
             .any(|i| matches!(i, InlineNode::Drawing(_)))
     );
     assert!(features(&import).contains(&"pict"));
+}
+
+// ---- media / hyperlinks inside extra parts -------------------------------
+
+fn image_source(rid: &str, part: &str) -> crate::MediaSource {
+    crate::MediaSource {
+        relationship_id: rid.to_owned(),
+        media_type: "image/png".to_owned(),
+        part_name: part.to_owned(),
+    }
+}
+
+#[test]
+fn image_inside_a_footnote_is_modeled_via_the_notes_part_relationships() {
+    // A footnote body with a DrawingML picture whose r:embed resolves through the
+    // footnotes part's OWN image relationship.
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:footnoteReference w:id="1"/></w:r></w:p>
+    </w:body></w:document>"#;
+    let footnote_xml = format!(
+        r#"<w:footnotes xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic">
+            <w:footnote w:id="1"><w:p><w:r>{DRAWING_INLINE}</w:r></w:p></w:footnote>
+        </w:footnotes>"#
+    );
+    let footnotes = crate::PartSources {
+        xml: footnote_xml.into_bytes(),
+        images: vec![image_source("rId7", "word/media/image1.png")],
+        hyperlinks: std::collections::BTreeMap::new(),
+    };
+    let import = import_with_sources(
+        document,
+        None,
+        None,
+        Some(&footnotes),
+        None,
+        &[],
+        &[],
+        &[],
+        &std::collections::BTreeMap::new(),
+        ImportConfig::default(),
+    )
+    .unwrap();
+
+    // The footnote's block content contains a Drawing referencing shared media.
+    let note = import
+        .document
+        .definitions()
+        .footnotes
+        .iter()
+        .next()
+        .map(|(_, n)| n)
+        .unwrap();
+    let has_drawing = note.blocks.iter().any(|b| matches!(
+        b, BlockNode::Paragraph(p) if p.inlines.iter().any(|i| matches!(i, InlineNode::Drawing(_)))
+    ));
+    assert!(has_drawing, "image inside footnote modeled as a Drawing");
+    assert_eq!(
+        import.document.definitions().media.len(),
+        1,
+        "note-part image in the media table"
+    );
+}
+
+#[test]
+fn external_hyperlink_inside_a_header_is_modeled_via_the_header_part_relationships() {
+    let document = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r"><w:body>
+        <w:p><w:r><w:t>Body.</w:t></w:r></w:p>
+        <w:sectPr><w:headerReference w:type="default" r:id="rId2"/></w:sectPr>
+    </w:body></w:document>"#;
+    let header = br#"<w:hdr xmlns:w="urn:w" xmlns:r="urn:r">
+        <w:p><w:hyperlink r:id="rIdLink"><w:r><w:t>site</w:t></w:r></w:hyperlink></w:p>
+    </w:hdr>"#;
+    let mut hyperlinks = std::collections::BTreeMap::new();
+    hyperlinks.insert("rIdLink".to_owned(), "https://example.com/".to_owned());
+    let header_part = crate::PartSources {
+        xml: header.to_vec(),
+        images: Vec::new(),
+        hyperlinks,
+    };
+    let import = import_with_sources(
+        document,
+        None,
+        None,
+        None,
+        None,
+        &[("rId2".to_owned(), header_part)],
+        &[],
+        &[],
+        &std::collections::BTreeMap::new(),
+        ImportConfig::default(),
+    )
+    .unwrap();
+
+    let hf = import
+        .document
+        .definitions()
+        .headers
+        .iter()
+        .next()
+        .map(|(_, h)| h)
+        .unwrap();
+    let has_link = hf.blocks.iter().any(|b| matches!(
+        b, BlockNode::Paragraph(p) if p.inlines.iter().any(|i| matches!(i, InlineNode::Hyperlink(_)))
+    ));
+    assert!(has_link, "external hyperlink inside a header is modeled");
+}
+
+#[test]
+fn two_relationships_to_the_same_image_get_distinct_media_ids() {
+    // Backward-compat (review): media is allocated per relationship (no dedup),
+    // so a document referencing one image part from two relationships yields two
+    // media entries, exactly as before extra-part media aggregation.
+    let document = br#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body>
+        <w:p><w:r><w:pict><v:imagedata r:id="rId5"/></w:pict></w:r>
+             <w:r><w:pict><v:imagedata r:id="rId8"/></w:pict></w:r></w:p>
+    </w:body></w:document>"#;
+    let rels = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/><Relationship Id="rId8" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+    let media = [("word/media/image1.png", b"PNGDATA".as_slice())];
+    let import = import_bytes(&build_package(document, rels, &media));
+    assert_eq!(
+        import.document.definitions().media.len(),
+        2,
+        "one media entry per relationship (no dedup)"
+    );
 }

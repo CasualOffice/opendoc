@@ -208,6 +208,7 @@ UI, or Tauri integration. See the
 - [Schema v1 footnotes/endnotes design](docs/42-SCHEMA-V1-NOTES-DESIGN.md)
 - [Schema v1 headers/footers design](docs/43-SCHEMA-V1-HEADERS-FOOTERS-DESIGN.md)
 - [Schema v1 legacy VML pictures design](docs/44-SCHEMA-V1-VML-IMAGES-DESIGN.md)
+- [Extra-part media/hyperlinks design](docs/45-EXTRA-PART-MEDIA-AND-HYPERLINKS-DESIGN.md)
 
 The numbered documents in `docs/` are the source of truth for accepted
 architecture, behavior, delivery status, and compatibility claims.

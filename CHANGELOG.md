@@ -14,6 +14,11 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Added
 
+- Images and external hyperlinks inside notes, headers, and footers are now
+  modeled (previously reported): each extra part resolves its own image and
+  hyperlink relationships, and the media table aggregates image relationships
+  across the whole package, de-duplicated by image part so a shared image has one
+  id. Each part's parser resolves its own (per-part) relationship ids.
 - Legacy VML pictures (`w:pict` → `v:imagedata@r:id`) are now imported as a
   `Drawing` (referencing the same media table as DrawingML pictures), instead of
   being reported and dropped. No model change; VML CSS sizing is not captured.
