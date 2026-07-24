@@ -14,9 +14,11 @@ the future document engine for Casual Docs and as an embeddable SDK for other
 applications.
 
 > [!IMPORTANT]
-> OpenDoc is in pre-release development. Phase 0 is complete, but the crates are
-> not published and the public API is not stable. Semantic DOCX import, layout,
-> rendering, save, and an end-user editor are not available yet.
+> OpenDoc is in pre-release development. Phase 0 is complete and Phase 1A
+> (semantic DOCX import) is in progress: a `.docx` reads end-to-end into the
+> normalized model, validated against LibreOffice at 100% text-content fidelity.
+> The crates are not published and the public API is not stable. Layout,
+> rendering, DOCX save, and an end-user editor are not available yet.
 
 ## Design Goals
 
@@ -35,26 +37,26 @@ applications.
 
 ## Current Capabilities
 
-Phase 0 establishes the tested runtime and package-safety foundation:
+Phase 0 (runtime + package safety) is complete; Phase 1A (semantic import) is
+being built on top of it:
 
 | Area | Available today |
 | --- | --- |
-| Document model | Deterministic paragraph and text model with stable node IDs |
-| Snapshot I/O | Strict, bounded normalized JSON schema v0 import and export |
+| Document model | Deterministic paragraph/text model (schema v0) and a typed schema v1 (properties, styles, numbering, sections, media refs) with strict validation and total v0→v1 migration |
+| Snapshot I/O | Strict, bounded normalized JSON import/export for v0 and v1 |
 | Transactions | Grapheme-aware insert/delete, paragraph split/join, position mapping, and semantic inverses |
-| History | Revision-checked undo and redo |
-| Selection | Directed caret/range selection mapped through edits and history |
-| Runtime events | Bounded, ordered transaction and selection event subscriptions |
-| DOCX packages | Security-bounded ZIP admission, deterministic metadata, and verified on-demand part reads |
-| Engineering | Reproducible benchmarks, generated fixtures, dependency policy, and package-reader fuzzing |
+| History / Selection / Events | Revision-checked undo/redo; directed caret/range selection; bounded ordered event subscriptions |
+| DOCX package reader | Security-bounded ZIP admission; relationship-based main-document discovery (transitional + ISO Strict); content-type and relationship-graph resolution; deterministic source snapshot |
+| Semantic DOCX import | `.docx` → v1 model: paragraphs, runs, text (tab/break), direct run properties (bold/italic/underline/strike/size/RGB), paragraph formatting (alignment/indentation/spacing), styles (with `basedOn`), numbering (`numPr`), and body section geometry — table-cell text flattened; everything unmapped dispositioned in a deterministic compatibility report (no silent loss) |
+| Round-trip | Retention mode retains the source package byte-for-byte (tier-1 byte floor) so unmapped content is preserved; a LibreOffice differential harness measures text-content fidelity |
+| Engineering | Reproducible benchmarks, generated + real-producer fixtures, dependency policy, package-reader fuzzing; every crate decomposed into focused modules |
 | Portability | Required CI on Linux, macOS ARM64, Windows x64, WASM, and Rust 1.85 MSRV |
 
 The following capabilities are planned but are **not implemented**:
 
-- semantic WordprocessingML import;
-- styles, numbering, tables, sections, and images;
+- edit-tolerant (tier-2) provenance and DOCX **writing** / verified byte round-trip;
+- tables, images, fields, headers/footers, and tracked changes as model semantics;
 - text shaping, pagination, layout, display lists, and rendering;
-- DOCX writing and semantic round-trip preservation;
 - browser, Tauri, C ABI, and npm distribution surfaces;
 - collaboration adapters and production application integration.
 
@@ -120,8 +122,9 @@ compilation.
 | `casual-doc-transaction` | Atomic operations, inverses, and position mapping |
 | `casual-doc-selection` | Logical caret/range validation and mapping |
 | `casual-doc-ooxml` | Security-bounded OOXML package inspection |
-| `casual-doc-import` | WordprocessingML body import into the normalized model |
+| `casual-doc-import` | WordprocessingML semantic import into the normalized model |
 | `opendoc-benchmark` | Reproducible workload and baseline reporting |
+| `opendoc-fidelity` | LibreOffice differential text-fidelity harness |
 | `opendoc-fuzz` | Independently locked package-reader fuzz targets |
 
 Internal crates are deliberately unpublished while architecture and public API
@@ -135,7 +138,7 @@ on design:
 | Phase | Outcome | Status |
 | --- | --- | --- |
 | 0 | Runtime, model, package-safety, CI, corpus, and benchmark foundation | Complete |
-| 1A | Semantic DOCX import, normalized snapshots, and compatibility reports | Designing |
+| 1A | Semantic DOCX import, normalized snapshots, and compatibility reports | In progress |
 | 1B | Typography and paragraph layout | Not started |
 | 1C | Pagination and backend-neutral display list | Not started |
 | 1D | Native/WASM rendering and hit testing | Not started |

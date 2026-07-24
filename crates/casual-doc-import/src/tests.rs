@@ -105,7 +105,6 @@ fn tabs_breaks_and_color_are_mapped() {
 #[test]
 fn unsupported_constructs_are_dispositioned_and_cell_text_is_flattened() {
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
-            <w:sectPr/>
             <w:tbl><w:tr><w:tc><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>
         </w:body></w:document>"#;
     let import = import(xml);
@@ -115,14 +114,13 @@ fn unsupported_constructs_are_dispositioned_and_cell_text_is_flattened() {
         panic!("expected run");
     };
     assert_eq!(run.text, "cell");
-    // Table/section structure is reported, ordered by feature name.
+    // Table structure is reported, ordered by feature name.
     let features: Vec<&str> = import
         .report
         .entries
         .iter()
         .map(|entry| entry.feature.as_str())
         .collect();
-    assert!(features.contains(&"sectPr"));
     assert!(features.contains(&"tbl"));
     assert!(features.windows(2).all(|pair| pair[0] < pair[1]));
     for entry in &import.report.entries {
@@ -683,4 +681,27 @@ fn dangling_numbering_reference_is_reported_not_emitted() {
     let import = import_with_numbering(document, numbering);
     assert_eq!(paragraph(&import, 0).properties.numbering, None);
     assert!(features(&import).contains(&"numPr"));
+}
+
+#[test]
+fn body_level_section_geometry_is_mapped() {
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:t>x</w:t></w:r></w:p>
+        <w:sectPr>
+            <w:pgSz w:w="12240" w:h="15840"/>
+            <w:pgMar w:top="1440" w:bottom="1440" w:left="1800" w:right="1800"/>
+            <w:cols w:num="2"/>
+        </w:sectPr>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let sections = &import.document.definitions().sections;
+    assert_eq!(sections.len(), 1);
+    let section = &sections[0];
+    assert_eq!(section.page_size.width_twips, 12240);
+    assert_eq!(section.page_size.height_twips, 15840);
+    assert_eq!(section.page_margins.start_twips, 1800); // w:left -> start
+    assert_eq!(section.page_margins.end_twips, 1800); // w:right -> end
+    assert_eq!(section.columns.count, 2);
+    // sectPr is now mapped, so it is no longer reported.
+    assert!(!features(&import).contains(&"sectPr"));
 }

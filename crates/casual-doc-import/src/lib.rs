@@ -6,11 +6,13 @@
 //! spacing) — plus the styles part (paragraph/character style definitions with
 //! `basedOn` inheritance, resolved `w:pStyle`/`w:rStyle` references) and the
 //! numbering part (abstract/instance definitions with resolved `w:numPr`
-//! references) into a deterministic `v1::Document`. Every traversed construct
-//! that is not modeled is recorded in a bounded, deterministic compatibility
-//! report under the dual-axis disposition taxonomy (`35-DISPOSITION-TAXONOMY.md`);
-//! nothing is dropped silently. Sections, tables (as structure), media, fields,
-//! headers/footers, and tracked changes are reported, not yet modeled.
+//! references), and body-level section geometry (`w:sectPr` → page size,
+//! margins, columns) into a deterministic `v1::Document`. Every traversed
+//! construct that is not modeled is recorded in a bounded, deterministic
+//! compatibility report under the dual-axis disposition taxonomy
+//! (`35-DISPOSITION-TAXONOMY.md`); nothing is dropped silently. Tables (as
+//! structure), media, fields, headers/footers, per-paragraph section breaks,
+//! and tracked changes are reported, not yet modeled.
 //!
 //! Import runs in `Semantic` mode (report-and-drop) by default. `Retention`
 //! mode additionally keeps the original main-document bytes verbatim (the D5
@@ -161,7 +163,7 @@ pub(crate) fn import_with_sources(
         Some(xml) => numbering::parse(xml, &mut ids, &mut reporter, config)?,
         None => Numbering::default(),
     };
-    let mut body = body::parse(
+    let (mut body, sections) = body::parse(
         document_xml,
         &mut ids,
         &styles,
@@ -187,6 +189,7 @@ pub(crate) fn import_with_sources(
         styles: styles.into_definitions(),
         abstract_numbering,
         numbering: numbering_instances,
+        sections,
         ..Definitions::default()
     };
     let document = Document::new(document_id, body, definitions).map_err(ImportError::Model)?;

@@ -1,8 +1,8 @@
 //! Main-document body parsing into v1 block nodes.
 
 use casual_doc_model::v1::{
-    BlockNode, Break, BreakKind, InlineNode, Paragraph, ParagraphProperties, Run, RunProperties,
-    StyleKind, Tab,
+    BlockNode, Break, BreakKind, InlineNode, PageMargins, PageSize, Paragraph, ParagraphProperties,
+    Run, RunProperties, SectionBoundary, SectionColumns, SectionId, StyleKind, Tab,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::Reader;
@@ -25,6 +25,18 @@ enum Segment {
     },
     Tab,
     Break(BreakKind),
+}
+
+/// Raw section geometry accumulated while inside a `w:sectPr`.
+#[derive(Default)]
+struct SectionAccumulator {
+    page_width: Option<i32>,
+    page_height: Option<i32>,
+    margin_top: Option<i32>,
+    margin_bottom: Option<i32>,
+    margin_start: Option<i32>,
+    margin_end: Option<i32>,
+    columns: Option<u16>,
 }
 
 struct BodyParser<'a> {
@@ -52,6 +64,8 @@ struct BodyParser<'a> {
     text_buffer: String,
     segments: Vec<Segment>,
     paragraphs: Vec<Paragraph>,
+    section: Option<SectionAccumulator>,
+    sections: Vec<SectionBoundary>,
 }
 
 /// Parses main-document body bytes into ordered block nodes, allocating ids.
@@ -62,7 +76,7 @@ pub(crate) fn parse(
     numbering: &Numbering,
     reporter: &mut Reporter,
     config: ImportConfig,
-) -> Result<Vec<BlockNode>, ImportError> {
+) -> Result<(Vec<BlockNode>, Vec<SectionBoundary>), ImportError> {
     let mut parser = BodyParser {
         ids,
         styles,
@@ -88,13 +102,16 @@ pub(crate) fn parse(
         text_buffer: String::new(),
         segments: Vec::new(),
         paragraphs: Vec::new(),
+        section: None,
+        sections: Vec::new(),
     };
     parser.run(xml)?;
-    Ok(parser
+    let body = parser
         .paragraphs
         .into_iter()
         .map(BlockNode::Paragraph)
-        .collect())
+        .collect();
+    Ok((body, parser.sections))
 }
 
 impl BodyParser<'_> {
@@ -217,6 +234,31 @@ impl BodyParser<'_> {
             }
             b"tab" if self.run_open => self.segments.push(Segment::Tab),
             b"br" if self.run_open => self.segments.push(Segment::Break(break_kind(element))),
+            b"sectPr" if self.in_body && !self.paragraph_open && self.ppr_depth == 0 => {
+                self.section = Some(SectionAccumulator::default());
+            }
+            b"pgSz" if self.section.is_some() => {
+                if let Some(section) = self.section.as_mut() {
+                    section.page_width = attr_i32(element, b"w");
+                    section.page_height = attr_i32(element, b"h");
+                }
+            }
+            b"pgMar" if self.section.is_some() => {
+                if let Some(section) = self.section.as_mut() {
+                    section.margin_top = attr_i32(element, b"top");
+                    section.margin_bottom = attr_i32(element, b"bottom");
+                    section.margin_start =
+                        attr_i32(element, b"start").or_else(|| attr_i32(element, b"left"));
+                    section.margin_end =
+                        attr_i32(element, b"end").or_else(|| attr_i32(element, b"right"));
+                }
+            }
+            b"cols" if self.section.is_some() => {
+                if let Some(section) = self.section.as_mut() {
+                    section.columns =
+                        attribute_value(element, b"num").and_then(|value| value.parse().ok());
+                }
+            }
             _ if self.rpr_depth > 0 => {
                 if !apply_run_property(&mut self.run_properties, local, element) {
                     self.reporter.report(local);
@@ -267,6 +309,11 @@ impl BodyParser<'_> {
                 self.rpr_depth = 0;
             }
             b"rPr" => self.rpr_depth = self.rpr_depth.saturating_sub(1),
+            b"sectPr" => {
+                if let Some(accumulator) = self.section.take() {
+                    self.build_section(accumulator)?;
+                }
+            }
             b"t" if self.in_text => {
                 self.in_text = false;
                 let text = std::mem::take(&mut self.text_buffer);
@@ -279,6 +326,30 @@ impl BodyParser<'_> {
             }
             _ => {}
         }
+        Ok(())
+    }
+
+    fn build_section(&mut self, accumulator: SectionAccumulator) -> Result<(), ImportError> {
+        let id = SectionId::new(self.next_id()?);
+        let page_size = PageSize {
+            width_twips: accumulator.page_width.unwrap_or(12_240).clamp(1, 31_680),
+            height_twips: accumulator.page_height.unwrap_or(15_840).clamp(1, 31_680),
+        };
+        let page_margins = PageMargins {
+            top_twips: accumulator.margin_top.unwrap_or(1_440).clamp(0, 31_680),
+            bottom_twips: accumulator.margin_bottom.unwrap_or(1_440).clamp(0, 31_680),
+            start_twips: accumulator.margin_start.unwrap_or(1_440).clamp(0, 31_680),
+            end_twips: accumulator.margin_end.unwrap_or(1_440).clamp(0, 31_680),
+        };
+        let columns = SectionColumns {
+            count: accumulator.columns.unwrap_or(1).clamp(1, 64),
+        };
+        self.sections.push(SectionBoundary {
+            id,
+            page_size,
+            page_margins,
+            columns,
+        });
         Ok(())
     }
 
@@ -311,6 +382,10 @@ impl BodyParser<'_> {
         });
         Ok(())
     }
+}
+
+fn attr_i32(element: &BytesStart<'_>, name: &[u8]) -> Option<i32> {
+    attribute_value(element, name).and_then(|value| value.parse().ok())
 }
 
 fn normalize_segments(segments: Vec<Segment>) -> Vec<Segment> {
