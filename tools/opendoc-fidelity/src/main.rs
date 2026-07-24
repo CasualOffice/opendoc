@@ -134,13 +134,37 @@ fn unique_temp_dir() -> Result<PathBuf, Box<dyn Error>> {
     Ok(dir)
 }
 
-/// Collapses whitespace and drops empty lines so incidental formatting does not
-/// count as a text-content difference.
+/// Collapses whitespace, strips generated list markers, and drops empty lines so
+/// only source text content is compared. LibreOffice renders numbering markers
+/// (`• `, `1. `) that are generated from the numbering definition, not literal
+/// source text, so they are removed for a content-fidelity comparison.
 fn normalize(text: &str) -> Vec<String> {
     text.lines()
         .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
+        .map(|line| strip_list_marker(&line).to_owned())
         .filter(|line| !line.is_empty())
         .collect()
+}
+
+fn strip_list_marker(line: &str) -> &str {
+    // Bullet markers: "• ", "- ", "* ", "◦ ".
+    for bullet in ["\u{2022} ", "\u{25e6} ", "- ", "* "] {
+        if let Some(rest) = line.strip_prefix(bullet) {
+            return rest;
+        }
+    }
+    // Numeric/alpha markers: "<label>. " or "<label>) " where label is a short
+    // run of digits or ascii letters (e.g. "1. ", "12) ", "a. ", "iv) ").
+    if let Some((label, rest)) = line.split_once(|c| c == '.' || c == ')') {
+        if !label.is_empty()
+            && label.len() <= 4
+            && label.chars().all(|c| c.is_ascii_alphanumeric())
+            && rest.starts_with(' ')
+        {
+            return rest.trim_start();
+        }
+    }
+    line
 }
 
 /// Fraction of normalized lines that appear (as a multiset) in both texts.
