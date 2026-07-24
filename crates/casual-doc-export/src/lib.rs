@@ -190,6 +190,34 @@ mod tests {
     }
 
     #[test]
+    fn document_with_external_and_internal_hyperlinks_round_trips() {
+        // External (`r:id` -> an External-mode relationship) and internal
+        // (`w:anchor`) hyperlinks. They round-trip verbatim today; the semantic
+        // model captures them as first-class inlines as modeling lands.
+        let original = include_bytes!("../../../fixtures/corpus/real-producer-hyperlinks.docx");
+        let config = ImportConfig {
+            mode: ImportMode::Retention,
+            ..ImportConfig::default()
+        };
+
+        let first = {
+            let mut package = DocxPackage::open(original, PackageLimits::default()).unwrap();
+            import_package(&mut package, config).unwrap()
+        };
+        let rebuilt = write_package(first.retained_source.as_ref().unwrap()).unwrap();
+        let second = {
+            let mut package = DocxPackage::open(&rebuilt, PackageLimits::default()).unwrap();
+            import_package(&mut package, config).unwrap()
+        };
+
+        assert_eq!(first.document, second.document);
+        assert_eq!(
+            second.retained_source.as_ref().unwrap().parts,
+            first.retained_source.as_ref().unwrap().parts
+        );
+    }
+
+    #[test]
     fn semantic_mode_has_no_retained_parts() {
         let source = casual_doc_import::RetainedSource {
             main_document: Vec::new(),
