@@ -12,6 +12,7 @@ mod document;
 mod ids;
 mod migration;
 mod properties;
+mod table;
 
 pub use body::*;
 pub use definitions::*;
@@ -19,6 +20,7 @@ pub use document::*;
 pub use ids::*;
 pub use migration::*;
 pub use properties::*;
+pub use table::*;
 
 #[cfg(test)]
 mod tests;

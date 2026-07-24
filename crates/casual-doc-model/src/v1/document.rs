@@ -173,11 +173,7 @@ impl Document {
             insert_id(&mut ids, id.node_id())?;
         }
         for block in &self.body {
-            let BlockNode::Paragraph(paragraph) = block;
-            insert_id(&mut ids, paragraph.id)?;
-            for inline in &paragraph.inlines {
-                record_inline_ids(inline, &mut ids)?;
-            }
+            record_block_ids(block, &mut ids)?;
         }
         Ok(())
     }
@@ -350,9 +346,54 @@ impl Document {
 
     fn validate_body(&self) -> Result<(), ModelError> {
         for block in &self.body {
-            let BlockNode::Paragraph(paragraph) = block;
-            self.check_paragraph_property_refs(&paragraph.properties)?;
-            self.validate_inlines(&paragraph.inlines, paragraph.id, false)?;
+            self.validate_block(block, 0)?;
+        }
+        Ok(())
+    }
+
+    /// Validates one block, recursing through table cells. `table_depth` is the
+    /// number of enclosing tables (0 at body level), used to bound nesting.
+    fn validate_block(&self, block: &BlockNode, table_depth: u32) -> Result<(), ModelError> {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                self.check_paragraph_property_refs(&paragraph.properties)?;
+                self.validate_inlines(&paragraph.inlines, paragraph.id, false)?;
+            }
+            BlockNode::Table(table) => self.validate_table(table, table_depth)?,
+        }
+        Ok(())
+    }
+
+    fn validate_table(&self, table: &Table, table_depth: u32) -> Result<(), ModelError> {
+        if table_depth + 1 > MAX_TABLE_DEPTH {
+            return Err(ModelError::TableNestingTooDeep(table.id));
+        }
+        if table.rows.is_empty() {
+            return Err(ModelError::EmptyTable(table.id));
+        }
+        for column in &table.grid {
+            if let Some(width) = column.width_twips {
+                check_domain((0..=31_680).contains(&width), "table.grid.column.width")?;
+            }
+        }
+        for row in &table.rows {
+            if row.cells.is_empty() {
+                return Err(ModelError::EmptyTableRow(row.id));
+            }
+            for cell in &row.cells {
+                if cell.blocks.is_empty() {
+                    return Err(ModelError::EmptyTableCell(cell.id));
+                }
+                if let Some(span) = cell.properties.grid_span {
+                    check_domain((1..=16_384).contains(&span), "table.cell.grid_span")?;
+                }
+                if let Some(width) = cell.properties.width_twips {
+                    check_domain((0..=31_680).contains(&width), "table.cell.width")?;
+                }
+                for nested in &cell.blocks {
+                    self.validate_block(nested, table_depth + 1)?;
+                }
+            }
         }
         Ok(())
     }
@@ -424,20 +465,60 @@ impl Document {
     }
 
     fn validate_snapshot_limits(&self, limits: SnapshotLimits) -> Result<(), SnapshotError> {
-        enforce_limit("body_blocks", self.body.len(), limits.max_blocks)?;
+        let mut blocks = 0_usize;
         let mut scalar_values = 0_usize;
         for block in &self.body {
-            let BlockNode::Paragraph(paragraph) = block;
-            for inline in &paragraph.inlines {
-                accumulate_inline_limits(inline, limits, &mut scalar_values)?;
-            }
+            accumulate_block_limits(block, limits, &mut blocks, &mut scalar_values)?;
         }
+        enforce_limit("body_blocks", blocks, limits.max_blocks)?;
         enforce_limit(
             "unicode_scalar_values",
             scalar_values,
             limits.max_unicode_scalar_values,
         )
     }
+}
+
+/// Accounts one block against the block-count and text limits, recursing through
+/// table cells so nested paragraphs and tables cannot smuggle past the bounds.
+fn accumulate_block_limits(
+    block: &BlockNode,
+    limits: SnapshotLimits,
+    blocks: &mut usize,
+    scalar_values: &mut usize,
+) -> Result<(), SnapshotError> {
+    *blocks = blocks.checked_add(1).ok_or(SnapshotError::LimitExceeded {
+        limit: "body_blocks",
+        observed: usize::MAX,
+        allowed: limits.max_blocks,
+    })?;
+    match block {
+        BlockNode::Paragraph(paragraph) => {
+            for inline in &paragraph.inlines {
+                accumulate_inline_limits(inline, limits, scalar_values)?;
+            }
+        }
+        BlockNode::Table(table) => {
+            for row in &table.rows {
+                *blocks = blocks.checked_add(1).ok_or(SnapshotError::LimitExceeded {
+                    limit: "body_blocks",
+                    observed: usize::MAX,
+                    allowed: limits.max_blocks,
+                })?;
+                for cell in &row.cells {
+                    *blocks = blocks.checked_add(1).ok_or(SnapshotError::LimitExceeded {
+                        limit: "body_blocks",
+                        observed: usize::MAX,
+                        allowed: limits.max_blocks,
+                    })?;
+                    for nested in &cell.blocks {
+                        accumulate_block_limits(nested, limits, blocks, scalar_values)?;
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Accounts one inline node against the text limits, recursing into hyperlink
@@ -474,6 +555,31 @@ fn insert_id(ids: &mut BTreeSet<NodeId>, id: NodeId) -> Result<(), ModelError> {
     } else {
         Err(ModelError::DuplicateNodeId(id))
     }
+}
+
+/// Records a block's ids, recursing through table rows, cells, and nested blocks.
+fn record_block_ids(block: &BlockNode, ids: &mut BTreeSet<NodeId>) -> Result<(), ModelError> {
+    match block {
+        BlockNode::Paragraph(paragraph) => {
+            insert_id(ids, paragraph.id)?;
+            for inline in &paragraph.inlines {
+                record_inline_ids(inline, ids)?;
+            }
+        }
+        BlockNode::Table(table) => {
+            insert_id(ids, table.id)?;
+            for row in &table.rows {
+                insert_id(ids, row.id)?;
+                for cell in &row.cells {
+                    insert_id(ids, cell.id)?;
+                    for nested in &cell.blocks {
+                        record_block_ids(nested, ids)?;
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Records an inline's id and, for a hyperlink, its children's ids recursively.

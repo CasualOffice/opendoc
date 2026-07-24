@@ -69,7 +69,7 @@ mod tests {
     use super::*;
 
     use casual_doc_import::{ImportConfig, ImportMode, import_package};
-    use casual_doc_model::v1::{BlockNode, Document, InlineNode};
+    use casual_doc_model::v1::{BlockNode, Document, InlineNode, Table, VerticalMerge};
     use casual_doc_ooxml::{DocxPackage, PackageLimits};
     use zip::write::SimpleFileOptions;
     use zip::{CompressionMethod, ZipWriter};
@@ -85,13 +85,23 @@ mod tests {
             }
             false
         }
-        document.body().iter().any(|block| {
-            let BlockNode::Paragraph(paragraph) = block;
-            paragraph
-                .inlines
-                .iter()
-                .any(|inline| walk(inline, predicate))
-        })
+        fn walk_blocks(
+            blocks: &[BlockNode],
+            predicate: impl Fn(&InlineNode) -> bool + Copy,
+        ) -> bool {
+            blocks.iter().any(|block| match block {
+                BlockNode::Paragraph(paragraph) => paragraph
+                    .inlines
+                    .iter()
+                    .any(|inline| walk(inline, predicate)),
+                BlockNode::Table(table) => table.rows.iter().any(|row| {
+                    row.cells
+                        .iter()
+                        .any(|cell| walk_blocks(&cell.blocks, predicate))
+                }),
+            })
+        }
+        walk_blocks(document.body(), predicate)
     }
 
     fn sample_package() -> Vec<u8> {
@@ -150,10 +160,22 @@ mod tests {
         );
     }
 
+    fn first_table(document: &Document) -> &Table {
+        document
+            .body()
+            .iter()
+            .find_map(|block| match block {
+                BlockNode::Table(table) => Some(table),
+                BlockNode::Paragraph(_) => None,
+            })
+            .expect("a table in the body")
+    }
+
     #[test]
     fn table_with_merged_cells_round_trips() {
-        // A table with a horizontal (gridSpan) and vertical (vMerge) merge.
-        // Round-trips today via Retention; groundwork for table modeling.
+        // A table with a horizontal (gridSpan) and vertical (vMerge) merge. The
+        // structure is now modeled AND the source round-trips byte-for-byte via
+        // Retention, so the merge geometry survives import -> write -> reopen.
         let original = include_bytes!("../../../fixtures/corpus/real-producer-table-merges.docx");
         let config = ImportConfig {
             mode: ImportMode::Retention,
@@ -174,6 +196,18 @@ mod tests {
         assert_eq!(
             second.retained_source.as_ref().unwrap().parts,
             first.retained_source.as_ref().unwrap().parts
+        );
+
+        // The reopened model still carries the modeled merge geometry.
+        let table = first_table(&second.document);
+        assert_eq!(table.rows[0].cells[0].properties.grid_span, Some(2));
+        assert_eq!(
+            table.rows[1].cells[0].properties.vertical_merge,
+            Some(VerticalMerge::Restart)
+        );
+        assert_eq!(
+            table.rows[2].cells[0].properties.vertical_merge,
+            Some(VerticalMerge::Continue)
         );
     }
 

@@ -6,7 +6,7 @@ use casual_doc_model::v1::{
     BlockNode, Break, BreakKind, Drawing, Extent, ExternalTarget, Hyperlink, HyperlinkTarget,
     InlineNode, InternalTarget, MAX_EMU, MediaId, PageMargins, PageSize, Paragraph,
     ParagraphProperties, Run, RunProperties, SectionBoundary, SectionColumns, SectionId, StyleKind,
-    Tab,
+    Tab, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::Reader;
@@ -20,6 +20,7 @@ use crate::properties::{
 };
 use crate::report::Reporter;
 use crate::styles::Styles;
+use crate::tables::TableStack;
 
 /// A run/tab/break/drawing/hyperlink segment before ids and normalization.
 enum Segment {
@@ -93,8 +94,13 @@ struct BodyParser<'a> {
     drawing_extra: bool,
     hyperlink: Option<HyperlinkAccumulator>,
     hyperlink_depth: u32,
+    tables: TableStack,
+    tcpr_depth: u32,
+    /// Depth of nested tables refused past `MAX_TABLE_DEPTH`; while non-zero the
+    /// table structure is suppressed so it cannot corrupt the enclosing table.
+    suppressed_tbl_depth: u32,
     segments: Vec<Segment>,
-    paragraphs: Vec<Paragraph>,
+    blocks: Vec<BlockNode>,
     section: Option<SectionAccumulator>,
     sections: Vec<SectionBoundary>,
 }
@@ -147,18 +153,16 @@ pub(crate) fn parse<'a>(
         drawing_extra: false,
         hyperlink: None,
         hyperlink_depth: 0,
+        tables: TableStack::default(),
+        tcpr_depth: 0,
+        suppressed_tbl_depth: 0,
         segments: Vec::new(),
-        paragraphs: Vec::new(),
+        blocks: Vec::new(),
         section: None,
         sections: Vec::new(),
     };
     parser.run(xml)?;
-    let body = parser
-        .paragraphs
-        .into_iter()
-        .map(BlockNode::Paragraph)
-        .collect();
-    Ok((body, parser.sections))
+    Ok((parser.blocks, parser.sections))
 }
 
 impl BodyParser<'_> {
@@ -361,6 +365,97 @@ impl BodyParser<'_> {
                         attribute_value(element, b"num").and_then(|value| value.parse().ok());
                 }
             }
+            // Tables are the one nested block construct: cell paragraphs (and
+            // nested tables) route into the open cell instead of the flat body.
+            //
+            // Suppression is context-independent and always balanced: every
+            // `<w:tbl>` either opens a real table or increments the counter, and
+            // every `</w:tbl>` balances it (the end arms below), so a `</w:tbl>`
+            // can never desynchronize the table stack or close a real table it
+            // does not own — even for malformed input where a `<w:tbl>` appears
+            // inside a run or paragraph.
+            b"tbl" if self.suppressed_tbl_depth > 0 => {
+                // Already inside a refused/suppressed subtree: count every nested
+                // table so the matching `</w:tbl>` balances suppression.
+                self.suppressed_tbl_depth += 1;
+                self.reporter.report(b"tbl");
+            }
+            b"tbl"
+                if self.in_body
+                    && !self.run_open
+                    && !self.paragraph_open
+                    && self.ppr_depth == 0
+                    && self.rpr_depth == 0 =>
+            {
+                if !self.tables.open_table(&mut *self.ids)? {
+                    // Nesting past the model bound: suppress the whole subtree so
+                    // its rows/cells cannot mutate the enclosing table. Paragraphs
+                    // inside still flatten into the enclosing cell (no data loss).
+                    self.suppressed_tbl_depth = 1;
+                    self.reporter.report(b"tbl");
+                }
+            }
+            // A `<w:tbl>` in a non-block context (malformed: inside a run or
+            // paragraph properties) is suppressed so its `</w:tbl>` cannot close a
+            // real table; any text inside still flattens into the enclosing cell.
+            b"tbl" if self.in_body => {
+                self.suppressed_tbl_depth = 1;
+                self.reporter.report(b"tbl");
+            }
+            b"tr"
+                if self.tables.is_active()
+                    && self.suppressed_tbl_depth == 0
+                    && !self.paragraph_open
+                    && !self.run_open =>
+            {
+                self.tables.open_row(&mut *self.ids)?;
+            }
+            b"tc"
+                if self.tables.is_active()
+                    && self.suppressed_tbl_depth == 0
+                    && !self.paragraph_open
+                    && !self.run_open =>
+            {
+                self.tcpr_depth = 0;
+                self.tables.open_cell(&mut *self.ids)?;
+            }
+            b"tblGrid" if self.tables.is_active() && self.suppressed_tbl_depth == 0 => {}
+            b"gridCol" if self.tables.is_active() && self.suppressed_tbl_depth == 0 => {
+                let width = attr_i32(element, b"w").map(|width| width.clamp(0, 31_680));
+                self.tables.add_grid_column(width);
+            }
+            b"tcPr" if self.tables.is_active() && self.suppressed_tbl_depth == 0 => {
+                self.tcpr_depth += 1
+            }
+            b"gridSpan" if self.tcpr_depth > 0 => {
+                if let Some(span) =
+                    attribute_value(element, b"val").and_then(|value| value.parse::<u32>().ok())
+                {
+                    if (1..=16_384).contains(&span) {
+                        self.tables.set_grid_span(span);
+                    }
+                }
+            }
+            b"vMerge" if self.tcpr_depth > 0 => {
+                let restart = attribute_value(element, b"val")
+                    .map(|value| value == "restart")
+                    .unwrap_or(false);
+                self.tables.set_vertical_merge(if restart {
+                    VerticalMerge::Restart
+                } else {
+                    VerticalMerge::Continue
+                });
+            }
+            b"tcW" if self.tcpr_depth > 0 => {
+                // Only `dxa` (twips) widths are modeled; `pct`/`auto` are reported.
+                let is_dxa = attribute_value(element, b"type")
+                    .map(|kind| kind == "dxa")
+                    .unwrap_or(true);
+                match attr_i32(element, b"w") {
+                    Some(width) if is_dxa => self.tables.set_cell_width(width.clamp(0, 31_680)),
+                    _ => self.reporter.report(b"tcW"),
+                }
+            }
             _ if self.rpr_depth > 0 => {
                 if !apply_run_property(&mut self.run_properties, local, element) {
                     self.reporter.report(local);
@@ -453,6 +548,29 @@ impl BodyParser<'_> {
                 }
                 self.hyperlink_depth = self.hyperlink_depth.saturating_sub(1);
             }
+            b"tcPr" => self.tcpr_depth = self.tcpr_depth.saturating_sub(1),
+            // A refused subtree's own `</w:tbl>` closes suppression, never a real
+            // table on the stack; its `</w:tc>`/`</w:tr>` are inert.
+            b"tbl" if self.suppressed_tbl_depth > 0 => {
+                self.suppressed_tbl_depth -= 1;
+            }
+            b"tc" if self.tables.is_active() && self.suppressed_tbl_depth == 0 => {
+                self.tcpr_depth = 0;
+                self.tables.close_cell(&mut *self.ids)?;
+            }
+            b"tr" if self.tables.is_active() && self.suppressed_tbl_depth == 0 => {
+                if !self.tables.close_row() {
+                    self.reporter.report(b"tr");
+                }
+            }
+            b"tbl" if self.tables.is_active() => match self.tables.close_table() {
+                Some(table) => {
+                    if let Some(returned) = self.tables.push_block(BlockNode::Table(table)) {
+                        self.blocks.push(returned);
+                    }
+                }
+                None => self.reporter.report(b"tbl"),
+            },
             _ => {}
         }
         Ok(())
@@ -574,11 +692,15 @@ impl BodyParser<'_> {
         for segment in normalized {
             inlines.push(self.segment_to_inline(segment)?);
         }
-        self.paragraphs.push(Paragraph {
+        let block = BlockNode::Paragraph(Paragraph {
             id: paragraph_id,
             properties: std::mem::take(&mut self.paragraph_properties),
             inlines,
         });
+        // Route into the open table cell, if any; otherwise the body root.
+        if let Some(returned) = self.tables.push_block(block) {
+            self.blocks.push(returned);
+        }
         Ok(())
     }
 

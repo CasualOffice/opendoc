@@ -38,6 +38,7 @@ mod properties;
 mod report;
 mod retain;
 mod styles;
+mod tables;
 
 pub use config::{ImportConfig, ImportMode};
 pub use error::ImportError;

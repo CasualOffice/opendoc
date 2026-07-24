@@ -14,6 +14,12 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Added
 
+- Semantic tables in schema v1: an additive `BlockNode::Table` (shared column
+  grid, rows, cells holding recursive block content, `gridSpan`/`vMerge` cell
+  merge geometry, depth-bounded), imported from `w:tbl` instead of flattening
+  cell text into the body, with unmapped table styling still reported and
+  Retention-preserved. Backward-compatible: existing snapshots and the v0→v1
+  migration are unchanged.
 - Pinned-source architecture research for LibreOffice, ONLYOFFICE, Open XML
   SDK, and Apache POI, plus a proposed OOXML fidelity architecture covering
   source snapshots, provenance, typed preservation, mapping rules, and future

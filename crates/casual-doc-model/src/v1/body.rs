@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{BreakKind, MediaId, ParagraphProperties, RunProperties};
+use super::{BreakKind, MediaId, ParagraphProperties, RunProperties, Table};
 use crate::NodeId;
 
 /// OOXML `ST_PositiveCoordinate` upper bound, in English Metric Units (EMU).
@@ -154,4 +154,6 @@ pub struct Paragraph {
 pub enum BlockNode {
     /// A paragraph block.
     Paragraph(Paragraph),
+    /// A table block.
+    Table(Table),
 }

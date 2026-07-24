@@ -47,8 +47,51 @@ fn features(import: &Import) -> Vec<&str> {
 }
 
 fn paragraph(import: &Import, index: usize) -> &Paragraph {
-    let BlockNode::Paragraph(paragraph) = &import.document.body()[index];
-    paragraph
+    match &import.document.body()[index] {
+        BlockNode::Paragraph(paragraph) => paragraph,
+        BlockNode::Table(_) => panic!("expected a paragraph at index {index}"),
+    }
+}
+
+/// Per-paragraph run text in document order, recursing through table cells.
+fn collect_block_texts(blocks: &[BlockNode], out: &mut Vec<String>) {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                let text: String = paragraph
+                    .inlines
+                    .iter()
+                    .filter_map(|inline| match inline {
+                        InlineNode::Run(run) => Some(run.text.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                out.push(text);
+            }
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        collect_block_texts(&cell.blocks, out);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn nonempty_block_texts(import: &Import) -> Vec<String> {
+    let mut texts = Vec::new();
+    collect_block_texts(import.document.body(), &mut texts);
+    texts.retain(|text| !text.is_empty());
+    texts
+}
+
+/// The first table in the body, if any.
+fn first_table(import: &Import) -> Option<&casual_doc_model::v1::Table> {
+    import.document.body().iter().find_map(|block| match block {
+        BlockNode::Table(table) => Some(table),
+        BlockNode::Paragraph(_) => None,
+    })
 }
 
 #[test]
@@ -120,30 +163,26 @@ fn tabs_breaks_and_color_are_mapped() {
 }
 
 #[test]
-fn unsupported_constructs_are_dispositioned_and_cell_text_is_flattened() {
+fn table_is_modeled_as_a_block_with_cell_content() {
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
             <w:tbl><w:tr><w:tc><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>
         </w:body></w:document>"#;
     let import = import(xml);
-    // The table cell paragraph is flattened into the body (R4).
+    // The table is a first-class block; its cell paragraph is nested inside it.
     assert_eq!(import.document.body().len(), 1);
-    let InlineNode::Run(run) = &paragraph(&import, 0).inlines[0] else {
+    let table = first_table(&import).expect("table modeled in body");
+    assert_eq!(table.rows.len(), 1);
+    assert_eq!(table.rows[0].cells.len(), 1);
+    let cell = &table.rows[0].cells[0];
+    let BlockNode::Paragraph(cell_paragraph) = &cell.blocks[0] else {
+        panic!("expected a paragraph in the cell");
+    };
+    let InlineNode::Run(run) = &cell_paragraph.inlines[0] else {
         panic!("expected run");
     };
     assert_eq!(run.text, "cell");
-    // Table structure is reported, ordered by feature name.
-    let features: Vec<&str> = import
-        .report
-        .entries
-        .iter()
-        .map(|entry| entry.feature.as_str())
-        .collect();
-    assert!(features.contains(&"tbl"));
-    assert!(features.windows(2).all(|pair| pair[0] < pair[1]));
-    for entry in &import.report.entries {
-        assert_eq!(entry.model_outcome, ModelOutcome::Omitted);
-        assert_eq!(entry.retention_outcome, RetentionOutcome::NotRetained);
-    }
+    // The modeled table is not reported as unmapped.
+    assert!(!features(&import).contains(&"tbl"));
 }
 
 #[test]
@@ -473,8 +512,11 @@ fn nested_rpr_does_not_drop_following_formatting() {
 
 #[test]
 fn retention_mode_retains_source_and_marks_unmapped_preserved() {
+    // The table structure is modeled; `w:tblStyle` (table-level styling) is not,
+    // so it exercises the unmapped-but-preserved disposition in Retention mode.
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
-        <w:tbl><w:tr><w:tc><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>
+        <w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/></w:tblPr>
+            <w:tr><w:tc><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>
     </w:body></w:document>"#;
     let config = ImportConfig {
         mode: ImportMode::Retention,
@@ -489,14 +531,9 @@ fn retention_mode_retains_source_and_marks_unmapped_preserved() {
         xml.to_vec()
     );
 
-    // Unmapped constructs are now preserved rather than dropped.
-    assert!(
-        import
-            .report
-            .entries
-            .iter()
-            .any(|entry| entry.feature == "tbl")
-    );
+    // Unmapped constructs (here, table styling) are preserved rather than dropped.
+    assert!(features(&import).contains(&"tblStyle"));
+    assert!(!import.report.entries.is_empty());
     for entry in &import.report.entries {
         assert_eq!(entry.model_outcome, ModelOutcome::Omitted);
         assert_eq!(entry.retention_outcome, RetentionOutcome::Preserved);
@@ -586,22 +623,7 @@ fn real_producer_libreoffice_document_imports_expected_text() {
     let mut package = DocxPackage::open(bytes, casual_doc_ooxml::PackageLimits::default()).unwrap();
     let import = import_package(&mut package, ImportConfig::default()).unwrap();
 
-    let texts: Vec<String> = import
-        .document
-        .body()
-        .iter()
-        .map(|BlockNode::Paragraph(paragraph)| {
-            paragraph
-                .inlines
-                .iter()
-                .filter_map(|inline| match inline {
-                    InlineNode::Run(run) => Some(run.text.as_str()),
-                    _ => None,
-                })
-                .collect::<String>()
-        })
-        .filter(|text| !text.is_empty())
-        .collect();
+    let texts = nonempty_block_texts(&import);
 
     assert_eq!(
         texts,
@@ -615,31 +637,16 @@ fn real_producer_libreoffice_document_imports_expected_text() {
 }
 
 #[test]
-fn real_producer_table_and_lists_flatten_cell_and_item_text() {
-    // Real LibreOffice .docx with a 2x2 table and bullet/numbered lists.
-    // Table cell paragraphs flatten into the body (R4); list item text is
-    // imported (generated markers are presentation and are not source text).
+fn real_producer_table_and_lists_model_cells_and_item_text() {
+    // Real LibreOffice .docx with a 2x2 table and bullet/numbered lists. The
+    // table is now modeled as structure: its cell paragraphs live inside the
+    // Table block (not flattened), while recursive text extraction still
+    // recovers all cell and list-item content in document order.
     let bytes = include_bytes!("../../../fixtures/corpus/real-producer-table-list.docx");
     let mut package = DocxPackage::open(bytes, casual_doc_ooxml::PackageLimits::default()).unwrap();
     let import = import_package(&mut package, ImportConfig::default()).unwrap();
 
-    let texts: Vec<String> = import
-        .document
-        .body()
-        .iter()
-        .map(|BlockNode::Paragraph(paragraph)| {
-            paragraph
-                .inlines
-                .iter()
-                .filter_map(|inline| match inline {
-                    InlineNode::Run(run) => Some(run.text.as_str()),
-                    _ => None,
-                })
-                .collect::<String>()
-        })
-        .filter(|text| !text.is_empty())
-        .collect();
-
+    let texts = nonempty_block_texts(&import);
     assert_eq!(
         texts,
         vec![
@@ -655,13 +662,20 @@ fn real_producer_table_and_lists_flatten_cell_and_item_text() {
             "Closing paragraph.",
         ]
     );
-    // The table is reported as unmapped structure (its geometry is not modeled).
+
+    // The table is first-class structure in the body: a 2x2 grid of cells,
+    // each cell holding its own paragraph. It is no longer reported as unmapped.
+    let table = first_table(&import).expect("table modeled in body");
+    assert_eq!(table.rows.len(), 2);
+    assert_eq!(table.rows[0].cells.len(), 2);
+    assert_eq!(table.rows[1].cells.len(), 2);
     assert!(
-        import
+        !import
             .report
             .entries
             .iter()
-            .any(|entry| entry.feature == "tbl")
+            .any(|entry| entry.feature == "tbl"),
+        "modeled table must not be reported as unmapped"
     );
 }
 
@@ -921,4 +935,137 @@ fn image_inside_a_hyperlink_becomes_a_drawing_child() {
         panic!("expected a hyperlink");
     };
     assert!(matches!(link.inlines[0], InlineNode::Drawing(_)));
+}
+
+#[test]
+fn real_producer_table_merges_map_grid_span_and_vertical_merge() {
+    use casual_doc_model::v1::VerticalMerge;
+
+    let bytes = include_bytes!("../../../fixtures/corpus/real-producer-table-merges.docx");
+    let mut package = DocxPackage::open(bytes, casual_doc_ooxml::PackageLimits::default()).unwrap();
+    let import = import_package(&mut package, ImportConfig::default()).unwrap();
+
+    let table = first_table(&import).expect("table modeled in body");
+    // Three grid columns (w:tblGrid), preserved in order.
+    assert_eq!(
+        table
+            .grid
+            .iter()
+            .map(|column| column.width_twips)
+            .collect::<Vec<_>>(),
+        vec![Some(1636), Some(391), Some(436)],
+    );
+    assert_eq!(table.rows.len(), 3);
+
+    // Row 1, cell 1 spans two grid columns (w:gridSpan) and carries a dxa width.
+    let spanning = &table.rows[0].cells[0];
+    assert_eq!(spanning.properties.grid_span, Some(2));
+    assert_eq!(spanning.properties.width_twips, Some(2027));
+
+    // Row 2 opens a vertical merge; row 3 continues it (w:vMerge).
+    assert_eq!(
+        table.rows[1].cells[0].properties.vertical_merge,
+        Some(VerticalMerge::Restart)
+    );
+    assert_eq!(
+        table.rows[2].cells[0].properties.vertical_merge,
+        Some(VerticalMerge::Continue)
+    );
+
+    // Cell text is recoverable from the modeled structure.
+    let texts = nonempty_block_texts(&import);
+    assert!(texts.contains(&"Spans two columns".to_owned()));
+    assert!(texts.contains(&"Spans two rows".to_owned()));
+
+    // The modeled table is not reported as unmapped structure.
+    assert!(!features(&import).contains(&"tbl"));
+}
+
+#[test]
+fn nested_tables_nest_and_percent_cell_width_is_reported() {
+    // A table whose cell contains a nested table; the outer cell also carries a
+    // percentage width (w:tcW type="pct"), which is not modeled and is reported.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:tbl>
+            <w:tblGrid><w:gridCol w:w="5000"/></w:tblGrid>
+            <w:tr><w:tc>
+                <w:tcPr><w:tcW w:w="2500" w:type="pct"/></w:tcPr>
+                <w:p><w:r><w:t>outer</w:t></w:r></w:p>
+                <w:tbl><w:tr><w:tc><w:p><w:r><w:t>inner</w:t></w:r></w:p></w:tc></w:tr></w:tbl>
+            </w:tc></w:tr>
+        </w:tbl>
+    </w:body></w:document>"#;
+    let import = import(xml);
+
+    let outer = first_table(&import).expect("outer table modeled");
+    assert_eq!(outer.grid.len(), 1);
+    assert_eq!(outer.grid[0].width_twips, Some(5000));
+    let cell = &outer.rows[0].cells[0];
+    // Percentage width is not modeled (dxa only); it stays None and is reported.
+    assert_eq!(cell.properties.width_twips, None);
+    assert!(features(&import).contains(&"tcW"));
+
+    // The cell holds its paragraph and then a nested table (document order).
+    assert!(matches!(cell.blocks[0], BlockNode::Paragraph(_)));
+    let BlockNode::Table(inner) = &cell.blocks[1] else {
+        panic!("expected a nested table as the cell's second block");
+    };
+    assert_eq!(inner.rows.len(), 1);
+    let texts = nonempty_block_texts(&import);
+    assert_eq!(texts, vec!["outer".to_owned(), "inner".to_owned()]);
+}
+
+#[test]
+fn tables_nested_past_depth_bound_flatten_without_data_loss() {
+    // Regression (adversarial review): a table nested past MAX_TABLE_DEPTH must
+    // not corrupt the enclosing table. The over-depth subtree is suppressed and
+    // its paragraph text flattens into the innermost modeled cell — no cell
+    // content is silently dropped, and the model stays valid and bounded.
+    use casual_doc_model::v1::MAX_TABLE_DEPTH;
+
+    let depth = MAX_TABLE_DEPTH + 1; // 33: one level past the bound
+    let mut xml = String::from(r#"<w:document xmlns:w="urn:w"><w:body>"#);
+    for i in 0..depth {
+        xml.push_str("<w:tbl><w:tr><w:tc>");
+        xml.push_str(&format!("<w:p><w:r><w:t>L{i}</w:t></w:r></w:p>"));
+    }
+    for _ in 0..depth {
+        xml.push_str("</w:tc></w:tr></w:tbl>");
+    }
+    xml.push_str("</w:body></w:document>");
+
+    // Imports to a valid, bounded model (validation would reject depth > bound).
+    let import = import(xml.as_bytes());
+
+    // Every level's text survives — the over-depth level flattens up, it is not
+    // dropped and it does not overwrite the enclosing cell's own paragraph.
+    let texts = nonempty_block_texts(&import);
+    for i in 0..depth {
+        assert!(texts.contains(&format!("L{i}")), "lost cell text L{i}");
+    }
+    // The over-depth table is reported (dispositioned), not silently absorbed.
+    assert!(features(&import).contains(&"tbl"));
+}
+
+#[test]
+fn malformed_table_inside_a_paragraph_does_not_desync_the_stack() {
+    // A `<w:tbl>` nested inside a `<w:p>` is malformed (valid OOXML makes tables
+    // and paragraphs block-level siblings). It must be suppressed WITHOUT
+    // consuming the enclosing real table's `</w:tbl>`: the outer table and the
+    // surrounding cell text must both survive. Regression for the adversarial
+    // review's start/end asymmetry finding.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:tbl><w:tr><w:tc>
+            <w:p><w:tbl/><w:r><w:t>keep</w:t></w:r></w:p>
+        </w:tc></w:tr></w:tbl>
+    </w:body></w:document>"#;
+    let import = import(xml);
+
+    // The real outer table is not dropped by the stray inner `</w:tbl>`.
+    let table = first_table(&import).expect("outer table survives");
+    assert_eq!(table.rows.len(), 1);
+    assert_eq!(table.rows[0].cells.len(), 1);
+    // Cell text after the malformed table is preserved.
+    assert!(nonempty_block_texts(&import).contains(&"keep".to_owned()));
+    assert!(features(&import).contains(&"tbl"));
 }

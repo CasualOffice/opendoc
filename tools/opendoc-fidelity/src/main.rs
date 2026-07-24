@@ -84,14 +84,30 @@ fn extract_ours(bytes: &[u8]) -> Result<String, Box<dyn Error>> {
     let mut package = DocxPackage::open(bytes, PackageLimits::default())?;
     let import = import_package(&mut package, ImportConfig::default())?;
     let mut out = String::new();
-    for block in import.document.body() {
-        let BlockNode::Paragraph(paragraph) = block;
-        for inline in &paragraph.inlines {
-            push_inline_text(inline, &mut out);
-        }
-        out.push('\n');
-    }
+    push_blocks_text(import.document.body(), &mut out);
     Ok(out)
+}
+
+/// Appends the text of a block sequence, recursing through table cells so cell
+/// text counts toward the fidelity comparison.
+fn push_blocks_text(blocks: &[BlockNode], out: &mut String) {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                for inline in &paragraph.inlines {
+                    push_inline_text(inline, out);
+                }
+                out.push('\n');
+            }
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        push_blocks_text(&cell.blocks, out);
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn push_inline_text(inline: &InlineNode, out: &mut String) {
