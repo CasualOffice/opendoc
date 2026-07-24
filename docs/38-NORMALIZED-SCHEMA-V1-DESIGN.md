@@ -1,6 +1,6 @@
 # Normalized Schema v1 Design
 
-**Status:** Proposed; not accepted
+**Status:** Accepted — 2026-07-24 (repository owner)
 **Tracker:** P1A-008
 **Decision basis:** ADR-027 (`36-ADR-027-ACCEPTANCE-RECORD.md`), ADR-014
 (grapheme positions), ADR-018 (strict bounded JSON v0)
