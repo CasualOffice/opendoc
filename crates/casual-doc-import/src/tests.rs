@@ -594,3 +594,54 @@ fn real_producer_libreoffice_document_imports_expected_text() {
         ]
     );
 }
+
+#[test]
+fn real_producer_table_and_lists_flatten_cell_and_item_text() {
+    // Real LibreOffice .docx with a 2x2 table and bullet/numbered lists.
+    // Table cell paragraphs flatten into the body (R4); list item text is
+    // imported (generated markers are presentation and are not source text).
+    let bytes = include_bytes!("../../../fixtures/corpus/real-producer-table-list.docx");
+    let mut package = DocxPackage::open(bytes, casual_doc_ooxml::PackageLimits::default()).unwrap();
+    let import = import_package(&mut package, ImportConfig::default()).unwrap();
+
+    let texts: Vec<String> = import
+        .document
+        .body()
+        .iter()
+        .map(|BlockNode::Paragraph(paragraph)| {
+            paragraph
+                .inlines
+                .iter()
+                .filter_map(|inline| match inline {
+                    InlineNode::Run(run) => Some(run.text.as_str()),
+                    _ => None,
+                })
+                .collect::<String>()
+        })
+        .filter(|text| !text.is_empty())
+        .collect();
+
+    assert_eq!(
+        texts,
+        vec![
+            "Intro paragraph.",
+            "R1C1",
+            "R1C2",
+            "R2C1",
+            "R2C2",
+            "First item",
+            "Second item",
+            "Alpha",
+            "Beta",
+            "Closing paragraph.",
+        ]
+    );
+    // The table is reported as unmapped structure (its geometry is not modeled).
+    assert!(
+        import
+            .report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "tbl")
+    );
+}
