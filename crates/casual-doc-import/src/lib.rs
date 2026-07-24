@@ -7,10 +7,13 @@
 //! `basedOn` inheritance, resolved `w:pStyle`/`w:rStyle` references) and the
 //! numbering part (abstract/instance definitions with resolved `w:numPr`
 //! references), body-level section geometry (`w:sectPr` → page size, margins,
-//! columns), and media references (image relationships → the media table, no
-//! bytes decoded) into a deterministic `v1::Document`. Every traversed construct
-//! that is not modeled is recorded in a bounded, deterministic compatibility
-//! report under the dual-axis disposition taxonomy (`35-DISPOSITION-TAXONOMY.md`);
+//! columns), media references (image relationships → the media table, no bytes
+//! decoded), inline drawings (embedded pictures → media-referencing drawing
+//! nodes with their EMU extent), and hyperlinks (external `r:id` resolved
+//! through the relationship graph or internal `w:anchor`, wrapping their child
+//! runs) into a deterministic `v1::Document`. Every traversed construct that is
+//! not modeled is recorded in a bounded, deterministic compatibility report
+//! under the dual-axis disposition taxonomy (`35-DISPOSITION-TAXONOMY.md`);
 //! nothing is dropped silently. Constructs not yet in the semantic model (tables
 //! as structure, fields, headers/footers, per-paragraph section breaks, tracked
 //! changes, ...) are still fully round-trippable: in `Retention` mode the source
