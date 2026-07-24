@@ -164,6 +164,34 @@ pub struct DocumentRelationship {
     pub resolved_part: Option<String>,
 }
 
+/// One admitted part in the deterministic source-package manifest.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PartManifestEntry {
+    /// Normalized package-relative part name.
+    pub part_name: String,
+    /// Declared content type, if `[Content_Types].xml` resolves one.
+    pub content_type: Option<String>,
+    /// Compressed bytes declared by ZIP metadata.
+    pub compressed_bytes: u64,
+    /// Expanded bytes declared by ZIP metadata.
+    pub expanded_bytes: u64,
+    /// Accepted compression method.
+    pub compression: PartCompression,
+}
+
+/// A deterministic, bounded snapshot of admitted source-package facts. This is
+/// the Tier-1 provenance artifact (ADR-027 D5) and a component of the future
+/// import bundle; it carries no decompressed document text.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourcePackageSnapshot {
+    /// Admitted parts ordered by normalized part name.
+    pub parts: Vec<PartManifestEntry>,
+    /// Normalized part name of the discovered main document.
+    pub main_document_part: String,
+    /// The main document's resolved relationships, ordered by id.
+    pub main_document_relationships: Vec<DocumentRelationship>,
+}
+
 /// Thread-safe cancellation flag for package admission and part reads.
 #[derive(Clone, Debug, Default)]
 pub struct CancellationToken {
@@ -366,6 +394,31 @@ impl<'a> DocxPackage<'a> {
     #[must_use]
     pub fn main_document_relationships(&self) -> &[DocumentRelationship] {
         &self.main_document_relationships
+    }
+
+    /// Builds the deterministic source-package snapshot (part manifest with
+    /// content types, the main document, and its relationship graph).
+    #[must_use]
+    pub fn source_snapshot(&self) -> SourcePackageSnapshot {
+        let parts = self
+            .entries
+            .iter()
+            .map(|entry| PartManifestEntry {
+                part_name: entry.part_name.clone(),
+                content_type: self
+                    .content_types
+                    .content_type_of(&entry.part_name)
+                    .map(str::to_owned),
+                compressed_bytes: entry.compressed_bytes,
+                expanded_bytes: entry.expanded_bytes,
+                compression: entry.compression,
+            })
+            .collect();
+        SourcePackageSnapshot {
+            parts,
+            main_document_part: self.main_document_part.clone(),
+            main_document_relationships: self.main_document_relationships.clone(),
+        }
     }
 
     /// Returns deterministic part metadata ordered by normalized part name.
@@ -1862,5 +1915,76 @@ mod tests {
         let bytes = discovery_package(&content_types, &root_rels, DOCUMENT_PART);
         let package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
         assert!(package.main_document_relationships().is_empty());
+    }
+
+    #[test]
+    fn source_snapshot_is_deterministic_with_content_types_and_relationships() {
+        let content_types = format!(
+            "{CONTENT_TYPES_HEAD}<Default Extension=\"png\" ContentType=\"image/png\"/>\
+             <Override PartName=\"/word/document.xml\" ContentType=\"{MAIN_TYPE}\"/></Types>"
+        )
+        .into_bytes();
+        let root_rels = relationships(&office_document_relationship(
+            OFFICE_DOCUMENT_REL_TRANSITIONAL,
+            DOCUMENT_PART,
+            false,
+        ));
+        let document_rels: &[u8] = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+        let entries: [(&str, &[u8], CompressionMethod); 5] = [
+            (
+                CONTENT_TYPES_PART,
+                content_types.as_slice(),
+                CompressionMethod::Stored,
+            ),
+            (
+                ROOT_RELATIONSHIPS_PART,
+                root_rels.as_slice(),
+                CompressionMethod::Stored,
+            ),
+            (DOCUMENT_PART, DOCUMENT, CompressionMethod::Deflated),
+            (
+                "word/_rels/document.xml.rels",
+                document_rels,
+                CompressionMethod::Stored,
+            ),
+            (
+                "word/media/image1.png",
+                b"PNGDATA",
+                CompressionMethod::Stored,
+            ),
+        ];
+        let bytes = package(&entries);
+        let package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+
+        let snapshot = package.source_snapshot();
+        // Deterministic: identical to a second call.
+        assert_eq!(snapshot, package.source_snapshot());
+        // Parts ordered by name, with resolved content types.
+        let names: Vec<&str> = snapshot
+            .parts
+            .iter()
+            .map(|part| part.part_name.as_str())
+            .collect();
+        assert!(names.windows(2).all(|pair| pair[0] < pair[1]));
+        let document = snapshot
+            .parts
+            .iter()
+            .find(|part| part.part_name == DOCUMENT_PART)
+            .unwrap();
+        assert_eq!(document.content_type.as_deref(), Some(MAIN_TYPE));
+        let image = snapshot
+            .parts
+            .iter()
+            .find(|part| part.part_name == "word/media/image1.png")
+            .unwrap();
+        assert_eq!(image.content_type.as_deref(), Some("image/png"));
+        assert_eq!(snapshot.main_document_part, DOCUMENT_PART);
+        assert_eq!(snapshot.main_document_relationships.len(), 1);
+        assert_eq!(
+            snapshot.main_document_relationships[0]
+                .resolved_part
+                .as_deref(),
+            Some("word/media/image1.png")
+        );
     }
 }
