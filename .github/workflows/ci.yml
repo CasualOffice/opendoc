@@ -241,13 +241,13 @@ jobs:
         run: |
           jq -r '.fixtures[] | "\(.sha256)  fixtures/\(.path)"' fixtures/manifest.json \
             | sha256sum --check -
-      - name: Reject unmanifested or missing generated fixtures
+      - name: Reject unmanifested or missing fixtures
         run: |
           jq -r '.fixtures[].path' fixtures/manifest.json | sort > "${RUNNER_TEMP}/manifest-paths"
-          for fixture in fixtures/generated/*; do
-            basename "${fixture}"
-          done | sed 's|^|generated/|' | sort > "${RUNNER_TEMP}/generated-paths"
-          diff -u "${RUNNER_TEMP}/manifest-paths" "${RUNNER_TEMP}/generated-paths"
+          for fixture in fixtures/corpus/*.docx fixtures/generated/*.docx; do
+            printf '%s\n' "${fixture#fixtures/}"
+          done | sort > "${RUNNER_TEMP}/actual-paths"
+          diff -u "${RUNNER_TEMP}/manifest-paths" "${RUNNER_TEMP}/actual-paths"
       - name: Validate committed benchmark baselines
         run: |
           for report in benchmarks/baselines/*.json; do
