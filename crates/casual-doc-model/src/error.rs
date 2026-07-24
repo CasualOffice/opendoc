@@ -95,6 +95,14 @@ pub enum ModelError {
     },
     /// A v0 source with a non-empty extension map cannot migrate to v1.
     UnsupportedV0Extensions,
+    /// A table had no rows (v1).
+    EmptyTable(NodeId),
+    /// A table row had no cells (v1).
+    EmptyTableRow(NodeId),
+    /// A table cell had no block content (v1).
+    EmptyTableCell(NodeId),
+    /// A table nested deeper than the supported bound (v1).
+    TableNestingTooDeep(NodeId),
 }
 
 impl fmt::Display for ModelError {
@@ -182,6 +190,15 @@ impl fmt::Display for ModelError {
             ),
             Self::UnsupportedV0Extensions => {
                 formatter.write_str("v0 extension map cannot be represented in schema v1")
+            }
+            Self::EmptyTable(id) => write!(formatter, "table {id} has no rows"),
+            Self::EmptyTableRow(id) => write!(formatter, "table row {id} has no cells"),
+            Self::EmptyTableCell(id) => write!(formatter, "table cell {id} has no block content"),
+            Self::TableNestingTooDeep(id) => {
+                write!(
+                    formatter,
+                    "table {id} nests deeper than the supported bound"
+                )
             }
         }
     }

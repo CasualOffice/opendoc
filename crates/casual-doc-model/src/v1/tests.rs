@@ -40,7 +40,9 @@ fn marks_migrate_to_run_properties() {
 
     let mut ids = IdGenerator::new(5);
     let migrated = Document::from_v0(&source, &mut ids).unwrap();
-    let BlockNode::Paragraph(result) = &migrated.body()[0];
+    let BlockNode::Paragraph(result) = &migrated.body()[0] else {
+        panic!("expected a paragraph");
+    };
     let InlineNode::Run(run) = &result.inlines[0] else {
         panic!("expected a run");
     };
@@ -381,7 +383,9 @@ fn migration_skips_ids_that_collide_with_preserved_paragraph_ids() {
     let source = document_with_paragraph_ids(NodeId::from_parts(4, 9).unwrap(), paragraph);
 
     let migrated = Document::from_v0(&source, &mut IdGenerator::new(4)).unwrap();
-    let BlockNode::Paragraph(result) = &migrated.body()[0];
+    let BlockNode::Paragraph(result) = &migrated.body()[0] else {
+        panic!("expected a paragraph");
+    };
     let InlineNode::Run(run) = &result.inlines[0] else {
         panic!("expected a run");
     };
@@ -547,6 +551,275 @@ fn over_domain_hyperlink_url_is_rejected() {
         ModelError::PropertyValueOutOfDomain {
             property: "hyperlink.external.url"
         }
+    ));
+}
+
+// ---- schema v1 tables ----------------------------------------------------
+
+/// A distinct node id in namespace 1 (block ids); document ids use namespace 9.
+fn tid(counter: u64) -> NodeId {
+    NodeId::from_parts(1, counter).unwrap()
+}
+
+fn paragraph_block(id: NodeId) -> BlockNode {
+    BlockNode::Paragraph(Paragraph {
+        id,
+        properties: ParagraphProperties::default(),
+        inlines: Vec::new(),
+    })
+}
+
+fn cell(id: NodeId, properties: TableCellProperties, blocks: Vec<BlockNode>) -> TableCell {
+    TableCell {
+        id,
+        properties,
+        blocks,
+    }
+}
+
+fn table_document(body: Vec<BlockNode>) -> Result<Document, ModelError> {
+    Document::new(
+        NodeId::from_parts(9, 1).unwrap(),
+        body,
+        Definitions::default(),
+    )
+}
+
+#[test]
+fn valid_table_with_merges_validates_and_round_trips_json() {
+    // A 2x2 table: top-left spans two grid columns (gridSpan), and the
+    // right column vertically merges (Restart over Continue).
+    let table = BlockNode::Table(Table {
+        id: tid(10),
+        grid: vec![
+            GridColumn {
+                width_twips: Some(2_880),
+            },
+            GridColumn {
+                width_twips: Some(2_880),
+            },
+        ],
+        rows: vec![
+            TableRow {
+                id: tid(11),
+                cells: vec![
+                    cell(
+                        tid(12),
+                        TableCellProperties {
+                            grid_span: Some(2),
+                            ..TableCellProperties::default()
+                        },
+                        vec![paragraph_block(tid(13))],
+                    ),
+                    cell(
+                        tid(14),
+                        TableCellProperties {
+                            vertical_merge: Some(VerticalMerge::Restart),
+                            ..TableCellProperties::default()
+                        },
+                        vec![paragraph_block(tid(15))],
+                    ),
+                ],
+            },
+            TableRow {
+                id: tid(16),
+                cells: vec![
+                    cell(
+                        tid(17),
+                        TableCellProperties::default(),
+                        vec![paragraph_block(tid(18))],
+                    ),
+                    cell(
+                        tid(19),
+                        TableCellProperties {
+                            vertical_merge: Some(VerticalMerge::Continue),
+                            ..TableCellProperties::default()
+                        },
+                        vec![paragraph_block(tid(20))],
+                    ),
+                ],
+            },
+        ],
+    });
+
+    let document = table_document(vec![table]).unwrap();
+    let json = document.to_json().unwrap();
+    let reloaded = Document::from_json(&json, SnapshotLimits::default()).unwrap();
+    assert_eq!(document, reloaded);
+
+    let BlockNode::Table(table) = &document.body()[0] else {
+        panic!("expected a table");
+    };
+    assert_eq!(table.grid.len(), 2);
+    assert_eq!(table.rows[0].cells[0].properties.grid_span, Some(2));
+    assert_eq!(
+        table.rows[0].cells[1].properties.vertical_merge,
+        Some(VerticalMerge::Restart)
+    );
+    assert_eq!(
+        table.rows[1].cells[1].properties.vertical_merge,
+        Some(VerticalMerge::Continue)
+    );
+}
+
+#[test]
+fn empty_table_is_rejected() {
+    let table = BlockNode::Table(Table {
+        id: tid(10),
+        grid: Vec::new(),
+        rows: Vec::new(),
+    });
+    assert!(matches!(
+        table_document(vec![table]),
+        Err(ModelError::EmptyTable(_))
+    ));
+}
+
+#[test]
+fn table_row_without_cells_is_rejected() {
+    let table = BlockNode::Table(Table {
+        id: tid(10),
+        grid: Vec::new(),
+        rows: vec![TableRow {
+            id: tid(11),
+            cells: Vec::new(),
+        }],
+    });
+    assert!(matches!(
+        table_document(vec![table]),
+        Err(ModelError::EmptyTableRow(_))
+    ));
+}
+
+#[test]
+fn table_cell_without_blocks_is_rejected() {
+    let table = BlockNode::Table(Table {
+        id: tid(10),
+        grid: Vec::new(),
+        rows: vec![TableRow {
+            id: tid(11),
+            cells: vec![cell(tid(12), TableCellProperties::default(), Vec::new())],
+        }],
+    });
+    assert!(matches!(
+        table_document(vec![table]),
+        Err(ModelError::EmptyTableCell(_))
+    ));
+}
+
+#[test]
+fn grid_span_out_of_domain_is_rejected() {
+    let table = BlockNode::Table(Table {
+        id: tid(10),
+        grid: Vec::new(),
+        rows: vec![TableRow {
+            id: tid(11),
+            cells: vec![cell(
+                tid(12),
+                TableCellProperties {
+                    grid_span: Some(0),
+                    ..TableCellProperties::default()
+                },
+                vec![paragraph_block(tid(13))],
+            )],
+        }],
+    });
+    assert!(matches!(
+        table_document(vec![table]),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "table.cell.grid_span"
+        })
+    ));
+}
+
+#[test]
+fn duplicate_id_inside_a_cell_is_rejected() {
+    // The cell id collides with a nested paragraph id.
+    let table = BlockNode::Table(Table {
+        id: tid(10),
+        grid: Vec::new(),
+        rows: vec![TableRow {
+            id: tid(11),
+            cells: vec![cell(
+                tid(12),
+                TableCellProperties::default(),
+                vec![paragraph_block(tid(12))],
+            )],
+        }],
+    });
+    assert!(matches!(
+        table_document(vec![table]),
+        Err(ModelError::DuplicateNodeId(_))
+    ));
+}
+
+fn wrap_in_tables(depth: u32, counter: &mut u64) -> BlockNode {
+    if depth == 0 {
+        *counter += 1;
+        return paragraph_block(tid(*counter));
+    }
+    let inner = wrap_in_tables(depth - 1, counter);
+    *counter += 1;
+    let table_id = tid(*counter);
+    *counter += 1;
+    let row_id = tid(*counter);
+    *counter += 1;
+    let cell_id = tid(*counter);
+    BlockNode::Table(Table {
+        id: table_id,
+        grid: Vec::new(),
+        rows: vec![TableRow {
+            id: row_id,
+            cells: vec![cell(cell_id, TableCellProperties::default(), vec![inner])],
+        }],
+    })
+}
+
+#[test]
+fn table_nesting_within_bound_validates() {
+    let mut counter = 0;
+    let block = wrap_in_tables(MAX_TABLE_DEPTH, &mut counter);
+    assert!(table_document(vec![block]).is_ok());
+}
+
+#[test]
+fn table_nesting_beyond_bound_is_rejected() {
+    let mut counter = 0;
+    let block = wrap_in_tables(MAX_TABLE_DEPTH + 1, &mut counter);
+    assert!(matches!(
+        table_document(vec![block]),
+        Err(ModelError::TableNestingTooDeep(_))
+    ));
+}
+
+#[test]
+fn nested_table_block_count_is_bounded() {
+    // A table (1) + row (1) + cell (1) + nested paragraph (1) = 4 blocks; a
+    // max_blocks of 3 must reject via the snapshot limit, not silently pass.
+    let table = BlockNode::Table(Table {
+        id: tid(10),
+        grid: Vec::new(),
+        rows: vec![TableRow {
+            id: tid(11),
+            cells: vec![cell(
+                tid(12),
+                TableCellProperties::default(),
+                vec![paragraph_block(tid(13))],
+            )],
+        }],
+    });
+    let document = table_document(vec![table]).unwrap();
+    let json = document.to_json().unwrap();
+    let limits = SnapshotLimits {
+        max_blocks: 3,
+        ..SnapshotLimits::default()
+    };
+    assert!(matches!(
+        Document::from_json(&json, limits),
+        Err(SnapshotError::LimitExceeded {
+            limit: "body_blocks",
+            ..
+        })
     ));
 }
 
