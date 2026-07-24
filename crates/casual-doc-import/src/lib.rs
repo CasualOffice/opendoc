@@ -11,8 +11,11 @@
 //! dropped silently. Numbering, sections, tables (as structure), media, fields,
 //! headers/footers, and tracked changes are reported, not yet modeled.
 //!
-//! Import runs in Semantic mode (report-and-drop). Round-trip fidelity
-//! (Retention mode: preserve unmapped constructs) is the next milestone.
+//! Import runs in `Semantic` mode (report-and-drop) by default. `Retention`
+//! mode additionally keeps the original main-document bytes verbatim (the D5
+//! tier-1 byte floor), so unmapped constructs are `preserved` and an unedited
+//! document round-trips exactly. Edit-tolerant tier-2 per-construct provenance
+//! and the Phase-2 writer are the next round-trip milestones.
 
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]
@@ -22,11 +25,13 @@ mod config;
 mod error;
 mod properties;
 mod report;
+mod retain;
 mod styles;
 
-pub use config::ImportConfig;
+pub use config::{ImportConfig, ImportMode};
 pub use error::ImportError;
 pub use report::{CompatibilityEntry, CompatibilityReport, ModelOutcome, RetentionOutcome};
+pub use retain::RetainedSource;
 
 use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{BlockNode, Definitions, Document, Paragraph, ParagraphProperties};
@@ -42,6 +47,8 @@ pub struct Import {
     pub document: Document,
     /// The compatibility report.
     pub report: CompatibilityReport,
+    /// Source retained for round-trip; `Some` only in `Retention` mode.
+    pub retained_source: Option<RetainedSource>,
 }
 
 /// Imports the main document of an admitted DOCX package into a v1 document,
@@ -78,6 +85,27 @@ pub(crate) fn import_with_sources(
     config: ImportConfig,
 ) -> Result<Import, ImportError> {
     config.validate()?;
+
+    // Retention mode retains the original main-document bytes verbatim (the
+    // tier-1 byte floor) so unmapped constructs are preserved for round-trip.
+    let retained_source = match config.mode {
+        ImportMode::Retention => {
+            if document_xml.len() > config.max_text_bytes {
+                return Err(ImportError::LimitExceeded {
+                    limit: "retained_bytes",
+                });
+            }
+            Some(RetainedSource {
+                main_document: document_xml.to_vec(),
+            })
+        }
+        ImportMode::Semantic => None,
+    };
+    let retention = match config.mode {
+        ImportMode::Retention => RetentionOutcome::Preserved,
+        ImportMode::Semantic => RetentionOutcome::NotRetained,
+    };
+
     let mut ids = IdGenerator::new(config.id_namespace);
     // documentId is the first allocated id (deterministic).
     let document_id = ids
@@ -110,7 +138,8 @@ pub(crate) fn import_with_sources(
     let document = Document::new(document_id, body, definitions).map_err(ImportError::Model)?;
     Ok(Import {
         document,
-        report: reporter.into_report(),
+        report: reporter.into_report(retention),
+        retained_source,
     })
 }
 

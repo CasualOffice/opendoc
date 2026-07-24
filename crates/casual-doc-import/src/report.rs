@@ -72,7 +72,10 @@ impl Reporter {
         }
     }
 
-    pub(crate) fn into_report(self) -> CompatibilityReport {
+    /// Builds the report, dispositioning every reported (unmapped) construct
+    /// with `retention` — `NotRetained` in Semantic mode, `Preserved` in
+    /// Retention mode (covered by the retained source byte floor).
+    pub(crate) fn into_report(self, retention: RetentionOutcome) -> CompatibilityReport {
         let mut entries: Vec<CompatibilityEntry> = self
             .counts
             .into_iter()
@@ -80,7 +83,7 @@ impl Reporter {
                 feature,
                 occurrences,
                 model_outcome: ModelOutcome::Omitted,
-                retention_outcome: RetentionOutcome::NotRetained,
+                retention_outcome: retention,
             })
             .collect();
         if self.overflow > 0 {
@@ -88,7 +91,7 @@ impl Reporter {
                 feature: "(overflow)".to_owned(),
                 occurrences: self.overflow,
                 model_outcome: ModelOutcome::Omitted,
-                retention_outcome: RetentionOutcome::NotRetained,
+                retention_outcome: retention,
             });
         }
         entries.sort_by(|left, right| left.feature.cmp(&right.feature));

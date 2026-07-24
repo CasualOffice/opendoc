@@ -4,8 +4,8 @@ use casual_doc_model::v1::{
 use casual_doc_ooxml::DocxPackage;
 
 use crate::{
-    Import, ImportConfig, ImportError, ModelOutcome, RetentionOutcome, import_main_document_xml,
-    import_package, import_with_sources,
+    Import, ImportConfig, ImportError, ImportMode, ModelOutcome, RetentionOutcome,
+    import_main_document_xml, import_package, import_with_sources,
 };
 
 fn import(xml: &[u8]) -> Import {
@@ -450,4 +450,63 @@ fn nested_rpr_does_not_drop_following_formatting() {
         panic!("expected run");
     };
     assert_eq!(run.properties.bold, Some(true));
+}
+
+#[test]
+fn retention_mode_retains_source_and_marks_unmapped_preserved() {
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:tbl><w:tr><w:tc><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>
+    </w:body></w:document>"#;
+    let config = ImportConfig {
+        mode: ImportMode::Retention,
+        ..ImportConfig::default()
+    };
+    let import = import_main_document_xml(xml, config).unwrap();
+
+    // The source is retained byte-identically (tier-1 byte floor): an unedited
+    // document can be reproduced verbatim.
+    assert_eq!(
+        import.retained_source.as_ref().unwrap().main_document,
+        xml.to_vec()
+    );
+
+    // Unmapped constructs are now preserved rather than dropped.
+    assert!(
+        import
+            .report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "tbl")
+    );
+    for entry in &import.report.entries {
+        assert_eq!(entry.model_outcome, ModelOutcome::Omitted);
+        assert_eq!(entry.retention_outcome, RetentionOutcome::Preserved);
+    }
+
+    // Semantic mode retains nothing and reports not-retained.
+    let semantic = import_main_document_xml(xml, ImportConfig::default()).unwrap();
+    assert!(semantic.retained_source.is_none());
+    assert!(
+        semantic
+            .report
+            .entries
+            .iter()
+            .all(|entry| entry.retention_outcome == RetentionOutcome::NotRetained)
+    );
+}
+
+#[test]
+fn retention_over_the_byte_ceiling_fails_closed() {
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+    let config = ImportConfig {
+        mode: ImportMode::Retention,
+        max_text_bytes: xml.len() - 1,
+        ..ImportConfig::default()
+    };
+    assert_eq!(
+        import_main_document_xml(xml, config),
+        Err(ImportError::LimitExceeded {
+            limit: "retained_bytes"
+        })
+    );
 }
