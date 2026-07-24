@@ -78,6 +78,7 @@ struct ContentFrame {
     pending_embed: Option<String>,
     pending_extent: Option<Extent>,
     drawing_extra: bool,
+    pict_depth: u32,
     hyperlink: Option<HyperlinkAccumulator>,
     hyperlink_depth: u32,
     field: Option<FieldAccumulator>,
@@ -156,6 +157,9 @@ struct BodyParser<'a> {
     pending_embed: Option<String>,
     pending_extent: Option<Extent>,
     drawing_extra: bool,
+    /// Depth of an open `w:pict` (legacy VML picture); `pending_embed` holds its
+    /// `v:imagedata@r:id` until the picture closes.
+    pict_depth: u32,
     hyperlink: Option<HyperlinkAccumulator>,
     hyperlink_depth: u32,
     /// The open field, if any (simple or complex). Mutually exclusive with an
@@ -256,6 +260,7 @@ impl<'a> BodyParser<'a> {
             pending_embed: None,
             pending_extent: None,
             drawing_extra: false,
+            pict_depth: 0,
             hyperlink: None,
             hyperlink_depth: 0,
             field: None,
@@ -641,6 +646,17 @@ impl BodyParser<'_> {
                 }
             }
             b"hlinkClick" | b"svgBlip" if self.drawing_depth > 0 => self.drawing_extra = true,
+            // A legacy VML picture (`w:pict`) carries its image as
+            // `v:imagedata@r:id`; resolve it through the same media table.
+            b"pict" if self.run_open => {
+                self.pict_depth += 1;
+                if self.pict_depth == 1 {
+                    self.pending_embed = None;
+                }
+            }
+            b"imagedata" if self.pict_depth > 0 && self.pending_embed.is_none() => {
+                self.pending_embed = attribute_value(element, b"id");
+            }
             // Only a true body-level `w:sectPr` is a document section; a `sectPr`
             // inside a text box (frames non-empty), a notes part, or a
             // header/footer part is not, so it is reported instead of silently
@@ -890,6 +906,12 @@ impl BodyParser<'_> {
                     self.commit_drawing();
                 }
             }
+            b"pict" if self.pict_depth > 0 => {
+                self.pict_depth -= 1;
+                if self.pict_depth == 0 {
+                    self.commit_pict();
+                }
+            }
             b"hyperlink" if self.hyperlink_depth > 0 => {
                 if self.hyperlink_depth == 1 {
                     if let Some(accumulator) = self.hyperlink.take() {
@@ -959,6 +981,23 @@ impl BodyParser<'_> {
         }
     }
 
+    /// Commits a legacy VML picture that just closed. A resolvable
+    /// `v:imagedata@r:id` becomes a `Drawing` (no EMU extent — VML sizes in CSS,
+    /// which the model does not capture); an unresolved id or an image-less shape
+    /// (e.g. a VML text box, handled elsewhere) is reported.
+    fn commit_pict(&mut self) {
+        match self.pending_embed.take() {
+            Some(id) => match self.media_index.get(&id) {
+                Some(media) => self.push_segment(Segment::Drawing {
+                    media: *media,
+                    extent: None,
+                }),
+                None => self.reporter.report(b"pict"),
+            },
+            None => self.reporter.report(b"pict"),
+        }
+    }
+
     fn build_section(&mut self, accumulator: SectionAccumulator) -> Result<(), ImportError> {
         let id = SectionId::new(self.next_id()?);
         let page_size = PageSize {
@@ -1011,6 +1050,7 @@ impl BodyParser<'_> {
             pending_embed: self.pending_embed.take(),
             pending_extent: self.pending_extent.take(),
             drawing_extra: std::mem::take(&mut self.drawing_extra),
+            pict_depth: std::mem::take(&mut self.pict_depth),
             hyperlink: self.hyperlink.take(),
             hyperlink_depth: std::mem::take(&mut self.hyperlink_depth),
             field: self.field.take(),
@@ -1055,6 +1095,7 @@ impl BodyParser<'_> {
         self.pending_embed = frame.pending_embed;
         self.pending_extent = frame.pending_extent;
         self.drawing_extra = frame.drawing_extra;
+        self.pict_depth = frame.pict_depth;
         self.hyperlink = frame.hyperlink;
         self.hyperlink_depth = frame.hyperlink_depth;
         self.field = frame.field;
@@ -1267,6 +1308,10 @@ impl BodyParser<'_> {
         self.instr_buffer.clear();
         self.drawing_depth = 0;
         self.blipfill_depth = 0;
+        // Parity with the drawing counters: reset the VML picture depth too, so a
+        // pict left open across a paragraph flush cannot leak and defeat the next
+        // picture's `imagedata` guard.
+        self.pict_depth = 0;
         let paragraph_id = self
             .paragraph_id
             .take()
