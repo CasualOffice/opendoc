@@ -557,3 +557,40 @@ fn retention_mode_via_package_retains_all_parts_verbatim() {
     );
     assert!(retained.parts.contains_key("_rels/.rels"));
 }
+
+#[test]
+fn real_producer_libreoffice_document_imports_expected_text() {
+    // A real LibreOffice-produced .docx (styles, sectPr, unicode). Locks in
+    // realistic-import text extraction in CI (no soffice needed); the harness
+    // separately confirms this matches LibreOffice's own text.
+    let bytes = include_bytes!("../../../fixtures/corpus/real-producer-libreoffice.docx");
+    let mut package = DocxPackage::open(bytes, casual_doc_ooxml::PackageLimits::default()).unwrap();
+    let import = import_package(&mut package, ImportConfig::default()).unwrap();
+
+    let texts: Vec<String> = import
+        .document
+        .body()
+        .iter()
+        .map(|BlockNode::Paragraph(paragraph)| {
+            paragraph
+                .inlines
+                .iter()
+                .filter_map(|inline| match inline {
+                    InlineNode::Run(run) => Some(run.text.as_str()),
+                    _ => None,
+                })
+                .collect::<String>()
+        })
+        .filter(|text| !text.is_empty())
+        .collect();
+
+    assert_eq!(
+        texts,
+        vec![
+            "OpenDoc Fidelity Sample",
+            "The quick brown fox jumps over the lazy dog.",
+            "Formatting: bold, italic, underline.",
+            "Unicode: Cafe, resume, naive, 日本語, العربية, emoji family.",
+        ]
+    );
+}
