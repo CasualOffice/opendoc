@@ -48,6 +48,8 @@ Update this file whenever work begins, changes scope, or finishes.
 | ID | Title | Owner | Status | Links |
 | --- | --- | --- | --- | --- |
 | P1A-001 | Semantic DOCX import design | Codex | Designing | `32-PHASE-1A-SEMANTIC-DOCX-IMPORT-DESIGN.md`; implementation is blocked until design acceptance. |
+| P1A-002 | DOCX engine competitor source study | Codex | In review | `33-DOCX-ENGINE-COMPETITOR-RESEARCH.md`; pinned-source findings complete. |
+| P1A-003 | OOXML fidelity architecture | Codex | Designing | `34-OOXML-FIDELITY-ARCHITECTURE.md`; candidate ADR-027 is not accepted. |
 
 ## Completed Work
 

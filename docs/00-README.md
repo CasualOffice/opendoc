@@ -55,6 +55,8 @@ The runtime is not a UI toolkit and is not a DOCX-only editor. It is a determini
 30. `30-PHASE-0-CLOSURE-DESIGN.md` — corpus, fuzzing, and exit-evidence closure.
 31. `31-PHASE-0-EXIT-REPORT.md` — accepted Phase 0 evidence and deferrals.
 32. `32-PHASE-1A-SEMANTIC-DOCX-IMPORT-DESIGN.md` — proposed semantic import and compatibility-report contract.
+33. `33-DOCX-ENGINE-COMPETITOR-RESEARCH.md` — source-architecture study of DOCX import, editing, preservation, and export.
+34. `34-OOXML-FIDELITY-ARCHITECTURE.md` — proposed dual-representation fidelity and future save-planning contract.
 
 ## Recommended project names
 

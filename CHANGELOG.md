@@ -14,6 +14,10 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Added
 
+- Pinned-source architecture research for LibreOffice, ONLYOFFICE, Open XML
+  SDK, and Apache POI, plus a proposed OOXML fidelity architecture covering
+  source snapshots, provenance, typed preservation, mapping rules, and future
+  save planning.
 - Production project foundation, design process, tracker, security policy, and
   CI contract.
 - Initial normalized model, atomic text-insertion transaction, position mapping,

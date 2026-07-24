@@ -110,7 +110,7 @@ The first slice permits:
 
 - `serde` for explicit snapshot value serialization;
 - `unicode-segmentation` for grapheme-boundary semantics.
-- exactly `zip` 7.0.0 with minimal pure-Rust Deflate features for the
+- exactly `zip` 7.2.0 with minimal pure-Rust Deflate features for the
   security-reviewed DOCX package boundary.
 
 Every added dependency requires:

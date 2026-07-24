@@ -54,7 +54,11 @@ Layout generates a display list. A renderer consumes that display list. Renderin
 
 ### Import preserves intent and unknown data
 
-DOCX import maps recognized structures into normalized nodes and stores preservable unknown XML fragments/relationships in an extension bag.
+DOCX import maps recognized structures into normalized nodes while retaining
+bounded source provenance and safely preservable unsupported content outside
+the live editing model. Candidate ADR-027 proposes an immutable source snapshot,
+typed preservation ledger, and one import/export mapping registry; see
+`34-OOXML-FIDELITY-ARCHITECTURE.md`.
 
 ### Host controls policy
 
@@ -132,7 +136,9 @@ Converts layout fragments plus decorations into a renderer-neutral display list.
 
 ### Import/export
 
-DOCX package reader/writer, OOXML mapping, relationships, media, style resolution, numbering, themes, and preservation bags.
+DOCX package reader/writer, source-shaped OOXML decoding, relationships, media,
+style resolution, numbering, themes, provenance, typed preservation, and a
+versioned bidirectional mapping registry.
 
 ### Resource services
 

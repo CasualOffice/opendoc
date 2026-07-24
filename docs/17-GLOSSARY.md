@@ -65,7 +65,7 @@ A rule that every committed normalized document must satisfy.
 
 **Extension bag**
 Opaque, bounded, non-executable data retained to preserve safely attached
-format-specific content the runtime does not fully understand.
+model extensions. It is not the DOCX source snapshot or preservation ledger.
 
 ## Editing Terms
 
@@ -135,6 +135,25 @@ and visual tests.
 An OPC ZIP package containing WordprocessingML, relationships, media, and
 related OOXML parts.
 
+**Source package snapshot**
+An immutable, bounded record of an admitted package's parts, relationships,
+hashes, and explicitly retained safe bytes.
+
+**Provenance map**
+Internal records connecting normalized semantic owners and properties to
+source regions and mapping-rule versions without making OOXML locations model
+identity.
+
+**Preservation ledger**
+Typed, bounded records for safely retained unsupported or source-specific
+content, including ownership, order, invalidation, conflict, and future save
+disposition.
+
+**Mapping registry**
+A versioned feature registry that owns source decoding, normalized mapping,
+preservation, reverse mapping, dirty scope, security policy, and required test
+evidence.
+
 **Supported**
 Imported, rendered, editable, and exported with defined semantics.
 
@@ -142,7 +161,8 @@ Imported, rendered, editable, and exported with defined semantics.
 Displayed, but editing is restricted to protect fidelity.
 
 **Preserved**
-Retained for round trip even though the runtime cannot fully render or edit it.
+Retained in validated source-snapshot or preservation-ledger data even though
+the runtime cannot fully render or edit it. A warning alone is not preservation.
 
 **Flattened**
 Converted to a simpler representation with an explicit warning.

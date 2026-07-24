@@ -73,7 +73,9 @@ Reference rendering backends.
 
 ### `casual-doc-ooxml`
 
-ZIP package security, XML parser/writer, WordprocessingML/DrawingML mapping, relationships, media, preservation.
+ZIP package security, XML parser/writer, WordprocessingML/DrawingML mapping,
+relationships, media, immutable source snapshots, provenance, typed
+preservation, and future export planning.
 
 ### `casual-doc-collab`
 
@@ -113,9 +115,10 @@ DocumentSession
 Host bytes
   -> format sniff
   -> bounded package reader
-  -> parse package parts
-  -> OOXML normalization
-  -> validate model
+  -> immutable source snapshot and package graph
+  -> source-shaped OOXML decoding
+  -> normalized model + provenance + preservation ledger + report
+  -> validate atomic import bundle
   -> build indexes
   -> create revision 0
   -> request required resources
@@ -156,15 +159,19 @@ Viewport request
 ## 7. Save flow
 
 ```text
-Session snapshot
+Session snapshot + dirty regions
+  + source snapshot + provenance + preservation ledger
   -> normalize/check invariants
-  -> OOXML projection
-  -> merge preserved extension data
+  -> mapping-registry export plan
+  -> copy, regenerate, merge, omit, or block by owned region
   -> write relationships/media
   -> deterministic ZIP package
-  -> validation report
+  -> package validation + compatibility report
   -> bytes/stream to host
 ```
+
+The detailed save architecture is proposed, not accepted or implemented. See
+`34-OOXML-FIDELITY-ARCHITECTURE.md`.
 
 ## 8. Public host interfaces
 

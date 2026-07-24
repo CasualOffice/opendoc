@@ -61,7 +61,7 @@ report.
 | --- | --- | --- |
 | Normalized JSON snapshot | Yes | Strict bounded schema v0 load/export implemented. |
 | Canonical normalized CBOR | Yes | Designed, not implemented. |
-| DOCX import/export | Yes | Bounded ZIP inspection implemented; semantic import/export not implemented. |
+| DOCX import/export | Yes | Bounded ZIP inspection implemented; semantic import is designing, and writer implementation remains Phase 2. |
 | TXT import/export | Yes | Planned as a simple conformance path. |
 | PDF render/export | Yes | Backend decision pending. |
 | ODT import/export | Later | Not a v1 release gate. |

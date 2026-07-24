@@ -13,12 +13,12 @@ does not parse WordprocessingML into the normalized document yet.
 
 ## Dependency Decision
 
-Pin `zip` 7.0.0 with default features disabled and the pure-Rust Deflate path
+Pin `zip` 7.2.0 with default features disabled and the pure-Rust Deflate path
 enabled.
 
 Reasons:
 
-- `zip` 7.0.0 declares Rust 1.83 support, compatible with OpenDoc's Rust 1.85
+- `zip` 7.2.0 declares Rust 1.83 support, compatible with OpenDoc's Rust 1.85
   MSRV;
 - the current 8.6.0 release declares Rust 1.88 and cannot be adopted without an
   explicit OpenDoc MSRV decision;
@@ -28,7 +28,7 @@ Reasons:
 
 Primary references checked 2026-07-24:
 
-- [zip 7.0.0 package metadata](https://crates.io/crates/zip/7.0.0);
+- [zip 7.2.0 package metadata](https://crates.io/crates/zip/7.2.0);
 - [zip 8.6.0 documentation and MSRV](https://docs.rs/zip/8.6.0/zip/);
 - [ZipFile path and size APIs](https://docs.rs/zip/8.6.0/zip/read/struct.ZipFile.html).
 

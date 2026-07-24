@@ -4,6 +4,10 @@
 **Status:** Complete
 **Research checked:** 2026-07-24
 
+Pass 2, the source-architecture study of LibreOffice, ONLYOFFICE, Open XML SDK,
+and Apache POI, is complete in `33-DOCX-ENGINE-COMPETITOR-RESEARCH.md`. Its
+proposed OpenDoc consequence is `34-OOXML-FIDELITY-ARCHITECTURE.md`.
+
 ## Purpose
 
 Competitive analysis informs product boundaries, compatibility expectations, SDK
@@ -148,6 +152,8 @@ Primary product and project documentation checked on 2026-07-24:
 
 ## Next Pass
 
-Pass 2 begins with runnable, rights-cleared DOCX fixtures and records measured
-import, edit, export, pagination, and warning behavior. Marketing feature lists
-are not accepted as fidelity evidence.
+Pass 3 uses runnable, rights-reviewed DOCX fixtures and records measured import,
+edit, export, pagination, preservation, and warning behavior. It must separate
+observed results from source-code inference and record product versions, input
+hashes, commands, and environment limitations. Marketing feature lists are not
+accepted as fidelity evidence.
