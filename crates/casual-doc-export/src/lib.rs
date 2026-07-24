@@ -161,6 +161,35 @@ mod tests {
     }
 
     #[test]
+    fn rich_document_with_nested_tables_and_image_round_trips() {
+        // Nested tables, an embedded image (word/media/image1.png), and styles.
+        let original = include_bytes!("../../../fixtures/corpus/real-producer-rich.docx");
+        let config = ImportConfig {
+            mode: ImportMode::Retention,
+            ..ImportConfig::default()
+        };
+
+        let first = {
+            let mut package = DocxPackage::open(original, PackageLimits::default()).unwrap();
+            import_package(&mut package, config).unwrap()
+        };
+        // The embedded image relationship is mapped into the media table.
+        assert!(!first.document.definitions().media.is_empty());
+
+        let rebuilt = write_package(first.retained_source.as_ref().unwrap()).unwrap();
+        let second = {
+            let mut package = DocxPackage::open(&rebuilt, PackageLimits::default()).unwrap();
+            import_package(&mut package, config).unwrap()
+        };
+
+        assert_eq!(first.document, second.document);
+        // The image binary and every other part round-trip byte-identically.
+        let parts = &first.retained_source.as_ref().unwrap().parts;
+        assert!(parts.contains_key("word/media/image1.png"));
+        assert_eq!(&second.retained_source.as_ref().unwrap().parts, parts);
+    }
+
+    #[test]
     fn semantic_mode_has_no_retained_parts() {
         let source = casual_doc_import::RetainedSource {
             main_document: Vec::new(),
