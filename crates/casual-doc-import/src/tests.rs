@@ -1681,3 +1681,43 @@ fn stray_sect_pr_and_body_inside_a_header_part_are_reported() {
     assert!(features(&import).contains(&"sectPr"));
     assert!(features(&import).contains(&"body"));
 }
+
+// ---- legacy VML pictures -------------------------------------------------
+
+#[test]
+fn vml_pict_image_becomes_a_drawing() {
+    // A legacy VML picture (w:pict > v:imagedata@r:id) resolves through the same
+    // media table as a DrawingML picture and becomes a Drawing.
+    let document = br#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:v="urn:v"><w:body>
+        <w:p><w:r><w:pict><v:shape style="width:10pt"><v:imagedata r:id="rId5"/></v:shape></w:pict></w:r></w:p>
+    </w:body></w:document>"#;
+    let rels = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+    let media = [("word/media/image1.png", b"PNGDATA".as_slice())];
+    let import = import_bytes(&build_package(document, rels, &media));
+    let drawing = paragraph(&import, 0)
+        .inlines
+        .iter()
+        .find_map(|i| match i {
+            InlineNode::Drawing(d) => Some(d),
+            _ => None,
+        })
+        .expect("VML image modeled as a Drawing");
+    // VML sizes in CSS, not EMU, so no extent is captured.
+    assert!(drawing.extent.is_none());
+}
+
+#[test]
+fn vml_pict_with_unresolved_image_is_reported() {
+    let document = br#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:v="urn:v"><w:body>
+        <w:p><w:r><w:pict><v:shape><v:imagedata r:id="rId9"/></v:shape></w:pict></w:r></w:p>
+    </w:body></w:document>"#;
+    let rels = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>"#;
+    let import = import_bytes(&build_package(document, rels, &[]));
+    assert!(
+        !paragraph(&import, 0)
+            .inlines
+            .iter()
+            .any(|i| matches!(i, InlineNode::Drawing(_)))
+    );
+    assert!(features(&import).contains(&"pict"));
+}

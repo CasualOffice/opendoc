@@ -14,6 +14,9 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Added
 
+- Legacy VML pictures (`w:pict` → `v:imagedata@r:id`) are now imported as a
+  `Drawing` (referencing the same media table as DrawingML pictures), instead of
+  being reported and dropped. No model change; VML CSS sizing is not captured.
 - Semantic headers and footers in schema v1: the `word/header*.xml` /
   `word/footer*.xml` parts are parsed into additive `Definitions.headers` /
   `footers` definitions (block content), and each `w:sectPr`
