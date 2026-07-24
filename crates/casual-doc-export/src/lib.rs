@@ -247,6 +247,42 @@ mod tests {
     }
 
     #[test]
+    fn document_with_footnotes_part_round_trips() {
+        // A footnote reference in the body plus a separate word/footnotes.xml
+        // part. Retention retains the part so it round-trips before modeling.
+        let original = include_bytes!("../../../fixtures/corpus/real-producer-footnotes.docx");
+        let config = ImportConfig {
+            mode: ImportMode::Retention,
+            ..ImportConfig::default()
+        };
+
+        let first = {
+            let mut package = DocxPackage::open(original, PackageLimits::default()).unwrap();
+            import_package(&mut package, config).unwrap()
+        };
+        assert!(
+            first
+                .retained_source
+                .as_ref()
+                .unwrap()
+                .parts
+                .contains_key("word/footnotes.xml")
+        );
+
+        let rebuilt = write_package(first.retained_source.as_ref().unwrap()).unwrap();
+        let second = {
+            let mut package = DocxPackage::open(&rebuilt, PackageLimits::default()).unwrap();
+            import_package(&mut package, config).unwrap()
+        };
+
+        assert_eq!(first.document, second.document);
+        assert_eq!(
+            second.retained_source.as_ref().unwrap().parts,
+            first.retained_source.as_ref().unwrap().parts
+        );
+    }
+
+    #[test]
     fn semantic_mode_has_no_retained_parts() {
         let source = casual_doc_import::RetainedSource {
             main_document: Vec::new(),
