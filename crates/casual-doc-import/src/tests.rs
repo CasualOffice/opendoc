@@ -13,7 +13,11 @@ fn import(xml: &[u8]) -> Import {
 }
 
 fn import_with_styles(document: &[u8], styles: &[u8]) -> Import {
-    import_with_sources(document, Some(styles), ImportConfig::default()).unwrap()
+    import_with_sources(document, Some(styles), None, ImportConfig::default()).unwrap()
+}
+
+fn import_with_numbering(document: &[u8], numbering: &[u8]) -> Import {
+    import_with_sources(document, None, Some(numbering), ImportConfig::default()).unwrap()
 }
 
 fn features(import: &Import) -> Vec<&str> {
@@ -644,4 +648,39 @@ fn real_producer_table_and_lists_flatten_cell_and_item_text() {
             .iter()
             .any(|entry| entry.feature == "tbl")
     );
+}
+
+#[test]
+fn numbering_reference_resolves_to_a_definition() {
+    let numbering = br#"<w:numbering xmlns:w="urn:w">
+        <w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/>
+            <w:numFmt w:val="bullet"/></w:lvl></w:abstractNum>
+        <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
+    </w:numbering>"#;
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>
+            <w:r><w:t>item</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import_with_numbering(document, numbering);
+
+    let reference = paragraph(&import, 0).properties.numbering.unwrap();
+    assert_eq!(reference.level, 0);
+    let definitions = import.document.definitions();
+    assert_eq!(definitions.abstract_numbering.len(), 1);
+    assert_eq!(definitions.numbering.len(), 1);
+    assert!(definitions.numbering.get(&reference.instance).is_some());
+    // numFmt is unmapped level detail -> reported.
+    assert!(features(&import).contains(&"numFmt"));
+}
+
+#[test]
+fn dangling_numbering_reference_is_reported_not_emitted() {
+    let numbering = br#"<w:numbering xmlns:w="urn:w"/>"#;
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="99"/></w:numPr></w:pPr>
+            <w:r><w:t>x</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import_with_numbering(document, numbering);
+    assert_eq!(paragraph(&import, 0).properties.numbering, None);
+    assert!(features(&import).contains(&"numPr"));
 }

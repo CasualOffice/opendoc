@@ -10,6 +10,7 @@ use quick_xml::events::{BytesStart, Event};
 
 use crate::config::ImportConfig;
 use crate::error::ImportError;
+use crate::numbering::Numbering;
 use crate::properties::{
     apply_paragraph_property, apply_run_property, attribute_value, break_kind,
 };
@@ -29,6 +30,7 @@ enum Segment {
 struct BodyParser<'a> {
     ids: &'a mut IdGenerator,
     styles: &'a Styles,
+    numbering: &'a Numbering,
     reporter: &'a mut Reporter,
     config: ImportConfig,
     elements: u64,
@@ -40,6 +42,9 @@ struct BodyParser<'a> {
     paragraph_id: Option<NodeId>,
     paragraph_properties: ParagraphProperties,
     ppr_depth: u32,
+    numpr_depth: u32,
+    pending_num_id: Option<String>,
+    pending_ilvl: u8,
     run_open: bool,
     run_properties: RunProperties,
     rpr_depth: u32,
@@ -54,12 +59,14 @@ pub(crate) fn parse(
     xml: &[u8],
     ids: &mut IdGenerator,
     styles: &Styles,
+    numbering: &Numbering,
     reporter: &mut Reporter,
     config: ImportConfig,
 ) -> Result<Vec<BlockNode>, ImportError> {
     let mut parser = BodyParser {
         ids,
         styles,
+        numbering,
         reporter,
         config,
         elements: 0,
@@ -71,6 +78,9 @@ pub(crate) fn parse(
         paragraph_id: None,
         paragraph_properties: ParagraphProperties::default(),
         ppr_depth: 0,
+        numpr_depth: 0,
+        pending_num_id: None,
+        pending_ilvl: 0,
         run_open: false,
         run_properties: RunProperties::default(),
         rpr_depth: 0,
@@ -169,6 +179,9 @@ impl BodyParser<'_> {
                 self.paragraph_open = true;
                 self.paragraph_id = Some(self.next_id()?);
                 self.paragraph_properties = ParagraphProperties::default();
+                self.numpr_depth = 0;
+                self.pending_num_id = None;
+                self.pending_ilvl = 0;
                 self.segments.clear();
             }
             b"pPr" if self.paragraph_open && !self.run_open => self.ppr_depth += 1,
@@ -177,6 +190,15 @@ impl BodyParser<'_> {
                     Some(style) => self.paragraph_properties.style_ref = Some(style),
                     None => self.reporter.report(local),
                 }
+            }
+            b"numPr" if self.ppr_depth > 0 => self.numpr_depth += 1,
+            b"numId" if self.numpr_depth > 0 => {
+                self.pending_num_id = attribute_value(element, b"val");
+            }
+            b"ilvl" if self.numpr_depth > 0 => {
+                self.pending_ilvl = attribute_value(element, b"val")
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or(0);
             }
             b"r" if self.paragraph_open => {
                 self.run_open = true;
@@ -226,6 +248,20 @@ impl BodyParser<'_> {
             b"body" => self.in_body = false,
             b"p" if self.paragraph_open => self.finish_paragraph()?,
             b"pPr" => self.ppr_depth = self.ppr_depth.saturating_sub(1),
+            b"numPr" => {
+                self.numpr_depth = self.numpr_depth.saturating_sub(1);
+                if self.numpr_depth == 0 {
+                    if let Some(num_id) = self.pending_num_id.take() {
+                        match self.numbering.resolve(&num_id, self.pending_ilvl) {
+                            Some(reference) => {
+                                self.paragraph_properties.numbering = Some(reference);
+                            }
+                            None => self.reporter.report(b"numPr"),
+                        }
+                    }
+                    self.pending_ilvl = 0;
+                }
+            }
             b"r" => {
                 self.run_open = false;
                 self.rpr_depth = 0;

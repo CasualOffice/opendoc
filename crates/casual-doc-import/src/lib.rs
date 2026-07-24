@@ -4,11 +4,12 @@
 //! tabs and breaks, direct run properties (bold, italic, underline, strike,
 //! size, RGB color), and direct paragraph formatting (alignment, indentation,
 //! spacing) — plus the styles part (paragraph/character style definitions with
-//! `basedOn` inheritance, resolved `w:pStyle`/`w:rStyle` references) into a
-//! deterministic `v1::Document`. Every traversed construct that is not modeled
-//! is recorded in a bounded, deterministic compatibility report under the
-//! dual-axis disposition taxonomy (`35-DISPOSITION-TAXONOMY.md`); nothing is
-//! dropped silently. Numbering, sections, tables (as structure), media, fields,
+//! `basedOn` inheritance, resolved `w:pStyle`/`w:rStyle` references) and the
+//! numbering part (abstract/instance definitions with resolved `w:numPr`
+//! references) into a deterministic `v1::Document`. Every traversed construct
+//! that is not modeled is recorded in a bounded, deterministic compatibility
+//! report under the dual-axis disposition taxonomy (`35-DISPOSITION-TAXONOMY.md`);
+//! nothing is dropped silently. Sections, tables (as structure), media, fields,
 //! headers/footers, and tracked changes are reported, not yet modeled.
 //!
 //! Import runs in `Semantic` mode (report-and-drop) by default. `Retention`
@@ -23,6 +24,7 @@
 mod body;
 mod config;
 mod error;
+mod numbering;
 mod properties;
 mod report;
 mod retain;
@@ -37,6 +39,7 @@ use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{BlockNode, Definitions, Document, Paragraph, ParagraphProperties};
 use casual_doc_ooxml::DocxPackage;
 
+use crate::numbering::Numbering;
 use crate::report::Reporter;
 use crate::styles::Styles;
 
@@ -58,11 +61,15 @@ pub fn import_package(
     config: ImportConfig,
 ) -> Result<Import, ImportError> {
     let main_part = package.main_document_part().to_owned();
-    let styles_part = package
-        .main_document_relationships()
-        .iter()
-        .find(|relationship| relationship.relationship_type.ends_with("/styles"))
-        .and_then(|relationship| relationship.resolved_part.clone());
+    let related_part = |suffix: &str| {
+        package
+            .main_document_relationships()
+            .iter()
+            .find(|relationship| relationship.relationship_type.ends_with(suffix))
+            .and_then(|relationship| relationship.resolved_part.clone())
+    };
+    let styles_part = related_part("/styles");
+    let numbering_part = related_part("/numbering");
 
     let document_bytes = package
         .read_part(&main_part)
@@ -71,7 +78,16 @@ pub fn import_package(
         Some(part) => Some(package.read_part(&part).map_err(ImportError::Package)?),
         None => None,
     };
-    let mut import = import_with_sources(&document_bytes, styles_bytes.as_deref(), config)?;
+    let numbering_bytes = match numbering_part {
+        Some(part) => Some(package.read_part(&part).map_err(ImportError::Package)?),
+        None => None,
+    };
+    let mut import = import_with_sources(
+        &document_bytes,
+        styles_bytes.as_deref(),
+        numbering_bytes.as_deref(),
+        config,
+    )?;
 
     // In Retention mode, retain every admitted part verbatim (the package-level
     // byte floor) so styles, media, and other parts can be reproduced too.
@@ -98,12 +114,13 @@ pub fn import_package(
 
 /// Imports main-document WordprocessingML bytes (no styles) into a v1 document.
 pub fn import_main_document_xml(xml: &[u8], config: ImportConfig) -> Result<Import, ImportError> {
-    import_with_sources(xml, None, config)
+    import_with_sources(xml, None, None, config)
 }
 
 pub(crate) fn import_with_sources(
     document_xml: &[u8],
     styles_xml: Option<&[u8]>,
+    numbering_xml: Option<&[u8]>,
     config: ImportConfig,
 ) -> Result<Import, ImportError> {
     config.validate()?;
@@ -140,7 +157,18 @@ pub(crate) fn import_with_sources(
         Some(xml) => styles::parse(xml, &mut ids, &mut reporter, config)?,
         None => Styles::default(),
     };
-    let mut body = body::parse(document_xml, &mut ids, &styles, &mut reporter, config)?;
+    let numbering = match numbering_xml {
+        Some(xml) => numbering::parse(xml, &mut ids, &mut reporter, config)?,
+        None => Numbering::default(),
+    };
+    let mut body = body::parse(
+        document_xml,
+        &mut ids,
+        &styles,
+        &numbering,
+        &mut reporter,
+        config,
+    )?;
     if body.is_empty() {
         // A body with no paragraphs yields a single empty paragraph so the v1
         // document has a non-empty body.
@@ -154,8 +182,11 @@ pub(crate) fn import_with_sources(
         }));
     }
 
+    let (abstract_numbering, numbering_instances) = numbering.into_definitions();
     let definitions = Definitions {
         styles: styles.into_definitions(),
+        abstract_numbering,
+        numbering: numbering_instances,
         ..Definitions::default()
     };
     let document = Document::new(document_id, body, definitions).map_err(ImportError::Model)?;
