@@ -21,7 +21,9 @@
 #![forbid(unsafe_code)]
 
 pub mod block;
+pub mod compose;
 pub mod display;
+pub mod fonts;
 pub mod model;
 pub mod page;
 pub mod shape;

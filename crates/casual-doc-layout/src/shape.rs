@@ -20,15 +20,13 @@ use parley::{
     StyleProperty,
 };
 
+use crate::fonts::ROBOTO_REGULAR;
 use crate::model::ModelRange;
 use crate::text::{
     Decoration, FontId, Glyph, GlyphRun, Line, LineBreak, LineConstraints, LineLayout, LineShaper,
     StyledRun,
 };
 use crate::units::{Point, Twip};
-
-/// The bundled default font — Roboto Regular, Apache-2.0 (see `fonts/README.md`).
-const ROBOTO_REGULAR: &[u8] = include_bytes!("../fonts/Roboto-Regular.ttf");
 
 /// A glyph color carried through `parley`. `Brush` is blanket-implemented for any
 /// `Clone + PartialEq + Default + Debug`, so this newtype is a valid brush and
