@@ -215,7 +215,7 @@ fn rect_path(rect: Rect, dpi: f32) -> Option<tiny_skia::Path> {
     builder.finish()
 }
 
-/// A [`GlyphSource`] backed by a single font blob for [`FontId(0)`] — the current
+/// A [`GlyphSource`] backed by a single font blob for `FontId(0)` — the current
 /// default face until the font resolver (`P1C-002`) supplies the full set.
 #[derive(Clone, Copy, Debug)]
 pub struct SingleFontSource<'a> {
