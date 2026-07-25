@@ -579,6 +579,39 @@ fn table_and_cell_borders_and_margins_are_captured_without_collision() {
 }
 
 #[test]
+fn edge_scope_does_not_leak_across_a_text_box() {
+    // Regression (adversarial review): a `w:txbxContent` nested inside an open
+    // border container must not let the inner table's `</w:tblBorders>` clobber
+    // the outer scope — the outer table's later border must still be captured.
+    // (Malformed OOXML, but the code must not silently drop the outer border.)
+    let xml = br#"<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps"><w:body>
+        <w:tbl><w:tblPr><w:tblBorders>
+            <w:r><w:drawing><wp:inline><a:graphic><a:graphicData><wps:wsp><wps:txbx>
+                <w:txbxContent>
+                    <w:tbl><w:tblPr><w:tblBorders><w:top w:val="single"/></w:tblBorders></w:tblPr>
+                        <w:tr><w:tc><w:p/></w:tc></w:tr></w:tbl>
+                </w:txbxContent>
+            </wps:txbx></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>
+            <w:bottom w:val="double"/>
+        </w:tblBorders></w:tblPr>
+            <w:tr><w:tc><w:p><w:r><w:t>c</w:t></w:r></w:p></w:tc></w:tr>
+        </w:tbl>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let outer = first_table(&import).expect("outer table");
+    assert_eq!(
+        outer
+            .properties
+            .borders
+            .bottom
+            .as_ref()
+            .map(|e| e.style.as_str()),
+        Some("double"),
+        "outer table bottom border survives the nested text-box table"
+    );
+}
+
+#[test]
 fn border_edge_without_a_style_is_reported_not_modeled() {
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
         <w:tbl><w:tblPr><w:tblBorders><w:top w:sz="8"/></w:tblBorders></w:tblPr>

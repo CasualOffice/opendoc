@@ -158,6 +158,7 @@ struct ContentFrame {
     tblpr_depth: u32,
     trpr_depth: u32,
     pr_change_depth: u32,
+    edge_scope: EdgeScope,
     suppressed_tbl_depth: u32,
     segments: Vec<Segment>,
     blocks: Vec<BlockNode>,
@@ -271,8 +272,10 @@ struct BodyParser<'a> {
     /// nested historical property container must not map over the current values.
     pr_change_depth: u32,
     /// Which table border/margin container is currently open (for edge routing).
-    /// Never spans a text box (an edge container has no box content), so it is not
-    /// part of `ContentFrame`.
+    /// A well-formed edge container has no box content, but malformed markup can
+    /// nest a `w:txbxContent` inside one; it is saved/restored across a text-box
+    /// frame (like the depth counters) so an inner table's edge container cannot
+    /// clobber the outer scope and drop the enclosing table's borders.
     edge_scope: EdgeScope,
     /// Depth of nested tables refused past `MAX_TABLE_DEPTH`; while non-zero the
     /// table structure is suppressed so it cannot corrupt the enclosing table.
@@ -1621,6 +1624,7 @@ impl BodyParser<'_> {
             tblpr_depth: std::mem::take(&mut self.tblpr_depth),
             trpr_depth: std::mem::take(&mut self.trpr_depth),
             pr_change_depth: std::mem::take(&mut self.pr_change_depth),
+            edge_scope: std::mem::replace(&mut self.edge_scope, EdgeScope::None),
             suppressed_tbl_depth: std::mem::take(&mut self.suppressed_tbl_depth),
             segments: std::mem::take(&mut self.segments),
             blocks: std::mem::take(&mut self.blocks),
@@ -1673,6 +1677,7 @@ impl BodyParser<'_> {
         self.tblpr_depth = frame.tblpr_depth;
         self.trpr_depth = frame.trpr_depth;
         self.pr_change_depth = frame.pr_change_depth;
+        self.edge_scope = frame.edge_scope;
         self.suppressed_tbl_depth = frame.suppressed_tbl_depth;
         self.segments = frame.segments;
         self.blocks = frame.blocks;
