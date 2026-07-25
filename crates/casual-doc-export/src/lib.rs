@@ -204,6 +204,7 @@ mod semantic_tests {
     /// `cargo test -p casual-doc-export -- --ignored soffice`.
     #[test]
     #[ignore = "requires a local LibreOffice (soffice) install"]
+    #[allow(clippy::print_stderr)] // a skip diagnostic in an ignored, on-demand test
     fn writer_output_opens_in_libreoffice() {
         let Some(soffice) = find_soffice() else {
             eprintln!("skipping: no soffice binary found");
