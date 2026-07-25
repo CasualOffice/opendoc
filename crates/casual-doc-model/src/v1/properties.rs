@@ -2,7 +2,85 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{NumberingInstanceId, StyleId};
+use super::{BorderEdge, NumberingInstanceId, Shading, StyleId};
+
+/// A paragraph border set (`w:pBdr`); any subset of edges. Reuses the shared
+/// `BorderEdge` value type.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ParagraphBorders {
+    /// Top edge.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top: Option<BorderEdge>,
+    /// Bottom edge.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bottom: Option<BorderEdge>,
+    /// Leading (start) edge.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start: Option<BorderEdge>,
+    /// Trailing (end) edge.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end: Option<BorderEdge>,
+    /// Border between consecutive same-properties paragraphs (`w:between`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub between: Option<BorderEdge>,
+    /// Border bar (`w:bar`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bar: Option<BorderEdge>,
+}
+
+impl ParagraphBorders {
+    /// Whether no edge is set (serializes to nothing).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// A custom tab stop's alignment (`w:tab/@w:val`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TabAlignment {
+    /// Left/start-aligned.
+    Start,
+    /// Centered.
+    Center,
+    /// Right/end-aligned.
+    End,
+    /// Aligned on the decimal separator.
+    Decimal,
+    /// A vertical bar.
+    Bar,
+}
+
+/// A custom tab stop's leader glyph (`w:tab/@w:leader`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TabLeader {
+    /// A dotted leader.
+    Dot,
+    /// A hyphen leader.
+    Hyphen,
+    /// An underscore leader.
+    Underscore,
+    /// A middle-dot leader.
+    MiddleDot,
+    /// A heavy (thick) leader.
+    Heavy,
+}
+
+/// A custom tab stop (`w:tabs > w:tab`). A `clear` tab is not modeled (reported).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TabStop {
+    /// Position in twips from the leading margin (`w:pos`), may be negative.
+    pub position_twips: i32,
+    /// Alignment (`w:val`).
+    pub alignment: TabAlignment,
+    /// Leader glyph (`w:leader`), if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub leader: Option<TabLeader>,
+}
 
 /// Paragraph alignment.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -223,6 +301,15 @@ pub struct ParagraphProperties {
     /// Outline (heading) level, `0..=9` (`w:outlineLvl`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub outline_level: Option<u8>,
+    /// Paragraph borders (`w:pBdr`).
+    #[serde(default, skip_serializing_if = "ParagraphBorders::is_empty")]
+    pub borders: ParagraphBorders,
+    /// Paragraph background shading (`w:shd`).
+    #[serde(default, skip_serializing_if = "Shading::is_empty")]
+    pub shading: Shading,
+    /// Custom tab stops (`w:tabs`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tabs: Vec<TabStop>,
 }
 
 /// Run vertical alignment (`w:vertAlign`).

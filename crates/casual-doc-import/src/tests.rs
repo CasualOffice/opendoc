@@ -713,6 +713,76 @@ fn paragraph_flag_and_outline_properties_are_mapped() {
 }
 
 #[test]
+fn paragraph_borders_shading_and_tabs_are_mapped() {
+    use casual_doc_model::v1::{RgbColor, TabAlignment, TabLeader};
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:pPr>
+            <w:pBdr>
+                <w:top w:val="single" w:sz="8" w:color="112233" w:space="4"/>
+                <w:between w:val="dotted"/>
+            </w:pBdr>
+            <w:shd w:val="clear" w:fill="EEEEEE"/>
+            <w:tabs>
+                <w:tab w:val="center" w:pos="2160" w:leader="dot"/>
+                <w:tab w:val="right" w:pos="4320"/>
+                <w:tab w:val="clear" w:pos="100"/>
+            </w:tabs>
+        </w:pPr><w:r><w:t>x</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let p = &paragraph(&import, 0).properties;
+    // Border (top) captured; between edge too.
+    let top = p.borders.top.as_ref().expect("top border");
+    assert_eq!(top.style, "single");
+    assert_eq!(top.size_eighth_points, Some(8));
+    assert_eq!(
+        top.color,
+        Some(RgbColor {
+            r: 0x11,
+            g: 0x22,
+            b: 0x33
+        })
+    );
+    assert_eq!(
+        p.borders.between.as_ref().map(|e| e.style.as_str()),
+        Some("dotted")
+    );
+    // Shading.
+    assert_eq!(
+        p.shading.fill,
+        Some(RgbColor {
+            r: 0xEE,
+            g: 0xEE,
+            b: 0xEE
+        })
+    );
+    // Two modeled tab stops (the `clear` tab is reported, not modeled).
+    assert_eq!(p.tabs.len(), 2);
+    assert_eq!(p.tabs[0].alignment, TabAlignment::Center);
+    assert_eq!(p.tabs[0].position_twips, 2160);
+    assert_eq!(p.tabs[0].leader, Some(TabLeader::Dot));
+    assert_eq!(p.tabs[1].alignment, TabAlignment::End);
+    assert!(features(&import).contains(&"tab"), "clear tab reported");
+}
+
+#[test]
+fn paragraph_mark_rpr_shading_is_not_mapped_as_paragraph_shading() {
+    // A `w:shd` inside the paragraph mark's own `w:rPr` is a RUN property, so it
+    // must NOT be captured as paragraph shading (it stays reported). This is the
+    // disambiguation that previously blocked paragraph shading.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:pPr><w:rPr><w:shd w:val="clear" w:fill="FF0000"/></w:rPr></w:pPr>
+            <w:r><w:t>x</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    assert!(
+        paragraph(&import, 0).properties.shading.fill.is_none(),
+        "mark-rPr shd is not paragraph shading"
+    );
+    assert!(features(&import).contains(&"shd"));
+}
+
+#[test]
 fn out_of_range_outline_level_is_reported_not_mapped() {
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
         <w:p><w:pPr><w:outlineLvl w:val="42"/></w:pPr><w:r><w:t>x</w:t></w:r></w:p>
