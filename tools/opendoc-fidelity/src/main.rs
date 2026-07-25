@@ -140,6 +140,13 @@ fn push_inline_text(inline: &InlineNode, out: &mut String) {
             }
         }
         InlineNode::TextBox(text_box) => push_blocks_text(&text_box.blocks, out),
+        // A tracked-change range's content is real text (an insertion reads as
+        // present text; a deletion's `w:delText` is retained), so recurse into it.
+        InlineNode::Revision(revision) => {
+            for child in &revision.inlines {
+                push_inline_text(child, out);
+            }
+        }
         // A note reference renders as a mark/number, not source text; the note
         // body text is appended separately from the definitions.
         InlineNode::NoteReference(_) => {}

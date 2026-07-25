@@ -408,7 +408,7 @@ impl Document {
         match block {
             BlockNode::Paragraph(paragraph) => {
                 self.check_paragraph_property_refs(&paragraph.properties)?;
-                self.validate_inlines(&paragraph.inlines, paragraph.id, false, textbox_depth)?;
+                self.validate_inlines(&paragraph.inlines, paragraph.id, false, textbox_depth, 0)?;
             }
             BlockNode::Table(table) => self.validate_table(table, table_depth, textbox_depth)?,
         }
@@ -460,12 +460,16 @@ impl Document {
     /// so a nested wrapper (hyperlink or field inside either) is rejected — this
     /// bounds inline nesting to one wrapper level. `textbox_depth` carries the
     /// enclosing text-box nesting; a text box's blocks restart the table budget.
+    /// `revision_depth` bounds tracked-change (`w:ins`/`w:del`) wrapper nesting; a
+    /// revision is transparent to `in_wrapper` (it neither imposes nor clears the
+    /// leaf-only rule), so only nested revisions bump it.
     fn validate_inlines(
         &self,
         inlines: &[InlineNode],
         owner: NodeId,
         in_wrapper: bool,
         textbox_depth: u32,
+        revision_depth: u32,
     ) -> Result<(), ModelError> {
         let mut previous_run_properties: Option<&RunProperties> = None;
         for inline in inlines {
@@ -512,7 +516,13 @@ impl Document {
                     if link.inlines.is_empty() {
                         return Err(ModelError::EmptyHyperlink(link.id));
                     }
-                    self.validate_inlines(&link.inlines, link.id, true, textbox_depth)?;
+                    self.validate_inlines(
+                        &link.inlines,
+                        link.id,
+                        true,
+                        textbox_depth,
+                        revision_depth,
+                    )?;
                     previous_run_properties = None;
                 }
                 InlineNode::Field(field) => {
@@ -526,7 +536,13 @@ impl Document {
                     )?;
                     // A field's cached result may be empty; when present it is
                     // validated as leaf inlines (in_wrapper rejects any wrapper).
-                    self.validate_inlines(&field.inlines, field.id, true, textbox_depth)?;
+                    self.validate_inlines(
+                        &field.inlines,
+                        field.id,
+                        true,
+                        textbox_depth,
+                        revision_depth,
+                    )?;
                     previous_run_properties = None;
                 }
                 InlineNode::TextBox(text_box) => {
@@ -560,6 +576,35 @@ impl Document {
                     if !self.definitions.comments.contains_key(&reference.comment) {
                         return Err(ModelError::DanglingCommentRef(reference.comment.node_id()));
                     }
+                    previous_run_properties = None;
+                }
+                InlineNode::Revision(revision) => {
+                    if revision_depth + 1 > MAX_REVISION_DEPTH {
+                        return Err(ModelError::RevisionNestingTooDeep(revision.id));
+                    }
+                    if revision.inlines.is_empty() {
+                        return Err(ModelError::EmptyRevision(revision.id));
+                    }
+                    for value in [&revision.author, &revision.revision_id]
+                        .into_iter()
+                        .flatten()
+                    {
+                        check_domain(!value.is_empty() && value.len() <= 255, "revision.metadata")?;
+                    }
+                    if let Some(date) = &revision.date {
+                        check_domain(!date.is_empty() && date.len() <= 64, "revision.date")?;
+                    }
+                    // A revision is a transparent range marker: `in_wrapper` passes
+                    // through unchanged (it may wrap a hyperlink/field at top level,
+                    // and may itself sit inside one), and only nested revisions bump
+                    // `revision_depth`.
+                    self.validate_inlines(
+                        &revision.inlines,
+                        revision.id,
+                        in_wrapper,
+                        textbox_depth,
+                        revision_depth + 1,
+                    )?;
                     previous_run_properties = None;
                 }
                 InlineNode::Tab(_) | InlineNode::Break(_) => {
@@ -741,6 +786,11 @@ fn accumulate_inline_limits(
                 accumulate_block_limits(block, limits, blocks, scalar_values)?;
             }
         }
+        InlineNode::Revision(revision) => {
+            for child in &revision.inlines {
+                accumulate_inline_limits(child, limits, blocks, scalar_values)?;
+            }
+        }
         InlineNode::Tab(_)
         | InlineNode::Break(_)
         | InlineNode::Drawing(_)
@@ -801,6 +851,11 @@ fn record_inline_ids(inline: &InlineNode, ids: &mut BTreeSet<NodeId>) -> Result<
         InlineNode::TextBox(text_box) => {
             for block in &text_box.blocks {
                 record_block_ids(block, ids)?;
+            }
+        }
+        InlineNode::Revision(revision) => {
+            for child in &revision.inlines {
+                record_inline_ids(child, ids)?;
             }
         }
         _ => {}

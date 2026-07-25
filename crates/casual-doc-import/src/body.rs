@@ -6,9 +6,9 @@ use casual_doc_model::v1::{
     BlockNode, Break, BreakKind, Comment, CommentId, CommentReference, Drawing, Extent,
     ExternalTarget, Field, HeaderFooterId, HeaderFooterKind, HeaderFooterRef, Hyperlink,
     HyperlinkTarget, InlineNode, InternalTarget, MAX_EMU, MAX_FIELD_INSTRUCTION_BYTES,
-    MAX_TEXTBOX_DEPTH, MediaId, NoteId, NoteKind, NoteReference, PageMargins, PageSize, Paragraph,
-    ParagraphProperties, Run, RunProperties, SectionBoundary, SectionColumns, SectionId, StyleKind,
-    Tab, TextBox, VerticalMerge,
+    MAX_REVISION_DEPTH, MAX_TEXTBOX_DEPTH, MediaId, NoteId, NoteKind, NoteReference, PageMargins,
+    PageSize, Paragraph, ParagraphProperties, Revision, RevisionKind, Run, RunProperties,
+    SectionBoundary, SectionColumns, SectionId, StyleKind, Tab, TextBox, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::Reader;
@@ -56,6 +56,34 @@ enum Segment {
     CommentReference {
         comment: CommentId,
     },
+    /// A tracked-change (insertion/deletion) range wrapping inline content.
+    Revision {
+        kind: RevisionKind,
+        author: Option<String>,
+        date: Option<String>,
+        revision_id: Option<String>,
+        children: Vec<Segment>,
+    },
+}
+
+/// Which wrapper is currently the innermost open one. A single discriminator
+/// stack records the relative open order of the three inline wrappers so a
+/// segment routes into whichever nests deepest, regardless of kind — hyperlinks
+/// and revisions nest in either order, and revisions nest within themselves.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WrapperKind {
+    Hyperlink,
+    Field,
+    Revision,
+}
+
+/// A tracked-change range (`w:ins`/`w:del`) being accumulated.
+struct RevisionAccumulator {
+    kind: RevisionKind,
+    author: Option<String>,
+    date: Option<String>,
+    revision_id: Option<String>,
+    segments: Vec<Segment>,
 }
 
 /// Optional comment metadata captured from a `w:comment`'s attributes (all
@@ -100,6 +128,8 @@ struct ContentFrame {
     in_instr: bool,
     instr_buffer: String,
     ruby_annotation_depth: u32,
+    revisions: Vec<RevisionAccumulator>,
+    wrapper_order: Vec<WrapperKind>,
     tables: TableStack,
     tcpr_depth: u32,
     suppressed_tbl_depth: u32,
@@ -178,7 +208,7 @@ struct BodyParser<'a> {
     hyperlink: Option<HyperlinkAccumulator>,
     hyperlink_depth: u32,
     /// The open field, if any (simple or complex). Mutually exclusive with an
-    /// open hyperlink (a wrapper never opens inside another wrapper).
+    /// open hyperlink (a hyperlink and a field never open inside one another).
     field: Option<FieldAccumulator>,
     /// Nesting depth of `<w:fldSimple>` / complex `fldChar` fields, so a
     /// missing/extra delimiter cannot desynchronize field commits.
@@ -190,6 +220,13 @@ struct BodyParser<'a> {
     /// Nesting depth of open ruby annotations (`w:rt`), whose text is dropped;
     /// a counter so a nested `w:rt` does not clear it early.
     ruby_annotation_depth: u32,
+    /// Open tracked-change (`w:ins`/`w:del`) ranges, innermost last.
+    revisions: Vec<RevisionAccumulator>,
+    /// The relative open order of the hyperlink, field, and revision wrappers, so
+    /// a segment routes into the innermost regardless of kind. Its top identifies
+    /// which accumulator (`hyperlink`, `field`, or `revisions.last()`) receives
+    /// the next segment.
+    wrapper_order: Vec<WrapperKind>,
     tables: TableStack,
     tcpr_depth: u32,
     /// Depth of nested tables refused past `MAX_TABLE_DEPTH`; while non-zero the
@@ -289,6 +326,8 @@ impl<'a> BodyParser<'a> {
             in_instr: false,
             instr_buffer: String::new(),
             ruby_annotation_depth: 0,
+            revisions: Vec::new(),
+            wrapper_order: Vec::new(),
             tables: TableStack::default(),
             tcpr_depth: 0,
             suppressed_tbl_depth: 0,
@@ -642,6 +681,13 @@ impl BodyParser<'_> {
                 self.in_text = true;
                 self.text_buffer.clear();
             }
+            // Deleted text inside a `w:del` uses `w:delText` instead of `w:t`; it
+            // is captured into the run text buffer exactly like `w:t` so deleted
+            // content is preserved (the enclosing revision marks it deleted).
+            b"delText" if self.run_open => {
+                self.in_text = true;
+                self.text_buffer.clear();
+            }
             // A ruby annotation's runs are the phonetic guide, not base text.
             // A counter (not a flag) so a nested `w:rt` cannot clear it early.
             b"rt" => self.ruby_annotation_depth += 1,
@@ -711,6 +757,7 @@ impl BodyParser<'_> {
                                 tooltip,
                                 segments: Vec::new(),
                             });
+                            self.wrapper_order.push(WrapperKind::Hyperlink);
                         }
                         None => self.reporter.report(b"hyperlink"),
                     }
@@ -719,6 +766,19 @@ impl BodyParser<'_> {
                     // the outer link and the nesting is reported.
                     self.reporter.report(b"hyperlink");
                 }
+            }
+            // A run-range tracked change (`w:ins`/`w:del`). The `ppr_depth == 0 &&
+            // rpr_depth == 0` guard admits ONLY range revisions: a `w:ins`/`w:del`
+            // inside `w:pPr>w:rPr` (a paragraph-mark revision) or `w:r>w:rPr` (a
+            // run-property revision marker) has a non-zero property depth, so it
+            // falls through to the property report arms (reported, not modeled).
+            b"ins" | b"del"
+                if self.paragraph_open
+                    && !self.run_open
+                    && self.ppr_depth == 0
+                    && self.rpr_depth == 0 =>
+            {
+                self.open_revision(local, element);
             }
             b"drawing" if self.run_open => {
                 self.drawing_depth += 1;
@@ -985,7 +1045,7 @@ impl BodyParser<'_> {
                     self.build_section(accumulator)?;
                 }
             }
-            b"t" if self.in_text => {
+            b"t" | b"delText" if self.in_text => {
                 self.in_text = false;
                 let text = std::mem::take(&mut self.text_buffer);
                 // A ruby annotation (`w:rt`) is a phonetic guide, not base text;
@@ -1030,22 +1090,13 @@ impl BodyParser<'_> {
             }
             b"hyperlink" if self.hyperlink_depth > 0 => {
                 if self.hyperlink_depth == 1 {
-                    if let Some(accumulator) = self.hyperlink.take() {
-                        let children = normalize_segments(accumulator.segments);
-                        if children.is_empty() {
-                            self.reporter.report(b"hyperlink");
-                        } else {
-                            // Commit to the parent stream: a hyperlink never nests.
-                            self.segments.push(Segment::Hyperlink {
-                                target: accumulator.target,
-                                tooltip: accumulator.tooltip,
-                                children,
-                            });
-                        }
-                    }
+                    self.commit_hyperlink();
                 }
                 self.hyperlink_depth = self.hyperlink_depth.saturating_sub(1);
             }
+            // A tracked-change range closes: commit it into the enclosing wrapper
+            // (an outer revision/hyperlink) or the paragraph.
+            b"ins" | b"del" if self.top_wrapper_is_revision() => self.commit_revision(),
             b"tcPr" => self.tcpr_depth = self.tcpr_depth.saturating_sub(1),
             // A refused subtree's own `</w:tbl>` closes suppression, never a real
             // table on the stack; its `</w:tc>`/`</w:tr>` are inert.
@@ -1174,6 +1225,8 @@ impl BodyParser<'_> {
             in_instr: std::mem::take(&mut self.in_instr),
             ruby_annotation_depth: std::mem::take(&mut self.ruby_annotation_depth),
             instr_buffer: std::mem::take(&mut self.instr_buffer),
+            revisions: std::mem::take(&mut self.revisions),
+            wrapper_order: std::mem::take(&mut self.wrapper_order),
             tables: std::mem::take(&mut self.tables),
             tcpr_depth: std::mem::take(&mut self.tcpr_depth),
             suppressed_tbl_depth: std::mem::take(&mut self.suppressed_tbl_depth),
@@ -1220,6 +1273,8 @@ impl BodyParser<'_> {
         self.in_instr = frame.in_instr;
         self.ruby_annotation_depth = frame.ruby_annotation_depth;
         self.instr_buffer = frame.instr_buffer;
+        self.revisions = frame.revisions;
+        self.wrapper_order = frame.wrapper_order;
         self.tables = frame.tables;
         self.tcpr_depth = frame.tcpr_depth;
         self.suppressed_tbl_depth = frame.suppressed_tbl_depth;
@@ -1294,23 +1349,39 @@ impl BodyParser<'_> {
         Ok(())
     }
 
-    /// Routes a segment into the innermost open wrapper: an open field, then an
-    /// open hyperlink, else the paragraph. Fields and hyperlinks never open
-    /// inside one another, so at most one wrapper is ever open.
+    /// Routes a segment into the innermost open wrapper as identified by the top
+    /// of `wrapper_order`, else the paragraph. Hyperlinks, fields, and revisions
+    /// nest in any order (a revision inside a hyperlink, a hyperlink inside a
+    /// revision, revisions inside revisions), so the discriminator stack — not a
+    /// fixed field-then-hyperlink precedence — determines which nests deepest.
     ///
     /// All display segments of an open field are captured into its cached result,
     /// including any that arrive before `separate` — a well-formed field has none
     /// there (the instruction is `w:instrText`, routed separately), so this only
     /// preserves malformed pre-`separate` display content instead of dropping it.
     fn push_segment(&mut self, segment: Segment) {
-        if let Some(field) = self.field.as_mut() {
-            field.segments.push(segment);
-            return;
+        match self.wrapper_order.last() {
+            Some(WrapperKind::Field) => {
+                if let Some(field) = self.field.as_mut() {
+                    field.segments.push(segment);
+                    return;
+                }
+            }
+            Some(WrapperKind::Hyperlink) => {
+                if let Some(hyperlink) = self.hyperlink.as_mut() {
+                    hyperlink.segments.push(segment);
+                    return;
+                }
+            }
+            Some(WrapperKind::Revision) => {
+                if let Some(revision) = self.revisions.last_mut() {
+                    revision.segments.push(segment);
+                    return;
+                }
+            }
+            None => {}
         }
-        match self.hyperlink.as_mut() {
-            Some(accumulator) => accumulator.segments.push(segment),
-            None => self.segments.push(segment),
-        }
+        self.segments.push(segment);
     }
 
     /// Opens a complex field on a `fldChar begin`. A field nested in another
@@ -1324,6 +1395,7 @@ impl BodyParser<'_> {
                 in_result: false,
                 segments: Vec::new(),
             });
+            self.wrapper_order.push(WrapperKind::Field);
         } else {
             self.reporter.report(b"fldChar");
         }
@@ -1339,6 +1411,7 @@ impl BodyParser<'_> {
                 in_result: true,
                 segments: Vec::new(),
             });
+            self.wrapper_order.push(WrapperKind::Field);
         } else {
             self.reporter.report(b"fldSimple");
         }
@@ -1365,9 +1438,13 @@ impl BodyParser<'_> {
 
     /// Commits the open field. A valid instruction becomes a `Field` segment; an
     /// empty or over-long instruction is reported and the cached-result content is
-    /// flattened into the enclosing stream so no display text is lost.
+    /// flattened into the enclosing stream so no display text is lost. The field's
+    /// segment routes into the enclosing wrapper (an outer revision) or paragraph.
     fn commit_field(&mut self) {
         if let Some(field) = self.field.take() {
+            // Drop the field's wrapper marker (it is the innermost) before routing
+            // so its committed segment lands in the enclosing wrapper.
+            self.pop_wrapper(WrapperKind::Field);
             if field.instruction.is_empty() || field.instruction.len() > MAX_FIELD_INSTRUCTION_BYTES
             {
                 self.reporter.report(b"fldChar");
@@ -1381,6 +1458,100 @@ impl BodyParser<'_> {
                     children,
                 });
             }
+        }
+    }
+
+    /// Commits the open hyperlink, routing its segment into the enclosing wrapper
+    /// (an outer revision) or the paragraph. An empty link is reported and dropped.
+    fn commit_hyperlink(&mut self) {
+        if let Some(accumulator) = self.hyperlink.take() {
+            self.pop_wrapper(WrapperKind::Hyperlink);
+            let children = normalize_segments(accumulator.segments);
+            if children.is_empty() {
+                self.reporter.report(b"hyperlink");
+            } else {
+                self.push_segment(Segment::Hyperlink {
+                    target: accumulator.target,
+                    tooltip: accumulator.tooltip,
+                    children,
+                });
+            }
+        }
+    }
+
+    /// Whether the innermost open wrapper is a tracked-change range.
+    fn top_wrapper_is_revision(&self) -> bool {
+        matches!(self.wrapper_order.last(), Some(WrapperKind::Revision))
+    }
+
+    /// Opens a tracked-change range (`w:ins`/`w:del`). Over-`MAX_REVISION_DEPTH`
+    /// nesting is reported and the range is treated transparently (no accumulator
+    /// pushed), so its runs flatten into the enclosing content without loss.
+    fn open_revision(&mut self, local: &[u8], element: &BytesStart<'_>) {
+        if self.revisions.len() as u32 >= MAX_REVISION_DEPTH {
+            self.reporter.report(local);
+            return;
+        }
+        let kind = if local == b"ins" {
+            RevisionKind::Insertion
+        } else {
+            RevisionKind::Deletion
+        };
+        self.revisions.push(RevisionAccumulator {
+            kind,
+            author: attribute_value(element, b"author")
+                .filter(|value| !value.is_empty() && value.len() <= 255),
+            date: attribute_value(element, b"date")
+                .filter(|value| !value.is_empty() && value.len() <= 64),
+            revision_id: attribute_value(element, b"id")
+                .filter(|value| !value.is_empty() && value.len() <= 64),
+            segments: Vec::new(),
+        });
+        self.wrapper_order.push(WrapperKind::Revision);
+    }
+
+    /// Commits the innermost open tracked-change range, routing its segment into
+    /// the enclosing wrapper (an outer revision/hyperlink) or the paragraph. An
+    /// empty range is reported and dropped.
+    fn commit_revision(&mut self) {
+        if let Some(accumulator) = self.revisions.pop() {
+            self.pop_wrapper(WrapperKind::Revision);
+            let children = normalize_segments(accumulator.segments);
+            if children.is_empty() {
+                self.reporter.report(match accumulator.kind {
+                    RevisionKind::Insertion => b"ins",
+                    RevisionKind::Deletion => b"del",
+                });
+            } else {
+                self.push_segment(Segment::Revision {
+                    kind: accumulator.kind,
+                    author: accumulator.author,
+                    date: accumulator.date,
+                    revision_id: accumulator.revision_id,
+                    children,
+                });
+            }
+        }
+    }
+
+    /// Pops the innermost wrapper marker, asserting it matches the wrapper being
+    /// committed (the three wrappers close in strict XML nesting order, so the
+    /// innermost marker is always the one being committed).
+    fn pop_wrapper(&mut self, expected: WrapperKind) {
+        debug_assert_eq!(self.wrapper_order.last(), Some(&expected));
+        if self.wrapper_order.last() == Some(&expected) {
+            self.wrapper_order.pop();
+        }
+    }
+
+    /// Commits the innermost open wrapper (whichever kind), used to drain wrappers
+    /// left open by malformed input at paragraph end.
+    fn commit_top_wrapper(&mut self) {
+        match self.wrapper_order.last() {
+            Some(WrapperKind::Field) => self.commit_field(),
+            Some(WrapperKind::Hyperlink) => self.commit_hyperlink(),
+            Some(WrapperKind::Revision) => self.commit_revision(),
+            None => {}
         }
     }
 
@@ -1417,24 +1588,20 @@ impl BodyParser<'_> {
         self.paragraph_open = false;
         self.ppr_depth = 0;
         self.run_open = false;
-        // Robustness: a `w:p` that closes with an open hyperlink is malformed;
-        // flush what was accumulated so nothing is dropped, then reset state.
-        if let Some(accumulator) = self.hyperlink.take() {
-            let children = normalize_segments(accumulator.segments);
-            if children.is_empty() {
-                self.reporter.report(b"hyperlink");
-            } else {
-                self.segments.push(Segment::Hyperlink {
-                    target: accumulator.target,
-                    tooltip: accumulator.tooltip,
-                    children,
-                });
+        // Robustness: a `w:p` that closes with wrappers still open (a malformed
+        // hyperlink/field/revision missing its close) is drained innermost-first
+        // so each commits its accumulated content into the next-enclosing wrapper
+        // (or the paragraph) — nothing is dropped and nesting order is preserved.
+        while !self.wrapper_order.is_empty() {
+            let before = self.wrapper_order.len();
+            self.commit_top_wrapper();
+            if self.wrapper_order.len() == before {
+                // Defensive: a marker with no live accumulator would not pop;
+                // drop it so the drain always terminates.
+                self.wrapper_order.pop();
             }
         }
         self.hyperlink_depth = 0;
-        // Robustness: a `w:p` that closes with an open field (missing `end`) is
-        // malformed; commit what was accumulated so its cached text is not lost.
-        self.commit_field();
         self.field_depth = 0;
         self.in_instr = false;
         self.instr_buffer.clear();
@@ -1536,6 +1703,28 @@ impl BodyParser<'_> {
                 Ok(InlineNode::CommentReference(CommentReference {
                     id,
                     comment,
+                }))
+            }
+            Segment::Revision {
+                kind,
+                author,
+                date,
+                revision_id,
+                children,
+            } => {
+                // The revision's own id precedes its children's (document order).
+                let id = self.next_id()?;
+                let mut inlines = Vec::with_capacity(children.len());
+                for child in children {
+                    inlines.push(self.segment_to_inline(child)?);
+                }
+                Ok(InlineNode::Revision(Revision {
+                    id,
+                    kind,
+                    author,
+                    date,
+                    revision_id,
+                    inlines,
                 }))
             }
         }
