@@ -115,6 +115,10 @@ pub enum ModelError {
     DanglingHeaderFooterRef(NodeId),
     /// A comment reference did not resolve (v1).
     DanglingCommentRef(NodeId),
+    /// A revision range had no inline content (v1).
+    EmptyRevision(NodeId),
+    /// A revision nested deeper than the supported bound (v1).
+    RevisionNestingTooDeep(NodeId),
 }
 
 impl fmt::Display for ModelError {
@@ -230,6 +234,13 @@ impl fmt::Display for ModelError {
             }
             Self::DanglingCommentRef(id) => {
                 write!(formatter, "comment reference {id} does not resolve")
+            }
+            Self::EmptyRevision(id) => write!(formatter, "revision {id} has no inline content"),
+            Self::RevisionNestingTooDeep(id) => {
+                write!(
+                    formatter,
+                    "revision {id} nests deeper than the supported bound"
+                )
             }
         }
     }

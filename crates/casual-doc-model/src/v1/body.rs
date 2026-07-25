@@ -175,6 +175,47 @@ pub struct CommentReference {
     pub comment: CommentId,
 }
 
+/// Maximum revision-wrapper nesting depth (a `w:ins` around a `w:del`, ...).
+pub const MAX_REVISION_DEPTH: u32 = 8;
+
+/// Whether a tracked-change range was inserted or deleted.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RevisionKind {
+    /// An inserted run range (`w:ins`).
+    Insertion,
+    /// A deleted run range (`w:del`); its runs carry `w:delText` content.
+    Deletion,
+}
+
+/// A tracked-change (revision) range wrapping inline content (`w:ins`/`w:del`).
+///
+/// Author/date/id are retained as the producer wrote them (opaque, bounded),
+/// mirroring `Comment` metadata. Deleted text is preserved verbatim in the
+/// wrapped runs' `text`; the `Deletion` kind marks it deleted. A revision is a
+/// transparent range marker: it may wrap leaf inlines, a hyperlink/field, or a
+/// nested revision, and may itself appear inside a hyperlink/field.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Revision {
+    /// Stable identity (this inline node's own id).
+    pub id: NodeId,
+    /// Whether the range was inserted or deleted.
+    pub kind: RevisionKind,
+    /// The revision author, if declared (non-empty, at most 255 bytes).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    /// The revision date as written (ISO-8601 string), if declared (<= 64 bytes).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub date: Option<String>,
+    /// The producer's revision id (`w:id`) as written, if declared (<= 64 bytes).
+    /// Opaque and non-unique across ranges — a grouping key, not a node identity.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revision_id: Option<String>,
+    /// The wrapped inline content (non-empty; may include a nested revision).
+    pub inlines: Vec<InlineNode>,
+}
+
 /// Inline content supported by schema v1.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -197,6 +238,8 @@ pub enum InlineNode {
     NoteReference(NoteReference),
     /// An inline reference to a comment.
     CommentReference(CommentReference),
+    /// A tracked-change (insertion/deletion) range wrapping inline content.
+    Revision(Revision),
 }
 
 impl InlineNode {
@@ -213,6 +256,7 @@ impl InlineNode {
             Self::TextBox(text_box) => text_box.id,
             Self::NoteReference(note) => note.id,
             Self::CommentReference(comment) => comment.id,
+            Self::Revision(revision) => revision.id,
         }
     }
 }

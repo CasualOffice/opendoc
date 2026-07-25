@@ -14,6 +14,15 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Added
 
+- Tracked changes (revisions) are now modeled: inserted (`w:ins`) and deleted
+  (`w:del`) run ranges become an additive `InlineNode::Revision` wrapper carrying
+  its kind (insertion/deletion) plus retained author/date/id metadata and wrapping
+  its content inlines; deleted text (`w:delText`) is preserved verbatim in the
+  wrapped runs. Revisions nest with hyperlinks in both directions and within
+  themselves (`w:ins` around `w:del`). Paragraph-mark, property-change
+  (`w:rPrChange`/`w:pPrChange`/…), and move revisions remain reported (not yet
+  modeled). Strictly additive — existing snapshots and the migration golden are
+  byte-identical. (`48-SCHEMA-V1-TRACKED-CHANGES-DESIGN.md`)
 - Comments (`word/comments.xml`) are now modeled as first-class definitions:
   `Definitions::comments` (a `CommentId → Comment` map, empty-omitted), each
   `Comment` carrying recursive block content plus retained `author`/`initials`/

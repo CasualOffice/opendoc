@@ -1333,3 +1333,187 @@ fn empty_comment_author_is_rejected() {
         })
     ));
 }
+
+// ---- tracked changes (revisions) -----------------------------------------
+
+fn revision_paragraph(paragraph_id: NodeId, inline: InlineNode) -> BlockNode {
+    BlockNode::Paragraph(Paragraph {
+        id: paragraph_id,
+        properties: ParagraphProperties::default(),
+        inlines: vec![inline],
+    })
+}
+
+/// Builds `depth` nested revision wrappers around a leaf run, each with a unique
+/// id drawn from `counter`.
+fn wrap_in_revisions(depth: u32, counter: &mut u64) -> InlineNode {
+    *counter += 1;
+    let id = tid(*counter);
+    if depth == 0 {
+        return run_inline(id, "leaf");
+    }
+    let inner = wrap_in_revisions(depth - 1, counter);
+    InlineNode::Revision(Revision {
+        id,
+        kind: RevisionKind::Insertion,
+        author: None,
+        date: None,
+        revision_id: None,
+        inlines: vec![inner],
+    })
+}
+
+#[test]
+fn insertion_revision_round_trips_with_metadata() {
+    let revision = InlineNode::Revision(Revision {
+        id: tid(10),
+        kind: RevisionKind::Insertion,
+        author: Some("Bob".to_owned()),
+        date: Some("2026-07-25T00:00:00Z".to_owned()),
+        revision_id: Some("42".to_owned()),
+        inlines: vec![run_inline(tid(11), "added")],
+    });
+    let document = table_document(vec![revision_paragraph(tid(1), revision)]).unwrap();
+    let reloaded =
+        Document::from_json(&document.to_json().unwrap(), SnapshotLimits::default()).unwrap();
+    assert_eq!(document, reloaded);
+}
+
+#[test]
+fn deletion_revision_preserves_deleted_text() {
+    let revision = InlineNode::Revision(Revision {
+        id: tid(10),
+        kind: RevisionKind::Deletion,
+        author: None,
+        date: None,
+        revision_id: None,
+        inlines: vec![run_inline(tid(11), "gone")],
+    });
+    let document = table_document(vec![revision_paragraph(tid(1), revision)]).unwrap();
+    let reloaded =
+        Document::from_json(&document.to_json().unwrap(), SnapshotLimits::default()).unwrap();
+    assert_eq!(document, reloaded);
+    let BlockNode::Paragraph(paragraph) = &document.body()[0] else {
+        panic!("expected a paragraph");
+    };
+    let InlineNode::Revision(revision) = &paragraph.inlines[0] else {
+        panic!("expected a revision");
+    };
+    assert_eq!(revision.kind, RevisionKind::Deletion);
+    let InlineNode::Run(run) = &revision.inlines[0] else {
+        panic!("expected a run");
+    };
+    assert_eq!(run.text, "gone");
+}
+
+#[test]
+fn empty_revision_is_rejected() {
+    let revision = InlineNode::Revision(Revision {
+        id: tid(10),
+        kind: RevisionKind::Insertion,
+        author: None,
+        date: None,
+        revision_id: None,
+        inlines: Vec::new(),
+    });
+    assert!(matches!(
+        table_document(vec![revision_paragraph(tid(1), revision)]),
+        Err(ModelError::EmptyRevision(_))
+    ));
+}
+
+#[test]
+fn nested_insertion_around_deletion_is_accepted() {
+    let inner = InlineNode::Revision(Revision {
+        id: tid(12),
+        kind: RevisionKind::Deletion,
+        author: None,
+        date: None,
+        revision_id: None,
+        inlines: vec![run_inline(tid(13), "x")],
+    });
+    let outer = InlineNode::Revision(Revision {
+        id: tid(10),
+        kind: RevisionKind::Insertion,
+        author: None,
+        date: None,
+        revision_id: None,
+        inlines: vec![inner],
+    });
+    assert!(table_document(vec![revision_paragraph(tid(1), outer)]).is_ok());
+}
+
+#[test]
+fn revision_nesting_at_bound_is_accepted() {
+    let mut counter = 100;
+    let nested = wrap_in_revisions(MAX_REVISION_DEPTH, &mut counter);
+    assert!(table_document(vec![revision_paragraph(tid(1), nested)]).is_ok());
+}
+
+#[test]
+fn revision_nesting_beyond_bound_is_rejected() {
+    let mut counter = 100;
+    let nested = wrap_in_revisions(MAX_REVISION_DEPTH + 1, &mut counter);
+    assert!(matches!(
+        table_document(vec![revision_paragraph(tid(1), nested)]),
+        Err(ModelError::RevisionNestingTooDeep(_))
+    ));
+}
+
+#[test]
+fn oversized_revision_date_is_rejected() {
+    let revision = InlineNode::Revision(Revision {
+        id: tid(10),
+        kind: RevisionKind::Insertion,
+        author: None,
+        date: Some("0".repeat(65)),
+        revision_id: None,
+        inlines: vec![run_inline(tid(11), "t")],
+    });
+    assert!(matches!(
+        table_document(vec![revision_paragraph(tid(1), revision)]),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "revision.date"
+        })
+    ));
+}
+
+#[test]
+fn revision_may_wrap_a_hyperlink_at_top_level() {
+    // A revision is transparent to the wrapper leaf-only rule, so it may wrap a
+    // hyperlink (an inserted link) even though a hyperlink cannot nest in a
+    // hyperlink/field.
+    let link = InlineNode::Hyperlink(Hyperlink {
+        id: tid(12),
+        target: HyperlinkTarget::Internal(InternalTarget {
+            anchor: "a".to_owned(),
+        }),
+        tooltip: None,
+        inlines: vec![run_inline(tid(13), "link")],
+    });
+    let revision = InlineNode::Revision(Revision {
+        id: tid(10),
+        kind: RevisionKind::Insertion,
+        author: None,
+        date: None,
+        revision_id: None,
+        inlines: vec![link],
+    });
+    assert!(table_document(vec![revision_paragraph(tid(1), revision)]).is_ok());
+}
+
+#[test]
+fn revision_child_id_duplicating_the_wrapper_is_rejected() {
+    let revision = InlineNode::Revision(Revision {
+        id: tid(10),
+        kind: RevisionKind::Insertion,
+        author: None,
+        date: None,
+        revision_id: None,
+        inlines: vec![run_inline(tid(10), "dup")],
+    });
+    assert!(matches!(
+        table_document(vec![revision_paragraph(tid(1), revision)]),
+        Err(ModelError::DuplicateNodeId(_))
+    ));
+}

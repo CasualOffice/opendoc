@@ -1,6 +1,6 @@
 use casual_doc_model::v1::{
     Alignment, BlockNode, Break, BreakKind, Color, HyperlinkTarget, InlineNode, Paragraph,
-    RgbColor, StyleKind,
+    RevisionKind, RgbColor, StyleKind,
 };
 use casual_doc_ooxml::DocxPackage;
 
@@ -1124,12 +1124,14 @@ fn malformed_table_inside_a_paragraph_does_not_desync_the_stack() {
     assert!(features(&import).contains(&"tbl"));
 }
 
-/// Recursively collects run text within an inline (into hyperlinks and fields).
+/// Recursively collects run text within an inline (into hyperlinks, fields, and
+/// tracked-change revisions).
 fn inline_text(inline: &InlineNode, out: &mut String) {
     match inline {
         InlineNode::Run(run) => out.push_str(&run.text),
         InlineNode::Hyperlink(link) => link.inlines.iter().for_each(|c| inline_text(c, out)),
         InlineNode::Field(field) => field.inlines.iter().for_each(|c| inline_text(c, out)),
+        InlineNode::Revision(revision) => revision.inlines.iter().for_each(|c| inline_text(c, out)),
         _ => {}
     }
 }
@@ -1771,6 +1773,273 @@ fn body_with_an_eof_truncated_table_preserves_its_content() {
     );
 }
 
+// ---- tracked changes (revisions) -----------------------------------------
+
+/// Returns the first `Revision` inline in paragraph 0, if any.
+fn first_revision(import: &Import) -> Option<&casual_doc_model::v1::Revision> {
+    paragraph(import, 0).inlines.iter().find_map(|i| match i {
+        InlineNode::Revision(r) => Some(r),
+        _ => None,
+    })
+}
+
+#[test]
+fn inserted_run_is_modeled_as_revision_with_metadata() {
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:ins w:id="1" w:author="Ada" w:date="2026-07-25T00:00:00Z">
+            <w:r><w:t>added</w:t></w:r>
+        </w:ins></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let revision = first_revision(&import).expect("insertion modeled");
+    assert_eq!(revision.kind, RevisionKind::Insertion);
+    assert_eq!(revision.author.as_deref(), Some("Ada"));
+    assert_eq!(revision.date.as_deref(), Some("2026-07-25T00:00:00Z"));
+    assert_eq!(revision.revision_id.as_deref(), Some("1"));
+    let mut text = String::new();
+    inline_text(&InlineNode::Revision(revision.clone()), &mut text);
+    assert_eq!(text, "added");
+}
+
+#[test]
+fn deleted_run_preserves_deltext() {
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:del w:id="2" w:author="Bob">
+            <w:r><w:delText>gone</w:delText></w:r>
+        </w:del></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let revision = first_revision(&import).expect("deletion modeled");
+    assert_eq!(revision.kind, RevisionKind::Deletion);
+    // The deleted text is preserved verbatim in the wrapped run.
+    let InlineNode::Run(run) = &revision.inlines[0] else {
+        panic!("expected a run");
+    };
+    assert_eq!(run.text, "gone");
+}
+
+#[test]
+fn nested_insertion_around_deletion_is_modeled() {
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:ins w:id="1"><w:del w:id="2">
+            <w:r><w:delText>x</w:delText></w:r>
+        </w:del></w:ins></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let outer = first_revision(&import).expect("outer insertion");
+    assert_eq!(outer.kind, RevisionKind::Insertion);
+    let InlineNode::Revision(inner) = &outer.inlines[0] else {
+        panic!("expected a nested revision");
+    };
+    assert_eq!(inner.kind, RevisionKind::Deletion);
+    let InlineNode::Run(run) = &inner.inlines[0] else {
+        panic!("expected a run");
+    };
+    assert_eq!(run.text, "x");
+}
+
+#[test]
+fn revision_wrapping_a_hyperlink_is_modeled() {
+    // Inserting a whole link: `w:ins` wraps a `w:hyperlink`. Both the revision
+    // and the hyperlink survive (the innermost-wins routing regression guard).
+    let document = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r"><w:body>
+        <w:p><w:ins w:id="1"><w:hyperlink r:id="rIdLink">
+            <w:r><w:t>site</w:t></w:r>
+        </w:hyperlink></w:ins></w:p>
+    </w:body></w:document>"#;
+    let mut hyperlinks = std::collections::BTreeMap::new();
+    hyperlinks.insert("rIdLink".to_owned(), "https://example.com/".to_owned());
+    let import = import_with_sources(
+        document,
+        None,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        None,
+        &[],
+        &hyperlinks,
+        ImportConfig::default(),
+    )
+    .unwrap();
+    let revision = first_revision(&import).expect("insertion modeled");
+    let InlineNode::Hyperlink(link) = &revision.inlines[0] else {
+        panic!("expected the hyperlink inside the revision");
+    };
+    let mut text = String::new();
+    link.inlines.iter().for_each(|c| inline_text(c, &mut text));
+    assert_eq!(text, "site");
+}
+
+#[test]
+fn revision_inside_a_hyperlink_is_modeled() {
+    // Editing text inside an existing link: `w:hyperlink` wraps a `w:ins`. Both
+    // wrappers survive, nested in the correct order.
+    let document = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r"><w:body>
+        <w:p><w:hyperlink r:id="rIdLink"><w:ins w:id="1">
+            <w:r><w:t>edited</w:t></w:r>
+        </w:ins></w:hyperlink></w:p>
+    </w:body></w:document>"#;
+    let mut hyperlinks = std::collections::BTreeMap::new();
+    hyperlinks.insert("rIdLink".to_owned(), "https://example.com/".to_owned());
+    let import = import_with_sources(
+        document,
+        None,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        None,
+        &[],
+        &hyperlinks,
+        ImportConfig::default(),
+    )
+    .unwrap();
+    let InlineNode::Hyperlink(link) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected a hyperlink");
+    };
+    let InlineNode::Revision(revision) = &link.inlines[0] else {
+        panic!("expected a revision inside the hyperlink");
+    };
+    assert_eq!(revision.kind, RevisionKind::Insertion);
+    let mut text = String::new();
+    inline_text(&link.inlines[0], &mut text);
+    assert_eq!(text, "edited");
+}
+
+#[test]
+fn paragraph_mark_and_property_change_revisions_are_reported_not_modeled() {
+    // A `w:ins` inside `w:pPr>w:rPr` (paragraph-mark insertion) and a `w:rPrChange`
+    // are not run ranges: they are reported, produce no Revision node, and the
+    // paragraph's real text is intact.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p>
+            <w:pPr><w:rPr><w:ins w:id="1"/></w:rPr></w:pPr>
+            <w:r><w:rPr><w:rPrChange w:id="2" w:author="A"><w:rPr/></w:rPrChange></w:rPr><w:t>body</w:t></w:r>
+        </w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    assert!(
+        first_revision(&import).is_none(),
+        "no run-range revision is modeled"
+    );
+    let mut text = String::new();
+    paragraph(&import, 0)
+        .inlines
+        .iter()
+        .for_each(|i| inline_text(i, &mut text));
+    assert_eq!(text, "body");
+    assert!(features(&import).contains(&"ins"));
+    assert!(features(&import).contains(&"rPrChange"));
+}
+
+#[test]
+fn empty_revision_is_dropped_and_reported() {
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:ins w:id="1"></w:ins><w:r><w:t>keep</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    assert!(first_revision(&import).is_none(), "empty range not modeled");
+    assert!(features(&import).contains(&"ins"));
+    // The surrounding real text is unaffected.
+    let mut text = String::new();
+    paragraph(&import, 0)
+        .inlines
+        .iter()
+        .for_each(|i| inline_text(i, &mut text));
+    assert_eq!(text, "keep");
+}
+
+#[test]
+fn oversized_revision_metadata_is_dropped_not_truncated() {
+    let long_author = "a".repeat(256);
+    let xml = format!(
+        r#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:ins w:id="1" w:author="{long_author}"><w:r><w:t>t</w:t></w:r></w:ins></w:p>
+    </w:body></w:document>"#
+    );
+    let import = import(xml.as_bytes());
+    let revision = first_revision(&import).expect("insertion modeled");
+    assert!(revision.author.is_none(), "oversized author dropped");
+}
+
+#[test]
+fn unclosed_revision_at_eof_flushes_its_runs() {
+    // A `w:ins` left open by EOF-truncated markup (the stream ends before its
+    // close) still commits its accumulated runs at paragraph flush — no text is
+    // stranded in the wrapper stack. (A mismatched `</w:p>` inside an open
+    // `w:ins` is instead rejected by quick-xml as malformed, never silent.)
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:ins w:id="1"><w:r><w:t>text</w:t></w:r>"#;
+    let import = import(xml);
+    let revision = first_revision(&import).expect("truncated insertion still modeled");
+    let mut text = String::new();
+    inline_text(&InlineNode::Revision(revision.clone()), &mut text);
+    assert_eq!(text, "text", "unclosed revision's run text preserved");
+}
+
+#[test]
+fn revision_wrapping_a_text_box_preserves_box_content() {
+    // A `w:ins` wraps a run whose drawing carries a text box. The text box must
+    // land inside the revision (the ContentFrame suspend/restore of the revision
+    // stack across `w:txbxContent`), and neither wrapper's content is lost.
+    let xml = br#"<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps"><w:body>
+        <w:p><w:ins w:id="1">
+            <w:r><w:t>see </w:t></w:r>
+            <w:r><w:drawing><wp:inline><a:graphic><a:graphicData><wps:wsp><wps:txbx>
+                <w:txbxContent><w:p><w:r><w:t>boxed</w:t></w:r></w:p></w:txbxContent>
+            </wps:txbx></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>
+        </w:ins></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let revision = first_revision(&import).expect("insertion modeled");
+    // The run text and the text box both survive inside the revision.
+    let has_box = revision
+        .inlines
+        .iter()
+        .any(|i| matches!(i, InlineNode::TextBox(_)));
+    assert!(has_box, "text box lands inside the revision");
+    let mut text = String::new();
+    inline_text(&InlineNode::Revision(revision.clone()), &mut text);
+    // `inline_text` does not recurse text boxes, so only the run text shows here.
+    assert_eq!(text, "see ");
+}
+
+#[test]
+fn revision_inside_a_text_box_is_modeled_in_box_content() {
+    // A text box whose own content contains a `w:ins`: the box parses in a fresh
+    // context, so the revision is modeled inside the box's blocks, not the outer
+    // paragraph.
+    let xml = br#"<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps"><w:body>
+        <w:p><w:r><w:drawing><wp:inline><a:graphic><a:graphicData><wps:wsp><wps:txbx>
+            <w:txbxContent><w:p><w:ins w:id="1"><w:r><w:t>added</w:t></w:r></w:ins></w:p></w:txbxContent>
+        </wps:txbx></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    // The outer paragraph has no revision; the box holds it.
+    assert!(first_revision(&import).is_none());
+    let InlineNode::TextBox(text_box) = paragraph(&import, 0)
+        .inlines
+        .iter()
+        .find(|i| matches!(i, InlineNode::TextBox(_)))
+        .expect("text box")
+    else {
+        unreachable!()
+    };
+    let BlockNode::Paragraph(inner) = &text_box.blocks[0] else {
+        panic!("expected a paragraph in the box");
+    };
+    assert!(
+        inner
+            .inlines
+            .iter()
+            .any(|i| matches!(i, InlineNode::Revision(_))),
+        "the revision is modeled inside the box content"
+    );
+}
+
 // ---- headers / footers ---------------------------------------------------
 
 fn import_with_header_footer(
@@ -2132,4 +2401,73 @@ fn nested_ruby_annotation_does_not_leak_base_text() {
     // Only the outermost base is kept; no annotation fragment leaks in.
     assert_eq!(text, "BASE");
     assert!(!text.contains("anno") && !text.contains("inner") && !text.contains("ib"));
+}
+
+#[test]
+fn zzz_textbox_inside_revision_probe() {
+    let xml = br#"<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps"><w:body>
+        <w:p><w:ins w:id="1"><w:r><w:t>pre</w:t></w:r><w:r><w:drawing><wp:inline><a:graphic><a:graphicData><wps:wsp><wps:txbx>
+            <w:txbxContent><w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:txbxContent>
+        </wps:txbx></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r><w:r><w:t>post</w:t></w:r></w:ins></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let para = paragraph(&import, 0);
+    eprintln!("PARA INLINES: {:#?}", para.inlines);
+    let revision = first_revision(&import).expect("insertion modeled");
+    let mut text = String::new();
+    inline_text(&InlineNode::Revision(revision.clone()), &mut text);
+    eprintln!("REVISION TEXT: {:?}", text);
+    let tb = find_textbox(&revision.inlines);
+    eprintln!("TEXTBOX IN REVISION: {:?}", tb.map(|b| tb_block_text(&b.blocks)));
+    let outer_tb = find_textbox(&para.inlines);
+    eprintln!("TEXTBOX AT PARA LEVEL: {:?}", outer_tb.map(|b| tb_block_text(&b.blocks)));
+}
+
+#[test]
+fn zzz_revision_inside_textbox_probe() {
+    let xml = br#"<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps"><w:body>
+        <w:p><w:r><w:t>outer</w:t></w:r><w:r><w:drawing><wp:inline><a:graphic><a:graphicData><wps:wsp><wps:txbx>
+            <w:txbxContent><w:p><w:ins w:id="1"><w:r><w:t>Inserted</w:t></w:r></w:ins></w:p></w:txbxContent>
+        </wps:txbx></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let para = paragraph(&import, 0);
+    eprintln!("PARA INLINES: {:#?}", para.inlines);
+    let outer_rev = first_revision(&import);
+    eprintln!("REVISION AT PARA LEVEL (should be None): {:?}", outer_rev.is_some());
+    let tb = find_textbox(&para.inlines).expect("text box modeled");
+    eprintln!("TEXTBOX BLOCKS: {:#?}", tb.blocks);
+}
+
+#[test]
+fn zzz_unclosed_revision_at_box_exit_probe() {
+    // w:ins opened inside the box but never closed before </w:txbxContent>.
+    let xml = br#"<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps"><w:body>
+        <w:p><w:r><w:t>outer</w:t></w:r><w:r><w:drawing><wp:inline><a:graphic><a:graphicData><wps:wsp><wps:txbx>
+            <w:txbxContent><w:p><w:ins w:id="1"><w:r><w:t>Inserted</w:t></w:r></w:txbxContent>
+        </wps:txbx></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r><w:r><w:t>tail</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let para = paragraph(&import, 0);
+    eprintln!("UNCLOSED PARA INLINES: {:#?}", para.inlines);
+    eprintln!("REVISION AT PARA LEVEL (should be None): {:?}", first_revision(&import).is_some());
+    let outer: String = para.inlines.iter().filter_map(|i| match i { InlineNode::Run(r)=>Some(r.text.as_str()), _=>None }).collect();
+    eprintln!("OUTER RUN TEXT: {:?}", outer);
+    if let Some(tb) = find_textbox(&para.inlines) { eprintln!("TB BLOCKS: {:#?}", tb.blocks); } else { eprintln!("NO TEXTBOX"); }
+}
+
+#[test]
+fn zzz_box_inside_unclosed_outer_revision_probe() {
+    // w:ins opened in OUTER context wrapping the box; the box exits normally,
+    // then the paragraph ends without </w:ins>.
+    let xml = br#"<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps"><w:body>
+        <w:p><w:ins w:id="1"><w:r><w:drawing><wp:inline><a:graphic><a:graphicData><wps:wsp><wps:txbx>
+            <w:txbxContent><w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:txbxContent>
+        </wps:txbx></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r><w:r><w:t>after</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let para = paragraph(&import, 0);
+    eprintln!("BOX-IN-UNCLOSED PARA INLINES: {:#?}", para.inlines);
+    let rev = first_revision(&import).expect("revision drained at para end");
+    eprintln!("TB IN REVISION: {:?}", find_textbox(&rev.inlines).map(|b| tb_block_text(&b.blocks)));
 }
