@@ -23,6 +23,12 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Added
 
+- Semantic DOCX writer now emits the self-contained inline constructs:
+  hyperlinks (external via generated `document.xml.rels` relationships, internal
+  via `w:anchor`, with tooltips), simple fields (`w:fldSimple`), bookmark ranges,
+  tracked-change revisions (`w:ins`/`w:del`, deletions written as `w:delText`),
+  and inline content controls (`w:sdt`). Proven by model-fixed-point round-trips
+  for both the self-contained set and external hyperlinks (rels regenerated).
 - Semantic DOCX writer now emits tables: the model's tables (grid, table/row/
   cell properties incl. borders, shading, margins, merges, and nested tables)
   are serialized back to `w:tbl`, proven by the model-fixed-point round-trip.

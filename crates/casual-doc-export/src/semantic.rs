@@ -1,11 +1,14 @@
 //! Semantic DOCX writer: serialize a v1 `Document` model back to a valid,
 //! editable WordprocessingML package (the dual of the Retention byte-copy
-//! writer). This is Phase-1B slice 1: the core body — `w:document`/`w:body`,
-//! paragraphs, runs, the mapped run/paragraph properties, tabs/breaks, and the
-//! section `w:sectPr`. Tables, inline constructs (hyperlinks/fields/drawings/…),
-//! and the definition parts (styles/numbering/notes/headers/comments) land in
-//! later slices; a model that uses them is written with what this slice
-//! supports and the rest is skipped (never a malformed part).
+//! writer). Written today: the core body (`w:document`/`w:body`, paragraphs,
+//! runs, the mapped run/paragraph properties, tabs/breaks), tables (grid +
+//! table/row/cell properties, merges, nested tables), and the self-contained
+//! inline constructs (hyperlinks with `document.xml.rels` generation, fields,
+//! bookmarks, tracked-change revisions, inline content controls). The
+//! media-backed constructs (drawings, text boxes) and the definition parts
+//! (styles/numbering/notes/headers/comments, and note/comment references) land
+//! in later slices; a model that uses them is written with what is supported and
+//! the rest is skipped (never a malformed part).
 //!
 //! Output is byte-deterministic for a given model: parts in fixed order, a fixed
 //! ZIP timestamp, ids/relationships re-minted in document order.
@@ -14,10 +17,11 @@ use std::collections::BTreeMap;
 use std::io::{Cursor, Write};
 
 use casual_doc_model::v1::{
-    Alignment, BlockNode, BorderEdge, BreakKind, CellVerticalAlignment, Color, Document,
-    HeightRule, InlineNode, ParagraphProperties, RgbColor, RunProperties, Table, TableBorders,
-    TableCell, TableCellProperties, TableLayout, TableProperties, TableRow, TableRowProperties,
-    TextDirection, VerticalMerge,
+    Alignment, BlockNode, BorderEdge, BreakKind, CellVerticalAlignment, Color, Definitions,
+    Document, HeightRule, HyperlinkTarget, InlineNode, ParagraphProperties, RevisionKind, RgbColor,
+    RunProperties, SdtControlKind, SdtProperties, Table, TableBorders, TableCell,
+    TableCellProperties, TableLayout, TableProperties, TableRow, TableRowProperties, TextDirection,
+    VerticalMerge,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -33,6 +37,55 @@ const DOC_REL_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument";
 const DOC_CT: &str =
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml";
+const R_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+const HYPERLINK_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
+
+/// A `document.xml.rels` entry: (relationship id, external target URL).
+type RelEntry = (String, String);
+
+/// Accumulates the `word/_rels/document.xml.rels` entries the body needs while
+/// it is written. Today that is one external-target relationship per distinct
+/// hyperlink URL; media/part relationships join in later slices. `rId`s are
+/// assigned in document order so the package is byte-deterministic, and a URL
+/// seen twice reuses its `rId` (harmless to the round-trip, which stores the URL
+/// not the id).
+struct RelBuilder {
+    next: u32,
+    by_url: BTreeMap<String, String>,
+    entries: Vec<RelEntry>,
+}
+
+impl RelBuilder {
+    fn new() -> Self {
+        Self {
+            next: 0,
+            by_url: BTreeMap::new(),
+            entries: Vec::new(),
+        }
+    }
+
+    /// Returns the `rId` for an external hyperlink URL, minting a new one (and
+    /// recording the relationship) the first time each URL is seen.
+    fn hyperlink(&mut self, url: &str) -> String {
+        if let Some(id) = self.by_url.get(url) {
+            return id.clone();
+        }
+        self.next += 1;
+        let id = format!("rId{}", self.next);
+        self.by_url.insert(url.to_string(), id.clone());
+        self.entries.push((id.clone(), url.to_string()));
+        id
+    }
+}
+
+/// Threaded write context: the bookmark-name source (bookmark markers carry only
+/// a `BookmarkId`; the name lives in `Definitions`) and the relationship
+/// accumulator (external hyperlinks).
+struct Ctx<'a> {
+    defs: &'a Definitions,
+    rels: RelBuilder,
+}
 
 /// Serializes a v1 `Document` to a DOCX package. `media` supplies binary image
 /// bytes by part name (the model carries `MediaReference` metadata, not bytes);
@@ -41,15 +94,17 @@ pub fn write_document(
     document: &Document,
     _media: &BTreeMap<String, Vec<u8>>,
 ) -> Result<Vec<u8>, ExportError> {
-    let document_xml = document_xml(document)?;
+    let (document_xml, rels) = document_xml(document)?;
 
-    // Fixed part set for the core slice; each is emitted in a deterministic
-    // order so the package bytes are reproducible.
+    // Fixed part set; each is emitted in a deterministic order so the package
+    // bytes are reproducible. The document relationships part carries any
+    // external hyperlink targets collected while writing the body (empty
+    // otherwise — byte-identical to the no-relationship case).
     let parts: [(&str, Vec<u8>); 4] = [
         ("[Content_Types].xml", content_types_xml()?),
         ("_rels/.rels", root_rels_xml()?),
         ("word/document.xml", document_xml),
-        ("word/_rels/document.xml.rels", empty_rels_xml()?),
+        ("word/_rels/document.xml.rels", document_rels_xml(&rels)?),
     ];
 
     let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
@@ -124,53 +179,85 @@ fn root_rels_xml() -> Result<Vec<u8>, ExportError> {
     Ok(finish(w))
 }
 
-/// Emits an empty per-document relationships part (this slice references no
-/// external targets; later slices add hyperlink/media/part relationships).
-fn empty_rels_xml() -> Result<Vec<u8>, ExportError> {
+/// Emits `word/_rels/document.xml.rels`. With no entries it is the empty
+/// `<Relationships/>` element (byte-identical to the earlier no-relationship
+/// slices); with entries it carries one external hyperlink relationship each.
+fn document_rels_xml(entries: &[RelEntry]) -> Result<Vec<u8>, ExportError> {
     let mut w = new_writer();
     let mut rels = start("Relationships");
     rels.push_attribute(("xmlns", REL_NS));
-    w.write_event(Event::Empty(rels)).map_err(pkg)?;
+    if entries.is_empty() {
+        w.write_event(Event::Empty(rels)).map_err(pkg)?;
+        return Ok(finish(w));
+    }
+    w.write_event(Event::Start(rels)).map_err(pkg)?;
+    for (id, url) in entries {
+        let mut rel = start("Relationship");
+        rel.push_attribute(("Id", id.as_str()));
+        rel.push_attribute(("Type", HYPERLINK_REL_TYPE));
+        rel.push_attribute(("Target", url.as_str()));
+        rel.push_attribute(("TargetMode", "External"));
+        w.write_event(Event::Empty(rel)).map_err(pkg)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("Relationships")))
+        .map_err(pkg)?;
     Ok(finish(w))
 }
 
-/// Emits `word/document.xml` from the model body.
-fn document_xml(document: &Document) -> Result<Vec<u8>, ExportError> {
+/// Emits `word/document.xml` from the model body, returning the bytes plus the
+/// external hyperlink relationships collected while writing (for
+/// `document.xml.rels`).
+fn document_xml(document: &Document) -> Result<(Vec<u8>, Vec<RelEntry>), ExportError> {
     let mut w = new_writer();
     let mut doc = start("w:document");
     doc.push_attribute(("xmlns:w", W_NS));
+    // `xmlns:r` is required so a hyperlink's `r:id` is well-formed; harmless when
+    // no relationship-referencing construct is present.
+    doc.push_attribute(("xmlns:r", R_NS));
     w.write_event(Event::Start(doc)).map_err(pkg)?;
     w.write_event(Event::Start(start("w:body"))).map_err(pkg)?;
 
+    let mut ctx = Ctx {
+        defs: document.definitions(),
+        rels: RelBuilder::new(),
+    };
     for block in document.body() {
-        write_block(&mut w, block)?;
+        write_block(&mut w, block, &mut ctx)?;
     }
 
     w.write_event(Event::End(BytesEnd::new("w:body")))
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("w:document")))
         .map_err(pkg)?;
-    Ok(finish(w))
+    Ok((finish(w), ctx.rels.entries))
 }
 
 /// Emits a body/cell block. Content-control block wrappers (`BlockNode::Sdt`)
 /// are a later slice — their inner blocks are emitted directly (no text loss).
-fn write_block(w: &mut Writer<Cursor<Vec<u8>>>, block: &BlockNode) -> Result<(), ExportError> {
+fn write_block(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    block: &BlockNode,
+    ctx: &mut Ctx,
+) -> Result<(), ExportError> {
     match block {
         BlockNode::Paragraph(paragraph) => {
-            write_paragraph(w, &paragraph.properties, &paragraph.inlines)
+            write_paragraph(w, &paragraph.properties, &paragraph.inlines, ctx)
         }
-        BlockNode::Table(table) => write_table(w, table),
+        BlockNode::Table(table) => write_table(w, table, ctx),
         BlockNode::Sdt(sdt) => {
             for inner in &sdt.blocks {
-                write_block(w, inner)?;
+                write_block(w, inner, ctx)?;
             }
             Ok(())
         }
     }
 }
 
-fn write_table(w: &mut Writer<Cursor<Vec<u8>>>, table: &Table) -> Result<(), ExportError> {
+fn write_table(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    table: &Table,
+    ctx: &mut Ctx,
+) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("w:tbl"))).map_err(pkg)?;
     write_table_properties(w, &table.properties)?;
     if !table.grid.is_empty() {
@@ -187,7 +274,7 @@ fn write_table(w: &mut Writer<Cursor<Vec<u8>>>, table: &Table) -> Result<(), Exp
             .map_err(pkg)?;
     }
     for row in &table.rows {
-        write_row(w, row)?;
+        write_row(w, row, ctx)?;
     }
     w.write_event(Event::End(BytesEnd::new("w:tbl")))
         .map_err(pkg)?;
@@ -249,11 +336,15 @@ fn write_table_properties(
     Ok(())
 }
 
-fn write_row(w: &mut Writer<Cursor<Vec<u8>>>, row: &TableRow) -> Result<(), ExportError> {
+fn write_row(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    row: &TableRow,
+    ctx: &mut Ctx,
+) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("w:tr"))).map_err(pkg)?;
     write_row_properties(w, &row.properties)?;
     for cell in &row.cells {
-        write_cell(w, cell)?;
+        write_cell(w, cell, ctx)?;
     }
     w.write_event(Event::End(BytesEnd::new("w:tr")))
         .map_err(pkg)?;
@@ -298,11 +389,15 @@ fn write_row_properties(
     Ok(())
 }
 
-fn write_cell(w: &mut Writer<Cursor<Vec<u8>>>, cell: &TableCell) -> Result<(), ExportError> {
+fn write_cell(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    cell: &TableCell,
+    ctx: &mut Ctx,
+) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("w:tc"))).map_err(pkg)?;
     write_cell_properties(w, &cell.properties)?;
     for block in &cell.blocks {
-        write_block(w, block)?;
+        write_block(w, block, ctx)?;
     }
     w.write_event(Event::End(BytesEnd::new("w:tc")))
         .map_err(pkg)?;
@@ -469,11 +564,12 @@ fn write_paragraph(
     w: &mut Writer<Cursor<Vec<u8>>>,
     properties: &ParagraphProperties,
     inlines: &[InlineNode],
+    ctx: &mut Ctx,
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("w:p"))).map_err(pkg)?;
     write_paragraph_properties(w, properties)?;
     for inline in inlines {
-        write_inline(w, inline)?;
+        write_inline(w, inline, ctx, false)?;
     }
     w.write_event(Event::End(BytesEnd::new("w:p")))
         .map_err(pkg)?;
@@ -530,18 +626,26 @@ fn write_paragraph_properties(
     Ok(())
 }
 
-fn write_inline(w: &mut Writer<Cursor<Vec<u8>>>, inline: &InlineNode) -> Result<(), ExportError> {
+/// Emits one inline node. `in_deletion` is true when the node sits inside a
+/// tracked-change deletion range, so a run's text is written as `w:delText`
+/// (which the importer reads back into `run.text`, exactly like `w:t`).
+fn write_inline(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    inline: &InlineNode,
+    ctx: &mut Ctx,
+    in_deletion: bool,
+) -> Result<(), ExportError> {
     match inline {
         InlineNode::Run(run) => {
             w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
             write_run_properties(w, &run.properties)?;
-            let mut t = start("w:t");
+            let tag = if in_deletion { "w:delText" } else { "w:t" };
+            let mut t = start(tag);
             t.push_attribute(("xml:space", "preserve"));
             w.write_event(Event::Start(t)).map_err(pkg)?;
             w.write_event(Event::Text(BytesText::new(&run.text)))
                 .map_err(pkg)?;
-            w.write_event(Event::End(BytesEnd::new("w:t")))
-                .map_err(pkg)?;
+            w.write_event(Event::End(BytesEnd::new(tag))).map_err(pkg)?;
             w.write_event(Event::End(BytesEnd::new("w:r")))
                 .map_err(pkg)?;
         }
@@ -559,11 +663,159 @@ fn write_inline(w: &mut Writer<Cursor<Vec<u8>>>, inline: &InlineNode) -> Result<
             w.write_event(Event::End(BytesEnd::new("w:r")))
                 .map_err(pkg)?;
         }
-        // Later-slice inline constructs are not yet written; the core-slice
-        // round-trip corpus does not exercise them.
-        _ => {}
+        // A hyperlink is a direct inline child of `w:p` (never inside a `w:r`):
+        // an external target resolves through an `r:id` relationship, an internal
+        // one through a `w:anchor` bookmark name.
+        InlineNode::Hyperlink(link) => {
+            let mut el = start("w:hyperlink");
+            match &link.target {
+                HyperlinkTarget::External(ext) => {
+                    let rid = ctx.rels.hyperlink(&ext.url);
+                    el.push_attribute(("r:id", rid.as_str()));
+                    if let Some(tip) = &link.tooltip {
+                        el.push_attribute(("w:tooltip", tip.as_str()));
+                    }
+                    w.write_event(Event::Start(el)).map_err(pkg)?;
+                }
+                HyperlinkTarget::Internal(int) => {
+                    el.push_attribute(("w:anchor", int.anchor.as_str()));
+                    if let Some(tip) = &link.tooltip {
+                        el.push_attribute(("w:tooltip", tip.as_str()));
+                    }
+                    w.write_event(Event::Start(el)).map_err(pkg)?;
+                }
+            }
+            for child in &link.inlines {
+                write_inline(w, child, ctx, in_deletion)?;
+            }
+            w.write_event(Event::End(BytesEnd::new("w:hyperlink")))
+                .map_err(pkg)?;
+        }
+        // A simple field: the instruction inline, the cached result as children.
+        InlineNode::Field(field) => {
+            let mut el = start("w:fldSimple");
+            el.push_attribute(("w:instr", field.instruction.as_str()));
+            w.write_event(Event::Start(el)).map_err(pkg)?;
+            for child in &field.inlines {
+                write_inline(w, child, ctx, in_deletion)?;
+            }
+            w.write_event(Event::End(BytesEnd::new("w:fldSimple")))
+                .map_err(pkg)?;
+        }
+        // A tracked-change range. Its own runs are deleted text when this is a
+        // deletion (or when already inside one); insertions keep the flag.
+        InlineNode::Revision(revision) => {
+            let (name, deleted) = match revision.kind {
+                RevisionKind::Insertion => ("w:ins", in_deletion),
+                RevisionKind::Deletion => ("w:del", true),
+            };
+            let mut el = start(name);
+            if let Some(author) = &revision.author {
+                el.push_attribute(("w:author", author.as_str()));
+            }
+            if let Some(date) = &revision.date {
+                el.push_attribute(("w:date", date.as_str()));
+            }
+            if let Some(id) = &revision.revision_id {
+                el.push_attribute(("w:id", id.as_str()));
+            }
+            w.write_event(Event::Start(el)).map_err(pkg)?;
+            for child in &revision.inlines {
+                write_inline(w, child, ctx, deleted)?;
+            }
+            w.write_event(Event::End(BytesEnd::new(name))).map_err(pkg)?;
+        }
+        // A bookmark range marker (zero-width). The pairing key `w:id` derives
+        // from the shared `BookmarkId`; the name lives in `Definitions`.
+        InlineNode::BookmarkStart(marker) => {
+            if let Some(bookmark) = ctx.defs.bookmarks.get(&marker.bookmark) {
+                let id = marker.bookmark.node_id().as_u128().to_string();
+                let mut el = start("w:bookmarkStart");
+                el.push_attribute(("w:id", id.as_str()));
+                el.push_attribute(("w:name", bookmark.name.as_str()));
+                w.write_event(Event::Empty(el)).map_err(pkg)?;
+            }
+        }
+        InlineNode::BookmarkEnd(marker) => {
+            let id = marker.bookmark.node_id().as_u128().to_string();
+            let mut el = start("w:bookmarkEnd");
+            el.push_attribute(("w:id", id.as_str()));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+        // An inline content control: typed `w:sdtPr` (omitted when default) plus
+        // `w:sdtContent` wrapping the children.
+        InlineNode::Sdt(sdt) => {
+            w.write_event(Event::Start(start("w:sdt"))).map_err(pkg)?;
+            write_sdt_properties(w, &sdt.properties)?;
+            w.write_event(Event::Start(start("w:sdtContent")))
+                .map_err(pkg)?;
+            for child in &sdt.inlines {
+                write_inline(w, child, ctx, in_deletion)?;
+            }
+            w.write_event(Event::End(BytesEnd::new("w:sdtContent")))
+                .map_err(pkg)?;
+            w.write_event(Event::End(BytesEnd::new("w:sdt")))
+                .map_err(pkg)?;
+        }
+        // Drawings, text boxes, and note/comment references depend on media or
+        // definition parts written in a later slice (P1B-005).
+        InlineNode::Drawing(_)
+        | InlineNode::TextBox(_)
+        | InlineNode::NoteReference(_)
+        | InlineNode::CommentReference(_) => {}
     }
     Ok(())
+}
+
+/// Emits `w:sdtPr` for an inline content control, or nothing when the control
+/// carries no modeled properties. Children are ordered per `CT_SdtPr` (alias,
+/// tag, id, type marker) for Word validity; the importer is order-independent.
+fn write_sdt_properties(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    properties: &SdtProperties,
+) -> Result<(), ExportError> {
+    if *properties == SdtProperties::default() {
+        return Ok(());
+    }
+    w.write_event(Event::Start(start("w:sdtPr"))).map_err(pkg)?;
+    for (value, name) in [
+        (&properties.alias, "w:alias"),
+        (&properties.tag, "w:tag"),
+        (&properties.control_id, "w:id"),
+    ] {
+        if let Some(value) = value {
+            let mut el = start(name);
+            el.push_attribute(("w:val", value.as_str()));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+    }
+    if let Some(kind) = properties.control_kind {
+        w.write_event(Event::Empty(start(sdt_kind_element(kind))))
+            .map_err(pkg)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("w:sdtPr")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+/// Maps a content-control kind to its `w:sdtPr` type-marker element. The
+/// importer matches by local name, so the `w:`-prefixed spelling round-trips
+/// (`Checkbox` re-imports even though real OOXML uses `w14:checkbox`).
+fn sdt_kind_element(kind: SdtControlKind) -> &'static str {
+    match kind {
+        SdtControlKind::RichText => "w:richText",
+        SdtControlKind::PlainText => "w:text",
+        SdtControlKind::ComboBox => "w:comboBox",
+        SdtControlKind::DropDownList => "w:dropDownList",
+        SdtControlKind::Date => "w:date",
+        SdtControlKind::Picture => "w:picture",
+        SdtControlKind::Checkbox => "w:checkbox",
+        SdtControlKind::Group => "w:group",
+        SdtControlKind::BuildingBlockGallery => "w:docPartObj",
+        SdtControlKind::RepeatingSection => "w:repeatingSection",
+        SdtControlKind::Citation => "w:citation",
+        SdtControlKind::Bibliography => "w:bibliography",
+    }
 }
 
 fn write_run_properties(
