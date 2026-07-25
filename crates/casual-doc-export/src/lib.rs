@@ -425,6 +425,44 @@ mod semantic_tests {
     }
 
     #[test]
+    fn embedded_fonts_survive_the_semantic_round_trip() {
+        // A fontTable font with an embedded regular face whose .odttf resolves
+        // through fontTable.xml.rels. The writer regenerates fontTable.xml (with
+        // the w:embedRegular), fontTable.xml.rels (/font), the odttf content-type
+        // Default, and the .odttf part.
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="odttf" ContentType="application/vnd.openxmlformats-officedocument.obfuscatedFont"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/fontTable.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/fontTable" Target="fontTable.xml"/></Relationships>"#;
+        let font_table = br#"<w:fonts xmlns:w="urn:w" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+            <w:font w:name="Calibri"><w:panose1 w:val="020F0502"/>
+                <w:embedRegular r:id="rIdF1" w:fontKey="{6C99A02D-4E1B-4E5A-9F0C-1234567890AB}" w:subsetted="true"/>
+                <w:embedBold r:id="rIdF2" w:fontKey="{AB99A02D-4E1B-4E5A-9F0C-1234567890AB}"/></w:font>
+        </w:fonts>"#;
+        let font_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdF1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/font" Target="fonts/font1.odttf"/><Relationship Id="rIdF2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/font" Target="fonts/font2.odttf"/></Relationships>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/fontTable.xml", font_table),
+            ("word/_rels/fontTable.xml.rels", font_rels),
+            ("word/fonts/font1.odttf", b"ODTTF-DATA-1"),
+            ("word/fonts/font2.odttf", b"ODTTF-DATA-2"),
+        ]);
+        let m1 = reopen(&source);
+        let font = &m1.definitions().font_table[0];
+        assert!(font.embedded.regular.is_some() && font.embedded.bold.is_some());
+        assert_eq!(
+            font.embedded.regular.as_ref().unwrap().part_name,
+            "word/fonts/font1.odttf"
+        );
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(m1, m2, "embedded fonts survive write -> reopen");
+    }
+
+    #[test]
     fn theme_font_scheme_survives_the_semantic_round_trip() {
         // A theme with a fontScheme (major + minor, base entries with hints, a
         // per-script override, empty ea/cs) plus an unrelated clrScheme (which

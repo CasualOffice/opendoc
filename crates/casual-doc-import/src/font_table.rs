@@ -7,7 +7,11 @@
 //! floor is Retention's job. Oversized values are dropped (bounded) so a
 //! hostile part cannot fail model validation.
 
-use casual_doc_model::v1::{FontDescriptor, FontFamilyKind, FontPitch, FontSig};
+use std::collections::BTreeMap;
+
+use casual_doc_model::v1::{
+    EmbeddedFace, EmbeddedFontSet, FontDescriptor, FontFamilyKind, FontPitch, FontSig,
+};
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 
@@ -15,8 +19,14 @@ use crate::config::ImportConfig;
 use crate::error::ImportError;
 use crate::properties::{attribute_value, is_true};
 
-/// Parses `word/fontTable.xml` into ordered font descriptors.
-pub(crate) fn parse(xml: &[u8], config: ImportConfig) -> Result<Vec<FontDescriptor>, ImportError> {
+/// Parses `word/fontTable.xml` into ordered font descriptors. `font_rels` maps a
+/// `fontTable.xml.rels` relationship id to its `.odttf` part name, so an embedded
+/// face's `r:id` resolves to a part.
+pub(crate) fn parse(
+    xml: &[u8],
+    font_rels: &BTreeMap<String, String>,
+    config: ImportConfig,
+) -> Result<Vec<FontDescriptor>, ImportError> {
     let mut reader = Reader::from_reader(xml);
     let mut buffer = Vec::new();
     let mut fonts = Vec::new();
@@ -37,11 +47,11 @@ pub(crate) fn parse(xml: &[u8], config: ImportConfig) -> Result<Vec<FontDescript
                     return Err(ImportError::LimitExceeded { limit: "xml_depth" });
                 }
                 bump(&mut elements, config.max_elements)?;
-                on_start(&element, &mut current);
+                on_start(&element, &mut current, font_rels);
             }
             Event::Empty(element) => {
                 bump(&mut elements, config.max_elements)?;
-                on_start(&element, &mut current);
+                on_start(&element, &mut current, font_rels);
                 on_end(element.local_name().as_ref(), &mut current, &mut fonts);
             }
             Event::End(element) => {
@@ -55,7 +65,11 @@ pub(crate) fn parse(xml: &[u8], config: ImportConfig) -> Result<Vec<FontDescript
     Ok(fonts)
 }
 
-fn on_start(element: &BytesStart<'_>, current: &mut Option<FontDescriptor>) {
+fn on_start(
+    element: &BytesStart<'_>,
+    current: &mut Option<FontDescriptor>,
+    font_rels: &BTreeMap<String, String>,
+) {
     match element.local_name().as_ref() {
         b"font" => {
             let name = attribute_value(element, b"name").unwrap_or_default();
@@ -68,8 +82,21 @@ fn on_start(element: &BytesStart<'_>, current: &mut Option<FontDescriptor>) {
                 pitch: None,
                 sig: FontSig::default(),
                 not_true_type: false,
+                embedded: EmbeddedFontSet::default(),
             });
         }
+        b"embedRegular" => set(current, |font| {
+            font.embedded.regular = embed_face(element, font_rels);
+        }),
+        b"embedBold" => set(current, |font| {
+            font.embedded.bold = embed_face(element, font_rels);
+        }),
+        b"embedItalic" => set(current, |font| {
+            font.embedded.italic = embed_face(element, font_rels);
+        }),
+        b"embedBoldItalic" => set(current, |font| {
+            font.embedded.bold_italic = embed_face(element, font_rels);
+        }),
         b"altName" => set(current, |font| font.alt_name = bounded_val(element, 255)),
         b"panose1" => set(current, |font| font.panose1 = bounded_val(element, 255)),
         b"charset" => set(current, |font| font.charset = bounded_val(element, 255)),
@@ -119,6 +146,25 @@ fn set(current: &mut Option<FontDescriptor>, apply: impl FnOnce(&mut FontDescrip
 
 fn bounded_val(element: &BytesStart<'_>, max: usize) -> Option<String> {
     attribute_value(element, b"val").filter(|value| !value.is_empty() && value.len() <= max)
+}
+
+/// Builds an embedded face from a `w:embed*` element: its `r:id` must resolve to
+/// an `.odttf` part and a non-empty `w:fontKey` must be present (else skipped).
+fn embed_face(
+    element: &BytesStart<'_>,
+    font_rels: &BTreeMap<String, String>,
+) -> Option<EmbeddedFace> {
+    let relationship_id = attribute_value(element, b"id")?;
+    let part_name = font_rels.get(&relationship_id)?.clone();
+    let font_key =
+        attribute_value(element, b"fontKey").filter(|key| !key.is_empty() && key.len() <= 64)?;
+    let subsetted = is_true(attribute_value(element, b"subsetted").as_deref());
+    Some(EmbeddedFace {
+        font_key,
+        subsetted,
+        relationship_id,
+        part_name,
+    })
 }
 
 fn sig_val(element: &BytesStart<'_>, name: &[u8]) -> Option<String> {

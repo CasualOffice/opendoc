@@ -1,16 +1,14 @@
 //! Semantic DOCX writer: serialize a v1 `Document` model back to a valid,
 //! editable WordprocessingML package (the dual of the Retention byte-copy
 //! writer). Written today: the core body (`w:document`/`w:body`, paragraphs,
-//! runs, the mapped run/paragraph properties, tabs/breaks), tables (grid +
-//! table/row/cell properties, merges, nested tables), and the self-contained
-//! inline constructs (hyperlinks with `document.xml.rels` generation, fields,
-//! bookmarks, tracked-change revisions, inline content controls), and the
-//! definition parts (`fontTable.xml`, `theme1.xml` font scheme, `styles.xml`
-//! with `w:pStyle`/`w:rStyle`, `numbering.xml` with body `w:numPr`, footnotes/
-//! endnotes and comments with their body references and per-part hyperlink
-//! rels), headers/footers, sections, and the media-backed constructs (inline
-//! drawings + image parts, text boxes). Embedded fonts are a follow-up; anything
-//! unsupported is skipped (never a malformed part).
+//! runs, all mapped run/paragraph properties, tabs/breaks), tables, the inline
+//! constructs (hyperlinks, fields, bookmarks, revisions, content controls,
+//! note/comment references, drawings, text boxes), block content controls, the
+//! definition parts (`fontTable.xml` incl. embedded fonts, `theme1.xml` font
+//! scheme, `styles.xml`, `numbering.xml`, footnotes/endnotes, comments), and the
+//! structural parts (body `w:sectPr`, headers/footers). Media/font binary bytes
+//! are supplied by the caller; the model carries only the reference metadata.
+//! Anything unsupported is skipped, never a malformed part.
 //!
 //! Output is byte-deterministic for a given model: parts in fixed order, a fixed
 //! ZIP timestamp, ids/relationships re-minted in document order.
@@ -84,6 +82,9 @@ const PIC_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/picture";
 const WPS_NS: &str = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape";
 const IMAGE_REL_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+const FONT_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/font";
+const OBFUSCATED_FONT_CT: &str = "application/vnd.openxmlformats-officedocument.obfuscatedFont";
 
 /// The lowercased file extension of a media part name (for the content-type
 /// `Default`), e.g. `word/media/image1.PNG` -> `png`; `bin` when absent.
@@ -233,15 +234,19 @@ pub fn write_document(
     // and a document relationship; they appear only when the model has the
     // content (byte-identical to the earlier slices otherwise).
     let mut extras: Vec<ExtraPart> = Vec::new();
+    let mut font_rels: Vec<RelEntry> = Vec::new();
     if !definitions.font_table.is_empty() {
+        let (bytes, rels) = font_table_xml(&definitions.font_table)?;
+        font_rels = rels;
         extras.push(ExtraPart::new(
             "word/fontTable.xml",
             FONT_TABLE_CT,
             FONT_TABLE_REL_TYPE,
             "fontTable.xml",
-            font_table_xml(&definitions.font_table)?,
+            bytes,
         ));
     }
+    let has_embedded_fonts = !font_rels.is_empty();
     if let Some(scheme) = &definitions.font_scheme {
         extras.push(ExtraPart::new(
             "word/theme/theme1.xml",
@@ -355,7 +360,7 @@ pub fn write_document(
     let mut parts: Vec<(String, Vec<u8>)> = vec![
         (
             "[Content_Types].xml".to_owned(),
-            content_types_xml(&extras, &definitions.media)?,
+            content_types_xml(&extras, &definitions.media, has_embedded_fonts)?,
         ),
         ("_rels/.rels".to_owned(), root_rels_xml()?),
         ("word/document.xml".to_owned(), document_xml),
@@ -379,6 +384,19 @@ pub fn write_document(
     for (_, reference) in definitions.media.iter() {
         let bytes = media.get(&reference.part_name).cloned().unwrap_or_default();
         parts.push((reference.part_name.clone(), bytes));
+    }
+    // Embedded fonts: the fontTable's own rels (`/font`) plus the `.odttf` parts.
+    if has_embedded_fonts {
+        parts.push((
+            "word/_rels/fontTable.xml.rels".to_owned(),
+            font_rels_xml(&font_rels)?,
+        ));
+        for font in &definitions.font_table {
+            for (_, face) in font.embedded.faces() {
+                let bytes = media.get(&face.part_name).cloned().unwrap_or_default();
+                parts.push((face.part_name.clone(), bytes));
+            }
+        }
     }
 
     let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
@@ -414,6 +432,7 @@ fn start<'a>(name: &'a str) -> BytesStart<'a> {
 fn content_types_xml(
     extras: &[ExtraPart],
     media: &DefinitionMap<MediaId, MediaReference>,
+    has_embedded_fonts: bool,
 ) -> Result<Vec<u8>, ExportError> {
     let mut w = new_writer();
     let mut types = start("Types");
@@ -443,6 +462,12 @@ fn content_types_xml(
         let mut d = start("Default");
         d.push_attribute(("Extension", ext.as_str()));
         d.push_attribute(("ContentType", ct));
+        w.write_event(Event::Empty(d)).map_err(pkg)?;
+    }
+    if has_embedded_fonts {
+        let mut d = start("Default");
+        d.push_attribute(("Extension", "odttf"));
+        d.push_attribute(("ContentType", OBFUSCATED_FONT_CT));
         w.write_event(Event::Empty(d)).map_err(pkg)?;
     }
     let mut over = start("Override");
@@ -691,10 +716,12 @@ fn hf_kind_token(kind: HeaderFooterKind) -> &'static str {
 }
 
 /// Emits `word/fontTable.xml` from the model's font descriptors, in order.
-fn font_table_xml(fonts: &[FontDescriptor]) -> Result<Vec<u8>, ExportError> {
+fn font_table_xml(fonts: &[FontDescriptor]) -> Result<(Vec<u8>, Vec<RelEntry>), ExportError> {
     let mut w = new_writer();
+    let mut font_rels: Vec<RelEntry> = Vec::new();
     let mut root = start("w:fonts");
     root.push_attribute(("xmlns:w", W_NS));
+    root.push_attribute(("xmlns:r", R_NS));
     w.write_event(Event::Start(root)).map_err(pkg)?;
     for font in fonts {
         let mut el = start("w:font");
@@ -741,10 +768,44 @@ fn font_table_xml(fonts: &[FontDescriptor]) -> Result<Vec<u8>, ExportError> {
             w.write_event(Event::Empty(start("w:notTrueType")))
                 .map_err(pkg)?;
         }
+        // Embedded faces: emit each `w:embed*` with its verbatim relationship id
+        // (into `fontTable.xml.rels`) and font key, and record the rel.
+        for (name, face) in font.embedded.faces() {
+            let mut child = start(name);
+            child.push_attribute(("r:id", face.relationship_id.as_str()));
+            child.push_attribute(("w:fontKey", face.font_key.as_str()));
+            if face.subsetted {
+                child.push_attribute(("w:subsetted", "true"));
+            }
+            w.write_event(Event::Empty(child)).map_err(pkg)?;
+            font_rels.push((
+                face.relationship_id.clone(),
+                media_target(&face.part_name).to_owned(),
+            ));
+        }
         w.write_event(Event::End(BytesEnd::new("w:font")))
             .map_err(pkg)?;
     }
     w.write_event(Event::End(BytesEnd::new("w:fonts")))
+        .map_err(pkg)?;
+    Ok((finish(w), font_rels))
+}
+
+/// Emits a `fontTable.xml.rels` carrying the embedded-font `/font` relationships
+/// (internal targets, no `TargetMode`).
+fn font_rels_xml(rels: &[RelEntry]) -> Result<Vec<u8>, ExportError> {
+    let mut w = new_writer();
+    let mut root = start("Relationships");
+    root.push_attribute(("xmlns", REL_NS));
+    w.write_event(Event::Start(root)).map_err(pkg)?;
+    for (id, target) in rels {
+        let mut rel = start("Relationship");
+        rel.push_attribute(("Id", id.as_str()));
+        rel.push_attribute(("Type", FONT_REL_TYPE));
+        rel.push_attribute(("Target", target.as_str()));
+        w.write_event(Event::Empty(rel)).map_err(pkg)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("Relationships")))
         .map_err(pkg)?;
     Ok(finish(w))
 }
