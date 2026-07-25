@@ -4,6 +4,14 @@
 
 Do not replace the existing editor in one release. Build the runtime as a parallel, test-driven engine and migrate product surfaces only after each capability passes explicit fidelity and interaction gates.
 
+**Product sequencing (2026-07-25):** the **Tauri desktop application** is the
+product goal and is positioned **before the public editing SDK and the
+WASM/third-party embedding surfaces**. Once the rendering engine (Phase 1D)
+exists, the desktop app is built next; the SDK and embedding surfaces follow it.
+Tauri is not a current deliverable — it is not started until visual/rendering
+fidelity is reached. The phase sections below keep their existing exit gates; only
+the relative order of the desktop app versus the SDK/embedding surfaces changes.
+
 ## Phase 0 — Foundation and extraction
 
 **Duration:** 3–5 weeks
