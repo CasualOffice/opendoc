@@ -5,12 +5,12 @@
 //! table/row/cell properties, merges, nested tables), and the self-contained
 //! inline constructs (hyperlinks with `document.xml.rels` generation, fields,
 //! bookmarks, tracked-change revisions, inline content controls), and the
-//! font/style definition parts (`fontTable.xml`, `theme1.xml` font scheme,
-//! `styles.xml` with `w:pStyle`/`w:rStyle` references, `numbering.xml` with body
-//! `w:numPr`). The media-backed constructs (drawings, text boxes) and the
-//! remaining definition parts (notes, headers/footers, comments, and note/
-//! comment references) land in later slices; a model that uses them is written
-//! with what is supported and the rest is skipped (never a malformed part).
+//! definition parts (`fontTable.xml`, `theme1.xml` font scheme, `styles.xml`
+//! with `w:pStyle`/`w:rStyle`, `numbering.xml` with body `w:numPr`, footnotes/
+//! endnotes and comments with their body references and per-part hyperlink
+//! rels). The media-backed constructs (drawings, text boxes) and headers/footers
+//! land in later slices; a model that uses them is written with what is
+//! supported and the rest is skipped (never a malformed part).
 //!
 //! Output is byte-deterministic for a given model: parts in fixed order, a fixed
 //! ZIP timestamp, ids/relationships re-minted in document order.
@@ -20,13 +20,13 @@ use std::io::{Cursor, Write};
 
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, BorderEdge, BreakKind,
-    CellVerticalAlignment, Color, DefinitionMap, Definitions, Document, EmphasisMark,
-    FontCollection, FontDescriptor, FontFamilyKind, FontPitch, FontRef, FontScheme, HeightRule,
-    HighlightColor, HyperlinkTarget, InlineNode, NumberingInstance, NumberingInstanceId,
-    ParagraphProperties, RevisionKind, RgbColor, RunFontHint, RunProperties, SdtControlKind,
-    SdtProperties, Style, StyleId, StyleKind, Table, TableBorders, TableCell, TableCellProperties,
-    TableLayout, TableProperties, TableRow, TableRowProperties, TextDirection, ThemeFontRef,
-    VerticalAlignment, VerticalMerge,
+    CellVerticalAlignment, Color, Comment, CommentId, DefinitionMap, Definitions, Document,
+    EmphasisMark, FontCollection, FontDescriptor, FontFamilyKind, FontPitch, FontRef, FontScheme,
+    HeightRule, HighlightColor, HyperlinkTarget, InlineNode, Note, NoteId, NoteKind,
+    NumberingInstance, NumberingInstanceId, ParagraphProperties, RevisionKind, RgbColor,
+    RunFontHint, RunProperties, SdtControlKind, SdtProperties, Style, StyleId, StyleKind, Table,
+    TableBorders, TableCell, TableCellProperties, TableLayout, TableProperties, TableRow,
+    TableRowProperties, TextDirection, ThemeFontRef, VerticalAlignment, VerticalMerge,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -59,6 +59,18 @@ const NUMBERING_REL_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering";
 const NUMBERING_CT: &str =
     "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml";
+const FOOTNOTES_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes";
+const FOOTNOTES_CT: &str =
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml";
+const ENDNOTES_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes";
+const ENDNOTES_CT: &str =
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml";
+const COMMENTS_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
+const COMMENTS_CT: &str =
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml";
 const A_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
 
 /// A package part beyond `document.xml` (fontTable, theme, styles, …): its part
@@ -71,6 +83,10 @@ struct ExtraPart {
     rel_type: &'static str,
     target: &'static str,
     bytes: Vec<u8>,
+    /// The part's own external relationships (a hyperlink inside a note/comment
+    /// resolves through `word/_rels/<part>.rels`, not the document's). Empty when
+    /// the part references nothing.
+    own_rels: Vec<RelEntry>,
 }
 
 impl ExtraPart {
@@ -87,7 +103,13 @@ impl ExtraPart {
             rel_type,
             target,
             bytes,
+            own_rels: Vec::new(),
         }
+    }
+
+    fn with_own_rels(mut self, own_rels: Vec<RelEntry>) -> Self {
+        self.own_rels = own_rels;
+        self
     }
 }
 
@@ -187,20 +209,78 @@ pub fn write_document(
             numbering_xml(&definitions.abstract_numbering, &definitions.numbering)?,
         ));
     }
+    if !definitions.footnotes.is_empty() {
+        let (bytes, own_rels) = notes_xml(
+            "w:footnotes",
+            "w:footnote",
+            &definitions.footnotes,
+            definitions,
+        )?;
+        extras.push(
+            ExtraPart::new(
+                "word/footnotes.xml",
+                FOOTNOTES_CT,
+                FOOTNOTES_REL_TYPE,
+                "footnotes.xml",
+                bytes,
+            )
+            .with_own_rels(own_rels),
+        );
+    }
+    if !definitions.endnotes.is_empty() {
+        let (bytes, own_rels) = notes_xml(
+            "w:endnotes",
+            "w:endnote",
+            &definitions.endnotes,
+            definitions,
+        )?;
+        extras.push(
+            ExtraPart::new(
+                "word/endnotes.xml",
+                ENDNOTES_CT,
+                ENDNOTES_REL_TYPE,
+                "endnotes.xml",
+                bytes,
+            )
+            .with_own_rels(own_rels),
+        );
+    }
+    if !definitions.comments.is_empty() {
+        let (bytes, own_rels) = comments_xml(&definitions.comments, definitions)?;
+        extras.push(
+            ExtraPart::new(
+                "word/comments.xml",
+                COMMENTS_CT,
+                COMMENTS_REL_TYPE,
+                "comments.xml",
+                bytes,
+            )
+            .with_own_rels(own_rels),
+        );
+    }
 
     // Parts are emitted in a deterministic order so the package bytes are
     // reproducible.
-    let mut parts: Vec<(&str, Vec<u8>)> = vec![
-        ("[Content_Types].xml", content_types_xml(&extras)?),
-        ("_rels/.rels", root_rels_xml()?),
-        ("word/document.xml", document_xml),
+    let mut parts: Vec<(String, Vec<u8>)> = vec![
         (
-            "word/_rels/document.xml.rels",
+            "[Content_Types].xml".to_owned(),
+            content_types_xml(&extras)?,
+        ),
+        ("_rels/.rels".to_owned(), root_rels_xml()?),
+        ("word/document.xml".to_owned(), document_xml),
+        (
+            "word/_rels/document.xml.rels".to_owned(),
             document_rels_xml(&rels, &extras)?,
         ),
     ];
     for extra in extras {
-        parts.push((extra.part_name, extra.bytes));
+        if !extra.own_rels.is_empty() {
+            parts.push((
+                rels_part_name(extra.part_name),
+                part_rels_xml(&extra.own_rels)?,
+            ));
+        }
+        parts.push((extra.part_name.to_owned(), extra.bytes));
     }
 
     let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
@@ -315,6 +395,119 @@ fn document_rels_xml(entries: &[RelEntry], extras: &[ExtraPart]) -> Result<Vec<u
     w.write_event(Event::End(BytesEnd::new("Relationships")))
         .map_err(pkg)?;
     Ok(finish(w))
+}
+
+/// The `_rels` part name for a part, e.g. `word/footnotes.xml` ->
+/// `word/_rels/footnotes.xml.rels`.
+fn rels_part_name(part_name: &str) -> String {
+    match part_name.rfind('/') {
+        Some(slash) => format!(
+            "{}/_rels/{}.rels",
+            &part_name[..slash],
+            &part_name[slash + 1..]
+        ),
+        None => format!("_rels/{part_name}.rels"),
+    }
+}
+
+/// Emits a part-own relationships file carrying external hyperlink targets (used
+/// by a note/comment part whose content contains a hyperlink).
+fn part_rels_xml(entries: &[RelEntry]) -> Result<Vec<u8>, ExportError> {
+    let mut w = new_writer();
+    let mut rels = start("Relationships");
+    rels.push_attribute(("xmlns", REL_NS));
+    w.write_event(Event::Start(rels)).map_err(pkg)?;
+    for (id, url) in entries {
+        let mut rel = start("Relationship");
+        rel.push_attribute(("Id", id.as_str()));
+        rel.push_attribute(("Type", HYPERLINK_REL_TYPE));
+        rel.push_attribute(("Target", url.as_str()));
+        rel.push_attribute(("TargetMode", "External"));
+        w.write_event(Event::Empty(rel)).map_err(pkg)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("Relationships")))
+        .map_err(pkg)?;
+    Ok(finish(w))
+}
+
+/// Emits a footnotes/endnotes part: each note keyed by a `w:id` derived from its
+/// `NoteId`, wrapping the note's blocks. A fresh per-part `Ctx` routes a note's
+/// hyperlinks into the part's own rels (returned), not the document's.
+fn notes_xml(
+    root: &str,
+    item: &str,
+    notes: &DefinitionMap<NoteId, Note>,
+    defs: &Definitions,
+) -> Result<(Vec<u8>, Vec<RelEntry>), ExportError> {
+    let mut w = new_writer();
+    let mut ctx = Ctx {
+        defs,
+        rels: RelBuilder::new(),
+    };
+    let mut r = start(root);
+    r.push_attribute(("xmlns:w", W_NS));
+    r.push_attribute(("xmlns:r", R_NS));
+    w.write_event(Event::Start(r)).map_err(pkg)?;
+    for (id, note) in notes.iter() {
+        let mut el = start(item);
+        el.push_attribute(("w:id", note_id_token(*id).as_str()));
+        w.write_event(Event::Start(el)).map_err(pkg)?;
+        for block in &note.blocks {
+            write_block(&mut w, block, &mut ctx)?;
+        }
+        w.write_event(Event::End(BytesEnd::new(item)))
+            .map_err(pkg)?;
+    }
+    w.write_event(Event::End(BytesEnd::new(root)))
+        .map_err(pkg)?;
+    Ok((finish(w), ctx.rels.entries))
+}
+
+/// Emits `word/comments.xml`: each comment keyed by a `w:id` derived from its
+/// `CommentId`, with author/initials/date attributes, wrapping its blocks.
+fn comments_xml(
+    comments: &DefinitionMap<CommentId, Comment>,
+    defs: &Definitions,
+) -> Result<(Vec<u8>, Vec<RelEntry>), ExportError> {
+    let mut w = new_writer();
+    let mut ctx = Ctx {
+        defs,
+        rels: RelBuilder::new(),
+    };
+    let mut r = start("w:comments");
+    r.push_attribute(("xmlns:w", W_NS));
+    r.push_attribute(("xmlns:r", R_NS));
+    w.write_event(Event::Start(r)).map_err(pkg)?;
+    for (id, comment) in comments.iter() {
+        let mut el = start("w:comment");
+        el.push_attribute(("w:id", comment_id_token(*id).as_str()));
+        if let Some(author) = &comment.author {
+            el.push_attribute(("w:author", author.as_str()));
+        }
+        if let Some(initials) = &comment.initials {
+            el.push_attribute(("w:initials", initials.as_str()));
+        }
+        if let Some(date) = &comment.date {
+            el.push_attribute(("w:date", date.as_str()));
+        }
+        w.write_event(Event::Start(el)).map_err(pkg)?;
+        for block in &comment.blocks {
+            write_block(&mut w, block, &mut ctx)?;
+        }
+        w.write_event(Event::End(BytesEnd::new("w:comment")))
+            .map_err(pkg)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("w:comments")))
+        .map_err(pkg)?;
+    Ok((finish(w), ctx.rels.entries))
+}
+
+fn note_id_token(id: NoteId) -> String {
+    id.node_id().as_u128().to_string()
+}
+
+fn comment_id_token(id: CommentId) -> String {
+    id.node_id().as_u128().to_string()
 }
 
 /// Emits `word/fontTable.xml` from the model's font descriptors, in order.
@@ -1127,12 +1320,30 @@ fn write_inline(
             w.write_event(Event::End(BytesEnd::new("w:sdt")))
                 .map_err(pkg)?;
         }
-        // Drawings, text boxes, and note/comment references depend on media or
-        // definition parts written in a later slice (P1B-005).
-        InlineNode::Drawing(_)
-        | InlineNode::TextBox(_)
-        | InlineNode::NoteReference(_)
-        | InlineNode::CommentReference(_) => {}
+        // A footnote/endnote reference (run-level), by the id derived from the
+        // note it points at.
+        InlineNode::NoteReference(note_ref) => {
+            let element = match note_ref.kind {
+                NoteKind::Footnote => "w:footnoteReference",
+                NoteKind::Endnote => "w:endnoteReference",
+            };
+            w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
+            let mut el = start(element);
+            el.push_attribute(("w:id", note_id_token(note_ref.note).as_str()));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+            w.write_event(Event::End(BytesEnd::new("w:r")))
+                .map_err(pkg)?;
+        }
+        InlineNode::CommentReference(comment_ref) => {
+            w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
+            let mut el = start("w:commentReference");
+            el.push_attribute(("w:id", comment_id_token(comment_ref.comment).as_str()));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+            w.write_event(Event::End(BytesEnd::new("w:r")))
+                .map_err(pkg)?;
+        }
+        // Drawings and text boxes depend on the binary-media path (a later slice).
+        InlineNode::Drawing(_) | InlineNode::TextBox(_) => {}
     }
     Ok(())
 }

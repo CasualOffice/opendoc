@@ -36,6 +36,14 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Added
 
+- Semantic DOCX writer now emits footnotes/endnotes and comments: the note and
+  comment definition parts (`footnotes.xml`, `endnotes.xml`, `comments.xml`,
+  the latter with author/initials/date) are serialized back with ids derived
+  from the internal `NoteId`/`CommentId`, and the body's `w:footnoteReference`/
+  `w:endnoteReference`/`w:commentReference` reference them (previously dropped).
+  A hyperlink inside a note/comment correctly routes through that part's own
+  relationships (`word/_rels/<part>.xml.rels`) via a per-part writer context.
+  Proven by fixed-point round-trips (incl. a note-internal hyperlink).
 - Semantic DOCX writer now emits `word/numbering.xml`: abstract definitions
   (levels with start values) and numbering instances (with their abstract link)
   are serialized back, and a body paragraph's `w:numPr` (`numId` + `ilvl`,

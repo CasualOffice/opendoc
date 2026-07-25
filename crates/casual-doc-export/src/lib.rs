@@ -111,6 +111,20 @@ mod semantic_tests {
         zw.finish().unwrap().into_inner()
     }
 
+    /// Opens a DOCX package and imports it in Semantic mode, returning the model.
+    fn reopen(bytes: &[u8]) -> casual_doc_model::v1::Document {
+        let mut package = DocxPackage::open(bytes, PackageLimits::default()).unwrap();
+        import_package(
+            &mut package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document
+    }
+
     /// The Phase-1B semantic fixed point: importing a document, writing it, and
     /// reopening yields the identical model. The importer allocates ids in
     /// document order, so a writer that emits the body in that same order
@@ -573,6 +587,93 @@ mod semantic_tests {
         .unwrap()
         .document;
         assert_eq!(m1, m2, "numbering + numPr survive write -> reopen");
+    }
+
+    #[test]
+    fn notes_survive_the_semantic_round_trip() {
+        // A footnote and an endnote, each referenced from the body. The writer
+        // regenerates footnotes.xml/endnotes.xml with ids derived from the NoteId
+        // and the body w:footnoteReference/w:endnoteReference reference them.
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/footnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"/><Override PartName="/word/endnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:r><w:t>a</w:t></w:r><w:r><w:footnoteReference w:id="2"/></w:r></w:p>
+            <w:p><w:r><w:t>b</w:t></w:r><w:r><w:endnoteReference w:id="5"/></w:r></w:p>
+        </w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes" Target="endnotes.xml"/></Relationships>"#;
+        let footnotes = br#"<w:footnotes xmlns:w="urn:w"><w:footnote w:id="2"><w:p><w:r><w:t>fn body</w:t></w:r></w:p></w:footnote></w:footnotes>"#;
+        let endnotes = br#"<w:endnotes xmlns:w="urn:w"><w:endnote w:id="5"><w:p><w:r><w:t>en body</w:t></w:r></w:p></w:endnote></w:endnotes>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/footnotes.xml", footnotes),
+            ("word/endnotes.xml", endnotes),
+        ]);
+        let m1 = reopen(&source);
+        assert_eq!(m1.definitions().footnotes.iter().count(), 1);
+        assert_eq!(m1.definitions().endnotes.iter().count(), 1);
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(
+            m1, m2,
+            "footnotes + endnotes + refs survive write -> reopen"
+        );
+    }
+
+    #[test]
+    fn comments_survive_the_semantic_round_trip() {
+        // A comment with author/initials/date, referenced from the body.
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:r><w:t>x</w:t></w:r><w:r><w:commentReference w:id="1"/></w:r></w:p>
+        </w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="comments.xml"/></Relationships>"#;
+        let comments = br#"<w:comments xmlns:w="urn:w"><w:comment w:id="1" w:author="Alice" w:initials="AC" w:date="2020-01-02T03:04:05Z"><w:p><w:r><w:t>a note</w:t></w:r></w:p></w:comment></w:comments>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/comments.xml", comments),
+        ]);
+        let m1 = reopen(&source);
+        assert_eq!(m1.definitions().comments.iter().count(), 1);
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(m1, m2, "comments + refs survive write -> reopen");
+    }
+
+    #[test]
+    fn note_internal_hyperlink_routes_to_the_part_own_rels() {
+        // A hyperlink inside a footnote must resolve through the footnote part's
+        // OWN rels (word/_rels/footnotes.xml.rels), not document.xml.rels. The
+        // writer uses a per-part Ctx and regenerates the part-own rels file.
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/footnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:r><w:footnoteReference w:id="2"/></w:r></w:p>
+        </w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/></Relationships>"#;
+        let footnotes = br#"<w:footnotes xmlns:w="urn:w" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:footnote w:id="2"><w:p><w:hyperlink r:id="rIdX"><w:r><w:t>src</w:t></w:r></w:hyperlink></w:p></w:footnote></w:footnotes>"#;
+        let footnotes_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdX" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com/n" TargetMode="External"/></Relationships>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/footnotes.xml", footnotes),
+            ("word/_rels/footnotes.xml.rels", footnotes_rels),
+        ]);
+        let m1 = reopen(&source);
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(
+            m1, m2,
+            "a note-internal hyperlink survives via the part-own rels"
+        );
     }
 
     #[test]
