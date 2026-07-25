@@ -148,14 +148,41 @@ pub enum ThemeColorRef {
     FollowedHyperlink,
 }
 
-/// A theme font slot.
+/// A theme font slot (`w:rFonts@*Theme`, ECMA-376 §17.3.2.26). Each value names
+/// a major (heading) or minor (body) collection and the script axis
+/// (ascii/hAnsi/eastAsia/bidi) it resolves against in the theme font scheme.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum ThemeFontRef {
-    /// Major (heading) font.
-    Major,
-    /// Minor (body) font.
-    Minor,
+    /// `majorAscii`.
+    MajorAscii,
+    /// `majorHAnsi`.
+    MajorHAnsi,
+    /// `majorEastAsia`.
+    MajorEastAsia,
+    /// `majorBidi`.
+    MajorBidi,
+    /// `minorAscii`.
+    MinorAscii,
+    /// `minorHAnsi`.
+    MinorHAnsi,
+    /// `minorEastAsia`.
+    MinorEastAsia,
+    /// `minorBidi`.
+    MinorBidi,
+}
+
+/// The `w:rFonts@hint` disambiguator: which slot applies to a code point that
+/// falls in an ambiguous Unicode range.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RunFontHint {
+    /// `default`.
+    Default,
+    /// `eastAsia`.
+    EastAsia,
+    /// `cs`.
+    Cs,
 }
 
 /// An explicit sRGB color.
@@ -417,6 +444,10 @@ pub struct RunProperties {
     /// East-Asian font slot (`w:rFonts@eastAsia`/`@eastAsiaTheme`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub font_ref_east_asia: Option<FontRef>,
+    /// Font hint (`w:rFonts@hint`) disambiguating slot selection for code points
+    /// in an ambiguous Unicode range.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_hint: Option<RunFontHint>,
     /// All-capitals rendering (`w:caps`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub all_caps: Option<bool>,

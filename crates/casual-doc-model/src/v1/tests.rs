@@ -1069,8 +1069,9 @@ fn run_long_tail_properties_round_trip() {
             name: "Arial".to_owned(),
         })),
         font_ref_east_asia: Some(FontRef::Theme(ThemeFont {
-            slot: ThemeFontRef::Minor,
+            slot: ThemeFontRef::MinorEastAsia,
         })),
+        font_hint: Some(RunFontHint::EastAsia),
         vertical_alignment: Some(VerticalAlignment::Superscript),
         highlight: Some(HighlightColor::Yellow),
         emphasis: Some(EmphasisMark::Dot),

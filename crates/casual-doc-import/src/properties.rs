@@ -6,8 +6,8 @@
 
 use casual_doc_model::v1::{
     Alignment, BreakKind, Color, EmphasisMark, FontName, FontRef, HighlightColor, Indentation,
-    Language, ParagraphProperties, RgbColor, RunProperties, Spacing, StyleKind, ThemeFont,
-    ThemeFontRef, VerticalAlignment,
+    Language, ParagraphProperties, RgbColor, RunFontHint, RunProperties, Spacing, StyleKind,
+    ThemeFont, ThemeFontRef, VerticalAlignment,
 };
 use quick_xml::events::BytesStart;
 
@@ -43,15 +43,24 @@ pub(crate) fn apply_run_property(
         b"vanish" => properties.hidden = Some(is_true(value.as_deref())),
         b"webHidden" => properties.web_hidden = Some(is_true(value.as_deref())),
         b"dstrike" => properties.double_strike = Some(is_true(value.as_deref())),
-        // Fonts: each slot prefers its theme attr, else its named attr. Consumed
-        // when ANY slot resolves; an `rFonts` carrying only unmodeled detail (e.g.
-        // just `@hint`) resolves nothing and is reported (no silent loss).
+        // Fonts: each slot prefers its theme attr, else its named attr; `@hint`
+        // is modeled directly. Consumed when ANY slot or a recognized hint
+        // resolves; an `rFonts` carrying only unmodeled detail (e.g. an unknown
+        // hint) resolves nothing and is reported (no silent loss).
         b"rFonts" => {
             let ascii = font_slot(element, b"ascii", b"asciiTheme");
             let h_ansi = font_slot(element, b"hAnsi", b"hAnsiTheme");
             let cs = font_slot(element, b"cs", b"csTheme");
             let east_asia = font_slot(element, b"eastAsia", b"eastAsiaTheme");
-            if ascii.is_none() && h_ansi.is_none() && cs.is_none() && east_asia.is_none() {
+            let hint = attribute_value(element, b"hint")
+                .as_deref()
+                .and_then(run_font_hint);
+            if ascii.is_none()
+                && h_ansi.is_none()
+                && cs.is_none()
+                && east_asia.is_none()
+                && hint.is_none()
+            {
                 return false;
             }
             if ascii.is_some() {
@@ -65,6 +74,9 @@ pub(crate) fn apply_run_property(
             }
             if east_asia.is_some() {
                 properties.font_ref_east_asia = east_asia;
+            }
+            if hint.is_some() {
+                properties.font_hint = hint;
             }
         }
         // Named vocabularies: an unknown `val` is reported (not mapped), like `sz`.
@@ -133,13 +145,26 @@ fn font_slot(element: &BytesStart<'_>, named: &[u8], theme: &[u8]) -> Option<Fon
 }
 
 fn theme_font_ref(value: &str) -> Option<ThemeFontRef> {
-    if value.starts_with("major") {
-        Some(ThemeFontRef::Major)
-    } else if value.starts_with("minor") {
-        Some(ThemeFontRef::Minor)
-    } else {
-        None
-    }
+    Some(match value {
+        "majorAscii" => ThemeFontRef::MajorAscii,
+        "majorHAnsi" => ThemeFontRef::MajorHAnsi,
+        "majorEastAsia" => ThemeFontRef::MajorEastAsia,
+        "majorBidi" => ThemeFontRef::MajorBidi,
+        "minorAscii" => ThemeFontRef::MinorAscii,
+        "minorHAnsi" => ThemeFontRef::MinorHAnsi,
+        "minorEastAsia" => ThemeFontRef::MinorEastAsia,
+        "minorBidi" => ThemeFontRef::MinorBidi,
+        _ => return None,
+    })
+}
+
+fn run_font_hint(value: &str) -> Option<RunFontHint> {
+    Some(match value {
+        "default" => RunFontHint::Default,
+        "eastAsia" => RunFontHint::EastAsia,
+        "cs" => RunFontHint::Cs,
+        _ => return None,
+    })
 }
 
 fn vertical_alignment_from(value: &str) -> Option<VerticalAlignment> {
