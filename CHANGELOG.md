@@ -10,6 +10,13 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Fixed
 
+- The semantic DOCX writer now emits **every** modeled direct run property, not
+  just bold/italic/strike/underline/color/size/fonts: `w:caps`, `w:smallCaps`,
+  `w:vanish`, `w:webHidden`, `w:dstrike`, `w:vertAlign`, `w:highlight`, `w:em`,
+  `w:spacing` (character), `w:kern`, `w:position`, and `w:lang` (all three
+  tags). A run using any of these previously lost it on write → reopen; the full
+  set is now proven by a round-trip test. (`style_ref` awaits the styles-part
+  writer; `Color::Theme` on a run is not import-reachable.)
 - XML character references in attribute values are now unescaped on import, so
   an attribute-carried string (a field instruction, a hyperlink/relationship URL
   with `&` query separators, a bookmark name, a revision author, an `sdt` alias)
