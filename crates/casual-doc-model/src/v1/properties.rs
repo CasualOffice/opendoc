@@ -630,6 +630,11 @@ pub struct ParagraphProperties {
     /// Vertical alignment of text on the line (`w:textAlignment`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text_alignment: Option<VerticalTextAlignment>,
+    /// Formatting of the paragraph mark itself (`w:pPr > w:rPr`) — the run
+    /// properties applied to the end-of-paragraph glyph. `Some` (even when
+    /// default) means the `w:rPr` was present; additive, omitted when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mark_run: Option<Box<RunProperties>>,
 }
 
 /// Run vertical alignment (`w:vertAlign`).

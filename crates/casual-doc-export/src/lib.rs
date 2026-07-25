@@ -1207,6 +1207,41 @@ mod semantic_tests {
     }
 
     #[test]
+    fn paragraph_mark_run_properties_survive_the_semantic_round_trip() {
+        // The paragraph-mark w:rPr (the pilcrow's own formatting): a formatted
+        // mark on the first paragraph and a present-but-empty mark on the second
+        // (which must round-trip as Some(default), not None).
+        use casual_doc_model::v1::BlockNode;
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:pPr><w:rPr><w:b/><w:sz w:val="28"/><w:color w:val="FF0000"/></w:rPr></w:pPr>
+                <w:r><w:t>a</w:t></w:r></w:p>
+            <w:p><w:pPr><w:rPr/></w:pPr><w:r><w:t>b</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        let BlockNode::Paragraph(p0) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let mark = p0.properties.mark_run.as_ref().expect("mark run modeled");
+        assert_eq!(mark.bold, Some(true));
+        assert_eq!(mark.size_half_points, Some(28));
+        let BlockNode::Paragraph(p1) = &m1.body()[1] else {
+            panic!("expected a paragraph");
+        };
+        assert!(
+            p1.properties.mark_run.is_some(),
+            "a present-but-empty mark rPr is Some(default), not None"
+        );
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(
+            m1, m2,
+            "paragraph-mark run properties survive write -> reopen"
+        );
+    }
+
+    #[test]
     fn block_content_control_survives_the_semantic_round_trip() {
         // A block-level content control (w:sdt wrapping block content) with typed
         // properties — the writer previously emitted only the inner blocks,

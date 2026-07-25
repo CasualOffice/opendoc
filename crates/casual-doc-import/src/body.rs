@@ -211,6 +211,10 @@ struct ContentFrame {
     edge_scope: EdgeScope,
     in_tabs: bool,
     mark_rpr_depth: u32,
+    /// Whether a paragraph-mark `w:rPr` was seen (so a present-but-empty mark is
+    /// preserved as `Some(default)`), and its accumulated run properties.
+    mark_rpr_seen: bool,
+    mark_run_properties: RunProperties,
     suppressed_tbl_depth: u32,
     sdts: Vec<SdtAccumulator>,
     sdt_scopes: Vec<SdtScope>,
@@ -350,6 +354,9 @@ struct BodyParser<'a> {
     /// its children are the pilcrow's run properties, so a `w:shd` there is NOT
     /// paragraph shading. Never spans a text box.
     mark_rpr_depth: u32,
+    /// Whether a paragraph-mark `w:rPr` was seen, and its accumulated properties.
+    mark_rpr_seen: bool,
+    mark_run_properties: RunProperties,
     /// Depth of nested tables refused past `MAX_TABLE_DEPTH`; while non-zero the
     /// table structure is suppressed so it cannot corrupt the enclosing table.
     suppressed_tbl_depth: u32,
@@ -485,6 +492,8 @@ impl<'a> BodyParser<'a> {
             edge_scope: EdgeScope::None,
             in_tabs: false,
             mark_rpr_depth: 0,
+            mark_rpr_seen: false,
+            mark_run_properties: RunProperties::default(),
             suppressed_tbl_depth: 0,
             sdts: Vec::new(),
             sdt_scopes: Vec::new(),
@@ -828,6 +837,8 @@ impl BodyParser<'_> {
                 self.paragraph_open = true;
                 self.paragraph_id = Some(self.next_id()?);
                 self.paragraph_properties = ParagraphProperties::default();
+                self.mark_rpr_seen = false;
+                self.mark_run_properties = RunProperties::default();
                 self.numpr_depth = 0;
                 self.pending_num_id = None;
                 self.pending_ilvl = 0;
@@ -856,7 +867,10 @@ impl BodyParser<'_> {
             // A paragraph-mark `w:rPr` (inside `w:pPr`, no run open): its children
             // are the pilcrow's run properties, tracked separately so a `w:shd`
             // there is not captured as paragraph shading.
-            b"rPr" if self.ppr_depth > 0 && !self.run_open => self.mark_rpr_depth += 1,
+            b"rPr" if self.ppr_depth > 0 && !self.run_open => {
+                self.mark_rpr_depth += 1;
+                self.mark_rpr_seen = true;
+            }
             b"rPr" if self.run_open => self.rpr_depth += 1,
             b"rStyle" if self.rpr_depth > 0 => {
                 match self.resolve_style(element, StyleKind::Character) {
@@ -1564,6 +1578,13 @@ impl BodyParser<'_> {
                     self.reporter.report(local);
                 }
             }
+            // Paragraph-mark `w:rPr` children: the pilcrow's own run formatting,
+            // accumulated separately from both the run rPr and the paragraph props.
+            _ if self.mark_rpr_depth > 0 => {
+                if !apply_run_property(&mut self.mark_run_properties, local, element) {
+                    self.reporter.report(local);
+                }
+            }
             // A `w:pPr` child, but NOT one inside the paragraph mark's `w:rPr`
             // (`mark_rpr_depth`): a mark-rPr run property (e.g. `snapToGrid`, which
             // is valid on both pPr and rPr) must not be misattributed to the
@@ -2143,6 +2164,8 @@ impl BodyParser<'_> {
             edge_scope: std::mem::replace(&mut self.edge_scope, EdgeScope::None),
             in_tabs: std::mem::take(&mut self.in_tabs),
             mark_rpr_depth: std::mem::take(&mut self.mark_rpr_depth),
+            mark_rpr_seen: std::mem::take(&mut self.mark_rpr_seen),
+            mark_run_properties: std::mem::take(&mut self.mark_run_properties),
             suppressed_tbl_depth: std::mem::take(&mut self.suppressed_tbl_depth),
             sdts: std::mem::take(&mut self.sdts),
             sdt_scopes: std::mem::take(&mut self.sdt_scopes),
@@ -2202,6 +2225,8 @@ impl BodyParser<'_> {
         self.edge_scope = frame.edge_scope;
         self.in_tabs = frame.in_tabs;
         self.mark_rpr_depth = frame.mark_rpr_depth;
+        self.mark_rpr_seen = frame.mark_rpr_seen;
+        self.mark_run_properties = frame.mark_run_properties;
         self.suppressed_tbl_depth = frame.suppressed_tbl_depth;
         self.sdts = frame.sdts;
         self.sdt_scopes = frame.sdt_scopes;
@@ -2681,6 +2706,12 @@ impl BodyParser<'_> {
         // so a malformed unclosed `w:pBdr`/`w:tabs`/mark-`w:rPr` cannot leak.
         self.in_tabs = false;
         self.mark_rpr_depth = 0;
+        // A paragraph-mark `w:rPr` (even present-but-empty) is preserved as the
+        // paragraph's `mark_run`; `Some` records the mark's own formatting.
+        if std::mem::take(&mut self.mark_rpr_seen) {
+            self.paragraph_properties.mark_run =
+                Some(Box::new(std::mem::take(&mut self.mark_run_properties)));
+        }
         if self.edge_scope == EdgeScope::ParagraphBorders {
             self.edge_scope = EdgeScope::None;
         }

@@ -508,6 +508,9 @@ impl Document {
                 "paragraph.tabs",
             )?;
         }
+        if let Some(mark_run) = &properties.mark_run {
+            self.check_run_property_refs(mark_run)?;
+        }
         Ok(())
     }
 
