@@ -7,60 +7,144 @@
 //! and the renderer paints — so this closes the loop from imported DOCX to a
 //! rendered page.
 //!
-//! Scope (`P1C-004`): body paragraphs of text runs (with size/color/decoration),
-//! recursing through hyperlink/revision/content-control wrappers. Tables, inline
-//! drawings, fields, and the fuller run/paragraph property mapping
-//! (alignment/indent/tabs — `P1C-003`) and font resolution (`P1C-002`) are the
-//! following slices; unmapped inline nodes contribute no text yet (never panic).
+//! Scope: body paragraphs (runs with size/color/weight/decoration, recursing
+//! through hyperlink/revision/content-control wrappers) and **tables** (rows and
+//! nested tables, cells flowed at their grid-column width). Inline drawings,
+//! fields, block content controls, indents/tabs (`P1C-003b`), and cross-page
+//! table splitting (`P1D-003`) are the following slices; unmapped inline nodes
+//! contribute no text yet (never panic).
 
 use casual_doc_model::v1::{
-    Alignment, BlockNode, Color, Document, InlineNode, ParagraphProperties,
+    Alignment, BlockNode, Color, Document, InlineNode, ParagraphProperties, Table,
 };
 
-use crate::block::{BlockFragment, BoxMetrics, BreakControl};
+use crate::block::{BlockFragment, BoxMetrics, BreakControl, CellFragment};
 use crate::model::{ModelPos, ModelRange};
 use crate::text::{Decoration, LineConstraints, LineShaper, StyledRun, TextAlignment};
 use crate::units::Twip;
 
 /// Builds a galley of block fragments from a document's body, shaped to fit
-/// `content_width` (the page content-area width, in twips). Only paragraphs are
-/// laid out in this slice; other block kinds are skipped.
+/// `content_width` (the page content-area width, in twips).
 #[must_use]
 pub fn build_galley(
     document: &Document,
     shaper: &dyn LineShaper,
     content_width: Twip,
 ) -> Vec<BlockFragment> {
+    flow_blocks(document.body(), shaper, content_width)
+}
+
+/// Flows a sequence of block nodes (a body or a table cell) into shaped
+/// fragments at `width`. Paragraphs shape to lines; tables expand to their rows;
+/// block content controls are laid out in a later slice.
+fn flow_blocks(blocks: &[BlockNode], shaper: &dyn LineShaper, width: Twip) -> Vec<BlockFragment> {
     let mut galley = Vec::new();
-    for block in document.body() {
-        if let BlockNode::Paragraph(paragraph) = block {
-            let mut runs = Vec::new();
-            collect_runs(&paragraph.inlines, &mut runs);
-            let range = ModelRange::new(
-                ModelPos::new(paragraph.id, 0),
-                ModelPos::new(paragraph.id, 0),
-            );
-            let spacing = paragraph.properties.spacing.as_ref();
-            let lines = shaper.shape_paragraph(
-                &runs,
-                LineConstraints {
-                    max_width: content_width,
-                    rtl: false,
-                    alignment: alignment(&paragraph.properties),
-                    line_height_percent: spacing.and_then(|s| s.line_percent),
-                },
-                range,
-            );
-            galley.push(BlockFragment::Paragraph {
-                id: paragraph.id,
-                lines,
-                box_metrics: box_metrics(&paragraph.properties),
-                break_control: break_control(&paragraph.properties),
-            });
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                let mut runs = Vec::new();
+                collect_runs(&paragraph.inlines, &mut runs);
+                let range = ModelRange::new(
+                    ModelPos::new(paragraph.id, 0),
+                    ModelPos::new(paragraph.id, 0),
+                );
+                let spacing = paragraph.properties.spacing.as_ref();
+                let lines = shaper.shape_paragraph(
+                    &runs,
+                    LineConstraints {
+                        max_width: width,
+                        rtl: false,
+                        alignment: alignment(&paragraph.properties),
+                        line_height_percent: spacing.and_then(|s| s.line_percent),
+                    },
+                    range,
+                );
+                galley.push(BlockFragment::Paragraph {
+                    id: paragraph.id,
+                    lines,
+                    box_metrics: box_metrics(&paragraph.properties),
+                    break_control: break_control(&paragraph.properties),
+                });
+            }
+            BlockNode::Table(table) => flow_table(table, shaper, width, &mut galley),
+            BlockNode::Sdt(_) => {}
         }
-        // Tables and block content controls are laid out in later slices.
     }
     galley
+}
+
+/// Flows a table into one [`BlockFragment::TableRow`] per row. Column widths come
+/// from the grid (`w:gridCol`), distributed evenly when unspecified; a cell's
+/// content is flowed at the width of the grid columns it spans. Cross-page row
+/// splitting and header repetition are `P1D-003`.
+fn flow_table(
+    table: &Table,
+    shaper: &dyn LineShaper,
+    width: Twip,
+    galley: &mut Vec<BlockFragment>,
+) {
+    let widths = column_widths(table, width);
+    // Cumulative left edge of each column.
+    let mut edges = Vec::with_capacity(widths.len() + 1);
+    let mut x = Twip::ZERO;
+    for w in &widths {
+        edges.push(x);
+        x = x + *w;
+    }
+    edges.push(x);
+
+    for row in &table.rows {
+        let mut cells = Vec::new();
+        let mut col = 0usize;
+        for cell in &row.cells {
+            let span = cell.properties.grid_span.unwrap_or(1).max(1) as usize;
+            let cell_x = edges.get(col).copied().unwrap_or(Twip::ZERO);
+            let cell_end = edges
+                .get((col + span).min(edges.len() - 1))
+                .copied()
+                .unwrap_or(x);
+            let cell_width = cell_end - cell_x;
+            cells.push(CellFragment {
+                id: cell.id,
+                grid_span: span as u32,
+                x: cell_x,
+                width: cell_width,
+                blocks: flow_blocks(&cell.blocks, shaper, cell_width),
+            });
+            col += span;
+        }
+        galley.push(BlockFragment::TableRow {
+            id: row.id,
+            cells,
+            can_split: !row.properties.cant_split,
+            header: row.properties.header,
+        });
+    }
+}
+
+/// The width of each grid column (twips). Declared widths are used as-is; columns
+/// with no declared width share the remaining space evenly (at least 1 twip).
+fn column_widths(table: &Table, total: Twip) -> Vec<Twip> {
+    if table.grid.is_empty() {
+        return vec![total];
+    }
+    let declared: i32 = table.grid.iter().filter_map(|c| c.width_twips).sum();
+    let undeclared = table
+        .grid
+        .iter()
+        .filter(|c| c.width_twips.is_none())
+        .count();
+    let leftover = (total.raw() - declared).max(0);
+    let each = if undeclared > 0 {
+        (leftover / undeclared as i32).max(1)
+    } else {
+        0
+    };
+    table
+        .grid
+        .iter()
+        .map(|c| Twip(c.width_twips.unwrap_or(each).max(1)))
+        .collect()
 }
 
 /// Flattens a paragraph's inline nodes into styled text runs, recursing through
@@ -181,6 +265,52 @@ mod tests {
             Definitions::default(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn a_table_flows_to_a_row_fragment_with_positioned_cells() {
+        use casual_doc_model::v1::{
+            GridColumn, Table, TableCell, TableCellProperties, TableProperties, TableRow,
+            TableRowProperties,
+        };
+        let cell = |id: u64, text: &str| TableCell {
+            id: NodeId::from_parts(id, 1).unwrap(),
+            properties: TableCellProperties::default(),
+            blocks: vec![paragraph(
+                id + 100,
+                vec![run_node(id + 200, text, RunProperties::default())],
+            )],
+        };
+        let table = BlockNode::Table(Table {
+            id: NodeId::from_parts(50, 1).unwrap(),
+            grid: vec![
+                GridColumn {
+                    width_twips: Some(3000),
+                },
+                GridColumn {
+                    width_twips: Some(3000),
+                },
+            ],
+            properties: TableProperties::default(),
+            rows: vec![TableRow {
+                id: NodeId::from_parts(51, 1).unwrap(),
+                properties: TableRowProperties::default(),
+                cells: vec![cell(60, "left cell"), cell(61, "right cell")],
+            }],
+        });
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&document(vec![table]), &shaper, Twip::from_points(400));
+        assert_eq!(galley.len(), 1, "the table flows to one row fragment");
+        let BlockFragment::TableRow { cells, .. } = &galley[0] else {
+            panic!("expected a table row");
+        };
+        assert_eq!(cells.len(), 2);
+        // First cell at x=0 width 3000; second at x=3000.
+        assert_eq!(cells[0].x, Twip::ZERO);
+        assert_eq!(cells[0].width, Twip(3000));
+        assert_eq!(cells[1].x, Twip(3000));
+        // Each cell shaped its paragraph.
+        assert!(!cells[0].blocks.is_empty() && !cells[1].blocks.is_empty());
     }
 
     #[test]

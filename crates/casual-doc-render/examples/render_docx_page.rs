@@ -4,14 +4,13 @@
 use casual_doc_import::{ImportConfig, ImportMode, import_package};
 use casual_doc_layout::compose::compose_page;
 use casual_doc_layout::flow::build_galley;
-use casual_doc_layout::fonts::ROBOTO_REGULAR;
 use casual_doc_layout::paginate::{PageConfig, paginate};
 use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_layout::units::{Size, Twip};
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::SectionId;
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
-use casual_doc_render::{SingleFontSource, Surface, render};
+use casual_doc_render::{BundledFontSource, Surface, render};
 
 fn main() {
     let out = std::env::args()
@@ -46,12 +45,7 @@ fn main() {
     let w = config.page_size.width.to_device_px(dpi).ceil() as u32;
     let h = config.page_size.height.to_device_px(dpi).ceil() as u32;
     let mut surface = Surface::new(w, h).unwrap();
-    render(
-        &compose_page(page),
-        &mut surface,
-        dpi,
-        &SingleFontSource::new(ROBOTO_REGULAR),
-    );
+    render(&compose_page(page), &mut surface, dpi, &BundledFontSource);
     std::fs::write(&out, surface.encode_png().unwrap()).unwrap();
     eprintln!(
         "rendered {} paragraphs across {} page(s) -> {out}",

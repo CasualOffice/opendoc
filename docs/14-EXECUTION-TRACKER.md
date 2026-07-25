@@ -181,3 +181,5 @@ floor for unmodeled long-tail constructs.
 | P1E-001 | Canvas (WASM) backend | Claude Code | Planned | Execute the display list on `CanvasRenderingContext2D` (web + Tauri webview). |
 | P1E-002 | Hit-testing + caret + selection | Claude Code | Planned | pixel↔model position over the immutable page fragments; reconcile with `casual-doc-selection`. |
 | P1E-003 | GPU backend (`vello`/`wgpu`) | Claude Code | Planned | Native performance behind the same display-list interface. |
+
+| P1C-TBL | Tables in the galley + rendering | Claude Code | Done | `flow_blocks`/`flow_table` recurse: tables expand to `TableRow` fragments with cells positioned by grid columns (grid_span honored), cell content flowed at column width; nested tables via mutual recursion. `compose_page` renders cell content + grid borders. Verified: real-producer-rich.docx renders its table AND nested table with borders. Cross-page row split + header repeat = P1D-003. 1 test. |

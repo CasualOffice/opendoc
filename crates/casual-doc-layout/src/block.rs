@@ -33,6 +33,10 @@ pub struct CellFragment {
     pub id: NodeId,
     /// Column span (`w:gridSpan`).
     pub grid_span: u32,
+    /// The cell's left edge within the row (twips from the row's leading edge).
+    pub x: Twip,
+    /// The cell's content width (twips) — the span of its grid columns.
+    pub width: Twip,
     /// The cell's flowed block fragments.
     pub blocks: Vec<BlockFragment>,
 }
