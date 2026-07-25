@@ -76,6 +76,12 @@ The runtime is not a UI toolkit and is not a DOCX-only editor. It is a determini
 41. `41-PHASE-1B-EXIT-REPORT.md` — accepted Phase 1B evidence, coverage, and the no-silent-loss guarantee.
 42. `42-RENDERING-ARCHITECTURE-RESEARCH.md` — prior-art + ecosystem + algorithm research for the Phase 1C layout/pagination/rendering engine.
 
+39. `39-PHASE-1B-SEMANTIC-DOCX-WRITER-DESIGN.md` — the semantic writer design (model → valid editable `.docx`).
+40. `40-FONT-MANAGEMENT-DESIGN.md` — accepted full-scope font resolution/substitution/metrics design.
+41. `41-PHASE-1B-EXIT-REPORT.md` — accepted Phase 1B evidence, coverage, and the no-silent-loss guarantee.
+42. `42-RENDERING-ARCHITECTURE-RESEARCH.md` — prior-art + ecosystem + algorithm research for the Phase 1C layout/pagination/rendering engine.
+43. `43-PHASE-1C-LAYOUT-RENDERING-DESIGN.md` — proposed production layout/pagination/rendering engine design (Phases 1C–1E).
+
 Also present (not in the numbered sequence): `PHASE-1A-SEMANTIC-MODELING-TRACKER.md`.
 
 ### Consolidation note
