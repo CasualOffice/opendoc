@@ -13,11 +13,13 @@
 //! (alignment/indent/tabs — `P1C-003`) and font resolution (`P1C-002`) are the
 //! following slices; unmapped inline nodes contribute no text yet (never panic).
 
-use casual_doc_model::v1::{BlockNode, Color, Document, InlineNode, ParagraphProperties};
+use casual_doc_model::v1::{
+    Alignment, BlockNode, Color, Document, InlineNode, ParagraphProperties,
+};
 
 use crate::block::{BlockFragment, BoxMetrics};
 use crate::model::{ModelPos, ModelRange};
-use crate::text::{Decoration, FontId, LineConstraints, LineShaper, StyledRun};
+use crate::text::{Decoration, FontId, LineConstraints, LineShaper, StyledRun, TextAlignment};
 use crate::units::Twip;
 
 /// Builds a galley of block fragments from a document's body, shaped to fit
@@ -38,11 +40,14 @@ pub fn build_galley(
                 ModelPos::new(paragraph.id, 0),
                 ModelPos::new(paragraph.id, 0),
             );
+            let spacing = paragraph.properties.spacing.as_ref();
             let lines = shaper.shape_paragraph(
                 &runs,
                 LineConstraints {
                     max_width: content_width,
                     rtl: false,
+                    alignment: alignment(&paragraph.properties),
+                    line_height_percent: spacing.and_then(|s| s.line_percent),
                 },
                 range,
             );
@@ -93,11 +98,24 @@ fn styled_run<'a>(
         text,
         font: FontId(0),
         size,
+        bold: properties.bold.unwrap_or(false),
+        italic: properties.italic.unwrap_or(false),
+        letter_spacing: properties.character_spacing_twips.map_or(Twip::ZERO, Twip),
         color,
         decoration: Decoration {
             underline: properties.underline.unwrap_or(false),
             strikethrough: properties.strike.unwrap_or(false),
         },
+    }
+}
+
+/// Maps model paragraph alignment to the layout alignment.
+fn alignment(properties: &ParagraphProperties) -> TextAlignment {
+    match properties.alignment {
+        Some(Alignment::Start) | None => TextAlignment::Start,
+        Some(Alignment::End) => TextAlignment::End,
+        Some(Alignment::Center) => TextAlignment::Center,
+        Some(Alignment::Justify) => TextAlignment::Justify,
     }
 }
 

@@ -16,6 +16,9 @@ fn main() {
             text: "OpenDoc ",
             font: FontId(0),
             size: Twip::from_points(28),
+            bold: false,
+            italic: false,
+            letter_spacing: Twip::ZERO,
             color: [20, 20, 20, 255],
             decoration: Decoration::default(),
         },
@@ -23,6 +26,9 @@ fn main() {
             text: "layout engine",
             font: FontId(0),
             size: Twip::from_points(28),
+            bold: false,
+            italic: false,
+            letter_spacing: Twip::ZERO,
             color: [200, 60, 20, 255],
             decoration: Decoration {
                 underline: true,
@@ -34,7 +40,7 @@ fn main() {
         &runs,
         LineConstraints {
             max_width: Twip::from_points(400),
-            rtl: false,
+            ..LineConstraints::default()
         },
         ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, 0)),
     );
