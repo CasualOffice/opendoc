@@ -10,8 +10,8 @@ use casual_doc_model::v1::{
     MAX_FIELD_INSTRUCTION_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH, MAX_TEXTBOX_DEPTH, MediaId,
     NoteId, NoteKind, NoteReference, PageMargins, PageSize, Paragraph, ParagraphProperties,
     Revision, RevisionKind, RgbColor, Run, RunProperties, SdtControlKind, SdtProperties,
-    SectionBoundary, SectionColumns, SectionId, StyleKind, Tab, TableLayout, TextBox,
-    TextDirection, VerticalMerge,
+    SectionBoundary, SectionColumns, SectionId, StyleKind, Tab, TabAlignment, TabLeader, TabStop,
+    TableLayout, TextBox, TextDirection, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::Reader;
@@ -132,6 +132,8 @@ enum EdgeScope {
     None,
     Borders,
     Margins,
+    /// A `w:pBdr` paragraph-border container (edges route to the paragraph).
+    ParagraphBorders,
 }
 
 /// A tracked-change range (`w:ins`/`w:del`) being accumulated.
@@ -201,6 +203,8 @@ struct ContentFrame {
     trpr_depth: u32,
     pr_change_depth: u32,
     edge_scope: EdgeScope,
+    in_tabs: bool,
+    mark_rpr_depth: u32,
     suppressed_tbl_depth: u32,
     sdts: Vec<SdtAccumulator>,
     sdt_scopes: Vec<SdtScope>,
@@ -323,6 +327,13 @@ struct BodyParser<'a> {
     /// frame (like the depth counters) so an inner table's edge container cannot
     /// clobber the outer scope and drop the enclosing table's borders.
     edge_scope: EdgeScope,
+    /// Whether a `w:tabs` container is open (its `w:tab` children are tab stops,
+    /// not the inline run tab). Never spans a text box.
+    in_tabs: bool,
+    /// Depth of a paragraph-mark `w:rPr` (opened inside `w:pPr` with no run open):
+    /// its children are the pilcrow's run properties, so a `w:shd` there is NOT
+    /// paragraph shading. Never spans a text box.
+    mark_rpr_depth: u32,
     /// Depth of nested tables refused past `MAX_TABLE_DEPTH`; while non-zero the
     /// table structure is suppressed so it cannot corrupt the enclosing table.
     suppressed_tbl_depth: u32,
@@ -456,6 +467,8 @@ impl<'a> BodyParser<'a> {
             trpr_depth: 0,
             pr_change_depth: 0,
             edge_scope: EdgeScope::None,
+            in_tabs: false,
+            mark_rpr_depth: 0,
             suppressed_tbl_depth: 0,
             sdts: Vec::new(),
             sdt_scopes: Vec::new(),
@@ -824,6 +837,10 @@ impl BodyParser<'_> {
                 self.run_open = true;
                 self.run_properties = RunProperties::default();
             }
+            // A paragraph-mark `w:rPr` (inside `w:pPr`, no run open): its children
+            // are the pilcrow's run properties, tracked separately so a `w:shd`
+            // there is not captured as paragraph shading.
+            b"rPr" if self.ppr_depth > 0 && !self.run_open => self.mark_rpr_depth += 1,
             b"rPr" if self.run_open => self.rpr_depth += 1,
             b"rStyle" if self.rpr_depth > 0 => {
                 match self.resolve_style(element, StyleKind::Character) {
@@ -1225,7 +1242,10 @@ impl BodyParser<'_> {
                 }
             }
             b"tblLook" if self.tblpr_depth > 0 => self.apply_table_look(element),
-            b"shd" if self.tblpr_depth > 0 => {
+            // `ppr_depth == 0` so a paragraph-direct `w:shd` (a `w:p` opened while
+            // a `w:tblPr`/`w:tcPr` was left unclosed by malformed markup) is not
+            // misrouted to the table/cell — it wins at the paragraph arm below.
+            b"shd" if self.tblpr_depth > 0 && self.ppr_depth == 0 => {
                 let fill = self.shading_fill(element);
                 self.tables.set_table_shading(fill);
             }
@@ -1249,7 +1269,7 @@ impl BodyParser<'_> {
                 .tables
                 .set_row_header(is_true(attribute_value(element, b"val").as_deref())),
             // ---- cell property long tail (`w:tcPr`) --------------------------
-            b"shd" if self.tcpr_depth > 0 => {
+            b"shd" if self.tcpr_depth > 0 && self.ppr_depth == 0 => {
                 let fill = self.shading_fill(element);
                 self.tables.set_cell_shading(fill);
             }
@@ -1260,12 +1280,24 @@ impl BodyParser<'_> {
             b"tcBorders" if self.tcpr_depth > 0 => self.edge_scope = EdgeScope::Borders,
             b"tblCellMar" if self.tblpr_depth > 0 => self.edge_scope = EdgeScope::Margins,
             b"tcMar" if self.tcpr_depth > 0 => self.edge_scope = EdgeScope::Margins,
+            // Paragraph borders (`w:pBdr`), a direct `w:pPr` child (not the mark's).
+            b"pBdr" if self.ppr_depth > 0 && self.rpr_depth == 0 && self.mark_rpr_depth == 0 => {
+                self.edge_scope = EdgeScope::ParagraphBorders;
+            }
             b"top" | b"start" | b"left" | b"bottom" | b"end" | b"right" | b"insideH"
-            | b"insideV"
+            | b"insideV" | b"between" | b"bar"
                 if self.edge_scope != EdgeScope::None =>
             {
                 self.apply_table_edge(local, element);
             }
+            // Paragraph shading (`w:shd`), a direct `w:pPr` child — NOT the mark's
+            // `w:rPr` shd (a run property, left reported), and not a cell/table shd.
+            b"shd" if self.ppr_depth > 0 && self.rpr_depth == 0 && self.mark_rpr_depth == 0 => {
+                self.paragraph_properties.shading.fill = self.shading_fill(element);
+            }
+            // A `w:tabs` container: its `w:tab` children are custom tab stops.
+            b"tabs" if self.ppr_depth > 0 && self.mark_rpr_depth == 0 => self.in_tabs = true,
+            b"tab" if self.in_tabs => self.apply_tab_stop(element),
             b"vAlign" if self.tcpr_depth > 0 => match attribute_value(element, b"val").as_deref() {
                 Some("top") => self
                     .tables
@@ -1485,7 +1517,20 @@ impl BodyParser<'_> {
                 self.run_open = false;
                 self.rpr_depth = 0;
             }
-            b"rPr" => self.rpr_depth = self.rpr_depth.saturating_sub(1),
+            b"rPr" => {
+                // Key the close on `run_open`: a `w:rPr` closing while a run is
+                // open is that run's rPr (`rpr_depth`); otherwise it is the
+                // paragraph mark's rPr (`mark_rpr_depth`). Keying on the counter
+                // alone would let a run rPr nested (malformed) inside an open mark
+                // rPr wrongly drain `mark_rpr_depth`.
+                if self.run_open {
+                    self.rpr_depth = self.rpr_depth.saturating_sub(1);
+                } else if self.mark_rpr_depth > 0 {
+                    self.mark_rpr_depth -= 1;
+                } else {
+                    self.rpr_depth = self.rpr_depth.saturating_sub(1);
+                }
+            }
             b"sectPr" => {
                 if let Some(accumulator) = self.section.take() {
                     self.build_section(accumulator)?;
@@ -1553,9 +1598,10 @@ impl BodyParser<'_> {
             b"tcPr" => self.tcpr_depth = self.tcpr_depth.saturating_sub(1),
             b"tblPr" => self.tblpr_depth = self.tblpr_depth.saturating_sub(1),
             b"trPr" => self.trpr_depth = self.trpr_depth.saturating_sub(1),
-            b"tblBorders" | b"tcBorders" | b"tblCellMar" | b"tcMar" => {
+            b"tblBorders" | b"tcBorders" | b"tblCellMar" | b"tcMar" | b"pBdr" => {
                 self.edge_scope = EdgeScope::None;
             }
+            b"tabs" => self.in_tabs = false,
             // A refused subtree's own `</w:tbl>` closes suppression, never a real
             // table on the stack; its `</w:tc>`/`</w:tr>` are inert.
             b"tbl" if self.suppressed_tbl_depth > 0 => {
@@ -1685,7 +1731,62 @@ impl BodyParser<'_> {
                         .report(if cell { b"tcMar" } else { b"tblCellMar" }),
                 }
             }
+            EdgeScope::ParagraphBorders => match self.build_border_edge(element) {
+                Some(edge) => {
+                    let borders = &mut self.paragraph_properties.borders;
+                    match local {
+                        b"top" => borders.top = Some(edge),
+                        b"bottom" => borders.bottom = Some(edge),
+                        b"start" | b"left" => borders.start = Some(edge),
+                        b"end" | b"right" => borders.end = Some(edge),
+                        b"between" => borders.between = Some(edge),
+                        b"bar" => borders.bar = Some(edge),
+                        _ => {}
+                    }
+                }
+                None => self.reporter.report(b"pBdr"),
+            },
             EdgeScope::None => {}
+        }
+    }
+
+    /// Maps a `w:tabs > w:tab` custom tab stop. A `clear` or unknown alignment, a
+    /// missing/out-of-range `w:pos`, or an overflow past the bound is reported.
+    fn apply_tab_stop(&mut self, element: &BytesStart<'_>) {
+        let alignment = match attribute_value(element, b"val").as_deref() {
+            Some("start" | "left") => TabAlignment::Start,
+            Some("center") => TabAlignment::Center,
+            Some("end" | "right") => TabAlignment::End,
+            Some("decimal") => TabAlignment::Decimal,
+            Some("bar") => TabAlignment::Bar,
+            _ => {
+                self.reporter.report(b"tab");
+                return;
+            }
+        };
+        let position_twips = match attr_i32(element, b"pos") {
+            Some(pos) if (-31_680..=31_680).contains(&pos) => pos,
+            _ => {
+                self.reporter.report(b"tab");
+                return;
+            }
+        };
+        let leader = match attribute_value(element, b"leader").as_deref() {
+            Some("dot") => Some(TabLeader::Dot),
+            Some("hyphen") => Some(TabLeader::Hyphen),
+            Some("underscore") => Some(TabLeader::Underscore),
+            Some("middleDot") => Some(TabLeader::MiddleDot),
+            Some("heavy") => Some(TabLeader::Heavy),
+            _ => None,
+        };
+        if self.paragraph_properties.tabs.len() < 128 {
+            self.paragraph_properties.tabs.push(TabStop {
+                position_twips,
+                alignment,
+                leader,
+            });
+        } else {
+            self.reporter.report(b"tab");
         }
     }
 
@@ -1851,6 +1952,8 @@ impl BodyParser<'_> {
             trpr_depth: std::mem::take(&mut self.trpr_depth),
             pr_change_depth: std::mem::take(&mut self.pr_change_depth),
             edge_scope: std::mem::replace(&mut self.edge_scope, EdgeScope::None),
+            in_tabs: std::mem::take(&mut self.in_tabs),
+            mark_rpr_depth: std::mem::take(&mut self.mark_rpr_depth),
             suppressed_tbl_depth: std::mem::take(&mut self.suppressed_tbl_depth),
             sdts: std::mem::take(&mut self.sdts),
             sdt_scopes: std::mem::take(&mut self.sdt_scopes),
@@ -1908,6 +2011,8 @@ impl BodyParser<'_> {
         self.trpr_depth = frame.trpr_depth;
         self.pr_change_depth = frame.pr_change_depth;
         self.edge_scope = frame.edge_scope;
+        self.in_tabs = frame.in_tabs;
+        self.mark_rpr_depth = frame.mark_rpr_depth;
         self.suppressed_tbl_depth = frame.suppressed_tbl_depth;
         self.sdts = frame.sdts;
         self.sdt_scopes = frame.sdt_scopes;
@@ -2383,6 +2488,13 @@ impl BodyParser<'_> {
         // A ruby annotation never spans a paragraph; reset defensively so a
         // malformed unclosed `w:rt` cannot suppress a later paragraph's text.
         self.ruby_annotation_depth = 0;
+        // Paragraph-property containers never span a paragraph; reset defensively
+        // so a malformed unclosed `w:pBdr`/`w:tabs`/mark-`w:rPr` cannot leak.
+        self.in_tabs = false;
+        self.mark_rpr_depth = 0;
+        if self.edge_scope == EdgeScope::ParagraphBorders {
+            self.edge_scope = EdgeScope::None;
+        }
         let paragraph_id = self
             .paragraph_id
             .take()
