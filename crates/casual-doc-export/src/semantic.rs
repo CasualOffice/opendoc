@@ -25,9 +25,9 @@ use casual_doc_model::v1::{
     HeaderFooterId, HeaderFooterKind, HeightRule, HighlightColor, HyperlinkTarget, InlineNode,
     Note, NoteId, NoteKind, NumberingInstance, NumberingInstanceId, ParagraphProperties,
     RevisionKind, RgbColor, RunFontHint, RunProperties, SdtControlKind, SdtProperties,
-    SectionBoundary, Style, StyleId, StyleKind, Table, TableBorders, TableCell,
-    TableCellProperties, TableLayout, TableProperties, TableRow, TableRowProperties, TextDirection,
-    ThemeFontRef, VerticalAlignment, VerticalMerge,
+    SectionBoundary, Style, StyleId, StyleKind, TabAlignment, TabLeader, Table, TableBorders,
+    TableCell, TableCellProperties, TableLayout, TableProperties, TableRow, TableRowProperties,
+    TextDirection, ThemeFontRef, VerticalAlignment, VerticalMerge,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -1340,6 +1340,62 @@ fn write_paragraph_properties(
         el.push_attribute(("w:val", level.to_string().as_str()));
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
+    if let Some(spacing) = &properties.spacing {
+        let mut el = start("w:spacing");
+        if let Some(before) = spacing.before_twips {
+            el.push_attribute(("w:before", before.to_string().as_str()));
+        }
+        if let Some(after) = spacing.after_twips {
+            el.push_attribute(("w:after", after.to_string().as_str()));
+        }
+        if let Some(percent) = spacing.line_percent {
+            // The importer reads `line * 100 / 240` (auto rule); round the twips
+            // up so that integer division recovers the exact percent.
+            let line = (u64::from(percent) * 240).div_ceil(100);
+            el.push_attribute(("w:line", line.to_string().as_str()));
+            el.push_attribute(("w:lineRule", "auto"));
+        }
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    let borders = &properties.borders;
+    if borders.top.is_some()
+        || borders.bottom.is_some()
+        || borders.start.is_some()
+        || borders.end.is_some()
+        || borders.between.is_some()
+        || borders.bar.is_some()
+    {
+        w.write_event(Event::Start(start("w:pBdr"))).map_err(pkg)?;
+        for (edge, name) in [
+            (&borders.top, "w:top"),
+            (&borders.start, "w:start"),
+            (&borders.bottom, "w:bottom"),
+            (&borders.end, "w:end"),
+            (&borders.between, "w:between"),
+            (&borders.bar, "w:bar"),
+        ] {
+            if let Some(edge) = edge {
+                write_border_edge(w, name, edge)?;
+            }
+        }
+        w.write_event(Event::End(BytesEnd::new("w:pBdr")))
+            .map_err(pkg)?;
+    }
+    write_shading(w, &properties.shading)?;
+    if !properties.tabs.is_empty() {
+        w.write_event(Event::Start(start("w:tabs"))).map_err(pkg)?;
+        for tab in &properties.tabs {
+            let mut el = start("w:tab");
+            el.push_attribute(("w:val", tab_alignment_token(tab.alignment)));
+            el.push_attribute(("w:pos", tab.position_twips.to_string().as_str()));
+            if let Some(leader) = tab.leader {
+                el.push_attribute(("w:leader", tab_leader_token(leader)));
+            }
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+        w.write_event(Event::End(BytesEnd::new("w:tabs")))
+            .map_err(pkg)?;
+    }
     w.write_event(Event::End(BytesEnd::new("w:pPr")))
         .map_err(pkg)?;
     Ok(())
@@ -1748,6 +1804,26 @@ fn highlight_token(highlight: HighlightColor) -> &'static str {
         HighlightColor::Red => "red",
         HighlightColor::White => "white",
         HighlightColor::Yellow => "yellow",
+    }
+}
+
+fn tab_alignment_token(alignment: TabAlignment) -> &'static str {
+    match alignment {
+        TabAlignment::Start => "start",
+        TabAlignment::Center => "center",
+        TabAlignment::End => "end",
+        TabAlignment::Decimal => "decimal",
+        TabAlignment::Bar => "bar",
+    }
+}
+
+fn tab_leader_token(leader: TabLeader) -> &'static str {
+    match leader {
+        TabLeader::Dot => "dot",
+        TabLeader::Hyphen => "hyphen",
+        TabLeader::Underscore => "underscore",
+        TabLeader::MiddleDot => "middleDot",
+        TabLeader::Heavy => "heavy",
     }
 }
 

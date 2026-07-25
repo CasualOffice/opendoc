@@ -10,6 +10,13 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Fixed
 
+- The semantic DOCX writer now emits the structured paragraph properties it
+  previously dropped: paragraph `w:spacing` (before/after and line percent, the
+  latter round-tripped exactly through the importer's `line*100/240` rule),
+  `w:pBdr` (all six edges incl. `between`/`bar`), `w:shd`, and `w:tabs` (position,
+  alignment, leader). A paragraph using any of these previously lost it on write
+  → reopen; now proven by a round-trip test. (Completes the paragraph-property
+  writer alongside the earlier run-property completeness.)
 - The semantic DOCX writer preserves a style's present-but-empty `w:pPr`/`w:rPr`:
   a style whose paragraph/run properties reduce to the model default is now
   emitted as an empty element so it re-imports as `Some(default)` rather than
