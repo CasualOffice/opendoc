@@ -49,6 +49,85 @@ impl Shading {
     }
 }
 
+/// One border edge (`w:top`/`w:start`/`w:bottom`/`w:end`/`w:insideH`/`w:insideV`).
+/// The `style` token is retained verbatim (the `ST_Border` list is ~180 values
+/// incl. art borders — a producer-facing vocabulary kept opaque, like other
+/// producer-specific tokens); the editable size/color/space are typed.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BorderEdge {
+    /// Line style token (`w:val`), non-empty, at most 32 bytes.
+    pub style: String,
+    /// Line width in eighth-points (`w:sz`; `0..=1024`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_eighth_points: Option<u32>,
+    /// Line color (`w:color`), explicit sRGB only; `auto`/theme reported.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<RgbColor>,
+    /// Padding between border and text in points (`w:space`; `0..=31`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub space_points: Option<u32>,
+}
+
+/// A border set (`w:tblBorders` / `w:tcBorders`); any subset of edges.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TableBorders {
+    /// Top edge.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top: Option<BorderEdge>,
+    /// Leading (start) edge.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start: Option<BorderEdge>,
+    /// Bottom edge.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bottom: Option<BorderEdge>,
+    /// Trailing (end) edge.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end: Option<BorderEdge>,
+    /// Inside horizontal edges (`w:insideH`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inside_h: Option<BorderEdge>,
+    /// Inside vertical edges (`w:insideV`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inside_v: Option<BorderEdge>,
+}
+
+impl TableBorders {
+    /// Whether no edge is set (serializes to nothing).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// Cell content margins (`w:tblCellMar` / `w:tcMar`), dxa twips (`0..=31_680`).
+/// Non-`dxa` (`pct`/`nil`) margin types are reported.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CellMargins {
+    /// Top margin.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_twips: Option<i32>,
+    /// Leading (start) margin.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_twips: Option<i32>,
+    /// Bottom margin.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bottom_twips: Option<i32>,
+    /// Trailing (end) margin.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_twips: Option<i32>,
+}
+
+impl CellMargins {
+    /// Whether no margin is set (serializes to nothing).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// Table layout algorithm (`w:tblLayout/@w:type`).
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -93,7 +172,8 @@ impl TableLook {
 }
 
 /// Typed table properties (`w:tblPr`). An empty value serializes to nothing.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+// Not `Copy`: `TableBorders` owns a `String` (a border style token).
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TableProperties {
     /// Table alignment (`w:jc`); start/center/end (justify reported at import).
@@ -111,6 +191,12 @@ pub struct TableProperties {
     /// Table background shading (`w:shd`).
     #[serde(default, skip_serializing_if = "Shading::is_empty")]
     pub shading: Shading,
+    /// Table borders (`w:tblBorders`).
+    #[serde(default, skip_serializing_if = "TableBorders::is_empty")]
+    pub borders: TableBorders,
+    /// Default cell margins (`w:tblCellMar`).
+    #[serde(default, skip_serializing_if = "CellMargins::is_empty")]
+    pub cell_margins: CellMargins,
 }
 
 impl TableProperties {
@@ -201,7 +287,8 @@ pub enum TextDirection {
 }
 
 /// Typed table-cell properties. An empty value serializes to `{}`.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+// Not `Copy`: `TableBorders` owns a `String` (a border style token).
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TableCellProperties {
     /// Horizontal merge span in grid columns (`w:gridSpan`; `1..=16384`).
@@ -225,6 +312,12 @@ pub struct TableCellProperties {
     /// Cell text flow direction (`w:textDirection`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text_direction: Option<TextDirection>,
+    /// Cell borders (`w:tcBorders`).
+    #[serde(default, skip_serializing_if = "TableBorders::is_empty")]
+    pub borders: TableBorders,
+    /// Cell content margins (`w:tcMar`).
+    #[serde(default, skip_serializing_if = "CellMargins::is_empty")]
+    pub margins: CellMargins,
 }
 
 /// A table cell holding recursive block content.

@@ -8,9 +8,10 @@
 
 use casual_doc_model::v1::{Alignment, RgbColor};
 use casual_doc_model::v1::{
-    BlockNode, CellVerticalAlignment, GridColumn, HeightRule, MAX_TABLE_DEPTH, Paragraph,
-    ParagraphProperties, Table, TableCell, TableCellProperties, TableLayout, TableProperties,
-    TableRow, TableRowProperties, TextDirection, VerticalMerge,
+    BlockNode, BorderEdge, CellMargins, CellVerticalAlignment, GridColumn, HeightRule,
+    MAX_TABLE_DEPTH, Paragraph, ParagraphProperties, Table, TableBorders, TableCell,
+    TableCellProperties, TableLayout, TableProperties, TableRow, TableRowProperties, TextDirection,
+    VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 
@@ -49,6 +50,31 @@ pub(crate) struct TableStack {
 fn next_id(ids: &mut IdGenerator) -> Result<NodeId, ImportError> {
     ids.next_id()
         .map_err(|_| ImportError::LimitExceeded { limit: "node_ids" })
+}
+
+/// Routes a border edge to its field by OOXML local name (`start`/`left` and
+/// `end`/`right` are the transitional aliases of the same logical edge).
+fn set_border_field(borders: &mut TableBorders, edge: &[u8], value: BorderEdge) {
+    match edge {
+        b"top" => borders.top = Some(value),
+        b"start" | b"left" => borders.start = Some(value),
+        b"bottom" => borders.bottom = Some(value),
+        b"end" | b"right" => borders.end = Some(value),
+        b"insideH" => borders.inside_h = Some(value),
+        b"insideV" => borders.inside_v = Some(value),
+        _ => {}
+    }
+}
+
+/// Routes a cell margin to its field by OOXML local name.
+fn set_margin_field(margins: &mut CellMargins, edge: &[u8], twips: i32) {
+    match edge {
+        b"top" => margins.top_twips = Some(twips),
+        b"start" | b"left" => margins.start_twips = Some(twips),
+        b"bottom" => margins.bottom_twips = Some(twips),
+        b"end" | b"right" => margins.end_twips = Some(twips),
+        _ => {}
+    }
 }
 
 impl TableStack {
@@ -249,6 +275,34 @@ impl TableStack {
     pub(crate) fn set_row_header(&mut self, header: bool) {
         if let Some(properties) = self.row_properties() {
             properties.header = header;
+        }
+    }
+
+    /// Sets one border edge (by OOXML local name) on the innermost table.
+    pub(crate) fn set_table_border(&mut self, edge: &[u8], border: BorderEdge) {
+        if let Some(properties) = self.table_properties() {
+            set_border_field(&mut properties.borders, edge, border);
+        }
+    }
+
+    /// Sets one border edge on the current cell.
+    pub(crate) fn set_cell_border(&mut self, edge: &[u8], border: BorderEdge) {
+        if let Some(cell) = self.current_cell() {
+            set_border_field(&mut cell.properties.borders, edge, border);
+        }
+    }
+
+    /// Sets one default cell margin (by OOXML local name) on the innermost table.
+    pub(crate) fn set_table_margin(&mut self, edge: &[u8], twips: i32) {
+        if let Some(properties) = self.table_properties() {
+            set_margin_field(&mut properties.cell_margins, edge, twips);
+        }
+    }
+
+    /// Sets one content margin on the current cell.
+    pub(crate) fn set_cell_margin(&mut self, edge: &[u8], twips: i32) {
+        if let Some(cell) = self.current_cell() {
+            set_margin_field(&mut cell.properties.margins, edge, twips);
         }
     }
 

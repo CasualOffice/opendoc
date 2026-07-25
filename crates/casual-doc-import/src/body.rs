@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use casual_doc_model::v1::{
-    Alignment, BlockNode, Break, BreakKind, CellVerticalAlignment, Comment, CommentId,
+    Alignment, BlockNode, BorderEdge, Break, BreakKind, CellVerticalAlignment, Comment, CommentId,
     CommentReference, Drawing, Extent, ExternalTarget, Field, HeaderFooterId, HeaderFooterKind,
     HeaderFooterRef, HeightRule, Hyperlink, HyperlinkTarget, InlineNode, InternalTarget, MAX_EMU,
     MAX_FIELD_INSTRUCTION_BYTES, MAX_REVISION_DEPTH, MAX_TEXTBOX_DEPTH, MediaId, NoteId, NoteKind,
@@ -76,6 +76,18 @@ enum WrapperKind {
     Hyperlink,
     Field,
     Revision,
+}
+
+/// Which table property container (if any) is currently capturing edge children.
+/// The edge element names (`top`/`start`/`bottom`/`end`/`left`/`right`) collide
+/// between the border containers (`w:tblBorders`/`w:tcBorders`) and the margin
+/// containers (`w:tblCellMar`/`w:tcMar`), so this scope disambiguates them; the
+/// table-vs-cell level is taken from `tblpr_depth`/`tcpr_depth`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EdgeScope {
+    None,
+    Borders,
+    Margins,
 }
 
 /// A tracked-change range (`w:ins`/`w:del`) being accumulated.
@@ -249,6 +261,10 @@ struct BodyParser<'a> {
     /// Depth of an open property-change tracked revision (`w:*PrChange`), whose
     /// nested historical property container must not map over the current values.
     pr_change_depth: u32,
+    /// Which table border/margin container is currently open (for edge routing).
+    /// Never spans a text box (an edge container has no box content), so it is not
+    /// part of `ContentFrame`.
+    edge_scope: EdgeScope,
     /// Depth of nested tables refused past `MAX_TABLE_DEPTH`; while non-zero the
     /// table structure is suppressed so it cannot corrupt the enclosing table.
     suppressed_tbl_depth: u32,
@@ -354,6 +370,7 @@ impl<'a> BodyParser<'a> {
             tblpr_depth: 0,
             trpr_depth: 0,
             pr_change_depth: 0,
+            edge_scope: EdgeScope::None,
             suppressed_tbl_depth: 0,
             segments: Vec::new(),
             blocks: Vec::new(),
@@ -1089,6 +1106,19 @@ impl BodyParser<'_> {
                 let fill = self.shading_fill(element);
                 self.tables.set_cell_shading(fill);
             }
+            // Border / margin containers open an edge-capture scope. The
+            // table-vs-cell level is `tblpr_depth`/`tcpr_depth`; the scope
+            // disambiguates the border/margin edge children that share names.
+            b"tblBorders" if self.tblpr_depth > 0 => self.edge_scope = EdgeScope::Borders,
+            b"tcBorders" if self.tcpr_depth > 0 => self.edge_scope = EdgeScope::Borders,
+            b"tblCellMar" if self.tblpr_depth > 0 => self.edge_scope = EdgeScope::Margins,
+            b"tcMar" if self.tcpr_depth > 0 => self.edge_scope = EdgeScope::Margins,
+            b"top" | b"start" | b"left" | b"bottom" | b"end" | b"right" | b"insideH"
+            | b"insideV"
+                if self.edge_scope != EdgeScope::None =>
+            {
+                self.apply_table_edge(local, element);
+            }
             b"vAlign" if self.tcpr_depth > 0 => match attribute_value(element, b"val").as_deref() {
                 Some("top") => self
                     .tables
@@ -1254,6 +1284,9 @@ impl BodyParser<'_> {
             b"tcPr" => self.tcpr_depth = self.tcpr_depth.saturating_sub(1),
             b"tblPr" => self.tblpr_depth = self.tblpr_depth.saturating_sub(1),
             b"trPr" => self.trpr_depth = self.trpr_depth.saturating_sub(1),
+            b"tblBorders" | b"tcBorders" | b"tblCellMar" | b"tcMar" => {
+                self.edge_scope = EdgeScope::None;
+            }
             // A refused subtree's own `</w:tbl>` closes suppression, never a real
             // table on the stack; its `</w:tc>`/`</w:tr>` are inert.
             b"tbl" if self.suppressed_tbl_depth > 0 => {
@@ -1345,6 +1378,69 @@ impl BodyParser<'_> {
         attribute_value(element, b"fill")
             .filter(|value| value != "auto")
             .and_then(|value| parse_rgb(&value))
+    }
+
+    /// Routes a border/margin edge child (`top`/`start`/…) to the table or cell
+    /// (per `tcpr_depth`) under the open [`EdgeScope`]. A border edge with no
+    /// valid style, or a non-`dxa` margin, is reported (the container name) so no
+    /// visible geometry is silently lost.
+    fn apply_table_edge(&mut self, local: &[u8], element: &BytesStart<'_>) {
+        let cell = self.tcpr_depth > 0;
+        match self.edge_scope {
+            EdgeScope::Borders => match self.build_border_edge(element) {
+                Some(edge) if cell => self.tables.set_cell_border(local, edge),
+                Some(edge) => self.tables.set_table_border(local, edge),
+                None => self
+                    .reporter
+                    .report(if cell { b"tcBorders" } else { b"tblBorders" }),
+            },
+            EdgeScope::Margins => {
+                // Margins have no inside edges.
+                if matches!(local, b"insideH" | b"insideV") {
+                    return;
+                }
+                let is_dxa = attribute_value(element, b"type")
+                    .map(|kind| kind == "dxa")
+                    .unwrap_or(true);
+                match attr_i32(element, b"w") {
+                    Some(width) if is_dxa => {
+                        let width = width.clamp(0, 31_680);
+                        if cell {
+                            self.tables.set_cell_margin(local, width);
+                        } else {
+                            self.tables.set_table_margin(local, width);
+                        }
+                    }
+                    _ => self
+                        .reporter
+                        .report(if cell { b"tcMar" } else { b"tblCellMar" }),
+                }
+            }
+            EdgeScope::None => {}
+        }
+    }
+
+    /// Builds a `BorderEdge` from an edge element's attributes. Returns `None`
+    /// (caller reports) when the required `w:val` style is missing/empty/oversized.
+    fn build_border_edge(&self, element: &BytesStart<'_>) -> Option<BorderEdge> {
+        let style = attribute_value(element, b"val").filter(|v| !v.is_empty() && v.len() <= 32)?;
+        let size_eighth_points = attribute_value(element, b"sz")
+            .and_then(|value| value.parse::<u32>().ok())
+            .map(|size| size.min(1024));
+        // Only an explicit sRGB color is modeled; `auto`/theme colors are dropped
+        // (the edge itself is still captured).
+        let color = attribute_value(element, b"color")
+            .filter(|value| value != "auto")
+            .and_then(|value| parse_rgb(&value));
+        let space_points = attribute_value(element, b"space")
+            .and_then(|value| value.parse::<u32>().ok())
+            .map(|space| space.min(31));
+        Some(BorderEdge {
+            style,
+            size_eighth_points,
+            color,
+            space_points,
+        })
     }
 
     /// Applies a `w:tblLook`: either the explicit boolean attributes

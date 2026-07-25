@@ -274,6 +274,12 @@ pub struct Paragraph {
 }
 
 /// A body-level node.
+// `Table` is larger than `Paragraph` now that tables carry borders/margins.
+// Boxing it (or its properties) is a worthwhile memory optimization for
+// paragraph-heavy bodies, but it ripples across every construction/match site
+// and the enum is part of the public API; tracked as a follow-up so it can land
+// as one focused change rather than entangled with feature slices.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum BlockNode {
