@@ -14,6 +14,12 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Added
 
+- Paragraph structural flags (`w:keepNext`, `w:keepLines`,
+  `w:pageBreakBefore`, `w:widowControl`, `w:contextualSpacing`,
+  `w:suppressLineNumbers`) and outline level (`w:outlineLvl`, 0-9) are now
+  modeled on paragraphs (in both direct formatting and styles). Additive;
+  existing snapshots and the migration golden are byte-identical.
+  (`50-SCHEMA-V1-PARAGRAPH-PROPERTIES-DESIGN.md`)
 - Table, row, and cell formatting (attribute-based, first slice): tables model
   `w:tblPr` (alignment, dxa width, layout, look flags, background shading), rows
   model `w:trPr` (height + rule, cantSplit, header repeat), and cells gain

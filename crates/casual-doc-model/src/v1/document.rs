@@ -369,6 +369,9 @@ impl Document {
                 )?;
             }
         }
+        if let Some(level) = properties.outline_level {
+            check_domain(level <= 9, "paragraph.outline_level")?;
+        }
         Ok(())
     }
 

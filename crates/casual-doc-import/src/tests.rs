@@ -486,6 +486,40 @@ fn paragraph_direct_formatting_is_mapped() {
 }
 
 #[test]
+fn paragraph_flag_and_outline_properties_are_mapped() {
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:pPr>
+            <w:keepNext/>
+            <w:keepLines w:val="1"/>
+            <w:pageBreakBefore/>
+            <w:widowControl w:val="0"/>
+            <w:contextualSpacing/>
+            <w:suppressLineNumbers/>
+            <w:outlineLvl w:val="2"/>
+        </w:pPr><w:r><w:t>x</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let props = &paragraph(&import, 0).properties;
+    assert!(props.keep_next);
+    assert!(props.keep_lines);
+    assert!(props.page_break_before);
+    assert!(!props.widow_control, "val=0 clears the toggle");
+    assert!(props.contextual_spacing);
+    assert!(props.suppress_line_numbers);
+    assert_eq!(props.outline_level, Some(2));
+}
+
+#[test]
+fn out_of_range_outline_level_is_reported_not_mapped() {
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:pPr><w:outlineLvl w:val="42"/></w:pPr><w:r><w:t>x</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    assert_eq!(paragraph(&import, 0).properties.outline_level, None);
+    assert!(features(&import).contains(&"outlineLvl"));
+}
+
+#[test]
 fn unmapped_paragraph_property_children_are_still_reported() {
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
             <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>x</w:t></w:r></w:p>

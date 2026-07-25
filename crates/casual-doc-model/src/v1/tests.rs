@@ -1032,6 +1032,52 @@ fn default_run_properties_still_serialize_to_empty_object() {
     assert_eq!(json, "{}");
 }
 
+#[test]
+fn default_paragraph_properties_still_serialize_to_empty_object() {
+    // Same additive guard for the paragraph long-tail fields.
+    let json = serde_json::to_string(&ParagraphProperties::default()).unwrap();
+    assert_eq!(json, "{}");
+}
+
+#[test]
+fn paragraph_long_tail_properties_round_trip() {
+    let properties = ParagraphProperties {
+        keep_next: true,
+        page_break_before: true,
+        contextual_spacing: true,
+        suppress_line_numbers: true,
+        outline_level: Some(3),
+        ..ParagraphProperties::default()
+    };
+    let block = BlockNode::Paragraph(Paragraph {
+        id: tid(1),
+        properties,
+        inlines: vec![run_inline(tid(2), "x")],
+    });
+    let document = table_document(vec![block]).unwrap();
+    let reloaded =
+        Document::from_json(&document.to_json().unwrap(), SnapshotLimits::default()).unwrap();
+    assert_eq!(document, reloaded);
+}
+
+#[test]
+fn out_of_range_outline_level_is_rejected() {
+    let block = BlockNode::Paragraph(Paragraph {
+        id: tid(1),
+        properties: ParagraphProperties {
+            outline_level: Some(10),
+            ..ParagraphProperties::default()
+        },
+        inlines: vec![run_inline(tid(2), "x")],
+    });
+    assert!(matches!(
+        table_document(vec![block]),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "paragraph.outline_level"
+        })
+    ));
+}
+
 fn field_paragraph(field: Field) -> BlockNode {
     BlockNode::Paragraph(Paragraph {
         id: tid(1),
