@@ -18,6 +18,9 @@ use casual_doc_import::RetainedSource;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, DateTime, ZipWriter};
 
+mod semantic;
+pub use semantic::write_document;
+
 /// A package-writing failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ExportError {
@@ -62,6 +65,63 @@ pub fn write_package(source: &RetainedSource) -> Result<Vec<u8>, ExportError> {
         .finish()
         .map_err(|_| ExportError::Package)?
         .into_inner())
+}
+
+#[cfg(test)]
+mod semantic_tests {
+    use std::collections::BTreeMap;
+
+    use casual_doc_import::{ImportConfig, ImportMode, import_main_document_xml, import_package};
+    use casual_doc_ooxml::{DocxPackage, PackageLimits};
+
+    use crate::write_document;
+
+    /// The Phase-1B semantic fixed point: importing a document, writing it, and
+    /// reopening yields the identical model. The importer allocates ids in
+    /// document order, so a writer that emits the body in that same order
+    /// reproduces every id — the strongest correctness gate for the writer.
+    #[test]
+    fn core_body_survives_the_semantic_round_trip() {
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:pPr><w:jc w:val="center"/><w:keepNext/><w:outlineLvl w:val="2"/></w:pPr>
+                <w:r><w:rPr><w:b/><w:i w:val="0"/><w:u/><w:color w:val="FF0000"/><w:sz w:val="28"/></w:rPr>
+                    <w:t xml:space="preserve">Hello </w:t></w:r>
+                <w:r><w:t>world</w:t></w:r><w:r><w:tab/></w:r>
+                <w:r><w:t>after</w:t></w:r><w:r><w:br w:type="page"/></w:r></w:p>
+            <w:p><w:r><w:t>Second paragraph</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+        let m2 = import_package(
+            &mut package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+
+        assert_eq!(m1, m2, "the model survives write -> reopen unchanged");
+    }
+
+    #[test]
+    fn writer_is_deterministic() {
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        let m = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        assert_eq!(
+            write_document(&m, &BTreeMap::new()).unwrap(),
+            write_document(&m, &BTreeMap::new()).unwrap(),
+            "the same model writes identical bytes"
+        );
+    }
 }
 
 #[cfg(test)]
