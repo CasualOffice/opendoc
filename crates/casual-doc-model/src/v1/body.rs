@@ -239,6 +239,91 @@ pub struct BookmarkEnd {
     pub bookmark: BookmarkId,
 }
 
+/// Maximum content-control (structured document tag) nesting depth (an `sdt`
+/// inside an `sdt` inside …). Block and inline sdt nesting share this budget.
+pub const MAX_SDT_DEPTH: u32 = 8;
+
+/// The editing behaviour of a content control (`w:sdtPr` type marker). `None`
+/// means the producer wrote no type marker — the OOXML default, rich text — or a
+/// marker this slice does not map (then also reported). Producer-specific detail
+/// of each type (list entries, date format, checkbox glyphs) is deferred.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SdtControlKind {
+    /// A rich-text control (`w:richText`).
+    RichText,
+    /// A plain-text control (`w:text`).
+    PlainText,
+    /// A combo-box control (`w:comboBox`).
+    ComboBox,
+    /// A drop-down-list control (`w:dropDownList`).
+    DropDownList,
+    /// A date-picker control (`w:date`).
+    Date,
+    /// A picture control (`w:picture`).
+    Picture,
+    /// A checkbox control (`w14:checkbox`).
+    Checkbox,
+    /// A grouping control (`w:group`).
+    Group,
+    /// A building-block gallery (`w:docPartObj` / `w:docPartList`).
+    BuildingBlockGallery,
+    /// A repeating-section control (`w:repeatingSection`).
+    RepeatingSection,
+    /// A citation control (`w:citation`).
+    Citation,
+    /// A bibliography control (`w:bibliography`).
+    Bibliography,
+}
+
+/// Typed content-control properties (`w:sdtPr`). An empty value serializes to
+/// `{}`. Everything else in `w:sdtPr` (lock, placeholder, data binding, list
+/// entries, date/checkbox detail) is retained-and-reported, not modeled here.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SdtProperties {
+    /// Editing behaviour, if a recognized type marker was present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub control_kind: Option<SdtControlKind>,
+    /// Friendly name (`w:alias@w:val`), if declared (non-empty, <= 255 bytes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alias: Option<String>,
+    /// Programmatic tag (`w:tag@w:val`), if declared (non-empty, <= 255 bytes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+    /// The producer's `w:id@w:val` as written, if declared (<= 64 bytes). Opaque
+    /// and non-unique across controls — a grouping key, NOT a node identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub control_id: Option<String>,
+}
+
+/// A block-level content control (`w:sdt` around paragraphs/tables). Its content
+/// reuses the recursive block model.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BlockSdt {
+    /// Stable identity.
+    pub id: NodeId,
+    /// Control properties (always present; empty is `{}`).
+    pub properties: SdtProperties,
+    /// The wrapped block content (non-empty; paragraphs and nested tables).
+    pub blocks: Vec<BlockNode>,
+}
+
+/// An inline-level content control (`w:sdt` around runs). A transparent inline
+/// range wrapper (like `Revision`): it may wrap leaf inlines, a hyperlink/field,
+/// or a nested inline sdt, and may itself appear inside a hyperlink/field.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct InlineSdt {
+    /// Stable identity.
+    pub id: NodeId,
+    /// Control properties (always present; empty is `{}`).
+    pub properties: SdtProperties,
+    /// The wrapped inline content (non-empty).
+    pub inlines: Vec<InlineNode>,
+}
+
 /// Inline content supported by schema v1.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -267,6 +352,8 @@ pub enum InlineNode {
     BookmarkStart(BookmarkStart),
     /// The end marker of a bookmark range.
     BookmarkEnd(BookmarkEnd),
+    /// An inline-level content control wrapping inline content.
+    Sdt(InlineSdt),
 }
 
 impl InlineNode {
@@ -286,6 +373,7 @@ impl InlineNode {
             Self::Revision(revision) => revision.id,
             Self::BookmarkStart(node) => node.id,
             Self::BookmarkEnd(node) => node.id,
+            Self::Sdt(sdt) => sdt.id,
         }
     }
 }
@@ -316,4 +404,6 @@ pub enum BlockNode {
     Paragraph(Paragraph),
     /// A table block.
     Table(Table),
+    /// A block-level content control wrapping block content.
+    Sdt(BlockSdt),
 }

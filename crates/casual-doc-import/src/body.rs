@@ -3,12 +3,13 @@
 use std::collections::BTreeMap;
 
 use casual_doc_model::v1::{
-    Alignment, BlockNode, Bookmark, BookmarkEnd, BookmarkId, BookmarkStart, BorderEdge, Break,
-    BreakKind, CellVerticalAlignment, Comment, CommentId, CommentReference, DefinitionMap, Drawing,
-    Extent, ExternalTarget, Field, HeaderFooterId, HeaderFooterKind, HeaderFooterRef, HeightRule,
-    Hyperlink, HyperlinkTarget, InlineNode, InternalTarget, MAX_EMU, MAX_FIELD_INSTRUCTION_BYTES,
-    MAX_REVISION_DEPTH, MAX_TEXTBOX_DEPTH, MediaId, NoteId, NoteKind, NoteReference, PageMargins,
-    PageSize, Paragraph, ParagraphProperties, Revision, RevisionKind, RgbColor, Run, RunProperties,
+    Alignment, BlockNode, BlockSdt, Bookmark, BookmarkEnd, BookmarkId, BookmarkStart, BorderEdge,
+    Break, BreakKind, CellVerticalAlignment, Comment, CommentId, CommentReference, DefinitionMap,
+    Drawing, Extent, ExternalTarget, Field, HeaderFooterId, HeaderFooterKind, HeaderFooterRef,
+    HeightRule, Hyperlink, HyperlinkTarget, InlineNode, InlineSdt, InternalTarget, MAX_EMU,
+    MAX_FIELD_INSTRUCTION_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH, MAX_TEXTBOX_DEPTH, MediaId,
+    NoteId, NoteKind, NoteReference, PageMargins, PageSize, Paragraph, ParagraphProperties,
+    Revision, RevisionKind, RgbColor, Run, RunProperties, SdtControlKind, SdtProperties,
     SectionBoundary, SectionColumns, SectionId, StyleKind, Tab, TableLayout, TextBox,
     TextDirection, VerticalMerge,
 };
@@ -74,6 +75,11 @@ enum Segment {
     BookmarkEnd {
         bookmark: BookmarkId,
     },
+    /// An inline-level content control (`w:sdt`) wrapping inline content.
+    Sdt {
+        properties: SdtProperties,
+        children: Vec<Segment>,
+    },
 }
 
 /// Which wrapper is currently the innermost open one. A single discriminator
@@ -85,6 +91,35 @@ enum WrapperKind {
     Hyperlink,
     Field,
     Revision,
+    Sdt,
+}
+
+/// The position an open `w:sdt` occupies, decided from parser state at `<w:sdt>`,
+/// so its `</w:sdtContent>`/`</w:sdt>` route by scope.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SdtScope {
+    /// A content control around runs (routes via `wrapper_order`, like a revision).
+    Inline,
+    /// A content control around blocks (a suspended `ContentFrame`, like a box).
+    Block,
+    /// A deferred position (row/cell-structural, invalid nesting, or over bound):
+    /// reported once, its inner content flows to the current container unchanged.
+    Passthrough,
+}
+
+/// Which kind of construct a suspended [`ContentFrame`] is building.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FrameKind {
+    /// A text box (`w:txbxContent`): emits an inline `TextBox` segment on exit.
+    TextBox,
+    /// A block content control (`w:sdt`): emits a `BlockNode::Sdt` on exit.
+    BlockSdt,
+}
+
+/// An inline content control (`w:sdt`) being accumulated, innermost last.
+struct SdtAccumulator {
+    properties: SdtProperties,
+    segments: Vec<Segment>,
 }
 
 /// Which table property container (if any) is currently capturing edge children.
@@ -123,7 +158,14 @@ struct CommentMeta {
 /// suspending and restoring the enclosing context keeps the outer paragraph and
 /// the enclosing drawing (its image) intact.
 struct ContentFrame {
-    textbox_id: NodeId,
+    /// What this frame builds (a text box or a block content control).
+    kind: FrameKind,
+    /// The allocated id of the emitted node (text box or block sdt).
+    node_id: NodeId,
+    /// The block sdt's control properties (unused for a text box).
+    sdt_properties: SdtProperties,
+    /// Text-box nesting depth at this frame (a text-box-only path counter, so
+    /// intervening block-sdt frames never inflate the `MAX_TEXTBOX_DEPTH` check).
     depth: u32,
     paragraph_open: bool,
     paragraph_id: Option<NodeId>,
@@ -160,6 +202,10 @@ struct ContentFrame {
     pr_change_depth: u32,
     edge_scope: EdgeScope,
     suppressed_tbl_depth: u32,
+    sdts: Vec<SdtAccumulator>,
+    sdt_scopes: Vec<SdtScope>,
+    pending_block_sdt_props: Vec<SdtProperties>,
+    sdt_prop_depth: u32,
     segments: Vec<Segment>,
     blocks: Vec<BlockNode>,
 }
@@ -280,9 +326,28 @@ struct BodyParser<'a> {
     /// Depth of nested tables refused past `MAX_TABLE_DEPTH`; while non-zero the
     /// table structure is suppressed so it cannot corrupt the enclosing table.
     suppressed_tbl_depth: u32,
+    /// Open inline content controls (`w:sdt` around runs), innermost last; each
+    /// receives segments via `wrapper_order` exactly like a revision.
+    sdts: Vec<SdtAccumulator>,
+    /// Scope of every currently-open `w:sdt` (inline/block/passthrough), so its
+    /// `</w:sdtContent>`/`</w:sdt>` route by scope.
+    sdt_scopes: Vec<SdtScope>,
+    /// Properties of open block content controls awaiting their `w:sdtContent`.
+    pending_block_sdt_props: Vec<SdtProperties>,
+    /// Depth inside a `w:sdtPr`/`w:sdtEndPr` subtree, so its property children
+    /// (and any `w:rPr`) are captured or reported, never leaked into run flow.
+    sdt_prop_depth: u32,
+    /// Content-control nesting depth (a `w:sdt` inside a `w:sdt`); a true path
+    /// counter for the `MAX_SDT_DEPTH` guard, NOT suspended in a frame so it
+    /// matches the model (a text box does not reset it).
+    sdt_depth: u32,
+    /// Count of currently-open text-box frames — a text-box-only path counter for
+    /// the `MAX_TEXTBOX_DEPTH` bound, so intervening block-sdt frames on `frames`
+    /// never inflate it (the two frame kinds share `frames` but not this depth).
+    open_textboxes: u32,
     segments: Vec<Segment>,
     blocks: Vec<BlockNode>,
-    /// Suspended enclosing contexts, one per open text box.
+    /// Suspended enclosing contexts, one per open text box or block content control.
     frames: Vec<ContentFrame>,
     /// Depth of an `mc:Choice`/`mc:Fallback` branch being skipped (a non-selected
     /// alternate representation); while non-zero, all events are ignored.
@@ -392,6 +457,12 @@ impl<'a> BodyParser<'a> {
             pr_change_depth: 0,
             edge_scope: EdgeScope::None,
             suppressed_tbl_depth: 0,
+            sdts: Vec::new(),
+            sdt_scopes: Vec::new(),
+            pending_block_sdt_props: Vec::new(),
+            sdt_prop_depth: 0,
+            sdt_depth: 0,
+            open_textboxes: 0,
             segments: Vec::new(),
             blocks: Vec::new(),
             frames: Vec::new(),
@@ -431,7 +502,7 @@ pub(crate) fn parse<'a>(
     // restored, then finish a paragraph the unwind may have re-opened so its
     // content is committed, not stranded in a suspended frame.
     while !parser.frames.is_empty() {
-        parser.exit_textbox()?;
+        parser.exit_frame()?;
     }
     if parser.paragraph_open {
         parser.finish_paragraph()?;
@@ -478,7 +549,7 @@ pub(crate) fn parse_notes(
     let mut parser = BodyParser::build(ids, reporter, &inputs, bookmarks, Some(container), config);
     parser.run(xml)?;
     while !parser.frames.is_empty() {
-        parser.exit_textbox()?;
+        parser.exit_frame()?;
     }
     // A note left open by malformed input still commits its content.
     parser.close_note()?;
@@ -522,7 +593,7 @@ pub(crate) fn parse_header_footer(
     parser.hf_root = Some(root);
     parser.run(xml)?;
     while !parser.frames.is_empty() {
-        parser.exit_textbox()?;
+        parser.exit_frame()?;
     }
     if parser.paragraph_open {
         parser.finish_paragraph()?;
@@ -565,7 +636,7 @@ pub(crate) fn parse_comments(
     let mut parser = BodyParser::build(ids, reporter, &inputs, bookmarks, Some(b"comment"), config);
     parser.run(xml)?;
     while !parser.frames.is_empty() {
-        parser.exit_textbox()?;
+        parser.exit_frame()?;
     }
     parser.close_note()?;
     Ok(parser
@@ -1214,6 +1285,82 @@ impl BodyParser<'_> {
                     _ => self.reporter.report(b"textDirection"),
                 }
             }
+            // ---- content controls (`w:sdt`) ----------------------------------
+            // A content control wraps flow content. Its scope (inline around runs,
+            // block around paragraphs/tables, or a deferred passthrough) is decided
+            // from the surrounding parser state exactly as `p`/`r`/`tbl` are.
+            b"sdt" => {
+                let scope = self.decide_sdt_scope();
+                self.sdt_scopes.push(scope);
+                match scope {
+                    SdtScope::Inline => {
+                        self.sdt_depth += 1;
+                        self.sdts.push(SdtAccumulator {
+                            properties: SdtProperties::default(),
+                            segments: Vec::new(),
+                        });
+                        self.wrapper_order.push(WrapperKind::Sdt);
+                    }
+                    SdtScope::Block => {
+                        self.sdt_depth += 1;
+                        self.pending_block_sdt_props.push(SdtProperties::default());
+                    }
+                    // Reported once; its inner rows/cells/paragraphs flow to the
+                    // current container unchanged (no data loss).
+                    SdtScope::Passthrough => self.reporter.report(b"sdt"),
+                }
+            }
+            // A `w:sdtPr`/`w:sdtEndPr` property subtree: guard its children so a
+            // nested `w:rPr` cannot leak into run flow.
+            b"sdtPr" | b"sdtEndPr" if !self.sdt_scopes.is_empty() => self.sdt_prop_depth += 1,
+            // The block control's content opens a fresh suspended frame; an inline
+            // control's content is inert (its segments route via `wrapper_order`).
+            b"sdtContent" => {
+                if self.sdt_scopes.last() == Some(&SdtScope::Block) {
+                    self.enter_sdt_block()?;
+                }
+            }
+            // Recognized `w:sdtPr` type markers set the control kind.
+            b"richText" | b"text" | b"comboBox" | b"dropDownList" | b"date" | b"picture"
+            | b"checkbox" | b"group" | b"repeatingSection" | b"citation" | b"bibliography"
+                if self.sdt_prop_depth > 0 =>
+            {
+                let kind = sdt_control_kind(local);
+                if let Some(properties) = self.current_sdt_properties() {
+                    properties.control_kind = kind;
+                }
+            }
+            // Both building-block gallery forms collapse to one control kind, so the
+            // `w:docPartObj` vs `w:docPartList` distinction is reported as lost.
+            b"docPartObj" | b"docPartList" if self.sdt_prop_depth > 0 => {
+                self.reporter.report(local);
+                if let Some(properties) = self.current_sdt_properties() {
+                    properties.control_kind = Some(SdtControlKind::BuildingBlockGallery);
+                }
+            }
+            b"alias" if self.sdt_prop_depth > 0 => {
+                let value = self.sdt_bounded_value(element, b"alias", 255);
+                if let Some(properties) = self.current_sdt_properties() {
+                    properties.alias = value;
+                }
+            }
+            b"tag" if self.sdt_prop_depth > 0 => {
+                let value = self.sdt_bounded_value(element, b"tag", 255);
+                if let Some(properties) = self.current_sdt_properties() {
+                    properties.tag = value;
+                }
+            }
+            b"id" if self.sdt_prop_depth > 0 => {
+                let value = self.sdt_bounded_value(element, b"id", 64);
+                if let Some(properties) = self.current_sdt_properties() {
+                    properties.control_id = value;
+                }
+            }
+            // Any other element inside `w:sdtPr`/`w:sdtEndPr` (lock, placeholder,
+            // dataBinding, list entries, date/checkbox detail, end-mark `w:rPr`) is
+            // the reported long tail. Placed BEFORE the generic rPr/pPr/flow arms
+            // so a `w:sdtPr` `w:rPr` can never leak into run/paragraph flow.
+            _ if self.sdt_prop_depth > 0 => self.reporter.report(local),
             _ if self.rpr_depth > 0 => {
                 if !apply_run_property(&mut self.run_properties, local, element) {
                     self.reporter.report(local);
@@ -1266,7 +1413,36 @@ impl BodyParser<'_> {
             b"AlternateContent" => {
                 self.alt_stack.pop();
             }
-            b"txbxContent" => self.exit_textbox()?,
+            b"txbxContent" => self.exit_frame()?,
+            // A block control's content closes: build and route the `BlockNode::Sdt`.
+            // The block frame emptied `sdt_scopes` when it suspended the enclosing
+            // context, so its own `</w:sdtContent>` sees a drained scope stack over a
+            // `BlockSdt` frame; an inline/passthrough control's `</w:sdtContent>`
+            // still sees its `Inline`/`Passthrough` scope on top and is inert.
+            b"sdtContent" => {
+                if self.sdt_scopes.last().is_none()
+                    && self.frames.last().map(|frame| frame.kind) == Some(FrameKind::BlockSdt)
+                {
+                    self.exit_frame()?;
+                }
+            }
+            b"sdtPr" | b"sdtEndPr" => self.sdt_prop_depth = self.sdt_prop_depth.saturating_sub(1),
+            // A content control closes: pop its scope, and (inline) commit its
+            // accumulated segments as an `InlineSdt`.
+            b"sdt" => match self.sdt_scopes.pop() {
+                Some(SdtScope::Inline) => {
+                    self.sdt_depth = self.sdt_depth.saturating_sub(1);
+                    self.commit_sdt();
+                }
+                Some(SdtScope::Block) => {
+                    self.sdt_depth = self.sdt_depth.saturating_sub(1);
+                    // Defensive: a block control whose `w:sdtContent` never arrived
+                    // leaves its pending properties behind; drop them so nothing
+                    // leaks (a frame left open is unwound at container close).
+                    self.pending_block_sdt_props.pop();
+                }
+                Some(SdtScope::Passthrough) | None => {}
+            },
             _ if self.note_container == Some(local) => self.close_note()?,
             b"p" if self.paragraph_open => self.finish_paragraph()?,
             b"pPr" => self.ppr_depth = self.ppr_depth.saturating_sub(1),
@@ -1586,10 +1762,39 @@ impl BodyParser<'_> {
     /// enclosing content context so the box's own paragraphs/runs/tables build
     /// into a fresh context and cannot corrupt the enclosing paragraph or drawing.
     fn enter_textbox(&mut self) -> Result<(), ImportError> {
-        let textbox_id = self.next_id()?;
-        let depth = self.frames.len() as u32 + 1;
+        let node_id = self.next_id()?;
+        // Text-box-only nesting depth (block-sdt frames do not bump it).
+        self.open_textboxes += 1;
+        let depth = self.open_textboxes;
+        self.push_frame(FrameKind::TextBox, node_id, depth, SdtProperties::default());
+        Ok(())
+    }
+
+    /// Enters a block content control's content (`w:sdtContent`): allocate the sdt
+    /// id (document order), take its accumulated properties, then suspend the
+    /// enclosing context so the control's blocks build into a fresh container
+    /// (its own table stack) exactly like a text box. A missing `w:sdtPr` yields
+    /// default properties (never a panic).
+    fn enter_sdt_block(&mut self) -> Result<(), ImportError> {
+        let node_id = self.next_id()?;
+        let properties = self.pending_block_sdt_props.pop().unwrap_or_default();
+        self.push_frame(FrameKind::BlockSdt, node_id, 0, properties);
+        Ok(())
+    }
+
+    /// Suspends the enclosing content context into a new [`ContentFrame`], so the
+    /// frame's own paragraphs/runs/tables/controls build into a fresh context.
+    fn push_frame(
+        &mut self,
+        kind: FrameKind,
+        node_id: NodeId,
+        depth: u32,
+        sdt_properties: SdtProperties,
+    ) {
         let frame = ContentFrame {
-            textbox_id,
+            kind,
+            node_id,
+            sdt_properties,
             depth,
             paragraph_open: std::mem::take(&mut self.paragraph_open),
             paragraph_id: self.paragraph_id.take(),
@@ -1626,17 +1831,21 @@ impl BodyParser<'_> {
             pr_change_depth: std::mem::take(&mut self.pr_change_depth),
             edge_scope: std::mem::replace(&mut self.edge_scope, EdgeScope::None),
             suppressed_tbl_depth: std::mem::take(&mut self.suppressed_tbl_depth),
+            sdts: std::mem::take(&mut self.sdts),
+            sdt_scopes: std::mem::take(&mut self.sdt_scopes),
+            pending_block_sdt_props: std::mem::take(&mut self.pending_block_sdt_props),
+            sdt_prop_depth: std::mem::take(&mut self.sdt_prop_depth),
             segments: std::mem::take(&mut self.segments),
             blocks: std::mem::take(&mut self.blocks),
         };
         self.frames.push(frame);
-        Ok(())
     }
 
-    /// Exits a text box: finish its content, restore the enclosing context, and
-    /// route the built `TextBox` into the enclosing inline stream. A box that is
-    /// empty or nested past the bound is reported and dropped (never silent).
-    fn exit_textbox(&mut self) -> Result<(), ImportError> {
+    /// Exits a suspended frame (`w:txbxContent` or a block `w:sdtContent`): finish
+    /// its content, restore the enclosing context, then emit either an inline
+    /// `TextBox` segment or a `BlockNode::Sdt`. An empty (or over-deep text box)
+    /// frame is reported and dropped (never silent).
+    fn exit_frame(&mut self) -> Result<(), ImportError> {
         if self.paragraph_open {
             self.finish_paragraph()?;
         }
@@ -1679,15 +1888,42 @@ impl BodyParser<'_> {
         self.pr_change_depth = frame.pr_change_depth;
         self.edge_scope = frame.edge_scope;
         self.suppressed_tbl_depth = frame.suppressed_tbl_depth;
+        self.sdts = frame.sdts;
+        self.sdt_scopes = frame.sdt_scopes;
+        self.pending_block_sdt_props = frame.pending_block_sdt_props;
+        self.sdt_prop_depth = frame.sdt_prop_depth;
         self.segments = frame.segments;
         self.blocks = frame.blocks;
-        if blocks.is_empty() || frame.depth > MAX_TEXTBOX_DEPTH {
-            self.reporter.report(b"txbxContent");
-        } else {
-            self.push_segment(Segment::TextBox(TextBox {
-                id: frame.textbox_id,
-                blocks,
-            }));
+        match frame.kind {
+            FrameKind::TextBox => {
+                self.open_textboxes = self.open_textboxes.saturating_sub(1);
+                if blocks.is_empty() || frame.depth > MAX_TEXTBOX_DEPTH {
+                    self.reporter.report(b"txbxContent");
+                } else {
+                    self.push_segment(Segment::TextBox(TextBox {
+                        id: frame.node_id,
+                        blocks,
+                    }));
+                }
+            }
+            FrameKind::BlockSdt => {
+                if blocks.is_empty() {
+                    // An empty content control carries no block content; report and
+                    // drop it (parallel to the empty-text-box path).
+                    self.reporter.report(b"sdtContent");
+                } else {
+                    let block = BlockNode::Sdt(BlockSdt {
+                        id: frame.node_id,
+                        properties: frame.sdt_properties,
+                        blocks,
+                    });
+                    // Route into the enclosing open cell, if any; otherwise the
+                    // body root — exactly like a finished paragraph or table.
+                    if let Some(returned) = self.tables.push_block(block) {
+                        self.blocks.push(returned);
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -1728,7 +1964,7 @@ impl BodyParser<'_> {
             // paragraph — then finish that paragraph so its content (and the text
             // box) is committed, not dropped.
             while !self.frames.is_empty() {
-                self.exit_textbox()?;
+                self.exit_frame()?;
             }
             if self.paragraph_open {
                 self.finish_paragraph()?;
@@ -1780,6 +2016,12 @@ impl BodyParser<'_> {
             Some(WrapperKind::Revision) => {
                 if let Some(revision) = self.revisions.last_mut() {
                     revision.segments.push(segment);
+                    return;
+                }
+            }
+            Some(WrapperKind::Sdt) => {
+                if let Some(sdt) = self.sdts.last_mut() {
+                    sdt.segments.push(segment);
                     return;
                 }
             }
@@ -1951,7 +2193,91 @@ impl BodyParser<'_> {
             Some(WrapperKind::Field) => self.commit_field(),
             Some(WrapperKind::Hyperlink) => self.commit_hyperlink(),
             Some(WrapperKind::Revision) => self.commit_revision(),
+            Some(WrapperKind::Sdt) => self.commit_sdt(),
             None => {}
+        }
+    }
+
+    /// Commits the innermost open inline content control, routing its segment into
+    /// the enclosing wrapper (an outer hyperlink/field/revision/sdt) or the
+    /// paragraph. An empty control is reported and dropped (like an empty revision).
+    fn commit_sdt(&mut self) {
+        if let Some(accumulator) = self.sdts.pop() {
+            self.pop_wrapper(WrapperKind::Sdt);
+            let children = normalize_segments(accumulator.segments);
+            if children.is_empty() {
+                self.reporter.report(b"sdt");
+            } else {
+                self.push_segment(Segment::Sdt {
+                    properties: accumulator.properties,
+                    children,
+                });
+            }
+        }
+    }
+
+    /// Decides the scope of a `w:sdt` from the surrounding parser state, exactly as
+    /// `p`/`r`/`tbl` positions are decided. Over `MAX_SDT_DEPTH`, or in any position
+    /// that is neither run-flow nor block-flow (a run interior, or a table's
+    /// row/cell-structural gap), the control is a reported passthrough.
+    fn decide_sdt_scope(&self) -> SdtScope {
+        if self.sdt_depth >= MAX_SDT_DEPTH {
+            return SdtScope::Passthrough;
+        }
+        // Run position: inside a paragraph, not inside a run, drawing, picture, or
+        // a sdt property subtree.
+        if self.paragraph_open
+            && !self.run_open
+            && self.sdt_prop_depth == 0
+            && self.drawing_depth == 0
+            && self.pict_depth == 0
+        {
+            return SdtScope::Inline;
+        }
+        // Block position: where a paragraph/table goes — no open paragraph/run or
+        // property context, and either no table is active or a cell is open (not a
+        // structural gap between rows/cells).
+        if self.in_body
+            && !self.paragraph_open
+            && !self.run_open
+            && self.ppr_depth == 0
+            && self.rpr_depth == 0
+            && self.sdt_prop_depth == 0
+            && (!self.tables.is_active() || self.tables.in_cell())
+        {
+            return SdtScope::Block;
+        }
+        SdtScope::Passthrough
+    }
+
+    /// Mutable access to the innermost open control's properties, routed by scope.
+    /// Yields `None` for a passthrough control (its properties are discarded).
+    fn current_sdt_properties(&mut self) -> Option<&mut SdtProperties> {
+        match self.sdt_scopes.last()? {
+            SdtScope::Inline => self
+                .sdts
+                .last_mut()
+                .map(|accumulator| &mut accumulator.properties),
+            SdtScope::Block => self.pending_block_sdt_props.last_mut(),
+            SdtScope::Passthrough => None,
+        }
+    }
+
+    /// Reads a `w:sdtPr` marker's bounded `@w:val`. A value that is present but out
+    /// of domain (empty or too long) is reported and dropped rather than mapped.
+    fn sdt_bounded_value(
+        &mut self,
+        element: &BytesStart<'_>,
+        local: &[u8],
+        max: usize,
+    ) -> Option<String> {
+        match attribute_value(element, b"val") {
+            Some(value) if !value.is_empty() && value.len() <= max => Some(value),
+            Some(_) => {
+                self.reporter.report(local);
+                None
+            }
+            None => None,
         }
     }
 
@@ -2003,6 +2329,17 @@ impl BodyParser<'_> {
         }
         self.hyperlink_depth = 0;
         self.field_depth = 0;
+        // An inline content control never spans a paragraph. The drain above
+        // committed any left open by malformed input via `commit_top_wrapper`; now
+        // clear their scope entries and the shared `sdt_depth` path counter so an
+        // unclosed inline `w:sdt` cannot desync a later paragraph (a stray
+        // `</w:sdt>` then finds no scope and is inert). Every scope entry present
+        // at paragraph end is necessarily inline — a block control opens only when
+        // no paragraph is open.
+        while matches!(self.sdt_scopes.last(), Some(SdtScope::Inline)) {
+            self.sdt_scopes.pop();
+            self.sdt_depth = self.sdt_depth.saturating_sub(1);
+        }
         // A revision never spans a paragraph; reset the suppression counter so a
         // malformed unbalanced property-context marker cannot leak into the next.
         self.suppressed_revision_depth = 0;
@@ -2138,8 +2475,44 @@ impl BodyParser<'_> {
                 let id = self.next_id()?;
                 Ok(InlineNode::BookmarkEnd(BookmarkEnd { id, bookmark }))
             }
+            Segment::Sdt {
+                properties,
+                children,
+            } => {
+                // The control's own id precedes its children's (document order).
+                let id = self.next_id()?;
+                let mut inlines = Vec::with_capacity(children.len());
+                for child in children {
+                    inlines.push(self.segment_to_inline(child)?);
+                }
+                Ok(InlineNode::Sdt(InlineSdt {
+                    id,
+                    properties,
+                    inlines,
+                }))
+            }
         }
     }
+}
+
+/// Maps a recognized `w:sdtPr` type-marker element name to a control kind. The
+/// caller guarantees `local` is one of the mapped markers (the building-block
+/// gallery forms `w:docPartObj`/`w:docPartList` are handled separately).
+fn sdt_control_kind(local: &[u8]) -> Option<SdtControlKind> {
+    Some(match local {
+        b"richText" => SdtControlKind::RichText,
+        b"text" => SdtControlKind::PlainText,
+        b"comboBox" => SdtControlKind::ComboBox,
+        b"dropDownList" => SdtControlKind::DropDownList,
+        b"date" => SdtControlKind::Date,
+        b"picture" => SdtControlKind::Picture,
+        b"checkbox" => SdtControlKind::Checkbox,
+        b"group" => SdtControlKind::Group,
+        b"repeatingSection" => SdtControlKind::RepeatingSection,
+        b"citation" => SdtControlKind::Citation,
+        b"bibliography" => SdtControlKind::Bibliography,
+        _ => return None,
+    })
 }
 
 /// Maps a `w:type` on a header/footer reference to its page kind (`default`

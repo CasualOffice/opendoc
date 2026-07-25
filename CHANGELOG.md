@@ -33,6 +33,17 @@ OpenDoc will use semantic versioning when its public package line begins.
   reported (not silently lost); strict anchor resolution is deferred. Additive:
   existing snapshots and the v0→v1 migration golden are byte-identical.
   (`52-SCHEMA-V1-BOOKMARKS-DESIGN.md`)
+- Content controls (structured document tags) in schema v1: block-level
+  (`w:sdt` around paragraphs/tables) and inline-level (`w:sdt` around runs)
+  controls are modeled as additive `BlockNode::Sdt` / `InlineNode::Sdt` wrappers
+  carrying typed properties (control kind, alias, tag, retained `w:id`) and
+  wrapping their content, which continues to parse (no text loss). A block sdt
+  restarts the table-depth budget (like a text box), so deep tables inside a
+  control import cleanly. Row/cell-structural controls and the `w:sdtPr` long
+  tail (locks, placeholders, data binding, per-type detail, and the
+  `w:docPartObj` vs `w:docPartList` distinction) remain reported (not yet
+  modeled). Strictly additive — existing snapshots and the v0→v1 migration
+  golden are byte-identical. (`53-SCHEMA-V1-CONTENT-CONTROLS-DESIGN.md`)
 - Paragraph structural flags (`w:keepNext`, `w:keepLines`,
   `w:pageBreakBefore`, `w:widowControl`, `w:contextualSpacing`,
   `w:suppressLineNumbers`) and outline level (`w:outlineLvl`, 0-9) are now

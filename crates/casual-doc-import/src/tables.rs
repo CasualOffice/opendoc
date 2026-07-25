@@ -83,6 +83,18 @@ impl TableStack {
         !self.stack.is_empty()
     }
 
+    /// Whether the innermost open table has an open row with an open cell, i.e.
+    /// block content routes into a cell right now. Used to distinguish a
+    /// block-level content control inside a cell (allowed) from one sitting in a
+    /// table's structural gap between rows/cells (deferred as passthrough).
+    pub(crate) fn in_cell(&self) -> bool {
+        self.stack
+            .last()
+            .and_then(|table| table.row.as_ref())
+            .map(|row| row.cell.is_some())
+            .unwrap_or(false)
+    }
+
     fn current_cell(&mut self) -> Option<&mut CellBuilder> {
         self.stack.last_mut()?.row.as_mut()?.cell.as_mut()
     }

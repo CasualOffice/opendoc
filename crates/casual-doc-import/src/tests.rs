@@ -1,6 +1,6 @@
 use casual_doc_model::v1::{
     Alignment, BlockNode, Break, BreakKind, Color, HyperlinkTarget, InlineNode, Paragraph,
-    RevisionKind, RgbColor, StyleKind,
+    RevisionKind, RgbColor, SdtControlKind, StyleKind,
 };
 use casual_doc_ooxml::DocxPackage;
 
@@ -103,7 +103,9 @@ fn features(import: &Import) -> Vec<&str> {
 fn paragraph(import: &Import, index: usize) -> &Paragraph {
     match &import.document.body()[index] {
         BlockNode::Paragraph(paragraph) => paragraph,
-        BlockNode::Table(_) => panic!("expected a paragraph at index {index}"),
+        BlockNode::Table(_) | BlockNode::Sdt(_) => {
+            panic!("expected a paragraph at index {index}")
+        }
     }
 }
 
@@ -129,6 +131,7 @@ fn collect_block_texts(blocks: &[BlockNode], out: &mut Vec<String>) {
                     }
                 }
             }
+            BlockNode::Sdt(sdt) => collect_block_texts(&sdt.blocks, out),
         }
     }
 }
@@ -144,7 +147,7 @@ fn nonempty_block_texts(import: &Import) -> Vec<String> {
 fn first_table(import: &Import) -> Option<&casual_doc_model::v1::Table> {
     import.document.body().iter().find_map(|block| match block {
         BlockNode::Table(table) => Some(table),
-        BlockNode::Paragraph(_) => None,
+        BlockNode::Paragraph(_) | BlockNode::Sdt(_) => None,
     })
 }
 
@@ -1760,6 +1763,7 @@ fn tb_block_text(blocks: &[BlockNode]) -> String {
                     .rows
                     .iter()
                     .for_each(|r| r.cells.iter().for_each(|c| walk_blocks(&c.blocks, out))),
+                BlockNode::Sdt(sdt) => walk_blocks(&sdt.blocks, out),
             }
         }
     }
@@ -3185,4 +3189,338 @@ fn bookmark_defined_in_a_header_lands_in_document_bookmarks() {
         .next()
         .unwrap();
     assert_eq!(bm.name, "hdrmark");
+}
+// ---- content controls (structured document tags) -------------------------
+
+fn find_block_sdt(blocks: &[BlockNode]) -> Option<&casual_doc_model::v1::BlockSdt> {
+    blocks.iter().find_map(|block| match block {
+        BlockNode::Sdt(sdt) => Some(sdt),
+        _ => None,
+    })
+}
+
+fn find_inline_sdt(inlines: &[InlineNode]) -> Option<&casual_doc_model::v1::InlineSdt> {
+    inlines.iter().find_map(|inline| match inline {
+        InlineNode::Sdt(sdt) => Some(sdt),
+        _ => None,
+    })
+}
+
+/// All run text under a sequence of inlines, recursing through content controls
+/// and hyperlinks (used to prove wrapped/nested content is preserved).
+fn deep_inline_text(inlines: &[InlineNode]) -> String {
+    fn walk(inlines: &[InlineNode], out: &mut String) {
+        for inline in inlines {
+            match inline {
+                InlineNode::Run(run) => out.push_str(&run.text),
+                InlineNode::Sdt(sdt) => walk(&sdt.inlines, out),
+                InlineNode::Hyperlink(link) => walk(&link.inlines, out),
+                InlineNode::Field(field) => walk(&field.inlines, out),
+                _ => {}
+            }
+        }
+    }
+    let mut out = String::new();
+    walk(inlines, &mut out);
+    out
+}
+
+#[test]
+fn block_content_control_is_modeled_with_properties() {
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:sdt>
+            <w:sdtPr>
+                <w:alias w:val="Full name"/>
+                <w:tag w:val="fullName"/>
+                <w:id w:val="1553275"/>
+                <w:richText/>
+            </w:sdtPr>
+            <w:sdtContent>
+                <w:p><w:r><w:t>Inside</w:t></w:r></w:p>
+            </w:sdtContent>
+        </w:sdt>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let sdt = find_block_sdt(import.document.body()).expect("block sdt modeled");
+    assert_eq!(sdt.properties.alias.as_deref(), Some("Full name"));
+    assert_eq!(sdt.properties.tag.as_deref(), Some("fullName"));
+    assert_eq!(sdt.properties.control_id.as_deref(), Some("1553275"));
+    assert_eq!(sdt.properties.control_kind, Some(SdtControlKind::RichText));
+    assert_eq!(tb_block_text(&sdt.blocks), "Inside");
+}
+
+#[test]
+fn inline_content_control_is_modeled_and_does_not_corrupt_the_paragraph() {
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p>
+            <w:r><w:t>Before</w:t></w:r>
+            <w:sdt>
+                <w:sdtPr><w:tag w:val="pick"/><w:dropDownList/></w:sdtPr>
+                <w:sdtContent><w:r><w:t>Choice</w:t></w:r></w:sdtContent>
+            </w:sdt>
+            <w:r><w:t>After</w:t></w:r>
+        </w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let para = paragraph(&import, 0);
+    let sdt = find_inline_sdt(&para.inlines).expect("inline sdt modeled");
+    assert_eq!(sdt.properties.tag.as_deref(), Some("pick"));
+    assert_eq!(
+        sdt.properties.control_kind,
+        Some(SdtControlKind::DropDownList)
+    );
+    let InlineNode::Run(run) = &sdt.inlines[0] else {
+        panic!("expected a run");
+    };
+    assert_eq!(run.text, "Choice");
+    let outer: String = para
+        .inlines
+        .iter()
+        .filter_map(|i| match i {
+            InlineNode::Run(r) => Some(r.text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(outer, "BeforeAfter");
+}
+
+#[test]
+fn block_content_control_inside_a_table_cell_lands_in_the_cell() {
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:tbl><w:tr><w:tc>
+            <w:sdt><w:sdtPr><w:tag w:val="cellCtrl"/></w:sdtPr>
+                <w:sdtContent><w:p><w:r><w:t>Celled</w:t></w:r></w:p></w:sdtContent>
+            </w:sdt>
+        </w:tc></w:tr></w:tbl>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let table = first_table(&import).expect("a table");
+    let cell = &table.rows[0].cells[0];
+    let sdt = find_block_sdt(&cell.blocks).expect("block sdt in the cell");
+    assert_eq!(sdt.properties.tag.as_deref(), Some("cellCtrl"));
+    assert_eq!(tb_block_text(&sdt.blocks), "Celled");
+}
+
+#[test]
+fn inline_content_control_and_hyperlink_compose_innermost_wins() {
+    // A hyperlink inside an inline content control.
+    let over = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:sdt><w:sdtPr><w:tag w:val="wrap"/></w:sdtPr><w:sdtContent>
+            <w:hyperlink w:anchor="bm"><w:r><w:t>link</w:t></w:r></w:hyperlink>
+        </w:sdtContent></w:sdt></w:p>
+    </w:body></w:document>"#;
+    let over_import = import(over);
+    let para = paragraph(&over_import, 0);
+    let sdt = find_inline_sdt(&para.inlines).expect("inline sdt over a hyperlink");
+    assert!(matches!(sdt.inlines[0], InlineNode::Hyperlink(_)));
+    assert_eq!(deep_inline_text(&para.inlines), "link");
+
+    // An inline content control inside a hyperlink (the innermost wrapper wins).
+    let under = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:hyperlink w:anchor="bm2">
+            <w:sdt><w:sdtPr><w:tag w:val="inner"/></w:sdtPr>
+                <w:sdtContent><w:r><w:t>x</w:t></w:r></w:sdtContent></w:sdt>
+        </w:hyperlink></w:p>
+    </w:body></w:document>"#;
+    let under_import = import(under);
+    let para = paragraph(&under_import, 0);
+    let InlineNode::Hyperlink(link) = &para.inlines[0] else {
+        panic!("expected a hyperlink");
+    };
+    let sdt = find_inline_sdt(&link.inlines).expect("inline sdt inside the hyperlink");
+    assert_eq!(sdt.properties.tag.as_deref(), Some("inner"));
+    assert_eq!(deep_inline_text(&para.inlines), "x");
+}
+
+#[test]
+fn nested_inline_content_controls_nest() {
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:sdt><w:sdtPr><w:tag w:val="outer"/></w:sdtPr><w:sdtContent>
+            <w:sdt><w:sdtPr><w:tag w:val="inner"/></w:sdtPr><w:sdtContent>
+                <w:r><w:t>deep</w:t></w:r>
+            </w:sdtContent></w:sdt>
+        </w:sdtContent></w:sdt></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let para = paragraph(&import, 0);
+    let outer = find_inline_sdt(&para.inlines).expect("outer sdt");
+    assert_eq!(outer.properties.tag.as_deref(), Some("outer"));
+    let inner = find_inline_sdt(&outer.inlines).expect("inner sdt");
+    assert_eq!(inner.properties.tag.as_deref(), Some("inner"));
+    assert_eq!(deep_inline_text(&para.inlines), "deep");
+}
+
+#[test]
+fn deep_tables_inside_a_block_content_control_import_without_hard_failure() {
+    // Regression (review-fix 1): a block sdt restarts the table-depth budget in
+    // both importer and model, so tables inside a control nested deep in tables do
+    // not sum past the bound and abort the whole import.
+    let mut xml = String::from(r#"<w:document xmlns:w="urn:w"><w:body>"#);
+    let outer = 20;
+    for _ in 0..outer {
+        xml.push_str("<w:tbl><w:tr><w:tc>");
+    }
+    xml.push_str("<w:sdt><w:sdtPr><w:tag w:val=\"ctrl\"/></w:sdtPr><w:sdtContent>");
+    let inner = 20;
+    for _ in 0..inner {
+        xml.push_str("<w:tbl><w:tr><w:tc>");
+    }
+    xml.push_str("<w:p><w:r><w:t>deep</w:t></w:r></w:p>");
+    for _ in 0..inner {
+        xml.push_str("</w:tc></w:tr></w:tbl>");
+    }
+    xml.push_str("</w:sdtContent></w:sdt>");
+    for _ in 0..outer {
+        xml.push_str("</w:tc></w:tr></w:tbl>");
+    }
+    xml.push_str("</w:body></w:document>");
+    let import = import(xml.as_bytes());
+    assert!(!import.document.body().is_empty());
+    assert!(nonempty_block_texts(&import).iter().any(|t| t == "deep"));
+}
+
+#[test]
+fn sdt_property_long_tail_is_reported_and_rpr_does_not_leak() {
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:sdt>
+            <w:sdtPr>
+                <w:tag w:val="t"/>
+                <w:lock w:val="sdtLocked"/>
+                <w:dataBinding w:storeItemID="{X}"/>
+                <w:placeholder><w:docPart w:val="Default"/></w:placeholder>
+                <w:rPr><w:b/></w:rPr>
+            </w:sdtPr>
+            <w:sdtContent><w:r><w:t>body</w:t></w:r></w:sdtContent>
+        </w:sdt></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let para = paragraph(&import, 0);
+    let sdt = find_inline_sdt(&para.inlines).expect("inline sdt");
+    let InlineNode::Run(run) = &sdt.inlines[0] else {
+        panic!("expected a run");
+    };
+    assert_eq!(run.text, "body");
+    // The bold declared in the sdtPr's rPr must NOT leak onto the wrapped run.
+    assert_eq!(run.properties.bold, None);
+    let reported = features(&import);
+    assert!(reported.contains(&"lock"));
+    assert!(reported.contains(&"dataBinding"));
+    assert!(reported.contains(&"rPr"));
+}
+
+#[test]
+fn row_structural_content_control_is_reported_with_inner_rows_intact() {
+    // An sdt wrapping table rows (a structural control) is deferred: reported as a
+    // passthrough, but its inner rows/cells still parse into the table (no loss).
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:tbl>
+            <w:sdt><w:sdtPr><w:tag w:val="rowCtrl"/></w:sdtPr><w:sdtContent>
+                <w:tr><w:tc><w:p><w:r><w:t>R1</w:t></w:r></w:p></w:tc></w:tr>
+            </w:sdtContent></w:sdt>
+        </w:tbl>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    assert!(features(&import).contains(&"sdt"));
+    let table = first_table(&import).expect("a table");
+    assert_eq!(tb_block_text(&table.rows[0].cells[0].blocks), "R1");
+}
+
+#[test]
+fn empty_content_control_is_dropped_and_reported() {
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:sdt><w:sdtPr><w:tag w:val="x"/></w:sdtPr><w:sdtContent></w:sdtContent></w:sdt>
+        <w:p><w:r><w:t>after</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    assert!(find_block_sdt(import.document.body()).is_none());
+    assert!(features(&import).contains(&"sdtContent"));
+    assert_eq!(nonempty_block_texts(&import), vec!["after".to_string()]);
+}
+
+#[test]
+fn content_control_over_max_depth_is_a_reported_passthrough() {
+    // The 9th nested inline sdt exceeds MAX_SDT_DEPTH (8): it is a reported
+    // passthrough, but its run still flows into the innermost modeled control.
+    let mut xml = String::from(r#"<w:document xmlns:w="urn:w"><w:body><w:p>"#);
+    let depth = 9;
+    for _ in 0..depth {
+        xml.push_str("<w:sdt><w:sdtContent>");
+    }
+    xml.push_str("<w:r><w:t>deep</w:t></w:r>");
+    for _ in 0..depth {
+        xml.push_str("</w:sdtContent></w:sdt>");
+    }
+    xml.push_str("</w:p></w:body></w:document>");
+    let import = import(xml.as_bytes());
+    let para = paragraph(&import, 0);
+    assert_eq!(deep_inline_text(&para.inlines), "deep");
+    assert!(features(&import).contains(&"sdt"));
+}
+
+#[test]
+fn unclosed_inline_content_control_flushes_its_content_without_desync() {
+    // A truncated document leaves an inline control open at EOF (every close tag
+    // is missing). The final paragraph flush drains it via `commit_top_wrapper`
+    // so its run is committed, not stranded — and the shared depth/scope counters
+    // are cleared (no desync). A literally-mismatched `</w:sdt>` would instead be
+    // rejected by the XML layer, so EOF truncation is the reachable open case.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:sdt><w:sdtPr><w:tag w:val="open"/></w:sdtPr><w:sdtContent><w:r><w:t>kept</w:t></w:r>"#;
+    let import = import(xml);
+    let para = paragraph(&import, 0);
+    let sdt = find_inline_sdt(&para.inlines).expect("drained inline sdt");
+    assert_eq!(sdt.properties.tag.as_deref(), Some("open"));
+    let InlineNode::Run(run) = &sdt.inlines[0] else {
+        panic!("expected a run");
+    };
+    assert_eq!(run.text, "kept");
+}
+
+#[test]
+fn block_content_control_without_sdt_pr_does_not_panic() {
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:sdt><w:sdtContent><w:p><w:r><w:t>noPr</w:t></w:r></w:p></w:sdtContent></w:sdt>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let sdt = find_block_sdt(import.document.body()).expect("block sdt without sdtPr");
+    assert_eq!(
+        sdt.properties,
+        casual_doc_model::v1::SdtProperties::default()
+    );
+    assert_eq!(tb_block_text(&sdt.blocks), "noPr");
+}
+
+#[test]
+fn building_block_gallery_forms_report_the_lost_distinction() {
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:sdt><w:sdtPr><w:docPartObj/></w:sdtPr>
+            <w:sdtContent><w:r><w:t>gallery</w:t></w:r></w:sdtContent></w:sdt></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let para = paragraph(&import, 0);
+    let sdt = find_inline_sdt(&para.inlines).expect("gallery sdt");
+    assert_eq!(
+        sdt.properties.control_kind,
+        Some(SdtControlKind::BuildingBlockGallery)
+    );
+    // The docPartObj vs docPartList distinction collapses to one kind: reported.
+    assert!(features(&import).contains(&"docPartObj"));
+}
+
+#[test]
+fn content_control_inside_a_text_box_round_trips() {
+    let xml = br#"<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps"><w:body>
+        <w:p><w:r><w:drawing><wp:inline><a:graphic><a:graphicData><wps:wsp><wps:txbx>
+            <w:txbxContent>
+                <w:sdt><w:sdtPr><w:tag w:val="inBox"/></w:sdtPr>
+                    <w:sdtContent><w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:sdtContent>
+                </w:sdt>
+            </w:txbxContent>
+        </wps:txbx></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let para = paragraph(&import, 0);
+    let text_box = find_textbox(&para.inlines).expect("text box modeled");
+    let sdt = find_block_sdt(&text_box.blocks).expect("block sdt inside the text box");
+    assert_eq!(sdt.properties.tag.as_deref(), Some("inBox"));
+    assert_eq!(tb_block_text(&sdt.blocks), "Boxed");
 }
