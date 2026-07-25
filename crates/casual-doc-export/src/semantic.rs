@@ -18,11 +18,11 @@ use std::io::{Cursor, Write};
 
 use casual_doc_model::v1::{
     Alignment, BlockNode, BorderEdge, BreakKind, CellVerticalAlignment, Color, Definitions,
-    Document, EmphasisMark, FontRef, HeightRule, HighlightColor, HyperlinkTarget, InlineNode,
-    ParagraphProperties, RevisionKind, RgbColor, RunFontHint, RunProperties, SdtControlKind,
-    SdtProperties, Table, TableBorders, TableCell, TableCellProperties, TableLayout,
-    TableProperties, TableRow, TableRowProperties, TextDirection, ThemeFontRef, VerticalAlignment,
-    VerticalMerge,
+    Document, EmphasisMark, FontDescriptor, FontFamilyKind, FontPitch, FontRef, HeightRule,
+    HighlightColor, HyperlinkTarget, InlineNode, ParagraphProperties, RevisionKind, RgbColor,
+    RunFontHint, RunProperties, SdtControlKind, SdtProperties, Table, TableBorders, TableCell,
+    TableCellProperties, TableLayout, TableProperties, TableRow, TableRowProperties, TextDirection,
+    ThemeFontRef, VerticalAlignment, VerticalMerge,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -41,6 +41,10 @@ const DOC_CT: &str =
 const R_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const HYPERLINK_REL_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
+const FONT_TABLE_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/fontTable";
+const FONT_TABLE_CT: &str =
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml";
 
 /// A `document.xml.rels` entry: (relationship id, external target URL).
 type RelEntry = (String, String);
@@ -96,17 +100,28 @@ pub fn write_document(
     _media: &BTreeMap<String, Vec<u8>>,
 ) -> Result<Vec<u8>, ExportError> {
     let (document_xml, rels) = document_xml(document)?;
+    let font_table = &document.definitions().font_table;
 
-    // Fixed part set; each is emitted in a deterministic order so the package
-    // bytes are reproducible. The document relationships part carries any
-    // external hyperlink targets collected while writing the body (empty
-    // otherwise — byte-identical to the no-relationship case).
-    let parts: [(&str, Vec<u8>); 4] = [
-        ("[Content_Types].xml", content_types_xml()?),
+    // Parts are emitted in a deterministic order so the package bytes are
+    // reproducible. The document relationships part carries any external
+    // hyperlink targets collected while writing the body plus the font-table
+    // relationship; the font-table part and its content-type override appear
+    // only when the model has font descriptors (byte-identical otherwise).
+    let mut parts: Vec<(&str, Vec<u8>)> = vec![
+        (
+            "[Content_Types].xml",
+            content_types_xml(!font_table.is_empty())?,
+        ),
         ("_rels/.rels", root_rels_xml()?),
         ("word/document.xml", document_xml),
-        ("word/_rels/document.xml.rels", document_rels_xml(&rels)?),
+        (
+            "word/_rels/document.xml.rels",
+            document_rels_xml(&rels, !font_table.is_empty())?,
+        ),
     ];
+    if !font_table.is_empty() {
+        parts.push(("word/fontTable.xml", font_table_xml(font_table)?));
+    }
 
     let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
     let options = SimpleFileOptions::default()
@@ -138,7 +153,7 @@ fn start<'a>(name: &'a str) -> BytesStart<'a> {
 
 /// Emits `[Content_Types].xml` with the standard defaults plus the main-document
 /// override.
-fn content_types_xml() -> Result<Vec<u8>, ExportError> {
+fn content_types_xml(has_font_table: bool) -> Result<Vec<u8>, ExportError> {
     let mut w = new_writer();
     let mut types = start("Types");
     types.push_attribute(("xmlns", CT_NS));
@@ -155,10 +170,16 @@ fn content_types_xml() -> Result<Vec<u8>, ExportError> {
         d.push_attribute(("ContentType", ct));
         w.write_event(Event::Empty(d)).map_err(pkg)?;
     }
-    let mut over = start("Override");
-    over.push_attribute(("PartName", "/word/document.xml"));
-    over.push_attribute(("ContentType", DOC_CT));
-    w.write_event(Event::Empty(over)).map_err(pkg)?;
+    let mut overrides = vec![("/word/document.xml", DOC_CT)];
+    if has_font_table {
+        overrides.push(("/word/fontTable.xml", FONT_TABLE_CT));
+    }
+    for (part_name, ct) in overrides {
+        let mut over = start("Override");
+        over.push_attribute(("PartName", part_name));
+        over.push_attribute(("ContentType", ct));
+        w.write_event(Event::Empty(over)).map_err(pkg)?;
+    }
     w.write_event(Event::End(BytesEnd::new("Types")))
         .map_err(pkg)?;
     Ok(finish(w))
@@ -183,11 +204,11 @@ fn root_rels_xml() -> Result<Vec<u8>, ExportError> {
 /// Emits `word/_rels/document.xml.rels`. With no entries it is the empty
 /// `<Relationships/>` element (byte-identical to the earlier no-relationship
 /// slices); with entries it carries one external hyperlink relationship each.
-fn document_rels_xml(entries: &[RelEntry]) -> Result<Vec<u8>, ExportError> {
+fn document_rels_xml(entries: &[RelEntry], has_font_table: bool) -> Result<Vec<u8>, ExportError> {
     let mut w = new_writer();
     let mut rels = start("Relationships");
     rels.push_attribute(("xmlns", REL_NS));
-    if entries.is_empty() {
+    if entries.is_empty() && !has_font_table {
         w.write_event(Event::Empty(rels)).map_err(pkg)?;
         return Ok(finish(w));
     }
@@ -200,9 +221,97 @@ fn document_rels_xml(entries: &[RelEntry]) -> Result<Vec<u8>, ExportError> {
         rel.push_attribute(("TargetMode", "External"));
         w.write_event(Event::Empty(rel)).map_err(pkg)?;
     }
+    if has_font_table {
+        // A fresh internal relationship after the hyperlink ids; the importer
+        // resolves the font table by relationship type, not by this id.
+        let id = format!("rId{}", entries.len() + 1);
+        let mut rel = start("Relationship");
+        rel.push_attribute(("Id", id.as_str()));
+        rel.push_attribute(("Type", FONT_TABLE_REL_TYPE));
+        rel.push_attribute(("Target", "fontTable.xml"));
+        w.write_event(Event::Empty(rel)).map_err(pkg)?;
+    }
     w.write_event(Event::End(BytesEnd::new("Relationships")))
         .map_err(pkg)?;
     Ok(finish(w))
+}
+
+/// Emits `word/fontTable.xml` from the model's font descriptors, in order.
+fn font_table_xml(fonts: &[FontDescriptor]) -> Result<Vec<u8>, ExportError> {
+    let mut w = new_writer();
+    let mut root = start("w:fonts");
+    root.push_attribute(("xmlns:w", W_NS));
+    w.write_event(Event::Start(root)).map_err(pkg)?;
+    for font in fonts {
+        let mut el = start("w:font");
+        el.push_attribute(("w:name", font.name.as_str()));
+        w.write_event(Event::Start(el)).map_err(pkg)?;
+        for (value, name) in [
+            (&font.alt_name, "w:altName"),
+            (&font.panose1, "w:panose1"),
+            (&font.charset, "w:charset"),
+        ] {
+            if let Some(value) = value {
+                let mut child = start(name);
+                child.push_attribute(("w:val", value.as_str()));
+                w.write_event(Event::Empty(child)).map_err(pkg)?;
+            }
+        }
+        if let Some(family) = font.family {
+            let mut child = start("w:family");
+            child.push_attribute(("w:val", font_family_token(family)));
+            w.write_event(Event::Empty(child)).map_err(pkg)?;
+        }
+        if let Some(pitch) = font.pitch {
+            let mut child = start("w:pitch");
+            child.push_attribute(("w:val", font_pitch_token(pitch)));
+            w.write_event(Event::Empty(child)).map_err(pkg)?;
+        }
+        if !font.sig.is_empty() {
+            let mut child = start("w:sig");
+            for (value, name) in [
+                (&font.sig.usb0, "w:usb0"),
+                (&font.sig.usb1, "w:usb1"),
+                (&font.sig.usb2, "w:usb2"),
+                (&font.sig.usb3, "w:usb3"),
+                (&font.sig.csb0, "w:csb0"),
+                (&font.sig.csb1, "w:csb1"),
+            ] {
+                if let Some(value) = value {
+                    child.push_attribute((name, value.as_str()));
+                }
+            }
+            w.write_event(Event::Empty(child)).map_err(pkg)?;
+        }
+        if font.not_true_type {
+            w.write_event(Event::Empty(start("w:notTrueType")))
+                .map_err(pkg)?;
+        }
+        w.write_event(Event::End(BytesEnd::new("w:font")))
+            .map_err(pkg)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("w:fonts")))
+        .map_err(pkg)?;
+    Ok(finish(w))
+}
+
+fn font_family_token(family: FontFamilyKind) -> &'static str {
+    match family {
+        FontFamilyKind::Auto => "auto",
+        FontFamilyKind::Decorative => "decorative",
+        FontFamilyKind::Modern => "modern",
+        FontFamilyKind::Roman => "roman",
+        FontFamilyKind::Script => "script",
+        FontFamilyKind::Swiss => "swiss",
+    }
+}
+
+fn font_pitch_token(pitch: FontPitch) -> &'static str {
+    match pitch {
+        FontPitch::Default => "default",
+        FontPitch::Fixed => "fixed",
+        FontPitch::Variable => "variable",
+    }
 }
 
 /// Emits `word/document.xml` from the model body, returning the bytes plus the

@@ -99,6 +99,18 @@ mod semantic_tests {
         zw.finish().unwrap().into_inner()
     }
 
+    /// Zips the named parts verbatim into a DOCX package (for a source that needs
+    /// a custom `[Content_Types].xml` and extra parts, e.g. `fontTable.xml`).
+    fn zip_named(parts: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut zw = ZipWriter::new(Cursor::new(Vec::new()));
+        let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        for (name, bytes) in parts {
+            zw.start_file(*name, opts).unwrap();
+            zw.write_all(bytes).unwrap();
+        }
+        zw.finish().unwrap().into_inner()
+    }
+
     /// The Phase-1B semantic fixed point: importing a document, writing it, and
     /// reopening yields the identical model. The importer allocates ids in
     /// document order, so a writer that emits the body in that same order
@@ -345,6 +357,57 @@ mod semantic_tests {
         .unwrap()
         .document;
         assert_eq!(m1, m2, "the run-fonts model survives write -> reopen");
+    }
+
+    #[test]
+    fn font_table_survives_the_semantic_round_trip() {
+        // A fontTable.xml with a fully-populated descriptor (altName, panose1,
+        // charset, family, pitch, sig, notTrueType) and a minimal one must
+        // survive: the writer regenerates the part, its content-type override,
+        // and the /fontTable relationship.
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/fontTable.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/fontTable" Target="fontTable.xml"/></Relationships>"#;
+        let font_table = br#"<w:fonts xmlns:w="urn:w">
+            <w:font w:name="Calibri">
+                <w:altName w:val="Carlito"/><w:panose1 w:val="020F0502020204030204"/>
+                <w:charset w:val="00"/><w:family w:val="swiss"/><w:pitch w:val="variable"/>
+                <w:sig w:usb0="E4002EFF" w:usb1="C000247B" w:csb0="0000019F"/>
+                <w:notTrueType/></w:font>
+            <w:font w:name="Symbol"><w:family w:val="roman"/></w:font>
+        </w:fonts>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/fontTable.xml", font_table),
+        ]);
+        let mut src_package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let m1 = import_package(
+            &mut src_package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+        assert_eq!(m1.definitions().font_table.len(), 2, "both fonts imported");
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+        let m2 = import_package(
+            &mut package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+        assert_eq!(m1, m2, "the font-table model survives write -> reopen");
     }
 
     #[test]

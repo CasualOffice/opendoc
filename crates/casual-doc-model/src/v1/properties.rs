@@ -241,6 +241,108 @@ pub enum FontRef {
     Named(FontName),
 }
 
+/// A `w:font` family classification (`w:family@w:val`, ECMA-376 §17.8).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FontFamilyKind {
+    /// `auto`.
+    Auto,
+    /// `decorative`.
+    Decorative,
+    /// `modern`.
+    Modern,
+    /// `roman`.
+    Roman,
+    /// `script`.
+    Script,
+    /// `swiss`.
+    Swiss,
+}
+
+/// A `w:font` character pitch (`w:pitch@w:val`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FontPitch {
+    /// `default`.
+    Default,
+    /// `fixed`.
+    Fixed,
+    /// `variable`.
+    Variable,
+}
+
+/// The OS/2 Unicode + code-page coverage signature (`w:sig`). Each field is the
+/// producer's 32-bit hex value retained verbatim (opaque), never reinterpreted,
+/// so unknown coverage bits are preserved.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FontSig {
+    /// `w:usb0`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usb0: Option<String>,
+    /// `w:usb1`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usb1: Option<String>,
+    /// `w:usb2`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usb2: Option<String>,
+    /// `w:usb3`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usb3: Option<String>,
+    /// `w:csb0`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub csb0: Option<String>,
+    /// `w:csb1`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub csb1: Option<String>,
+}
+
+impl FontSig {
+    /// Whether no signature field is set.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.usb0.is_none()
+            && self.usb1.is_none()
+            && self.usb2.is_none()
+            && self.usb3.is_none()
+            && self.csb0.is_none()
+            && self.csb1.is_none()
+    }
+}
+
+/// A `w:font` descriptor from `word/fontTable.xml` (ECMA-376 §17.8): the
+/// substitution/coverage hints a producer records for a font family. Keyed by
+/// `name`; entries are preserved even when no run references the family (Word
+/// emits stale entries). `panose1`/`charset` and the `sig` fields are retained
+/// as written (opaque hex) so unknown bits are never dropped.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FontDescriptor {
+    /// The font family name (`w:font@w:name`, non-empty, at most 255 bytes).
+    pub name: String,
+    /// Alternate family name used as a substitution hint (`w:altName@w:val`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alt_name: Option<String>,
+    /// PANOSE-1 classification (`w:panose1@w:val`), opaque hex as written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub panose1: Option<String>,
+    /// Windows charset byte (`w:charset@w:val`), opaque hex as written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub charset: Option<String>,
+    /// Family classification (`w:family@w:val`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub family: Option<FontFamilyKind>,
+    /// Character pitch (`w:pitch@w:val`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pitch: Option<FontPitch>,
+    /// OS/2 coverage signature (`w:sig`).
+    #[serde(default, skip_serializing_if = "FontSig::is_empty")]
+    pub sig: FontSig,
+    /// Whether the font is a non-TrueType (raster) face (`w:notTrueType`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub not_true_type: bool,
+}
+
 /// Paragraph indentation in twips.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

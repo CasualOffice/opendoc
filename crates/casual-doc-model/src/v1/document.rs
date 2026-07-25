@@ -98,7 +98,36 @@ impl Document {
         self.validate_headers_footers()?;
         self.validate_comments()?;
         self.validate_bookmarks()?;
+        self.validate_font_table()?;
         self.validate_body()?;
+        Ok(())
+    }
+
+    fn validate_font_table(&self) -> Result<(), ModelError> {
+        for font in &self.definitions.font_table {
+            check_domain(!font.name.is_empty() && font.name.len() <= 255, "font.name")?;
+            for (value, field) in [
+                (&font.alt_name, "font.altName"),
+                (&font.panose1, "font.panose1"),
+                (&font.charset, "font.charset"),
+            ] {
+                if let Some(value) = value {
+                    check_domain(!value.is_empty() && value.len() <= 255, field)?;
+                }
+            }
+            for (value, field) in [
+                (&font.sig.usb0, "font.sig.usb0"),
+                (&font.sig.usb1, "font.sig.usb1"),
+                (&font.sig.usb2, "font.sig.usb2"),
+                (&font.sig.usb3, "font.sig.usb3"),
+                (&font.sig.csb0, "font.sig.csb0"),
+                (&font.sig.csb1, "font.sig.csb1"),
+            ] {
+                if let Some(value) = value {
+                    check_domain(!value.is_empty() && value.len() <= 32, field)?;
+                }
+            }
+        }
         Ok(())
     }
 

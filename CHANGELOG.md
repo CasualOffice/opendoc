@@ -36,6 +36,14 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Added
 
+- Font management, Phase 1A.2a (`fontTable.xml`): the font table is now modeled
+  as first-class `FontDescriptor`s on `Definitions::font_table` — family name,
+  `altName`, `panose1`, `charset`, `family`, `pitch`, the OS/2 `sig` coverage
+  fields, and `notTrueType`, with panose/charset/sig retained verbatim (opaque).
+  The importer resolves the `/fontTable` relationship and parses the part; the
+  semantic writer regenerates `word/fontTable.xml` with its content-type override
+  and relationship. Proven by a fixed-point round-trip. Additive: existing v1
+  snapshots and the v0→v1 migration golden are byte-identical.
 - Font management, Phase 1A.1 (run-level `w:rFonts` fidelity): the theme-font
   slot vocabulary is now the full 8-value set (`majorAscii`/`majorHAnsi`/
   `majorEastAsia`/`majorBidi` and the `minor*` counterparts) instead of a
