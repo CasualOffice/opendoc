@@ -431,6 +431,23 @@ impl Document {
                 )?;
             }
         }
+        if let Some(value) = properties.character_spacing_twips {
+            check_domain((-31_680..=31_680).contains(&value), "run.character_spacing")?;
+        }
+        if let Some(value) = properties.kerning_half_points {
+            check_domain(value <= 65_534, "run.kerning")?;
+        }
+        if let Some(value) = properties.position_half_points {
+            check_domain((-31_680..=31_680).contains(&value), "run.position")?;
+        }
+        if let Some(language) = &properties.language {
+            for tag in [&language.value, &language.east_asia, &language.bidi]
+                .into_iter()
+                .flatten()
+            {
+                check_domain(!tag.is_empty() && tag.len() <= 85, "run.language")?;
+            }
+        }
         Ok(())
     }
 

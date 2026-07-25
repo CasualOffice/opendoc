@@ -27,6 +27,10 @@ OpenDoc will use semantic versioning when its public package line begins.
   stops (`w:tabs`) are now modeled on paragraphs (borders reuse the shared
   border-edge type; a `w:shd` on the paragraph mark's `w:rPr` stays a run
   property, reported). Additive; the migration golden is byte-identical.
+- Run typographic metrics and language: character spacing (`w:spacing` in
+  a run), kerning (`w:kern`), baseline position (`w:position`), and language
+  tags (`w:lang` val/eastAsia/bidi) are now modeled on runs; out-of-range
+  metrics are reported. Additive; the migration golden is byte-identical.
 - Content controls (structured document tags) in schema v1: block-level
   (`w:sdt` around paragraphs/tables) and inline-level (`w:sdt` around runs)
   controls are modeled as additive `BlockNode::Sdt` / `InlineNode::Sdt` wrappers

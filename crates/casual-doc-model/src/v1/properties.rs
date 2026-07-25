@@ -441,4 +441,40 @@ pub struct RunProperties {
     /// Emphasis mark (`w:em`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub emphasis: Option<EmphasisMark>,
+    /// Inter-character spacing in twips (`w:spacing`), may be negative.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub character_spacing_twips: Option<i32>,
+    /// Kerning activation threshold in half-points (`w:kern`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kerning_half_points: Option<u32>,
+    /// Baseline offset in half-points (`w:position`), may be negative.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub position_half_points: Option<i32>,
+    /// Language tags (`w:lang`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<Language>,
+}
+
+/// Run language tags (`w:lang`). Each tag is a producer-written language string
+/// (BCP-47-ish), retained opaquely and bounded, not parsed.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Language {
+    /// Latin (`w:val`) language tag.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    /// East-Asian (`w:eastAsia`) language tag.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub east_asia: Option<String>,
+    /// Complex-script (`w:bidi`) language tag.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bidi: Option<String>,
+}
+
+impl Language {
+    /// Whether no tag is set (serializes to nothing).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
 }

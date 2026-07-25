@@ -83,6 +83,7 @@ Design references point at `38-SCHEMA-V1-DESIGN-REFERENCE.md` (anchor).
 | P1A-030 | Fix ruby phonetic guides (`w:ruby`) | Claude Code | In review | Import-only: `ruby_annotation_depth` suppresses `w:rt` text so the base reads in order (annotation reported); 2 tests; 1 review fix (bool→depth counter) (`38-…#ruby`). |
 | P1A-031 | Model comments (extra-part bodies + reference + metadata) | Claude Code | In review | Additive `Definitions.comments` (blocks + author/initials/date) + `InlineNode::CommentReference`; reuses note-container machine; 10 tests; review-fixed EOF-truncated open-table strand via `TableStack::flush_open` (`38-…#comments`). |
 | P1A-032 | Model tracked changes / revisions (`w:ins`,`w:del`,`w:delText`) | Claude Code | In review | Additive `InlineNode::Revision` wrapper (kind + author/date/id), `w:delText` verbatim; unified innermost-wins `wrapper_order` stack; 24 tests; review-fixed close-side desync via `suppressed_revision_depth` (`38-…#tracked-changes`). |
+| P1A-033b | Model run metrics + language (`w:spacing`/`kern`/`position`/`lang`) | Claude Code | Done | Additive `RunProperties`: character_spacing_twips/kerning_half_points/position_half_points (bounded, out-of-range reported) + `Language{value,eastAsia,bidi}`; closes the run-property tail (`38-…#run-properties`). |
 | P1A-033 | Model run-property long tail (toggles + fonts + vocabularies) | Claude Code | In review | Additive `RunProperties`: caps/smallCaps/hidden/webHidden/doubleStrike toggles, `rFonts` four slots, vertAlign/highlight/emphasis enums; default serializes `{}`; 7 tests. Deferred: metrics + `w:lang` (`38-…#run-properties`). |
 | P1A-034b | Model paragraph borders + shading + tabs (wave 2) | Claude Code | Done | `ParagraphBorders` (reusing `BorderEdge`) via a `ParagraphBorders` edge scope, paragraph `w:shd` (a `mark_rpr_depth` counter distinguishes the pilcrow's `w:rPr` shd), and `w:tabs`→`TabStop{pos,alignment,leader}` (clear/unknown reported); closes the paragraph-property tail (`38-…#paragraph-properties`). |
 | P1A-034 | Model paragraph-property long tail (flags + outline; wave 1) | Claude Code | In review | Wave 1 shipped keep/break/widow/contextualSpacing/suppressLineNumbers toggles + `outlineLvl`, via the shared `apply_paragraph_property` (body + styles); 5 tests. Waves 2+ (shading/borders/tabs) designed, pending impl (`38-…#paragraph-properties`). |
@@ -115,3 +116,9 @@ Design references point at `38-SCHEMA-V1-DESIGN-REFERENCE.md` (anchor).
 - Should the crate family retain the `casual-doc-*` names if public package-name
   availability later requires a change?
 - Which fixed font set should be used for deterministic layout baselines?
+
+## Phase 1B — Semantic DOCX writer (model -> WordprocessingML)
+
+| ID | Item | Owner | Status | Notes |
+|---|---|---|---|---|
+| P1B-001 | Semantic DOCX writer design | Claude Code | Designed | `39-PHASE-1B-SEMANTIC-DOCX-WRITER-DESIGN.md`: serialize the v1 Document to a valid editable DOCX (the dual of Retention export); semantic-fixed-point round-trip (import->write->reopen = equal model); media supplied via a hybrid `part_name->bytes` map. Slices P1B-002..006. |

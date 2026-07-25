@@ -1107,6 +1107,55 @@ fn default_run_properties_still_serialize_to_empty_object() {
 }
 
 #[test]
+fn run_metrics_and_language_round_trip_and_bound() {
+    let properties = RunProperties {
+        character_spacing_twips: Some(-40),
+        kerning_half_points: Some(28),
+        position_half_points: Some(6),
+        language: Some(Language {
+            value: Some("en-US".to_owned()),
+            east_asia: Some("ja-JP".to_owned()),
+            bidi: None,
+        }),
+        ..RunProperties::default()
+    };
+    let block = BlockNode::Paragraph(Paragraph {
+        id: tid(1),
+        properties: ParagraphProperties::default(),
+        inlines: vec![InlineNode::Run(Run {
+            id: tid(2),
+            properties,
+            text: "x".to_owned(),
+        })],
+    });
+    let document = table_document(vec![block]).unwrap();
+    let reloaded =
+        Document::from_json(&document.to_json().unwrap(), SnapshotLimits::default()).unwrap();
+    assert_eq!(document, reloaded);
+
+    // Out-of-range character spacing is rejected.
+    let bad = RunProperties {
+        character_spacing_twips: Some(40_000),
+        ..RunProperties::default()
+    };
+    let bad_block = BlockNode::Paragraph(Paragraph {
+        id: tid(1),
+        properties: ParagraphProperties::default(),
+        inlines: vec![InlineNode::Run(Run {
+            id: tid(2),
+            properties: bad,
+            text: "x".to_owned(),
+        })],
+    });
+    assert!(matches!(
+        table_document(vec![bad_block]),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "run.character_spacing"
+        })
+    ));
+}
+
+#[test]
 fn default_paragraph_properties_still_serialize_to_empty_object() {
     // Same additive guard for the paragraph long-tail fields.
     let json = serde_json::to_string(&ParagraphProperties::default()).unwrap();
