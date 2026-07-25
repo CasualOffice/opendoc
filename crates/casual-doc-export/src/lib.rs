@@ -770,6 +770,36 @@ mod semantic_tests {
     }
 
     #[test]
+    fn paragraph_spacing_borders_shading_tabs_survive_the_round_trip() {
+        // The structured paragraph properties the writer previously dropped:
+        // w:spacing (incl. a non-round line percent to exercise the ceiling
+        // round-trip), w:pBdr, w:shd, and w:tabs.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:pPr>
+                <w:spacing w:before="120" w:after="240" w:line="360" w:lineRule="auto"/>
+                <w:pBdr>
+                    <w:top w:val="single" w:sz="8" w:color="112233" w:space="4"/>
+                    <w:bar w:val="dotted"/></w:pBdr>
+                <w:shd w:val="clear" w:color="auto" w:fill="EEEEEE"/>
+                <w:tabs>
+                    <w:tab w:val="center" w:pos="2160" w:leader="dot"/>
+                    <w:tab w:val="end" w:pos="9360"/></w:tabs>
+            </w:pPr><w:r><w:t>a</w:t></w:r></w:p>
+            <w:p><w:pPr><w:spacing w:line="100" w:lineRule="auto"/></w:pPr>
+                <w:r><w:t>b</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(
+            m1, m2,
+            "paragraph spacing/borders/shading/tabs survive write -> reopen"
+        );
+    }
+
+    #[test]
     fn all_run_properties_survive_the_semantic_round_trip() {
         // Every modeled run property (toggles on AND off, the value-carrying
         // vocabularies, the typographic metrics, and w:lang's three tags) must
