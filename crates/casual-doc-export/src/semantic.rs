@@ -723,7 +723,8 @@ fn write_inline(
             for child in &revision.inlines {
                 write_inline(w, child, ctx, deleted)?;
             }
-            w.write_event(Event::End(BytesEnd::new(name))).map_err(pkg)?;
+            w.write_event(Event::End(BytesEnd::new(name)))
+                .map_err(pkg)?;
         }
         // A bookmark range marker (zero-width). The pairing key `w:id` derives
         // from the shared `BookmarkId`; the name lives in `Definitions`.

@@ -279,6 +279,79 @@ mod semantic_tests {
             "the external-hyperlink model survives write -> reopen unchanged"
         );
     }
+
+    #[test]
+    fn attribute_entities_survive_the_semantic_round_trip() {
+        // Every attribute-carried string (field instruction, bookmark name,
+        // hyperlink tooltip/anchor, revision author, sdt alias) may contain XML
+        // metacharacters. The writer escapes them; the importer must unescape so
+        // the value round-trips instead of gaining an `amp;` layer each pass.
+        let xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r"><w:body>
+            <w:p>
+                <w:bookmarkStart w:id="1" w:name="A &amp; B &lt;x&gt;"/>
+                <w:hyperlink w:anchor="A &amp; B &lt;x&gt;" w:tooltip="quote &quot;here&quot;">
+                    <w:r><w:t>link</w:t></w:r></w:hyperlink>
+                <w:bookmarkEnd w:id="1"/>
+                <w:fldSimple w:instr=" HYPERLINK &quot;http://x/a?u=1&amp;v=2&quot; ">
+                    <w:r><w:t>r</w:t></w:r></w:fldSimple>
+                <w:ins w:author="a &amp; b"><w:r><w:t>i</w:t></w:r></w:ins>
+                <w:sdt><w:sdtPr><w:alias w:val="Tom &amp; Jerry"/><w:text/></w:sdtPr>
+                    <w:sdtContent><w:r><w:t>s</w:t></w:r></w:sdtContent></w:sdt>
+            </w:p>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+        let m2 = import_package(
+            &mut package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+        assert_eq!(
+            m1, m2,
+            "attribute values with XML metacharacters survive write -> reopen"
+        );
+    }
+
+    #[test]
+    fn external_hyperlink_url_with_ampersand_survives_the_round_trip() {
+        // A query-string URL carries `&` (escaped `&amp;` in the rels Target).
+        // The package parser must unescape it so the regenerated relationship
+        // resolves to the identical URL.
+        let document = br#"<w:document xmlns:w="urn:w" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>
+            <w:p><w:hyperlink r:id="rId100"><w:r><w:t>q</w:t></w:r></w:hyperlink></w:p>
+        </w:body></w:document>"#;
+        let rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId100" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com/s?u=1&amp;v=2&amp;w=3" TargetMode="External"/></Relationships>"#;
+        let source = pack(document, rels);
+        let mut src_package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let m1 = import_package(
+            &mut src_package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+        let m2 = import_package(
+            &mut package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+        assert_eq!(m1, m2, "an external URL with `&` survives write -> reopen");
+    }
 }
 
 #[cfg(test)]

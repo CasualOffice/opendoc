@@ -10,6 +10,12 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Fixed
 
+- XML character references in attribute values are now unescaped on import, so
+  an attribute-carried string (a field instruction, a hyperlink/relationship URL
+  with `&` query separators, a bookmark name, a revision author, an `sdt` alias)
+  round-trips symmetrically with the writer's escaping instead of gaining an
+  `amp;` layer on every pass. Applies to both the WordprocessingML importer and
+  the OPC package reader (relationship `Target`s).
 - Property-change tracked revisions (`w:tcPrChange`, `w:tblPrChange`,
   `w:trPrChange`, `w:pPrChange`, `w:rPrChange`, ...) no longer let their nested
   *historical* (pre-edit) property container overwrite the current table/row/
