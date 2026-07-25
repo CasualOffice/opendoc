@@ -1479,6 +1479,41 @@ fn oversized_revision_date_is_rejected() {
 }
 
 #[test]
+fn oversized_revision_id_is_rejected() {
+    // The producer `w:id` grouping key is bounded at 64 bytes (the importer's
+    // capture filter and the design contract), separate from author's 255.
+    let revision = InlineNode::Revision(Revision {
+        id: tid(10),
+        kind: RevisionKind::Insertion,
+        author: None,
+        date: None,
+        revision_id: Some("9".repeat(65)),
+        inlines: vec![run_inline(tid(11), "t")],
+    });
+    assert!(matches!(
+        table_document(vec![revision_paragraph(tid(1), revision)]),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "revision.date"
+        })
+    ));
+}
+
+#[test]
+fn long_revision_author_within_bound_is_accepted() {
+    // Author keeps its 255-byte bound (wider than id/date), so a 200-byte author
+    // is valid.
+    let revision = InlineNode::Revision(Revision {
+        id: tid(10),
+        kind: RevisionKind::Insertion,
+        author: Some("a".repeat(200)),
+        date: None,
+        revision_id: None,
+        inlines: vec![run_inline(tid(11), "t")],
+    });
+    assert!(table_document(vec![revision_paragraph(tid(1), revision)]).is_ok());
+}
+
+#[test]
 fn revision_may_wrap_a_hyperlink_at_top_level() {
     // A revision is transparent to the wrapper leaf-only rule, so it may wrap a
     // hyperlink (an inserted link) even though a hyperlink cannot nest in a

@@ -129,6 +129,7 @@ struct ContentFrame {
     instr_buffer: String,
     ruby_annotation_depth: u32,
     revisions: Vec<RevisionAccumulator>,
+    suppressed_revision_depth: u32,
     wrapper_order: Vec<WrapperKind>,
     tables: TableStack,
     tcpr_depth: u32,
@@ -222,6 +223,14 @@ struct BodyParser<'a> {
     ruby_annotation_depth: u32,
     /// Open tracked-change (`w:ins`/`w:del`) ranges, innermost last.
     revisions: Vec<RevisionAccumulator>,
+    /// Depth of `w:ins`/`w:del` elements that were NOT modeled as run ranges (a
+    /// property-context marker, an over-`MAX_REVISION_DEPTH` range, or one outside
+    /// a paragraph). A close-side counter — like `field_depth`/`hyperlink_depth` —
+    /// so an excluded range's `</w:ins>`/`</w:del>` is balanced and never commits
+    /// an enclosing real revision. Excluded ranges are always inner to any open
+    /// real revision (valid OOXML never wraps a paragraph in `w:ins`/`w:del`), so
+    /// the matching close arrives before the enclosing revision's.
+    suppressed_revision_depth: u32,
     /// The relative open order of the hyperlink, field, and revision wrappers, so
     /// a segment routes into the innermost regardless of kind. Its top identifies
     /// which accumulator (`hyperlink`, `field`, or `revisions.last()`) receives
@@ -327,6 +336,7 @@ impl<'a> BodyParser<'a> {
             instr_buffer: String::new(),
             ruby_annotation_depth: 0,
             revisions: Vec::new(),
+            suppressed_revision_depth: 0,
             wrapper_order: Vec::new(),
             tables: TableStack::default(),
             tcpr_depth: 0,
@@ -767,18 +777,28 @@ impl BodyParser<'_> {
                     self.reporter.report(b"hyperlink");
                 }
             }
-            // A run-range tracked change (`w:ins`/`w:del`). The `ppr_depth == 0 &&
-            // rpr_depth == 0` guard admits ONLY range revisions: a `w:ins`/`w:del`
-            // inside `w:pPr>w:rPr` (a paragraph-mark revision) or `w:r>w:rPr` (a
-            // run-property revision marker) has a non-zero property depth, so it
-            // falls through to the property report arms (reported, not modeled).
-            b"ins" | b"del"
+            // A tracked change (`w:ins`/`w:del`). Modeled as a run range ONLY when
+            // it sits directly in paragraph flow (not inside a run, not inside a
+            // property context) and within the nesting bound; every other position
+            // — a paragraph-mark revision (`w:pPr>w:rPr>w:ins`), a run-property
+            // revision marker (`w:r>w:rPr>w:ins`), an over-`MAX_REVISION_DEPTH`
+            // range, or a row/cell revision outside a paragraph — is reported and
+            // counted (`suppressed_revision_depth`) so its matching close balances
+            // and never commits an enclosing real revision. The arm is
+            // UNCONDITIONAL (both branches handle `ins`/`del`) so start and end
+            // stay balanced, exactly like tables' `suppressed_tbl_depth`.
+            b"ins" | b"del" => {
                 if self.paragraph_open
                     && !self.run_open
                     && self.ppr_depth == 0
-                    && self.rpr_depth == 0 =>
-            {
-                self.open_revision(local, element);
+                    && self.rpr_depth == 0
+                    && (self.revisions.len() as u32) < MAX_REVISION_DEPTH
+                {
+                    self.open_revision(local, element);
+                } else {
+                    self.reporter.report(local);
+                    self.suppressed_revision_depth += 1;
+                }
             }
             b"drawing" if self.run_open => {
                 self.drawing_depth += 1;
@@ -1094,8 +1114,15 @@ impl BodyParser<'_> {
                 }
                 self.hyperlink_depth = self.hyperlink_depth.saturating_sub(1);
             }
-            // A tracked-change range closes: commit it into the enclosing wrapper
-            // (an outer revision/hyperlink) or the paragraph.
+            // An excluded (reported, not modeled) `w:ins`/`w:del` closes: balance
+            // the suppression counter — never commit an enclosing real revision.
+            // Checked BEFORE the commit arm because an excluded range is always
+            // inner to any open real revision, so its close arrives first.
+            b"ins" | b"del" if self.suppressed_revision_depth > 0 => {
+                self.suppressed_revision_depth -= 1;
+            }
+            // A real tracked-change range closes: commit it into the enclosing
+            // wrapper (an outer revision/hyperlink) or the paragraph.
             b"ins" | b"del" if self.top_wrapper_is_revision() => self.commit_revision(),
             b"tcPr" => self.tcpr_depth = self.tcpr_depth.saturating_sub(1),
             // A refused subtree's own `</w:tbl>` closes suppression, never a real
@@ -1226,6 +1253,7 @@ impl BodyParser<'_> {
             ruby_annotation_depth: std::mem::take(&mut self.ruby_annotation_depth),
             instr_buffer: std::mem::take(&mut self.instr_buffer),
             revisions: std::mem::take(&mut self.revisions),
+            suppressed_revision_depth: std::mem::take(&mut self.suppressed_revision_depth),
             wrapper_order: std::mem::take(&mut self.wrapper_order),
             tables: std::mem::take(&mut self.tables),
             tcpr_depth: std::mem::take(&mut self.tcpr_depth),
@@ -1274,6 +1302,7 @@ impl BodyParser<'_> {
         self.ruby_annotation_depth = frame.ruby_annotation_depth;
         self.instr_buffer = frame.instr_buffer;
         self.revisions = frame.revisions;
+        self.suppressed_revision_depth = frame.suppressed_revision_depth;
         self.wrapper_order = frame.wrapper_order;
         self.tables = frame.tables;
         self.tcpr_depth = frame.tcpr_depth;
@@ -1484,14 +1513,10 @@ impl BodyParser<'_> {
         matches!(self.wrapper_order.last(), Some(WrapperKind::Revision))
     }
 
-    /// Opens a tracked-change range (`w:ins`/`w:del`). Over-`MAX_REVISION_DEPTH`
-    /// nesting is reported and the range is treated transparently (no accumulator
-    /// pushed), so its runs flatten into the enclosing content without loss.
+    /// Opens a tracked-change range (`w:ins`/`w:del`). The caller guarantees the
+    /// nesting bound and paragraph-flow position; this pushes the accumulator and
+    /// its wrapper marker.
     fn open_revision(&mut self, local: &[u8], element: &BytesStart<'_>) {
-        if self.revisions.len() as u32 >= MAX_REVISION_DEPTH {
-            self.reporter.report(local);
-            return;
-        }
         let kind = if local == b"ins" {
             RevisionKind::Insertion
         } else {
@@ -1603,6 +1628,9 @@ impl BodyParser<'_> {
         }
         self.hyperlink_depth = 0;
         self.field_depth = 0;
+        // A revision never spans a paragraph; reset the suppression counter so a
+        // malformed unbalanced property-context marker cannot leak into the next.
+        self.suppressed_revision_depth = 0;
         self.in_instr = false;
         self.instr_buffer.clear();
         self.drawing_depth = 0;

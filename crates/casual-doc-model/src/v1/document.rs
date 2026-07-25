@@ -585,14 +585,20 @@ impl Document {
                     if revision.inlines.is_empty() {
                         return Err(ModelError::EmptyRevision(revision.id));
                     }
-                    for value in [&revision.author, &revision.revision_id]
+                    if let Some(author) = &revision.author {
+                        check_domain(
+                            !author.is_empty() && author.len() <= 255,
+                            "revision.metadata",
+                        )?;
+                    }
+                    // The `w:id` (a producer-local grouping key) and the date are
+                    // short: both are bounded at 64 bytes, matching the importer's
+                    // capture filter and the design contract.
+                    for value in [&revision.date, &revision.revision_id]
                         .into_iter()
                         .flatten()
                     {
-                        check_domain(!value.is_empty() && value.len() <= 255, "revision.metadata")?;
-                    }
-                    if let Some(date) = &revision.date {
-                        check_domain(!date.is_empty() && date.len() <= 64, "revision.date")?;
+                        check_domain(!value.is_empty() && value.len() <= 64, "revision.date")?;
                     }
                     // A revision is a transparent range marker: `in_wrapper` passes
                     // through unchanged (it may wrap a hyperlink/field at top level,
