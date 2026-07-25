@@ -2093,3 +2093,327 @@ fn bookmark_marker_inside_a_hyperlink_validates() {
     let paragraph = bookmark_paragraph(tid(1), vec![link]);
     assert!(Document::new(tid(99), vec![paragraph], definitions).is_ok());
 }
+// ---- content controls (structured document tags) -------------------------
+
+fn full_sdt_props() -> SdtProperties {
+    SdtProperties {
+        control_kind: Some(SdtControlKind::RichText),
+        alias: Some("Full name".to_owned()),
+        tag: Some("fullName".to_owned()),
+        control_id: Some("1553275".to_owned()),
+    }
+}
+
+fn block_sdt(id: NodeId, properties: SdtProperties, blocks: Vec<BlockNode>) -> BlockNode {
+    BlockNode::Sdt(BlockSdt {
+        id,
+        properties,
+        blocks,
+    })
+}
+
+fn inline_sdt_paragraph(paragraph_id: NodeId, inline: InlineNode) -> BlockNode {
+    BlockNode::Paragraph(Paragraph {
+        id: paragraph_id,
+        properties: ParagraphProperties::default(),
+        inlines: vec![inline],
+    })
+}
+
+#[test]
+fn block_content_control_validates_and_round_trips_json() {
+    let sdt = block_sdt(tid(10), full_sdt_props(), vec![paragraph_block(tid(11))]);
+    let document = table_document(vec![sdt]).unwrap();
+    let reloaded =
+        Document::from_json(&document.to_json().unwrap(), SnapshotLimits::default()).unwrap();
+    assert_eq!(document, reloaded);
+    let BlockNode::Sdt(sdt) = &document.body()[0] else {
+        panic!("expected a block sdt");
+    };
+    assert_eq!(sdt.properties.control_kind, Some(SdtControlKind::RichText));
+    assert_eq!(sdt.properties.alias.as_deref(), Some("Full name"));
+    assert_eq!(sdt.properties.tag.as_deref(), Some("fullName"));
+    assert_eq!(sdt.properties.control_id.as_deref(), Some("1553275"));
+    assert_eq!(sdt.blocks.len(), 1);
+}
+
+#[test]
+fn inline_content_control_validates_and_round_trips_json() {
+    let inline = InlineNode::Sdt(InlineSdt {
+        id: tid(10),
+        properties: full_sdt_props(),
+        inlines: vec![run_inline(tid(11), "typed")],
+    });
+    let document = table_document(vec![inline_sdt_paragraph(tid(1), inline)]).unwrap();
+    let reloaded =
+        Document::from_json(&document.to_json().unwrap(), SnapshotLimits::default()).unwrap();
+    assert_eq!(document, reloaded);
+    let BlockNode::Paragraph(paragraph) = &document.body()[0] else {
+        panic!("expected a paragraph");
+    };
+    let InlineNode::Sdt(sdt) = &paragraph.inlines[0] else {
+        panic!("expected an inline sdt");
+    };
+    let InlineNode::Run(run) = &sdt.inlines[0] else {
+        panic!("expected a run");
+    };
+    assert_eq!(run.text, "typed");
+}
+
+#[test]
+fn every_sdt_control_kind_round_trips() {
+    for kind in [
+        SdtControlKind::RichText,
+        SdtControlKind::PlainText,
+        SdtControlKind::ComboBox,
+        SdtControlKind::DropDownList,
+        SdtControlKind::Date,
+        SdtControlKind::Picture,
+        SdtControlKind::Checkbox,
+        SdtControlKind::Group,
+        SdtControlKind::BuildingBlockGallery,
+        SdtControlKind::RepeatingSection,
+        SdtControlKind::Citation,
+        SdtControlKind::Bibliography,
+    ] {
+        let properties = SdtProperties {
+            control_kind: Some(kind),
+            ..SdtProperties::default()
+        };
+        let sdt = block_sdt(tid(10), properties, vec![paragraph_block(tid(11))]);
+        let document = table_document(vec![sdt]).unwrap();
+        let reloaded =
+            Document::from_json(&document.to_json().unwrap(), SnapshotLimits::default()).unwrap();
+        assert_eq!(document, reloaded);
+    }
+}
+
+#[test]
+fn empty_sdt_properties_serialize_to_empty_object() {
+    let sdt = block_sdt(
+        tid(10),
+        SdtProperties::default(),
+        vec![paragraph_block(tid(11))],
+    );
+    let json = String::from_utf8(table_document(vec![sdt]).unwrap().to_json().unwrap()).unwrap();
+    assert!(json.contains(r#""type":"sdt""#));
+    assert!(json.contains(r#""properties":{},"blocks":"#));
+}
+
+#[test]
+fn empty_block_content_control_is_rejected() {
+    let sdt = block_sdt(tid(10), SdtProperties::default(), Vec::new());
+    assert!(matches!(
+        table_document(vec![sdt]),
+        Err(ModelError::EmptySdt(_))
+    ));
+}
+
+#[test]
+fn empty_inline_content_control_is_rejected() {
+    let inline = InlineNode::Sdt(InlineSdt {
+        id: tid(10),
+        properties: SdtProperties::default(),
+        inlines: Vec::new(),
+    });
+    assert!(matches!(
+        table_document(vec![inline_sdt_paragraph(tid(1), inline)]),
+        Err(ModelError::EmptySdt(_))
+    ));
+}
+
+fn wrap_in_block_sdts(depth: u32, counter: &mut u64) -> BlockNode {
+    if depth == 0 {
+        *counter += 1;
+        return paragraph_block(tid(*counter));
+    }
+    let inner = wrap_in_block_sdts(depth - 1, counter);
+    *counter += 1;
+    block_sdt(tid(*counter), SdtProperties::default(), vec![inner])
+}
+
+fn wrap_in_inline_sdts(depth: u32, counter: &mut u64) -> InlineNode {
+    *counter += 1;
+    let id = tid(*counter);
+    if depth == 0 {
+        return run_inline(id, "leaf");
+    }
+    let inner = wrap_in_inline_sdts(depth - 1, counter);
+    InlineNode::Sdt(InlineSdt {
+        id,
+        properties: SdtProperties::default(),
+        inlines: vec![inner],
+    })
+}
+
+#[test]
+fn block_content_control_nesting_within_bound_validates() {
+    let mut counter = 0;
+    let block = wrap_in_block_sdts(MAX_SDT_DEPTH, &mut counter);
+    assert!(table_document(vec![block]).is_ok());
+}
+
+#[test]
+fn block_content_control_nesting_beyond_bound_is_rejected() {
+    let mut counter = 0;
+    let block = wrap_in_block_sdts(MAX_SDT_DEPTH + 1, &mut counter);
+    assert!(matches!(
+        table_document(vec![block]),
+        Err(ModelError::SdtNestingTooDeep(_))
+    ));
+}
+
+#[test]
+fn inline_content_control_nesting_within_bound_validates() {
+    let mut counter = 100;
+    let nested = wrap_in_inline_sdts(MAX_SDT_DEPTH, &mut counter);
+    assert!(table_document(vec![inline_sdt_paragraph(tid(1), nested)]).is_ok());
+}
+
+#[test]
+fn inline_content_control_nesting_beyond_bound_is_rejected() {
+    let mut counter = 100;
+    let nested = wrap_in_inline_sdts(MAX_SDT_DEPTH + 1, &mut counter);
+    assert!(matches!(
+        table_document(vec![inline_sdt_paragraph(tid(1), nested)]),
+        Err(ModelError::SdtNestingTooDeep(_))
+    ));
+}
+
+#[test]
+fn oversized_sdt_alias_is_rejected() {
+    let properties = SdtProperties {
+        alias: Some("a".repeat(256)),
+        ..SdtProperties::default()
+    };
+    let sdt = block_sdt(tid(10), properties, vec![paragraph_block(tid(11))]);
+    assert!(matches!(
+        table_document(vec![sdt]),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "sdt.alias"
+        })
+    ));
+}
+
+#[test]
+fn oversized_sdt_tag_is_rejected() {
+    let properties = SdtProperties {
+        tag: Some("t".repeat(256)),
+        ..SdtProperties::default()
+    };
+    let sdt = block_sdt(tid(10), properties, vec![paragraph_block(tid(11))]);
+    assert!(matches!(
+        table_document(vec![sdt]),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "sdt.tag"
+        })
+    ));
+}
+
+#[test]
+fn oversized_sdt_control_id_is_rejected() {
+    let properties = SdtProperties {
+        control_id: Some("9".repeat(65)),
+        ..SdtProperties::default()
+    };
+    let sdt = block_sdt(tid(10), properties, vec![paragraph_block(tid(11))]);
+    assert!(matches!(
+        table_document(vec![sdt]),
+        Err(ModelError::PropertyValueOutOfDomain { property: "sdt.id" })
+    ));
+}
+
+#[test]
+fn duplicate_id_inside_a_content_control_is_rejected() {
+    let sdt = block_sdt(
+        tid(10),
+        SdtProperties::default(),
+        vec![paragraph_block(tid(10))], // inner paragraph id collides with the sdt
+    );
+    assert!(matches!(
+        table_document(vec![sdt]),
+        Err(ModelError::DuplicateNodeId(_))
+    ));
+}
+
+#[test]
+fn inline_content_control_composes_with_a_hyperlink_either_way() {
+    // A content control is transparent to the wrapper leaf-only rule, so it may
+    // wrap a hyperlink AND may itself sit inside one.
+    let link = InlineNode::Hyperlink(Hyperlink {
+        id: tid(12),
+        target: HyperlinkTarget::Internal(InternalTarget {
+            anchor: "a".to_owned(),
+        }),
+        tooltip: None,
+        inlines: vec![run_inline(tid(13), "link")],
+    });
+    let sdt_over_link = InlineNode::Sdt(InlineSdt {
+        id: tid(10),
+        properties: SdtProperties::default(),
+        inlines: vec![link],
+    });
+    assert!(table_document(vec![inline_sdt_paragraph(tid(1), sdt_over_link)]).is_ok());
+
+    let inner_sdt = InlineNode::Sdt(InlineSdt {
+        id: tid(22),
+        properties: SdtProperties::default(),
+        inlines: vec![run_inline(tid(23), "x")],
+    });
+    let link_over_sdt = InlineNode::Hyperlink(Hyperlink {
+        id: tid(20),
+        target: HyperlinkTarget::Internal(InternalTarget {
+            anchor: "b".to_owned(),
+        }),
+        tooltip: None,
+        inlines: vec![inner_sdt],
+    });
+    assert!(table_document(vec![inline_sdt_paragraph(tid(2), link_over_sdt)]).is_ok());
+}
+
+fn nested_table(levels: u32, counter: &mut u64) -> BlockNode {
+    *counter += 1;
+    let table_id = tid(*counter);
+    *counter += 1;
+    let row_id = tid(*counter);
+    *counter += 1;
+    let cell_id = tid(*counter);
+    let inner = if levels <= 1 {
+        *counter += 1;
+        paragraph_block(tid(*counter))
+    } else {
+        nested_table(levels - 1, counter)
+    };
+    BlockNode::Table(Table {
+        id: table_id,
+        grid: Vec::new(),
+        properties: TableProperties::default(),
+        rows: vec![TableRow {
+            id: row_id,
+            properties: TableRowProperties::default(),
+            cells: vec![cell(cell_id, TableCellProperties::default(), vec![inner])],
+        }],
+    })
+}
+
+#[test]
+fn deep_table_inside_a_block_content_control_validates() {
+    // Regression (review-fix 1): a block sdt restarts the table-depth budget
+    // (matching the importer's fresh table stack), so a full-depth table tower
+    // INSIDE a control that itself sits in a table cell does not sum past
+    // MAX_TABLE_DEPTH and reject the whole document.
+    let mut counter = 100;
+    let tower = nested_table(MAX_TABLE_DEPTH, &mut counter);
+    let sdt = block_sdt(tid(1), SdtProperties::default(), vec![tower]);
+    let outer = BlockNode::Table(Table {
+        id: tid(2),
+        grid: Vec::new(),
+        properties: TableProperties::default(),
+        rows: vec![TableRow {
+            id: tid(3),
+            properties: TableRowProperties::default(),
+            cells: vec![cell(tid(4), TableCellProperties::default(), vec![sdt])],
+        }],
+    });
+    assert!(table_document(vec![outer]).is_ok());
+}

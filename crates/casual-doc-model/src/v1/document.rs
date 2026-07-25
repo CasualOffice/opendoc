@@ -407,25 +407,55 @@ impl Document {
 
     fn validate_body(&self) -> Result<(), ModelError> {
         for block in &self.body {
-            self.validate_block(block, 0, 0)?;
+            self.validate_block(block, 0, 0, 0)?;
         }
         Ok(())
     }
 
-    /// Validates one block, recursing through table cells and text boxes.
-    /// `table_depth` bounds table nesting; `textbox_depth` bounds text-box nesting.
+    /// Validates one block, recursing through table cells, text boxes, and content
+    /// controls. `table_depth` bounds table nesting; `textbox_depth` bounds
+    /// text-box nesting; `sdt_depth` bounds content-control (`w:sdt`) nesting.
     fn validate_block(
         &self,
         block: &BlockNode,
         table_depth: u32,
         textbox_depth: u32,
+        sdt_depth: u32,
     ) -> Result<(), ModelError> {
         match block {
             BlockNode::Paragraph(paragraph) => {
                 self.check_paragraph_property_refs(&paragraph.properties)?;
-                self.validate_inlines(&paragraph.inlines, paragraph.id, false, textbox_depth, 0)?;
+                self.validate_inlines(
+                    &paragraph.inlines,
+                    paragraph.id,
+                    false,
+                    textbox_depth,
+                    0,
+                    sdt_depth,
+                )?;
             }
-            BlockNode::Table(table) => self.validate_table(table, table_depth, textbox_depth)?,
+            BlockNode::Table(table) => {
+                self.validate_table(table, table_depth, textbox_depth, sdt_depth)?
+            }
+            BlockNode::Sdt(sdt) => {
+                if sdt_depth + 1 > MAX_SDT_DEPTH {
+                    return Err(ModelError::SdtNestingTooDeep(sdt.id));
+                }
+                if sdt.blocks.is_empty() {
+                    return Err(ModelError::EmptySdt(sdt.id));
+                }
+                check_sdt_properties(&sdt.properties)?;
+                // A block sdt's content builds in a fresh block container in the
+                // importer (a suspended frame with its own table stack), so the
+                // table budget restarts at 0 here — threading the enclosing
+                // `table_depth` would reject deep tables inside an sdt that the
+                // importer accepts and fail the whole import. The text-box budget
+                // passes through (an sdt is transparent to it); `sdt_depth` bounds
+                // this recursion.
+                for nested in &sdt.blocks {
+                    self.validate_block(nested, 0, textbox_depth, sdt_depth + 1)?;
+                }
+            }
         }
         Ok(())
     }
@@ -435,6 +465,7 @@ impl Document {
         table: &Table,
         table_depth: u32,
         textbox_depth: u32,
+        sdt_depth: u32,
     ) -> Result<(), ModelError> {
         if table_depth + 1 > MAX_TABLE_DEPTH {
             return Err(ModelError::TableNestingTooDeep(table.id));
@@ -472,7 +503,7 @@ impl Document {
                 check_borders(&cell.properties.borders, "table.cell.borders")?;
                 check_margins(&cell.properties.margins, "table.cell.margins")?;
                 for nested in &cell.blocks {
-                    self.validate_block(nested, table_depth + 1, textbox_depth)?;
+                    self.validate_block(nested, table_depth + 1, textbox_depth, sdt_depth)?;
                 }
             }
         }
@@ -487,7 +518,9 @@ impl Document {
     /// enclosing text-box nesting; a text box's blocks restart the table budget.
     /// `revision_depth` bounds tracked-change (`w:ins`/`w:del`) wrapper nesting; a
     /// revision is transparent to `in_wrapper` (it neither imposes nor clears the
-    /// leaf-only rule), so only nested revisions bump it.
+    /// leaf-only rule), so only nested revisions bump it. `sdt_depth` bounds
+    /// content-control (`w:sdt`) nesting; an inline sdt is likewise transparent to
+    /// `in_wrapper`, so only nested sdts bump it.
     fn validate_inlines(
         &self,
         inlines: &[InlineNode],
@@ -495,6 +528,7 @@ impl Document {
         in_wrapper: bool,
         textbox_depth: u32,
         revision_depth: u32,
+        sdt_depth: u32,
     ) -> Result<(), ModelError> {
         let mut previous_run_properties: Option<&RunProperties> = None;
         for inline in inlines {
@@ -547,6 +581,7 @@ impl Document {
                         true,
                         textbox_depth,
                         revision_depth,
+                        sdt_depth,
                     )?;
                     previous_run_properties = None;
                 }
@@ -567,6 +602,7 @@ impl Document {
                         true,
                         textbox_depth,
                         revision_depth,
+                        sdt_depth,
                     )?;
                     previous_run_properties = None;
                 }
@@ -583,7 +619,7 @@ impl Document {
                     // here would reject documents the importer accepts and fail the
                     // whole import. Text-box nesting bounds the recursion instead.
                     for block in &text_box.blocks {
-                        self.validate_block(block, 0, textbox_depth + 1)?;
+                        self.validate_block(block, 0, textbox_depth + 1, sdt_depth)?;
                     }
                     previous_run_properties = None;
                 }
@@ -635,6 +671,29 @@ impl Document {
                         in_wrapper,
                         textbox_depth,
                         revision_depth + 1,
+                        sdt_depth,
+                    )?;
+                    previous_run_properties = None;
+                }
+                InlineNode::Sdt(sdt) => {
+                    if sdt_depth + 1 > MAX_SDT_DEPTH {
+                        return Err(ModelError::SdtNestingTooDeep(sdt.id));
+                    }
+                    if sdt.inlines.is_empty() {
+                        return Err(ModelError::EmptySdt(sdt.id));
+                    }
+                    check_sdt_properties(&sdt.properties)?;
+                    // An inline sdt is a transparent range wrapper (like a
+                    // revision): `in_wrapper` passes through unchanged (it may wrap
+                    // a hyperlink/field and may itself sit inside one), and only
+                    // nested sdts bump `sdt_depth`.
+                    self.validate_inlines(
+                        &sdt.inlines,
+                        sdt.id,
+                        in_wrapper,
+                        textbox_depth,
+                        revision_depth,
+                        sdt_depth + 1,
                     )?;
                     previous_run_properties = None;
                 }
@@ -669,12 +728,12 @@ impl Document {
     fn validate_notes(&self) -> Result<(), ModelError> {
         for (_, note) in self.definitions.footnotes.iter() {
             for block in &note.blocks {
-                self.validate_block(block, 0, 0)?;
+                self.validate_block(block, 0, 0, 0)?;
             }
         }
         for (_, note) in self.definitions.endnotes.iter() {
             for block in &note.blocks {
-                self.validate_block(block, 0, 0)?;
+                self.validate_block(block, 0, 0, 0)?;
             }
         }
         Ok(())
@@ -690,7 +749,7 @@ impl Document {
             .chain(self.definitions.footers.iter())
         {
             for block in &header_footer.blocks {
-                self.validate_block(block, 0, 0)?;
+                self.validate_block(block, 0, 0, 0)?;
             }
         }
         Ok(())
@@ -707,7 +766,7 @@ impl Document {
                 check_domain(!date.is_empty() && date.len() <= 64, "comment.date")?;
             }
             for block in &comment.blocks {
-                self.validate_block(block, 0, 0)?;
+                self.validate_block(block, 0, 0, 0)?;
             }
         }
         Ok(())
@@ -804,6 +863,11 @@ fn accumulate_block_limits(
                 }
             }
         }
+        BlockNode::Sdt(sdt) => {
+            for nested in &sdt.blocks {
+                accumulate_block_limits(nested, limits, blocks, scalar_values)?;
+            }
+        }
     }
     Ok(())
 }
@@ -853,6 +917,11 @@ fn accumulate_inline_limits(
                 accumulate_inline_limits(child, limits, blocks, scalar_values)?;
             }
         }
+        InlineNode::Sdt(sdt) => {
+            for child in &sdt.inlines {
+                accumulate_inline_limits(child, limits, blocks, scalar_values)?;
+            }
+        }
         InlineNode::Tab(_)
         | InlineNode::Break(_)
         | InlineNode::Drawing(_)
@@ -893,6 +962,12 @@ fn record_block_ids(block: &BlockNode, ids: &mut BTreeSet<NodeId>) -> Result<(),
                 }
             }
         }
+        BlockNode::Sdt(sdt) => {
+            insert_id(ids, sdt.id)?;
+            for nested in &sdt.blocks {
+                record_block_ids(nested, ids)?;
+            }
+        }
     }
     Ok(())
 }
@@ -922,6 +997,11 @@ fn record_inline_ids(inline: &InlineNode, ids: &mut BTreeSet<NodeId>) -> Result<
                 record_inline_ids(child, ids)?;
             }
         }
+        InlineNode::Sdt(sdt) => {
+            for child in &sdt.inlines {
+                record_inline_ids(child, ids)?;
+            }
+        }
         _ => {}
     }
     Ok(())
@@ -938,6 +1018,22 @@ fn check_hyperlink_target(target: &HyperlinkTarget) -> Result<(), ModelError> {
             "hyperlink.internal.anchor",
         ),
     }
+}
+
+/// Validates a content control's typed properties: `alias`/`tag` are non-empty
+/// and at most 255 bytes; the retained producer `control_id` is non-empty and at
+/// most 64 bytes (its opaque grouping-key bound, matching the importer filter).
+fn check_sdt_properties(properties: &SdtProperties) -> Result<(), ModelError> {
+    if let Some(alias) = &properties.alias {
+        check_domain(!alias.is_empty() && alias.len() <= 255, "sdt.alias")?;
+    }
+    if let Some(tag) = &properties.tag {
+        check_domain(!tag.is_empty() && tag.len() <= 255, "sdt.tag")?;
+    }
+    if let Some(control_id) = &properties.control_id {
+        check_domain(!control_id.is_empty() && control_id.len() <= 64, "sdt.id")?;
+    }
+    Ok(())
 }
 
 fn check_domain(condition: bool, property: &'static str) -> Result<(), ModelError> {

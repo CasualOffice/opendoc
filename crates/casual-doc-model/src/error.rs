@@ -121,6 +121,10 @@ pub enum ModelError {
     RevisionNestingTooDeep(NodeId),
     /// A bookmark marker's reference did not resolve (v1).
     DanglingBookmarkRef(NodeId),
+    /// A content control (w:sdt) had no content (v1).
+    EmptySdt(NodeId),
+    /// A content control nested deeper than the supported bound (v1).
+    SdtNestingTooDeep(NodeId),
 }
 
 impl fmt::Display for ModelError {
@@ -246,6 +250,13 @@ impl fmt::Display for ModelError {
             }
             Self::DanglingBookmarkRef(id) => {
                 write!(formatter, "bookmark reference {id} does not resolve")
+            }
+            Self::EmptySdt(id) => write!(formatter, "content control {id} has no content"),
+            Self::SdtNestingTooDeep(id) => {
+                write!(
+                    formatter,
+                    "content control {id} nests deeper than the supported bound"
+                )
             }
         }
     }

@@ -118,6 +118,7 @@ fn push_blocks_text(blocks: &[BlockNode], out: &mut String) {
                     }
                 }
             }
+            BlockNode::Sdt(sdt) => push_blocks_text(&sdt.blocks, out),
         }
     }
 }
@@ -155,6 +156,13 @@ fn push_inline_text(inline: &InlineNode, out: &mut String) {
         InlineNode::CommentReference(_) => {}
         // A bookmark marker is a zero-width range anchor with no in-flow text.
         InlineNode::BookmarkStart(_) | InlineNode::BookmarkEnd(_) => {}
+        // A content control is a transparent wrapper; its wrapped runs are the
+        // visible text, so recurse into them.
+        InlineNode::Sdt(sdt) => {
+            for child in &sdt.inlines {
+                push_inline_text(child, out);
+            }
+        }
     }
 }
 

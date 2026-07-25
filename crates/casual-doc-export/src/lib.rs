@@ -90,6 +90,9 @@ mod tests {
                 InlineNode::TextBox(text_box) => {
                     return walk_blocks(&text_box.blocks, predicate);
                 }
+                InlineNode::Sdt(sdt) => {
+                    return sdt.inlines.iter().any(|child| walk(child, predicate));
+                }
                 _ => {}
             }
             false
@@ -108,6 +111,7 @@ mod tests {
                         .iter()
                         .any(|cell| walk_blocks(&cell.blocks, predicate))
                 }),
+                BlockNode::Sdt(sdt) => walk_blocks(&sdt.blocks, predicate),
             })
         }
         walk_blocks(document.body(), predicate)
@@ -175,7 +179,7 @@ mod tests {
             .iter()
             .find_map(|block| match block {
                 BlockNode::Table(table) => Some(table),
-                BlockNode::Paragraph(_) => None,
+                BlockNode::Paragraph(_) | BlockNode::Sdt(_) => None,
             })
             .expect("a table in the body")
     }
