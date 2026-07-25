@@ -15,6 +15,7 @@ dependencies = [
  "casual-doc-import",
  "casual-doc-model",
  "casual-doc-ooxml",
+ "quick-xml",
  "zip",
 ]
 
