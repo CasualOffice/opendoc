@@ -723,6 +723,34 @@ pub struct RunProperties {
     /// Language tags (`w:lang`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language: Option<Language>,
+    /// Outline (hollow) effect (`w:outline`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outline: Option<bool>,
+    /// Shadow effect (`w:shadow`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shadow: Option<bool>,
+    /// Embossed effect (`w:emboss`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub emboss: Option<bool>,
+    /// Imprint (engrave) effect (`w:imprint`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub imprint: Option<bool>,
+    /// Right-to-left run (`w:rtl`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rtl: Option<bool>,
+    /// Snap to the document grid (`w:snapToGrid`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snap_to_grid: Option<bool>,
+    /// Hidden only when the paragraph mark is hidden (`w:specVanish`), distinct
+    /// from `hidden` (`w:vanish`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spec_vanish: Option<bool>,
+    /// Run border (`w:bdr`), a single border edge.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub border: Option<BorderEdge>,
+    /// Run background shading (`w:shd`).
+    #[serde(default, skip_serializing_if = "Shading::is_empty")]
+    pub shading: Shading,
 }
 
 /// Run language tags (`w:lang`). Each tag is a producer-written language string

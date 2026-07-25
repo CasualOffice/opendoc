@@ -43,6 +43,13 @@ pub(crate) fn apply_run_property(
         b"vanish" => properties.hidden = Some(is_true(value.as_deref())),
         b"webHidden" => properties.web_hidden = Some(is_true(value.as_deref())),
         b"dstrike" => properties.double_strike = Some(is_true(value.as_deref())),
+        b"outline" => properties.outline = Some(is_true(value.as_deref())),
+        b"shadow" => properties.shadow = Some(is_true(value.as_deref())),
+        b"emboss" => properties.emboss = Some(is_true(value.as_deref())),
+        b"imprint" => properties.imprint = Some(is_true(value.as_deref())),
+        b"rtl" => properties.rtl = Some(is_true(value.as_deref())),
+        b"snapToGrid" => properties.snap_to_grid = Some(is_true(value.as_deref())),
+        b"specVanish" => properties.spec_vanish = Some(is_true(value.as_deref())),
         // Fonts: each slot prefers its theme attr, else its named attr; `@hint`
         // is modeled directly. Consumed when ANY slot or a recognized hint
         // resolves; an `rFonts` carrying only unmodeled detail (e.g. an unknown

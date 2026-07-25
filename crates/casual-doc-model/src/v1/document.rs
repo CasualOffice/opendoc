@@ -530,6 +530,18 @@ impl Document {
                 check_domain(!tag.is_empty() && tag.len() <= 85, "run.language")?;
             }
         }
+        if let Some(edge) = &properties.border {
+            check_domain(
+                !edge.style.is_empty() && edge.style.len() <= 32,
+                "run.border",
+            )?;
+            if let Some(size) = edge.size_eighth_points {
+                check_domain(size <= 1024, "run.border")?;
+            }
+            if let Some(space) = edge.space_points {
+                check_domain(space <= 31, "run.border")?;
+            }
+        }
         Ok(())
     }
 
