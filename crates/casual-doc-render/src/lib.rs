@@ -236,6 +236,18 @@ impl GlyphSource for SingleFontSource<'_> {
     }
 }
 
+/// A [`GlyphSource`] over the layout crate's bundled face set — serves the right
+/// Roboto face (regular/bold/italic/bold-italic) for a [`FontId`], matching the
+/// face the shaper resolved.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct BundledFontSource;
+
+impl GlyphSource for BundledFontSource {
+    fn font_data(&self, font: FontId) -> Option<&[u8]> {
+        Some(casual_doc_layout::fonts::face_bytes(font))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
