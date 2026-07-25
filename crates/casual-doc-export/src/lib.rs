@@ -677,6 +677,27 @@ mod semantic_tests {
     }
 
     #[test]
+    fn section_geometry_survives_the_semantic_round_trip() {
+        // A body-level w:sectPr (page size, margins, columns) — the writer
+        // emitted none before, so a section was silently dropped on write.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:r><w:t>x</w:t></w:r></w:p>
+            <w:sectPr>
+                <w:pgSz w:w="12240" w:h="15840"/>
+                <w:pgMar w:top="1440" w:bottom="1440" w:start="1800" w:end="1800"/>
+                <w:cols w:num="2"/>
+            </w:sectPr>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        assert_eq!(m1.definitions().sections.len(), 1);
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(m1, m2, "section geometry survives write -> reopen");
+    }
+
+    #[test]
     fn all_run_properties_survive_the_semantic_round_trip() {
         // Every modeled run property (toggles on AND off, the value-carrying
         // vocabularies, the typographic metrics, and w:lang's three tags) must

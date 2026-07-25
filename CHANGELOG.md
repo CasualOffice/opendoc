@@ -36,6 +36,10 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Added
 
+- Semantic DOCX writer now emits the body `w:sectPr` page geometry (page size,
+  margins, column count) — a section was previously silently dropped on write.
+  Proven by a fixed-point round-trip. Header/footer references land in a
+  follow-up slice.
 - Semantic DOCX writer now emits footnotes/endnotes and comments: the note and
   comment definition parts (`footnotes.xml`, `endnotes.xml`, `comments.xml`,
   the latter with author/initials/date) are serialized back with ids derived
