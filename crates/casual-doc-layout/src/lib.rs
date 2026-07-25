@@ -26,6 +26,7 @@ pub mod display;
 pub mod fonts;
 pub mod model;
 pub mod page;
+pub mod paginate;
 pub mod shape;
 pub mod text;
 pub mod units;
