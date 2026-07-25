@@ -208,6 +208,27 @@ impl Document {
                 (1..=64).contains(&section.columns.count),
                 "section.column_count",
             )?;
+            if let Some(space) = section.columns.space_twips {
+                check_domain((0..=31_680).contains(&space), "section.column_space")?;
+            }
+            if let Some(format) = &section.page_numbering.format {
+                check_domain(
+                    !format.is_empty() && format.len() <= 32,
+                    "section.page_numbering.format",
+                )?;
+            }
+            if let Some(start) = section.page_numbering.start {
+                check_domain(
+                    (0..=1_000_000).contains(&start),
+                    "section.page_numbering.start",
+                )?;
+            }
+            for value in [section.doc_grid.line_pitch, section.doc_grid.char_space]
+                .into_iter()
+                .flatten()
+            {
+                check_domain((0..=31_680).contains(&value), "section.doc_grid")?;
+            }
             for header in &section.headers {
                 if !self.definitions.headers.contains_key(&header.reference) {
                     return Err(ModelError::DanglingHeaderFooterRef(

@@ -1625,9 +1625,18 @@ fn valid_section(
             start_twips: 1_440,
             end_twips: 1_440,
         },
-        columns: SectionColumns { count: 1 },
+        columns: SectionColumns {
+            count: 1,
+            space_twips: None,
+            separator: None,
+        },
         headers,
         footers,
+        section_type: None,
+        title_page: None,
+        vertical_alignment: None,
+        page_numbering: PageNumbering::default(),
+        doc_grid: DocGrid::default(),
     }
 }
 
