@@ -1054,8 +1054,26 @@ impl BodyParser<'_> {
             b"imagedata" if self.pict_depth > 0 && self.pending_embed.is_none() => {
                 self.pending_embed = attribute_value(element, b"id");
             }
-            // Only a true body-level `w:sectPr` is a document section; a `sectPr`
-            // inside a text box (frames non-empty), a notes part, or a
+            // A `w:sectPr` nested in a paragraph's `w:pPr` marks the END of a
+            // section: this paragraph is the last of that section. It is a real
+            // document section (same body/frame/note/hf guards as the body-level
+            // one), captured here and linked to the paragraph on `</w:sectPr>`.
+            // The mark/run `rPr` depth guards keep a `sectPr`-like tag inside a
+            // run's properties from being mistaken for a section.
+            b"sectPr"
+                if self.in_body
+                    && self.frames.is_empty()
+                    && self.note_container.is_none()
+                    && self.hf_root.is_none()
+                    && self.paragraph_open
+                    && self.ppr_depth > 0
+                    && self.mark_rpr_depth == 0
+                    && self.rpr_depth == 0 =>
+            {
+                self.section = Some(SectionAccumulator::default());
+            }
+            // Only a true body-level `w:sectPr` is the final document section; a
+            // `sectPr` inside a text box (frames non-empty), a notes part, or a
             // header/footer part is not, so it is reported instead of silently
             // building a phantom/discarded section (which would also burn an id).
             b"sectPr"
@@ -1533,7 +1551,13 @@ impl BodyParser<'_> {
             }
             b"sectPr" => {
                 if let Some(accumulator) = self.section.take() {
-                    self.build_section(accumulator)?;
+                    let id = self.build_section(accumulator)?;
+                    // A section closed while a paragraph's `pPr` is still open is a
+                    // per-paragraph break: link it to the paragraph. The body-level
+                    // section (no paragraph open) is just pushed to `sections`.
+                    if self.paragraph_open && self.ppr_depth > 0 {
+                        self.paragraph_properties.section_break = Some(id);
+                    }
                 }
             }
             b"t" | b"delText" if self.in_text => {
@@ -1854,7 +1878,7 @@ impl BodyParser<'_> {
         }
     }
 
-    fn build_section(&mut self, accumulator: SectionAccumulator) -> Result<(), ImportError> {
+    fn build_section(&mut self, accumulator: SectionAccumulator) -> Result<SectionId, ImportError> {
         let id = SectionId::new(self.next_id()?);
         let page_size = PageSize {
             width_twips: accumulator.page_width.unwrap_or(12_240).clamp(1, 31_680),
@@ -1877,7 +1901,7 @@ impl BodyParser<'_> {
             headers: accumulator.headers,
             footers: accumulator.footers,
         });
-        Ok(())
+        Ok(id)
     }
 
     /// Enters a text box: allocate its id (document order), then suspend the

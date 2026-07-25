@@ -415,6 +415,16 @@ impl Document {
                 return Err(ModelError::DanglingStyleRef(style.node_id()));
             }
         }
+        if let Some(section) = properties.section_break {
+            if !self
+                .definitions
+                .sections
+                .iter()
+                .any(|boundary| boundary.id == section)
+            {
+                return Err(ModelError::DanglingSectionRef(section.node_id()));
+            }
+        }
         if let Some(numbering) = &properties.numbering {
             self.resolve_numbering_level(numbering)?;
         }

@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{BorderEdge, NumberingInstanceId, Shading, StyleId};
+use super::{BorderEdge, NumberingInstanceId, SectionId, Shading, StyleId};
 
 /// A paragraph border set (`w:pBdr`); any subset of edges. Reuses the shared
 /// `BorderEdge` value type.
@@ -570,6 +570,12 @@ pub struct ParagraphProperties {
     /// Custom tab stops (`w:tabs`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tabs: Vec<TabStop>,
+    /// This paragraph ends the referenced section: its `w:pPr` carries a nested
+    /// `w:sectPr` whose geometry lives in `Definitions.sections`. The final
+    /// (body-level) section is the trailing `sections` entry that no paragraph
+    /// references. Additive: omitted when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section_break: Option<SectionId>,
 }
 
 /// Run vertical alignment (`w:vertAlign`).
