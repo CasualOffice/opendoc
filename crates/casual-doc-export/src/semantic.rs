@@ -2021,6 +2021,13 @@ fn write_run_properties(
         (properties.small_caps, "w:smallCaps"),
         (properties.hidden, "w:vanish"),
         (properties.web_hidden, "w:webHidden"),
+        (properties.outline, "w:outline"),
+        (properties.shadow, "w:shadow"),
+        (properties.emboss, "w:emboss"),
+        (properties.imprint, "w:imprint"),
+        (properties.snap_to_grid, "w:snapToGrid"),
+        (properties.rtl, "w:rtl"),
+        (properties.spec_vanish, "w:specVanish"),
     ] {
         if let Some(on) = value {
             let mut el = start(name);
@@ -2054,6 +2061,10 @@ fn write_run_properties(
         el.push_attribute(("w:val", size.to_string().as_str()));
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
+    if let Some(edge) = &properties.border {
+        write_border_edge(w, "w:bdr", edge)?;
+    }
+    write_shading(w, &properties.shading)?;
     if let Some(alignment) = properties.vertical_alignment {
         let mut el = start("w:vertAlign");
         el.push_attribute(("w:val", vertical_alignment_token(alignment)));

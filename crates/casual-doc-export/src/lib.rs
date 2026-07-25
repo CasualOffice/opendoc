@@ -1174,6 +1174,27 @@ mod semantic_tests {
     }
 
     #[test]
+    fn new_run_properties_survive_the_semantic_round_trip() {
+        // The additive rPr coverage: the CT_OnOff effect toggles (on AND an
+        // explicit off via w:val="0"), rtl/snapToGrid/specVanish, and the two
+        // complex children w:bdr (a border edge) and w:shd (fill).
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:r><w:rPr>
+                <w:outline/><w:shadow w:val="0"/><w:emboss/><w:imprint/>
+                <w:snapToGrid w:val="0"/><w:rtl/><w:specVanish/>
+                <w:bdr w:val="single" w:sz="8" w:color="FF0000" w:space="4"/>
+                <w:shd w:val="clear" w:color="auto" w:fill="00FF00"/>
+            </w:rPr><w:t>x</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(m1, m2, "every new run property survives write -> reopen");
+    }
+
+    #[test]
     fn standard_cstheme_spelling_is_captured_and_normalized() {
         // Real Word writes the complex-script theme slot as `w:cstheme` (all
         // lowercase — the one rFonts theme attribute that breaks the camelCase

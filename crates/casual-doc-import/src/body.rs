@@ -28,6 +28,11 @@ use crate::styles::Styles;
 use crate::tables::TableStack;
 
 /// A run/tab/break/drawing/hyperlink/field segment before ids and normalization.
+// `Run` is the largest and most common variant (it holds the full
+// `RunProperties`); boxing it would add a heap allocation per run on the hot
+// import path, so the size difference is accepted (mirrors the model's
+// `InlineNode`).
+#[allow(clippy::large_enum_variant)]
 enum Segment {
     Run {
         properties: RunProperties,
@@ -1312,6 +1317,16 @@ impl BodyParser<'_> {
             // `w:rPr` shd (a run property, left reported), and not a cell/table shd.
             b"shd" if self.ppr_depth > 0 && self.rpr_depth == 0 && self.mark_rpr_depth == 0 => {
                 self.paragraph_properties.shading.fill = self.shading_fill(element);
+            }
+            // Run border (`w:bdr`): a single edge directly on the run's `w:rPr`
+            // (not a `pBdr`-style container). Reuses the shared edge builder.
+            b"bdr" if self.rpr_depth > 0 => match self.build_border_edge(element) {
+                Some(edge) => self.run_properties.border = Some(edge),
+                None => self.reporter.report(b"bdr"),
+            },
+            // Run shading (`w:shd`): the same fill-only modeling as paragraph/cell.
+            b"shd" if self.rpr_depth > 0 => {
+                self.run_properties.shading.fill = self.shading_fill(element);
             }
             // A `w:tabs` container: its `w:tab` children are custom tab stops.
             b"tabs" if self.ppr_depth > 0 && self.mark_rpr_depth == 0 => self.in_tabs = true,

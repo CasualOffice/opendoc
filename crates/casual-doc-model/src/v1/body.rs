@@ -325,6 +325,14 @@ pub struct InlineSdt {
 }
 
 /// Inline content supported by schema v1.
+//
+// `Run` is by far the largest and the most common variant (it carries the full
+// `RunProperties`, which grows as run-property coverage expands). Boxing it (or
+// its properties) would shrink the enum but add a heap allocation on the hot
+// path — most inline nodes are runs — and it ripples across every
+// construction/match site and the public API; tracked with the same follow-up
+// as `BlockNode` so it can land as one focused change.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum InlineNode {
