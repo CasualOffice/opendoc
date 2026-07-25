@@ -172,7 +172,8 @@ floor for unmodeled long-tail constructs.
 | P1C-001 | `parley` line shaper (default `LineShaper`) | Claude Code | Done | Shape a styled paragraph → positioned lines (greedy UAX#14 break, bidi); behind the trait. |
 | P1C-002 | Font resolution MVP (bundled core set) | Claude Code | Planned | Deterministic bundled/subset fonts (`40-…`); `FontId` resolution for WASM determinism. |
 | P1C-003 | Run/paragraph properties in layout + `TabResolver` | Claude Code | Planned | Bold/italic/size/color/underline/strike, alignment/indent/spacing, DOCX tab stops. |
-| P1C-004 | Block/flow galley + first PNG (CPU raster) | Claude Code | Planned | `casual-doc-render` `tiny-skia` backend; visual-regression PNG vs LibreOffice reference (extends M-002). |
+| P1C-RENDER | CPU render backend + first pixels | Claude Code | Done | New `casual-doc-render`: executes the display list on a `tiny-skia` pixmap; glyph runs rasterized from real `skrifa` outlines of the same face the shaper used (`GlyphSource` seam). `compose_paragraph` (layout) turns a shaped `LineLayout` into a display list. End to end: model text -> parley shaping -> display list -> outlines -> PNG (verified: renders "OpenDoc layout engine", multi-run color + underline). WASM-clean. 2 tests + example. |
+| P1C-004 | Block/flow galley (model paragraph -> shaped fragments) | Claude Code | Next | Turn a v1 `Document` paragraph (runs + properties) into `StyledRun`s -> shape -> `BlockFragment`; then visual-regression PNG vs LibreOffice (extends M-002). |
 | P1D-001 | Single-section paginator | Claude Code | Planned | Page box + implicit overflow breaks → multi-page. |
 | P1D-002 | Break control (CSS-Break-3 mapped from DOCX) | Claude Code | Planned | Forced breaks, keepNext/keepLines/widow-orphan; page-break parity gate. |
 | P1D-003 | Tables across pages + footnotes | Claude Code | Planned | Row split, header repeat, cantSplit; footnote fixed-point placement. |
