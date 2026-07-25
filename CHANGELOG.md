@@ -10,6 +10,11 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Fixed
 
+- The semantic DOCX writer preserves a style's present-but-empty `w:pPr`/`w:rPr`:
+  a style whose paragraph/run properties reduce to the model default is now
+  emitted as an empty element so it re-imports as `Some(default)` rather than
+  `None` (the importer keys on tag presence). Also emits the `w:widowControl`
+  paragraph flag, previously dropped. (Found by adversarial review.)
 - The semantic DOCX writer now emits **every** modeled direct run property, not
   just bold/italic/strike/underline/color/size/fonts: `w:caps`, `w:smallCaps`,
   `w:vanish`, `w:webHidden`, `w:dstrike`, `w:vertAlign`, `w:highlight`, `w:em`,
@@ -36,10 +41,16 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Added
 
+- Semantic DOCX writer now emits headers and footers: each `HeaderFooter`
+  definition becomes a `word/headerN.xml`/`footerN.xml` part (with per-part
+  hyperlink rels), and the body `w:sectPr` gains the `w:headerReference`/
+  `w:footerReference` entries. The relationship id each reference uses is derived
+  from the `HeaderFooterId`, and parts are emitted in id order so the importer
+  (which keys headers/footers by relationship order) re-allocates matching ids.
+  Proven by a fixed-point round-trip.
 - Semantic DOCX writer now emits the body `w:sectPr` page geometry (page size,
   margins, column count) — a section was previously silently dropped on write.
-  Proven by a fixed-point round-trip. Header/footer references land in a
-  follow-up slice.
+  Proven by a fixed-point round-trip.
 - Semantic DOCX writer now emits footnotes/endnotes and comments: the note and
   comment definition parts (`footnotes.xml`, `endnotes.xml`, `comments.xml`,
   the latter with author/initials/date) are serialized back with ids derived
