@@ -136,6 +136,7 @@ struct ContentFrame {
     tcpr_depth: u32,
     tblpr_depth: u32,
     trpr_depth: u32,
+    pr_change_depth: u32,
     suppressed_tbl_depth: u32,
     segments: Vec<Segment>,
     blocks: Vec<BlockNode>,
@@ -245,6 +246,9 @@ struct BodyParser<'a> {
     /// their property children map into the right level.
     tblpr_depth: u32,
     trpr_depth: u32,
+    /// Depth of an open property-change tracked revision (`w:*PrChange`), whose
+    /// nested historical property container must not map over the current values.
+    pr_change_depth: u32,
     /// Depth of nested tables refused past `MAX_TABLE_DEPTH`; while non-zero the
     /// table structure is suppressed so it cannot corrupt the enclosing table.
     suppressed_tbl_depth: u32,
@@ -349,6 +353,7 @@ impl<'a> BodyParser<'a> {
             tcpr_depth: 0,
             tblpr_depth: 0,
             trpr_depth: 0,
+            pr_change_depth: 0,
             suppressed_tbl_depth: 0,
             segments: Vec::new(),
             blocks: Vec::new(),
@@ -621,6 +626,21 @@ impl BodyParser<'_> {
             });
         }
         match local {
+            // Property-change tracked revisions carry a nested copy of the
+            // PREVIOUS property container (e.g. `w:tcPrChange > w:tcPr`). Report
+            // the container and skip its entire subtree so the historical values
+            // are never mapped over the current ones. The counter is incremented
+            // here (before the skip catch) so nested changes still balance.
+            b"pPrChange" | b"rPrChange" | b"tblPrChange" | b"trPrChange" | b"tcPrChange"
+            | b"sectPrChange" | b"tblGridChange" | b"numberingChange"
+                if self.in_document =>
+            {
+                self.pr_change_depth += 1;
+                self.reporter.report(local);
+            }
+            // Inside a property-change revision: ignore every element (its
+            // historical properties are reported via the container above).
+            _ if self.pr_change_depth > 0 => {}
             b"document" => self.in_document = true,
             b"body"
                 if self.in_document && self.note_container.is_none() && self.hf_root.is_none() =>
@@ -1127,6 +1147,18 @@ impl BodyParser<'_> {
             return Ok(());
         }
         match local {
+            // Close of a property-change revision container (balances the on_start
+            // increment). Placed BEFORE the skip catch so it is not swallowed.
+            b"pPrChange" | b"rPrChange" | b"tblPrChange" | b"trPrChange" | b"tcPrChange"
+            | b"sectPrChange" | b"tblGridChange" | b"numberingChange"
+                if self.pr_change_depth > 0 =>
+            {
+                self.pr_change_depth = self.pr_change_depth.saturating_sub(1);
+            }
+            // Inside a property-change revision: swallow every close so the nested
+            // historical property containers never decrement the real depth
+            // counters (they never incremented them — their opens were skipped).
+            _ if self.pr_change_depth > 0 => {}
             b"document" => self.in_document = false,
             b"body" => self.in_body = false,
             b"AlternateContent" => {
@@ -1302,7 +1334,12 @@ impl BodyParser<'_> {
             attribute_value(element, b"color").as_deref(),
             None | Some("auto")
         );
-        if !pattern_modeled || !pattern_color_default {
+        // A theme fill/color (`w:themeFill`/`w:themeColor`) carries a visible
+        // background we do not model as sRGB; report it so it is not silently
+        // lost (Word routinely emits `themeFill` without a duplicate `w:fill`).
+        let has_theme = attribute_value(element, b"themeFill").is_some()
+            || attribute_value(element, b"themeColor").is_some();
+        if !pattern_modeled || !pattern_color_default || has_theme {
             self.reporter.report(b"shd");
         }
         attribute_value(element, b"fill")
@@ -1418,6 +1455,7 @@ impl BodyParser<'_> {
             tcpr_depth: std::mem::take(&mut self.tcpr_depth),
             tblpr_depth: std::mem::take(&mut self.tblpr_depth),
             trpr_depth: std::mem::take(&mut self.trpr_depth),
+            pr_change_depth: std::mem::take(&mut self.pr_change_depth),
             suppressed_tbl_depth: std::mem::take(&mut self.suppressed_tbl_depth),
             segments: std::mem::take(&mut self.segments),
             blocks: std::mem::take(&mut self.blocks),
@@ -1469,6 +1507,7 @@ impl BodyParser<'_> {
         self.tcpr_depth = frame.tcpr_depth;
         self.tblpr_depth = frame.tblpr_depth;
         self.trpr_depth = frame.trpr_depth;
+        self.pr_change_depth = frame.pr_change_depth;
         self.suppressed_tbl_depth = frame.suppressed_tbl_depth;
         self.segments = frame.segments;
         self.blocks = frame.blocks;

@@ -8,6 +8,15 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ## Unreleased
 
+### Fixed
+
+- Property-change tracked revisions (`w:tcPrChange`, `w:tblPrChange`,
+  `w:trPrChange`, `w:pPrChange`, `w:rPrChange`, ...) no longer let their nested
+  *historical* (pre-edit) property container overwrite the current table/row/
+  cell/paragraph/run properties; the whole change subtree is reported and
+  skipped. Theme-based shading (`w:themeFill`/`w:themeColor`) is now reported
+  rather than silently dropped.
+
 ### Changed
 
 - Licensed the entire project under Apache License 2.0.
