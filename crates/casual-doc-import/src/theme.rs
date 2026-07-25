@@ -78,32 +78,32 @@ fn on_start(
         b"majorFont" if *in_scheme => *slot = Some(Slot::Major),
         b"minorFont" if *in_scheme => *slot = Some(Slot::Minor),
         b"latin" | b"ea" | b"cs" => {
-            if let Some(slot) = *slot {
-                if *in_scheme {
-                    let entry = theme_entry(element);
-                    let collection = collection_mut(scheme, slot);
-                    match local {
-                        b"latin" => collection.latin = entry,
-                        b"ea" => collection.ea = entry,
-                        _ => collection.cs = entry,
-                    }
+            if let Some(slot) = *slot
+                && *in_scheme
+            {
+                let entry = theme_entry(element);
+                let collection = collection_mut(scheme, slot);
+                match local {
+                    b"latin" => collection.latin = entry,
+                    b"ea" => collection.ea = entry,
+                    _ => collection.cs = entry,
                 }
             }
         }
         b"font" => {
-            if let Some(slot) = *slot {
-                if *in_scheme {
-                    if let (Some(script), Some(typeface)) = (
-                        attribute_value(element, b"script"),
-                        attribute_value(element, b"typeface"),
-                    ) {
-                        if !script.is_empty() && script.len() <= 32 && typeface.len() <= 255 {
-                            collection_mut(scheme, slot)
-                                .script_overrides
-                                .push(ScriptFont { script, typeface });
-                        }
-                    }
-                }
+            if let Some(slot) = *slot
+                && *in_scheme
+                && let (Some(script), Some(typeface)) = (
+                    attribute_value(element, b"script"),
+                    attribute_value(element, b"typeface"),
+                )
+                && !script.is_empty()
+                && script.len() <= 32
+                && typeface.len() <= 255
+            {
+                collection_mut(scheme, slot)
+                    .script_overrides
+                    .push(ScriptFont { script, typeface });
             }
         }
         _ => {}

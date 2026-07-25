@@ -392,10 +392,10 @@ impl Document {
         for (_, abstract_num) in self.definitions.abstract_numbering.iter() {
             for level in &abstract_num.levels {
                 check_domain(level.start <= 32_767, "numbering.level.start")?;
-                if let Some(style) = level.style_ref {
-                    if !self.style_exists(style) {
-                        return Err(ModelError::DanglingStyleRef(style.node_id()));
-                    }
+                if let Some(style) = level.style_ref
+                    && !self.style_exists(style)
+                {
+                    return Err(ModelError::DanglingStyleRef(style.node_id()));
                 }
             }
         }
@@ -431,20 +431,19 @@ impl Document {
         &self,
         properties: &ParagraphProperties,
     ) -> Result<(), ModelError> {
-        if let Some(style) = properties.style_ref {
-            if !self.style_exists(style) {
-                return Err(ModelError::DanglingStyleRef(style.node_id()));
-            }
+        if let Some(style) = properties.style_ref
+            && !self.style_exists(style)
+        {
+            return Err(ModelError::DanglingStyleRef(style.node_id()));
         }
-        if let Some(section) = properties.section_break {
-            if !self
+        if let Some(section) = properties.section_break
+            && !self
                 .definitions
                 .sections
                 .iter()
                 .any(|boundary| boundary.id == section)
-            {
-                return Err(ModelError::DanglingSectionRef(section.node_id()));
-            }
+        {
+            return Err(ModelError::DanglingSectionRef(section.node_id()));
         }
         if let Some(numbering) = &properties.numbering {
             self.resolve_numbering_level(numbering)?;
@@ -515,10 +514,10 @@ impl Document {
     }
 
     fn check_run_property_refs(&self, properties: &RunProperties) -> Result<(), ModelError> {
-        if let Some(style) = properties.style_ref {
-            if !self.style_exists(style) {
-                return Err(ModelError::DanglingStyleRef(style.node_id()));
-            }
+        if let Some(style) = properties.style_ref
+            && !self.style_exists(style)
+        {
+            return Err(ModelError::DanglingStyleRef(style.node_id()));
         }
         if let Some(size) = properties.size_half_points {
             check_domain((1..=65_534).contains(&size), "run.size_half_points")?;

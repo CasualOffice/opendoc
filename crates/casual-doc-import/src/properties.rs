@@ -146,10 +146,10 @@ fn font_slot(element: &BytesStart<'_>, named: &[u8], themes: &[&[u8]]) -> Option
     // `themes` lists the accepted attribute spellings in priority order (the cs
     // slot has two: the standard `w:cstheme` and the legacy `w:csTheme`).
     for theme in themes {
-        if let Some(value) = attribute_value(element, theme) {
-            if let Some(slot) = theme_font_ref(&value) {
-                return Some(FontRef::Theme(ThemeFont { slot }));
-            }
+        if let Some(value) = attribute_value(element, theme)
+            && let Some(slot) = theme_font_ref(&value)
+        {
+            return Some(FontRef::Theme(ThemeFont { slot }));
         }
     }
     attribute_value(element, named)
