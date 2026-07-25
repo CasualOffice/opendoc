@@ -1854,3 +1854,242 @@ fn revision_child_id_duplicating_the_wrapper_is_rejected() {
         Err(ModelError::DuplicateNodeId(_))
     ));
 }
+
+// ---- schema v1 bookmarks -------------------------------------------------
+
+fn bookmark_id(counter: u64) -> BookmarkId {
+    BookmarkId::new(tid(counter))
+}
+
+fn bookmark_paragraph(paragraph_id: NodeId, inlines: Vec<InlineNode>) -> BlockNode {
+    BlockNode::Paragraph(Paragraph {
+        id: paragraph_id,
+        properties: ParagraphProperties::default(),
+        inlines,
+    })
+}
+
+#[test]
+fn bookmark_pair_resolves_and_round_trips() {
+    let bm = bookmark_id(20);
+    let mut definitions = Definitions::default();
+    definitions.bookmarks.insert(
+        bm,
+        Bookmark {
+            name: "_Toc1".to_owned(),
+        },
+    );
+    let paragraph = bookmark_paragraph(
+        tid(1),
+        vec![
+            InlineNode::BookmarkStart(BookmarkStart {
+                id: tid(2),
+                bookmark: bm,
+            }),
+            run_inline(tid(3), "anchored"),
+            InlineNode::BookmarkEnd(BookmarkEnd {
+                id: tid(4),
+                bookmark: bm,
+            }),
+        ],
+    );
+    let document = Document::new(tid(99), vec![paragraph], definitions).unwrap();
+    let json = document.to_json().unwrap();
+    let reloaded = Document::from_json(&json, SnapshotLimits::default()).unwrap();
+    assert_eq!(document, reloaded);
+    assert_eq!(
+        document.definitions().bookmarks.get(&bm).unwrap().name,
+        "_Toc1"
+    );
+}
+
+#[test]
+fn empty_bookmarks_are_omitted_from_serialization() {
+    let document = Document::new(
+        tid(99),
+        vec![paragraph_block(tid(1))],
+        Definitions::default(),
+    )
+    .unwrap();
+    let json = String::from_utf8(document.to_json().unwrap()).unwrap();
+    assert!(!json.contains("bookmarks"));
+}
+
+#[test]
+fn dangling_bookmark_reference_is_rejected() {
+    let defined = bookmark_id(20);
+    let missing = bookmark_id(21);
+    let mut definitions = Definitions::default();
+    definitions.bookmarks.insert(
+        defined,
+        Bookmark {
+            name: "x".to_owned(),
+        },
+    );
+    let paragraph = bookmark_paragraph(
+        tid(1),
+        vec![InlineNode::BookmarkStart(BookmarkStart {
+            id: tid(2),
+            bookmark: missing,
+        })],
+    );
+    assert!(matches!(
+        Document::new(tid(99), vec![paragraph], definitions),
+        Err(ModelError::DanglingBookmarkRef(_))
+    ));
+}
+
+#[test]
+fn empty_bookmark_name_is_rejected() {
+    let bm = bookmark_id(20);
+    let mut definitions = Definitions::default();
+    definitions.bookmarks.insert(
+        bm,
+        Bookmark {
+            name: String::new(),
+        },
+    );
+    let paragraph = bookmark_paragraph(
+        tid(1),
+        vec![InlineNode::BookmarkStart(BookmarkStart {
+            id: tid(2),
+            bookmark: bm,
+        })],
+    );
+    assert!(matches!(
+        Document::new(tid(99), vec![paragraph], definitions),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "bookmark.name"
+        })
+    ));
+}
+
+#[test]
+fn oversized_bookmark_name_is_rejected() {
+    let bm = bookmark_id(20);
+    let mut definitions = Definitions::default();
+    definitions.bookmarks.insert(
+        bm,
+        Bookmark {
+            name: "a".repeat(256),
+        },
+    );
+    let paragraph = bookmark_paragraph(
+        tid(1),
+        vec![InlineNode::BookmarkStart(BookmarkStart {
+            id: tid(2),
+            bookmark: bm,
+        })],
+    );
+    assert!(matches!(
+        Document::new(tid(99), vec![paragraph], definitions),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "bookmark.name"
+        })
+    ));
+}
+
+#[test]
+fn bookmark_definition_id_colliding_with_a_node_is_rejected() {
+    // The bookmark definition id equals the start marker's own node id.
+    let bm = BookmarkId::new(tid(2));
+    let mut definitions = Definitions::default();
+    definitions.bookmarks.insert(
+        bm,
+        Bookmark {
+            name: "x".to_owned(),
+        },
+    );
+    let paragraph = bookmark_paragraph(
+        tid(1),
+        vec![InlineNode::BookmarkStart(BookmarkStart {
+            id: tid(2),
+            bookmark: bm,
+        })],
+    );
+    assert!(matches!(
+        Document::new(tid(99), vec![paragraph], definitions),
+        Err(ModelError::DuplicateNodeId(_))
+    ));
+}
+
+#[test]
+fn bookmark_marker_separates_equivalent_runs() {
+    // Two equal-property runs split by a marker must NOT be merge-flagged.
+    let bm = bookmark_id(20);
+    let mut definitions = Definitions::default();
+    definitions.bookmarks.insert(
+        bm,
+        Bookmark {
+            name: "x".to_owned(),
+        },
+    );
+    let paragraph = bookmark_paragraph(
+        tid(1),
+        vec![
+            run_inline(tid(2), "a"),
+            InlineNode::BookmarkStart(BookmarkStart {
+                id: tid(3),
+                bookmark: bm,
+            }),
+            run_inline(tid(4), "b"),
+        ],
+    );
+    assert!(Document::new(tid(99), vec![paragraph], definitions).is_ok());
+}
+
+#[test]
+fn lone_bookmark_start_validates() {
+    // Lax pairing: a start with no matching end is allowed.
+    let bm = bookmark_id(20);
+    let mut definitions = Definitions::default();
+    definitions.bookmarks.insert(
+        bm,
+        Bookmark {
+            name: "x".to_owned(),
+        },
+    );
+    let paragraph = bookmark_paragraph(
+        tid(1),
+        vec![
+            InlineNode::BookmarkStart(BookmarkStart {
+                id: tid(2),
+                bookmark: bm,
+            }),
+            run_inline(tid(3), "text"),
+        ],
+    );
+    assert!(Document::new(tid(99), vec![paragraph], definitions).is_ok());
+}
+
+#[test]
+fn bookmark_marker_inside_a_hyperlink_validates() {
+    let bm = bookmark_id(20);
+    let mut definitions = Definitions::default();
+    definitions.bookmarks.insert(
+        bm,
+        Bookmark {
+            name: "x".to_owned(),
+        },
+    );
+    let link = InlineNode::Hyperlink(Hyperlink {
+        id: tid(2),
+        target: HyperlinkTarget::Internal(InternalTarget {
+            anchor: "x".to_owned(),
+        }),
+        tooltip: None,
+        inlines: vec![
+            InlineNode::BookmarkStart(BookmarkStart {
+                id: tid(3),
+                bookmark: bm,
+            }),
+            run_inline(tid(4), "t"),
+            InlineNode::BookmarkEnd(BookmarkEnd {
+                id: tid(5),
+                bookmark: bm,
+            }),
+        ],
+    });
+    let paragraph = bookmark_paragraph(tid(1), vec![link]);
+    assert!(Document::new(tid(99), vec![paragraph], definitions).is_ok());
+}

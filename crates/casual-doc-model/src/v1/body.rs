@@ -2,7 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{BreakKind, CommentId, MediaId, NoteId, ParagraphProperties, RunProperties, Table};
+use super::{
+    BookmarkId, BreakKind, CommentId, MediaId, NoteId, ParagraphProperties, RunProperties, Table,
+};
 use crate::NodeId;
 
 /// OOXML `ST_PositiveCoordinate` upper bound, in English Metric Units (EMU).
@@ -216,6 +218,27 @@ pub struct Revision {
     pub inlines: Vec<InlineNode>,
 }
 
+/// The start marker of a bookmark range (`w:bookmarkStart`). A zero-width point;
+/// the range is the span to the `BookmarkEnd` sharing its `bookmark`.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BookmarkStart {
+    /// Stable identity (this marker's own id).
+    pub id: NodeId,
+    /// The bookmark this opens (resolves in `Definitions::bookmarks`).
+    pub bookmark: BookmarkId,
+}
+
+/// The end marker of a bookmark range (`w:bookmarkEnd`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BookmarkEnd {
+    /// Stable identity (this marker's own id).
+    pub id: NodeId,
+    /// The bookmark this closes (resolves in `Definitions::bookmarks`).
+    pub bookmark: BookmarkId,
+}
+
 /// Inline content supported by schema v1.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -240,6 +263,10 @@ pub enum InlineNode {
     CommentReference(CommentReference),
     /// A tracked-change (insertion/deletion) range wrapping inline content.
     Revision(Revision),
+    /// The start marker of a bookmark range.
+    BookmarkStart(BookmarkStart),
+    /// The end marker of a bookmark range.
+    BookmarkEnd(BookmarkEnd),
 }
 
 impl InlineNode {
@@ -257,6 +284,8 @@ impl InlineNode {
             Self::NoteReference(note) => note.id,
             Self::CommentReference(comment) => comment.id,
             Self::Revision(revision) => revision.id,
+            Self::BookmarkStart(node) => node.id,
+            Self::BookmarkEnd(node) => node.id,
         }
     }
 }

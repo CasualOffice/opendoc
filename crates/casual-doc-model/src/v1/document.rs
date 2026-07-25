@@ -97,6 +97,7 @@ impl Document {
         self.validate_notes()?;
         self.validate_headers_footers()?;
         self.validate_comments()?;
+        self.validate_bookmarks()?;
         self.validate_body()?;
         Ok(())
     }
@@ -217,6 +218,9 @@ impl Document {
             for block in &comment.blocks {
                 record_block_ids(block, &mut ids)?;
             }
+        }
+        for (id, _) in self.definitions.bookmarks.iter() {
+            insert_id(&mut ids, id.node_id())?;
         }
         for block in &self.body {
             record_block_ids(block, &mut ids)?;
@@ -634,6 +638,24 @@ impl Document {
                     )?;
                     previous_run_properties = None;
                 }
+                // Bookmark markers are inert leaves (like a tab): transparent to
+                // `in_wrapper`/`textbox_depth`/`revision_depth`. Each verifies its
+                // definition resolves and forms a hard merge boundary so two equal
+                // runs separated by a marker are not merged (position-preserving).
+                // Two arms, not an or-pattern: `BookmarkStart`/`BookmarkEnd` are
+                // distinct types, so one binding cannot cover both.
+                InlineNode::BookmarkStart(marker) => {
+                    if !self.definitions.bookmarks.contains_key(&marker.bookmark) {
+                        return Err(ModelError::DanglingBookmarkRef(marker.bookmark.node_id()));
+                    }
+                    previous_run_properties = None;
+                }
+                InlineNode::BookmarkEnd(marker) => {
+                    if !self.definitions.bookmarks.contains_key(&marker.bookmark) {
+                        return Err(ModelError::DanglingBookmarkRef(marker.bookmark.node_id()));
+                    }
+                    previous_run_properties = None;
+                }
                 InlineNode::Tab(_) | InlineNode::Break(_) => {
                     previous_run_properties = None;
                 }
@@ -687,6 +709,19 @@ impl Document {
             for block in &comment.blocks {
                 self.validate_block(block, 0, 0)?;
             }
+        }
+        Ok(())
+    }
+
+    /// Validates every bookmark definition's name domain. Marker-to-definition
+    /// integrity is checked in `validate_inlines`; internal-hyperlink anchor
+    /// resolution remains lax (forward/cross-part/well-known targets).
+    fn validate_bookmarks(&self) -> Result<(), ModelError> {
+        for (_, bookmark) in self.definitions.bookmarks.iter() {
+            check_domain(
+                !bookmark.name.is_empty() && bookmark.name.len() <= 255,
+                "bookmark.name",
+            )?;
         }
         Ok(())
     }
@@ -822,7 +857,9 @@ fn accumulate_inline_limits(
         | InlineNode::Break(_)
         | InlineNode::Drawing(_)
         | InlineNode::NoteReference(_)
-        | InlineNode::CommentReference(_) => {}
+        | InlineNode::CommentReference(_)
+        | InlineNode::BookmarkStart(_)
+        | InlineNode::BookmarkEnd(_) => {}
     }
     Ok(())
 }

@@ -2879,3 +2879,277 @@ fn nested_ruby_annotation_does_not_leak_base_text() {
     assert_eq!(text, "BASE");
     assert!(!text.contains("anno") && !text.contains("inner") && !text.contains("ib"));
 }
+
+// ---- bookmarks -----------------------------------------------------------
+
+fn bookmark_start(para: &Paragraph) -> Option<&casual_doc_model::v1::BookmarkStart> {
+    para.inlines.iter().find_map(|i| match i {
+        InlineNode::BookmarkStart(b) => Some(b),
+        _ => None,
+    })
+}
+
+fn bookmark_end(para: &Paragraph) -> Option<&casual_doc_model::v1::BookmarkEnd> {
+    para.inlines.iter().find_map(|i| match i {
+        InlineNode::BookmarkEnd(b) => Some(b),
+        _ => None,
+    })
+}
+
+#[test]
+fn inline_bookmark_pair_is_modeled() {
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p>
+            <w:bookmarkStart w:id="1" w:name="anchor"/>
+            <w:r><w:t>hello</w:t></w:r>
+            <w:bookmarkEnd w:id="1"/>
+        </w:p>
+    </w:body></w:document>"#;
+    let import = import(document);
+    let para = paragraph(&import, 0);
+    let start = bookmark_start(para).expect("start modeled");
+    let end = bookmark_end(para).expect("end modeled");
+    assert_eq!(start.bookmark, end.bookmark);
+    assert_eq!(import.document.definitions().bookmarks.len(), 1);
+    let bm = import
+        .document
+        .definitions()
+        .bookmarks
+        .get(&start.bookmark)
+        .expect("definition resolves");
+    assert_eq!(bm.name, "anchor");
+    // A modeled bookmark no longer appears in the report.
+    assert!(!features(&import).contains(&"bookmarkStart"));
+    assert!(!features(&import).contains(&"bookmarkEnd"));
+}
+
+#[test]
+fn bookmark_spanning_two_paragraphs_pairs_by_id() {
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:bookmarkStart w:id="1" w:name="span"/><w:r><w:t>a</w:t></w:r></w:p>
+        <w:p><w:r><w:t>b</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>
+    </w:body></w:document>"#;
+    let import = import(document);
+    let start = bookmark_start(paragraph(&import, 0)).expect("start in para 0");
+    let end = bookmark_end(paragraph(&import, 1)).expect("end in para 1");
+    assert_eq!(start.bookmark, end.bookmark);
+    assert_eq!(import.document.definitions().bookmarks.len(), 1);
+}
+
+#[test]
+fn internal_hyperlink_anchor_matching_a_bookmark_stays_lax() {
+    // A hyperlink whose anchor equals a bookmark name is modeled unchanged; no
+    // dangling-bookmark error and no spurious report (forward/lax resolution).
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p>
+            <w:bookmarkStart w:id="1" w:name="target"/>
+            <w:hyperlink w:anchor="target"><w:r><w:t>go</w:t></w:r></w:hyperlink>
+            <w:bookmarkEnd w:id="1"/>
+        </w:p>
+    </w:body></w:document>"#;
+    let import = import(document);
+    let para = paragraph(&import, 0);
+    let link = para.inlines.iter().find_map(|i| match i {
+        InlineNode::Hyperlink(l) => Some(l),
+        _ => None,
+    });
+    let link = link.expect("hyperlink modeled");
+    assert!(matches!(
+        &link.target,
+        HyperlinkTarget::Internal(t) if t.anchor == "target"
+    ));
+    assert!(bookmark_start(para).is_some());
+    assert!(!features(&import).contains(&"bookmarkStart"));
+    assert!(!features(&import).contains(&"bookmarkEnd"));
+}
+
+#[test]
+fn bookmark_inside_a_hyperlink_is_modeled_in_the_link() {
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p>
+            <w:hyperlink w:anchor="a">
+                <w:bookmarkStart w:id="1" w:name="inlink"/>
+                <w:r><w:t>go</w:t></w:r>
+                <w:bookmarkEnd w:id="1"/>
+            </w:hyperlink>
+        </w:p>
+    </w:body></w:document>"#;
+    let import = import(document);
+    let para = paragraph(&import, 0);
+    let link = para
+        .inlines
+        .iter()
+        .find_map(|i| match i {
+            InlineNode::Hyperlink(l) => Some(l),
+            _ => None,
+        })
+        .expect("hyperlink modeled");
+    // The markers land inside the hyperlink's inline stream, not the paragraph.
+    assert!(
+        link.inlines
+            .iter()
+            .any(|i| matches!(i, InlineNode::BookmarkStart(_)))
+    );
+    assert!(
+        link.inlines
+            .iter()
+            .any(|i| matches!(i, InlineNode::BookmarkEnd(_)))
+    );
+    assert_eq!(import.document.definitions().bookmarks.len(), 1);
+}
+
+#[test]
+fn orphan_bookmark_end_is_reported_and_dropped() {
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:t>x</w:t></w:r><w:bookmarkEnd w:id="9"/></w:p>
+    </w:body></w:document>"#;
+    let import = import(document);
+    assert!(bookmark_end(paragraph(&import, 0)).is_none());
+    assert!(import.document.definitions().bookmarks.is_empty());
+    assert!(features(&import).contains(&"bookmarkEnd"));
+}
+
+#[test]
+fn bookmark_without_a_name_is_reported_and_dropped() {
+    // A nameless start is dropped and its id is never registered, so the end
+    // becomes an orphan and is also reported — balanced, no dangling reference.
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:bookmarkStart w:id="1"/><w:r><w:t>x</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>
+    </w:body></w:document>"#;
+    let import = import(document);
+    let para = paragraph(&import, 0);
+    assert!(bookmark_start(para).is_none());
+    assert!(bookmark_end(para).is_none());
+    assert!(import.document.definitions().bookmarks.is_empty());
+    assert!(features(&import).contains(&"bookmarkStart"));
+    assert!(features(&import).contains(&"bookmarkEnd"));
+}
+
+#[test]
+fn oversized_bookmark_name_is_reported_and_dropped() {
+    let long = "a".repeat(256);
+    let document = format!(
+        r#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:bookmarkStart w:id="1" w:name="{long}"/><w:bookmarkEnd w:id="1"/></w:p>
+    </w:body></w:document>"#
+    );
+    let import = import(document.as_bytes());
+    assert!(import.document.definitions().bookmarks.is_empty());
+    assert!(features(&import).contains(&"bookmarkStart"));
+}
+
+#[test]
+fn duplicate_bookmark_id_keeps_the_first_and_reports_the_second() {
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p>
+            <w:bookmarkStart w:id="1" w:name="one"/>
+            <w:bookmarkStart w:id="1" w:name="two"/>
+            <w:r><w:t>x</w:t></w:r>
+            <w:bookmarkEnd w:id="1"/>
+        </w:p>
+    </w:body></w:document>"#;
+    let import = import(document);
+    let para = paragraph(&import, 0);
+    let starts: Vec<_> = para
+        .inlines
+        .iter()
+        .filter(|i| matches!(i, InlineNode::BookmarkStart(_)))
+        .collect();
+    assert_eq!(starts.len(), 1, "only the first start is modeled");
+    assert_eq!(import.document.definitions().bookmarks.len(), 1);
+    let (_, bm) = import
+        .document
+        .definitions()
+        .bookmarks
+        .iter()
+        .next()
+        .unwrap();
+    assert_eq!(bm.name, "one");
+    assert!(features(&import).contains(&"bookmarkStart"));
+    // The single end pairs with the surviving first start.
+    assert!(bookmark_end(para).is_some());
+}
+
+#[test]
+fn column_bookmark_is_modeled_by_name_and_reported() {
+    // The column span (`w:colFirst`/`w:colLast`) is dropped but the bookmark is
+    // still modeled by name/range; the dropped column attributes are reported.
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p>
+            <w:bookmarkStart w:id="1" w:name="col" w:colFirst="0" w:colLast="2"/>
+            <w:r><w:t>x</w:t></w:r>
+            <w:bookmarkEnd w:id="1"/>
+        </w:p>
+    </w:body></w:document>"#;
+    let import = import(document);
+    let para = paragraph(&import, 0);
+    let start = bookmark_start(para).expect("column bookmark still modeled");
+    let bm = import
+        .document
+        .definitions()
+        .bookmarks
+        .get(&start.bookmark)
+        .expect("definition");
+    assert_eq!(bm.name, "col");
+    // The dropped column span is surfaced in the report.
+    assert!(features(&import).contains(&"bookmarkStart"));
+}
+
+#[test]
+fn block_level_bookmark_is_reported_not_modeled() {
+    // A marker outside any paragraph (between blocks) is a deferred case: reported
+    // and dropped this slice, never modeled.
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:bookmarkStart w:id="1" w:name="blk"/>
+        <w:p><w:r><w:t>x</w:t></w:r></w:p>
+        <w:bookmarkEnd w:id="1"/>
+    </w:body></w:document>"#;
+    let import = import(document);
+    assert!(import.document.definitions().bookmarks.is_empty());
+    assert!(features(&import).contains(&"bookmarkStart"));
+    assert!(features(&import).contains(&"bookmarkEnd"));
+}
+
+#[test]
+fn bookmark_inside_a_text_box_is_modeled() {
+    let document =
+        br#"<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps"><w:body>
+        <w:p><w:r><w:drawing><wp:inline><a:graphic><a:graphicData><wps:wsp><wps:txbx>
+            <w:txbxContent><w:p>
+                <w:bookmarkStart w:id="1" w:name="inbox"/>
+                <w:r><w:t>boxed</w:t></w:r>
+                <w:bookmarkEnd w:id="1"/>
+            </w:p></w:txbxContent>
+        </wps:txbx></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import(document);
+    assert_eq!(import.document.definitions().bookmarks.len(), 1);
+    let text_box = find_textbox(&paragraph(&import, 0).inlines).expect("text box modeled");
+    let BlockNode::Paragraph(inner) = &text_box.blocks[0] else {
+        panic!("expected a paragraph in the text box");
+    };
+    assert!(bookmark_start(inner).is_some());
+    assert!(bookmark_end(inner).is_some());
+}
+
+#[test]
+fn bookmark_defined_in_a_header_lands_in_document_bookmarks() {
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:t>body</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+    let header = br#"<w:hdr xmlns:w="urn:w"><w:p>
+        <w:bookmarkStart w:id="1" w:name="hdrmark"/>
+        <w:r><w:t>h</w:t></w:r>
+        <w:bookmarkEnd w:id="1"/>
+    </w:p></w:hdr>"#;
+    let import = import_with_header_footer(document, &[("rId2", header)], &[]);
+    assert_eq!(import.document.definitions().bookmarks.len(), 1);
+    let (_, bm) = import
+        .document
+        .definitions()
+        .bookmarks
+        .iter()
+        .next()
+        .unwrap();
+    assert_eq!(bm.name, "hdrmark");
+}

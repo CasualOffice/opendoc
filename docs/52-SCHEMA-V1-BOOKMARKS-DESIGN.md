@@ -1,6 +1,6 @@
 # Normalized Schema v1: Bookmarks Design
 
-**Status:** Designed — 2026-07-25 (multi-agent coverage workflow; adversarially reviewed, verdict sound-with-fixes). Pending implementation.
+**Status:** Implemented — 2026-07-25 (multi-agent coverage workflow; adversarially reviewed, verdict sound-with-fixes; all review fixes folded in at implementation).
 **Tracker:** P1A-036
 
 > Produced by the parallel model-coverage design workflow. The adversarial review flagged concrete implementation fixes (see the tracker entry); fold them in at implementation time.

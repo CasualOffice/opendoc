@@ -3,8 +3,9 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    AbstractNumberingId, BlockNode, CommentId, DefinitionMap, FontName, HeaderFooterId, MediaId,
-    NoteId, NumberingInstanceId, ParagraphProperties, RunProperties, SectionId, StyleId, StyleKind,
+    AbstractNumberingId, BlockNode, BookmarkId, CommentId, DefinitionMap, FontName, HeaderFooterId,
+    MediaId, NoteId, NumberingInstanceId, ParagraphProperties, RunProperties, SectionId, StyleId,
+    StyleKind,
 };
 
 /// A style definition (its id is the map key).
@@ -206,6 +207,16 @@ pub struct Comment {
     pub date: Option<String>,
 }
 
+/// A bookmark definition (its id is the map key). A bookmark is a named range;
+/// its extent is delimited by a `BookmarkStart`/`BookmarkEnd` marker pair in body
+/// flow, and only its name is a definition-level property.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Bookmark {
+    /// The bookmark name as written (non-empty, at most 255 bytes).
+    pub name: String,
+}
+
 /// A media reference (its id is the map key).
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -253,6 +264,10 @@ pub struct Definitions {
     /// Comment definitions by id. Additive: omitted when empty.
     #[serde(default, skip_serializing_if = "DefinitionMap::is_empty")]
     pub comments: DefinitionMap<CommentId, Comment>,
+    /// Bookmark definitions by id. Additive: omitted when empty so existing
+    /// snapshots serialize byte-identically.
+    #[serde(default, skip_serializing_if = "DefinitionMap::is_empty")]
+    pub bookmarks: DefinitionMap<BookmarkId, Bookmark>,
     /// Document-wide defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub document_defaults: Option<DocumentDefaults>,
