@@ -17,7 +17,7 @@ use casual_doc_model::v1::{
     Alignment, BlockNode, Color, Document, InlineNode, ParagraphProperties,
 };
 
-use crate::block::{BlockFragment, BoxMetrics};
+use crate::block::{BlockFragment, BoxMetrics, BreakControl};
 use crate::model::{ModelPos, ModelRange};
 use crate::text::{Decoration, FontId, LineConstraints, LineShaper, StyledRun, TextAlignment};
 use crate::units::Twip;
@@ -55,6 +55,7 @@ pub fn build_galley(
                 id: paragraph.id,
                 lines,
                 box_metrics: box_metrics(&paragraph.properties),
+                break_control: break_control(&paragraph.properties),
             });
         }
         // Tables and block content controls are laid out in later slices.
@@ -116,6 +117,16 @@ fn alignment(properties: &ParagraphProperties) -> TextAlignment {
         Some(Alignment::End) => TextAlignment::End,
         Some(Alignment::Center) => TextAlignment::Center,
         Some(Alignment::Justify) => TextAlignment::Justify,
+    }
+}
+
+/// Maps paragraph break properties to the fragment's break control.
+fn break_control(properties: &ParagraphProperties) -> BreakControl {
+    BreakControl {
+        page_break_before: properties.page_break_before,
+        keep_next: properties.keep_next,
+        keep_lines: properties.keep_lines,
+        widow_control: properties.widow_control,
     }
 }
 
