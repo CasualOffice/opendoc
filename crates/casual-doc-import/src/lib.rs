@@ -120,9 +120,24 @@ pub fn import_package(
         Some(part) => Some(package.read_part(&part).map_err(ImportError::Package)?),
         None => None,
     };
-    let font_table_bytes = match font_table_part {
-        Some(part) => Some(package.read_part(&part).map_err(ImportError::Package)?),
-        None => None,
+    // The font table plus its own relationships (embedded `.odttf` fonts resolve
+    // through `fontTable.xml.rels`, not the document's).
+    let (font_table_bytes, font_table_rels) = match font_table_part {
+        Some(part) => {
+            let bytes = package.read_part(&part).map_err(ImportError::Package)?;
+            let relationships = package
+                .part_relationships(&part)
+                .map_err(ImportError::Package)?;
+            let font_rels: std::collections::BTreeMap<String, String> = relationships
+                .iter()
+                .filter(|relationship| relationship.relationship_type.ends_with("/font"))
+                .filter_map(|relationship| {
+                    Some((relationship.id.clone(), relationship.resolved_part.clone()?))
+                })
+                .collect();
+            (Some(bytes), font_rels)
+        }
+        None => (None, std::collections::BTreeMap::new()),
     };
     let theme_bytes = match theme_part {
         Some(part) => Some(package.read_part(&part).map_err(ImportError::Package)?),
@@ -186,6 +201,7 @@ pub fn import_package(
         styles_bytes.as_deref(),
         numbering_bytes.as_deref(),
         font_table_bytes.as_deref(),
+        &font_table_rels,
         theme_bytes.as_deref(),
         footnotes.as_ref(),
         endnotes.as_ref(),
@@ -227,6 +243,7 @@ pub fn import_main_document_xml(xml: &[u8], config: ImportConfig) -> Result<Impo
         None,
         None,
         None,
+        &std::collections::BTreeMap::new(),
         None,
         None,
         None,
@@ -436,6 +453,7 @@ pub(crate) fn import_with_sources(
     styles_xml: Option<&[u8]>,
     numbering_xml: Option<&[u8]>,
     font_table_xml: Option<&[u8]>,
+    font_table_rels: &std::collections::BTreeMap<String, String>,
     theme_xml: Option<&[u8]>,
     footnotes: Option<&PartSources>,
     endnotes: Option<&PartSources>,
@@ -485,7 +503,7 @@ pub(crate) fn import_with_sources(
         None => Numbering::default(),
     };
     let font_table = match font_table_xml {
-        Some(xml) => font_table::parse(xml, config)?,
+        Some(xml) => font_table::parse(xml, font_table_rels, config)?,
         None => Vec::new(),
     };
     let font_scheme = match theme_xml {

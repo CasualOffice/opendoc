@@ -48,6 +48,15 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Added
 
+- Font management, Phase 1A.3 (embedded fonts): a `fontTable.xml` font's
+  embedded faces (`w:embedRegular`/`Bold`/`Italic`/`BoldItalic`) are now modeled
+  as `EmbeddedFace` (fontKey, subsetted, the `fontTable.xml.rels` relationship
+  id and `.odttf` part name, all verbatim). The importer resolves the font
+  part's own relationships (`/font`); the writer regenerates the `w:embed*`
+  children, `fontTable.xml.rels`, the `obfuscatedFont` content-type, and the
+  `.odttf` parts (bytes verbatim — no de-obfuscation, which is a rendering
+  concern). Proven by a fixed-point round-trip. Additive; migration golden
+  byte-identical. (The `settings.xml` embedding flags remain a separate slice.)
 - Semantic DOCX writer now emits inline text boxes: a `w:txbxContent` holding
   block content is regenerated inside the minimal DrawingML shape scaffold the
   importer round-trips. Proven by a fixed-point round-trip.

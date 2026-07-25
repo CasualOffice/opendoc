@@ -156,6 +156,20 @@ impl Document {
                     check_domain(!value.is_empty() && value.len() <= 32, field)?;
                 }
             }
+            for (_, face) in font.embedded.faces() {
+                check_domain(
+                    !face.font_key.is_empty() && face.font_key.len() <= 64,
+                    "font.embed.fontKey",
+                )?;
+                check_domain(
+                    !face.relationship_id.is_empty() && face.relationship_id.len() <= 255,
+                    "font.embed.relationshipId",
+                )?;
+                check_domain(
+                    !face.part_name.is_empty() && face.part_name.len() <= 1024,
+                    "font.embed.partName",
+                )?;
+            }
         }
         Ok(())
     }

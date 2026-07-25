@@ -341,6 +341,69 @@ pub struct FontDescriptor {
     /// Whether the font is a non-TrueType (raster) face (`w:notTrueType`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub not_true_type: bool,
+    /// Embedded font faces for this family (`w:embedRegular`/…).
+    #[serde(default, skip_serializing_if = "EmbeddedFontSet::is_empty")]
+    pub embedded: EmbeddedFontSet,
+}
+
+/// One embedded font face (`w:embedRegular`/`w:embedBold`/…). The obfuscated
+/// `.odttf` bytes live in a package part; the model keeps the metadata verbatim
+/// so it round-trips (no de-obfuscation — that is a rendering concern).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EmbeddedFace {
+    /// The de-obfuscation key (`w:fontKey`, a `{GUID}`), retained verbatim.
+    pub font_key: String,
+    /// Whether the embedded font was subset to used glyphs (`w:subsetted`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub subsetted: bool,
+    /// The `fontTable.xml.rels` relationship id, retained verbatim.
+    pub relationship_id: String,
+    /// The `.odttf` package part name (e.g. `word/fonts/font1.odttf`).
+    pub part_name: String,
+}
+
+/// The embedded faces of a font family (regular/bold/italic/bold-italic).
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EmbeddedFontSet {
+    /// `w:embedRegular`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub regular: Option<EmbeddedFace>,
+    /// `w:embedBold`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bold: Option<EmbeddedFace>,
+    /// `w:embedItalic`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub italic: Option<EmbeddedFace>,
+    /// `w:embedBoldItalic`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bold_italic: Option<EmbeddedFace>,
+}
+
+impl EmbeddedFontSet {
+    /// Whether no face is embedded.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.regular.is_none()
+            && self.bold.is_none()
+            && self.italic.is_none()
+            && self.bold_italic.is_none()
+    }
+
+    /// The faces present, in a fixed order, with their `w:embed*` element names.
+    #[must_use]
+    pub fn faces(&self) -> Vec<(&'static str, &EmbeddedFace)> {
+        [
+            ("w:embedRegular", &self.regular),
+            ("w:embedBold", &self.bold),
+            ("w:embedItalic", &self.italic),
+            ("w:embedBoldItalic", &self.bold_italic),
+        ]
+        .into_iter()
+        .filter_map(|(name, face)| face.as_ref().map(|face| (name, face)))
+        .collect()
+    }
 }
 
 /// One theme font entry (`a:latin`/`a:ea`/`a:cs`, ECMA-376 §20.1.4.1). Its
