@@ -125,6 +125,153 @@ mod semantic_tests {
         .document
     }
 
+    /// The semantic fixed point over a whole package: `import(Semantic)` ->
+    /// `write_document` -> reopen == identical model. Media bytes are not needed
+    /// (the model holds only reference metadata).
+    fn assert_corpus_round_trip(source: &[u8], name: &str) {
+        let m1 = reopen(source);
+        let written = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&written);
+        assert_eq!(m1, m2, "{name}: real-producer doc survives write -> reopen");
+    }
+
+    #[test]
+    fn real_producer_corpus_survives_the_semantic_round_trip() {
+        // The writer must round-trip real Word/LibreOffice documents, not just
+        // hand-crafted fixtures. Each is imported semantically, written, and
+        // reopened; the model must be identical.
+        for (name, bytes) in [
+            (
+                "table-merges",
+                include_bytes!("../../../fixtures/corpus/real-producer-table-merges.docx")
+                    .as_slice(),
+            ),
+            (
+                "table-list",
+                include_bytes!("../../../fixtures/corpus/real-producer-table-list.docx").as_slice(),
+            ),
+            (
+                "rich",
+                include_bytes!("../../../fixtures/corpus/real-producer-rich.docx").as_slice(),
+            ),
+            (
+                "hyperlinks",
+                include_bytes!("../../../fixtures/corpus/real-producer-hyperlinks.docx").as_slice(),
+            ),
+            (
+                "header-footer",
+                include_bytes!("../../../fixtures/corpus/real-producer-header-footer.docx")
+                    .as_slice(),
+            ),
+            (
+                "footnotes",
+                include_bytes!("../../../fixtures/corpus/real-producer-footnotes.docx").as_slice(),
+            ),
+            (
+                "libreoffice",
+                include_bytes!("../../../fixtures/corpus/real-producer-libreoffice.docx")
+                    .as_slice(),
+            ),
+        ] {
+            assert_corpus_round_trip(bytes, name);
+        }
+    }
+
+    /// Locates a LibreOffice `soffice` binary, or returns `None` so the caller
+    /// can skip (LibreOffice is not a build/CI dependency).
+    fn find_soffice() -> Option<std::path::PathBuf> {
+        for candidate in [
+            "/opt/homebrew/bin/soffice",
+            "/usr/bin/soffice",
+            "/usr/local/bin/soffice",
+            "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+        ] {
+            let path = std::path::PathBuf::from(candidate);
+            if path.exists() {
+                return Some(path);
+            }
+        }
+        None
+    }
+
+    /// External validity gate: the writer's output must open in a real word
+    /// processor, not merely round-trip through our own importer. Each corpus
+    /// document is imported, re-written, and handed to LibreOffice for headless
+    /// conversion; a non-zero exit or missing output means we emitted a package
+    /// LibreOffice rejects.
+    ///
+    /// Ignored by default (LibreOffice is slow and not a CI dependency); run with
+    /// `cargo test -p casual-doc-export -- --ignored soffice`.
+    #[test]
+    #[ignore = "requires a local LibreOffice (soffice) install"]
+    #[allow(clippy::print_stderr)] // a skip diagnostic in an ignored, on-demand test
+    fn writer_output_opens_in_libreoffice() {
+        let Some(soffice) = find_soffice() else {
+            eprintln!("skipping: no soffice binary found");
+            return;
+        };
+        let tmp = std::env::temp_dir().join("opendoc-soffice-validity");
+        std::fs::create_dir_all(&tmp).unwrap();
+        let profile = tmp.join("profile");
+
+        for (name, bytes) in [
+            (
+                "table-merges",
+                include_bytes!("../../../fixtures/corpus/real-producer-table-merges.docx")
+                    .as_slice(),
+            ),
+            (
+                "rich",
+                include_bytes!("../../../fixtures/corpus/real-producer-rich.docx").as_slice(),
+            ),
+            (
+                "hyperlinks",
+                include_bytes!("../../../fixtures/corpus/real-producer-hyperlinks.docx").as_slice(),
+            ),
+            (
+                "header-footer",
+                include_bytes!("../../../fixtures/corpus/real-producer-header-footer.docx")
+                    .as_slice(),
+            ),
+            (
+                "footnotes",
+                include_bytes!("../../../fixtures/corpus/real-producer-footnotes.docx").as_slice(),
+            ),
+            (
+                "libreoffice",
+                include_bytes!("../../../fixtures/corpus/real-producer-libreoffice.docx")
+                    .as_slice(),
+            ),
+        ] {
+            let model = reopen(bytes);
+            let written = write_document(&model, &BTreeMap::new()).unwrap();
+            let docx = tmp.join(format!("{name}.docx"));
+            std::fs::write(&docx, &written).unwrap();
+
+            let out = tmp.join(name);
+            std::fs::create_dir_all(&out).unwrap();
+            let status = std::process::Command::new(&soffice)
+                .arg("--headless")
+                .arg(format!(
+                    "-env:UserInstallation=file://{}",
+                    profile.display()
+                ))
+                .arg("--convert-to")
+                .arg("txt:Text")
+                .arg("--outdir")
+                .arg(&out)
+                .arg(&docx)
+                .status()
+                .unwrap();
+            assert!(status.success(), "{name}: soffice rejected the package");
+            let txt = out.join(format!("{name}.txt"));
+            assert!(
+                txt.exists(),
+                "{name}: soffice produced no output (invalid package)"
+            );
+        }
+    }
+
     /// The Phase-1B semantic fixed point: importing a document, writing it, and
     /// reopening yields the identical model. The importer allocates ids in
     /// document order, so a writer that emits the body in that same order
