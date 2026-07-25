@@ -24,9 +24,9 @@ use casual_doc_model::v1::{
     EmphasisMark, FontCollection, FontDescriptor, FontFamilyKind, FontPitch, FontRef, FontScheme,
     HeightRule, HighlightColor, HyperlinkTarget, InlineNode, Note, NoteId, NoteKind,
     NumberingInstance, NumberingInstanceId, ParagraphProperties, RevisionKind, RgbColor,
-    RunFontHint, RunProperties, SdtControlKind, SdtProperties, Style, StyleId, StyleKind, Table,
-    TableBorders, TableCell, TableCellProperties, TableLayout, TableProperties, TableRow,
-    TableRowProperties, TextDirection, ThemeFontRef, VerticalAlignment, VerticalMerge,
+    RunFontHint, RunProperties, SdtControlKind, SdtProperties, SectionBoundary, Style, StyleId,
+    StyleKind, Table, TableBorders, TableCell, TableCellProperties, TableLayout, TableProperties,
+    TableRow, TableRowProperties, TextDirection, ThemeFontRef, VerticalAlignment, VerticalMerge,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -770,12 +770,49 @@ fn document_xml(document: &Document) -> Result<(Vec<u8>, Vec<RelEntry>), ExportE
     for block in document.body() {
         write_block(&mut w, block, &mut ctx)?;
     }
+    // The body-level section (the last, in the common single-section case). Its
+    // header/footer references land in a later slice.
+    if let Some(section) = document.definitions().sections.last() {
+        write_section_properties(&mut w, section)?;
+    }
 
     w.write_event(Event::End(BytesEnd::new("w:body")))
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("w:document")))
         .map_err(pkg)?;
     Ok((finish(w), ctx.rels.entries))
+}
+
+/// Emits a body-level `w:sectPr` with page geometry. Header/footer references
+/// are a later slice.
+fn write_section_properties(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    section: &SectionBoundary,
+) -> Result<(), ExportError> {
+    w.write_event(Event::Start(start("w:sectPr")))
+        .map_err(pkg)?;
+    let mut pg_sz = start("w:pgSz");
+    pg_sz.push_attribute(("w:w", section.page_size.width_twips.to_string().as_str()));
+    pg_sz.push_attribute(("w:h", section.page_size.height_twips.to_string().as_str()));
+    w.write_event(Event::Empty(pg_sz)).map_err(pkg)?;
+    let mut pg_mar = start("w:pgMar");
+    pg_mar.push_attribute(("w:top", section.page_margins.top_twips.to_string().as_str()));
+    pg_mar.push_attribute((
+        "w:bottom",
+        section.page_margins.bottom_twips.to_string().as_str(),
+    ));
+    pg_mar.push_attribute((
+        "w:start",
+        section.page_margins.start_twips.to_string().as_str(),
+    ));
+    pg_mar.push_attribute(("w:end", section.page_margins.end_twips.to_string().as_str()));
+    w.write_event(Event::Empty(pg_mar)).map_err(pkg)?;
+    let mut cols = start("w:cols");
+    cols.push_attribute(("w:num", section.columns.count.to_string().as_str()));
+    w.write_event(Event::Empty(cols)).map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("w:sectPr")))
+        .map_err(pkg)?;
+    Ok(())
 }
 
 /// Emits a body/cell block. Content-control block wrappers (`BlockNode::Sdt`)
