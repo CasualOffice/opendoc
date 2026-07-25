@@ -68,6 +68,11 @@ The runtime is not a UI toolkit and is not a DOCX-only editor. It is a determini
     bookmarks, content controls). Merges the former docs 32 and 38–53; the tracker
     references it by anchor. See its header for the old-number → section map.
 
+39. `39-PHASE-1B-SEMANTIC-DOCX-WRITER-DESIGN.md` — the semantic writer design (model → valid editable `.docx`).
+40. `40-FONT-MANAGEMENT-DESIGN.md` — accepted full-scope font resolution/substitution/metrics design.
+41. `41-PHASE-1B-EXIT-REPORT.md` — accepted Phase 1B evidence, coverage, and the no-silent-loss guarantee.
+42. `42-RENDERING-ARCHITECTURE-RESEARCH.md` — prior-art + ecosystem + algorithm research for the Phase 1C layout/pagination/rendering engine.
+
 Also present (not in the numbered sequence): `PHASE-1A-SEMANTIC-MODELING-TRACKER.md`.
 
 ### Consolidation note
