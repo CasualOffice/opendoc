@@ -234,7 +234,7 @@ pub(crate) fn attribute_value(element: &BytesStart<'_>, name: &[u8]) -> Option<S
     None
 }
 
-fn is_true(value: Option<&str>) -> bool {
+pub(crate) fn is_true(value: Option<&str>) -> bool {
     !matches!(value, Some("0") | Some("false") | Some("off"))
 }
 
@@ -267,7 +267,7 @@ fn spacing_line_percent(element: &BytesStart<'_>) -> Option<u16> {
     }
 }
 
-fn parse_rgb(value: &str) -> Option<RgbColor> {
+pub(crate) fn parse_rgb(value: &str) -> Option<RgbColor> {
     if value.len() != 6 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return None;
     }
