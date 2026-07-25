@@ -23,6 +23,12 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Added
 
+- Semantic DOCX writer (Phase 1B, first slice): `casual-doc-export::write_document`
+  serializes the v1 `Document` model back to a valid, editable DOCX (paragraphs,
+  runs, and the core run/paragraph properties). The import->write->reopen model
+  round-trip (the "semantic fixed point") is proven, and output bytes are
+  deterministic. The dual of the existing Retention byte-copy writer.
+  (`39-PHASE-1B-SEMANTIC-DOCX-WRITER-DESIGN.md`)
 - Run typographic metrics and language: character spacing (`w:spacing` in
   a run), kerning (`w:kern`), baseline position (`w:position`), and language
   tags (`w:lang` val/eastAsia/bidi) are now modeled on runs; out-of-range
