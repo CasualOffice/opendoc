@@ -1149,6 +1149,30 @@ mod semantic_tests {
     }
 
     #[test]
+    fn new_paragraph_properties_survive_the_semantic_round_trip() {
+        // The additive pPr coverage: the tri-state CT_OnOff toggles (an explicit
+        // off via w:val="0" on a default-ON toggle must survive) and
+        // w:textAlignment.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:pPr>
+                <w:bidi/><w:wordWrap w:val="0"/><w:kinsoku/><w:snapToGrid w:val="0"/>
+                <w:mirrorIndents/><w:adjustRightInd w:val="0"/><w:suppressAutoHyphens/>
+                <w:overflowPunct w:val="0"/><w:topLinePunct/><w:autoSpaceDE w:val="0"/>
+                <w:autoSpaceDN/><w:textAlignment w:val="center"/>
+            </w:pPr><w:r><w:t>x</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(
+            m1, m2,
+            "every new paragraph property survives write -> reopen"
+        );
+    }
+
+    #[test]
     fn block_content_control_survives_the_semantic_round_trip() {
         // A block-level content control (w:sdt wrapping block content) with typed
         // properties — the writer previously emitted only the inner blocks,

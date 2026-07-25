@@ -1487,7 +1487,12 @@ impl BodyParser<'_> {
                     self.reporter.report(local);
                 }
             }
-            _ if self.ppr_depth > 0 => {
+            // A `w:pPr` child, but NOT one inside the paragraph mark's `w:rPr`
+            // (`mark_rpr_depth`): a mark-rPr run property (e.g. `snapToGrid`, which
+            // is valid on both pPr and rPr) must not be misattributed to the
+            // paragraph. Mark-rPr children are the reported long tail until the
+            // mark run is modeled.
+            _ if self.ppr_depth > 0 && self.mark_rpr_depth == 0 => {
                 if !apply_paragraph_property(&mut self.paragraph_properties, local, element) {
                     self.reporter.report(local);
                 }

@@ -7,7 +7,7 @@
 use casual_doc_model::v1::{
     Alignment, BreakKind, Color, EmphasisMark, FontName, FontRef, HighlightColor, Indentation,
     Language, ParagraphProperties, RgbColor, RunFontHint, RunProperties, Spacing, StyleKind,
-    ThemeFont, ThemeFontRef, VerticalAlignment,
+    ThemeFont, ThemeFontRef, VerticalAlignment, VerticalTextAlignment,
 };
 use quick_xml::events::BytesStart;
 
@@ -277,6 +277,48 @@ pub(crate) fn apply_paragraph_property(
         b"suppressLineNumbers" => {
             properties.suppress_line_numbers = is_true(attribute_value(element, b"val").as_deref())
         }
+        // Tri-state toggles: several default ON in OOXML, so an explicit off
+        // (`w:val="0"`) is preserved as `Some(false)`.
+        b"bidi" => properties.bidi = Some(is_true(attribute_value(element, b"val").as_deref())),
+        b"wordWrap" => {
+            properties.word_wrap = Some(is_true(attribute_value(element, b"val").as_deref()))
+        }
+        b"kinsoku" => {
+            properties.kinsoku = Some(is_true(attribute_value(element, b"val").as_deref()))
+        }
+        b"snapToGrid" => {
+            properties.snap_to_grid = Some(is_true(attribute_value(element, b"val").as_deref()))
+        }
+        b"mirrorIndents" => {
+            properties.mirror_indents = Some(is_true(attribute_value(element, b"val").as_deref()))
+        }
+        b"adjustRightInd" => {
+            properties.adjust_right_ind = Some(is_true(attribute_value(element, b"val").as_deref()))
+        }
+        b"suppressAutoHyphens" => {
+            properties.suppress_auto_hyphens =
+                Some(is_true(attribute_value(element, b"val").as_deref()))
+        }
+        b"overflowPunct" => {
+            properties.overflow_punct = Some(is_true(attribute_value(element, b"val").as_deref()))
+        }
+        b"topLinePunct" => {
+            properties.top_line_punct = Some(is_true(attribute_value(element, b"val").as_deref()))
+        }
+        b"autoSpaceDE" => {
+            properties.auto_space_de = Some(is_true(attribute_value(element, b"val").as_deref()))
+        }
+        b"autoSpaceDN" => {
+            properties.auto_space_dn = Some(is_true(attribute_value(element, b"val").as_deref()))
+        }
+        b"textAlignment" => match attribute_value(element, b"val").as_deref() {
+            Some("auto") => properties.text_alignment = Some(VerticalTextAlignment::Auto),
+            Some("baseline") => properties.text_alignment = Some(VerticalTextAlignment::Baseline),
+            Some("bottom") => properties.text_alignment = Some(VerticalTextAlignment::Bottom),
+            Some("center") => properties.text_alignment = Some(VerticalTextAlignment::Center),
+            Some("top") => properties.text_alignment = Some(VerticalTextAlignment::Top),
+            _ => return false,
+        },
         b"outlineLvl" => {
             match attribute_value(element, b"val")
                 .and_then(|value| value.parse::<u8>().ok())
