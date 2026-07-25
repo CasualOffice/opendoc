@@ -707,6 +707,32 @@ mod semantic_tests {
     }
 
     #[test]
+    fn text_box_survives_the_semantic_round_trip() {
+        // An inline text box (w:txbxContent) holding block content — the writer
+        // regenerates the DrawingML shape scaffold the importer triggers on.
+        let xml = br#"<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps"><w:body>
+            <w:p><w:r><w:drawing><wp:inline><a:graphic><a:graphicData><wps:wsp><wps:txbx>
+                <w:txbxContent>
+                    <w:p><w:r><w:rPr><w:b/></w:rPr><w:t>boxed text</w:t></w:r></w:p>
+                    <w:p><w:r><w:t>second line</w:t></w:r></w:p>
+                </w:txbxContent>
+            </wps:txbx></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        // The paragraph's inline should be a text box.
+        assert!(matches!(
+            m1.body().first(),
+            Some(casual_doc_model::v1::BlockNode::Paragraph(p))
+                if matches!(p.inlines.first(), Some(casual_doc_model::v1::InlineNode::TextBox(_)))
+        ));
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(m1, m2, "an inline text box survives write -> reopen");
+    }
+
+    #[test]
     fn section_geometry_survives_the_semantic_round_trip() {
         // A body-level w:sectPr (page size, margins, columns) — the writer
         // emitted none before, so a section was silently dropped on write.

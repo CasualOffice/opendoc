@@ -48,6 +48,9 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Added
 
+- Semantic DOCX writer now emits inline text boxes: a `w:txbxContent` holding
+  block content is regenerated inside the minimal DrawingML shape scaffold the
+  importer round-trips. Proven by a fixed-point round-trip.
 - Semantic DOCX writer now emits inline drawings (embedded pictures): the
   `w:drawing`/`wp:inline`/`pic:pic` scaffold with `a:blip@r:embed`, the media
   part, its content-type `Default` (by extension), and the `/image` relationship
