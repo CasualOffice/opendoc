@@ -3,9 +3,9 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    AbstractNumberingId, BlockNode, BookmarkId, CommentId, DefinitionMap, FontDescriptor, FontName,
-    HeaderFooterId, MediaId, NoteId, NumberingInstanceId, ParagraphProperties, RunProperties,
-    SectionId, StyleId, StyleKind,
+    AbstractNumberingId, BlockNode, BookmarkId, CommentId, DefinitionMap, FontDescriptor,
+    FontScheme, HeaderFooterId, MediaId, NoteId, NumberingInstanceId, ParagraphProperties,
+    RunProperties, SectionId, StyleId, StyleKind,
 };
 
 /// A style definition (its id is the map key).
@@ -164,18 +164,6 @@ pub struct HeaderFooter {
     pub blocks: Vec<BlockNode>,
 }
 
-/// Semantic theme references retained without embedding the theme.
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ThemeReferences {
-    /// Major (heading) font family, if identified.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub major_font: Option<FontName>,
-    /// Minor (body) font family, if identified.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub minor_font: Option<FontName>,
-}
-
 /// A footnote or endnote definition (its id is the map key). Its content reuses
 /// the recursive block model, so a note may hold paragraphs, tables, and text
 /// boxes. `blocks` may be empty.
@@ -276,4 +264,8 @@ pub struct Definitions {
     /// byte-identically.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub font_table: Vec<FontDescriptor>,
+    /// Theme font scheme (`theme1.xml` `a:fontScheme`) against which theme font
+    /// slots resolve. Additive: omitted when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_scheme: Option<FontScheme>,
 }

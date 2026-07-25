@@ -18,11 +18,11 @@ use std::io::{Cursor, Write};
 
 use casual_doc_model::v1::{
     Alignment, BlockNode, BorderEdge, BreakKind, CellVerticalAlignment, Color, Definitions,
-    Document, EmphasisMark, FontDescriptor, FontFamilyKind, FontPitch, FontRef, HeightRule,
-    HighlightColor, HyperlinkTarget, InlineNode, ParagraphProperties, RevisionKind, RgbColor,
-    RunFontHint, RunProperties, SdtControlKind, SdtProperties, Table, TableBorders, TableCell,
-    TableCellProperties, TableLayout, TableProperties, TableRow, TableRowProperties, TextDirection,
-    ThemeFontRef, VerticalAlignment, VerticalMerge,
+    Document, EmphasisMark, FontCollection, FontDescriptor, FontFamilyKind, FontPitch, FontRef,
+    FontScheme, HeightRule, HighlightColor, HyperlinkTarget, InlineNode, ParagraphProperties,
+    RevisionKind, RgbColor, RunFontHint, RunProperties, SdtControlKind, SdtProperties, Table,
+    TableBorders, TableCell, TableCellProperties, TableLayout, TableProperties, TableRow,
+    TableRowProperties, TextDirection, ThemeFontRef, VerticalAlignment, VerticalMerge,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -45,6 +45,10 @@ const FONT_TABLE_REL_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/fontTable";
 const FONT_TABLE_CT: &str =
     "application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml";
+const THEME_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme";
+const THEME_CT: &str = "application/vnd.openxmlformats-officedocument.theme+xml";
+const A_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
 
 /// A `document.xml.rels` entry: (relationship id, external target URL).
 type RelEntry = (String, String);
@@ -101,26 +105,32 @@ pub fn write_document(
 ) -> Result<Vec<u8>, ExportError> {
     let (document_xml, rels) = document_xml(document)?;
     let font_table = &document.definitions().font_table;
+    let font_scheme = document.definitions().font_scheme.as_ref();
+    let has_font_table = !font_table.is_empty();
+    let has_theme = font_scheme.is_some();
 
     // Parts are emitted in a deterministic order so the package bytes are
     // reproducible. The document relationships part carries any external
-    // hyperlink targets collected while writing the body plus the font-table
-    // relationship; the font-table part and its content-type override appear
-    // only when the model has font descriptors (byte-identical otherwise).
+    // hyperlink targets collected while writing the body plus the font-table and
+    // theme relationships; those parts and their content-type overrides appear
+    // only when the model carries them (byte-identical otherwise).
     let mut parts: Vec<(&str, Vec<u8>)> = vec![
         (
             "[Content_Types].xml",
-            content_types_xml(!font_table.is_empty())?,
+            content_types_xml(has_font_table, has_theme)?,
         ),
         ("_rels/.rels", root_rels_xml()?),
         ("word/document.xml", document_xml),
         (
             "word/_rels/document.xml.rels",
-            document_rels_xml(&rels, !font_table.is_empty())?,
+            document_rels_xml(&rels, has_font_table, has_theme)?,
         ),
     ];
-    if !font_table.is_empty() {
+    if has_font_table {
         parts.push(("word/fontTable.xml", font_table_xml(font_table)?));
+    }
+    if let Some(scheme) = font_scheme {
+        parts.push(("word/theme/theme1.xml", theme_xml(scheme)?));
     }
 
     let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
@@ -153,7 +163,7 @@ fn start<'a>(name: &'a str) -> BytesStart<'a> {
 
 /// Emits `[Content_Types].xml` with the standard defaults plus the main-document
 /// override.
-fn content_types_xml(has_font_table: bool) -> Result<Vec<u8>, ExportError> {
+fn content_types_xml(has_font_table: bool, has_theme: bool) -> Result<Vec<u8>, ExportError> {
     let mut w = new_writer();
     let mut types = start("Types");
     types.push_attribute(("xmlns", CT_NS));
@@ -173,6 +183,9 @@ fn content_types_xml(has_font_table: bool) -> Result<Vec<u8>, ExportError> {
     let mut overrides = vec![("/word/document.xml", DOC_CT)];
     if has_font_table {
         overrides.push(("/word/fontTable.xml", FONT_TABLE_CT));
+    }
+    if has_theme {
+        overrides.push(("/word/theme/theme1.xml", THEME_CT));
     }
     for (part_name, ct) in overrides {
         let mut over = start("Override");
@@ -204,11 +217,15 @@ fn root_rels_xml() -> Result<Vec<u8>, ExportError> {
 /// Emits `word/_rels/document.xml.rels`. With no entries it is the empty
 /// `<Relationships/>` element (byte-identical to the earlier no-relationship
 /// slices); with entries it carries one external hyperlink relationship each.
-fn document_rels_xml(entries: &[RelEntry], has_font_table: bool) -> Result<Vec<u8>, ExportError> {
+fn document_rels_xml(
+    entries: &[RelEntry],
+    has_font_table: bool,
+    has_theme: bool,
+) -> Result<Vec<u8>, ExportError> {
     let mut w = new_writer();
     let mut rels = start("Relationships");
     rels.push_attribute(("xmlns", REL_NS));
-    if entries.is_empty() && !has_font_table {
+    if entries.is_empty() && !has_font_table && !has_theme {
         w.write_event(Event::Empty(rels)).map_err(pkg)?;
         return Ok(finish(w));
     }
@@ -221,15 +238,22 @@ fn document_rels_xml(entries: &[RelEntry], has_font_table: bool) -> Result<Vec<u
         rel.push_attribute(("TargetMode", "External"));
         w.write_event(Event::Empty(rel)).map_err(pkg)?;
     }
-    if has_font_table {
-        // A fresh internal relationship after the hyperlink ids; the importer
-        // resolves the font table by relationship type, not by this id.
-        let id = format!("rId{}", entries.len() + 1);
-        let mut rel = start("Relationship");
-        rel.push_attribute(("Id", id.as_str()));
-        rel.push_attribute(("Type", FONT_TABLE_REL_TYPE));
-        rel.push_attribute(("Target", "fontTable.xml"));
-        w.write_event(Event::Empty(rel)).map_err(pkg)?;
+    // Fresh internal relationships after the hyperlink ids; the importer resolves
+    // these parts by relationship type, not by id.
+    let mut next = entries.len();
+    for (present, rel_type, target) in [
+        (has_font_table, FONT_TABLE_REL_TYPE, "fontTable.xml"),
+        (has_theme, THEME_REL_TYPE, "theme/theme1.xml"),
+    ] {
+        if present {
+            next += 1;
+            let id = format!("rId{next}");
+            let mut rel = start("Relationship");
+            rel.push_attribute(("Id", id.as_str()));
+            rel.push_attribute(("Type", rel_type));
+            rel.push_attribute(("Target", target));
+            w.write_event(Event::Empty(rel)).map_err(pkg)?;
+        }
     }
     w.write_event(Event::End(BytesEnd::new("Relationships")))
         .map_err(pkg)?;
@@ -312,6 +336,64 @@ fn font_pitch_token(pitch: FontPitch) -> &'static str {
         FontPitch::Fixed => "fixed",
         FontPitch::Variable => "variable",
     }
+}
+
+/// Emits `word/theme/theme1.xml` carrying just the font scheme (the colour and
+/// format schemes are the byte-floor's concern, not the semantic model's).
+fn theme_xml(scheme: &FontScheme) -> Result<Vec<u8>, ExportError> {
+    let mut w = new_writer();
+    let mut root = start("a:theme");
+    root.push_attribute(("xmlns:a", A_NS));
+    root.push_attribute(("name", "Office Theme"));
+    w.write_event(Event::Start(root)).map_err(pkg)?;
+    w.write_event(Event::Start(start("a:themeElements")))
+        .map_err(pkg)?;
+    let mut font_scheme = start("a:fontScheme");
+    font_scheme.push_attribute(("name", "Office"));
+    w.write_event(Event::Start(font_scheme)).map_err(pkg)?;
+    write_font_collection(&mut w, "a:majorFont", &scheme.major)?;
+    write_font_collection(&mut w, "a:minorFont", &scheme.minor)?;
+    w.write_event(Event::End(BytesEnd::new("a:fontScheme")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("a:themeElements")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("a:theme")))
+        .map_err(pkg)?;
+    Ok(finish(w))
+}
+
+fn write_font_collection(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    tag: &str,
+    collection: &FontCollection,
+) -> Result<(), ExportError> {
+    w.write_event(Event::Start(start(tag))).map_err(pkg)?;
+    for (entry_tag, entry) in [
+        ("a:latin", &collection.latin),
+        ("a:ea", &collection.ea),
+        ("a:cs", &collection.cs),
+    ] {
+        let mut el = start(entry_tag);
+        el.push_attribute(("typeface", entry.typeface.as_str()));
+        if let Some(value) = &entry.panose {
+            el.push_attribute(("panose", value.as_str()));
+        }
+        if let Some(value) = &entry.pitch_family {
+            el.push_attribute(("pitchFamily", value.as_str()));
+        }
+        if let Some(value) = &entry.charset {
+            el.push_attribute(("charset", value.as_str()));
+        }
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    for over in &collection.script_overrides {
+        let mut el = start("a:font");
+        el.push_attribute(("script", over.script.as_str()));
+        el.push_attribute(("typeface", over.typeface.as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    w.write_event(Event::End(BytesEnd::new(tag))).map_err(pkg)?;
+    Ok(())
 }
 
 /// Emits `word/document.xml` from the model body, returning the bytes plus the
