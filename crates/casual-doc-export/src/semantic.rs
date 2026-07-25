@@ -6,11 +6,11 @@
 //! inline constructs (hyperlinks with `document.xml.rels` generation, fields,
 //! bookmarks, tracked-change revisions, inline content controls), and the
 //! font/style definition parts (`fontTable.xml`, `theme1.xml` font scheme,
-//! `styles.xml` with `w:pStyle`/`w:rStyle` references). The media-backed
-//! constructs (drawings, text boxes) and the remaining definition parts
-//! (numbering, notes, headers/footers, comments, and note/comment references)
-//! land in later slices; a model that uses them is written with what is
-//! supported and the rest is skipped (never a malformed part).
+//! `styles.xml` with `w:pStyle`/`w:rStyle` references, `numbering.xml` with body
+//! `w:numPr`). The media-backed constructs (drawings, text boxes) and the
+//! remaining definition parts (notes, headers/footers, comments, and note/
+//! comment references) land in later slices; a model that uses them is written
+//! with what is supported and the rest is skipped (never a malformed part).
 //!
 //! Output is byte-deterministic for a given model: parts in fixed order, a fixed
 //! ZIP timestamp, ids/relationships re-minted in document order.
@@ -19,9 +19,10 @@ use std::collections::BTreeMap;
 use std::io::{Cursor, Write};
 
 use casual_doc_model::v1::{
-    Alignment, BlockNode, BorderEdge, BreakKind, CellVerticalAlignment, Color, DefinitionMap,
-    Definitions, Document, EmphasisMark, FontCollection, FontDescriptor, FontFamilyKind, FontPitch,
-    FontRef, FontScheme, HeightRule, HighlightColor, HyperlinkTarget, InlineNode,
+    AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, BorderEdge, BreakKind,
+    CellVerticalAlignment, Color, DefinitionMap, Definitions, Document, EmphasisMark,
+    FontCollection, FontDescriptor, FontFamilyKind, FontPitch, FontRef, FontScheme, HeightRule,
+    HighlightColor, HyperlinkTarget, InlineNode, NumberingInstance, NumberingInstanceId,
     ParagraphProperties, RevisionKind, RgbColor, RunFontHint, RunProperties, SdtControlKind,
     SdtProperties, Style, StyleId, StyleKind, Table, TableBorders, TableCell, TableCellProperties,
     TableLayout, TableProperties, TableRow, TableRowProperties, TextDirection, ThemeFontRef,
@@ -54,6 +55,10 @@ const THEME_CT: &str = "application/vnd.openxmlformats-officedocument.theme+xml"
 const STYLES_REL_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles";
 const STYLES_CT: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml";
+const NUMBERING_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering";
+const NUMBERING_CT: &str =
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml";
 const A_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
 
 /// A package part beyond `document.xml` (fontTable, theme, styles, …): its part
@@ -171,6 +176,15 @@ pub fn write_document(
             STYLES_REL_TYPE,
             "styles.xml",
             styles_xml(&definitions.styles)?,
+        ));
+    }
+    if !definitions.abstract_numbering.is_empty() || !definitions.numbering.is_empty() {
+        extras.push(ExtraPart::new(
+            "word/numbering.xml",
+            NUMBERING_CT,
+            NUMBERING_REL_TYPE,
+            "numbering.xml",
+            numbering_xml(&definitions.abstract_numbering, &definitions.numbering)?,
         ));
     }
 
@@ -486,6 +500,60 @@ fn styles_xml(styles: &DefinitionMap<StyleId, Style>) -> Result<Vec<u8>, ExportE
 /// The `w:styleId`/`w:val` string for a style, derived from its internal id so
 /// references reproduce it deterministically.
 fn style_id_token(id: StyleId) -> String {
+    id.node_id().as_u128().to_string()
+}
+
+/// Emits `word/numbering.xml`: the abstract definitions (each with its levels'
+/// start values) then the numbering instances. The `w:abstractNumId`/`w:numId`
+/// strings derive from the internal ids so a `w:num`'s `w:abstractNumId` and a
+/// body `w:numPr`'s `w:numId` reference the same string and re-import to the
+/// same ids. Only the modeled level detail (index + start) is emitted; other
+/// `w:lvl` detail is not modeled (and the importer does not read it back).
+fn numbering_xml(
+    abstracts: &DefinitionMap<AbstractNumberingId, AbstractNumbering>,
+    instances: &DefinitionMap<NumberingInstanceId, NumberingInstance>,
+) -> Result<Vec<u8>, ExportError> {
+    let mut w = new_writer();
+    let mut root = start("w:numbering");
+    root.push_attribute(("xmlns:w", W_NS));
+    w.write_event(Event::Start(root)).map_err(pkg)?;
+    for (id, abstract_num) in abstracts.iter() {
+        let mut el = start("w:abstractNum");
+        el.push_attribute(("w:abstractNumId", abstract_id_token(*id).as_str()));
+        w.write_event(Event::Start(el)).map_err(pkg)?;
+        for level in &abstract_num.levels {
+            let mut lvl = start("w:lvl");
+            lvl.push_attribute(("w:ilvl", level.level.to_string().as_str()));
+            w.write_event(Event::Start(lvl)).map_err(pkg)?;
+            let mut s = start("w:start");
+            s.push_attribute(("w:val", level.start.to_string().as_str()));
+            w.write_event(Event::Empty(s)).map_err(pkg)?;
+            w.write_event(Event::End(BytesEnd::new("w:lvl")))
+                .map_err(pkg)?;
+        }
+        w.write_event(Event::End(BytesEnd::new("w:abstractNum")))
+            .map_err(pkg)?;
+    }
+    for (id, instance) in instances.iter() {
+        let mut el = start("w:num");
+        el.push_attribute(("w:numId", num_id_token(*id).as_str()));
+        w.write_event(Event::Start(el)).map_err(pkg)?;
+        let mut a = start("w:abstractNumId");
+        a.push_attribute(("w:val", abstract_id_token(instance.abstract_ref).as_str()));
+        w.write_event(Event::Empty(a)).map_err(pkg)?;
+        w.write_event(Event::End(BytesEnd::new("w:num")))
+            .map_err(pkg)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("w:numbering")))
+        .map_err(pkg)?;
+    Ok(finish(w))
+}
+
+fn abstract_id_token(id: AbstractNumberingId) -> String {
+    id.node_id().as_u128().to_string()
+}
+
+fn num_id_token(id: NumberingInstanceId) -> String {
     id.node_id().as_u128().to_string()
 }
 
@@ -873,6 +941,17 @@ fn write_paragraph_properties(
         let mut el = start("w:pStyle");
         el.push_attribute(("w:val", style_id_token(style_ref).as_str()));
         w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(numbering) = &properties.numbering {
+        w.write_event(Event::Start(start("w:numPr"))).map_err(pkg)?;
+        let mut ilvl = start("w:ilvl");
+        ilvl.push_attribute(("w:val", numbering.level.to_string().as_str()));
+        w.write_event(Event::Empty(ilvl)).map_err(pkg)?;
+        let mut num_id = start("w:numId");
+        num_id.push_attribute(("w:val", num_id_token(numbering.instance).as_str()));
+        w.write_event(Event::Empty(num_id)).map_err(pkg)?;
+        w.write_event(Event::End(BytesEnd::new("w:numPr")))
+            .map_err(pkg)?;
     }
     if let Some(alignment) = properties.alignment {
         let mut jc = start("w:jc");
