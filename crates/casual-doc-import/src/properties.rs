@@ -6,8 +6,8 @@
 
 use casual_doc_model::v1::{
     Alignment, BreakKind, Color, EmphasisMark, FontName, FontRef, HighlightColor, Indentation,
-    ParagraphProperties, RgbColor, RunProperties, Spacing, StyleKind, ThemeFont, ThemeFontRef,
-    VerticalAlignment,
+    Language, ParagraphProperties, RgbColor, RunProperties, Spacing, StyleKind, ThemeFont,
+    ThemeFontRef, VerticalAlignment,
 };
 use quick_xml::events::BytesStart;
 
@@ -80,6 +80,37 @@ pub(crate) fn apply_run_property(
             Some(emphasis) => properties.emphasis = Some(emphasis),
             None => return false,
         },
+        // Typographic metrics: an out-of-range value is reported, like `sz`.
+        b"spacing" => match value.as_deref().and_then(|v| v.parse::<i32>().ok()) {
+            Some(v) if (-31_680..=31_680).contains(&v) => {
+                properties.character_spacing_twips = Some(v)
+            }
+            _ => return false,
+        },
+        b"kern" => match value.as_deref().and_then(|v| v.parse::<u32>().ok()) {
+            Some(v) if v <= 65_534 => properties.kerning_half_points = Some(v),
+            _ => return false,
+        },
+        b"position" => match value.as_deref().and_then(|v| v.parse::<i32>().ok()) {
+            Some(v) if (-31_680..=31_680).contains(&v) => properties.position_half_points = Some(v),
+            _ => return false,
+        },
+        // Language tags (`w:lang`), retained opaque + bounded. Consumed if any
+        // tag resolves; an empty/oversized-only element is reported.
+        b"lang" => {
+            let tag = |name: &[u8]| {
+                attribute_value(element, name).filter(|v| !v.is_empty() && v.len() <= 85)
+            };
+            let language = Language {
+                value: tag(b"val"),
+                east_asia: tag(b"eastAsia"),
+                bidi: tag(b"bidi"),
+            };
+            if language.is_empty() {
+                return false;
+            }
+            properties.language = Some(language);
+        }
         _ => return false,
     }
     true
