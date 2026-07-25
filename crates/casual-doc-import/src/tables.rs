@@ -199,6 +199,32 @@ impl TableStack {
         true
     }
 
+    /// Force-closes every still-open table (innermost first), committing any
+    /// partial cell and row, and returns the finished top-level `Table` blocks in
+    /// document order. Used at a container boundary (EOF, note/comment/header
+    /// close) so a table left open by truncated input is neither dropped nor
+    /// bled into the next container — the stack is emptied. A table (or nested
+    /// table) that closes with no rows carries no content and is discarded.
+    pub(crate) fn flush_open(
+        &mut self,
+        ids: &mut IdGenerator,
+    ) -> Result<Vec<BlockNode>, ImportError> {
+        let mut roots = Vec::new();
+        while self.is_active() {
+            // Commit the innermost open cell and row before closing the table so
+            // their partial content is preserved, then fold the finished table
+            // into its parent cell (nested) or the returned roots (top level).
+            self.close_cell(ids)?;
+            self.close_row();
+            if let Some(table) = self.close_table() {
+                if let Some(returned) = self.push_block(BlockNode::Table(table)) {
+                    roots.push(returned);
+                }
+            }
+        }
+        Ok(roots)
+    }
+
     /// Closes the innermost table, returning the finished `Table`. Returns `None`
     /// when the table had no rows (caller reports it), so a degenerate table is
     /// dropped rather than producing an invalid model.

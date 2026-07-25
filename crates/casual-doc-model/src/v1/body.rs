@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{BreakKind, MediaId, NoteId, ParagraphProperties, RunProperties, Table};
+use super::{BreakKind, CommentId, MediaId, NoteId, ParagraphProperties, RunProperties, Table};
 use crate::NodeId;
 
 /// OOXML `ST_PositiveCoordinate` upper bound, in English Metric Units (EMU).
@@ -165,6 +165,16 @@ pub struct NoteReference {
     pub note: NoteId,
 }
 
+/// An inline reference to a comment definition (`w:commentReference`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CommentReference {
+    /// Stable identity.
+    pub id: NodeId,
+    /// The referenced comment (resolves in `Definitions::comments`).
+    pub comment: CommentId,
+}
+
 /// Inline content supported by schema v1.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -185,6 +195,8 @@ pub enum InlineNode {
     TextBox(TextBox),
     /// An inline reference to a footnote or endnote.
     NoteReference(NoteReference),
+    /// An inline reference to a comment.
+    CommentReference(CommentReference),
 }
 
 impl InlineNode {
@@ -200,6 +212,7 @@ impl InlineNode {
             Self::Field(field) => field.id,
             Self::TextBox(text_box) => text_box.id,
             Self::NoteReference(note) => note.id,
+            Self::CommentReference(comment) => comment.id,
         }
     }
 }

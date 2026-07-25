@@ -47,8 +47,8 @@ pub use retain::RetainedSource;
 
 use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
-    BlockNode, DefinitionMap, Definitions, Document, HeaderFooter, HeaderFooterId, MediaId, Note,
-    NoteId, Paragraph, ParagraphProperties,
+    BlockNode, Comment, CommentId, DefinitionMap, Definitions, Document, HeaderFooter,
+    HeaderFooterId, MediaId, Note, NoteId, Paragraph, ParagraphProperties,
 };
 use casual_doc_ooxml::DocxPackage;
 
@@ -86,6 +86,7 @@ pub fn import_package(
     let numbering_part = related_part("/numbering");
     let footnotes_part = related_part("/footnotes");
     let endnotes_part = related_part("/endnotes");
+    let comments_part = related_part("/comments");
     let media_sources: Vec<MediaSource> = package
         .main_document_relationships()
         .iter()
@@ -122,6 +123,10 @@ pub fn import_package(
         None => None,
     };
     let endnotes = match endnotes_part {
+        Some(part) => Some(resolve_part_sources(package, &part)?),
+        None => None,
+    };
+    let comments = match comments_part {
         Some(part) => Some(resolve_part_sources(package, &part)?),
         None => None,
     };
@@ -172,6 +177,7 @@ pub fn import_package(
         endnotes.as_ref(),
         &header_parts,
         &footer_parts,
+        comments.as_ref(),
         &media_sources,
         &hyperlink_rels,
         config,
@@ -210,6 +216,7 @@ pub fn import_main_document_xml(xml: &[u8], config: ImportConfig) -> Result<Impo
         None,
         &[],
         &[],
+        None,
         &[],
         &std::collections::BTreeMap::new(),
         config,
@@ -302,6 +309,47 @@ fn build_notes(
     Ok((map, index))
 }
 
+/// A comment definition map plus its source-`w:id` -> id resolution index.
+type BuiltComments = (
+    DefinitionMap<CommentId, Comment>,
+    std::collections::BTreeMap<String, CommentId>,
+);
+
+/// Parses the comments part into a `CommentId`-keyed definition map plus a
+/// source-`w:id` resolution index for in-body `w:commentReference`s. The part's
+/// own image and hyperlink relationships are resolved so images/links inside a
+/// comment are modeled. Missing part → empty.
+fn build_comments(
+    part: Option<&PartSources>,
+    styles: &Styles,
+    numbering: &Numbering,
+    media: &mut DefinitionMap<MediaId, casual_doc_model::v1::MediaReference>,
+    ids: &mut IdGenerator,
+    reporter: &mut Reporter,
+    config: ImportConfig,
+) -> Result<BuiltComments, ImportError> {
+    let mut map = DefinitionMap::default();
+    let mut index = std::collections::BTreeMap::new();
+    if let Some(part) = part {
+        let media_index = media::build_into(&part.images, media, ids, reporter)?;
+        let comments = body::parse_comments(
+            &part.xml,
+            ids,
+            reporter,
+            styles,
+            numbering,
+            &media_index,
+            &part.hyperlinks,
+            config,
+        )?;
+        for (source_id, comment_id, comment) in comments {
+            index.insert(source_id, comment_id);
+            map.insert(comment_id, comment);
+        }
+    }
+    Ok((map, index))
+}
+
 /// A header/footer definition map plus its relationship-id -> id resolution index.
 type BuiltHeaderFooters = (
     DefinitionMap<HeaderFooterId, HeaderFooter>,
@@ -368,6 +416,7 @@ pub(crate) fn import_with_sources(
     endnotes: Option<&PartSources>,
     header_parts: &[(String, PartSources)],
     footer_parts: &[(String, PartSources)],
+    comments: Option<&PartSources>,
     media_sources: &[MediaSource],
     hyperlink_rels: &std::collections::BTreeMap<String, String>,
     config: ImportConfig,
@@ -461,6 +510,15 @@ pub(crate) fn import_with_sources(
         &mut reporter,
         config,
     )?;
+    let (comments_map, comment_ids) = build_comments(
+        comments,
+        &styles,
+        &numbering,
+        &mut media,
+        &mut ids,
+        &mut reporter,
+        config,
+    )?;
 
     let (mut body, sections) = body::parse(
         document_xml,
@@ -475,6 +533,7 @@ pub(crate) fn import_with_sources(
             endnote_ids: &endnote_ids,
             header_ids: &header_ids,
             footer_ids: &footer_ids,
+            comment_ids: &comment_ids,
         },
         config,
     )?;
@@ -502,6 +561,7 @@ pub(crate) fn import_with_sources(
         endnotes: endnotes_map,
         headers,
         footers,
+        comments: comments_map,
         ..Definitions::default()
     };
     let document = Document::new(document_id, body, definitions).map_err(ImportError::Model)?;

@@ -22,6 +22,7 @@ fn import_with_styles(document: &[u8], styles: &[u8]) -> Import {
         None,
         &[],
         &[],
+        None,
         &[],
         &std::collections::BTreeMap::new(),
         ImportConfig::default(),
@@ -38,6 +39,7 @@ fn import_with_numbering(document: &[u8], numbering: &[u8]) -> Import {
         None,
         &[],
         &[],
+        None,
         &[],
         &std::collections::BTreeMap::new(),
         ImportConfig::default(),
@@ -63,6 +65,25 @@ fn import_with_notes(document: &[u8], footnotes: Option<&[u8]>, endnotes: Option
         endnotes.as_ref(),
         &[],
         &[],
+        None,
+        &[],
+        &std::collections::BTreeMap::new(),
+        ImportConfig::default(),
+    )
+    .unwrap()
+}
+
+fn import_with_comments(document: &[u8], comments: &[u8]) -> Import {
+    let comments = part_sources(comments);
+    import_with_sources(
+        document,
+        None,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        Some(&comments),
         &[],
         &std::collections::BTreeMap::new(),
         ImportConfig::default(),
@@ -1560,6 +1581,196 @@ fn stray_body_inside_a_notes_part_is_reported_not_silently_dropped() {
     assert!(features(&import).contains(&"body"));
 }
 
+// ---- comments ------------------------------------------------------------
+
+#[test]
+fn comment_reference_body_and_metadata_are_modeled() {
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p>
+            <w:commentRangeStart w:id="1"/>
+            <w:r><w:t>Reviewed</w:t></w:r>
+            <w:commentRangeEnd w:id="1"/>
+            <w:r><w:commentReference w:id="1"/></w:r>
+        </w:p>
+    </w:body></w:document>"#;
+    let comments = br#"<w:comments xmlns:w="urn:w">
+        <w:comment w:id="1" w:author="Ada Lovelace" w:initials="AL" w:date="2026-07-25T10:00:00Z">
+            <w:p><w:r><w:t>Please clarify.</w:t></w:r></w:p>
+        </w:comment>
+    </w:comments>"#;
+    let import = import_with_comments(document, comments);
+
+    // The body run carries a comment reference resolving to the definition.
+    let comment_ref = paragraph(&import, 0).inlines.iter().find_map(|i| match i {
+        InlineNode::CommentReference(c) => Some(c),
+        _ => None,
+    });
+    let comment_ref = comment_ref.expect("comment reference modeled");
+    // The comment-range markers are not modeled but are reported.
+    assert!(features(&import).contains(&"commentRangeStart"));
+    assert!(features(&import).contains(&"commentRangeEnd"));
+
+    assert_eq!(import.document.definitions().comments.len(), 1);
+    let comment = import
+        .document
+        .definitions()
+        .comments
+        .get(&comment_ref.comment)
+        .expect("comment definition resolves");
+    assert_eq!(tb_block_text(&comment.blocks), "Please clarify.");
+    assert_eq!(comment.author.as_deref(), Some("Ada Lovelace"));
+    assert_eq!(comment.initials.as_deref(), Some("AL"));
+    assert_eq!(comment.date.as_deref(), Some("2026-07-25T10:00:00Z"));
+}
+
+#[test]
+fn comment_without_metadata_is_modeled_with_none_fields() {
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:commentReference w:id="7"/></w:r></w:p>
+    </w:body></w:document>"#;
+    let comments = br#"<w:comments xmlns:w="urn:w">
+        <w:comment w:id="7"><w:p><w:r><w:t>No metadata.</w:t></w:r></w:p></w:comment>
+    </w:comments>"#;
+    let import = import_with_comments(document, comments);
+    let comment = import
+        .document
+        .definitions()
+        .comments
+        .iter()
+        .next()
+        .map(|(_, c)| c)
+        .expect("comment");
+    assert_eq!(tb_block_text(&comment.blocks), "No metadata.");
+    assert!(comment.author.is_none());
+    assert!(comment.initials.is_none());
+    assert!(comment.date.is_none());
+}
+
+#[test]
+fn dangling_comment_reference_is_reported_not_modeled() {
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:commentReference w:id="99"/></w:r></w:p>
+    </w:body></w:document>"#;
+    let comments = br#"<w:comments xmlns:w="urn:w">
+        <w:comment w:id="1"><w:p><w:r><w:t>body</w:t></w:r></w:p></w:comment>
+    </w:comments>"#;
+    let import = import_with_comments(document, comments);
+    // A reference to a missing comment id is reported, not modeled.
+    assert!(
+        !paragraph(&import, 0)
+            .inlines
+            .iter()
+            .any(|i| matches!(i, InlineNode::CommentReference(_)))
+    );
+    assert!(features(&import).contains(&"commentReference"));
+}
+
+#[test]
+fn comment_containing_a_text_box_preserves_its_content() {
+    // A comment reuses the note-container machinery, so closing it must unwind
+    // text-box frames and finish the restored paragraph (content not dropped).
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:commentReference w:id="1"/></w:r></w:p>
+    </w:body></w:document>"#;
+    let comments =
+        br#"<w:comments xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps">
+        <w:comment w:id="1"><w:p>
+            <w:r><w:t>see </w:t></w:r>
+            <w:r><w:drawing><wp:inline><a:graphic><a:graphicData><wps:wsp><wps:txbx>
+                <w:txbxContent><w:p><w:r><w:t>boxed</w:t></w:r></w:p></w:txbxContent>
+            </wps:txbx></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>
+        </w:p></w:comment>
+    </w:comments>"#;
+    let import = import_with_comments(document, comments);
+    let comment = import
+        .document
+        .definitions()
+        .comments
+        .iter()
+        .next()
+        .map(|(_, c)| c)
+        .expect("comment");
+    assert_eq!(tb_block_text(&comment.blocks), "see boxed");
+}
+
+#[test]
+fn oversized_comment_metadata_is_dropped_not_truncated() {
+    // Author/initials over 255 bytes and date over 64 bytes are discarded so the
+    // model's metadata domains hold without silent truncation of the value.
+    let long_author = "a".repeat(256);
+    let long_date = "2026-".to_owned() + &"0".repeat(64);
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:commentReference w:id="1"/></w:r></w:p>
+    </w:body></w:document>"#;
+    let comments = format!(
+        r#"<w:comments xmlns:w="urn:w">
+        <w:comment w:id="1" w:author="{long_author}" w:date="{long_date}">
+            <w:p><w:r><w:t>c</w:t></w:r></w:p>
+        </w:comment>
+    </w:comments>"#
+    );
+    let import = import_with_comments(document, comments.as_bytes());
+    let comment = import
+        .document
+        .definitions()
+        .comments
+        .iter()
+        .next()
+        .map(|(_, c)| c)
+        .expect("comment");
+    assert!(comment.author.is_none(), "oversized author dropped");
+    assert!(comment.date.is_none(), "oversized date dropped");
+}
+
+#[test]
+fn comment_with_an_eof_truncated_table_preserves_its_content() {
+    // Regression (adversarial review, data-loss): a comment whose table is left
+    // open by truncated markup (stream ends before `</w:tbl>`) must still commit
+    // the table's content, not strand it in the shared TableStack. `close_note`
+    // flushes any open table before taking the comment's blocks.
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:commentReference w:id="0"/></w:r></w:p>
+    </w:body></w:document>"#;
+    // Note: no `</w:tbl>`, no `</w:comment>`, no `</w:comments>` — a clean EOF
+    // truncation (quick-xml returns Eof; unclosed tags are not a mismatch error).
+    let comments = br#"<w:comments xmlns:w="urn:w">
+        <w:comment w:id="0"><w:tbl><w:tr><w:tc><w:p><w:r><w:t>data</w:t></w:r></w:p></w:tc></w:tr>"#;
+    let import = import_with_comments(document, comments);
+    let comment = import
+        .document
+        .definitions()
+        .comments
+        .iter()
+        .next()
+        .map(|(_, c)| c)
+        .expect("comment committed despite truncation");
+    // The truncated table's cell content survives (not dropped).
+    assert_eq!(tb_block_text(&comment.blocks), "data");
+    let has_table = comment
+        .blocks
+        .iter()
+        .any(|b| matches!(b, BlockNode::Table(_)));
+    assert!(has_table, "the open table is committed, not stranded");
+}
+
+#[test]
+fn body_with_an_eof_truncated_table_preserves_its_content() {
+    // Regression (adversarial review, data-loss): the same flush applies to the
+    // main body parse — a table left open at EOF still commits its content.
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:tbl><w:tr><w:tc><w:p><w:r><w:t>kept</w:t></w:r></w:p></w:tc></w:tr>"#;
+    let import = import(document);
+    assert!(nonempty_block_texts(&import).contains(&"kept".to_owned()));
+    assert!(
+        import
+            .document
+            .body()
+            .iter()
+            .any(|b| matches!(b, BlockNode::Table(_))),
+        "the open body table is committed at EOF"
+    );
+}
+
 // ---- headers / footers ---------------------------------------------------
 
 fn import_with_header_footer(
@@ -1583,6 +1794,7 @@ fn import_with_header_footer(
         None,
         &headers,
         &footers,
+        None,
         &[],
         &std::collections::BTreeMap::new(),
         ImportConfig::default(),
@@ -1766,6 +1978,7 @@ fn image_inside_a_footnote_is_modeled_via_the_notes_part_relationships() {
         None,
         &[],
         &[],
+        None,
         &[],
         &std::collections::BTreeMap::new(),
         ImportConfig::default(),
@@ -1816,6 +2029,7 @@ fn external_hyperlink_inside_a_header_is_modeled_via_the_header_part_relationshi
         None,
         &[("rId2".to_owned(), header_part)],
         &[],
+        None,
         &[],
         &std::collections::BTreeMap::new(),
         ImportConfig::default(),

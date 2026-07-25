@@ -14,6 +14,15 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Added
 
+- Comments (`word/comments.xml`) are now modeled as first-class definitions:
+  `Definitions::comments` (a `CommentId → Comment` map, empty-omitted), each
+  `Comment` carrying recursive block content plus retained `author`/`initials`/
+  `date` metadata, and an in-body `InlineNode::CommentReference` that resolves to
+  it (dangling references reported). Comment-part images and external hyperlinks
+  resolve through the part's own relationships. The `w:commentRangeStart`/`End`
+  anchor markers are reported (modeling deferred); no comment body content is
+  dropped. Strictly additive — existing snapshots and the migration golden are
+  byte-identical. (`47-SCHEMA-V1-COMMENTS-DESIGN.md`)
 - Ruby phonetic guides (`w:ruby`) now keep their base text in document
   order; the annotation (`w:rt`) is reported (its text was previously merged in
   front of the base). No model change.

@@ -113,6 +113,8 @@ pub enum ModelError {
     DanglingNoteRef(NodeId),
     /// A section's header/footer reference did not resolve (v1).
     DanglingHeaderFooterRef(NodeId),
+    /// A comment reference did not resolve (v1).
+    DanglingCommentRef(NodeId),
 }
 
 impl fmt::Display for ModelError {
@@ -225,6 +227,9 @@ impl fmt::Display for ModelError {
             }
             Self::DanglingHeaderFooterRef(id) => {
                 write!(formatter, "header/footer reference {id} does not resolve")
+            }
+            Self::DanglingCommentRef(id) => {
+                write!(formatter, "comment reference {id} does not resolve")
             }
         }
     }

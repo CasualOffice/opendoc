@@ -157,6 +157,13 @@ on design:
 | 5 | Collaboration adapters and product migration | Planned |
 | 6 | Stable 1.0 release | Planned |
 
+> [!NOTE]
+> Product sequencing: the **Tauri desktop application** is positioned **before the
+> public editing SDK and the WASM/third-party embedding surfaces**. Once the
+> rendering engine (Phase 1D) exists, the desktop app is built next; the SDK and
+> WASM/embedding surfaces follow it. Tauri is the product goal, not a current
+> deliverable — it is not started until visual/rendering fidelity is reached.
+
 Detailed deliverables and exit gates are maintained in the
 [roadmap](docs/06-ROADMAP-AND-DELIVERY.md). Work does not begin until its design
 is accepted and its tracker entry defines the verification gates.

@@ -143,6 +143,9 @@ fn push_inline_text(inline: &InlineNode, out: &mut String) {
         // A note reference renders as a mark/number, not source text; the note
         // body text is appended separately from the definitions.
         InlineNode::NoteReference(_) => {}
+        // A comment reference is an anchor with no in-flow text; the comment
+        // body lives in the definitions and is not part of the document text.
+        InlineNode::CommentReference(_) => {}
     }
 }
 

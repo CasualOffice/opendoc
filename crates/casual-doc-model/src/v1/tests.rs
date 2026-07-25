@@ -1256,3 +1256,80 @@ fn header_reference_does_not_resolve_against_footers() {
         Err(ModelError::DanglingHeaderFooterRef(_))
     ));
 }
+
+// ---- schema v1 comments --------------------------------------------------
+
+fn comment_paragraph(reference: NodeId, comment: CommentId) -> BlockNode {
+    BlockNode::Paragraph(Paragraph {
+        id: tid(1),
+        properties: ParagraphProperties::default(),
+        inlines: vec![InlineNode::CommentReference(CommentReference {
+            id: reference,
+            comment,
+        })],
+    })
+}
+
+#[test]
+fn comment_reference_resolves_and_round_trips() {
+    let id = CommentId::new(tid(20));
+    let mut definitions = Definitions::default();
+    definitions.comments.insert(
+        id,
+        Comment {
+            blocks: vec![paragraph_block(tid(30))],
+            author: Some("Alice".to_owned()),
+            initials: Some("AL".to_owned()),
+            date: Some("2026-07-25T00:00:00Z".to_owned()),
+        },
+    );
+    let document =
+        Document::new(tid(99), vec![comment_paragraph(tid(2), id)], definitions).unwrap();
+    let json = document.to_json().unwrap();
+    let reloaded = Document::from_json(&json, SnapshotLimits::default()).unwrap();
+    assert_eq!(document, reloaded);
+    let comment = document.definitions().comments.get(&id).unwrap();
+    assert_eq!(comment.author.as_deref(), Some("Alice"));
+}
+
+#[test]
+fn dangling_comment_reference_is_rejected() {
+    let defined = CommentId::new(tid(20));
+    let missing = CommentId::new(tid(21));
+    let mut definitions = Definitions::default();
+    definitions.comments.insert(
+        defined,
+        Comment {
+            blocks: vec![paragraph_block(tid(30))],
+            ..Comment::default()
+        },
+    );
+    assert!(matches!(
+        Document::new(
+            tid(99),
+            vec![comment_paragraph(tid(2), missing)],
+            definitions
+        ),
+        Err(ModelError::DanglingCommentRef(_))
+    ));
+}
+
+#[test]
+fn empty_comment_author_is_rejected() {
+    let id = CommentId::new(tid(20));
+    let mut definitions = Definitions::default();
+    definitions.comments.insert(
+        id,
+        Comment {
+            blocks: Vec::new(),
+            author: Some(String::new()),
+            ..Comment::default()
+        },
+    );
+    assert!(matches!(
+        Document::new(tid(99), vec![comment_paragraph(tid(2), id)], definitions),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "comment.metadata"
+        })
+    ));
+}
