@@ -88,8 +88,13 @@ pub(crate) fn apply_run_property(
 /// Resolves one `w:rFonts` slot: theme attr first (`major*`→Major, `minor*`→Minor),
 /// else the named attr (bounded to 255 bytes). Returns `None` if neither resolves.
 fn font_slot(element: &BytesStart<'_>, named: &[u8], theme: &[u8]) -> Option<FontRef> {
+    // A theme value IN the vocabulary wins; one OUTSIDE it (malformed/unknown)
+    // falls through to the named attribute rather than swallowing the slot — so a
+    // bogus theme next to a valid named family does not silently drop the family.
     if let Some(value) = attribute_value(element, theme) {
-        return theme_font_ref(&value).map(|slot| FontRef::Theme(ThemeFont { slot }));
+        if let Some(slot) = theme_font_ref(&value) {
+            return Some(FontRef::Theme(ThemeFont { slot }));
+        }
     }
     attribute_value(element, named)
         .filter(|name| !name.is_empty() && name.len() <= 255)
