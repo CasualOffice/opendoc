@@ -783,6 +783,71 @@ fn paragraph_mark_rpr_shading_is_not_mapped_as_paragraph_shading() {
 }
 
 #[test]
+fn run_rpr_nested_in_a_mark_rpr_does_not_steal_the_mark_shd() {
+    // Regression (review, minor): a malformed run rPr nested inside an unclosed
+    // paragraph-mark rPr must not drain mark_rpr_depth, else the pilcrow's own
+    // w:shd is mis-captured as paragraph shading. The close now keys on run_open.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:pPr><w:rPr><w:r><w:rPr/></w:r><w:shd w:fill="00FF00"/></w:rPr></w:pPr></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    assert!(
+        paragraph(&import, 0).properties.shading.fill.is_none(),
+        "the mark-rPr shd is not paragraph shading"
+    );
+}
+
+#[test]
+fn paragraph_shd_in_a_cell_is_paragraph_shading_not_cell_shading() {
+    // Regression (review, minor): a paragraph-direct w:shd inside a table cell
+    // must map to the paragraph, not the cell (the tblPr/tcPr shd arms now guard
+    // on ppr_depth==0). Well-formed: tcPr closes before the paragraph.
+    use casual_doc_model::v1::RgbColor;
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:tbl><w:tr><w:tc>
+            <w:tcPr><w:shd w:val="clear" w:fill="0000FF"/></w:tcPr>
+            <w:p><w:pPr><w:shd w:val="clear" w:fill="FF0000"/></w:pPr><w:r><w:t>x</w:t></w:r></w:p>
+        </w:tc></w:tr></w:tbl>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let cell = &first_table(&import).expect("table").rows[0].cells[0];
+    assert_eq!(
+        cell.properties.shading.fill,
+        Some(RgbColor { r: 0, g: 0, b: 255 }),
+        "cell shd stays the cell's"
+    );
+    let BlockNode::Paragraph(para) = &cell.blocks[0] else {
+        panic!("expected a paragraph");
+    };
+    assert_eq!(
+        para.properties.shading.fill,
+        Some(RgbColor { r: 255, g: 0, b: 0 }),
+        "paragraph shd is the paragraph's, not stolen by the cell"
+    );
+}
+
+#[test]
+fn tabs_scope_does_not_leak_across_a_text_box() {
+    // Regression (review, minor): an open w:tabs container must be saved/restored
+    // across a text-box frame, so a text box inside the paragraph does not let its
+    // inner finish_paragraph clear the outer in_tabs and drop the tab stop.
+    let xml = br#"<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps"><w:body>
+        <w:p><w:pPr><w:tabs>
+            <w:r><w:drawing><wp:inline><a:graphic><a:graphicData><wps:wsp><wps:txbx>
+                <w:txbxContent><w:p><w:r><w:t>boxed</w:t></w:r></w:p></w:txbxContent>
+            </wps:txbx></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>
+            <w:tab w:val="center" w:pos="2160"/>
+        </w:tabs></w:pPr><w:r><w:t>x</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    assert_eq!(
+        paragraph(&import, 0).properties.tabs.len(),
+        1,
+        "the outer paragraph's tab stop survives the nested text box"
+    );
+}
+
+#[test]
 fn out_of_range_outline_level_is_reported_not_mapped() {
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
         <w:p><w:pPr><w:outlineLvl w:val="42"/></w:pPr><w:r><w:t>x</w:t></w:r></w:p>

@@ -203,6 +203,8 @@ struct ContentFrame {
     trpr_depth: u32,
     pr_change_depth: u32,
     edge_scope: EdgeScope,
+    in_tabs: bool,
+    mark_rpr_depth: u32,
     suppressed_tbl_depth: u32,
     sdts: Vec<SdtAccumulator>,
     sdt_scopes: Vec<SdtScope>,
@@ -1240,7 +1242,10 @@ impl BodyParser<'_> {
                 }
             }
             b"tblLook" if self.tblpr_depth > 0 => self.apply_table_look(element),
-            b"shd" if self.tblpr_depth > 0 => {
+            // `ppr_depth == 0` so a paragraph-direct `w:shd` (a `w:p` opened while
+            // a `w:tblPr`/`w:tcPr` was left unclosed by malformed markup) is not
+            // misrouted to the table/cell — it wins at the paragraph arm below.
+            b"shd" if self.tblpr_depth > 0 && self.ppr_depth == 0 => {
                 let fill = self.shading_fill(element);
                 self.tables.set_table_shading(fill);
             }
@@ -1264,7 +1269,7 @@ impl BodyParser<'_> {
                 .tables
                 .set_row_header(is_true(attribute_value(element, b"val").as_deref())),
             // ---- cell property long tail (`w:tcPr`) --------------------------
-            b"shd" if self.tcpr_depth > 0 => {
+            b"shd" if self.tcpr_depth > 0 && self.ppr_depth == 0 => {
                 let fill = self.shading_fill(element);
                 self.tables.set_cell_shading(fill);
             }
@@ -1513,9 +1518,14 @@ impl BodyParser<'_> {
                 self.rpr_depth = 0;
             }
             b"rPr" => {
-                // A mark `w:rPr` and a run `w:rPr` never nest, so at most one is
-                // open; decrement whichever this close belongs to.
-                if self.mark_rpr_depth > 0 {
+                // Key the close on `run_open`: a `w:rPr` closing while a run is
+                // open is that run's rPr (`rpr_depth`); otherwise it is the
+                // paragraph mark's rPr (`mark_rpr_depth`). Keying on the counter
+                // alone would let a run rPr nested (malformed) inside an open mark
+                // rPr wrongly drain `mark_rpr_depth`.
+                if self.run_open {
+                    self.rpr_depth = self.rpr_depth.saturating_sub(1);
+                } else if self.mark_rpr_depth > 0 {
                     self.mark_rpr_depth -= 1;
                 } else {
                     self.rpr_depth = self.rpr_depth.saturating_sub(1);
@@ -1942,6 +1952,8 @@ impl BodyParser<'_> {
             trpr_depth: std::mem::take(&mut self.trpr_depth),
             pr_change_depth: std::mem::take(&mut self.pr_change_depth),
             edge_scope: std::mem::replace(&mut self.edge_scope, EdgeScope::None),
+            in_tabs: std::mem::take(&mut self.in_tabs),
+            mark_rpr_depth: std::mem::take(&mut self.mark_rpr_depth),
             suppressed_tbl_depth: std::mem::take(&mut self.suppressed_tbl_depth),
             sdts: std::mem::take(&mut self.sdts),
             sdt_scopes: std::mem::take(&mut self.sdt_scopes),
@@ -1999,6 +2011,8 @@ impl BodyParser<'_> {
         self.trpr_depth = frame.trpr_depth;
         self.pr_change_depth = frame.pr_change_depth;
         self.edge_scope = frame.edge_scope;
+        self.in_tabs = frame.in_tabs;
+        self.mark_rpr_depth = frame.mark_rpr_depth;
         self.suppressed_tbl_depth = frame.suppressed_tbl_depth;
         self.sdts = frame.sdts;
         self.sdt_scopes = frame.sdt_scopes;
