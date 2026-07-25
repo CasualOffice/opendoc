@@ -110,6 +110,57 @@ mod semantic_tests {
     }
 
     #[test]
+    fn tables_survive_the_semantic_round_trip() {
+        // A table exercising the grid, table/row/cell properties (borders,
+        // shading, margins, merges, vAlign, layout, look), and a nested table
+        // inside a cell — all must survive write -> reopen unchanged.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:tbl>
+                <w:tblPr>
+                    <w:jc w:val="center"/><w:tblW w:type="dxa" w:w="9000"/>
+                    <w:tblLayout w:type="fixed"/><w:tblLook w:firstRow="1" w:noVBand="1"/>
+                    <w:tblBorders><w:top w:val="single" w:sz="8" w:color="112233" w:space="4"/>
+                        <w:insideH w:val="dotted"/></w:tblBorders>
+                    <w:shd w:val="clear" w:fill="EEEEEE"/>
+                    <w:tblCellMar><w:top w:type="dxa" w:w="120"/><w:start w:type="dxa" w:w="60"/></w:tblCellMar>
+                </w:tblPr>
+                <w:tblGrid><w:gridCol w:w="4500"/><w:gridCol w:w="4500"/></w:tblGrid>
+                <w:tr>
+                    <w:trPr><w:trHeight w:val="500" w:hRule="atLeast"/><w:tblHeader/></w:trPr>
+                    <w:tc>
+                        <w:tcPr><w:gridSpan w:val="2"/><w:tcW w:type="dxa" w:w="9000"/>
+                            <w:shd w:val="clear" w:fill="FF0000"/><w:vAlign w:val="center"/><w:noWrap/>
+                            <w:tcBorders><w:bottom w:val="double" w:sz="16"/></w:tcBorders>
+                            <w:tcMar><w:end w:type="dxa" w:w="90"/></w:tcMar></w:tcPr>
+                        <w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Header</w:t></w:r></w:p>
+                    </w:tc>
+                </w:tr>
+                <w:tr>
+                    <w:tc><w:tcPr><w:vMerge w:val="restart"/></w:tcPr>
+                        <w:tbl><w:tr><w:tc><w:p><w:r><w:t>nested</w:t></w:r></w:p></w:tc></w:tr></w:tbl>
+                        <w:p><w:r><w:t>a</w:t></w:r></w:p></w:tc>
+                    <w:tc><w:p><w:r><w:t>b</w:t></w:r></w:p></w:tc>
+                </w:tr>
+            </w:tbl>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+        let m2 = import_package(
+            &mut package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+        assert_eq!(m1, m2, "the table model survives write -> reopen unchanged");
+    }
+
+    #[test]
     fn writer_is_deterministic() {
         let xml = br#"<w:document xmlns:w="urn:w"><w:body>
             <w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
