@@ -19,13 +19,14 @@ use std::io::{Cursor, Write};
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, BorderEdge, BreakKind,
     CellVerticalAlignment, Color, Comment, CommentId, DefinitionMap, Definitions, Document,
-    EmphasisMark, Extent, FontCollection, FontDescriptor, FontFamilyKind, FontPitch, FontRef,
-    FontScheme, HeaderFooterId, HeaderFooterKind, HeightRule, HighlightColor, HyperlinkTarget,
-    InlineNode, MediaId, MediaReference, Note, NoteId, NoteKind, NumberingInstance,
-    NumberingInstanceId, ParagraphProperties, RevisionKind, RgbColor, RunFontHint, RunProperties,
-    SdtControlKind, SdtProperties, SectionBoundary, Style, StyleId, StyleKind, TabAlignment,
-    TabLeader, Table, TableBorders, TableCell, TableCellProperties, TableLayout, TableProperties,
-    TableRow, TableRowProperties, TextDirection, ThemeFontRef, VerticalAlignment, VerticalMerge,
+    DocumentSettings, EmphasisMark, Extent, FontCollection, FontDescriptor, FontFamilyKind,
+    FontPitch, FontRef, FontScheme, HeaderFooterId, HeaderFooterKind, HeightRule, HighlightColor,
+    HyperlinkTarget, InlineNode, MediaId, MediaReference, Note, NoteId, NoteKind,
+    NumberingInstance, NumberingInstanceId, ParagraphProperties, RevisionKind, RgbColor,
+    RunFontHint, RunProperties, SdtControlKind, SdtProperties, SectionBoundary, Style, StyleId,
+    StyleKind, TabAlignment, TabLeader, Table, TableBorders, TableCell, TableCellProperties,
+    TableLayout, TableProperties, TableRow, TableRowProperties, TextDirection, ThemeFontRef,
+    VerticalAlignment, VerticalMerge,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -76,6 +77,10 @@ const HEADER_CT: &str = "application/vnd.openxmlformats-officedocument.wordproce
 const FOOTER_REL_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer";
 const FOOTER_CT: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml";
+const SETTINGS_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings";
+const SETTINGS_CT: &str =
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml";
 const A_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
 const WP_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
 const PIC_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/picture";
@@ -254,6 +259,15 @@ pub fn write_document(
             THEME_REL_TYPE,
             "theme/theme1.xml",
             theme_xml(scheme)?,
+        ));
+    }
+    if !definitions.settings.is_default() {
+        extras.push(ExtraPart::new(
+            "word/settings.xml",
+            SETTINGS_CT,
+            SETTINGS_REL_TYPE,
+            "settings.xml",
+            settings_xml(&definitions.settings)?,
         ));
     }
     if !definitions.styles.is_empty() {
@@ -939,6 +953,30 @@ fn styles_xml(styles: &DefinitionMap<StyleId, Style>) -> Result<Vec<u8>, ExportE
             .map_err(pkg)?;
     }
     w.write_event(Event::End(BytesEnd::new("w:styles")))
+        .map_err(pkg)?;
+    Ok(finish(w))
+}
+
+/// Emits `word/settings.xml` with the modeled `CT_OnOff` flags. Only the
+/// non-default flags are written (each present element means `true`), so the
+/// part appears exactly when the model carries a setting to preserve. Emitted
+/// only when `settings.is_default()` is false, matching the importer, which
+/// reads the same flags back — so the round trip is exact.
+fn settings_xml(settings: &DocumentSettings) -> Result<Vec<u8>, ExportError> {
+    let mut w = new_writer();
+    let mut root = start("w:settings");
+    root.push_attribute(("xmlns:w", W_NS));
+    w.write_event(Event::Start(root)).map_err(pkg)?;
+    for (name, on) in [
+        ("w:embedSystemFonts", settings.embed_system_fonts),
+        ("w:embedTrueTypeFonts", settings.embed_true_type_fonts),
+        ("w:saveSubsetFonts", settings.save_subset_fonts),
+    ] {
+        if on {
+            w.write_event(Event::Empty(start(name))).map_err(pkg)?;
+        }
+    }
+    w.write_event(Event::End(BytesEnd::new("w:settings")))
         .map_err(pkg)?;
     Ok(finish(w))
 }

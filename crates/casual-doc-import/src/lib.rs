@@ -38,6 +38,7 @@ mod numbering;
 mod properties;
 mod report;
 mod retain;
+mod settings;
 mod styles;
 mod tables;
 mod theme;
@@ -50,7 +51,8 @@ pub use retain::RetainedSource;
 use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
     BlockNode, Bookmark, BookmarkId, Comment, CommentId, DefinitionMap, Definitions, Document,
-    HeaderFooter, HeaderFooterId, MediaId, Note, NoteId, Paragraph, ParagraphProperties,
+    DocumentSettings, HeaderFooter, HeaderFooterId, MediaId, Note, NoteId, Paragraph,
+    ParagraphProperties,
 };
 use casual_doc_ooxml::DocxPackage;
 
@@ -88,6 +90,7 @@ pub fn import_package(
     let numbering_part = related_part("/numbering");
     let font_table_part = related_part("/fontTable");
     let theme_part = related_part("/theme");
+    let settings_part = related_part("/settings");
     let footnotes_part = related_part("/footnotes");
     let endnotes_part = related_part("/endnotes");
     let comments_part = related_part("/comments");
@@ -140,6 +143,10 @@ pub fn import_package(
         None => (None, std::collections::BTreeMap::new()),
     };
     let theme_bytes = match theme_part {
+        Some(part) => Some(package.read_part(&part).map_err(ImportError::Package)?),
+        None => None,
+    };
+    let settings_bytes = match settings_part {
         Some(part) => Some(package.read_part(&part).map_err(ImportError::Package)?),
         None => None,
     };
@@ -203,6 +210,7 @@ pub fn import_package(
         font_table_bytes.as_deref(),
         &font_table_rels,
         theme_bytes.as_deref(),
+        settings_bytes.as_deref(),
         footnotes.as_ref(),
         endnotes.as_ref(),
         &header_parts,
@@ -244,6 +252,7 @@ pub fn import_main_document_xml(xml: &[u8], config: ImportConfig) -> Result<Impo
         None,
         None,
         &std::collections::BTreeMap::new(),
+        None,
         None,
         None,
         None,
@@ -455,6 +464,7 @@ pub(crate) fn import_with_sources(
     font_table_xml: Option<&[u8]>,
     font_table_rels: &std::collections::BTreeMap<String, String>,
     theme_xml: Option<&[u8]>,
+    settings_xml: Option<&[u8]>,
     footnotes: Option<&PartSources>,
     endnotes: Option<&PartSources>,
     header_parts: &[(String, PartSources)],
@@ -509,6 +519,10 @@ pub(crate) fn import_with_sources(
     let font_scheme = match theme_xml {
         Some(xml) => theme::parse(xml, config)?,
         None => None,
+    };
+    let settings = match settings_xml {
+        Some(xml) => settings::parse(xml, config)?,
+        None => DocumentSettings::default(),
     };
     // Media is built into one shared table BEFORE any body so drawings resolve
     // their `r:embed`/`r:id` to a `MediaId` while parsing. The main document's
@@ -628,6 +642,7 @@ pub(crate) fn import_with_sources(
         bookmarks,
         font_table,
         font_scheme,
+        settings,
         ..Definitions::default()
     };
     let document = Document::new(document_id, body, definitions).map_err(ImportError::Model)?;

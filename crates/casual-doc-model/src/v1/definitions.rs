@@ -217,6 +217,33 @@ pub struct MediaReference {
     pub part_name: String,
 }
 
+/// Document-wide settings (`word/settings.xml`). Only the semantically load-
+/// bearing flags are modeled today; the struct is additive and grows as more
+/// settings are mapped. Serialized only when non-default so snapshots that
+/// predate it stay byte-identical.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DocumentSettings {
+    /// `w:embedTrueTypeFonts` — Word requires this flag before it will honor the
+    /// embedded font faces carried in `fontTable.xml`.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub embed_true_type_fonts: bool,
+    /// `w:embedSystemFonts` — embed fonts that ship with the operating system.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub embed_system_fonts: bool,
+    /// `w:saveSubsetFonts` — the embedded faces are subsetted to used glyphs.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub save_subset_fonts: bool,
+}
+
+impl DocumentSettings {
+    /// True when no setting departs from the default (so the part is omitted).
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// The document definition tables.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -268,4 +295,8 @@ pub struct Definitions {
     /// slots resolve. Additive: omitted when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font_scheme: Option<FontScheme>,
+    /// Document-wide settings (`word/settings.xml`). Additive: omitted when
+    /// default so existing snapshots serialize byte-identically.
+    #[serde(default, skip_serializing_if = "DocumentSettings::is_default")]
+    pub settings: DocumentSettings,
 }
