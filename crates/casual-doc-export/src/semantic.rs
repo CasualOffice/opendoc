@@ -22,11 +22,12 @@ use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, BorderEdge, BreakKind,
     CellVerticalAlignment, Color, Comment, CommentId, DefinitionMap, Definitions, Document,
     EmphasisMark, FontCollection, FontDescriptor, FontFamilyKind, FontPitch, FontRef, FontScheme,
-    HeightRule, HighlightColor, HyperlinkTarget, InlineNode, Note, NoteId, NoteKind,
-    NumberingInstance, NumberingInstanceId, ParagraphProperties, RevisionKind, RgbColor,
-    RunFontHint, RunProperties, SdtControlKind, SdtProperties, SectionBoundary, Style, StyleId,
-    StyleKind, Table, TableBorders, TableCell, TableCellProperties, TableLayout, TableProperties,
-    TableRow, TableRowProperties, TextDirection, ThemeFontRef, VerticalAlignment, VerticalMerge,
+    HeaderFooterId, HeaderFooterKind, HeightRule, HighlightColor, HyperlinkTarget, InlineNode,
+    Note, NoteId, NoteKind, NumberingInstance, NumberingInstanceId, ParagraphProperties,
+    RevisionKind, RgbColor, RunFontHint, RunProperties, SdtControlKind, SdtProperties,
+    SectionBoundary, Style, StyleId, StyleKind, Table, TableBorders, TableCell,
+    TableCellProperties, TableLayout, TableProperties, TableRow, TableRowProperties, TextDirection,
+    ThemeFontRef, VerticalAlignment, VerticalMerge,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -71,6 +72,12 @@ const COMMENTS_REL_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
 const COMMENTS_CT: &str =
     "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml";
+const HEADER_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header";
+const HEADER_CT: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml";
+const FOOTER_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer";
+const FOOTER_CT: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml";
 const A_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
 
 /// A package part beyond `document.xml` (fontTable, theme, styles, …): its part
@@ -78,37 +85,46 @@ const A_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
 /// that references it from `document.xml.rels`. `rId`s are assigned after the
 /// hyperlink relationships.
 struct ExtraPart {
-    part_name: &'static str,
+    part_name: String,
     content_type: &'static str,
     rel_type: &'static str,
-    target: &'static str,
+    target: String,
     bytes: Vec<u8>,
-    /// The part's own external relationships (a hyperlink inside a note/comment
-    /// resolves through `word/_rels/<part>.rels`, not the document's). Empty when
-    /// the part references nothing.
+    /// An explicit relationship id (headers/footers derive it from their id so a
+    /// `w:sectPr` reference can name it without threading a map). `None` = assign
+    /// a fresh `rId` after the hyperlink relationships.
+    rel_id: Option<String>,
+    /// The part's own external relationships (a hyperlink inside a note/comment/
+    /// header resolves through `word/_rels/<part>.rels`, not the document's).
     own_rels: Vec<RelEntry>,
 }
 
 impl ExtraPart {
     fn new(
-        part_name: &'static str,
+        part_name: &str,
         content_type: &'static str,
         rel_type: &'static str,
-        target: &'static str,
+        target: &str,
         bytes: Vec<u8>,
     ) -> Self {
         Self {
-            part_name,
+            part_name: part_name.to_owned(),
             content_type,
             rel_type,
-            target,
+            target: target.to_owned(),
             bytes,
+            rel_id: None,
             own_rels: Vec::new(),
         }
     }
 
     fn with_own_rels(mut self, own_rels: Vec<RelEntry>) -> Self {
         self.own_rels = own_rels;
+        self
+    }
+
+    fn with_rel_id(mut self, rel_id: String) -> Self {
+        self.rel_id = Some(rel_id);
         self
     }
 }
@@ -258,6 +274,37 @@ pub fn write_document(
             .with_own_rels(own_rels),
         );
     }
+    // Headers then footers, each a part with an id-derived relationship id the
+    // section's `w:sectPr` references. Emitted in ascending-id order so the
+    // importer (which keys by relationship order) re-allocates matching ids.
+    for (index, (id, header)) in definitions.headers.iter().enumerate() {
+        let (bytes, own_rels) = header_footer_xml("w:hdr", &header.blocks, definitions)?;
+        extras.push(
+            ExtraPart::new(
+                &format!("word/header{}.xml", index + 1),
+                HEADER_CT,
+                HEADER_REL_TYPE,
+                &format!("header{}.xml", index + 1),
+                bytes,
+            )
+            .with_rel_id(hf_rel_id(*id))
+            .with_own_rels(own_rels),
+        );
+    }
+    for (index, (id, footer)) in definitions.footers.iter().enumerate() {
+        let (bytes, own_rels) = header_footer_xml("w:ftr", &footer.blocks, definitions)?;
+        extras.push(
+            ExtraPart::new(
+                &format!("word/footer{}.xml", index + 1),
+                FOOTER_CT,
+                FOOTER_REL_TYPE,
+                &format!("footer{}.xml", index + 1),
+                bytes,
+            )
+            .with_rel_id(hf_rel_id(*id))
+            .with_own_rels(own_rels),
+        );
+    }
 
     // Parts are emitted in a deterministic order so the package bytes are
     // reproducible.
@@ -276,11 +323,11 @@ pub fn write_document(
     for extra in extras {
         if !extra.own_rels.is_empty() {
             parts.push((
-                rels_part_name(extra.part_name),
+                rels_part_name(&extra.part_name),
                 part_rels_xml(&extra.own_rels)?,
             ));
         }
-        parts.push((extra.part_name.to_owned(), extra.bytes));
+        parts.push((extra.part_name, extra.bytes));
     }
 
     let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
@@ -382,14 +429,24 @@ fn document_rels_xml(entries: &[RelEntry], extras: &[ExtraPart]) -> Result<Vec<u
         rel.push_attribute(("TargetMode", "External"));
         w.write_event(Event::Empty(rel)).map_err(pkg)?;
     }
-    // Fresh internal relationships after the hyperlink ids; the importer resolves
-    // these parts by relationship type, not by id.
-    for (offset, extra) in extras.iter().enumerate() {
-        let id = format!("rId{}", entries.len() + offset + 1);
+    // Internal relationships after the hyperlink ids. A part with an explicit
+    // `rel_id` (headers/footers) uses it; the rest get a fresh sequential `rId`.
+    // The importer resolves single parts by relationship type; headers/footers
+    // are keyed by the ORDER their `/header`/`/footer` relationships appear, so
+    // emit them in ascending-id order (the extras are built that way).
+    let mut next = entries.len();
+    for extra in extras {
+        let id = match &extra.rel_id {
+            Some(id) => id.clone(),
+            None => {
+                next += 1;
+                format!("rId{next}")
+            }
+        };
         let mut rel = start("Relationship");
         rel.push_attribute(("Id", id.as_str()));
         rel.push_attribute(("Type", extra.rel_type));
-        rel.push_attribute(("Target", extra.target));
+        rel.push_attribute(("Target", extra.target.as_str()));
         w.write_event(Event::Empty(rel)).map_err(pkg)?;
     }
     w.write_event(Event::End(BytesEnd::new("Relationships")))
@@ -508,6 +565,45 @@ fn note_id_token(id: NoteId) -> String {
 
 fn comment_id_token(id: CommentId) -> String {
     id.node_id().as_u128().to_string()
+}
+
+/// Emits a header or footer part (`w:hdr`/`w:ftr`) from its blocks. Uses a fresh
+/// per-part `Ctx` so a hyperlink inside routes to the part's own rels (returned).
+fn header_footer_xml(
+    root: &str,
+    blocks: &[BlockNode],
+    defs: &Definitions,
+) -> Result<(Vec<u8>, Vec<RelEntry>), ExportError> {
+    let mut w = new_writer();
+    let mut ctx = Ctx {
+        defs,
+        rels: RelBuilder::new(),
+    };
+    let mut r = start(root);
+    r.push_attribute(("xmlns:w", W_NS));
+    r.push_attribute(("xmlns:r", R_NS));
+    w.write_event(Event::Start(r)).map_err(pkg)?;
+    for block in blocks {
+        write_block(&mut w, block, &mut ctx)?;
+    }
+    w.write_event(Event::End(BytesEnd::new(root)))
+        .map_err(pkg)?;
+    Ok((finish(w), ctx.rels.entries))
+}
+
+/// The relationship id a `w:sectPr` uses to reference a header/footer part,
+/// derived from its id so the reference and the part's relationship agree
+/// without threading a map. The `rIdHf` prefix avoids the `rId{n}` ids.
+fn hf_rel_id(id: HeaderFooterId) -> String {
+    format!("rIdHf{}", id.node_id().as_u128())
+}
+
+fn hf_kind_token(kind: HeaderFooterKind) -> &'static str {
+    match kind {
+        HeaderFooterKind::Default => "default",
+        HeaderFooterKind::First => "first",
+        HeaderFooterKind::Even => "even",
+    }
 }
 
 /// Emits `word/fontTable.xml` from the model's font descriptors, in order.
@@ -676,11 +772,23 @@ fn styles_xml(styles: &DefinitionMap<StyleId, Style>) -> Result<Vec<u8>, ExportE
             el.push_attribute(("w:val", style_id_token(based_on).as_str()));
             w.write_event(Event::Empty(el)).map_err(pkg)?;
         }
+        // A `Some(default)` pPr/rPr must still emit its (empty) element: the
+        // importer keys on the tag's PRESENCE (Some vs None), while the property
+        // writers elide an all-default value — so emit a bare `<w:pPr/>`/`<w:rPr/>`
+        // for the default case to preserve presence across the round trip.
         if let Some(paragraph) = &style.paragraph {
-            write_paragraph_properties(&mut w, paragraph)?;
+            if *paragraph == ParagraphProperties::default() {
+                w.write_event(Event::Empty(start("w:pPr"))).map_err(pkg)?;
+            } else {
+                write_paragraph_properties(&mut w, paragraph)?;
+            }
         }
         if let Some(run) = &style.run {
-            write_run_properties(&mut w, run)?;
+            if *run == RunProperties::default() {
+                w.write_event(Event::Empty(start("w:rPr"))).map_err(pkg)?;
+            } else {
+                write_run_properties(&mut w, run)?;
+            }
         }
         w.write_event(Event::End(BytesEnd::new("w:style")))
             .map_err(pkg)?;
@@ -791,6 +899,17 @@ fn write_section_properties(
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("w:sectPr")))
         .map_err(pkg)?;
+    for (references, element) in [
+        (&section.headers, "w:headerReference"),
+        (&section.footers, "w:footerReference"),
+    ] {
+        for reference in references {
+            let mut el = start(element);
+            el.push_attribute(("w:type", hf_kind_token(reference.kind)));
+            el.push_attribute(("r:id", hf_rel_id(reference.reference).as_str()));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+    }
     let mut pg_sz = start("w:pgSz");
     pg_sz.push_attribute(("w:w", section.page_size.width_twips.to_string().as_str()));
     pg_sz.push_attribute(("w:h", section.page_size.height_twips.to_string().as_str()));
@@ -1208,6 +1327,7 @@ fn write_paragraph_properties(
         (properties.keep_next, "w:keepNext"),
         (properties.keep_lines, "w:keepLines"),
         (properties.page_break_before, "w:pageBreakBefore"),
+        (properties.widow_control, "w:widowControl"),
         (properties.contextual_spacing, "w:contextualSpacing"),
         (properties.suppress_line_numbers, "w:suppressLineNumbers"),
     ] {
