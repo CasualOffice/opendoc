@@ -14,8 +14,10 @@ the future document engine for Casual Docs and as an embeddable SDK for other
 applications.
 
 > [!IMPORTANT]
-> OpenDoc is in pre-release development. Phase 0 is complete and Phase 1A
-> (semantic DOCX import) is in progress: a `.docx` reads end-to-end into the
+> OpenDoc is in pre-release development. **Phase 0 and Phase 1A (semantic
+> modeling — every WordprocessingML construct family is now a first-class,
+> editable model value) are complete;** the semantic writer (model → editable
+> `.docx`) is now being built (Phase 1B). A `.docx` reads end-to-end into the
 > normalized model, validated against LibreOffice at 100% text-content fidelity.
 > The crates are not published and the public API is not stable. Layout,
 > rendering, DOCX save, and an end-user editor are not available yet.
@@ -37,8 +39,8 @@ applications.
 
 ## Current Capabilities
 
-Phase 0 (runtime + package safety) is complete; Phase 1A (semantic import) is
-being built on top of it:
+Phase 0 (runtime + package safety) is complete; Phase 1A (semantic import) has
+modeled every construct family, and the semantic writer is underway:
 
 | Area | Available today |
 | --- | --- |
@@ -53,17 +55,25 @@ being built on top of it:
 | Portability | Required CI on Linux, macOS ARM64, Windows x64, WASM, and Rust 1.85 MSRV |
 
 Every WordprocessingML construct is in scope for round-trip: what the semantic
-model does not yet represent is preserved verbatim and reproduced. The following
-are **not implemented yet** (nothing is excluded — this is the progression):
+model does not yet represent is preserved verbatim and reproduced.
 
-- **semantic modeling** of the remaining constructs (VML/legacy images,
-  comments, tracked changes, ...) as first-class model values — paragraphs,
-  runs, styles, numbering, sections, media, drawings, hyperlinks, tables,
-  fields, text boxes, footnotes/endnotes, and headers/footers are modeled
-  today; the rest round-trip via Retention and gain in-model editing as each is
-  added;
-- edit-tolerant (tier-2) provenance and the **semantic writer** that re-emits
-  after edits (the no-edit writer exists today);
+**Phase 1A (semantic modeling) is complete:** every construct family is a
+first-class, editable model value — paragraphs, runs (with the full property
+tail), styles, numbering, sections, media, drawings, hyperlinks, tables (with
+borders, shading, and margins), fields, text boxes, footnotes/endnotes,
+headers/footers, comments, tracked changes, bookmarks, and content controls;
+anything a producer wrote that is not yet modeled is reported and round-trips
+via Retention (no silent loss).
+
+The following are **not implemented yet** (nothing is excluded — this is the
+progression):
+
+- the **semantic writer** (`write_document`) that re-emits an *edited* model as a
+  valid `.docx` (Phase 1B, in progress) — its core body and tables land today,
+  proven by a model-fixed-point round-trip (import → write → reopen = identical
+  model); the remaining inline construct families and definition parts follow;
+- **font management** (font descriptor resolution, substitution, embedding, and
+  metrics) — under design, researched against Word/LibreOffice/ONLYOFFICE first;
 - text shaping, pagination, layout, display lists, and rendering;
 - browser, Tauri, C ABI, and npm distribution surfaces;
 - collaboration adapters and production application integration.
@@ -131,7 +141,7 @@ compilation.
 | `casual-doc-selection` | Logical caret/range validation and mapping |
 | `casual-doc-ooxml` | Security-bounded OOXML package inspection |
 | `casual-doc-import` | WordprocessingML semantic import into the normalized model |
-| `casual-doc-export` | DOCX package writer (no-edit reconstruction from retained source) |
+| `casual-doc-export` | DOCX writers: Retention (byte-identical reconstruction) and the semantic model → WordprocessingML writer (`write_document`) |
 | `opendoc-benchmark` | Reproducible workload and baseline reporting |
 | `opendoc-fidelity` | LibreOffice differential text-fidelity harness |
 | `opendoc-fuzz` | Independently locked package-reader fuzz targets |
@@ -147,7 +157,7 @@ on design:
 | Phase | Outcome | Status |
 | --- | --- | --- |
 | 0 | Runtime, model, package-safety, CI, corpus, and benchmark foundation | Complete |
-| 1A | Semantic DOCX import, normalized snapshots, and compatibility reports | In progress |
+| 1A | Semantic DOCX import + modeling (every construct family a first-class, editable model value), normalized snapshots, compatibility reports, the semantic model → DOCX writer, and font management | **Modeling + import complete**; writer in progress (core body + tables); font management under design |
 | 1B | Typography and paragraph layout | Not started |
 | 1C | Pagination and backend-neutral display list | Not started |
 | 1D | Native/WASM rendering and hit testing | Not started |
