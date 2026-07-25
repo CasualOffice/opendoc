@@ -70,15 +70,6 @@ The runtime is not a UI toolkit and is not a DOCX-only editor. It is a determini
 39. `39-PHASE-1B-SEMANTIC-DOCX-WRITER-DESIGN.md` — the semantic writer design (model → valid editable `.docx`).
 40. `40-FONT-MANAGEMENT-DESIGN.md` — accepted full-scope font resolution/substitution/metrics design.
 41. `41-PHASE-1B-EXIT-REPORT.md` — accepted Phase 1B evidence, coverage, and the no-silent-loss guarantee.
-
-39. `39-PHASE-1B-SEMANTIC-DOCX-WRITER-DESIGN.md` — the semantic writer design (model → valid editable `.docx`).
-40. `40-FONT-MANAGEMENT-DESIGN.md` — accepted full-scope font resolution/substitution/metrics design.
-41. `41-PHASE-1B-EXIT-REPORT.md` — accepted Phase 1B evidence, coverage, and the no-silent-loss guarantee.
-42. `42-RENDERING-ARCHITECTURE-RESEARCH.md` — prior-art + ecosystem + algorithm research for the Phase 1C layout/pagination/rendering engine.
-
-39. `39-PHASE-1B-SEMANTIC-DOCX-WRITER-DESIGN.md` — the semantic writer design (model → valid editable `.docx`).
-40. `40-FONT-MANAGEMENT-DESIGN.md` — accepted full-scope font resolution/substitution/metrics design.
-41. `41-PHASE-1B-EXIT-REPORT.md` — accepted Phase 1B evidence, coverage, and the no-silent-loss guarantee.
 42. `42-RENDERING-ARCHITECTURE-RESEARCH.md` — prior-art + ecosystem + algorithm research for the Phase 1C layout/pagination/rendering engine.
 43. `43-PHASE-1C-LAYOUT-RENDERING-DESIGN.md` — proposed production layout/pagination/rendering engine design (Phases 1C–1E).
 
@@ -89,7 +80,7 @@ Also present (not in the numbered sequence): `PHASE-1A-SEMANTIC-MODELING-TRACKER
 The former per-construct schema-v1 design docs (32 and 38–53, sixteen files) were
 consolidated into the single `38-SCHEMA-V1-DESIGN-REFERENCE.md`; the originals were
 deleted with no information loss. Number 32 is intentionally retired (its content
-lives in the "Import architecture" section of doc 38). Numbers 39–53 are now free.
+lives in the "Import architecture" section of doc 38). Numbers 44–53 are now free.
 
 ## Recommended project names
 

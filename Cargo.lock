@@ -30,6 +30,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "casual-doc-layout"
+version = "0.0.1"
+dependencies = [
+ "casual-doc-model",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "casual-doc-model"
 version = "0.0.1"
 dependencies = [

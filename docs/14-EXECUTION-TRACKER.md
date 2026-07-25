@@ -158,3 +158,25 @@ to the rendering path (Phase 1C).
 | P1B-COV-PAR | Paragraph-property coverage (~62->90%) | Claude Code | Done | Added the bidi/wordWrap/kinsoku/snapToGrid/mirrorIndents/adjustRightInd/suppressAutoHyphens/overflowPunct/topLinePunct/autoSpace* toggles + textAlignment (tri-state to preserve explicit-off on default-ON toggles). PR #64. |
 | P1B-COV-SECT | Section-property coverage (~40->85%) | Claude Code | Done | Added section break type, column space/separator, pgNumType, vAlign, titlePg, docGrid. PR #65. |
 | P1B-COV-MARK | Paragraph-mark rPr (`w:pPr > w:rPr`) | Claude Code | Done | `ParagraphProperties.mark_run: Option<Box<RunProperties>>`; importer routes mark-rPr children into a separate accumulator; writer emits it before `w:sectPr` (bare `<w:rPr/>` for Some(default)). Closes the paragraph family. PR #66. |
+
+## Phase 1C–1E — Layout, pagination & rendering engine
+
+**Design:** `43-PHASE-1C-LAYOUT-RENDERING-DESIGN.md` (research: `42-…`). A
+production, Word-grade layout/pagination/rendering engine delivered in
+production-complete slices; not an MVP. Retention remains the no-silent-loss
+floor for unmodeled long-tail constructs.
+
+| ID | Item | Owner | Status | Notes |
+|---|---|---|---|---|
+| P1C-000 | Layout crate scaffold + type spine | Claude Code | Done | New `casual-doc-layout`: device-independent geometry (`Twip`/`Point`/`Size`/`Rect`), line-level types (`Glyph`/`GlyphRun`/`Line`/`LineLayout`) + the `LineShaper` seam, block/flow fragments (`BlockFragment`/`BoxMetrics`), immutable paginated output (`Page`/`PaginatedLayout`), the backend-neutral display list (`PaintItem`/`DisplayList`), and layout-side model anchors. Stack validated (parley 0.11 + tiny-skia 0.12 build + licenses in allow-list). 7 tests. |
+| P1C-001 | `parley` line shaper (default `LineShaper`) | Claude Code | Next | Shape a styled paragraph → positioned lines (greedy UAX#14 break, bidi); behind the trait. |
+| P1C-002 | Font resolution MVP (bundled core set) | Claude Code | Planned | Deterministic bundled/subset fonts (`40-…`); `FontId` resolution for WASM determinism. |
+| P1C-003 | Run/paragraph properties in layout + `TabResolver` | Claude Code | Planned | Bold/italic/size/color/underline/strike, alignment/indent/spacing, DOCX tab stops. |
+| P1C-004 | Block/flow galley + first PNG (CPU raster) | Claude Code | Planned | `casual-doc-render` `tiny-skia` backend; visual-regression PNG vs LibreOffice reference (extends M-002). |
+| P1D-001 | Single-section paginator | Claude Code | Planned | Page box + implicit overflow breaks → multi-page. |
+| P1D-002 | Break control (CSS-Break-3 mapped from DOCX) | Claude Code | Planned | Forced breaks, keepNext/keepLines/widow-orphan; page-break parity gate. |
+| P1D-003 | Tables across pages + footnotes | Claude Code | Planned | Row split, header repeat, cantSplit; footnote fixed-point placement. |
+| P1D-004 | Incremental relayout + virtualized scroll | Claude Code | Planned | Dirty tracking + stabilization halt; O(neighborhood) per edit. |
+| P1E-001 | Canvas (WASM) backend | Claude Code | Planned | Execute the display list on `CanvasRenderingContext2D` (web + Tauri webview). |
+| P1E-002 | Hit-testing + caret + selection | Claude Code | Planned | pixel↔model position over the immutable page fragments; reconcile with `casual-doc-selection`. |
+| P1E-003 | GPU backend (`vello`/`wgpu`) | Claude Code | Planned | Native performance behind the same display-list interface. |
