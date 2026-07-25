@@ -40,6 +40,7 @@ mod report;
 mod retain;
 mod styles;
 mod tables;
+mod theme;
 
 pub use config::{ImportConfig, ImportMode};
 pub use error::ImportError;
@@ -86,6 +87,7 @@ pub fn import_package(
     let styles_part = related_part("/styles");
     let numbering_part = related_part("/numbering");
     let font_table_part = related_part("/fontTable");
+    let theme_part = related_part("/theme");
     let footnotes_part = related_part("/footnotes");
     let endnotes_part = related_part("/endnotes");
     let comments_part = related_part("/comments");
@@ -119,6 +121,10 @@ pub fn import_package(
         None => None,
     };
     let font_table_bytes = match font_table_part {
+        Some(part) => Some(package.read_part(&part).map_err(ImportError::Package)?),
+        None => None,
+    };
+    let theme_bytes = match theme_part {
         Some(part) => Some(package.read_part(&part).map_err(ImportError::Package)?),
         None => None,
     };
@@ -180,6 +186,7 @@ pub fn import_package(
         styles_bytes.as_deref(),
         numbering_bytes.as_deref(),
         font_table_bytes.as_deref(),
+        theme_bytes.as_deref(),
         footnotes.as_ref(),
         endnotes.as_ref(),
         &header_parts,
@@ -217,6 +224,7 @@ pub fn import_package(
 pub fn import_main_document_xml(xml: &[u8], config: ImportConfig) -> Result<Import, ImportError> {
     import_with_sources(
         xml,
+        None,
         None,
         None,
         None,
@@ -428,6 +436,7 @@ pub(crate) fn import_with_sources(
     styles_xml: Option<&[u8]>,
     numbering_xml: Option<&[u8]>,
     font_table_xml: Option<&[u8]>,
+    theme_xml: Option<&[u8]>,
     footnotes: Option<&PartSources>,
     endnotes: Option<&PartSources>,
     header_parts: &[(String, PartSources)],
@@ -478,6 +487,10 @@ pub(crate) fn import_with_sources(
     let font_table = match font_table_xml {
         Some(xml) => font_table::parse(xml, config)?,
         None => Vec::new(),
+    };
+    let font_scheme = match theme_xml {
+        Some(xml) => theme::parse(xml, config)?,
+        None => None,
     };
     // Media is built into one shared table BEFORE any body so drawings resolve
     // their `r:embed`/`r:id` to a `MediaId` while parsing. The main document's
@@ -596,6 +609,7 @@ pub(crate) fn import_with_sources(
         comments: comments_map,
         bookmarks,
         font_table,
+        font_scheme,
         ..Definitions::default()
     };
     let document = Document::new(document_id, body, definitions).map_err(ImportError::Model)?;

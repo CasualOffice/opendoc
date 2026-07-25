@@ -21,6 +21,7 @@ fn import_with_styles(document: &[u8], styles: &[u8]) -> Import {
         None,
         None,
         None,
+        None,
         &[],
         &[],
         None,
@@ -36,6 +37,7 @@ fn import_with_numbering(document: &[u8], numbering: &[u8]) -> Import {
         document,
         None,
         Some(numbering),
+        None,
         None,
         None,
         None,
@@ -64,6 +66,7 @@ fn import_with_notes(document: &[u8], footnotes: Option<&[u8]>, endnotes: Option
         None,
         None,
         None,
+        None,
         footnotes.as_ref(),
         endnotes.as_ref(),
         &[],
@@ -80,6 +83,7 @@ fn import_with_comments(document: &[u8], comments: &[u8]) -> Import {
     let comments = part_sources(comments);
     import_with_sources(
         document,
+        None,
         None,
         None,
         None,
@@ -359,6 +363,34 @@ fn font_table_descriptors_are_parsed() {
     assert!(fonts[0].not_true_type);
     assert_eq!(fonts[1].name, "Symbol");
     assert!(fonts[1].alt_name.is_none() && !fonts[1].not_true_type);
+}
+
+#[test]
+fn theme_font_scheme_is_parsed_and_clr_scheme_ignored() {
+    let xml = br#"<a:theme xmlns:a="urn:a"><a:themeElements>
+        <a:fontScheme name="Office">
+            <a:majorFont>
+                <a:latin typeface="Calibri Light" panose="020F0302" pitchFamily="34" charset="0"/>
+                <a:ea typeface=""/><a:cs typeface=""/>
+                <a:font script="Hang" typeface="Malgun Gothic"/></a:majorFont>
+            <a:minorFont><a:latin typeface="Calibri"/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont>
+        </a:fontScheme>
+        <a:clrScheme name="Office"><a:dk1><a:sysClr val="windowText"/></a:dk1></a:clrScheme>
+    </a:themeElements></a:theme>"#;
+    let scheme = crate::theme::parse(xml, ImportConfig::default())
+        .unwrap()
+        .unwrap();
+    assert_eq!(scheme.major.latin.typeface, "Calibri Light");
+    assert_eq!(scheme.major.latin.panose.as_deref(), Some("020F0302"));
+    assert_eq!(scheme.major.latin.pitch_family.as_deref(), Some("34"));
+    assert!(scheme.major.ea.typeface.is_empty());
+    assert_eq!(scheme.major.script_overrides.len(), 1);
+    assert_eq!(scheme.major.script_overrides[0].script, "Hang");
+    assert_eq!(scheme.minor.latin.typeface, "Calibri");
+    // A theme with no fontScheme yields None.
+    let none =
+        crate::theme::parse(br#"<a:theme xmlns:a="urn:a"/>"#, ImportConfig::default()).unwrap();
+    assert!(none.is_none());
 }
 
 #[test]
@@ -2498,6 +2530,7 @@ fn revision_wrapping_a_hyperlink_is_modeled() {
         None,
         None,
         None,
+        None,
         &[],
         &[],
         None,
@@ -2528,6 +2561,7 @@ fn revision_inside_a_hyperlink_is_modeled() {
     hyperlinks.insert("rIdLink".to_owned(), "https://example.com/".to_owned());
     let import = import_with_sources(
         document,
+        None,
         None,
         None,
         None,
@@ -2767,6 +2801,7 @@ fn import_with_header_footer(
         None,
         None,
         None,
+        None,
         &headers,
         &footers,
         None,
@@ -2950,6 +2985,7 @@ fn image_inside_a_footnote_is_modeled_via_the_notes_part_relationships() {
         None,
         None,
         None,
+        None,
         Some(&footnotes),
         None,
         &[],
@@ -2999,6 +3035,7 @@ fn external_hyperlink_inside_a_header_is_modeled_via_the_header_part_relationshi
     };
     let import = import_with_sources(
         document,
+        None,
         None,
         None,
         None,

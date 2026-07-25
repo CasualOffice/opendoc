@@ -343,6 +343,74 @@ pub struct FontDescriptor {
     pub not_true_type: bool,
 }
 
+/// One theme font entry (`a:latin`/`a:ea`/`a:cs`, ECMA-376 §20.1.4.1). Its
+/// `typeface` may be empty (meaning "fall back to the latin entry"); the
+/// panose/pitch/charset hints are retained verbatim (opaque).
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ThemeFontEntry {
+    /// The typeface name (`@typeface`, possibly empty).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub typeface: String,
+    /// PANOSE classification (`@panose`), opaque hex as written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub panose: Option<String>,
+    /// Pitch/family byte (`@pitchFamily`), opaque as written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pitch_family: Option<String>,
+    /// Windows charset (`@charset`), opaque as written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub charset: Option<String>,
+}
+
+/// A per-script typeface override (`<a:font script="Hans" typeface="..."/>`).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ScriptFont {
+    /// The ISO-15924 script tag (`@script`).
+    pub script: String,
+    /// The typeface for that script (`@typeface`).
+    pub typeface: String,
+}
+
+/// A major or minor font collection (`a:majorFont`/`a:minorFont`): the three
+/// base entries plus any per-script overrides.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FontCollection {
+    /// Latin entry (`a:latin`).
+    #[serde(default, skip_serializing_if = "ThemeFontEntry::is_default")]
+    pub latin: ThemeFontEntry,
+    /// East-Asian entry (`a:ea`).
+    #[serde(default, skip_serializing_if = "ThemeFontEntry::is_default")]
+    pub ea: ThemeFontEntry,
+    /// Complex-script entry (`a:cs`).
+    #[serde(default, skip_serializing_if = "ThemeFontEntry::is_default")]
+    pub cs: ThemeFontEntry,
+    /// Per-script typeface overrides, in document order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub script_overrides: Vec<ScriptFont>,
+}
+
+impl ThemeFontEntry {
+    /// Whether the entry is empty (no typeface or hints).
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        *self == ThemeFontEntry::default()
+    }
+}
+
+/// The theme font scheme (`theme1.xml` `a:fontScheme`): the major (heading) and
+/// minor (body) collections against which `w:rFonts@*Theme` slots resolve.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FontScheme {
+    /// The major (heading) collection (`a:majorFont`).
+    pub major: FontCollection,
+    /// The minor (body) collection (`a:minorFont`).
+    pub minor: FontCollection,
+}
+
 /// Paragraph indentation in twips.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

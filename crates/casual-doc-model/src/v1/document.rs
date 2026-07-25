@@ -99,7 +99,36 @@ impl Document {
         self.validate_comments()?;
         self.validate_bookmarks()?;
         self.validate_font_table()?;
+        self.validate_font_scheme()?;
         self.validate_body()?;
+        Ok(())
+    }
+
+    fn validate_font_scheme(&self) -> Result<(), ModelError> {
+        let Some(scheme) = &self.definitions.font_scheme else {
+            return Ok(());
+        };
+        for collection in [&scheme.major, &scheme.minor] {
+            for entry in [&collection.latin, &collection.ea, &collection.cs] {
+                check_domain(entry.typeface.len() <= 255, "fontScheme.typeface")?;
+                for (value, field) in [
+                    (&entry.panose, "fontScheme.panose"),
+                    (&entry.pitch_family, "fontScheme.pitchFamily"),
+                    (&entry.charset, "fontScheme.charset"),
+                ] {
+                    if let Some(value) = value {
+                        check_domain(!value.is_empty() && value.len() <= 255, field)?;
+                    }
+                }
+            }
+            for over in &collection.script_overrides {
+                check_domain(
+                    !over.script.is_empty() && over.script.len() <= 32,
+                    "fontScheme.script",
+                )?;
+                check_domain(over.typeface.len() <= 255, "fontScheme.override.typeface")?;
+            }
+        }
         Ok(())
     }
 

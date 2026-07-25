@@ -36,6 +36,17 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Added
 
+- Font management, Phase 1A.2b (theme `fontScheme`): the theme font scheme
+  (`theme1.xml` `a:fontScheme`) is now modeled as `Definitions::font_scheme` — a
+  `FontScheme` of major/minor `FontCollection`s, each with latin/ea/cs
+  `ThemeFontEntry`s (typeface + opaque panose/pitchFamily/charset) and per-script
+  overrides — so the 8-value theme font slots resolve to concrete families. The
+  importer resolves the `/theme` relationship and parses the font scheme by local
+  name (ignoring the colour/format schemes, which round-trip via Retention); the
+  writer regenerates `word/theme/theme1.xml` with its content-type override and
+  relationship. The orphaned `ThemeReferences` type is removed. Proven by a
+  fixed-point round-trip. Additive: existing snapshots and the migration golden
+  are byte-identical.
 - Font management, Phase 1A.2a (`fontTable.xml`): the font table is now modeled
   as first-class `FontDescriptor`s on `Definitions::font_table` — family name,
   `altName`, `panose1`, `charset`, `family`, `pitch`, the OS/2 `sig` coverage

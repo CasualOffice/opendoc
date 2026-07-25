@@ -411,6 +411,63 @@ mod semantic_tests {
     }
 
     #[test]
+    fn theme_font_scheme_survives_the_semantic_round_trip() {
+        // A theme with a fontScheme (major + minor, base entries with hints, a
+        // per-script override, empty ea/cs) plus an unrelated clrScheme (which
+        // must be ignored) — the writer regenerates theme1.xml, its content-type
+        // override, and the /theme relationship, and the font scheme round-trips.
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/></Relationships>"#;
+        let theme = br#"<a:theme xmlns:a="urn:a" name="Office Theme"><a:themeElements>
+            <a:fontScheme name="Office">
+                <a:majorFont>
+                    <a:latin typeface="Calibri Light" panose="020F0302020204030204" pitchFamily="34" charset="0"/>
+                    <a:ea typeface=""/><a:cs typeface=""/>
+                    <a:font script="Jpan" typeface="Yu Gothic Light"/></a:majorFont>
+                <a:minorFont>
+                    <a:latin typeface="Calibri"/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont>
+            </a:fontScheme>
+            <a:clrScheme name="Office"><a:dk1><a:sysClr val="windowText"/></a:dk1></a:clrScheme>
+        </a:themeElements></a:theme>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/theme/theme1.xml", theme),
+        ]);
+        let mut src_package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let m1 = import_package(
+            &mut src_package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+        let scheme = m1.definitions().font_scheme.as_ref().unwrap();
+        assert_eq!(scheme.major.latin.typeface, "Calibri Light");
+        assert_eq!(scheme.major.script_overrides.len(), 1);
+        assert_eq!(scheme.minor.latin.typeface, "Calibri");
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+        let m2 = import_package(
+            &mut package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+        assert_eq!(m1, m2, "the theme font scheme survives write -> reopen");
+    }
+
+    #[test]
     fn all_run_properties_survive_the_semantic_round_trip() {
         // Every modeled run property (toggles on AND off, the value-carrying
         // vocabularies, the typographic metrics, and w:lang's three tags) must
