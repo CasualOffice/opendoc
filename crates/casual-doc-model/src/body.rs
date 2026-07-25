@@ -256,11 +256,11 @@ impl Paragraph {
             match inline {
                 InlineNode::Text(run) if run.text.is_empty() => {}
                 InlineNode::Text(run) => {
-                    if let Some(InlineNode::Text(previous)) = normalized.last_mut() {
-                        if previous.marks == run.marks {
-                            previous.text.push_str(&run.text);
-                            continue;
-                        }
+                    if let Some(InlineNode::Text(previous)) = normalized.last_mut()
+                        && previous.marks == run.marks
+                    {
+                        previous.text.push_str(&run.text);
+                        continue;
                     }
                     normalized.push(InlineNode::Text(run));
                 }

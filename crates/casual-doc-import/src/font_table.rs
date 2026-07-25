@@ -128,12 +128,12 @@ fn on_start(
 }
 
 fn on_end(local: &[u8], current: &mut Option<FontDescriptor>, fonts: &mut Vec<FontDescriptor>) {
-    if local == b"font" {
-        if let Some(font) = current.take() {
-            // Skip an empty/oversized name (model validation would reject it).
-            if !font.name.is_empty() && font.name.len() <= 255 {
-                fonts.push(font);
-            }
+    if local == b"font"
+        && let Some(font) = current.take()
+    {
+        // Skip an empty/oversized name (model validation would reject it).
+        if !font.name.is_empty() && font.name.len() <= 255 {
+            fonts.push(font);
         }
     }
 }

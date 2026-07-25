@@ -25,7 +25,7 @@ not considered supported until its required CI and conformance gates pass.
 | Linux ARM64 | `aarch64-unknown-linux-gnu` | Tier 2 | Planned after headless CLI exists. |
 
 The first release line uses Rust 2024 edition, pins Rust 1.96.0 for development,
-and supports Rust 1.85.0 as its MSRV. Every pull request checks both compiler
+and supports Rust 1.88.0 as its MSRV. Every pull request checks both compiler
 boundaries. The MSRV may only be raised through an ADR and a documented release
 note.
 

@@ -173,7 +173,7 @@ jobs:
             command: cargo test --workspace --all-features --locked
           - name: MSRV
             os: ubuntu-24.04
-            toolchain: 1.85.0
+            toolchain: 1.88.0
             command: cargo check --workspace --all-targets --all-features --locked
     runs-on: ${{ matrix.os }}
     steps:

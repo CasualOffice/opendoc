@@ -3,7 +3,7 @@
 **Status:** Accepted for Phase 0
 **CI provider:** GitHub Actions
 **Development toolchain:** Rust 1.96.0
-**MSRV:** Rust 1.85.0
+**MSRV:** Rust 1.88.0
 **Last updated:** 2026-07-24
 
 ## Purpose
@@ -61,7 +61,7 @@ Every pull request continuously checks both supported compiler boundaries:
 
 - Rust 1.96.0 runs formatting, strict Clippy, tests, documentation, WASM,
   benchmark smoke, repository policy, and dependency policy;
-- Rust 1.85.0 runs a locked workspace check with all targets and features.
+- Rust 1.88.0 runs a locked workspace check with all targets and features.
 
 The development toolchain catches current compiler and tooling behavior. The
 MSRV job prevents syntax, manifest, or dependency changes from silently raising
@@ -81,7 +81,7 @@ release note, and green replacement CI job.
 | `wasm32-unknown-unknown` | Yes |
 | Headless CLI/service | Yes |
 | Rust 1.96.0 development toolchain | Yes |
-| Rust 1.85.0 MSRV | Yes |
+| Rust 1.88.0 MSRV | Yes |
 
 ## Rust Gates
 
@@ -93,7 +93,7 @@ cargo +1.96.0 clippy --workspace --all-targets --all-features --locked -- -D war
 cargo +1.96.0 test --workspace --all-features --locked
 cargo +1.96.0 test --doc --workspace --all-features --locked
 cargo +1.96.0 check --workspace --all-features --locked --target wasm32-unknown-unknown
-cargo +1.85.0 check --workspace --all-targets --all-features --locked
+cargo +1.88.0 check --workspace --all-targets --all-features --locked
 ```
 
 Additional gates should be added as capabilities appear:
@@ -151,7 +151,7 @@ Additional gates should be added as capabilities appear:
 | Linting | Implemented | Clippy denies warnings for all targets/features. |
 | Unit tests | Implemented | Native workspace and doc tests. |
 | WASM build | Implemented | Foundation crates compile for `wasm32-unknown-unknown`. |
-| Platform/MSRV | Implemented | macOS 15 ARM64, Windows 2025 x64, pinned Rust 1.96, and Rust 1.85 checks run on every PR. |
+| Platform/MSRV | Implemented | macOS 15 ARM64, Windows 2025 x64, pinned Rust 1.96, and Rust 1.88 checks run on every PR. |
 | Dependency policy | Implemented | Licenses, sources, versions, and RustSec advisories. |
 | Fuzzing | Initial package target implemented | Pull requests compile the independently locked target; scheduled security CI runs a bounded seeded campaign. |
 | Corpus tests | Phase 0 package corpus + Phase 1A/1B round-trip corpus implemented | Seven package/security fixtures plus real-producer round-trip fixtures (import → write → reopen fixed-point) run in workspace tests; visual layer remains pending. |

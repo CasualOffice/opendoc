@@ -411,14 +411,14 @@ impl TableStack {
                 }));
             }
         }
-        if let Some(row) = self.stack.last_mut().and_then(|table| table.row.as_mut()) {
-            if let Some(cell) = row.cell.take() {
-                row.cells.push(TableCell {
-                    id: cell.id,
-                    properties: cell.properties,
-                    blocks: cell.blocks,
-                });
-            }
+        if let Some(row) = self.stack.last_mut().and_then(|table| table.row.as_mut())
+            && let Some(cell) = row.cell.take()
+        {
+            row.cells.push(TableCell {
+                id: cell.id,
+                properties: cell.properties,
+                blocks: cell.blocks,
+            });
         }
         Ok(())
     }
@@ -427,17 +427,17 @@ impl TableStack {
     /// when the row had no cells (caller reports it), so a degenerate row never
     /// produces an invalid model.
     pub(crate) fn close_row(&mut self) -> bool {
-        if let Some(table) = self.stack.last_mut() {
-            if let Some(row) = table.row.take() {
-                if row.cells.is_empty() {
-                    return false;
-                }
-                table.rows.push(TableRow {
-                    id: row.id,
-                    properties: row.properties,
-                    cells: row.cells,
-                });
+        if let Some(table) = self.stack.last_mut()
+            && let Some(row) = table.row.take()
+        {
+            if row.cells.is_empty() {
+                return false;
             }
+            table.rows.push(TableRow {
+                id: row.id,
+                properties: row.properties,
+                cells: row.cells,
+            });
         }
         true
     }
@@ -459,10 +459,10 @@ impl TableStack {
             // into its parent cell (nested) or the returned roots (top level).
             self.close_cell(ids)?;
             self.close_row();
-            if let Some(table) = self.close_table() {
-                if let Some(returned) = self.push_block(BlockNode::Table(table)) {
-                    roots.push(returned);
-                }
+            if let Some(table) = self.close_table()
+                && let Some(returned) = self.push_block(BlockNode::Table(table))
+            {
+                roots.push(returned);
             }
         }
         Ok(roots)

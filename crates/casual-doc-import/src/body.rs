@@ -1050,13 +1050,14 @@ impl BodyParser<'_> {
                 }
             }
             b"extent" if self.drawing_depth > 0 => {
-                if let (Some(cx), Some(cy)) = (attr_i64(element, b"cx"), attr_i64(element, b"cy")) {
-                    if (0..=MAX_EMU).contains(&cx) && (0..=MAX_EMU).contains(&cy) {
-                        self.pending_extent = Some(Extent {
-                            width_emu: cx,
-                            height_emu: cy,
-                        });
-                    }
+                if let (Some(cx), Some(cy)) = (attr_i64(element, b"cx"), attr_i64(element, b"cy"))
+                    && (0..=MAX_EMU).contains(&cx)
+                    && (0..=MAX_EMU).contains(&cy)
+                {
+                    self.pending_extent = Some(Extent {
+                        width_emu: cx,
+                        height_emu: cy,
+                    });
                 }
             }
             b"blipFill" if self.drawing_depth > 0 => self.blipfill_depth += 1,
@@ -1308,10 +1309,9 @@ impl BodyParser<'_> {
             b"gridSpan" if self.tcpr_depth > 0 => {
                 if let Some(span) =
                     attribute_value(element, b"val").and_then(|value| value.parse::<u32>().ok())
+                    && (1..=16_384).contains(&span)
                 {
-                    if (1..=16_384).contains(&span) {
-                        self.tables.set_grid_span(span);
-                    }
+                    self.tables.set_grid_span(span);
                 }
             }
             b"vMerge" if self.tcpr_depth > 0 => {
@@ -2414,10 +2414,10 @@ impl BodyParser<'_> {
     /// Handles a `fldChar separate`: the outermost field switches to collecting
     /// its cached result.
     fn separate_field(&mut self) {
-        if self.field_depth == 1 {
-            if let Some(field) = self.field.as_mut() {
-                field.in_result = true;
-            }
+        if self.field_depth == 1
+            && let Some(field) = self.field.as_mut()
+        {
+            field.in_result = true;
         }
     }
 
@@ -2970,11 +2970,10 @@ fn normalize_segments(segments: Vec<Segment>) -> Vec<Segment> {
                     properties: previous_properties,
                     text: previous_text,
                 }) = normalized.last_mut()
+                    && *previous_properties == properties
                 {
-                    if *previous_properties == properties {
-                        previous_text.push_str(&text);
-                        continue;
-                    }
+                    previous_text.push_str(&text);
+                    continue;
                 }
                 normalized.push(Segment::Run { properties, text });
             }

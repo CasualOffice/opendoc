@@ -277,18 +277,18 @@ fn resolve_part_sources(
         .map_err(ImportError::Package)?;
     let mut images = Vec::new();
     for relationship in &relationships {
-        if relationship.relationship_type.ends_with("/image") {
-            if let Some(part) = relationship.resolved_part.clone() {
-                let media_type = package
-                    .content_type(&part)
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| "application/octet-stream".to_owned());
-                images.push(MediaSource {
-                    relationship_id: relationship.id.clone(),
-                    media_type,
-                    part_name: part,
-                });
-            }
+        if relationship.relationship_type.ends_with("/image")
+            && let Some(part) = relationship.resolved_part.clone()
+        {
+            let media_type = package
+                .content_type(&part)
+                .map(str::to_owned)
+                .unwrap_or_else(|| "application/octet-stream".to_owned());
+            images.push(MediaSource {
+                relationship_id: relationship.id.clone(),
+                media_type,
+                part_name: part,
+            });
         }
     }
     let hyperlinks = relationships
