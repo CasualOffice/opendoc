@@ -1436,6 +1436,23 @@ impl BodyParser<'_> {
             b"sdt" => match self.sdt_scopes.pop() {
                 Some(SdtScope::Inline) => {
                     self.sdt_depth = self.sdt_depth.saturating_sub(1);
+                    // A dangling inner wrapper — e.g. an unterminated `fldChar`
+                    // field, which is delimited by markers, not an XML element —
+                    // may sit ABOVE this control on the wrapper stack when its
+                    // `</w:sdt>` fires. Drain those first so the control is the
+                    // innermost wrapper before it commits, mirroring the
+                    // `finish_paragraph` drain; otherwise `commit_sdt`'s
+                    // `pop_wrapper(Sdt)` would fire on the wrong wrapper (a panic
+                    // in debug, a silent desync/loss in release).
+                    while !self.wrapper_order.is_empty()
+                        && !matches!(self.wrapper_order.last(), Some(WrapperKind::Sdt))
+                    {
+                        let before = self.wrapper_order.len();
+                        self.commit_top_wrapper();
+                        if self.wrapper_order.len() == before {
+                            self.wrapper_order.pop();
+                        }
+                    }
                     self.commit_sdt();
                 }
                 Some(SdtScope::Block) => {
@@ -1984,6 +2001,14 @@ impl BodyParser<'_> {
         // A bookmark never legitimately spans two notes/comments; clear the pairing
         // map defensively so an unclosed start cannot pair across containers.
         self.bookmark_ids.clear();
+        // Content-control state never spans two notes/comments either; a
+        // truncated block control (missing `</w:sdt>`) would otherwise leak a
+        // `Block` scope and a non-zero depth into the next note parsed by this
+        // reused parser, tightening its `MAX_SDT_DEPTH` and mis-scoping controls.
+        self.sdt_depth = 0;
+        self.sdt_scopes.clear();
+        self.sdt_prop_depth = 0;
+        self.pending_block_sdt_props.clear();
         self.in_body = false;
         if let Some((source_id, node_id, meta)) = self.current_note.take() {
             let blocks = std::mem::take(&mut self.blocks);
