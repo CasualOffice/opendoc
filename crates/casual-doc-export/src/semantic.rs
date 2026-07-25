@@ -14,8 +14,10 @@ use std::collections::BTreeMap;
 use std::io::{Cursor, Write};
 
 use casual_doc_model::v1::{
-    Alignment, BlockNode, BreakKind, Color, Document, InlineNode, ParagraphProperties,
-    RunProperties,
+    Alignment, BlockNode, BorderEdge, BreakKind, CellVerticalAlignment, Color, Document,
+    HeightRule, InlineNode, ParagraphProperties, RgbColor, RunProperties, Table, TableBorders,
+    TableCell, TableCellProperties, TableLayout, TableProperties, TableRow, TableRowProperties,
+    TextDirection, VerticalMerge,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -141,12 +143,7 @@ fn document_xml(document: &Document) -> Result<Vec<u8>, ExportError> {
     w.write_event(Event::Start(start("w:body"))).map_err(pkg)?;
 
     for block in document.body() {
-        // Tables and content-control block wrappers are a later slice; skip them
-        // rather than write a malformed part. (The core-slice round-trip corpus
-        // is text-only.)
-        if let BlockNode::Paragraph(paragraph) = block {
-            write_paragraph(&mut w, &paragraph.properties, &paragraph.inlines)?;
-        }
+        write_block(&mut w, block)?;
     }
 
     w.write_event(Event::End(BytesEnd::new("w:body")))
@@ -154,6 +151,318 @@ fn document_xml(document: &Document) -> Result<Vec<u8>, ExportError> {
     w.write_event(Event::End(BytesEnd::new("w:document")))
         .map_err(pkg)?;
     Ok(finish(w))
+}
+
+/// Emits a body/cell block. Content-control block wrappers (`BlockNode::Sdt`)
+/// are a later slice — their inner blocks are emitted directly (no text loss).
+fn write_block(w: &mut Writer<Cursor<Vec<u8>>>, block: &BlockNode) -> Result<(), ExportError> {
+    match block {
+        BlockNode::Paragraph(paragraph) => {
+            write_paragraph(w, &paragraph.properties, &paragraph.inlines)
+        }
+        BlockNode::Table(table) => write_table(w, table),
+        BlockNode::Sdt(sdt) => {
+            for inner in &sdt.blocks {
+                write_block(w, inner)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn write_table(w: &mut Writer<Cursor<Vec<u8>>>, table: &Table) -> Result<(), ExportError> {
+    w.write_event(Event::Start(start("w:tbl"))).map_err(pkg)?;
+    write_table_properties(w, &table.properties)?;
+    if !table.grid.is_empty() {
+        w.write_event(Event::Start(start("w:tblGrid")))
+            .map_err(pkg)?;
+        for column in &table.grid {
+            let mut col = start("w:gridCol");
+            if let Some(width) = column.width_twips {
+                col.push_attribute(("w:w", width.to_string().as_str()));
+            }
+            w.write_event(Event::Empty(col)).map_err(pkg)?;
+        }
+        w.write_event(Event::End(BytesEnd::new("w:tblGrid")))
+            .map_err(pkg)?;
+    }
+    for row in &table.rows {
+        write_row(w, row)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("w:tbl")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+fn write_table_properties(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    properties: &TableProperties,
+) -> Result<(), ExportError> {
+    if *properties == TableProperties::default() {
+        return Ok(());
+    }
+    w.write_event(Event::Start(start("w:tblPr"))).map_err(pkg)?;
+    if let Some(alignment) = properties.alignment {
+        let mut jc = start("w:jc");
+        jc.push_attribute(("w:val", alignment_token(alignment)));
+        w.write_event(Event::Empty(jc)).map_err(pkg)?;
+    }
+    if let Some(width) = properties.width_twips {
+        let mut el = start("w:tblW");
+        el.push_attribute(("w:type", "dxa"));
+        el.push_attribute(("w:w", width.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(layout) = properties.layout {
+        let mut el = start("w:tblLayout");
+        el.push_attribute((
+            "w:type",
+            match layout {
+                TableLayout::Fixed => "fixed",
+                TableLayout::Autofit => "autofit",
+            },
+        ));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if !properties.look.is_empty() {
+        let look = &properties.look;
+        let mut el = start("w:tblLook");
+        for (on, name) in [
+            (look.first_row, "w:firstRow"),
+            (look.last_row, "w:lastRow"),
+            (look.first_column, "w:firstColumn"),
+            (look.last_column, "w:lastColumn"),
+            (look.no_h_band, "w:noHBand"),
+            (look.no_v_band, "w:noVBand"),
+        ] {
+            if on {
+                el.push_attribute((name, "1"));
+            }
+        }
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    write_borders(w, "w:tblBorders", &properties.borders)?;
+    write_shading(w, &properties.shading)?;
+    write_margins(w, "w:tblCellMar", &properties.cell_margins)?;
+    w.write_event(Event::End(BytesEnd::new("w:tblPr")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+fn write_row(w: &mut Writer<Cursor<Vec<u8>>>, row: &TableRow) -> Result<(), ExportError> {
+    w.write_event(Event::Start(start("w:tr"))).map_err(pkg)?;
+    write_row_properties(w, &row.properties)?;
+    for cell in &row.cells {
+        write_cell(w, cell)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("w:tr")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+fn write_row_properties(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    properties: &TableRowProperties,
+) -> Result<(), ExportError> {
+    if *properties == TableRowProperties::default() {
+        return Ok(());
+    }
+    w.write_event(Event::Start(start("w:trPr"))).map_err(pkg)?;
+    if !properties.height.is_empty() {
+        let mut el = start("w:trHeight");
+        if let Some(value) = properties.height.value_twips {
+            el.push_attribute(("w:val", value.to_string().as_str()));
+        }
+        if let Some(rule) = properties.height.rule {
+            el.push_attribute((
+                "w:hRule",
+                match rule {
+                    HeightRule::Auto => "auto",
+                    HeightRule::AtLeast => "atLeast",
+                    HeightRule::Exact => "exact",
+                },
+            ));
+        }
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if properties.cant_split {
+        w.write_event(Event::Empty(start("w:cantSplit")))
+            .map_err(pkg)?;
+    }
+    if properties.header {
+        w.write_event(Event::Empty(start("w:tblHeader")))
+            .map_err(pkg)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("w:trPr")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+fn write_cell(w: &mut Writer<Cursor<Vec<u8>>>, cell: &TableCell) -> Result<(), ExportError> {
+    w.write_event(Event::Start(start("w:tc"))).map_err(pkg)?;
+    write_cell_properties(w, &cell.properties)?;
+    for block in &cell.blocks {
+        write_block(w, block)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("w:tc")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+fn write_cell_properties(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    properties: &TableCellProperties,
+) -> Result<(), ExportError> {
+    if *properties == TableCellProperties::default() {
+        return Ok(());
+    }
+    w.write_event(Event::Start(start("w:tcPr"))).map_err(pkg)?;
+    if let Some(width) = properties.width_twips {
+        let mut el = start("w:tcW");
+        el.push_attribute(("w:type", "dxa"));
+        el.push_attribute(("w:w", width.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(span) = properties.grid_span {
+        let mut el = start("w:gridSpan");
+        el.push_attribute(("w:val", span.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(merge) = properties.vertical_merge {
+        let mut el = start("w:vMerge");
+        // `Continue` is the bare element; `Restart` carries `w:val="restart"`.
+        if merge == VerticalMerge::Restart {
+            el.push_attribute(("w:val", "restart"));
+        }
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    write_borders(w, "w:tcBorders", &properties.borders)?;
+    write_shading(w, &properties.shading)?;
+    write_margins(w, "w:tcMar", &properties.margins)?;
+    if let Some(alignment) = properties.vertical_alignment {
+        let mut el = start("w:vAlign");
+        el.push_attribute((
+            "w:val",
+            match alignment {
+                CellVerticalAlignment::Top => "top",
+                CellVerticalAlignment::Center => "center",
+                CellVerticalAlignment::Bottom => "bottom",
+            },
+        ));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if properties.no_wrap {
+        w.write_event(Event::Empty(start("w:noWrap")))
+            .map_err(pkg)?;
+    }
+    if let Some(direction) = properties.text_direction {
+        let mut el = start("w:textDirection");
+        el.push_attribute((
+            "w:val",
+            match direction {
+                TextDirection::LrTb => "lrTb",
+                TextDirection::TbRl => "tbRl",
+                TextDirection::BtLr => "btLr",
+            },
+        ));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("w:tcPr")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits a border set (`w:tblBorders`/`w:tcBorders`) if any edge is present.
+fn write_borders(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    container: &str,
+    borders: &TableBorders,
+) -> Result<(), ExportError> {
+    if borders.is_empty() {
+        return Ok(());
+    }
+    w.write_event(Event::Start(start(container))).map_err(pkg)?;
+    for (edge, name) in [
+        (&borders.top, "w:top"),
+        (&borders.start, "w:start"),
+        (&borders.bottom, "w:bottom"),
+        (&borders.end, "w:end"),
+        (&borders.inside_h, "w:insideH"),
+        (&borders.inside_v, "w:insideV"),
+    ] {
+        if let Some(edge) = edge {
+            write_border_edge(w, name, edge)?;
+        }
+    }
+    w.write_event(Event::End(BytesEnd::new(container)))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+fn write_border_edge(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    name: &str,
+    edge: &BorderEdge,
+) -> Result<(), ExportError> {
+    let mut el = start(name);
+    el.push_attribute(("w:val", edge.style.as_str()));
+    if let Some(size) = edge.size_eighth_points {
+        el.push_attribute(("w:sz", size.to_string().as_str()));
+    }
+    if let Some(color) = &edge.color {
+        el.push_attribute(("w:color", rgb_hex(color).as_str()));
+    }
+    if let Some(space) = edge.space_points {
+        el.push_attribute(("w:space", space.to_string().as_str()));
+    }
+    w.write_event(Event::Empty(el)).map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits cell margins (`w:tblCellMar`/`w:tcMar`) if any edge is present.
+fn write_margins(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    container: &str,
+    margins: &casual_doc_model::v1::CellMargins,
+) -> Result<(), ExportError> {
+    if margins.is_empty() {
+        return Ok(());
+    }
+    w.write_event(Event::Start(start(container))).map_err(pkg)?;
+    for (value, name) in [
+        (margins.top_twips, "w:top"),
+        (margins.start_twips, "w:start"),
+        (margins.bottom_twips, "w:bottom"),
+        (margins.end_twips, "w:end"),
+    ] {
+        if let Some(value) = value {
+            let mut el = start(name);
+            el.push_attribute(("w:type", "dxa"));
+            el.push_attribute(("w:w", value.to_string().as_str()));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+    }
+    w.write_event(Event::End(BytesEnd::new(container)))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+fn write_shading(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    shading: &casual_doc_model::v1::Shading,
+) -> Result<(), ExportError> {
+    if let Some(fill) = &shading.fill {
+        let mut el = start("w:shd");
+        el.push_attribute(("w:val", "clear"));
+        el.push_attribute(("w:color", "auto"));
+        el.push_attribute(("w:fill", rgb_hex(fill).as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    Ok(())
+}
+
+fn rgb_hex(color: &RgbColor) -> String {
+    format!("{:02X}{:02X}{:02X}", color.r, color.g, color.b)
 }
 
 fn write_paragraph(

@@ -23,6 +23,9 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Added
 
+- Semantic DOCX writer now emits tables: the model's tables (grid, table/row/
+  cell properties incl. borders, shading, margins, merges, and nested tables)
+  are serialized back to `w:tbl`, proven by the model-fixed-point round-trip.
 - Semantic DOCX writer (Phase 1B, first slice): `casual-doc-export::write_document`
   serializes the v1 `Document` model back to a valid, editable DOCX (paragraphs,
   runs, and the core run/paragraph properties). The import->write->reopen model
