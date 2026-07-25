@@ -427,6 +427,93 @@ fn table_row_and_cell_properties_are_mapped() {
 }
 
 #[test]
+fn cell_property_change_revision_does_not_overwrite_current_properties() {
+    // Regression (adversarial review, major): a w:tcPrChange carries a nested
+    // w:tcPr with the PRE-EDIT properties; schema-ordered last, it must NOT
+    // overwrite the current cell's properties.
+    use casual_doc_model::v1::RgbColor;
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:tbl><w:tr><w:tc>
+            <w:tcPr>
+                <w:shd w:val="clear" w:color="auto" w:fill="00FF00"/>
+                <w:tcPrChange w:id="1" w:author="A" w:date="2020-01-01T00:00:00Z">
+                    <w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="FF0000"/></w:tcPr>
+                </w:tcPrChange>
+            </w:tcPr>
+            <w:p><w:r><w:t>c</w:t></w:r></w:p>
+        </w:tc></w:tr></w:tbl>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let cell = &first_table(&import).expect("table").rows[0].cells[0];
+    assert_eq!(
+        cell.properties.shading.fill,
+        Some(RgbColor { r: 0, g: 255, b: 0 }),
+        "current (00FF00) kept, not the historical FF0000"
+    );
+    assert!(features(&import).contains(&"tcPrChange"));
+}
+
+#[test]
+fn table_and_row_property_change_revisions_do_not_overwrite() {
+    use casual_doc_model::v1::Alignment;
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:tbl>
+            <w:tblPr>
+                <w:jc w:val="center"/>
+                <w:tblPrChange w:id="1" w:author="A" w:date="2020-01-01T00:00:00Z">
+                    <w:tblPr><w:jc w:val="start"/></w:tblPr>
+                </w:tblPrChange>
+            </w:tblPr>
+            <w:tr>
+                <w:trPr>
+                    <w:tblHeader/>
+                    <w:trPrChange w:id="2" w:author="A" w:date="2020-01-01T00:00:00Z">
+                        <w:trPr><w:trHeight w:val="5000" w:hRule="exact"/></w:trPr>
+                    </w:trPrChange>
+                </w:trPr>
+                <w:tc><w:p><w:r><w:t>c</w:t></w:r></w:p></w:tc>
+            </w:tr>
+        </w:tbl>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let table = first_table(&import).expect("table");
+    assert_eq!(
+        table.properties.alignment,
+        Some(Alignment::Center),
+        "current Center kept, not the historical Start"
+    );
+    let row = &table.rows[0];
+    assert!(row.properties.header, "current tblHeader kept");
+    assert!(
+        row.properties.height.value_twips.is_none(),
+        "no phantom historical height"
+    );
+}
+
+#[test]
+fn theme_shading_is_reported_not_silently_dropped() {
+    // Regression (adversarial review, major): a w:themeFill carries a visible
+    // background we do not model as sRGB; it must be reported (Word emits it
+    // without a duplicate w:fill).
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:tbl><w:tr><w:tc>
+            <w:tcPr><w:shd w:val="clear" w:color="auto" w:themeFill="accent1"/></w:tcPr>
+            <w:p><w:r><w:t>c</w:t></w:r></w:p>
+        </w:tc></w:tr></w:tbl>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let cell = &first_table(&import).expect("table").rows[0].cells[0];
+    assert!(
+        cell.properties.shading.fill.is_none(),
+        "theme fill not sRGB"
+    );
+    assert!(
+        features(&import).contains(&"shd"),
+        "theme shading reported, not silently dropped"
+    );
+}
+
+#[test]
 fn degraded_table_properties_are_reported_not_silently_mapped() {
     // pct table width, a table jc=both (justify), an unknown vAlign, and a
     // patterned shd are each reported; the modeled fill is still captured.
