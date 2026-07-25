@@ -6,7 +6,7 @@ Do not replace the existing editor in one release. Build the runtime as a parall
 
 **Product sequencing (2026-07-25):** the **Tauri desktop application** is the
 product goal and is positioned **before the public editing SDK and the
-WASM/third-party embedding surfaces**. Once the rendering engine (Phase 1D)
+WASM/third-party embedding surfaces**. Once the rendering engine (Phase 1E)
 exists, the desktop app is built next; the SDK and embedding surfaces follow it.
 Tauri is not a current deliverable — it is not started until visual/rendering
 fidelity is reached. The phase sections below keep their existing exit gates; only
@@ -40,7 +40,7 @@ Exit gate:
 - no production integration yet.
 
 ADR-023 corrects the original dependency order: visual artifacts begin in Phase
-1D when the renderer exists, and semantic round-trip artifacts begin in Phase 2
+1E when the renderer exists, and semantic round-trip artifacts begin in Phase 1B
 when the DOCX writer exists. Phase 0 does not create placeholder evidence for
 unimplemented capabilities.
 
@@ -49,9 +49,9 @@ stages. Passing semantic import does not imply layout support, passing layout
 does not imply pagination, and passing pagination does not imply rendering or
 hit testing.
 
-## Phase 1A — Semantic DOCX import
+## Phase 1A — Semantic DOCX import and modeling
 
-**Status:** Designing
+**Status:** Complete
 **Design:** `38-SCHEMA-V1-DESIGN-REFERENCE.md#import-architecture`
 **Fidelity design:** `34-OOXML-FIDELITY-ARCHITECTURE.md`
 **Research:** `33-DOCX-ENGINE-COMPETITOR-RESEARCH.md`
@@ -83,12 +83,17 @@ Exit gate:
 - every `preserved` disposition identifies retained data with an accepted
   owner, anchor, security policy, and future save disposition;
 - every imported semantic feature has a declared reverse-mapping and dirty-scope
-  strategy even though writer implementation remains in Phase 2;
+  strategy (the semantic writer that consumes it is Phase 1B);
 - malformed, over-limit, externally targeted, or structurally inconsistent
   input fails with typed, redacted diagnostics and no partial session;
 - no layout, pagination, rendering, editing, or save claim is made.
 
-## Phase 1B — Typography and paragraph layout
+## Phase 1B — Semantic DOCX writer (model → WordprocessingML)
+
+**Status:** In progress (nearly feature-complete)
+**Design:** `39-PHASE-1B-SEMANTIC-DOCX-WRITER-DESIGN.md`
+
+## Phase 1C — Typography and paragraph layout
 
 **Status:** Not started
 
@@ -110,7 +115,7 @@ Exit gate:
 - Unicode script, bidi, fallback, tab, and indentation fixtures pass;
 - no pagination or rendering claim is made.
 
-## Phase 1C — Pagination and display list
+## Phase 1D — Pagination and display list
 
 **Status:** Not started
 
@@ -129,7 +134,7 @@ Exit gate:
 - cache invalidation and bounded-memory behavior are tested;
 - no renderer or pointer hit-testing claim is made.
 
-## Phase 1D — Renderer and hit testing
+## Phase 1E — Renderer and hit testing
 
 **Status:** Not started
 
@@ -166,7 +171,7 @@ Deliver:
 - paragraphs/lists;
 - undo/redo;
 - incremental relayout;
-- DOCX save;
+- DOCX save (edit→save workflow atop the Phase 1B semantic writer);
 - public command API.
 
 Exit gate:

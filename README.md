@@ -39,8 +39,9 @@ applications.
 
 ## Current Capabilities
 
-Phase 0 (runtime + package safety) is complete; Phase 1A (semantic import) has
-modeled every construct family, and the semantic writer is underway:
+Phase 0 (runtime + package safety) and Phase 1A (semantic import — every
+construct family modeled) are complete; the semantic writer (Phase 1B) now
+round-trips essentially all content and is nearly feature-complete:
 
 | Area | Available today |
 | --- | --- |
@@ -69,11 +70,16 @@ The following are **not implemented yet** (nothing is excluded — this is the
 progression):
 
 - the **semantic writer** (`write_document`) that re-emits an *edited* model as a
-  valid `.docx` (Phase 1B, in progress) — its core body and tables land today,
-  proven by a model-fixed-point round-trip (import → write → reopen = identical
-  model); the remaining inline construct families and definition parts follow;
-- **font management** (font descriptor resolution, substitution, embedding, and
-  metrics) — under design, researched against Word/LibreOffice/ONLYOFFICE first;
+  valid `.docx` (Phase 1B, nearly feature-complete) — body, tables, all inline
+  constructs, run/paragraph properties, styles, numbering, fontTable (incl.
+  embedded fonts), theme fontScheme, notes, comments, sections, and
+  headers/footers all survive the model-fixed-point round-trip (import → write →
+  reopen = identical model), and the output opens cleanly in LibreOffice;
+  remaining: settings.xml embedding flags and multi-section documents;
+- **font management**: all OOXML font data (rFonts + hint, fontTable, theme
+  fontScheme, and embedded fonts) is now modeled and round-tripped; font
+  resolution/substitution/metrics is designed and accepted (full scope), not yet
+  implemented;
 - text shaping, pagination, layout, display lists, and rendering;
 - browser, Tauri, C ABI, and npm distribution surfaces;
 - collaboration adapters and production application integration.
@@ -157,10 +163,11 @@ on design:
 | Phase | Outcome | Status |
 | --- | --- | --- |
 | 0 | Runtime, model, package-safety, CI, corpus, and benchmark foundation | Complete |
-| 1A | Semantic DOCX import + modeling (every construct family a first-class, editable model value), normalized snapshots, compatibility reports, the semantic model → DOCX writer, and font management | **Modeling + import complete**; writer in progress (core body + tables); font management under design |
-| 1B | Typography and paragraph layout | Not started |
-| 1C | Pagination and backend-neutral display list | Not started |
-| 1D | Native/WASM rendering and hit testing | Not started |
+| 1A | Semantic DOCX import + modeling (every construct family a first-class, editable model value), normalized snapshots, compatibility reports, and font-data modeling | **Complete** |
+| 1B | Semantic writer (model → valid editable `.docx`) | Nearly feature-complete; settings flags and multi-section remain |
+| 1C | Typography and paragraph layout | Not started |
+| 1D | Pagination and backend-neutral display list | Not started |
+| 1E | Native/WASM rendering and hit testing | Not started |
 | 2 | Core editing SDK and DOCX save/reopen workflow | Planned |
 | 3 | Advanced office-document features | Planned |
 | 4 | Stable SDK surfaces and third-party embedding | Planned |
@@ -170,7 +177,7 @@ on design:
 > [!NOTE]
 > Product sequencing: the **Tauri desktop application** is positioned **before the
 > public editing SDK and the WASM/third-party embedding surfaces**. Once the
-> rendering engine (Phase 1D) exists, the desktop app is built next; the SDK and
+> rendering engine (Phase 1E) exists, the desktop app is built next; the SDK and
 > WASM/embedding surfaces follow it. Tauri is the product goal, not a current
 > deliverable — it is not started until visual/rendering fidelity is reached.
 

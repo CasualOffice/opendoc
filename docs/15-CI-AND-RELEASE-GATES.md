@@ -154,7 +154,7 @@ Additional gates should be added as capabilities appear:
 | Platform/MSRV | Implemented | macOS 15 ARM64, Windows 2025 x64, pinned Rust 1.96, and Rust 1.85 checks run on every PR. |
 | Dependency policy | Implemented | Licenses, sources, versions, and RustSec advisories. |
 | Fuzzing | Initial package target implemented | Pull requests compile the independently locked target; scheduled security CI runs a bounded seeded campaign. |
-| Corpus tests | Phase 0 package corpus implemented | Seven generated package/security fixtures run in workspace tests; semantic and visual layers remain pending. |
+| Corpus tests | Phase 0 package corpus + Phase 1A/1B round-trip corpus implemented | Seven package/security fixtures plus real-producer round-trip fixtures (import → write → reopen fixed-point) run in workspace tests; visual layer remains pending. |
 | Visual regression | Not started | Requires renderer and fixed fonts. |
 | Benchmarking | Initial harness implemented | Package/model smoke is required; named-environment comparison is manual until a controlled runner is provisioned. |
 | Release artifacts | Not started | Define before beta. |

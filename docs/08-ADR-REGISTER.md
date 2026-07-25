@@ -221,6 +221,11 @@ an importer/writer are placeholder artifacts, not compatibility evidence.
 **Consequence:** the Phase 0 exit report names those later owners explicitly and
 cannot imply layout, rendering, or save support.
 
+**Update (2026-07):** the semantic writer was delivered as Phase 1B ahead of
+typography; semantic DOCX round-trip baselines therefore begin with the Phase 1B
+writer, and typography/pagination/renderer renumber to 1C/1D/1E respectively. See
+the tracker (`14-EXECUTION-TRACKER.md`) and README roadmap.
+
 ## ADR-024 — Isolate and continuously build parser fuzz targets
 
 **Decision:** Keep `cargo-fuzz` targets in an independently locked `fuzz/`
@@ -248,6 +253,10 @@ ambiguous.
 **Consequence:** each stage has an independent exit report. Phase 1A cannot
 claim visual support, and UI or Tauri work cannot begin merely because semantic
 import succeeds.
+
+**Update (2026-07):** the semantic writer was delivered as Phase 1B ahead of
+typography; typography/pagination/renderer renumber to 1C/1D/1E respectively. See
+the tracker (`14-EXECUTION-TRACKER.md`) and README roadmap.
 
 ## ADR-026 — License the whole project under Apache-2.0
 
