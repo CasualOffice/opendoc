@@ -86,4 +86,13 @@ impl BlockFragment {
                 .unwrap_or(Twip::ZERO),
         }
     }
+
+    /// The document node this fragment came from (its anchor for pagination
+    /// boundaries and hit-testing).
+    #[must_use]
+    pub fn node_id(&self) -> NodeId {
+        match self {
+            BlockFragment::Paragraph { id, .. } | BlockFragment::TableRow { id, .. } => *id,
+        }
+    }
 }
