@@ -666,6 +666,41 @@ fn valid_table_with_merges_validates_and_round_trips_json() {
 }
 
 #[test]
+fn table_alignment_justify_is_rejected() {
+    // `both` (justify) is not a valid `ST_JcTable` value; an authored model must
+    // not carry it (the writer would emit an invalid `w:jc`). Start/Center/End
+    // remain valid.
+    let table = |alignment| {
+        BlockNode::Table(Table {
+            id: tid(30),
+            grid: vec![GridColumn {
+                width_twips: Some(2_880),
+            }],
+            properties: TableProperties {
+                alignment: Some(alignment),
+                ..TableProperties::default()
+            },
+            rows: vec![TableRow {
+                id: tid(31),
+                properties: TableRowProperties::default(),
+                cells: vec![cell(
+                    tid(32),
+                    TableCellProperties::default(),
+                    vec![paragraph_block(tid(33))],
+                )],
+            }],
+        })
+    };
+    assert!(matches!(
+        table_document(vec![table(Alignment::Justify)]),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "table.alignment"
+        })
+    ));
+    assert!(table_document(vec![table(Alignment::Center)]).is_ok());
+}
+
+#[test]
 fn table_properties_round_trip_and_default_omits_the_key() {
     // A cell with a default (empty) properties still serializes to {} and a table
     // with default properties omits the "properties" key entirely — the

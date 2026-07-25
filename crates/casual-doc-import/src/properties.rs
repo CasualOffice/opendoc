@@ -48,10 +48,12 @@ pub(crate) fn apply_run_property(
         // resolves; an `rFonts` carrying only unmodeled detail (e.g. an unknown
         // hint) resolves nothing and is reported (no silent loss).
         b"rFonts" => {
-            let ascii = font_slot(element, b"ascii", b"asciiTheme");
-            let h_ansi = font_slot(element, b"hAnsi", b"hAnsiTheme");
-            let cs = font_slot(element, b"cs", b"csTheme");
-            let east_asia = font_slot(element, b"eastAsia", b"eastAsiaTheme");
+            let ascii = font_slot(element, b"ascii", &[b"asciiTheme"]);
+            let h_ansi = font_slot(element, b"hAnsi", &[b"hAnsiTheme"]);
+            // `w:cstheme` is the standard spelling; `w:csTheme` is accepted as a
+            // legacy fallback so documents written either way import identically.
+            let cs = font_slot(element, b"cs", &[b"cstheme", b"csTheme"]);
+            let east_asia = font_slot(element, b"eastAsia", &[b"eastAsiaTheme"]);
             let hint = attribute_value(element, b"hint")
                 .as_deref()
                 .and_then(run_font_hint);
@@ -130,13 +132,17 @@ pub(crate) fn apply_run_property(
 
 /// Resolves one `w:rFonts` slot: theme attr first (`major*`→Major, `minor*`→Minor),
 /// else the named attr (bounded to 255 bytes). Returns `None` if neither resolves.
-fn font_slot(element: &BytesStart<'_>, named: &[u8], theme: &[u8]) -> Option<FontRef> {
+fn font_slot(element: &BytesStart<'_>, named: &[u8], themes: &[&[u8]]) -> Option<FontRef> {
     // A theme value IN the vocabulary wins; one OUTSIDE it (malformed/unknown)
     // falls through to the named attribute rather than swallowing the slot — so a
     // bogus theme next to a valid named family does not silently drop the family.
-    if let Some(value) = attribute_value(element, theme) {
-        if let Some(slot) = theme_font_ref(&value) {
-            return Some(FontRef::Theme(ThemeFont { slot }));
+    // `themes` lists the accepted attribute spellings in priority order (the cs
+    // slot has two: the standard `w:cstheme` and the legacy `w:csTheme`).
+    for theme in themes {
+        if let Some(value) = attribute_value(element, theme) {
+            if let Some(slot) = theme_font_ref(&value) {
+                return Some(FontRef::Theme(ThemeFont { slot }));
+            }
         }
     }
     attribute_value(element, named)

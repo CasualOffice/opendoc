@@ -1174,6 +1174,40 @@ mod semantic_tests {
     }
 
     #[test]
+    fn standard_cstheme_spelling_is_captured_and_normalized() {
+        // Real Word writes the complex-script theme slot as `w:cstheme` (all
+        // lowercase — the one rFonts theme attribute that breaks the camelCase
+        // pattern). The importer must read it (previously it only read the
+        // legacy `w:csTheme`, silently dropping the slot on genuine files), and
+        // the writer must emit the standard spelling so it round-trips.
+        use casual_doc_model::v1::{BlockNode, FontRef, InlineNode, ThemeFontRef};
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:r><w:rPr>
+                <w:rFonts w:cstheme="majorBidi"/>
+            </w:rPr><w:t>x</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Run(run) = &paragraph.inlines[0] else {
+            panic!("expected a run");
+        };
+        assert!(
+            matches!(
+                run.properties.font_ref_cs,
+                Some(FontRef::Theme(ref t)) if t.slot == ThemeFontRef::MajorBidi
+            ),
+            "standard w:cstheme is captured into the cs slot"
+        );
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(m1, m2, "cstheme survives write -> reopen");
+    }
+
+    #[test]
     fn external_hyperlink_url_with_ampersand_survives_the_round_trip() {
         // A query-string URL carries `&` (escaped `&amp;` in the rels Target).
         // The package parser must unescape it so the regenerated relationship

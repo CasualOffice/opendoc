@@ -1984,7 +1984,8 @@ fn write_run_properties(
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
     // Fonts (`w:rFonts`): the four slots (each a named family or a `*Theme`
-    // reference) and the `@hint`. `w:cs` uses `w:csTheme` to match the importer.
+    // reference) and the `@hint`. The cs slot emits the standard `w:cstheme`
+    // spelling (the importer also accepts the legacy `w:csTheme`).
     if properties.font_ref.is_some()
         || properties.font_ref_h_ansi.is_some()
         || properties.font_ref_cs.is_some()
@@ -2005,7 +2006,7 @@ fn write_run_properties(
             "w:eastAsiaTheme",
             &properties.font_ref_east_asia,
         );
-        push_font_slot(&mut el, "w:cs", "w:csTheme", &properties.font_ref_cs);
+        push_font_slot(&mut el, "w:cs", "w:cstheme", &properties.font_ref_cs);
         if let Some(hint) = properties.font_hint {
             el.push_attribute(("w:hint", font_hint_token(hint)));
         }
