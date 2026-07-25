@@ -698,6 +698,78 @@ mod semantic_tests {
     }
 
     #[test]
+    fn headers_footers_survive_the_semantic_round_trip() {
+        // A header and a footer referenced from the body sectPr. The writer
+        // regenerates the parts, their document relationships, and the sectPr
+        // references, deriving a stable relationship id from each HeaderFooterId.
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/><Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>
+            <w:p><w:r><w:t>x</w:t></w:r></w:p>
+            <w:sectPr>
+                <w:headerReference w:type="default" r:id="rIdHa"/>
+                <w:footerReference w:type="default" r:id="rIdFa"/>
+                <w:pgSz w:w="12240" w:h="15840"/>
+                <w:pgMar w:top="1440" w:bottom="1440" w:start="1440" w:end="1440"/>
+                <w:cols w:num="1"/>
+            </w:sectPr>
+        </w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdHa" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/><Relationship Id="rIdFa" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/></Relationships>"#;
+        let header =
+            br#"<w:hdr xmlns:w="urn:w"><w:p><w:r><w:t>the header</w:t></w:r></w:p></w:hdr>"#;
+        let footer =
+            br#"<w:ftr xmlns:w="urn:w"><w:p><w:r><w:t>the footer</w:t></w:r></w:p></w:ftr>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/header1.xml", header),
+            ("word/footer1.xml", footer),
+        ]);
+        let m1 = reopen(&source);
+        assert_eq!(m1.definitions().headers.iter().count(), 1);
+        assert_eq!(m1.definitions().footers.iter().count(), 1);
+        assert_eq!(m1.definitions().sections[0].headers.len(), 1);
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(
+            m1, m2,
+            "headers/footers + sectPr refs survive write -> reopen"
+        );
+    }
+
+    #[test]
+    fn style_with_empty_properties_survives_the_round_trip() {
+        // Regression (review): a style whose pPr/rPr is present but all-default
+        // imports as Some(default); the writer must still emit the (empty)
+        // element so re-import keeps Some(default), not None.
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>"#;
+        // Heading1: present but empty pPr -> Some(default); Emphasis: empty rPr.
+        let styles = br#"<w:styles xmlns:w="urn:w">
+            <w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="h1"/><w:pPr/></w:style>
+            <w:style w:type="character" w:styleId="Emphasis"><w:name w:val="em"/><w:rPr/></w:style>
+        </w:styles>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/styles.xml", styles),
+        ]);
+        let m1 = reopen(&source);
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(
+            m1, m2,
+            "a style with an empty pPr/rPr survives write -> reopen"
+        );
+    }
+
+    #[test]
     fn all_run_properties_survive_the_semantic_round_trip() {
         // Every modeled run property (toggles on AND off, the value-carrying
         // vocabularies, the typographic metrics, and w:lang's three tags) must
