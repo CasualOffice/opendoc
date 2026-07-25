@@ -3,8 +3,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    AbstractNumberingId, BlockNode, DefinitionMap, FontName, HeaderFooterId, MediaId, NoteId,
-    NumberingInstanceId, ParagraphProperties, RunProperties, SectionId, StyleId, StyleKind,
+    AbstractNumberingId, BlockNode, CommentId, DefinitionMap, FontName, HeaderFooterId, MediaId,
+    NoteId, NumberingInstanceId, ParagraphProperties, RunProperties, SectionId, StyleId, StyleKind,
 };
 
 /// A style definition (its id is the map key).
@@ -186,6 +186,26 @@ pub struct Note {
     pub blocks: Vec<BlockNode>,
 }
 
+/// A comment definition (its id is the map key). Its content reuses the recursive
+/// block model; `blocks` may be empty. Author/date/initials are retained as the
+/// producer wrote them (opaque, bounded).
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Comment {
+    /// The comment's block content.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocks: Vec<BlockNode>,
+    /// The comment author, if declared (at most 255 bytes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    /// The author's initials, if declared (at most 255 bytes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initials: Option<String>,
+    /// The comment date as written (ISO-8601 string), if declared (<= 64 bytes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date: Option<String>,
+}
+
 /// A media reference (its id is the map key).
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -230,6 +250,9 @@ pub struct Definitions {
     /// Footer definitions by id. Additive: omitted when empty.
     #[serde(default, skip_serializing_if = "DefinitionMap::is_empty")]
     pub footers: DefinitionMap<HeaderFooterId, HeaderFooter>,
+    /// Comment definitions by id. Additive: omitted when empty.
+    #[serde(default, skip_serializing_if = "DefinitionMap::is_empty")]
+    pub comments: DefinitionMap<CommentId, Comment>,
     /// Document-wide defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub document_defaults: Option<DocumentDefaults>,

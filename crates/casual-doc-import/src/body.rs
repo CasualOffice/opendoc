@@ -3,11 +3,12 @@
 use std::collections::BTreeMap;
 
 use casual_doc_model::v1::{
-    BlockNode, Break, BreakKind, Drawing, Extent, ExternalTarget, Field, HeaderFooterId,
-    HeaderFooterKind, HeaderFooterRef, Hyperlink, HyperlinkTarget, InlineNode, InternalTarget,
-    MAX_EMU, MAX_FIELD_INSTRUCTION_BYTES, MAX_TEXTBOX_DEPTH, MediaId, NoteId, NoteKind,
-    NoteReference, PageMargins, PageSize, Paragraph, ParagraphProperties, Run, RunProperties,
-    SectionBoundary, SectionColumns, SectionId, StyleKind, Tab, TextBox, VerticalMerge,
+    BlockNode, Break, BreakKind, Comment, CommentId, CommentReference, Drawing, Extent,
+    ExternalTarget, Field, HeaderFooterId, HeaderFooterKind, HeaderFooterRef, Hyperlink,
+    HyperlinkTarget, InlineNode, InternalTarget, MAX_EMU, MAX_FIELD_INSTRUCTION_BYTES,
+    MAX_TEXTBOX_DEPTH, MediaId, NoteId, NoteKind, NoteReference, PageMargins, PageSize, Paragraph,
+    ParagraphProperties, Run, RunProperties, SectionBoundary, SectionColumns, SectionId, StyleKind,
+    Tab, TextBox, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::Reader;
@@ -51,6 +52,19 @@ enum Segment {
         kind: NoteKind,
         note: NoteId,
     },
+    /// A reference to a comment definition.
+    CommentReference {
+        comment: CommentId,
+    },
+}
+
+/// Optional comment metadata captured from a `w:comment`'s attributes (all
+/// `None` for footnotes/endnotes, which reuse the same container machinery).
+#[derive(Default)]
+struct CommentMeta {
+    author: Option<String>,
+    date: Option<String>,
+    initials: Option<String>,
 }
 
 /// The content-building state suspended while parsing a text box's own content,
@@ -200,11 +214,11 @@ struct BodyParser<'a> {
     /// and treats each note element as a block container.
     note_container: Option<&'static [u8]>,
     /// The open note's source `w:id` and allocated id (note-container mode).
-    current_note: Option<(String, NoteId)>,
+    current_note: Option<(String, NodeId, CommentMeta)>,
     /// Whether the open note is a skipped separator/continuation note.
     skip_note: bool,
-    /// Collected notes: (source `w:id`, allocated id, block content).
-    notes: Vec<(String, NoteId, Vec<BlockNode>)>,
+    /// Collected notes/comments: (source `w:id`, allocated id, metadata, blocks).
+    notes: Vec<(String, NodeId, CommentMeta, Vec<BlockNode>)>,
     /// When set (`b"hdr"`/`b"ftr"`), the parser reads a header/footer part whose
     /// root element is the single block container.
     hf_root: Option<&'static [u8]>,
@@ -212,6 +226,8 @@ struct BodyParser<'a> {
     header_ids: &'a BTreeMap<String, HeaderFooterId>,
     /// Section reference resolution: footer relationship id -> definition id.
     footer_ids: &'a BTreeMap<String, HeaderFooterId>,
+    /// Body reference resolution: comment source `w:id` -> definition id.
+    comment_ids: &'a BTreeMap<String, CommentId>,
 }
 
 /// Resolution tables the body parser consults while mapping constructs.
@@ -224,6 +240,7 @@ pub(crate) struct ParseInputs<'a> {
     pub endnote_ids: &'a BTreeMap<String, NoteId>,
     pub header_ids: &'a BTreeMap<String, HeaderFooterId>,
     pub footer_ids: &'a BTreeMap<String, HeaderFooterId>,
+    pub comment_ids: &'a BTreeMap<String, CommentId>,
 }
 
 impl<'a> BodyParser<'a> {
@@ -291,6 +308,7 @@ impl<'a> BodyParser<'a> {
             hf_root: None,
             header_ids: inputs.header_ids,
             footer_ids: inputs.footer_ids,
+            comment_ids: inputs.comment_ids,
         }
     }
 }
@@ -314,6 +332,10 @@ pub(crate) fn parse<'a>(
     if parser.paragraph_open {
         parser.finish_paragraph()?;
     }
+    // Commit any table left open by truncated body markup (its partial content
+    // would otherwise be stranded in the `TableStack` at EOF).
+    let roots = parser.tables.flush_open(&mut *parser.ids)?;
+    parser.blocks.extend(roots);
     Ok((parser.blocks, parser.sections))
 }
 
@@ -336,6 +358,7 @@ pub(crate) fn parse_notes(
     // references inside a note (rare) carry no index.
     let empty_notes = BTreeMap::new();
     let empty_hf = BTreeMap::new();
+    let empty_comment = BTreeMap::new();
     let inputs = ParseInputs {
         styles,
         numbering,
@@ -345,6 +368,7 @@ pub(crate) fn parse_notes(
         endnote_ids: &empty_notes,
         header_ids: &empty_hf,
         footer_ids: &empty_hf,
+        comment_ids: &empty_comment,
     };
     let mut parser = BodyParser::build(ids, reporter, &inputs, Some(container), config);
     parser.run(xml)?;
@@ -353,7 +377,11 @@ pub(crate) fn parse_notes(
     }
     // A note left open by malformed input still commits its content.
     parser.close_note()?;
-    Ok(parser.notes)
+    Ok(parser
+        .notes
+        .into_iter()
+        .map(|(source_id, node_id, _meta, blocks)| (source_id, NoteId::new(node_id), blocks))
+        .collect())
 }
 
 /// Parses a header/footer part (`word/header1.xml` / `word/footer1.xml`) into its
@@ -372,6 +400,7 @@ pub(crate) fn parse_header_footer(
 ) -> Result<Vec<BlockNode>, ImportError> {
     let empty_notes = BTreeMap::new();
     let empty_hf = BTreeMap::new();
+    let empty_comment = BTreeMap::new();
     let inputs = ParseInputs {
         styles,
         numbering,
@@ -381,6 +410,7 @@ pub(crate) fn parse_header_footer(
         endnote_ids: &empty_notes,
         header_ids: &empty_hf,
         footer_ids: &empty_hf,
+        comment_ids: &empty_comment,
     };
     let mut parser = BodyParser::build(ids, reporter, &inputs, None, config);
     parser.hf_root = Some(root);
@@ -391,7 +421,62 @@ pub(crate) fn parse_header_footer(
     if parser.paragraph_open {
         parser.finish_paragraph()?;
     }
+    // Commit any table left open by truncated header/footer markup.
+    let roots = parser.tables.flush_open(&mut *parser.ids)?;
+    parser.blocks.extend(roots);
     Ok(parser.blocks)
+}
+
+/// Parses the comments part (`word/comments.xml`) into its comments, each keyed
+/// by its source `w:id` with its allocated id, metadata, and block content. The
+/// part resolves its own media and hyperlink relationships.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn parse_comments(
+    xml: &[u8],
+    ids: &mut IdGenerator,
+    reporter: &mut Reporter,
+    styles: &Styles,
+    numbering: &Numbering,
+    media_index: &BTreeMap<String, MediaId>,
+    hyperlink_rels: &BTreeMap<String, String>,
+    config: ImportConfig,
+) -> Result<Vec<(String, CommentId, Comment)>, ImportError> {
+    let empty_notes = BTreeMap::new();
+    let empty_hf = BTreeMap::new();
+    let empty_comment = BTreeMap::new();
+    let inputs = ParseInputs {
+        styles,
+        numbering,
+        media_index,
+        hyperlink_rels,
+        footnote_ids: &empty_notes,
+        endnote_ids: &empty_notes,
+        header_ids: &empty_hf,
+        footer_ids: &empty_hf,
+        comment_ids: &empty_comment,
+    };
+    let mut parser = BodyParser::build(ids, reporter, &inputs, Some(b"comment"), config);
+    parser.run(xml)?;
+    while !parser.frames.is_empty() {
+        parser.exit_textbox()?;
+    }
+    parser.close_note()?;
+    Ok(parser
+        .notes
+        .into_iter()
+        .map(|(source_id, node_id, meta, blocks)| {
+            (
+                source_id,
+                CommentId::new(node_id),
+                Comment {
+                    blocks,
+                    author: meta.author,
+                    date: meta.date,
+                    initials: meta.initials,
+                },
+            )
+        })
+        .collect())
 }
 
 impl BodyParser<'_> {
@@ -486,6 +571,7 @@ impl BodyParser<'_> {
             }
             // Notes-part mode: the `w:footnotes`/`w:endnotes` root enables
             // reporting, and each note element is a block container.
+            b"comments" if self.note_container == Some(b"comment") => self.in_document = true,
             b"footnotes" if self.note_container == Some(b"footnote") => self.in_document = true,
             b"endnotes" if self.note_container == Some(b"endnote") => self.in_document = true,
             _ if self.note_container == Some(local) && self.in_document => {
@@ -584,6 +670,17 @@ impl BodyParser<'_> {
                         note,
                     }),
                     None => self.reporter.report(b"endnoteReference"),
+                }
+            }
+            // A comment reference (inside a run) resolves to a comment id; the
+            // comment-range markers (`commentRangeStart`/`End`) are not modeled
+            // and fall through to the report arm.
+            b"commentReference" if self.run_open => {
+                match attribute_value(element, b"id")
+                    .and_then(|id| self.comment_ids.get(&id).copied())
+                {
+                    Some(comment) => self.push_segment(Segment::CommentReference { comment }),
+                    None => self.reporter.report(b"commentReference"),
                 }
             }
             // A complex field is delimited by field characters inside runs.
@@ -1154,8 +1251,15 @@ impl BodyParser<'_> {
         }
         self.skip_note = false;
         let source_id = attribute_value(element, b"id").unwrap_or_default();
-        let note_id = NoteId::new(self.next_id()?);
-        self.current_note = Some((source_id, note_id));
+        let node_id = self.next_id()?;
+        // Comment attributes (absent on footnote/endnote elements -> None).
+        let meta = CommentMeta {
+            author: attribute_value(element, b"author").filter(|v| !v.is_empty() && v.len() <= 255),
+            date: attribute_value(element, b"date").filter(|v| !v.is_empty() && v.len() <= 64),
+            initials: attribute_value(element, b"initials")
+                .filter(|v| !v.is_empty() && v.len() <= 255),
+        };
+        self.current_note = Some((source_id, node_id, meta));
         self.in_body = true;
         self.blocks.clear();
         Ok(())
@@ -1173,11 +1277,18 @@ impl BodyParser<'_> {
             if self.paragraph_open {
                 self.finish_paragraph()?;
             }
+            // Commit any table left open by truncated markup so its content is not
+            // stranded in the shared `TableStack`, and so it cannot bleed into the
+            // next note/comment parsed by this reused parser.
+            let roots = self.tables.flush_open(&mut *self.ids)?;
+            self.blocks.extend(roots);
         }
+        // Clear residual table-suppression so the next note/comment starts clean.
+        self.suppressed_tbl_depth = 0;
         self.in_body = false;
-        if let Some((source_id, note_id)) = self.current_note.take() {
+        if let Some((source_id, node_id, meta)) = self.current_note.take() {
             let blocks = std::mem::take(&mut self.blocks);
-            self.notes.push((source_id, note_id, blocks));
+            self.notes.push((source_id, node_id, meta, blocks));
         }
         self.skip_note = false;
         Ok(())
@@ -1419,6 +1530,13 @@ impl BodyParser<'_> {
             Segment::NoteReference { kind, note } => {
                 let id = self.next_id()?;
                 Ok(InlineNode::NoteReference(NoteReference { id, kind, note }))
+            }
+            Segment::CommentReference { comment } => {
+                let id = self.next_id()?;
+                Ok(InlineNode::CommentReference(CommentReference {
+                    id,
+                    comment,
+                }))
             }
         }
     }

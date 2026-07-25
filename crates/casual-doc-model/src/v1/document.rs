@@ -96,6 +96,7 @@ impl Document {
         self.validate_document_defaults()?;
         self.validate_notes()?;
         self.validate_headers_footers()?;
+        self.validate_comments()?;
         self.validate_body()?;
         Ok(())
     }
@@ -208,6 +209,12 @@ impl Document {
         {
             insert_id(&mut ids, id.node_id())?;
             for block in &header_footer.blocks {
+                record_block_ids(block, &mut ids)?;
+            }
+        }
+        for (id, comment) in self.definitions.comments.iter() {
+            insert_id(&mut ids, id.node_id())?;
+            for block in &comment.blocks {
                 record_block_ids(block, &mut ids)?;
             }
         }
@@ -549,6 +556,12 @@ impl Document {
                     }
                     previous_run_properties = None;
                 }
+                InlineNode::CommentReference(reference) => {
+                    if !self.definitions.comments.contains_key(&reference.comment) {
+                        return Err(ModelError::DanglingCommentRef(reference.comment.node_id()));
+                    }
+                    previous_run_properties = None;
+                }
                 InlineNode::Tab(_) | InlineNode::Break(_) => {
                     previous_run_properties = None;
                 }
@@ -589,6 +602,23 @@ impl Document {
         Ok(())
     }
 
+    /// Validates every comment's block content and metadata (a fresh block
+    /// container, like a note).
+    fn validate_comments(&self) -> Result<(), ModelError> {
+        for (_, comment) in self.definitions.comments.iter() {
+            for value in [&comment.author, &comment.initials].into_iter().flatten() {
+                check_domain(!value.is_empty() && value.len() <= 255, "comment.metadata")?;
+            }
+            if let Some(date) = &comment.date {
+                check_domain(!date.is_empty() && date.len() <= 64, "comment.date")?;
+            }
+            for block in &comment.blocks {
+                self.validate_block(block, 0, 0)?;
+            }
+        }
+        Ok(())
+    }
+
     fn validate_snapshot_limits(&self, limits: SnapshotLimits) -> Result<(), SnapshotError> {
         let mut blocks = 0_usize;
         let mut scalar_values = 0_usize;
@@ -612,6 +642,11 @@ impl Document {
             .chain(self.definitions.footers.iter())
         {
             for block in &header_footer.blocks {
+                accumulate_block_limits(block, limits, &mut blocks, &mut scalar_values)?;
+            }
+        }
+        for (_, comment) in self.definitions.comments.iter() {
+            for block in &comment.blocks {
                 accumulate_block_limits(block, limits, &mut blocks, &mut scalar_values)?;
             }
         }
@@ -709,7 +744,8 @@ fn accumulate_inline_limits(
         InlineNode::Tab(_)
         | InlineNode::Break(_)
         | InlineNode::Drawing(_)
-        | InlineNode::NoteReference(_) => {}
+        | InlineNode::NoteReference(_)
+        | InlineNode::CommentReference(_) => {}
     }
     Ok(())
 }

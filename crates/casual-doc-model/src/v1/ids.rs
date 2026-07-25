@@ -59,6 +59,10 @@ id_newtype!(
     /// Stable identity of a header or footer definition.
     HeaderFooterId
 );
+id_newtype!(
+    /// Stable identity of a comment definition.
+    CommentId
+);
 
 /// A duplicate-key-rejecting, deterministically-ordered id map.
 #[derive(Clone, Debug, Eq, PartialEq)]
