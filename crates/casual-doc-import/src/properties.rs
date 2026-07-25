@@ -5,8 +5,9 @@
 //! (unknown, or present-but-out-of-domain/degraded).
 
 use casual_doc_model::v1::{
-    Alignment, BreakKind, Color, Indentation, ParagraphProperties, RgbColor, RunProperties,
-    Spacing, StyleKind,
+    Alignment, BreakKind, Color, EmphasisMark, FontName, FontRef, HighlightColor, Indentation,
+    ParagraphProperties, RgbColor, RunProperties, Spacing, StyleKind, ThemeFont, ThemeFontRef,
+    VerticalAlignment,
 };
 use quick_xml::events::BytesStart;
 
@@ -36,9 +37,116 @@ pub(crate) fn apply_run_property(
             Some(rgb) => properties.color = Some(Color::Rgb(rgb)),
             None => return false,
         },
+        // Toggle marks (`CT_OnOff`): present means on unless `val` is 0/false/off.
+        b"caps" => properties.all_caps = Some(is_true(value.as_deref())),
+        b"smallCaps" => properties.small_caps = Some(is_true(value.as_deref())),
+        b"vanish" => properties.hidden = Some(is_true(value.as_deref())),
+        b"webHidden" => properties.web_hidden = Some(is_true(value.as_deref())),
+        b"dstrike" => properties.double_strike = Some(is_true(value.as_deref())),
+        // Fonts: each slot prefers its theme attr, else its named attr. Consumed
+        // when ANY slot resolves; an `rFonts` carrying only unmodeled detail (e.g.
+        // just `@hint`) resolves nothing and is reported (no silent loss).
+        b"rFonts" => {
+            let ascii = font_slot(element, b"ascii", b"asciiTheme");
+            let h_ansi = font_slot(element, b"hAnsi", b"hAnsiTheme");
+            let cs = font_slot(element, b"cs", b"csTheme");
+            let east_asia = font_slot(element, b"eastAsia", b"eastAsiaTheme");
+            if ascii.is_none() && h_ansi.is_none() && cs.is_none() && east_asia.is_none() {
+                return false;
+            }
+            if ascii.is_some() {
+                properties.font_ref = ascii;
+            }
+            if h_ansi.is_some() {
+                properties.font_ref_h_ansi = h_ansi;
+            }
+            if cs.is_some() {
+                properties.font_ref_cs = cs;
+            }
+            if east_asia.is_some() {
+                properties.font_ref_east_asia = east_asia;
+            }
+        }
+        // Named vocabularies: an unknown `val` is reported (not mapped), like `sz`.
+        b"vertAlign" => match value.as_deref().and_then(vertical_alignment_from) {
+            Some(alignment) => properties.vertical_alignment = Some(alignment),
+            None => return false,
+        },
+        b"highlight" => match value.as_deref().and_then(highlight_from) {
+            Some(highlight) => properties.highlight = Some(highlight),
+            None => return false,
+        },
+        b"em" => match value.as_deref().and_then(emphasis_from) {
+            Some(emphasis) => properties.emphasis = Some(emphasis),
+            None => return false,
+        },
         _ => return false,
     }
     true
+}
+
+/// Resolves one `w:rFonts` slot: theme attr first (`major*`→Major, `minor*`→Minor),
+/// else the named attr (bounded to 255 bytes). Returns `None` if neither resolves.
+fn font_slot(element: &BytesStart<'_>, named: &[u8], theme: &[u8]) -> Option<FontRef> {
+    if let Some(value) = attribute_value(element, theme) {
+        return theme_font_ref(&value).map(|slot| FontRef::Theme(ThemeFont { slot }));
+    }
+    attribute_value(element, named)
+        .filter(|name| !name.is_empty() && name.len() <= 255)
+        .map(|name| FontRef::Named(FontName { name }))
+}
+
+fn theme_font_ref(value: &str) -> Option<ThemeFontRef> {
+    if value.starts_with("major") {
+        Some(ThemeFontRef::Major)
+    } else if value.starts_with("minor") {
+        Some(ThemeFontRef::Minor)
+    } else {
+        None
+    }
+}
+
+fn vertical_alignment_from(value: &str) -> Option<VerticalAlignment> {
+    match value {
+        "baseline" => Some(VerticalAlignment::Baseline),
+        "superscript" => Some(VerticalAlignment::Superscript),
+        "subscript" => Some(VerticalAlignment::Subscript),
+        _ => None,
+    }
+}
+
+fn highlight_from(value: &str) -> Option<HighlightColor> {
+    Some(match value {
+        "none" => HighlightColor::None,
+        "black" => HighlightColor::Black,
+        "blue" => HighlightColor::Blue,
+        "cyan" => HighlightColor::Cyan,
+        "darkBlue" => HighlightColor::DarkBlue,
+        "darkCyan" => HighlightColor::DarkCyan,
+        "darkGray" => HighlightColor::DarkGray,
+        "darkGreen" => HighlightColor::DarkGreen,
+        "darkMagenta" => HighlightColor::DarkMagenta,
+        "darkRed" => HighlightColor::DarkRed,
+        "darkYellow" => HighlightColor::DarkYellow,
+        "green" => HighlightColor::Green,
+        "lightGray" => HighlightColor::LightGray,
+        "magenta" => HighlightColor::Magenta,
+        "red" => HighlightColor::Red,
+        "white" => HighlightColor::White,
+        "yellow" => HighlightColor::Yellow,
+        _ => return None,
+    })
+}
+
+fn emphasis_from(value: &str) -> Option<EmphasisMark> {
+    match value {
+        "none" => Some(EmphasisMark::None),
+        "dot" => Some(EmphasisMark::Dot),
+        "comma" => Some(EmphasisMark::Comma),
+        "circle" => Some(EmphasisMark::Circle),
+        "underDot" => Some(EmphasisMark::UnderDot),
+        _ => None,
+    }
 }
 
 /// Applies a paragraph-property element, returning whether it was fully mapped.

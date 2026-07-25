@@ -850,6 +850,66 @@ fn run_inline(id: NodeId, text: &str) -> InlineNode {
     })
 }
 
+fn run_with_props(id: NodeId, properties: RunProperties) -> BlockNode {
+    BlockNode::Paragraph(Paragraph {
+        id: tid(1),
+        properties: ParagraphProperties::default(),
+        inlines: vec![InlineNode::Run(Run {
+            id,
+            properties,
+            text: "x".to_owned(),
+        })],
+    })
+}
+
+#[test]
+fn run_long_tail_properties_round_trip() {
+    let properties = RunProperties {
+        all_caps: Some(true),
+        small_caps: Some(false),
+        hidden: Some(true),
+        double_strike: Some(true),
+        font_ref_cs: Some(FontRef::Named(FontName {
+            name: "Arial".to_owned(),
+        })),
+        font_ref_east_asia: Some(FontRef::Theme(ThemeFont {
+            slot: ThemeFontRef::Minor,
+        })),
+        vertical_alignment: Some(VerticalAlignment::Superscript),
+        highlight: Some(HighlightColor::Yellow),
+        emphasis: Some(EmphasisMark::Dot),
+        ..RunProperties::default()
+    };
+    let document = table_document(vec![run_with_props(tid(2), properties)]).unwrap();
+    let reloaded =
+        Document::from_json(&document.to_json().unwrap(), SnapshotLimits::default()).unwrap();
+    assert_eq!(document, reloaded);
+}
+
+#[test]
+fn empty_run_long_tail_font_name_is_rejected() {
+    let properties = RunProperties {
+        font_ref_h_ansi: Some(FontRef::Named(FontName {
+            name: String::new(),
+        })),
+        ..RunProperties::default()
+    };
+    assert!(matches!(
+        table_document(vec![run_with_props(tid(2), properties)]),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "run.font_ref.name"
+        })
+    ));
+}
+
+#[test]
+fn default_run_properties_still_serialize_to_empty_object() {
+    // Backward-compat guard: the additive long-tail fields must not appear when
+    // unset, so a default RunProperties serializes to `{}` as before.
+    let json = serde_json::to_string(&RunProperties::default()).unwrap();
+    assert_eq!(json, "{}");
+}
+
 fn field_paragraph(field: Field) -> BlockNode {
     BlockNode::Paragraph(Paragraph {
         id: tid(1),
