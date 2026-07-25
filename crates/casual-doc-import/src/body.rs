@@ -5,13 +5,14 @@ use std::collections::BTreeMap;
 use casual_doc_model::v1::{
     Alignment, BlockNode, BlockSdt, Bookmark, BookmarkEnd, BookmarkId, BookmarkStart, BorderEdge,
     Break, BreakKind, CellVerticalAlignment, Comment, CommentId, CommentReference, DefinitionMap,
-    Drawing, Extent, ExternalTarget, Field, HeaderFooterId, HeaderFooterKind, HeaderFooterRef,
-    HeightRule, Hyperlink, HyperlinkTarget, InlineNode, InlineSdt, InternalTarget, MAX_EMU,
-    MAX_FIELD_INSTRUCTION_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH, MAX_TEXTBOX_DEPTH, MediaId,
-    NoteId, NoteKind, NoteReference, PageMargins, PageSize, Paragraph, ParagraphProperties,
-    Revision, RevisionKind, RgbColor, Run, RunProperties, SdtControlKind, SdtProperties,
-    SectionBoundary, SectionColumns, SectionId, StyleKind, Tab, TabAlignment, TabLeader, TabStop,
-    TableLayout, TableOverlap, TextBox, TextDirection, VerticalMerge,
+    DocGrid, DocGridType, Drawing, Extent, ExternalTarget, Field, HeaderFooterId, HeaderFooterKind,
+    HeaderFooterRef, HeightRule, Hyperlink, HyperlinkTarget, InlineNode, InlineSdt, InternalTarget,
+    MAX_EMU, MAX_FIELD_INSTRUCTION_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH, MAX_TEXTBOX_DEPTH,
+    MediaId, NoteId, NoteKind, NoteReference, PageMargins, PageNumbering, PageSize,
+    PageVerticalAlignment, Paragraph, ParagraphProperties, Revision, RevisionKind, RgbColor, Run,
+    RunProperties, SdtControlKind, SdtProperties, SectionBoundary, SectionColumns, SectionId,
+    SectionType, StyleKind, Tab, TabAlignment, TabLeader, TabStop, TableLayout, TableOverlap,
+    TextBox, TextDirection, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::Reader;
@@ -248,6 +249,16 @@ struct SectionAccumulator {
     margin_start: Option<i32>,
     margin_end: Option<i32>,
     columns: Option<u16>,
+    column_space: Option<i32>,
+    column_separator: Option<bool>,
+    section_type: Option<SectionType>,
+    title_page: Option<bool>,
+    vertical_alignment: Option<PageVerticalAlignment>,
+    page_number_format: Option<String>,
+    page_number_start: Option<i32>,
+    doc_grid_type: Option<DocGridType>,
+    doc_grid_line_pitch: Option<i32>,
+    doc_grid_char_space: Option<i32>,
     headers: Vec<HeaderFooterRef>,
     footers: Vec<HeaderFooterRef>,
 }
@@ -1108,9 +1119,75 @@ impl BodyParser<'_> {
                 }
             }
             b"cols" if self.section.is_some() => {
+                let space = attr_i32(element, b"space");
+                let separator = attribute_value(element, b"sep")
+                    .as_deref()
+                    .map(|value| is_true(Some(value)));
                 if let Some(section) = self.section.as_mut() {
                     section.columns =
                         attribute_value(element, b"num").and_then(|value| value.parse().ok());
+                    section.column_space = space;
+                    section.column_separator = separator;
+                }
+            }
+            b"type" if self.section.is_some() => {
+                let section_type = match attribute_value(element, b"val").as_deref() {
+                    Some("nextPage") => Some(SectionType::NextPage),
+                    Some("continuous") => Some(SectionType::Continuous),
+                    Some("evenPage") => Some(SectionType::EvenPage),
+                    Some("oddPage") => Some(SectionType::OddPage),
+                    Some("nextColumn") => Some(SectionType::NextColumn),
+                    _ => None,
+                };
+                match (section_type, self.section.as_mut()) {
+                    (Some(value), Some(section)) => section.section_type = Some(value),
+                    (None, _) => self.reporter.report(b"type"),
+                    _ => {}
+                }
+            }
+            b"titlePg" if self.section.is_some() => {
+                let on = is_true(attribute_value(element, b"val").as_deref());
+                if let Some(section) = self.section.as_mut() {
+                    section.title_page = Some(on);
+                }
+            }
+            b"vAlign" if self.section.is_some() => {
+                let alignment = match attribute_value(element, b"val").as_deref() {
+                    Some("top") => Some(PageVerticalAlignment::Top),
+                    Some("center") => Some(PageVerticalAlignment::Center),
+                    Some("both") => Some(PageVerticalAlignment::Both),
+                    Some("bottom") => Some(PageVerticalAlignment::Bottom),
+                    _ => None,
+                };
+                match (alignment, self.section.as_mut()) {
+                    (Some(value), Some(section)) => section.vertical_alignment = Some(value),
+                    (None, _) => self.reporter.report(b"vAlign"),
+                    _ => {}
+                }
+            }
+            b"pgNumType" if self.section.is_some() => {
+                let format =
+                    attribute_value(element, b"fmt").filter(|v| !v.is_empty() && v.len() <= 32);
+                let start = attr_i32(element, b"start");
+                if let Some(section) = self.section.as_mut() {
+                    section.page_number_format = format;
+                    section.page_number_start = start;
+                }
+            }
+            b"docGrid" if self.section.is_some() => {
+                let grid_type = match attribute_value(element, b"type").as_deref() {
+                    Some("default") => Some(DocGridType::Default),
+                    Some("lines") => Some(DocGridType::Lines),
+                    Some("linesAndChars") => Some(DocGridType::LinesAndChars),
+                    Some("snapToChars") => Some(DocGridType::SnapToChars),
+                    _ => None,
+                };
+                let line_pitch = attr_i32(element, b"linePitch");
+                let char_space = attr_i32(element, b"charSpace");
+                if let Some(section) = self.section.as_mut() {
+                    section.doc_grid_type = grid_type;
+                    section.doc_grid_line_pitch = line_pitch;
+                    section.doc_grid_char_space = char_space;
                 }
             }
             b"headerReference" if self.section.is_some() => {
@@ -1964,6 +2041,17 @@ impl BodyParser<'_> {
         };
         let columns = SectionColumns {
             count: accumulator.columns.unwrap_or(1).clamp(1, 64),
+            space_twips: accumulator.column_space.map(|v| v.clamp(0, 31_680)),
+            separator: accumulator.column_separator,
+        };
+        let page_numbering = PageNumbering {
+            format: accumulator.page_number_format,
+            start: accumulator.page_number_start.map(|v| v.clamp(0, 1_000_000)),
+        };
+        let doc_grid = DocGrid {
+            grid_type: accumulator.doc_grid_type,
+            line_pitch: accumulator.doc_grid_line_pitch.map(|v| v.clamp(0, 31_680)),
+            char_space: accumulator.doc_grid_char_space.map(|v| v.clamp(0, 31_680)),
         };
         self.sections.push(SectionBoundary {
             id,
@@ -1972,6 +2060,11 @@ impl BodyParser<'_> {
             columns,
             headers: accumulator.headers,
             footers: accumulator.footers,
+            section_type: accumulator.section_type,
+            title_page: accumulator.title_page,
+            vertical_alignment: accumulator.vertical_alignment,
+            page_numbering,
+            doc_grid,
         });
         Ok(id)
     }

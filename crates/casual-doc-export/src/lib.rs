@@ -1003,6 +1003,40 @@ mod semantic_tests {
     }
 
     #[test]
+    fn expanded_section_properties_survive_the_semantic_round_trip() {
+        // The additive sectPr coverage: w:type, w:cols @space/@sep, w:pgNumType,
+        // w:vAlign, w:titlePg (explicit off), and w:docGrid.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:r><w:t>x</w:t></w:r></w:p>
+            <w:sectPr>
+                <w:type w:val="continuous"/>
+                <w:pgSz w:w="12240" w:h="15840"/>
+                <w:pgMar w:top="1440" w:bottom="1440" w:start="1440" w:end="1440"/>
+                <w:pgNumType w:fmt="lowerRoman" w:start="3"/>
+                <w:cols w:num="2" w:space="720" w:sep="1"/>
+                <w:vAlign w:val="center"/>
+                <w:titlePg w:val="0"/>
+                <w:docGrid w:type="lines" w:linePitch="360" w:charSpace="20"/>
+            </w:sectPr>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        let section = &m1.definitions().sections[0];
+        assert_eq!(
+            section.section_type,
+            Some(casual_doc_model::v1::SectionType::Continuous)
+        );
+        assert_eq!(section.page_numbering.start, Some(3));
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(
+            m1, m2,
+            "expanded section properties survive write -> reopen"
+        );
+    }
+
+    #[test]
     fn multi_section_survives_the_semantic_round_trip() {
         // Two sections: the first ends at paragraph one via a nested
         // w:pPr > w:sectPr (distinct geometry + columns); the second is the

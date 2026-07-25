@@ -18,15 +18,16 @@ use std::io::{Cursor, Write};
 
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, BorderEdge, BreakKind,
-    CellVerticalAlignment, Color, Comment, CommentId, DefinitionMap, Definitions, Document,
-    DocumentSettings, EmphasisMark, Extent, FontCollection, FontDescriptor, FontFamilyKind,
-    FontPitch, FontRef, FontScheme, HeaderFooterId, HeaderFooterKind, HeightRule, HighlightColor,
-    HyperlinkTarget, InlineNode, MediaId, MediaReference, Note, NoteId, NoteKind,
-    NumberingInstance, NumberingInstanceId, ParagraphProperties, RevisionKind, RgbColor,
-    RunFontHint, RunProperties, SdtControlKind, SdtProperties, SectionBoundary, Style, StyleId,
-    StyleKind, TabAlignment, TabLeader, Table, TableBorders, TableCell, TableCellProperties,
-    TableLayout, TableOverlap, TableProperties, TableRow, TableRowProperties, TextDirection,
-    ThemeFontRef, VerticalAlignment, VerticalMerge, VerticalTextAlignment,
+    CellVerticalAlignment, Color, Comment, CommentId, DefinitionMap, Definitions, DocGridType,
+    Document, DocumentSettings, EmphasisMark, Extent, FontCollection, FontDescriptor,
+    FontFamilyKind, FontPitch, FontRef, FontScheme, HeaderFooterId, HeaderFooterKind, HeightRule,
+    HighlightColor, HyperlinkTarget, InlineNode, MediaId, MediaReference, Note, NoteId, NoteKind,
+    NumberingInstance, NumberingInstanceId, PageVerticalAlignment, ParagraphProperties,
+    RevisionKind, RgbColor, RunFontHint, RunProperties, SdtControlKind, SdtProperties,
+    SectionBoundary, SectionType, Style, StyleId, StyleKind, TabAlignment, TabLeader, Table,
+    TableBorders, TableCell, TableCellProperties, TableLayout, TableOverlap, TableProperties,
+    TableRow, TableRowProperties, TextDirection, ThemeFontRef, VerticalAlignment, VerticalMerge,
+    VerticalTextAlignment,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -1102,6 +1103,20 @@ fn write_section_properties(
             w.write_event(Event::Empty(el)).map_err(pkg)?;
         }
     }
+    if let Some(section_type) = section.section_type {
+        let mut el = start("w:type");
+        el.push_attribute((
+            "w:val",
+            match section_type {
+                SectionType::NextPage => "nextPage",
+                SectionType::Continuous => "continuous",
+                SectionType::EvenPage => "evenPage",
+                SectionType::OddPage => "oddPage",
+                SectionType::NextColumn => "nextColumn",
+            },
+        ));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
     let mut pg_sz = start("w:pgSz");
     pg_sz.push_attribute(("w:w", section.page_size.width_twips.to_string().as_str()));
     pg_sz.push_attribute(("w:h", section.page_size.height_twips.to_string().as_str()));
@@ -1118,9 +1133,66 @@ fn write_section_properties(
     ));
     pg_mar.push_attribute(("w:end", section.page_margins.end_twips.to_string().as_str()));
     w.write_event(Event::Empty(pg_mar)).map_err(pkg)?;
+    if !section.page_numbering.is_empty() {
+        let mut el = start("w:pgNumType");
+        if let Some(format) = &section.page_numbering.format {
+            el.push_attribute(("w:fmt", format.as_str()));
+        }
+        if let Some(start_num) = section.page_numbering.start {
+            el.push_attribute(("w:start", start_num.to_string().as_str()));
+        }
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
     let mut cols = start("w:cols");
     cols.push_attribute(("w:num", section.columns.count.to_string().as_str()));
+    if let Some(space) = section.columns.space_twips {
+        cols.push_attribute(("w:space", space.to_string().as_str()));
+    }
+    if let Some(separator) = section.columns.separator {
+        cols.push_attribute(("w:sep", if separator { "1" } else { "0" }));
+    }
     w.write_event(Event::Empty(cols)).map_err(pkg)?;
+    if let Some(alignment) = section.vertical_alignment {
+        let mut el = start("w:vAlign");
+        el.push_attribute((
+            "w:val",
+            match alignment {
+                PageVerticalAlignment::Top => "top",
+                PageVerticalAlignment::Center => "center",
+                PageVerticalAlignment::Both => "both",
+                PageVerticalAlignment::Bottom => "bottom",
+            },
+        ));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(on) = section.title_page {
+        let mut el = start("w:titlePg");
+        if !on {
+            el.push_attribute(("w:val", "0"));
+        }
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if !section.doc_grid.is_empty() {
+        let mut el = start("w:docGrid");
+        if let Some(grid_type) = section.doc_grid.grid_type {
+            el.push_attribute((
+                "w:type",
+                match grid_type {
+                    DocGridType::Default => "default",
+                    DocGridType::Lines => "lines",
+                    DocGridType::LinesAndChars => "linesAndChars",
+                    DocGridType::SnapToChars => "snapToChars",
+                },
+            ));
+        }
+        if let Some(line_pitch) = section.doc_grid.line_pitch {
+            el.push_attribute(("w:linePitch", line_pitch.to_string().as_str()));
+        }
+        if let Some(char_space) = section.doc_grid.char_space {
+            el.push_attribute(("w:charSpace", char_space.to_string().as_str()));
+        }
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
     w.write_event(Event::End(BytesEnd::new("w:sectPr")))
         .map_err(pkg)?;
     Ok(())

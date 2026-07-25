@@ -104,12 +104,106 @@ pub struct PageMargins {
     pub end_twips: i32,
 }
 
-/// Section column layout.
+/// Section column layout (`w:cols`).
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SectionColumns {
-    /// Column count.
+    /// Column count (`w:num`).
     pub count: u16,
+    /// Spacing between columns in twips (`w:space`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub space_twips: Option<i32>,
+    /// Draw a line between columns (`w:sep`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub separator: Option<bool>,
+}
+
+/// A section break's type (`w:type/@w:val`) — where the new section begins.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SectionType {
+    /// Begin on the next page (`nextPage`, the default).
+    NextPage,
+    /// Continue on the same page (`continuous`).
+    Continuous,
+    /// Begin on the next even page (`evenPage`).
+    EvenPage,
+    /// Begin on the next odd page (`oddPage`).
+    OddPage,
+    /// Begin in the next column (`nextColumn`).
+    NextColumn,
+}
+
+/// Vertical alignment of content on the page (`w:vAlign/@w:val`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PageVerticalAlignment {
+    /// Top-aligned.
+    Top,
+    /// Centered.
+    Center,
+    /// Justified (`both`).
+    Both,
+    /// Bottom-aligned.
+    Bottom,
+}
+
+/// Page numbering for a section (`w:pgNumType`).
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PageNumbering {
+    /// Number format token (`w:fmt`, e.g. `decimal`/`lowerRoman`); the
+    /// `ST_NumberFormat` vocabulary is kept opaque, bounded to 32 bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
+    /// Starting page number (`w:start`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<i32>,
+}
+
+impl PageNumbering {
+    /// Whether nothing is set (serializes to nothing).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// Document-grid type (`w:docGrid/@w:type`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DocGridType {
+    /// No grid (`default`).
+    Default,
+    /// Line grid only (`lines`).
+    Lines,
+    /// Line and character grid (`linesAndChars`).
+    LinesAndChars,
+    /// Snap to characters (`snapToChars`).
+    SnapToChars,
+}
+
+/// Document grid for a section (`w:docGrid`), used mainly for East-Asian layout.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DocGrid {
+    /// Grid type (`w:type`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grid_type: Option<DocGridType>,
+    /// Line pitch in twips (`w:linePitch`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_pitch: Option<i32>,
+    /// Character spacing (`w:charSpace`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub char_space: Option<i32>,
+}
+
+impl DocGrid {
+    /// Whether nothing is set (serializes to nothing).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// Which page type a header or footer applies to.
@@ -152,6 +246,21 @@ pub struct SectionBoundary {
     /// Footer references by page type (additive; omitted when empty).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub footers: Vec<HeaderFooterRef>,
+    /// Where this section begins (`w:type`). Additive: omitted when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section_type: Option<SectionType>,
+    /// Use a distinct first-page header/footer (`w:titlePg`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_page: Option<bool>,
+    /// Vertical alignment of content on the page (`w:vAlign`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vertical_alignment: Option<PageVerticalAlignment>,
+    /// Page numbering (`w:pgNumType`).
+    #[serde(default, skip_serializing_if = "PageNumbering::is_empty")]
+    pub page_numbering: PageNumbering,
+    /// Document grid (`w:docGrid`).
+    #[serde(default, skip_serializing_if = "DocGrid::is_empty")]
+    pub doc_grid: DocGrid,
 }
 
 /// A header or footer definition (its id is the map key). Its content reuses the
