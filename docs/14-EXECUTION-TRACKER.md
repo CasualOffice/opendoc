@@ -115,3 +115,9 @@ Design references point at `38-SCHEMA-V1-DESIGN-REFERENCE.md` (anchor).
 - Should the crate family retain the `casual-doc-*` names if public package-name
   availability later requires a change?
 - Which fixed font set should be used for deterministic layout baselines?
+
+## Phase 1B — Semantic DOCX writer (model -> WordprocessingML)
+
+| ID | Item | Owner | Status | Notes |
+|---|---|---|---|---|
+| P1B-001 | Semantic DOCX writer design | Claude Code | Designed | `39-PHASE-1B-SEMANTIC-DOCX-WRITER-DESIGN.md`: serialize the v1 Document to a valid editable DOCX (the dual of Retention export); semantic-fixed-point round-trip (import->write->reopen = equal model); media supplied via a hybrid `part_name->bytes` map. Slices P1B-002..006. |
