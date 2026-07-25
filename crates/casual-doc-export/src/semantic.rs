@@ -8,9 +8,9 @@
 //! definition parts (`fontTable.xml`, `theme1.xml` font scheme, `styles.xml`
 //! with `w:pStyle`/`w:rStyle`, `numbering.xml` with body `w:numPr`, footnotes/
 //! endnotes and comments with their body references and per-part hyperlink
-//! rels). The media-backed constructs (drawings, text boxes) and headers/footers
-//! land in later slices; a model that uses them is written with what is
-//! supported and the rest is skipped (never a malformed part).
+//! rels), headers/footers, sections, and the media-backed constructs (inline
+//! drawings + image parts, text boxes). Embedded fonts are a follow-up; anything
+//! unsupported is skipped (never a malformed part).
 //!
 //! Output is byte-deterministic for a given model: parts in fixed order, a fixed
 //! ZIP timestamp, ids/relationships re-minted in document order.
@@ -81,6 +81,7 @@ const FOOTER_CT: &str = "application/vnd.openxmlformats-officedocument.wordproce
 const A_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
 const WP_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
 const PIC_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/picture";
+const WPS_NS: &str = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape";
 const IMAGE_REL_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
 
@@ -957,6 +958,7 @@ fn document_xml(
     doc.push_attribute(("xmlns:wp", WP_NS));
     doc.push_attribute(("xmlns:a", A_NS));
     doc.push_attribute(("xmlns:pic", PIC_NS));
+    doc.push_attribute(("xmlns:wps", WPS_NS));
     w.write_event(Event::Start(doc)).map_err(pkg)?;
     w.write_event(Event::Start(start("w:body"))).map_err(pkg)?;
 
@@ -1667,8 +1669,12 @@ fn write_inline(
                 .unwrap_or((0, 0));
             write_drawing(w, &embed, drawing.extent.as_ref(), cx, cy)?;
         }
-        // Text boxes hold block content in a DrawingML shape; a later slice.
-        InlineNode::TextBox(_) => {}
+        // An inline text box: a DrawingML shape whose `w:txbxContent` wraps the
+        // block content. The importer triggers on `w:txbxContent`, restoring the
+        // suspended run flow when it closes.
+        InlineNode::TextBox(text_box) => {
+            write_text_box(w, &text_box.blocks, ctx)?;
+        }
     }
     Ok(())
 }
@@ -1763,6 +1769,41 @@ fn write_drawing(
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("w:r")))
         .map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits an inline text box: the minimal DrawingML shape (`wps:wsp`/`wps:txbx`)
+/// wrapping a `w:txbxContent` that holds the block content — the scaffold the
+/// importer round-trips (it triggers on `w:txbxContent`, discarding the rest).
+fn write_text_box(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    blocks: &[BlockNode],
+    ctx: &mut Ctx,
+) -> Result<(), ExportError> {
+    for tag in ["w:r", "w:drawing", "wp:inline", "a:graphic"] {
+        w.write_event(Event::Start(start(tag))).map_err(pkg)?;
+    }
+    let mut graphic_data = start("a:graphicData");
+    graphic_data.push_attribute(("uri", WPS_NS));
+    w.write_event(Event::Start(graphic_data)).map_err(pkg)?;
+    for tag in ["wps:wsp", "wps:txbx", "w:txbxContent"] {
+        w.write_event(Event::Start(start(tag))).map_err(pkg)?;
+    }
+    for block in blocks {
+        write_block(w, block, ctx)?;
+    }
+    for tag in [
+        "w:txbxContent",
+        "wps:txbx",
+        "wps:wsp",
+        "a:graphicData",
+        "a:graphic",
+        "wp:inline",
+        "w:drawing",
+        "w:r",
+    ] {
+        w.write_event(Event::End(BytesEnd::new(tag))).map_err(pkg)?;
+    }
     Ok(())
 }
 
