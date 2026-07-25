@@ -958,15 +958,25 @@ fn end_to_end_from_admitted_package() {
 }
 
 #[test]
-fn character_spacing_in_rpr_is_reported_not_silently_dropped() {
-    // w:spacing in rPr is character spacing (unmapped); it must be reported and
-    // must NOT be treated as the paragraph spacing element.
+fn character_spacing_in_rpr_is_the_run_metric_not_paragraph_spacing() {
+    // w:spacing in rPr is character spacing (a run metric, now modeled); it must
+    // map to the run's character_spacing_twips and must NOT be treated as the
+    // paragraph spacing element.
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
-        <w:p><w:r><w:rPr><w:spacing w:val="20"/></w:rPr><w:t>x</w:t></w:r></w:p>
+        <w:p><w:r><w:rPr><w:spacing w:val="-20"/><w:kern w:val="28"/><w:position w:val="6"/>
+            <w:lang w:val="en-US" w:eastAsia="ja-JP"/></w:rPr><w:t>x</w:t></w:r></w:p>
     </w:body></w:document>"#;
     let import = import(xml);
-    assert!(features(&import).contains(&"spacing"));
+    let p = first_run_props(&import);
+    assert_eq!(p.character_spacing_twips, Some(-20));
+    assert_eq!(p.kerning_half_points, Some(28));
+    assert_eq!(p.position_half_points, Some(6));
+    let lang = p.language.as_ref().expect("lang modeled");
+    assert_eq!(lang.value.as_deref(), Some("en-US"));
+    assert_eq!(lang.east_asia.as_deref(), Some("ja-JP"));
+    // The run metric is not confused with paragraph spacing.
     assert_eq!(paragraph(&import, 0).properties.spacing, None);
+    assert!(!features(&import).contains(&"spacing"));
 }
 
 #[test]
