@@ -610,6 +610,34 @@ mod semantic_tests {
     }
 
     #[test]
+    fn settings_font_embedding_flags_survive_the_semantic_round_trip() {
+        // word/settings.xml carrying the font-embedding CT_OnOff flags: one bare
+        // (present => true), one explicitly true, one explicitly false (=> the
+        // model records false and the writer omits it). The writer regenerates
+        // settings.xml, its content-type override, and the /settings relationship.
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/></Relationships>"#;
+        let settings = br#"<w:settings xmlns:w="urn:w"><w:embedTrueTypeFonts/><w:saveSubsetFonts w:val="true"/><w:embedSystemFonts w:val="false"/></w:settings>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/settings.xml", settings),
+        ]);
+        let m1 = reopen(&source);
+        let flags = &m1.definitions().settings;
+        assert!(flags.embed_true_type_fonts, "bare flag => true");
+        assert!(flags.save_subset_fonts, "explicit true");
+        assert!(!flags.embed_system_fonts, "explicit false");
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(m1, m2, "settings flags survive write -> reopen");
+    }
+
+    #[test]
     fn theme_font_scheme_survives_the_semantic_round_trip() {
         // A theme with a fontScheme (major + minor, base entries with hints, a
         // per-script override, empty ea/cs) plus an unrelated clrScheme (which
