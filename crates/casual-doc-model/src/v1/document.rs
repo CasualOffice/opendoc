@@ -441,6 +441,8 @@ impl Document {
         if let Some(width) = table.properties.width_twips {
             check_domain((0..=31_680).contains(&width), "table.width")?;
         }
+        check_borders(&table.properties.borders, "table.borders")?;
+        check_margins(&table.properties.cell_margins, "table.cell_margins")?;
         for column in &table.grid {
             if let Some(width) = column.width_twips {
                 check_domain((0..=31_680).contains(&width), "table.grid.column.width")?;
@@ -463,6 +465,8 @@ impl Document {
                 if let Some(width) = cell.properties.width_twips {
                     check_domain((0..=31_680).contains(&width), "table.cell.width")?;
                 }
+                check_borders(&cell.properties.borders, "table.cell.borders")?;
+                check_margins(&cell.properties.margins, "table.cell.margins")?;
                 for nested in &cell.blocks {
                     self.validate_block(nested, table_depth + 1, textbox_depth)?;
                 }
@@ -905,4 +909,45 @@ fn check_domain(condition: bool, property: &'static str) -> Result<(), ModelErro
     } else {
         Err(ModelError::PropertyValueOutOfDomain { property })
     }
+}
+
+/// Bounds every present edge of a border set. `property` is the stable domain
+/// name for the level (`"table.borders"` / `"table.cell.borders"`).
+fn check_borders(borders: &TableBorders, property: &'static str) -> Result<(), ModelError> {
+    for edge in [
+        &borders.top,
+        &borders.start,
+        &borders.bottom,
+        &borders.end,
+        &borders.inside_h,
+        &borders.inside_v,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        check_domain(!edge.style.is_empty() && edge.style.len() <= 32, property)?;
+        if let Some(size) = edge.size_eighth_points {
+            check_domain(size <= 1024, property)?;
+        }
+        if let Some(space) = edge.space_points {
+            check_domain(space <= 31, property)?;
+        }
+    }
+    Ok(())
+}
+
+/// Bounds every present cell margin (`0..=31_680` twips).
+fn check_margins(margins: &CellMargins, property: &'static str) -> Result<(), ModelError> {
+    for value in [
+        margins.top_twips,
+        margins.start_twips,
+        margins.bottom_twips,
+        margins.end_twips,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        check_domain((0..=31_680).contains(&value), property)?;
+    }
+    Ok(())
 }

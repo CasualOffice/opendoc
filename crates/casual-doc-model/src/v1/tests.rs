@@ -745,6 +745,80 @@ fn table_properties_round_trip_and_default_omits_the_key() {
 }
 
 #[test]
+fn table_borders_and_margins_round_trip_and_reject_bad_style() {
+    let borders = TableBorders {
+        top: Some(BorderEdge {
+            style: "single".to_owned(),
+            size_eighth_points: Some(8),
+            color: Some(RgbColor { r: 1, g: 2, b: 3 }),
+            space_points: Some(4),
+        }),
+        ..TableBorders::default()
+    };
+    let table = Table {
+        id: tid(1),
+        grid: Vec::new(),
+        properties: TableProperties {
+            borders: borders.clone(),
+            cell_margins: CellMargins {
+                top_twips: Some(120),
+                ..CellMargins::default()
+            },
+            ..TableProperties::default()
+        },
+        rows: vec![TableRow {
+            id: tid(2),
+            properties: TableRowProperties::default(),
+            cells: vec![cell(
+                tid(3),
+                TableCellProperties {
+                    borders,
+                    ..TableCellProperties::default()
+                },
+                vec![paragraph_block(tid(4))],
+            )],
+        }],
+    };
+    let document = table_document(vec![BlockNode::Table(table)]).unwrap();
+    let reloaded =
+        Document::from_json(&document.to_json().unwrap(), SnapshotLimits::default()).unwrap();
+    assert_eq!(document, reloaded);
+
+    // An oversized border style token is rejected.
+    let bad = Table {
+        id: tid(1),
+        grid: Vec::new(),
+        properties: TableProperties {
+            borders: TableBorders {
+                top: Some(BorderEdge {
+                    style: "x".repeat(33),
+                    size_eighth_points: None,
+                    color: None,
+                    space_points: None,
+                }),
+                ..TableBorders::default()
+            },
+            ..TableProperties::default()
+        },
+        rows: vec![TableRow {
+            id: tid(2),
+            properties: TableRowProperties::default(),
+            cells: vec![cell(
+                tid(3),
+                TableCellProperties::default(),
+                vec![paragraph_block(tid(4))],
+            )],
+        }],
+    };
+    assert!(matches!(
+        table_document(vec![BlockNode::Table(bad)]),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "table.borders"
+        })
+    ));
+}
+
+#[test]
 fn over_range_table_width_is_rejected() {
     let table = Table {
         id: tid(1),

@@ -48,13 +48,14 @@ Each is designed + adversarially reviewed; docs 49–53. Implement top-down.
 
 | Seq | Item | Tracker | Design | Status |
 |----:|------|---------|--------|--------|
-| ⏭️ 1 | Table **borders + margins** (nested edge-child capture, collision-safe) | P1A-035b | `51` (wave 2) | 💤 queued |
+| ✅ 1 | Table **borders + margins** (nested edge-child capture, collision-safe) | P1A-035b | `51` (wave 2) | ✅ done (feat/table-borders) |
 | ⏭️ 2 | Paragraph **shading + borders (`pBdr`) + tabs** | P1A-034b | `50` (wave 2) | 💤 queued |
 | ⏭️ 3 | **Bookmarks** (`bookmarkStart/End` + internal-anchor validation) | P1A-036 | `52` | 💤 queued (review-fixes listed) |
 | ⏭️ 4 | **Content controls** (`w:sdt` block + inline wrapper) | P1A-037 | `53` | 💤 queued (review-fixes listed) |
 | ⏭️ 5 | Run-property **metrics** (`w:spacing`/`kern`/`position`) + `w:lang` | P1A-033b | `49` (slices C/E) | 💤 queued |
 
 ### Low-tail (fold into the slices above or a final sweep)
+- **Optimization:** box `BlockNode::Table` (now 416B vs 192B) — one focused API change, tracked (currently `#[allow(large_enum_variant)]`).
 - Row `w:jc` / `w:wBefore` / `w:wAfter` / `w:gridBefore` / `w:gridAfter`
 - Table `w:tblInd` / `w:tblOverlap` / `w:bidiVisual` / floating `w:tblpPr`
 - Run `w:caps`/`smallCaps` done; remaining `w:outline`/`emboss`/`imprint`/`effect`, `w:bdr`, color theme tint/shade

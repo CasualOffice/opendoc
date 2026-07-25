@@ -514,6 +514,86 @@ fn theme_shading_is_reported_not_silently_dropped() {
 }
 
 #[test]
+fn table_and_cell_borders_and_margins_are_captured_without_collision() {
+    use casual_doc_model::v1::RgbColor;
+    // The edge names top/start/bottom/end appear in BOTH the border container and
+    // the margin container; the open scope must route each correctly.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:tbl>
+            <w:tblPr>
+                <w:tblBorders>
+                    <w:top w:val="single" w:sz="8" w:color="FF0000" w:space="4"/>
+                    <w:insideH w:val="dotted"/>
+                </w:tblBorders>
+                <w:tblCellMar>
+                    <w:top w:type="dxa" w:w="120"/>
+                    <w:start w:type="dxa" w:w="60"/>
+                </w:tblCellMar>
+            </w:tblPr>
+            <w:tr><w:tc>
+                <w:tcPr>
+                    <w:tcBorders><w:bottom w:val="double" w:sz="16"/></w:tcBorders>
+                    <w:tcMar><w:end w:type="dxa" w:w="90"/></w:tcMar>
+                </w:tcPr>
+                <w:p><w:r><w:t>c</w:t></w:r></w:p>
+            </w:tc></w:tr>
+        </w:tbl>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let table = first_table(&import).expect("table");
+    // Table border (top) captured with size/color/space — NOT confused with the
+    // margin of the same edge name.
+    let top = table
+        .properties
+        .borders
+        .top
+        .as_ref()
+        .expect("table top border");
+    assert_eq!(top.style, "single");
+    assert_eq!(top.size_eighth_points, Some(8));
+    assert_eq!(top.color, Some(RgbColor { r: 255, g: 0, b: 0 }));
+    assert_eq!(top.space_points, Some(4));
+    assert_eq!(
+        table
+            .properties
+            .borders
+            .inside_h
+            .as_ref()
+            .map(|e| e.style.as_str()),
+        Some("dotted")
+    );
+    // Table default cell margins (same top/start edge names, different container).
+    assert_eq!(table.properties.cell_margins.top_twips, Some(120));
+    assert_eq!(table.properties.cell_margins.start_twips, Some(60));
+    // Cell-level border + margin.
+    let cell = &table.rows[0].cells[0];
+    assert_eq!(
+        cell.properties
+            .borders
+            .bottom
+            .as_ref()
+            .map(|e| e.style.as_str()),
+        Some("double")
+    );
+    assert_eq!(cell.properties.margins.end_twips, Some(90));
+}
+
+#[test]
+fn border_edge_without_a_style_is_reported_not_modeled() {
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:tbl><w:tblPr><w:tblBorders><w:top w:sz="8"/></w:tblBorders></w:tblPr>
+            <w:tr><w:tc><w:p><w:r><w:t>c</w:t></w:r></w:p></w:tc></w:tr></w:tbl>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let table = first_table(&import).expect("table");
+    assert!(
+        table.properties.borders.top.is_none(),
+        "no style -> not modeled"
+    );
+    assert!(features(&import).contains(&"tblBorders"));
+}
+
+#[test]
 fn degraded_table_properties_are_reported_not_silently_mapped() {
     // pct table width, a table jc=both (justify), an unknown vAlign, and a
     // patterned shd are each reported; the modeled fill is still captured.
