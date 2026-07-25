@@ -16,15 +16,15 @@ use std::sync::Arc;
 
 use parley::fontique::Blob;
 use parley::{
-    Alignment, AlignmentOptions, FontContext, FontFamily, LayoutContext, PositionedLayoutItem,
-    StyleProperty,
+    Alignment, AlignmentOptions, FontContext, FontFamily, FontStyle, FontWeight, LayoutContext,
+    LineHeight, PositionedLayoutItem, StyleProperty,
 };
 
 use crate::fonts::ROBOTO_REGULAR;
 use crate::model::ModelRange;
 use crate::text::{
     Decoration, FontId, Glyph, GlyphRun, Line, LineBreak, LineConstraints, LineLayout, LineShaper,
-    StyledRun,
+    StyledRun, TextAlignment,
 };
 use crate::units::{Point, Twip};
 
@@ -77,6 +77,16 @@ impl Default for ParleyShaper {
     }
 }
 
+/// Maps the crate's [`TextAlignment`] to `parley`'s.
+fn alignment(alignment: TextAlignment) -> Alignment {
+    match alignment {
+        TextAlignment::Start => Alignment::Start,
+        TextAlignment::End => Alignment::End,
+        TextAlignment::Center => Alignment::Center,
+        TextAlignment::Justify => Alignment::Justify,
+    }
+}
+
 impl core::fmt::Debug for ParleyShaper {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // `parley`'s font/layout contexts are opaque caches and not `Debug`.
@@ -108,9 +118,30 @@ impl LineShaper for ParleyShaper {
         // Feed sizes in twips with scale = 1 so all outputs are in twips.
         let mut builder = layout_cx.ranged_builder(&mut fonts, &text, 1.0, false);
         builder.push_default(FontFamily::from(self.default_family.as_str()));
+        // Line height as a percent of the metrics line height (`w:spacing@line`).
+        if let Some(percent) = constraints.line_height_percent {
+            builder.push_default(StyleProperty::LineHeight(LineHeight::MetricsRelative(
+                f32::from(percent) / 100.0,
+            )));
+        }
         for (start, end, run) in &spans {
             builder.push(StyleProperty::FontSize(run.size.raw() as f32), *start..*end);
             builder.push(StyleProperty::Brush(ColorBrush(run.color)), *start..*end);
+            if run.bold {
+                builder.push(
+                    StyleProperty::FontWeight(FontWeight::new(700.0)),
+                    *start..*end,
+                );
+            }
+            if run.italic {
+                builder.push(StyleProperty::FontStyle(FontStyle::Italic), *start..*end);
+            }
+            if run.letter_spacing != Twip::ZERO {
+                builder.push(
+                    StyleProperty::LetterSpacing(run.letter_spacing.raw() as f32),
+                    *start..*end,
+                );
+            }
             if run.decoration.underline {
                 builder.push(StyleProperty::Underline(true), *start..*end);
             }
@@ -121,7 +152,10 @@ impl LineShaper for ParleyShaper {
 
         let mut layout = builder.build(&text);
         layout.break_all_lines(Some(constraints.max_width.raw() as f32));
-        layout.align(Alignment::Start, AlignmentOptions::default());
+        layout.align(
+            alignment(constraints.alignment),
+            AlignmentOptions::default(),
+        );
 
         let line_count = layout.lines().count();
         let mut lines = Vec::with_capacity(line_count);
@@ -196,22 +230,25 @@ mod tests {
             text,
             font: FontId(0),
             size: Twip::from_points(11),
+            bold: false,
+            italic: false,
+            letter_spacing: Twip::ZERO,
             color: [0, 0, 0, 255],
             decoration: Decoration::default(),
+        }
+    }
+
+    fn constraints(width_points: i32) -> LineConstraints {
+        LineConstraints {
+            max_width: Twip::from_points(width_points),
+            ..LineConstraints::default()
         }
     }
 
     #[test]
     fn shapes_a_single_line_of_text() {
         let shaper = ParleyShaper::new();
-        let layout = shaper.shape_paragraph(
-            &[run("Hello world")],
-            LineConstraints {
-                max_width: Twip::from_points(500),
-                rtl: false,
-            },
-            para_range(),
-        );
+        let layout = shaper.shape_paragraph(&[run("Hello world")], constraints(500), para_range());
         assert_eq!(layout.lines.len(), 1, "short text fits on one line");
         let line = &layout.lines[0];
         assert!(!line.runs.is_empty(), "the line has at least one glyph run");
@@ -227,17 +264,62 @@ mod tests {
     }
 
     #[test]
+    fn alignment_shifts_the_line_position() {
+        let shaper = ParleyShaper::new();
+        let left = LineConstraints {
+            max_width: Twip::from_points(400),
+            alignment: TextAlignment::Start,
+            ..LineConstraints::default()
+        };
+        let centered = LineConstraints {
+            alignment: TextAlignment::Center,
+            ..left
+        };
+        let x = |c| {
+            shaper
+                .shape_paragraph(&[run("short")], c, para_range())
+                .lines[0]
+                .runs[0]
+                .origin
+                .x
+                .raw()
+        };
+        // Centered text starts further from the leading edge than start-aligned.
+        assert!(
+            x(centered) > x(left),
+            "center alignment offsets the line inward"
+        );
+    }
+
+    #[test]
+    fn bold_and_letter_spacing_are_applied() {
+        let shaper = ParleyShaper::new();
+        let plain = run("iiiii");
+        let spaced = StyledRun {
+            letter_spacing: Twip::from_points(4),
+            ..run("iiiii")
+        };
+        let width = |r: StyledRun<'_>| {
+            let line = &shaper
+                .shape_paragraph(&[r], constraints(500), para_range())
+                .lines[0];
+            line.runs
+                .iter()
+                .flat_map(|g| &g.glyphs)
+                .map(|g| g.advance.raw())
+                .sum::<i32>()
+        };
+        assert!(
+            width(spaced) > width(plain),
+            "letter spacing widens the run's advances"
+        );
+    }
+
+    #[test]
     fn wraps_when_the_line_is_narrow() {
         let shaper = ParleyShaper::new();
         // A narrow column forces the two words onto separate lines.
-        let layout = shaper.shape_paragraph(
-            &[run("Hello world")],
-            LineConstraints {
-                max_width: Twip::from_points(30),
-                rtl: false,
-            },
-            para_range(),
-        );
+        let layout = shaper.shape_paragraph(&[run("Hello world")], constraints(30), para_range());
         assert!(
             layout.lines.len() >= 2,
             "narrow width wraps to multiple lines"
@@ -255,20 +337,16 @@ mod tests {
             text: "x",
             font: FontId(0),
             size: Twip::from_points(11),
+            bold: false,
+            italic: false,
+            letter_spacing: Twip::ZERO,
             color: [255, 0, 0, 255],
             decoration: Decoration {
                 underline: true,
                 strikethrough: false,
             },
         };
-        let layout = shaper.shape_paragraph(
-            &[styled],
-            LineConstraints {
-                max_width: Twip::from_points(500),
-                rtl: false,
-            },
-            para_range(),
-        );
+        let layout = shaper.shape_paragraph(&[styled], constraints(500), para_range());
         let run = &layout.lines[0].runs[0];
         assert_eq!(
             run.color,

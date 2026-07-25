@@ -68,12 +68,15 @@ mod tests {
                 text: "Hi",
                 font: FontId(0),
                 size: Twip::from_points(11),
+                bold: false,
+                italic: false,
+                letter_spacing: Twip::ZERO,
                 color: [0, 0, 0, 255],
                 decoration: Decoration::default(),
             }],
             LineConstraints {
                 max_width: Twip::from_points(500),
-                rtl: false,
+                ..LineConstraints::default()
             },
             ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, 0)),
         );

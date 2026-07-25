@@ -115,10 +115,30 @@ pub struct StyledRun<'a> {
     pub font: FontId,
     /// Font size.
     pub size: Twip,
+    /// Bold weight (`w:b`).
+    pub bold: bool,
+    /// Italic style (`w:i`).
+    pub italic: bool,
+    /// Inter-character spacing added to each glyph advance (`w:spacing`), twips.
+    pub letter_spacing: Twip,
     /// Fill color (RGBA).
     pub color: [u8; 4],
     /// Decorations.
     pub decoration: Decoration,
+}
+
+/// Horizontal alignment of a paragraph's lines.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+pub enum TextAlignment {
+    /// Leading-edge aligned (the default).
+    #[default]
+    Start,
+    /// Trailing-edge aligned.
+    End,
+    /// Centered.
+    Center,
+    /// Justified (last line start-aligned).
+    Justify,
 }
 
 /// The constraints a paragraph is shaped under.
@@ -128,6 +148,22 @@ pub struct LineConstraints {
     pub max_width: Twip,
     /// Base direction (`true` = right-to-left paragraph).
     pub rtl: bool,
+    /// Horizontal alignment of the lines.
+    pub alignment: TextAlignment,
+    /// Line height as a percent of the single-spaced height (`w:spacing@line`
+    /// with `lineRule="auto"`); `None` = the font's natural line height.
+    pub line_height_percent: Option<u16>,
+}
+
+impl Default for LineConstraints {
+    fn default() -> Self {
+        Self {
+            max_width: Twip::ZERO,
+            rtl: false,
+            alignment: TextAlignment::Start,
+            line_height_percent: None,
+        }
+    }
 }
 
 /// The seam between the block/flow engine and the concrete text stack: shape a
