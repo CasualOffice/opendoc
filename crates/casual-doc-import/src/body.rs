@@ -847,11 +847,15 @@ impl BodyParser<'_> {
                 }
             }
             // A bookmark end marker (`w:bookmarkEnd`). Modeled only when its source
-            // `w:id` resolves to an already-registered start; an orphan end (no
-            // matching start, block-level start, or dropped start) is reported.
+            // `w:id` resolves to an open (registered) start; the id is then
+            // DE-REGISTERED so exactly one end pairs with one start. A second end
+            // reusing that id — or an end with no matching start, a block-level
+            // start, or a dropped start — orphans and is reported. (Removing on
+            // end also lets a producer legitimately reuse a `w:id` for a later,
+            // non-overlapping range: its fresh start registers cleanly.)
             b"bookmarkEnd" if self.paragraph_open && !self.run_open => {
                 match attribute_value(element, b"id")
-                    .and_then(|source| self.bookmark_ids.get(&source).copied())
+                    .and_then(|source| self.bookmark_ids.remove(&source))
                 {
                     Some(bookmark) => self.push_segment(Segment::BookmarkEnd { bookmark }),
                     None => self.reporter.report(b"bookmarkEnd"),

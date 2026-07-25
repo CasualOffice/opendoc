@@ -3104,6 +3104,36 @@ fn duplicate_bookmark_id_keeps_the_first_and_reports_the_second() {
 }
 
 #[test]
+fn reused_bookmark_id_after_close_models_both_ranges_without_a_phantom_end() {
+    // Regression (adversarial review, major): a `w:id` reused after its first
+    // range fully closed must not re-resolve its end onto the first bookmark
+    // (which produced an unbalanced Start(A),End(A),End(A)). De-registering the
+    // id on end makes the second range a fresh, balanced bookmark.
+    let document = br#"<w:document xmlns:w="urn:w"><w:body><w:p>
+        <w:bookmarkStart w:id="1" w:name="a"/><w:r><w:t>X</w:t></w:r><w:bookmarkEnd w:id="1"/>
+        <w:bookmarkStart w:id="1" w:name="b"/><w:r><w:t>Y</w:t></w:r><w:bookmarkEnd w:id="1"/>
+    </w:p></w:body></w:document>"#;
+    let import = import(document);
+    let para = paragraph(&import, 0);
+    let starts = para
+        .inlines
+        .iter()
+        .filter(|i| matches!(i, InlineNode::BookmarkStart(_)))
+        .count();
+    let ends = para
+        .inlines
+        .iter()
+        .filter(|i| matches!(i, InlineNode::BookmarkEnd(_)))
+        .count();
+    // Balanced: two distinct bookmarks, one end each — no phantom third marker.
+    assert_eq!(starts, 2, "both reused-id ranges modeled");
+    assert_eq!(ends, 2, "exactly one end per start; no phantom end");
+    assert_eq!(import.document.definitions().bookmarks.len(), 2);
+    // Every emitted marker resolves (no dangling) — the document validates.
+    assert!(import.document.validate().is_ok());
+}
+
+#[test]
 fn column_bookmark_is_modeled_by_name_and_reported() {
     // The column span (`w:colFirst`/`w:colLast`) is dropped but the bookmark is
     // still modeled by name/range; the dropped column attributes are reported.
