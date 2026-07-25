@@ -61,7 +61,7 @@ report.
 | --- | --- | --- |
 | Normalized JSON snapshot | Yes | Strict bounded schema v0 load/export implemented. |
 | Canonical normalized CBOR | Yes | Designed, not implemented. |
-| DOCX import/export | Yes | Bounded ZIP inspection implemented; semantic import is designing, and writer implementation remains Phase 2. |
+| DOCX import/export | Yes | Bounded ZIP inspection implemented; semantic import complete (every construct family modeled); the semantic writer (Phase 1B) round-trips essentially all content and is nearly feature-complete. |
 | TXT import/export | Yes | Planned as a simple conformance path. |
 | PDF render/export | Yes | Backend decision pending. |
 | ODT import/export | Later | Not a v1 release gate. |
@@ -72,13 +72,13 @@ report.
 
 | Area | v1 expectation | Current status |
 | --- | --- | --- |
-| Paragraphs, marks, lists | Supported | Paragraph/text/mark model foundation implemented; list semantics are Phase 1A. |
-| Tables and merged cells | Supported | Designed, not implemented. |
-| Sections, headers, footers | Supported | Designed, not implemented. |
-| Images and anchors | Supported | Designed, not implemented. |
-| Comments and tracked changes | Supported | Designed, not implemented. |
-| Fields and notes | Supported or render-only by subtype | Designed, not implemented. |
-| Shapes, text boxes, VML | Preserve or flatten with warning | Designed, not implemented. |
+| Paragraphs, marks, lists | Supported | Paragraph/text/mark model implemented; list/numbering semantics modeled and imported (Phase 1A complete). |
+| Tables and merged cells | Supported | Modeled and imported (Phase 1A); layout/edit surface pending. |
+| Sections, headers, footers | Supported | Modeled and imported (Phase 1A); layout/edit surface pending. |
+| Images and anchors | Supported | Modeled and imported (Phase 1A); layout/edit surface pending. |
+| Comments and tracked changes | Supported | Modeled and imported (Phase 1A); layout/edit surface pending. |
+| Fields and notes | Supported or render-only by subtype | Modeled and imported (Phase 1A); layout/edit surface pending. |
+| Shapes, text boxes, VML | Preserve or flatten with warning | Modeled and imported (Phase 1A); layout/edit surface pending. |
 | Real-time collaboration | Adapter-based | Post local transaction stability. |
 | Accessibility semantics | Required | Designed, not implemented. |
 
