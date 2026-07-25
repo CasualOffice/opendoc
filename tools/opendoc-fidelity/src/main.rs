@@ -153,6 +153,8 @@ fn push_inline_text(inline: &InlineNode, out: &mut String) {
         // A comment reference is an anchor with no in-flow text; the comment
         // body lives in the definitions and is not part of the document text.
         InlineNode::CommentReference(_) => {}
+        // A bookmark marker is a zero-width range anchor with no in-flow text.
+        InlineNode::BookmarkStart(_) | InlineNode::BookmarkEnd(_) => {}
     }
 }
 

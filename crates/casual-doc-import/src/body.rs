@@ -3,13 +3,14 @@
 use std::collections::BTreeMap;
 
 use casual_doc_model::v1::{
-    Alignment, BlockNode, BorderEdge, Break, BreakKind, CellVerticalAlignment, Comment, CommentId,
-    CommentReference, Drawing, Extent, ExternalTarget, Field, HeaderFooterId, HeaderFooterKind,
-    HeaderFooterRef, HeightRule, Hyperlink, HyperlinkTarget, InlineNode, InternalTarget, MAX_EMU,
-    MAX_FIELD_INSTRUCTION_BYTES, MAX_REVISION_DEPTH, MAX_TEXTBOX_DEPTH, MediaId, NoteId, NoteKind,
-    NoteReference, PageMargins, PageSize, Paragraph, ParagraphProperties, Revision, RevisionKind,
-    RgbColor, Run, RunProperties, SectionBoundary, SectionColumns, SectionId, StyleKind, Tab,
-    TableLayout, TextBox, TextDirection, VerticalMerge,
+    Alignment, BlockNode, Bookmark, BookmarkEnd, BookmarkId, BookmarkStart, BorderEdge, Break,
+    BreakKind, CellVerticalAlignment, Comment, CommentId, CommentReference, DefinitionMap, Drawing,
+    Extent, ExternalTarget, Field, HeaderFooterId, HeaderFooterKind, HeaderFooterRef, HeightRule,
+    Hyperlink, HyperlinkTarget, InlineNode, InternalTarget, MAX_EMU, MAX_FIELD_INSTRUCTION_BYTES,
+    MAX_REVISION_DEPTH, MAX_TEXTBOX_DEPTH, MediaId, NoteId, NoteKind, NoteReference, PageMargins,
+    PageSize, Paragraph, ParagraphProperties, Revision, RevisionKind, RgbColor, Run, RunProperties,
+    SectionBoundary, SectionColumns, SectionId, StyleKind, Tab, TableLayout, TextBox,
+    TextDirection, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::Reader;
@@ -64,6 +65,14 @@ enum Segment {
         date: Option<String>,
         revision_id: Option<String>,
         children: Vec<Segment>,
+    },
+    /// The start marker of a bookmark range.
+    BookmarkStart {
+        bookmark: BookmarkId,
+    },
+    /// The end marker of a bookmark range.
+    BookmarkEnd {
+        bookmark: BookmarkId,
     },
 }
 
@@ -301,6 +310,13 @@ struct BodyParser<'a> {
     footer_ids: &'a BTreeMap<String, HeaderFooterId>,
     /// Body reference resolution: comment source `w:id` -> definition id.
     comment_ids: &'a BTreeMap<String, CommentId>,
+    /// Document-global bookmark definitions accumulator (threaded across every
+    /// part so body + notes + headers + footers + comments land in one table).
+    bookmarks: &'a mut DefinitionMap<BookmarkId, Bookmark>,
+    /// Source `w:id` string -> allocated `BookmarkId`, for start/end pairing
+    /// across paragraphs. Part-scoped (NOT swapped in `ContentFrame`): a bookmark
+    /// opened in body flow and closed inside a text box still pairs.
+    bookmark_ids: BTreeMap<String, BookmarkId>,
 }
 
 /// Resolution tables the body parser consults while mapping constructs.
@@ -321,6 +337,7 @@ impl<'a> BodyParser<'a> {
         ids: &'a mut IdGenerator,
         reporter: &'a mut Reporter,
         inputs: &ParseInputs<'a>,
+        bookmarks: &'a mut DefinitionMap<BookmarkId, Bookmark>,
         note_container: Option<&'static [u8]>,
         config: ImportConfig,
     ) -> Self {
@@ -389,19 +406,23 @@ impl<'a> BodyParser<'a> {
             header_ids: inputs.header_ids,
             footer_ids: inputs.footer_ids,
             comment_ids: inputs.comment_ids,
+            bookmarks,
+            bookmark_ids: BTreeMap::new(),
         }
     }
 }
 
 /// Parses main-document body bytes into ordered block nodes, allocating ids.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn parse<'a>(
     xml: &[u8],
     ids: &'a mut IdGenerator,
     reporter: &'a mut Reporter,
     inputs: ParseInputs<'a>,
+    bookmarks: &'a mut DefinitionMap<BookmarkId, Bookmark>,
     config: ImportConfig,
 ) -> Result<(Vec<BlockNode>, Vec<SectionBoundary>), ImportError> {
-    let mut parser = BodyParser::build(ids, reporter, &inputs, None, config);
+    let mut parser = BodyParser::build(ids, reporter, &inputs, bookmarks, None, config);
     parser.run(xml)?;
     // Unwind any text box left open by malformed input so the true body root is
     // restored, then finish a paragraph the unwind may have re-opened so its
@@ -431,6 +452,7 @@ pub(crate) fn parse_notes(
     numbering: &Numbering,
     media_index: &BTreeMap<String, MediaId>,
     hyperlink_rels: &BTreeMap<String, String>,
+    bookmarks: &mut DefinitionMap<BookmarkId, Bookmark>,
     container: &'static [u8],
     config: ImportConfig,
 ) -> Result<Vec<(String, NoteId, Vec<BlockNode>)>, ImportError> {
@@ -450,7 +472,7 @@ pub(crate) fn parse_notes(
         footer_ids: &empty_hf,
         comment_ids: &empty_comment,
     };
-    let mut parser = BodyParser::build(ids, reporter, &inputs, Some(container), config);
+    let mut parser = BodyParser::build(ids, reporter, &inputs, bookmarks, Some(container), config);
     parser.run(xml)?;
     while !parser.frames.is_empty() {
         parser.exit_textbox()?;
@@ -475,6 +497,7 @@ pub(crate) fn parse_header_footer(
     numbering: &Numbering,
     media_index: &BTreeMap<String, MediaId>,
     hyperlink_rels: &BTreeMap<String, String>,
+    bookmarks: &mut DefinitionMap<BookmarkId, Bookmark>,
     root: &'static [u8],
     config: ImportConfig,
 ) -> Result<Vec<BlockNode>, ImportError> {
@@ -492,7 +515,7 @@ pub(crate) fn parse_header_footer(
         footer_ids: &empty_hf,
         comment_ids: &empty_comment,
     };
-    let mut parser = BodyParser::build(ids, reporter, &inputs, None, config);
+    let mut parser = BodyParser::build(ids, reporter, &inputs, bookmarks, None, config);
     parser.hf_root = Some(root);
     parser.run(xml)?;
     while !parser.frames.is_empty() {
@@ -519,6 +542,7 @@ pub(crate) fn parse_comments(
     numbering: &Numbering,
     media_index: &BTreeMap<String, MediaId>,
     hyperlink_rels: &BTreeMap<String, String>,
+    bookmarks: &mut DefinitionMap<BookmarkId, Bookmark>,
     config: ImportConfig,
 ) -> Result<Vec<(String, CommentId, Comment)>, ImportError> {
     let empty_notes = BTreeMap::new();
@@ -535,7 +559,7 @@ pub(crate) fn parse_comments(
         footer_ids: &empty_hf,
         comment_ids: &empty_comment,
     };
-    let mut parser = BodyParser::build(ids, reporter, &inputs, Some(b"comment"), config);
+    let mut parser = BodyParser::build(ids, reporter, &inputs, bookmarks, Some(b"comment"), config);
     parser.run(xml)?;
     while !parser.frames.is_empty() {
         parser.exit_textbox()?;
@@ -783,6 +807,51 @@ impl BodyParser<'_> {
                 {
                     Some(comment) => self.push_segment(Segment::CommentReference { comment }),
                     None => self.reporter.report(b"commentReference"),
+                }
+            }
+            // A bookmark start marker (`w:bookmarkStart`, self-closing → an Empty
+            // event, so handled entirely here; its `on_end` falls to `_ => {}`).
+            // Modeled only in paragraph flow, with a bounded non-empty name, and a
+            // fresh source `w:id`. A missing/oversized name or a duplicate id is
+            // reported+dropped (its `w:id` is NOT registered, so the matching end
+            // becomes an orphan that is also reported → balanced, no dangling ref).
+            b"bookmarkStart" if self.paragraph_open && !self.run_open => {
+                match attribute_value(element, b"name")
+                    .filter(|name| !name.is_empty() && name.len() <= 255)
+                {
+                    Some(name) => {
+                        let source = attribute_value(element, b"id").unwrap_or_default();
+                        if self.bookmark_ids.contains_key(&source) {
+                            // Duplicate `w:id`: keep the first, report the second.
+                            self.reporter.report(b"bookmarkStart");
+                        } else {
+                            let bookmark = BookmarkId::new(self.next_id()?);
+                            self.bookmarks.insert(bookmark, Bookmark { name });
+                            self.bookmark_ids.insert(source, bookmark);
+                            self.push_segment(Segment::BookmarkStart { bookmark });
+                            // A column bookmark (`w:colFirst`/`w:colLast`, a
+                            // table-cell column range) is modeled by name/range,
+                            // but its column span is dropped — report it so the
+                            // dropped column attributes surface, never silently.
+                            if attribute_value(element, b"colFirst").is_some()
+                                || attribute_value(element, b"colLast").is_some()
+                            {
+                                self.reporter.report(b"bookmarkStart");
+                            }
+                        }
+                    }
+                    None => self.reporter.report(b"bookmarkStart"),
+                }
+            }
+            // A bookmark end marker (`w:bookmarkEnd`). Modeled only when its source
+            // `w:id` resolves to an already-registered start; an orphan end (no
+            // matching start, block-level start, or dropped start) is reported.
+            b"bookmarkEnd" if self.paragraph_open && !self.run_open => {
+                match attribute_value(element, b"id")
+                    .and_then(|source| self.bookmark_ids.get(&source).copied())
+                {
+                    Some(bookmark) => self.push_segment(Segment::BookmarkEnd { bookmark }),
+                    None => self.reporter.report(b"bookmarkEnd"),
                 }
             }
             // A complex field is delimited by field characters inside runs.
@@ -1667,6 +1736,9 @@ impl BodyParser<'_> {
         }
         // Clear residual table-suppression so the next note/comment starts clean.
         self.suppressed_tbl_depth = 0;
+        // A bookmark never legitimately spans two notes/comments; clear the pairing
+        // map defensively so an unclosed start cannot pair across containers.
+        self.bookmark_ids.clear();
         self.in_body = false;
         if let Some((source_id, node_id, meta)) = self.current_note.take() {
             let blocks = std::mem::take(&mut self.blocks);
@@ -2052,6 +2124,14 @@ impl BodyParser<'_> {
                     revision_id,
                     inlines,
                 }))
+            }
+            Segment::BookmarkStart { bookmark } => {
+                let id = self.next_id()?;
+                Ok(InlineNode::BookmarkStart(BookmarkStart { id, bookmark }))
+            }
+            Segment::BookmarkEnd { bookmark } => {
+                let id = self.next_id()?;
+                Ok(InlineNode::BookmarkEnd(BookmarkEnd { id, bookmark }))
             }
         }
     }

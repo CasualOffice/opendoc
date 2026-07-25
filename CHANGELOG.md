@@ -23,6 +23,16 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Added
 
+- Bookmarks in schema v1: `w:bookmarkStart`/`w:bookmarkEnd` are modeled as an
+  additive `Bookmark{name}` definition table (`Definitions::bookmarks`, keyed by a
+  new `BookmarkId`) plus a paired `InlineNode::BookmarkStart`/`BookmarkEnd` marker
+  range delimiting the bookmark's extent in document flow. Marker→definition
+  integrity is validated (`DanglingBookmarkRef`); internal-hyperlink anchor
+  resolution remains lax (forward/cross-part/well-known targets). Block-level
+  markers and column bookmarks (`w:colFirst`/`w:colLast`, span dropped) remain
+  reported (not silently lost); strict anchor resolution is deferred. Additive:
+  existing snapshots and the v0→v1 migration golden are byte-identical.
+  (`52-SCHEMA-V1-BOOKMARKS-DESIGN.md`)
 - Paragraph structural flags (`w:keepNext`, `w:keepLines`,
   `w:pageBreakBefore`, `w:widowControl`, `w:contextualSpacing`,
   `w:suppressLineNumbers`) and outline level (`w:outlineLvl`, 0-9) are now

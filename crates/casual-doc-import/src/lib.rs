@@ -47,8 +47,8 @@ pub use retain::RetainedSource;
 
 use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
-    BlockNode, Comment, CommentId, DefinitionMap, Definitions, Document, HeaderFooter,
-    HeaderFooterId, MediaId, Note, NoteId, Paragraph, ParagraphProperties,
+    BlockNode, Bookmark, BookmarkId, Comment, CommentId, DefinitionMap, Definitions, Document,
+    HeaderFooter, HeaderFooterId, MediaId, Note, NoteId, Paragraph, ParagraphProperties,
 };
 use casual_doc_ooxml::DocxPackage;
 
@@ -282,6 +282,7 @@ fn build_notes(
     styles: &Styles,
     numbering: &Numbering,
     media: &mut DefinitionMap<MediaId, casual_doc_model::v1::MediaReference>,
+    bookmarks: &mut DefinitionMap<BookmarkId, Bookmark>,
     ids: &mut IdGenerator,
     reporter: &mut Reporter,
     config: ImportConfig,
@@ -298,6 +299,7 @@ fn build_notes(
             numbering,
             &media_index,
             &part.hyperlinks,
+            bookmarks,
             container,
             config,
         )?;
@@ -319,11 +321,13 @@ type BuiltComments = (
 /// source-`w:id` resolution index for in-body `w:commentReference`s. The part's
 /// own image and hyperlink relationships are resolved so images/links inside a
 /// comment are modeled. Missing part → empty.
+#[allow(clippy::too_many_arguments)]
 fn build_comments(
     part: Option<&PartSources>,
     styles: &Styles,
     numbering: &Numbering,
     media: &mut DefinitionMap<MediaId, casual_doc_model::v1::MediaReference>,
+    bookmarks: &mut DefinitionMap<BookmarkId, Bookmark>,
     ids: &mut IdGenerator,
     reporter: &mut Reporter,
     config: ImportConfig,
@@ -340,6 +344,7 @@ fn build_comments(
             numbering,
             &media_index,
             &part.hyperlinks,
+            bookmarks,
             config,
         )?;
         for (source_id, comment_id, comment) in comments {
@@ -367,6 +372,7 @@ fn build_header_footers(
     styles: &Styles,
     numbering: &Numbering,
     media: &mut DefinitionMap<MediaId, casual_doc_model::v1::MediaReference>,
+    bookmarks: &mut DefinitionMap<BookmarkId, Bookmark>,
     ids: &mut IdGenerator,
     reporter: &mut Reporter,
     config: ImportConfig,
@@ -389,6 +395,7 @@ fn build_header_footers(
             numbering,
             &media_index,
             &part.hyperlinks,
+            bookmarks,
             root,
             config,
         )?;
@@ -470,12 +477,19 @@ pub(crate) fn import_with_sources(
     let mut media = DefinitionMap::default();
     let media_index = media::build_into(media_sources, &mut media, &mut ids, &mut reporter)?;
 
+    // Bookmarks are discovered during each part's body parse (not built ahead like
+    // media), so they accumulate into one document-global map threaded (by `&mut`)
+    // into every part parser — body, notes, headers, footers, and comments all land
+    // in a single `Definitions::bookmarks`.
+    let mut bookmarks = DefinitionMap::default();
+
     let (footnotes_map, footnote_ids) = build_notes(
         footnotes,
         b"footnote",
         &styles,
         &numbering,
         &mut media,
+        &mut bookmarks,
         &mut ids,
         &mut reporter,
         config,
@@ -486,6 +500,7 @@ pub(crate) fn import_with_sources(
         &styles,
         &numbering,
         &mut media,
+        &mut bookmarks,
         &mut ids,
         &mut reporter,
         config,
@@ -496,6 +511,7 @@ pub(crate) fn import_with_sources(
         &styles,
         &numbering,
         &mut media,
+        &mut bookmarks,
         &mut ids,
         &mut reporter,
         config,
@@ -506,6 +522,7 @@ pub(crate) fn import_with_sources(
         &styles,
         &numbering,
         &mut media,
+        &mut bookmarks,
         &mut ids,
         &mut reporter,
         config,
@@ -515,6 +532,7 @@ pub(crate) fn import_with_sources(
         &styles,
         &numbering,
         &mut media,
+        &mut bookmarks,
         &mut ids,
         &mut reporter,
         config,
@@ -535,6 +553,7 @@ pub(crate) fn import_with_sources(
             footer_ids: &footer_ids,
             comment_ids: &comment_ids,
         },
+        &mut bookmarks,
         config,
     )?;
     if body.is_empty() {
@@ -562,6 +581,7 @@ pub(crate) fn import_with_sources(
         headers,
         footers,
         comments: comments_map,
+        bookmarks,
         ..Definitions::default()
     };
     let document = Document::new(document_id, body, definitions).map_err(ImportError::Model)?;

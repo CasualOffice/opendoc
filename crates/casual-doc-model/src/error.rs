@@ -119,6 +119,8 @@ pub enum ModelError {
     EmptyRevision(NodeId),
     /// A revision nested deeper than the supported bound (v1).
     RevisionNestingTooDeep(NodeId),
+    /// A bookmark marker's reference did not resolve (v1).
+    DanglingBookmarkRef(NodeId),
 }
 
 impl fmt::Display for ModelError {
@@ -241,6 +243,9 @@ impl fmt::Display for ModelError {
                     formatter,
                     "revision {id} nests deeper than the supported bound"
                 )
+            }
+            Self::DanglingBookmarkRef(id) => {
+                write!(formatter, "bookmark reference {id} does not resolve")
             }
         }
     }

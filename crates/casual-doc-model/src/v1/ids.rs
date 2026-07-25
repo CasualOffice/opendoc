@@ -63,6 +63,10 @@ id_newtype!(
     /// Stable identity of a comment definition.
     CommentId
 );
+id_newtype!(
+    /// Stable identity of a bookmark definition (shared by its start/end markers).
+    BookmarkId
+);
 
 /// A duplicate-key-rejecting, deterministically-ordered id map.
 #[derive(Clone, Debug, Eq, PartialEq)]
