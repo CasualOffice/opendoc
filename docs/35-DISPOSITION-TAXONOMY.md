@@ -2,10 +2,10 @@
 
 **Status:** Accepted — 2026-07-24 (decision D3, `36-ADR-027-ACCEPTANCE-RECORD.md`)
 **Tracker:** P1A-004
-**Applies to:** `32-PHASE-1A-SEMANTIC-DOCX-IMPORT-DESIGN.md`,
+**Applies to:** `38-SCHEMA-V1-DESIGN-REFERENCE.md` (import architecture),
 `34-OOXML-FIDELITY-ARCHITECTURE.md`
-**Reconciles:** the three divergent disposition enums previously stated in
-docs 32 and 34.
+**Reconciles:** the three divergent disposition enums previously stated in the
+Phase 1A import design (now `38-…#import-architecture`) and doc 34.
 
 ## Why this document exists
 

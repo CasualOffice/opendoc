@@ -22,7 +22,7 @@ recommended here, awaiting owner sign-off), `Accepted` (owner-signed).
 
 Acceptance of ADR-027 is **architecture-level only**. It does not green-light
 importer code, which remains gated on the accepted normalized schema v1 and the
-five artifact schemas (see `32-PHASE-1A-SEMANTIC-DOCX-IMPORT-DESIGN.md`).
+five artifact schemas (see `38-SCHEMA-V1-DESIGN-REFERENCE.md#import-architecture`).
 
 ## Decisions
 

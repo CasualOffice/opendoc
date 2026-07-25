@@ -36,7 +36,7 @@ The runtime is not a UI toolkit and is not a DOCX-only editor. It is a determini
 11. `11-DESIGN-FIRST-PROCESS.md` — required research, design, tracking, and delivery flow.
 12. `12-COMPETITIVE-ANALYSIS.md` — current product and SDK comparison.
 13. `13-UX-AND-BUG-HUNTING.md` — UX review areas and defect policy.
-14. `14-EXECUTION-TRACKER.md` — current project execution state.
+14. `14-EXECUTION-TRACKER.md` — current project execution state (terse; detail in git/PRs/design docs).
 15. `15-CI-AND-RELEASE-GATES.md` — automated quality and release gates.
 16. `16-DOCUMENTATION-MAINTENANCE.md` — documentation ownership and freshness.
 17. `17-GLOSSARY.md` — canonical project terminology.
@@ -54,9 +54,28 @@ The runtime is not a UI toolkit and is not a DOCX-only editor. It is a determini
 29. `29-BENCHMARK-AND-BASELINE-HARNESS.md` — reproducible timing and report contract.
 30. `30-PHASE-0-CLOSURE-DESIGN.md` — corpus, fuzzing, and exit-evidence closure.
 31. `31-PHASE-0-EXIT-REPORT.md` — accepted Phase 0 evidence and deferrals.
-32. `32-PHASE-1A-SEMANTIC-DOCX-IMPORT-DESIGN.md` — proposed semantic import and compatibility-report contract.
+32. *(retired — merged into 38)* the Phase 1A semantic-import design is now the
+    "Import architecture" section of `38-SCHEMA-V1-DESIGN-REFERENCE.md`.
 33. `33-DOCX-ENGINE-COMPETITOR-RESEARCH.md` — source-architecture study of DOCX import, editing, preservation, and export.
 34. `34-OOXML-FIDELITY-ARCHITECTURE.md` — proposed dual-representation fidelity and future save-planning contract.
+35. `35-DISPOSITION-TAXONOMY.md` — dual-axis (model/retention) disposition taxonomy for the compatibility report.
+36. `36-ADR-027-ACCEPTANCE-RECORD.md` — ADR-027 acceptance record (decisions D1–D11, reconciliations R1–R4).
+37. `37-PHASE-1A-DECISION-RESEARCH.md` — cited Word/ONLYOFFICE/LibreOffice research behind the Phase 1A decisions.
+38. `38-SCHEMA-V1-DESIGN-REFERENCE.md` — **consolidated** schema-v1 design record:
+    semantic-import architecture, base schema v1, and one section per modeled
+    construct (tables, fields, text boxes, notes, headers/footers, VML, extra-part
+    media, ruby, comments, tracked changes, run/paragraph/table properties,
+    bookmarks, content controls). Merges the former docs 32 and 38–53; the tracker
+    references it by anchor. See its header for the old-number → section map.
+
+Also present (not in the numbered sequence): `PHASE-1A-SEMANTIC-MODELING-TRACKER.md`.
+
+### Consolidation note
+
+The former per-construct schema-v1 design docs (32 and 38–53, sixteen files) were
+consolidated into the single `38-SCHEMA-V1-DESIGN-REFERENCE.md`; the originals were
+deleted with no information loss. Number 32 is intentionally retired (its content
+lives in the "Import architecture" section of doc 38). Numbers 39–53 are now free.
 
 ## Recommended project names
 
