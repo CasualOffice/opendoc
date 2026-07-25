@@ -1763,6 +1763,16 @@ fn write_paragraph_properties(
         w.write_event(Event::End(BytesEnd::new("w:tabs")))
             .map_err(pkg)?;
     }
+    // The paragraph-mark run properties (`w:pPr > w:rPr`) precede `w:sectPr` in
+    // CT_PPr. A `Some(default)` still emits a bare `<w:rPr/>` so the mark's
+    // presence round-trips (the property writer elides an all-default value).
+    if let Some(mark_run) = &properties.mark_run {
+        if **mark_run == RunProperties::default() {
+            w.write_event(Event::Empty(start("w:rPr"))).map_err(pkg)?;
+        } else {
+            write_run_properties(w, mark_run)?;
+        }
+    }
     // The section break is the last `w:pPr` child (CT_PPr places `w:sectPr`
     // after every property element), marking this paragraph as a section's end.
     if let Some(section) = section {
