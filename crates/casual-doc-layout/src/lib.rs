@@ -24,5 +24,6 @@ pub mod block;
 pub mod display;
 pub mod model;
 pub mod page;
+pub mod shape;
 pub mod text;
 pub mod units;

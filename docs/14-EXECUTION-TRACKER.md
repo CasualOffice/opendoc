@@ -169,7 +169,7 @@ floor for unmodeled long-tail constructs.
 | ID | Item | Owner | Status | Notes |
 |---|---|---|---|---|
 | P1C-000 | Layout crate scaffold + type spine | Claude Code | Done | New `casual-doc-layout`: device-independent geometry (`Twip`/`Point`/`Size`/`Rect`), line-level types (`Glyph`/`GlyphRun`/`Line`/`LineLayout`) + the `LineShaper` seam, block/flow fragments (`BlockFragment`/`BoxMetrics`), immutable paginated output (`Page`/`PaginatedLayout`), the backend-neutral display list (`PaintItem`/`DisplayList`), and layout-side model anchors. Stack validated (parley 0.11 + tiny-skia 0.12 build + licenses in allow-list). 7 tests. |
-| P1C-001 | `parley` line shaper (default `LineShaper`) | Claude Code | Next | Shape a styled paragraph → positioned lines (greedy UAX#14 break, bidi); behind the trait. |
+| P1C-001 | `parley` line shaper (default `LineShaper`) | Claude Code | Done | Shape a styled paragraph → positioned lines (greedy UAX#14 break, bidi); behind the trait. |
 | P1C-002 | Font resolution MVP (bundled core set) | Claude Code | Planned | Deterministic bundled/subset fonts (`40-…`); `FontId` resolution for WASM determinism. |
 | P1C-003 | Run/paragraph properties in layout + `TabResolver` | Claude Code | Planned | Bold/italic/size/color/underline/strike, alignment/indent/spacing, DOCX tab stops. |
 | P1C-004 | Block/flow galley + first PNG (CPU raster) | Claude Code | Planned | `casual-doc-render` `tiny-skia` backend; visual-regression PNG vs LibreOffice reference (extends M-002). |
