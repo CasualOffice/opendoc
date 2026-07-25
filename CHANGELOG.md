@@ -48,6 +48,15 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Added
 
+- Semantic DOCX writer now emits inline drawings (embedded pictures): the
+  `w:drawing`/`wp:inline`/`pic:pic` scaffold with `a:blip@r:embed`, the media
+  part, its content-type `Default` (by extension), and the `/image` relationship
+  are regenerated. Media `part_name`/`relationship_id` are emitted verbatim so
+  `MediaReference` round-trips, and those relationship ids are reserved so
+  hyperlink/part ids cannot collide with them. `write_document`'s media byte map
+  is now used (an absent entry writes an empty part; the reference still
+  round-trips). Proven by a fixed-point round-trip. Text boxes and embedded
+  fonts remain follow-ups.
 - Semantic DOCX writer now emits headers and footers: each `HeaderFooter`
   definition becomes a `word/headerN.xml`/`footerN.xml` part (with per-part
   hyperlink rels), and the body `w:sectPr` gains the `w:headerReference`/

@@ -15,19 +15,19 @@
 //! Output is byte-deterministic for a given model: parts in fixed order, a fixed
 //! ZIP timestamp, ids/relationships re-minted in document order.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Write};
 
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, BorderEdge, BreakKind,
     CellVerticalAlignment, Color, Comment, CommentId, DefinitionMap, Definitions, Document,
-    EmphasisMark, FontCollection, FontDescriptor, FontFamilyKind, FontPitch, FontRef, FontScheme,
-    HeaderFooterId, HeaderFooterKind, HeightRule, HighlightColor, HyperlinkTarget, InlineNode,
-    Note, NoteId, NoteKind, NumberingInstance, NumberingInstanceId, ParagraphProperties,
-    RevisionKind, RgbColor, RunFontHint, RunProperties, SdtControlKind, SdtProperties,
-    SectionBoundary, Style, StyleId, StyleKind, TabAlignment, TabLeader, Table, TableBorders,
-    TableCell, TableCellProperties, TableLayout, TableProperties, TableRow, TableRowProperties,
-    TextDirection, ThemeFontRef, VerticalAlignment, VerticalMerge,
+    EmphasisMark, Extent, FontCollection, FontDescriptor, FontFamilyKind, FontPitch, FontRef,
+    FontScheme, HeaderFooterId, HeaderFooterKind, HeightRule, HighlightColor, HyperlinkTarget,
+    InlineNode, MediaId, MediaReference, Note, NoteId, NoteKind, NumberingInstance,
+    NumberingInstanceId, ParagraphProperties, RevisionKind, RgbColor, RunFontHint, RunProperties,
+    SdtControlKind, SdtProperties, SectionBoundary, Style, StyleId, StyleKind, TabAlignment,
+    TabLeader, Table, TableBorders, TableCell, TableCellProperties, TableLayout, TableProperties,
+    TableRow, TableRowProperties, TextDirection, ThemeFontRef, VerticalAlignment, VerticalMerge,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -79,6 +79,28 @@ const FOOTER_REL_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer";
 const FOOTER_CT: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml";
 const A_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
+const WP_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
+const PIC_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/picture";
+const IMAGE_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+
+/// The lowercased file extension of a media part name (for the content-type
+/// `Default`), e.g. `word/media/image1.PNG` -> `png`; `bin` when absent.
+fn media_extension(part_name: &str) -> String {
+    part_name
+        .rsplit('/')
+        .next()
+        .and_then(|file| file.rsplit_once('.'))
+        .map(|(_, ext)| ext.to_ascii_lowercase())
+        .filter(|ext| !ext.is_empty())
+        .unwrap_or_else(|| "bin".to_owned())
+}
+
+/// The `word/`-relative target for a media relationship, e.g.
+/// `word/media/image1.png` -> `media/image1.png`.
+fn media_target(part_name: &str) -> &str {
+    part_name.strip_prefix("word/").unwrap_or(part_name)
+}
 
 /// A package part beyond `document.xml` (fontTable, theme, styles, …): its part
 /// name, content type, and the relationship (type + `word/`-relative target)
@@ -142,14 +164,29 @@ struct RelBuilder {
     next: u32,
     by_url: BTreeMap<String, String>,
     entries: Vec<RelEntry>,
+    /// `rId`s already claimed by media relationships (emitted verbatim); minting
+    /// skips these so a hyperlink cannot collide with a media relationship.
+    reserved: BTreeSet<String>,
 }
 
 impl RelBuilder {
-    fn new() -> Self {
+    fn new(reserved: BTreeSet<String>) -> Self {
         Self {
             next: 0,
             by_url: BTreeMap::new(),
             entries: Vec::new(),
+            reserved,
+        }
+    }
+
+    /// Mints the next free `rId`, skipping any reserved by media.
+    fn mint(&mut self) -> String {
+        loop {
+            self.next += 1;
+            let id = format!("rId{}", self.next);
+            if !self.reserved.contains(&id) {
+                return id;
+            }
         }
     }
 
@@ -159,8 +196,7 @@ impl RelBuilder {
         if let Some(id) = self.by_url.get(url) {
             return id.clone();
         }
-        self.next += 1;
-        let id = format!("rId{}", self.next);
+        let id = self.mint();
         self.by_url.insert(url.to_string(), id.clone());
         self.entries.push((id.clone(), url.to_string()));
         id
@@ -180,10 +216,17 @@ struct Ctx<'a> {
 /// pass an empty map when the model uses no drawings.
 pub fn write_document(
     document: &Document,
-    _media: &BTreeMap<String, Vec<u8>>,
+    media: &BTreeMap<String, Vec<u8>>,
 ) -> Result<Vec<u8>, ExportError> {
-    let (document_xml, rels) = document_xml(document)?;
     let definitions = document.definitions();
+    // Media relationships are emitted with their verbatim ids so the model
+    // round-trips; reserve them so hyperlink/part rids do not collide.
+    let media_rel_ids: BTreeSet<String> = definitions
+        .media
+        .iter()
+        .map(|(_, reference)| reference.relationship_id.clone())
+        .collect();
+    let (document_xml, rels) = document_xml(document, media_rel_ids)?;
 
     // Extra parts beyond document.xml, each carrying its content-type override
     // and a document relationship; they appear only when the model has the
@@ -311,13 +354,13 @@ pub fn write_document(
     let mut parts: Vec<(String, Vec<u8>)> = vec![
         (
             "[Content_Types].xml".to_owned(),
-            content_types_xml(&extras)?,
+            content_types_xml(&extras, &definitions.media)?,
         ),
         ("_rels/.rels".to_owned(), root_rels_xml()?),
         ("word/document.xml".to_owned(), document_xml),
         (
             "word/_rels/document.xml.rels".to_owned(),
-            document_rels_xml(&rels, &extras)?,
+            document_rels_xml(&rels, &extras, &definitions.media)?,
         ),
     ];
     for extra in extras {
@@ -328,6 +371,13 @@ pub fn write_document(
             ));
         }
         parts.push((extra.part_name, extra.bytes));
+    }
+    // Media parts (image bytes supplied by the caller; the model carries only
+    // the reference metadata). An absent entry writes an empty part — the
+    // reference still round-trips (bytes are Retention's concern).
+    for (_, reference) in definitions.media.iter() {
+        let bytes = media.get(&reference.part_name).cloned().unwrap_or_default();
+        parts.push((reference.part_name.clone(), bytes));
     }
 
     let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
@@ -360,7 +410,10 @@ fn start<'a>(name: &'a str) -> BytesStart<'a> {
 
 /// Emits `[Content_Types].xml` with the standard defaults plus the main-document
 /// override.
-fn content_types_xml(extras: &[ExtraPart]) -> Result<Vec<u8>, ExportError> {
+fn content_types_xml(
+    extras: &[ExtraPart],
+    media: &DefinitionMap<MediaId, MediaReference>,
+) -> Result<Vec<u8>, ExportError> {
     let mut w = new_writer();
     let mut types = start("Types");
     types.push_attribute(("xmlns", CT_NS));
@@ -374,6 +427,20 @@ fn content_types_xml(extras: &[ExtraPart]) -> Result<Vec<u8>, ExportError> {
     ] {
         let mut d = start("Default");
         d.push_attribute(("Extension", ext));
+        d.push_attribute(("ContentType", ct));
+        w.write_event(Event::Empty(d)).map_err(pkg)?;
+    }
+    // A `Default` per distinct media extension, mapped to that media's content
+    // type (so `content_type(part)` re-imports to the same `media_type`).
+    let mut media_defaults: BTreeMap<String, &str> = BTreeMap::new();
+    for (_, reference) in media.iter() {
+        media_defaults
+            .entry(media_extension(&reference.part_name))
+            .or_insert(reference.media_type.as_str());
+    }
+    for (ext, ct) in media_defaults {
+        let mut d = start("Default");
+        d.push_attribute(("Extension", ext.as_str()));
         d.push_attribute(("ContentType", ct));
         w.write_event(Event::Empty(d)).map_err(pkg)?;
     }
@@ -412,11 +479,15 @@ fn root_rels_xml() -> Result<Vec<u8>, ExportError> {
 /// Emits `word/_rels/document.xml.rels`. With no entries it is the empty
 /// `<Relationships/>` element (byte-identical to the earlier no-relationship
 /// slices); with entries it carries one external hyperlink relationship each.
-fn document_rels_xml(entries: &[RelEntry], extras: &[ExtraPart]) -> Result<Vec<u8>, ExportError> {
+fn document_rels_xml(
+    entries: &[RelEntry],
+    extras: &[ExtraPart],
+    media: &DefinitionMap<MediaId, MediaReference>,
+) -> Result<Vec<u8>, ExportError> {
     let mut w = new_writer();
     let mut rels = start("Relationships");
     rels.push_attribute(("xmlns", REL_NS));
-    if entries.is_empty() && extras.is_empty() {
+    if entries.is_empty() && extras.is_empty() && media.is_empty() {
         w.write_event(Event::Empty(rels)).map_err(pkg)?;
         return Ok(finish(w));
     }
@@ -429,19 +500,31 @@ fn document_rels_xml(entries: &[RelEntry], extras: &[ExtraPart]) -> Result<Vec<u
         rel.push_attribute(("TargetMode", "External"));
         w.write_event(Event::Empty(rel)).map_err(pkg)?;
     }
+    // Media relationships with their verbatim ids (so `MediaReference` round-
+    // trips); these ids are reserved elsewhere so nothing else reuses them.
+    let mut reserved: BTreeSet<String> = BTreeSet::new();
+    for (_, reference) in media.iter() {
+        reserved.insert(reference.relationship_id.clone());
+        let mut rel = start("Relationship");
+        rel.push_attribute(("Id", reference.relationship_id.as_str()));
+        rel.push_attribute(("Type", IMAGE_REL_TYPE));
+        rel.push_attribute(("Target", media_target(&reference.part_name)));
+        w.write_event(Event::Empty(rel)).map_err(pkg)?;
+    }
     // Internal relationships after the hyperlink ids. A part with an explicit
-    // `rel_id` (headers/footers) uses it; the rest get a fresh sequential `rId`.
-    // The importer resolves single parts by relationship type; headers/footers
-    // are keyed by the ORDER their `/header`/`/footer` relationships appear, so
-    // emit them in ascending-id order (the extras are built that way).
+    // `rel_id` (headers/footers) uses it; the rest get a fresh sequential `rId`
+    // that skips any reserved media id. Headers/footers keep relationship order.
     let mut next = entries.len();
     for extra in extras {
         let id = match &extra.rel_id {
             Some(id) => id.clone(),
-            None => {
+            None => loop {
                 next += 1;
-                format!("rId{next}")
-            }
+                let id = format!("rId{next}");
+                if !reserved.contains(&id) {
+                    break id;
+                }
+            },
         };
         let mut rel = start("Relationship");
         rel.push_attribute(("Id", id.as_str()));
@@ -499,7 +582,7 @@ fn notes_xml(
     let mut w = new_writer();
     let mut ctx = Ctx {
         defs,
-        rels: RelBuilder::new(),
+        rels: RelBuilder::new(BTreeSet::new()),
     };
     let mut r = start(root);
     r.push_attribute(("xmlns:w", W_NS));
@@ -529,7 +612,7 @@ fn comments_xml(
     let mut w = new_writer();
     let mut ctx = Ctx {
         defs,
-        rels: RelBuilder::new(),
+        rels: RelBuilder::new(BTreeSet::new()),
     };
     let mut r = start("w:comments");
     r.push_attribute(("xmlns:w", W_NS));
@@ -577,7 +660,7 @@ fn header_footer_xml(
     let mut w = new_writer();
     let mut ctx = Ctx {
         defs,
-        rels: RelBuilder::new(),
+        rels: RelBuilder::new(BTreeSet::new()),
     };
     let mut r = start(root);
     r.push_attribute(("xmlns:w", W_NS));
@@ -861,19 +944,25 @@ fn num_id_token(id: NumberingInstanceId) -> String {
 /// Emits `word/document.xml` from the model body, returning the bytes plus the
 /// external hyperlink relationships collected while writing (for
 /// `document.xml.rels`).
-fn document_xml(document: &Document) -> Result<(Vec<u8>, Vec<RelEntry>), ExportError> {
+fn document_xml(
+    document: &Document,
+    media_rel_ids: BTreeSet<String>,
+) -> Result<(Vec<u8>, Vec<RelEntry>), ExportError> {
     let mut w = new_writer();
     let mut doc = start("w:document");
     doc.push_attribute(("xmlns:w", W_NS));
-    // `xmlns:r` is required so a hyperlink's `r:id` is well-formed; harmless when
-    // no relationship-referencing construct is present.
+    // `xmlns:r` is required so a hyperlink's/drawing's `r:id`/`r:embed` is
+    // well-formed; the DrawingML prefixes are declared for inline drawings.
     doc.push_attribute(("xmlns:r", R_NS));
+    doc.push_attribute(("xmlns:wp", WP_NS));
+    doc.push_attribute(("xmlns:a", A_NS));
+    doc.push_attribute(("xmlns:pic", PIC_NS));
     w.write_event(Event::Start(doc)).map_err(pkg)?;
     w.write_event(Event::Start(start("w:body"))).map_err(pkg)?;
 
     let mut ctx = Ctx {
         defs: document.definitions(),
-        rels: RelBuilder::new(),
+        rels: RelBuilder::new(media_rel_ids),
     };
     for block in document.body() {
         write_block(&mut w, block, &mut ctx)?;
@@ -1563,9 +1652,117 @@ fn write_inline(
             w.write_event(Event::End(BytesEnd::new("w:r")))
                 .map_err(pkg)?;
         }
-        // Drawings and text boxes depend on the binary-media path (a later slice).
-        InlineNode::Drawing(_) | InlineNode::TextBox(_) => {}
+        // An inline drawing: the minimal `w:drawing`/`wp:inline`/`pic:pic`
+        // scaffold whose one load-bearing attribute is `a:blip@r:embed`, the
+        // media's (verbatim) relationship id. The importer discards the rest.
+        InlineNode::Drawing(drawing) => {
+            let Some(reference) = ctx.defs.media.get(&drawing.media) else {
+                return Ok(());
+            };
+            let embed = reference.relationship_id.clone();
+            let (cx, cy) = drawing
+                .extent
+                .as_ref()
+                .map(|extent| (extent.width_emu, extent.height_emu))
+                .unwrap_or((0, 0));
+            write_drawing(w, &embed, drawing.extent.as_ref(), cx, cy)?;
+        }
+        // Text boxes hold block content in a DrawingML shape; a later slice.
+        InlineNode::TextBox(_) => {}
     }
+    Ok(())
+}
+
+/// Emits an inline `w:drawing` (embedded picture) referencing `embed` — the
+/// media relationship id the importer resolves through the media table. Only
+/// `wp:extent` and `a:blip@r:embed` are read back; the rest is fixed scaffold.
+fn write_drawing(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    embed: &str,
+    extent: Option<&Extent>,
+    cx: i64,
+    cy: i64,
+) -> Result<(), ExportError> {
+    w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
+    w.write_event(Event::Start(start("w:drawing")))
+        .map_err(pkg)?;
+    let mut inline = start("wp:inline");
+    for name in ["distT", "distB", "distL", "distR"] {
+        inline.push_attribute((name, "0"));
+    }
+    w.write_event(Event::Start(inline)).map_err(pkg)?;
+    if let Some(extent) = extent {
+        let mut el = start("wp:extent");
+        el.push_attribute(("cx", extent.width_emu.to_string().as_str()));
+        el.push_attribute(("cy", extent.height_emu.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    let mut doc_pr = start("wp:docPr");
+    doc_pr.push_attribute(("id", "1"));
+    doc_pr.push_attribute(("name", "Picture 1"));
+    w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
+    w.write_event(Event::Start(start("a:graphic")))
+        .map_err(pkg)?;
+    let mut graphic_data = start("a:graphicData");
+    graphic_data.push_attribute(("uri", PIC_NS));
+    w.write_event(Event::Start(graphic_data)).map_err(pkg)?;
+    w.write_event(Event::Start(start("pic:pic"))).map_err(pkg)?;
+    w.write_event(Event::Start(start("pic:nvPicPr")))
+        .map_err(pkg)?;
+    let mut c_nv_pr = start("pic:cNvPr");
+    c_nv_pr.push_attribute(("id", "1"));
+    c_nv_pr.push_attribute(("name", "Picture 1"));
+    w.write_event(Event::Empty(c_nv_pr)).map_err(pkg)?;
+    w.write_event(Event::Empty(start("pic:cNvPicPr")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("pic:nvPicPr")))
+        .map_err(pkg)?;
+    w.write_event(Event::Start(start("pic:blipFill")))
+        .map_err(pkg)?;
+    let mut blip = start("a:blip");
+    blip.push_attribute(("r:embed", embed));
+    w.write_event(Event::Empty(blip)).map_err(pkg)?;
+    w.write_event(Event::Start(start("a:stretch")))
+        .map_err(pkg)?;
+    w.write_event(Event::Empty(start("a:fillRect")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("a:stretch")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("pic:blipFill")))
+        .map_err(pkg)?;
+    w.write_event(Event::Start(start("pic:spPr")))
+        .map_err(pkg)?;
+    w.write_event(Event::Start(start("a:xfrm"))).map_err(pkg)?;
+    let mut off = start("a:off");
+    off.push_attribute(("x", "0"));
+    off.push_attribute(("y", "0"));
+    w.write_event(Event::Empty(off)).map_err(pkg)?;
+    let mut ext = start("a:ext");
+    ext.push_attribute(("cx", cx.to_string().as_str()));
+    ext.push_attribute(("cy", cy.to_string().as_str()));
+    w.write_event(Event::Empty(ext)).map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("a:xfrm")))
+        .map_err(pkg)?;
+    let mut geom = start("a:prstGeom");
+    geom.push_attribute(("prst", "rect"));
+    w.write_event(Event::Start(geom)).map_err(pkg)?;
+    w.write_event(Event::Empty(start("a:avLst"))).map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("a:prstGeom")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("pic:spPr")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("pic:pic")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("a:graphicData")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("a:graphic")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("wp:inline")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("w:drawing")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("w:r")))
+        .map_err(pkg)?;
     Ok(())
 }
 

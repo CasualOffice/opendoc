@@ -677,6 +677,36 @@ mod semantic_tests {
     }
 
     #[test]
+    fn inline_drawing_survives_the_semantic_round_trip() {
+        // An inline embedded picture: the writer regenerates the media part, its
+        // content-type Default, the /image relationship (verbatim id), and the
+        // w:drawing scaffold whose a:blip@r:embed points back at the media.
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body>
+            <w:p><w:r><w:drawing><wp:inline><wp:extent cx="914400" cy="685800"/>
+                <a:graphic><a:graphicData><pic:pic><pic:blipFill>
+                    <a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic>
+            </wp:inline></w:drawing></w:r></w:p>
+        </w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/media/image1.png", b"PNGDATA"),
+        ]);
+        let m1 = reopen(&source);
+        assert_eq!(m1.definitions().media.iter().count(), 1);
+        // The writer needs no bytes for the model to round-trip (MediaReference
+        // holds no bytes); it emits an empty media part.
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(m1, m2, "an inline drawing survives write -> reopen");
+    }
+
+    #[test]
     fn section_geometry_survives_the_semantic_round_trip() {
         // A body-level w:sectPr (page size, margins, columns) — the writer
         // emitted none before, so a section was silently dropped on write.
