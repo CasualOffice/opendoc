@@ -184,7 +184,8 @@ The next milestone is deliberately limited to this end-to-end path:
 
 This milestone does not include typography, pagination, rendering, hit testing,
 UI, or Tauri integration. See the
-[proposed Phase 1A design](docs/32-PHASE-1A-SEMANTIC-DOCX-IMPORT-DESIGN.md), the
+[schema v1 design reference](docs/38-SCHEMA-V1-DESIGN-REFERENCE.md) (import
+architecture + per-construct model), the
 [DOCX engine research](docs/33-DOCX-ENGINE-COMPETITOR-RESEARCH.md), and the
 [proposed OOXML fidelity architecture](docs/34-OOXML-FIDELITY-ARCHITECTURE.md).
 
@@ -202,21 +203,12 @@ UI, or Tauri integration. See the
 - [CI and release gates](docs/15-CI-AND-RELEASE-GATES.md)
 - [Support matrix](docs/18-SUPPORT-MATRIX.md)
 - [Phase 0 exit report](docs/31-PHASE-0-EXIT-REPORT.md)
-- [Proposed Phase 1A semantic import design](docs/32-PHASE-1A-SEMANTIC-DOCX-IMPORT-DESIGN.md)
 - [DOCX engine competitor research](docs/33-DOCX-ENGINE-COMPETITOR-RESEARCH.md)
 - [Proposed OOXML fidelity architecture](docs/34-OOXML-FIDELITY-ARCHITECTURE.md)
 - [Import disposition taxonomy](docs/35-DISPOSITION-TAXONOMY.md)
 - [ADR-027 acceptance record](docs/36-ADR-027-ACCEPTANCE-RECORD.md)
 - [Phase 1A decision research (Word/ONLYOFFICE/LibreOffice)](docs/37-PHASE-1A-DECISION-RESEARCH.md)
-- [Normalized schema v1 design](docs/38-NORMALIZED-SCHEMA-V1-DESIGN.md)
-- [Schema v1 semantic tables design](docs/39-SCHEMA-V1-TABLES-DESIGN.md)
-- [Schema v1 fields design](docs/40-SCHEMA-V1-FIELDS-DESIGN.md)
-- [Schema v1 text boxes design](docs/41-SCHEMA-V1-TEXTBOXES-DESIGN.md)
-- [Schema v1 footnotes/endnotes design](docs/42-SCHEMA-V1-NOTES-DESIGN.md)
-- [Schema v1 headers/footers design](docs/43-SCHEMA-V1-HEADERS-FOOTERS-DESIGN.md)
-- [Schema v1 legacy VML pictures design](docs/44-SCHEMA-V1-VML-IMAGES-DESIGN.md)
-- [Extra-part media/hyperlinks design](docs/45-EXTRA-PART-MEDIA-AND-HYPERLINKS-DESIGN.md)
-- [Ruby phonetic guides design](docs/46-RUBY-PHONETIC-GUIDES-DESIGN.md)
+- [Schema v1 design reference (consolidated: import architecture, base schema, and every modeled construct)](docs/38-SCHEMA-V1-DESIGN-REFERENCE.md)
 
 The numbered documents in `docs/` are the source of truth for accepted
 architecture, behavior, delivery status, and compatibility claims.

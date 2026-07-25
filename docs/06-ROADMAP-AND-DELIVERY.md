@@ -52,7 +52,7 @@ hit testing.
 ## Phase 1A — Semantic DOCX import
 
 **Status:** Designing
-**Design:** `32-PHASE-1A-SEMANTIC-DOCX-IMPORT-DESIGN.md`
+**Design:** `38-SCHEMA-V1-DESIGN-REFERENCE.md#import-architecture`
 **Fidelity design:** `34-OOXML-FIDELITY-ARCHITECTURE.md`
 **Research:** `33-DOCX-ENGINE-COMPETITOR-RESEARCH.md`
 
