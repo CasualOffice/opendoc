@@ -25,8 +25,8 @@ use casual_doc_model::v1::{
     NumberingInstance, NumberingInstanceId, ParagraphProperties, RevisionKind, RgbColor,
     RunFontHint, RunProperties, SdtControlKind, SdtProperties, SectionBoundary, Style, StyleId,
     StyleKind, TabAlignment, TabLeader, Table, TableBorders, TableCell, TableCellProperties,
-    TableLayout, TableProperties, TableRow, TableRowProperties, TextDirection, ThemeFontRef,
-    VerticalAlignment, VerticalMerge,
+    TableLayout, TableOverlap, TableProperties, TableRow, TableRowProperties, TextDirection,
+    ThemeFontRef, VerticalAlignment, VerticalMerge,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -1191,6 +1191,17 @@ fn write_table_properties(
         return Ok(());
     }
     w.write_event(Event::Start(start("w:tblPr"))).map_err(pkg)?;
+    if let Some(overlap) = properties.overlap {
+        let mut el = start("w:tblOverlap");
+        el.push_attribute((
+            "w:val",
+            match overlap {
+                TableOverlap::Never => "never",
+                TableOverlap::Overlap => "overlap",
+            },
+        ));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
     if let Some(alignment) = properties.alignment {
         let mut jc = start("w:jc");
         jc.push_attribute(("w:val", alignment_token(alignment)));
@@ -1200,6 +1211,18 @@ fn write_table_properties(
         let mut el = start("w:tblW");
         el.push_attribute(("w:type", "dxa"));
         el.push_attribute(("w:w", width.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(spacing) = properties.cell_spacing_twips {
+        let mut el = start("w:tblCellSpacing");
+        el.push_attribute(("w:type", "dxa"));
+        el.push_attribute(("w:w", spacing.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(indent) = properties.indent_twips {
+        let mut el = start("w:tblInd");
+        el.push_attribute(("w:type", "dxa"));
+        el.push_attribute(("w:w", indent.to_string().as_str()));
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
     if let Some(layout) = properties.layout {
@@ -1233,6 +1256,16 @@ fn write_table_properties(
     write_borders(w, "w:tblBorders", &properties.borders)?;
     write_shading(w, &properties.shading)?;
     write_margins(w, "w:tblCellMar", &properties.cell_margins)?;
+    if let Some(caption) = &properties.caption {
+        let mut el = start("w:tblCaption");
+        el.push_attribute(("w:val", caption.as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(description) = &properties.description {
+        let mut el = start("w:tblDescription");
+        el.push_attribute(("w:val", description.as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
     w.write_event(Event::End(BytesEnd::new("w:tblPr")))
         .map_err(pkg)?;
     Ok(())
@@ -1285,6 +1318,17 @@ fn write_row_properties(
     if properties.header {
         w.write_event(Event::Empty(start("w:tblHeader")))
             .map_err(pkg)?;
+    }
+    if let Some(spacing) = properties.cell_spacing_twips {
+        let mut el = start("w:tblCellSpacing");
+        el.push_attribute(("w:type", "dxa"));
+        el.push_attribute(("w:w", spacing.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(alignment) = properties.alignment {
+        let mut el = start("w:jc");
+        el.push_attribute(("w:val", alignment_token(alignment)));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
     w.write_event(Event::End(BytesEnd::new("w:trPr")))
         .map_err(pkg)?;
@@ -1363,6 +1407,14 @@ fn write_cell_properties(
             },
         ));
         w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if properties.fit_text {
+        w.write_event(Event::Empty(start("w:tcFitText")))
+            .map_err(pkg)?;
+    }
+    if properties.hide_mark {
+        w.write_event(Event::Empty(start("w:hideMark")))
+            .map_err(pkg)?;
     }
     w.write_event(Event::End(BytesEnd::new("w:tcPr")))
         .map_err(pkg)?;

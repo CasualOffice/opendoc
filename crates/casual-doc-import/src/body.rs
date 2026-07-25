@@ -11,7 +11,7 @@ use casual_doc_model::v1::{
     NoteId, NoteKind, NoteReference, PageMargins, PageSize, Paragraph, ParagraphProperties,
     Revision, RevisionKind, RgbColor, Run, RunProperties, SdtControlKind, SdtProperties,
     SectionBoundary, SectionColumns, SectionId, StyleKind, Tab, TabAlignment, TabLeader, TabStop,
-    TableLayout, TextBox, TextDirection, VerticalMerge,
+    TableLayout, TableOverlap, TextBox, TextDirection, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::Reader;
@@ -1265,6 +1265,39 @@ impl BodyParser<'_> {
                 }
             }
             b"tblLook" if self.tblpr_depth > 0 => self.apply_table_look(element),
+            b"tblInd" if self.tblpr_depth > 0 => {
+                let is_dxa = attribute_value(element, b"type")
+                    .map(|kind| kind == "dxa")
+                    .unwrap_or(true);
+                match attr_i32(element, b"w") {
+                    Some(v) if is_dxa => self.tables.set_table_indent(v.clamp(-31_680, 31_680)),
+                    _ => self.reporter.report(b"tblInd"),
+                }
+            }
+            b"tblCellSpacing" if self.tblpr_depth > 0 => {
+                let is_dxa = attribute_value(element, b"type")
+                    .map(|kind| kind == "dxa")
+                    .unwrap_or(true);
+                match attr_i32(element, b"w") {
+                    Some(v) if is_dxa => self.tables.set_table_cell_spacing(v.clamp(0, 31_680)),
+                    _ => self.reporter.report(b"tblCellSpacing"),
+                }
+            }
+            b"tblOverlap" if self.tblpr_depth > 0 => {
+                match attribute_value(element, b"val").as_deref() {
+                    Some("never") => self.tables.set_table_overlap(TableOverlap::Never),
+                    Some("overlap") => self.tables.set_table_overlap(TableOverlap::Overlap),
+                    _ => self.reporter.report(b"tblOverlap"),
+                }
+            }
+            b"tblCaption" if self.tblpr_depth > 0 => match attribute_value(element, b"val") {
+                Some(v) if !v.is_empty() && v.len() <= 255 => self.tables.set_table_caption(v),
+                _ => self.reporter.report(b"tblCaption"),
+            },
+            b"tblDescription" if self.tblpr_depth > 0 => match attribute_value(element, b"val") {
+                Some(v) if !v.is_empty() && v.len() <= 255 => self.tables.set_table_description(v),
+                _ => self.reporter.report(b"tblDescription"),
+            },
             // `ppr_depth == 0` so a paragraph-direct `w:shd` (a `w:p` opened while
             // a `w:tblPr`/`w:tcPr` was left unclosed by malformed markup) is not
             // misrouted to the table/cell — it wins at the paragraph arm below.
@@ -1291,6 +1324,19 @@ impl BodyParser<'_> {
             b"tblHeader" if self.trpr_depth > 0 => self
                 .tables
                 .set_row_header(is_true(attribute_value(element, b"val").as_deref())),
+            b"jc" if self.trpr_depth > 0 => match table_alignment(element) {
+                Some(alignment) => self.tables.set_row_alignment(alignment),
+                None => self.reporter.report(b"jc"),
+            },
+            b"tblCellSpacing" if self.trpr_depth > 0 => {
+                let is_dxa = attribute_value(element, b"type")
+                    .map(|kind| kind == "dxa")
+                    .unwrap_or(true);
+                match attr_i32(element, b"w") {
+                    Some(v) if is_dxa => self.tables.set_row_cell_spacing(v.clamp(0, 31_680)),
+                    _ => self.reporter.report(b"tblCellSpacing"),
+                }
+            }
             // ---- cell property long tail (`w:tcPr`) --------------------------
             b"shd" if self.tcpr_depth > 0 && self.ppr_depth == 0 => {
                 let fill = self.shading_fill(element);
@@ -1354,6 +1400,12 @@ impl BodyParser<'_> {
                     _ => self.reporter.report(b"textDirection"),
                 }
             }
+            b"tcFitText" if self.tcpr_depth > 0 => self
+                .tables
+                .set_cell_fit_text(is_true(attribute_value(element, b"val").as_deref())),
+            b"hideMark" if self.tcpr_depth > 0 => self
+                .tables
+                .set_cell_hide_mark(is_true(attribute_value(element, b"val").as_deref())),
             // ---- content controls (`w:sdt`) ----------------------------------
             // A content control wraps flow content. Its scope (inline around runs,
             // block around paragraphs/tables, or a deferred passthrough) is decided

@@ -138,6 +138,16 @@ pub enum TableLayout {
     Autofit,
 }
 
+/// Floating-table overlap behavior (`w:tblOverlap/@w:val`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TableOverlap {
+    /// Never overlap other floating tables (`w:val="never"`).
+    Never,
+    /// May overlap (`w:val="overlap"`).
+    Overlap,
+}
+
 /// Conditional-formatting look flags (`w:tblLook`). All-false serializes to
 /// nothing (omitted).
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -197,6 +207,23 @@ pub struct TableProperties {
     /// Default cell margins (`w:tblCellMar`).
     #[serde(default, skip_serializing_if = "CellMargins::is_empty")]
     pub cell_margins: CellMargins,
+    /// Table indent from the leading margin in twips, `dxa` only (`w:tblInd`);
+    /// may be negative.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub indent_twips: Option<i32>,
+    /// Default cell spacing in twips, `dxa` only (`w:tblCellSpacing`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cell_spacing_twips: Option<i32>,
+    /// Floating-overlap behavior (`w:tblOverlap`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overlap: Option<TableOverlap>,
+    /// Accessibility caption (`w:tblCaption`); non-empty, at most 255 bytes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub caption: Option<String>,
+    /// Accessibility description (`w:tblDescription`); non-empty, at most 255
+    /// bytes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 impl TableProperties {
@@ -252,6 +279,12 @@ pub struct TableRowProperties {
     /// Repeat as a header row across pages (`w:tblHeader`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub header: bool,
+    /// Row alignment (`w:jc`); start/center/end (justify reported at import).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alignment: Option<Alignment>,
+    /// Per-row default cell spacing in twips, `dxa` only (`w:tblCellSpacing`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cell_spacing_twips: Option<i32>,
 }
 
 impl TableRowProperties {
@@ -318,6 +351,12 @@ pub struct TableCellProperties {
     /// Cell content margins (`w:tcMar`).
     #[serde(default, skip_serializing_if = "CellMargins::is_empty")]
     pub margins: CellMargins,
+    /// Shrink text to fit the cell width (`w:tcFitText`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fit_text: bool,
+    /// Hide the end-of-cell mark; affects auto-fit height (`w:hideMark`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hide_mark: bool,
 }
 
 /// A table cell holding recursive block content.
