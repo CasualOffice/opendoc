@@ -313,6 +313,28 @@ dependency policy in `deny.toml`.
 gate in docs 32 and 34; the parser is wrapped behind an internal bounded reader
 so limits and entity-disabling are enforced in one place.
 
+## ADR-029 — Raise the MSRV to Rust 1.88 for the Phase 1C text stack
+
+**Decision:** Accepted 2026-07-26. Raise the workspace (and `fuzz/` workspace)
+Minimum Supported Rust Version from 1.85.0 to **1.88.0**, and update the CI MSRV
+job to 1.88.0.
+
+**Why:** the accepted Phase 1C layout/rendering design
+(`43-PHASE-1C-LAYOUT-RENDERING-DESIGN.md`, research in `42-…`) adopts the modern
+Rust text stack — `parley` (line layout), `fontique` (font enumeration/fallback),
+`harfrust` (shaping), `skrifa`, and `icu4x` 2.x (Unicode segmentation/bidi).
+`parley` 0.11 and `fontique` 0.11 require Rust 1.88; `icu4x` 2.x requires 1.86.
+Pinning back to `parley` 0.7 to preserve MSRV 1.85 would start a production,
+Word-grade engine on a year-old text stack with weaker complex-script support —
+a poor long-term trade for a subsystem the product leans on heavily. Rust 1.88
+(released mid-2025) is well-established.
+
+**Consequence:** satisfies the support-matrix rule that "the MSRV may only be
+raised through an ADR and a documented release note" (`18-SUPPORT-MATRIX.md`).
+The MSRV CI gate now checks 1.88.0; `06`/`15`/`18` are updated. No existing code
+changes (raising the MSRV never breaks lower-version-compatible code); the bump
+is a prerequisite landed ahead of the `parley` line-shaper slice (P1C-001).
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;
