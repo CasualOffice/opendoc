@@ -134,5 +134,9 @@ fn run_properties_from_marks(marks: &BTreeSet<Mark>) -> RunProperties {
         color: None,
         size_half_points: None,
         font_ref: None,
+        // The v0 mark set carries only the four toggles above; every additive
+        // long-tail field stays `None`, so the migration output (and its
+        // byte-exact golden) is unchanged.
+        ..RunProperties::default()
     }
 }

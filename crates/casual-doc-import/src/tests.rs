@@ -216,6 +216,98 @@ fn tabs_breaks_and_color_are_mapped() {
     );
 }
 
+/// Reads the first run's properties from paragraph 0.
+fn first_run_props(import: &Import) -> &casual_doc_model::v1::RunProperties {
+    match &paragraph(import, 0).inlines[0] {
+        InlineNode::Run(run) => &run.properties,
+        _ => panic!("expected a run"),
+    }
+}
+
+#[test]
+fn run_toggle_marks_are_mapped() {
+    use casual_doc_model::v1::RunProperties;
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:rPr>
+            <w:caps/><w:smallCaps/><w:vanish/><w:webHidden/><w:dstrike w:val="0"/>
+        </w:rPr><w:t>x</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let p: &RunProperties = first_run_props(&import);
+    assert_eq!(p.all_caps, Some(true));
+    assert_eq!(p.small_caps, Some(true));
+    assert_eq!(p.hidden, Some(true));
+    assert_eq!(p.web_hidden, Some(true));
+    assert_eq!(p.double_strike, Some(false), "val=0 clears the toggle");
+}
+
+#[test]
+fn run_fonts_named_and_theme_slots_are_mapped() {
+    use casual_doc_model::v1::{FontName, FontRef, ThemeFont, ThemeFontRef};
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:rPr>
+            <w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Arial" w:eastAsiaTheme="minorEastAsia"/>
+        </w:rPr><w:t>x</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let p = first_run_props(&import);
+    assert_eq!(
+        p.font_ref,
+        Some(FontRef::Named(FontName {
+            name: "Calibri".to_owned()
+        })),
+        "the ascii slot finally populates font_ref"
+    );
+    assert_eq!(
+        p.font_ref_cs,
+        Some(FontRef::Named(FontName {
+            name: "Arial".to_owned()
+        }))
+    );
+    assert_eq!(
+        p.font_ref_east_asia,
+        Some(FontRef::Theme(ThemeFont {
+            slot: ThemeFontRef::Minor
+        })),
+        "eastAsiaTheme=minorEastAsia -> Minor slot"
+    );
+}
+
+#[test]
+fn rfonts_with_only_a_hint_is_reported_not_silently_swallowed() {
+    // An rFonts carrying only unmodeled detail (no slot resolves) is reported.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:rPr><w:rFonts w:hint="eastAsia"/></w:rPr><w:t>x</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let p = first_run_props(&import);
+    assert!(p.font_ref.is_none());
+    assert!(features(&import).contains(&"rFonts"));
+}
+
+#[test]
+fn run_named_vocabularies_are_mapped_and_unknown_values_reported() {
+    use casual_doc_model::v1::{EmphasisMark, HighlightColor, VerticalAlignment};
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:rPr>
+            <w:vertAlign w:val="superscript"/><w:highlight w:val="yellow"/><w:em w:val="dot"/>
+        </w:rPr><w:t>x</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+    let good = import(xml);
+    let p = first_run_props(&good);
+    assert_eq!(p.vertical_alignment, Some(VerticalAlignment::Superscript));
+    assert_eq!(p.highlight, Some(HighlightColor::Yellow));
+    assert_eq!(p.emphasis, Some(EmphasisMark::Dot));
+
+    // An unknown highlight value is reported, not mapped.
+    let bad = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:rPr><w:highlight w:val="chartreuse"/></w:rPr><w:t>x</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+    let bad_import = import(bad);
+    assert!(first_run_props(&bad_import).highlight.is_none());
+    assert!(features(&bad_import).contains(&"highlight"));
+}
+
 #[test]
 fn table_is_modeled_as_a_block_with_cell_content() {
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>

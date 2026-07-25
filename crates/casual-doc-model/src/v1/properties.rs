@@ -200,6 +200,74 @@ pub struct ParagraphProperties {
     pub spacing: Option<Spacing>,
 }
 
+/// Run vertical alignment (`w:vertAlign`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VerticalAlignment {
+    /// Normal baseline.
+    Baseline,
+    /// Raised (superscript).
+    Superscript,
+    /// Lowered (subscript).
+    Subscript,
+}
+
+/// A named text-highlight color (`w:highlight`, `ST_HighlightColor`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HighlightColor {
+    /// No highlight (an explicit clear).
+    None,
+    /// Black.
+    Black,
+    /// Blue.
+    Blue,
+    /// Cyan.
+    Cyan,
+    /// Dark blue.
+    DarkBlue,
+    /// Dark cyan.
+    DarkCyan,
+    /// Dark gray.
+    DarkGray,
+    /// Dark green.
+    DarkGreen,
+    /// Dark magenta.
+    DarkMagenta,
+    /// Dark red.
+    DarkRed,
+    /// Dark yellow.
+    DarkYellow,
+    /// Green.
+    Green,
+    /// Light gray.
+    LightGray,
+    /// Magenta.
+    Magenta,
+    /// Red.
+    Red,
+    /// White.
+    White,
+    /// Yellow.
+    Yellow,
+}
+
+/// An emphasis mark (`w:em`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EmphasisMark {
+    /// No emphasis mark (an explicit clear).
+    None,
+    /// A dot above (or below) each character.
+    Dot,
+    /// A comma above each character.
+    Comma,
+    /// A circle above each character.
+    Circle,
+    /// A dot below each character.
+    UnderDot,
+}
+
 /// Typed run properties. An empty value serializes to `{}`.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -225,7 +293,40 @@ pub struct RunProperties {
     /// Font size in half-points.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size_half_points: Option<u32>,
-    /// Font reference.
+    /// Font reference (the `w:rFonts@ascii`/`@asciiTheme` slot).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub font_ref: Option<FontRef>,
+    /// High-ANSI font slot (`w:rFonts@hAnsi`/`@hAnsiTheme`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_ref_h_ansi: Option<FontRef>,
+    /// Complex-script font slot (`w:rFonts@cs`/`@csTheme`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_ref_cs: Option<FontRef>,
+    /// East-Asian font slot (`w:rFonts@eastAsia`/`@eastAsiaTheme`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_ref_east_asia: Option<FontRef>,
+    /// All-capitals rendering (`w:caps`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub all_caps: Option<bool>,
+    /// Small-capitals rendering (`w:smallCaps`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub small_caps: Option<bool>,
+    /// Hidden text (`w:vanish`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hidden: Option<bool>,
+    /// Hidden in web view (`w:webHidden`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub web_hidden: Option<bool>,
+    /// Double strike-through (`w:dstrike`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub double_strike: Option<bool>,
+    /// Superscript / subscript (`w:vertAlign`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vertical_alignment: Option<VerticalAlignment>,
+    /// Text highlight color (`w:highlight`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub highlight: Option<HighlightColor>,
+    /// Emphasis mark (`w:em`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub emphasis: Option<EmphasisMark>,
 }

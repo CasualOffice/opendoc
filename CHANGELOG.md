@@ -14,6 +14,13 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Added
 
+- Run-property long tail (first slice): runs now model the toggle marks
+  (`w:caps`/`smallCaps`/`vanish`/`webHidden`/`dstrike`), fonts (`w:rFonts` — the
+  ascii/hAnsi/cs/eastAsia named + theme slots, finally populating the existing
+  `font_ref`), and the named vocabularies `w:vertAlign` (super/subscript),
+  `w:highlight` (named color), and `w:em` (emphasis mark). Unmapped values are
+  reported, not silently dropped. Strictly additive — existing snapshots and the
+  migration golden are byte-identical. (`49-SCHEMA-V1-RUN-PROPERTIES-DESIGN.md`)
 - Tracked changes (revisions) are now modeled: inserted (`w:ins`) and deleted
   (`w:del`) run ranges become an additive `InlineNode::Revision` wrapper carrying
   its kind (insertion/deletion) plus retained author/date/id metadata and wrapping

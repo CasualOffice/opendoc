@@ -381,11 +381,19 @@ impl Document {
         if let Some(size) = properties.size_half_points {
             check_domain((1..=65_534).contains(&size), "run.size_half_points")?;
         }
-        if let Some(FontRef::Named(font)) = &properties.font_ref {
-            check_domain(
-                !font.name.is_empty() && font.name.len() <= 255,
-                "run.font_ref.name",
-            )?;
+        // Every named font slot (ascii + the three additive siblings) is bounded.
+        for slot in [
+            &properties.font_ref,
+            &properties.font_ref_h_ansi,
+            &properties.font_ref_cs,
+            &properties.font_ref_east_asia,
+        ] {
+            if let Some(FontRef::Named(font)) = slot {
+                check_domain(
+                    !font.name.is_empty() && font.name.len() <= 255,
+                    "run.font_ref.name",
+                )?;
+            }
         }
         Ok(())
     }
