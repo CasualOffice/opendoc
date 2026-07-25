@@ -20,7 +20,6 @@ use parley::{
     LineHeight, PositionedLayoutItem, StyleProperty,
 };
 
-use crate::fonts::ROBOTO_REGULAR;
 use crate::model::ModelRange;
 use crate::text::{
     Decoration, FontId, Glyph, GlyphRun, Line, LineBreak, LineConstraints, LineLayout, LineShaper,
@@ -28,11 +27,15 @@ use crate::text::{
 };
 use crate::units::{Point, Twip};
 
-/// A glyph color carried through `parley`. `Brush` is blanket-implemented for any
-/// `Clone + PartialEq + Default + Debug`, so this newtype is a valid brush and
-/// round-trips the run color out of the shaped layout.
+/// Per-run data carried through `parley` and recovered from the shaped layout.
+/// `Brush` is blanket-implemented for any `Clone + PartialEq + Default + Debug`,
+/// so this struct is a valid brush and round-trips the run's fill color and the
+/// resolved [`FontId`] (so the renderer can outline the exact face).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-struct ColorBrush([u8; 4]);
+struct RunBrush {
+    color: [u8; 4],
+    font: u32,
+}
 
 /// The default `parley`-backed line shaper.
 ///
@@ -41,26 +44,30 @@ struct ColorBrush([u8; 4]);
 /// contexts are caches); the contexts therefore live behind `RefCell`.
 pub struct ParleyShaper {
     fonts: RefCell<FontContext>,
-    layout_cx: RefCell<LayoutContext<ColorBrush>>,
+    layout_cx: RefCell<LayoutContext<RunBrush>>,
     default_family: String,
 }
 
 impl ParleyShaper {
-    /// Creates a shaper with the bundled font registered into an empty
-    /// collection (no system fonts — deterministic).
+    /// Creates a shaper with all bundled faces (Roboto regular/bold/italic/bold-
+    /// italic) registered into an empty collection (no system fonts —
+    /// deterministic). `parley` selects the face per run from the pushed weight/
+    /// style; the run's [`FontId`] rides the brush so the renderer draws the same.
     #[must_use]
     pub fn new() -> Self {
         let mut fonts = FontContext::new();
-        let registered = fonts
-            .collection
-            .register_fonts(Blob::new(Arc::new(ROBOTO_REGULAR.to_vec())), None);
-        let family_id = registered
-            .first()
-            .expect("the bundled font registers a family")
-            .0;
+        let mut family_id = None;
+        for (_, bytes) in crate::fonts::BUNDLED_FACES {
+            let registered = fonts
+                .collection
+                .register_fonts(Blob::new(Arc::new(bytes.to_vec())), None);
+            if family_id.is_none() {
+                family_id = registered.first().map(|(id, _)| *id);
+            }
+        }
         let default_family = fonts
             .collection
-            .family_name(family_id)
+            .family_name(family_id.expect("the bundled faces register a family"))
             .expect("the registered family has a name")
             .to_owned();
         Self {
@@ -126,7 +133,13 @@ impl LineShaper for ParleyShaper {
         }
         for (start, end, run) in &spans {
             builder.push(StyleProperty::FontSize(run.size.raw() as f32), *start..*end);
-            builder.push(StyleProperty::Brush(ColorBrush(run.color)), *start..*end);
+            builder.push(
+                StyleProperty::Brush(RunBrush {
+                    color: run.color,
+                    font: run.font.0,
+                }),
+                *start..*end,
+            );
             if run.bold {
                 builder.push(
                     StyleProperty::FontWeight(FontWeight::new(700.0)),
@@ -182,9 +195,9 @@ impl LineShaper for ParleyShaper {
                     })
                     .collect();
                 out_runs.push(GlyphRun {
-                    font: FontId(0),
+                    font: FontId(style.brush.font),
                     size,
-                    color: style.brush.0,
+                    color: style.brush.color,
                     origin,
                     bidi_level: 0,
                     decoration: Decoration {

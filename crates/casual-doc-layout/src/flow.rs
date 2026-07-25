@@ -19,7 +19,7 @@ use casual_doc_model::v1::{
 
 use crate::block::{BlockFragment, BoxMetrics, BreakControl};
 use crate::model::{ModelPos, ModelRange};
-use crate::text::{Decoration, FontId, LineConstraints, LineShaper, StyledRun, TextAlignment};
+use crate::text::{Decoration, LineConstraints, LineShaper, StyledRun, TextAlignment};
 use crate::units::Twip;
 
 /// Builds a galley of block fragments from a document's body, shaped to fit
@@ -95,12 +95,16 @@ fn styled_run<'a>(
         Some(Color::Rgb(rgb)) => [rgb.r, rgb.g, rgb.b, 255],
         _ => [0, 0, 0, 255],
     };
+    let bold = properties.bold.unwrap_or(false);
+    let italic = properties.italic.unwrap_or(false);
     StyledRun {
         text,
-        font: FontId(0),
+        // Select the bundled face matching the run's weight/style so the renderer
+        // outlines the same face `parley` shapes with.
+        font: crate::fonts::face_id(bold, italic),
         size,
-        bold: properties.bold.unwrap_or(false),
-        italic: properties.italic.unwrap_or(false),
+        bold,
+        italic,
         letter_spacing: properties.character_spacing_twips.map_or(Twip::ZERO, Twip),
         color,
         decoration: Decoration {
