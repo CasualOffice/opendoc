@@ -3222,6 +3222,54 @@ fn bookmark_defined_in_a_header_lands_in_document_bookmarks() {
 }
 // ---- content controls (structured document tags) -------------------------
 
+#[test]
+fn inline_sdt_with_a_dangling_field_inside_does_not_panic_or_desync() {
+    // Regression (adversarial review, major): an unterminated complex field
+    // (fldChar begin, no end) inside an inline sdt leaves WrapperKind::Field on
+    // top of the wrapper stack when `</w:sdt>` fires; committing the sdt then
+    // asserted the wrong top wrapper (panic in debug, desync in release). The
+    // close now drains the dangling inner wrapper first.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body><w:p>
+        <w:sdt><w:sdtPr><w:tag w:val="s"/></w:sdtPr><w:sdtContent>
+            <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+            <w:r><w:t>X</w:t></w:r>
+        </w:sdtContent></w:sdt>
+    </w:p></w:body></w:document>"#;
+    // Must not panic; the control is modeled and the document validates.
+    let import = import(xml);
+    assert!(import.document.validate().is_ok());
+    assert!(
+        find_inline_sdt(&paragraph(&import, 0).inlines).is_some(),
+        "the inline control is modeled (not desynced away)"
+    );
+}
+
+#[test]
+fn block_content_controls_in_consecutive_notes_are_each_modeled() {
+    // The reused notes parser resets its sdt state at each note boundary
+    // (close_note), so a content control in one note does not tighten
+    // MAX_SDT_DEPTH or mis-scope a control in the next note. (The truncated-note
+    // leak the reset guards against is not reachable through quick-xml's
+    // end-name check — a `</w:footnote>` over an open `<w:sdt>` is rejected as
+    // malformed — so this exercises the well-formed path the reset must preserve.)
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:footnoteReference w:id="1"/></w:r></w:p>
+        <w:p><w:r><w:footnoteReference w:id="2"/></w:r></w:p>
+    </w:body></w:document>"#;
+    let footnotes = br#"<w:footnotes xmlns:w="urn:w">
+        <w:footnote w:id="1"><w:sdt><w:sdtContent><w:p><w:r><w:t>a</w:t></w:r></w:p></w:sdtContent></w:sdt></w:footnote>
+        <w:footnote w:id="2"><w:sdt><w:sdtContent><w:p><w:r><w:t>b</w:t></w:r></w:p></w:sdtContent></w:sdt></w:footnote>
+    </w:footnotes>"#;
+    let import = import_with_notes(document, Some(footnotes), None);
+    for (_, note) in import.document.definitions().footnotes.iter() {
+        assert!(
+            note.blocks.iter().any(|b| matches!(b, BlockNode::Sdt(_))),
+            "each note's content control is modeled"
+        );
+    }
+    assert!(import.document.validate().is_ok());
+}
+
 fn find_block_sdt(blocks: &[BlockNode]) -> Option<&casual_doc_model::v1::BlockSdt> {
     blocks.iter().find_map(|block| match block {
         BlockNode::Sdt(sdt) => Some(sdt),
