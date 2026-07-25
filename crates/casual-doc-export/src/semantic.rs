@@ -26,7 +26,7 @@ use casual_doc_model::v1::{
     RunFontHint, RunProperties, SdtControlKind, SdtProperties, SectionBoundary, Style, StyleId,
     StyleKind, TabAlignment, TabLeader, Table, TableBorders, TableCell, TableCellProperties,
     TableLayout, TableOverlap, TableProperties, TableRow, TableRowProperties, TextDirection,
-    ThemeFontRef, VerticalAlignment, VerticalMerge,
+    ThemeFontRef, VerticalAlignment, VerticalMerge, VerticalTextAlignment,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -1592,6 +1592,43 @@ fn write_paragraph_properties(
         if flag {
             w.write_event(Event::Empty(start(name))).map_err(pkg)?;
         }
+    }
+    // Tri-state paragraph toggles (`CT_OnOff`): bare = on, `w:val="0"` = an
+    // explicit off, nothing = absent — so a default-ON toggle turned off survives.
+    for (value, name) in [
+        (properties.bidi, "w:bidi"),
+        (properties.word_wrap, "w:wordWrap"),
+        (properties.kinsoku, "w:kinsoku"),
+        (properties.snap_to_grid, "w:snapToGrid"),
+        (properties.mirror_indents, "w:mirrorIndents"),
+        (properties.adjust_right_ind, "w:adjustRightInd"),
+        (properties.suppress_auto_hyphens, "w:suppressAutoHyphens"),
+        (properties.overflow_punct, "w:overflowPunct"),
+        (properties.top_line_punct, "w:topLinePunct"),
+        (properties.auto_space_de, "w:autoSpaceDE"),
+        (properties.auto_space_dn, "w:autoSpaceDN"),
+    ] {
+        if let Some(on) = value {
+            let mut el = start(name);
+            if !on {
+                el.push_attribute(("w:val", "0"));
+            }
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+    }
+    if let Some(alignment) = properties.text_alignment {
+        let mut el = start("w:textAlignment");
+        el.push_attribute((
+            "w:val",
+            match alignment {
+                VerticalTextAlignment::Auto => "auto",
+                VerticalTextAlignment::Baseline => "baseline",
+                VerticalTextAlignment::Bottom => "bottom",
+                VerticalTextAlignment::Center => "center",
+                VerticalTextAlignment::Top => "top",
+            },
+        ));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
     if let Some(level) = properties.outline_level {
         let mut el = start("w:outlineLvl");

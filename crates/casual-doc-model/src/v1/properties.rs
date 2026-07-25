@@ -96,6 +96,22 @@ pub enum Alignment {
     Justify,
 }
 
+/// Vertical alignment of text on the line (`w:textAlignment/@w:val`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum VerticalTextAlignment {
+    /// Automatic (`auto`).
+    Auto,
+    /// Aligned to the text baseline.
+    Baseline,
+    /// Aligned to the bottom.
+    Bottom,
+    /// Centered.
+    Center,
+    /// Aligned to the top.
+    Top,
+}
+
 /// The kind of a style definition.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -576,6 +592,44 @@ pub struct ParagraphProperties {
     /// references. Additive: omitted when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub section_break: Option<SectionId>,
+    /// Right-to-left paragraph (`w:bidi`). Tri-state: several of these toggles
+    /// default ON in OOXML, so an explicit `w:val="0"` (off) must be preserved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bidi: Option<bool>,
+    /// Break within words for East-Asian text (`w:wordWrap`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub word_wrap: Option<bool>,
+    /// Apply East-Asian line-break (kinsoku) rules (`w:kinsoku`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kinsoku: Option<bool>,
+    /// Snap lines to the document grid (`w:snapToGrid`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snap_to_grid: Option<bool>,
+    /// Mirror indents on facing pages (`w:mirrorIndents`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mirror_indents: Option<bool>,
+    /// Adjust right indent for a document grid (`w:adjustRightInd`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub adjust_right_ind: Option<bool>,
+    /// Automatically hyphenate (`w:suppressAutoHyphens` inverted: `true` here
+    /// means hyphenation is suppressed).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suppress_auto_hyphens: Option<bool>,
+    /// Allow punctuation to overflow the text boundary (`w:overflowPunct`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overflow_punct: Option<bool>,
+    /// Allow the first line's leading punctuation to compress (`w:topLinePunct`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_line_punct: Option<bool>,
+    /// Auto-space between East-Asian and Latin text (`w:autoSpaceDE`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_space_de: Option<bool>,
+    /// Auto-space between East-Asian text and numbers (`w:autoSpaceDN`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_space_dn: Option<bool>,
+    /// Vertical alignment of text on the line (`w:textAlignment`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_alignment: Option<VerticalTextAlignment>,
 }
 
 /// Run vertical alignment (`w:vertAlign`).
