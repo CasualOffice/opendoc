@@ -132,12 +132,15 @@ pub(crate) fn for_each_metadata_element(
             for attribute in element.attributes() {
                 let attribute =
                     attribute.map_err(|_| PackageError::MalformedPackageXml { part })?;
-                // OPC relationship and content-type attribute values are plain
-                // ASCII/UTF-8 with no character entities; a value that fails
-                // UTF-8 or carries an unexpected entity fails closed downstream.
-                let value = core::str::from_utf8(attribute.value.as_ref())
+                // OPC attribute values (notably a relationship `Target` URL) may
+                // carry XML character references (`&amp;` in a query string), so
+                // unescape them; entity-free values are unchanged. Malformed
+                // UTF-8 or a bad entity fails closed.
+                let raw = core::str::from_utf8(attribute.value.as_ref())
                     .map_err(|_| PackageError::MalformedPackageXml { part })?;
-                sink(attribute.key.local_name().as_ref(), value);
+                let value = quick_xml::escape::unescape(raw)
+                    .map_err(|_| PackageError::MalformedPackageXml { part })?;
+                sink(attribute.key.local_name().as_ref(), value.as_ref());
             }
             Ok(())
         };

@@ -70,11 +70,34 @@ pub fn write_package(source: &RetainedSource) -> Result<Vec<u8>, ExportError> {
 #[cfg(test)]
 mod semantic_tests {
     use std::collections::BTreeMap;
+    use std::io::{Cursor, Write};
 
     use casual_doc_import::{ImportConfig, ImportMode, import_main_document_xml, import_package};
     use casual_doc_ooxml::{DocxPackage, PackageLimits};
+    use zip::write::SimpleFileOptions;
+    use zip::{CompressionMethod, ZipWriter};
 
     use crate::write_document;
+
+    /// Zips a minimal DOCX around a `word/document.xml` body and its
+    /// `document.xml.rels`, so a source document that references external
+    /// relationships (hyperlinks) can be imported into a model.
+    fn pack(document_xml: &[u8], document_rels: &[u8]) -> Vec<u8> {
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let mut zw = ZipWriter::new(Cursor::new(Vec::new()));
+        let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        for (name, bytes) in [
+            ("[Content_Types].xml", content_types.as_slice()),
+            ("_rels/.rels", root_rels.as_slice()),
+            ("word/document.xml", document_xml),
+            ("word/_rels/document.xml.rels", document_rels),
+        ] {
+            zw.start_file(name, opts).unwrap();
+            zw.write_all(bytes).unwrap();
+        }
+        zw.finish().unwrap().into_inner()
+    }
 
     /// The Phase-1B semantic fixed point: importing a document, writing it, and
     /// reopening yields the identical model. The importer allocates ids in
@@ -172,6 +195,162 @@ mod semantic_tests {
             write_document(&m, &BTreeMap::new()).unwrap(),
             "the same model writes identical bytes"
         );
+    }
+
+    #[test]
+    fn inline_constructs_survive_the_semantic_round_trip() {
+        // A paragraph exercising every self-contained inline construct: an
+        // internal hyperlink (anchor + tooltip) wrapping a run, a bookmark range
+        // around it, a simple field with a cached result, an insertion and a
+        // deletion revision (the deletion's run is delText), and an inline
+        // content control with typed properties — all survive write -> reopen.
+        let xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r"><w:body>
+            <w:p>
+                <w:bookmarkStart w:id="7" w:name="anchor"/>
+                <w:hyperlink w:anchor="anchor" w:tooltip="jump">
+                    <w:r><w:t xml:space="preserve">see anchor</w:t></w:r></w:hyperlink>
+                <w:bookmarkEnd w:id="7"/>
+                <w:fldSimple w:instr=" PAGE \* MERGEFORMAT ">
+                    <w:r><w:t>1</w:t></w:r></w:fldSimple>
+                <w:ins w:author="alice" w:date="2020-01-02T03:04:05Z" w:id="3">
+                    <w:r><w:t xml:space="preserve">inserted</w:t></w:r></w:ins>
+                <w:del w:author="bob">
+                    <w:r><w:delText xml:space="preserve">deleted</w:delText></w:r></w:del>
+                <w:sdt>
+                    <w:sdtPr><w:alias w:val="Company"/><w:tag w:val="c"/><w:id w:val="99"/><w:text/></w:sdtPr>
+                    <w:sdtContent><w:r><w:rPr><w:b/></w:rPr><w:t>Acme</w:t></w:r></w:sdtContent></w:sdt>
+            </w:p>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+        let m2 = import_package(
+            &mut package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+        assert_eq!(
+            m1, m2,
+            "the inline-construct model survives write -> reopen unchanged"
+        );
+    }
+
+    #[test]
+    fn external_hyperlink_survives_the_semantic_round_trip() {
+        // An external hyperlink resolves through a relationship; the writer must
+        // regenerate `document.xml.rels` so the reopened model carries the same
+        // URL. Source is a full package (the URL only resolves with its rels).
+        let document = br#"<w:document xmlns:w="urn:w" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>
+            <w:p><w:hyperlink r:id="rId100" w:tooltip="visit">
+                <w:r><w:t>Example</w:t></w:r></w:hyperlink></w:p>
+        </w:body></w:document>"#;
+        let rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId100" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com/a" TargetMode="External"/></Relationships>"#;
+        let source = pack(document, rels);
+        let mut src_package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let m1 = import_package(
+            &mut src_package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+        let m2 = import_package(
+            &mut package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+        assert_eq!(
+            m1, m2,
+            "the external-hyperlink model survives write -> reopen unchanged"
+        );
+    }
+
+    #[test]
+    fn attribute_entities_survive_the_semantic_round_trip() {
+        // Every attribute-carried string (field instruction, bookmark name,
+        // hyperlink tooltip/anchor, revision author, sdt alias) may contain XML
+        // metacharacters. The writer escapes them; the importer must unescape so
+        // the value round-trips instead of gaining an `amp;` layer each pass.
+        let xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r"><w:body>
+            <w:p>
+                <w:bookmarkStart w:id="1" w:name="A &amp; B &lt;x&gt;"/>
+                <w:hyperlink w:anchor="A &amp; B &lt;x&gt;" w:tooltip="quote &quot;here&quot;">
+                    <w:r><w:t>link</w:t></w:r></w:hyperlink>
+                <w:bookmarkEnd w:id="1"/>
+                <w:fldSimple w:instr=" HYPERLINK &quot;http://x/a?u=1&amp;v=2&quot; ">
+                    <w:r><w:t>r</w:t></w:r></w:fldSimple>
+                <w:ins w:author="a &amp; b"><w:r><w:t>i</w:t></w:r></w:ins>
+                <w:sdt><w:sdtPr><w:alias w:val="Tom &amp; Jerry"/><w:text/></w:sdtPr>
+                    <w:sdtContent><w:r><w:t>s</w:t></w:r></w:sdtContent></w:sdt>
+            </w:p>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+        let m2 = import_package(
+            &mut package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+        assert_eq!(
+            m1, m2,
+            "attribute values with XML metacharacters survive write -> reopen"
+        );
+    }
+
+    #[test]
+    fn external_hyperlink_url_with_ampersand_survives_the_round_trip() {
+        // A query-string URL carries `&` (escaped `&amp;` in the rels Target).
+        // The package parser must unescape it so the regenerated relationship
+        // resolves to the identical URL.
+        let document = br#"<w:document xmlns:w="urn:w" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>
+            <w:p><w:hyperlink r:id="rId100"><w:r><w:t>q</w:t></w:r></w:hyperlink></w:p>
+        </w:body></w:document>"#;
+        let rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId100" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com/s?u=1&amp;v=2&amp;w=3" TargetMode="External"/></Relationships>"#;
+        let source = pack(document, rels);
+        let mut src_package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let m1 = import_package(
+            &mut src_package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+        let m2 = import_package(
+            &mut package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+        assert_eq!(m1, m2, "an external URL with `&` survives write -> reopen");
     }
 }
 
