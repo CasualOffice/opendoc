@@ -6,7 +6,9 @@
 //! rendering backend applies the device scale (DPI × zoom) when it paints, which
 //! is the "scale only at paint" rule from `43-…`.
 
+use crate::block::BlockFragment;
 use crate::display::{DisplayList, PaintItem};
+use crate::page::Page;
 use crate::text::LineLayout;
 use crate::units::Point;
 
@@ -22,6 +24,27 @@ pub fn compose_paragraph(layout: &LineLayout, origin: Point) -> DisplayList {
             let mut placed = run.clone();
             placed.origin = Point::new(origin.x + run.origin.x, origin.y + run.origin.y);
             list.push(PaintItem::Glyphs { run: placed });
+        }
+    }
+    list
+}
+
+/// Builds the display list for a whole paginated [`Page`]: each placed paragraph
+/// fragment's shaped lines are composed at the fragment's position on the page
+/// (below its `space_before`). Table rows are composed in a later slice.
+#[must_use]
+pub fn compose_page(page: &Page) -> DisplayList {
+    let mut list = DisplayList::new();
+    for placed in &page.placed {
+        if let BlockFragment::Paragraph {
+            lines, box_metrics, ..
+        } = &placed.fragment
+        {
+            let origin = Point::new(
+                placed.rect.origin.x,
+                placed.rect.origin.y + box_metrics.space_before,
+            );
+            list.items.extend(compose_paragraph(lines, origin).items);
         }
     }
     list
