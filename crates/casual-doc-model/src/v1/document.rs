@@ -610,6 +610,21 @@ impl Document {
         if let Some(alignment) = table.properties.alignment {
             check_domain(alignment != Alignment::Justify, "table.alignment")?;
         }
+        if let Some(indent) = table.properties.indent_twips {
+            check_domain((-31_680..=31_680).contains(&indent), "table.indent")?;
+        }
+        if let Some(spacing) = table.properties.cell_spacing_twips {
+            check_domain((0..=31_680).contains(&spacing), "table.cell_spacing")?;
+        }
+        for value in [&table.properties.caption, &table.properties.description]
+            .into_iter()
+            .flatten()
+        {
+            check_domain(
+                !value.is_empty() && value.len() <= 255,
+                "table.accessibility",
+            )?;
+        }
         check_borders(&table.properties.borders, "table.borders")?;
         check_margins(&table.properties.cell_margins, "table.cell_margins")?;
         for column in &table.grid {
@@ -623,6 +638,12 @@ impl Document {
             }
             if let Some(height) = row.properties.height.value_twips {
                 check_domain(height <= 31_680, "table.row.height")?;
+            }
+            if let Some(spacing) = row.properties.cell_spacing_twips {
+                check_domain((0..=31_680).contains(&spacing), "table.row.cell_spacing")?;
+            }
+            if let Some(alignment) = row.properties.alignment {
+                check_domain(alignment != Alignment::Justify, "table.row.alignment")?;
             }
             for cell in &row.cells {
                 if cell.blocks.is_empty() {

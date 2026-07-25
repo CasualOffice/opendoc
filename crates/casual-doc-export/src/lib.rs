@@ -357,6 +357,42 @@ mod semantic_tests {
     }
 
     #[test]
+    fn expanded_table_properties_survive_the_semantic_round_trip() {
+        // The additive table/row/cell properties: tblOverlap, tblCellSpacing,
+        // tblInd, tblCaption/tblDescription; a per-row jc + tblCellSpacing; and
+        // per-cell tcFitText/hideMark.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:tbl>
+                <w:tblPr>
+                    <w:tblOverlap w:val="never"/>
+                    <w:tblW w:type="dxa" w:w="9000"/>
+                    <w:tblCellSpacing w:type="dxa" w:w="15"/>
+                    <w:tblInd w:type="dxa" w:w="240"/>
+                    <w:tblCaption w:val="Quarterly figures"/>
+                    <w:tblDescription w:val="Revenue by region and quarter"/>
+                </w:tblPr>
+                <w:tblGrid><w:gridCol w:w="9000"/></w:tblGrid>
+                <w:tr>
+                    <w:trPr><w:tblCellSpacing w:type="dxa" w:w="20"/><w:jc w:val="center"/></w:trPr>
+                    <w:tc>
+                        <w:tcPr><w:tcFitText/><w:hideMark/></w:tcPr>
+                        <w:p><w:r><w:t>x</w:t></w:r></w:p>
+                    </w:tc>
+                </w:tr>
+            </w:tbl>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(
+            m1, m2,
+            "expanded table properties survive write -> reopen unchanged"
+        );
+    }
+
+    #[test]
     fn writer_is_deterministic() {
         let xml = br#"<w:document xmlns:w="urn:w"><w:body>
             <w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;

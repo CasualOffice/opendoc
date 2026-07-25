@@ -10,8 +10,8 @@ use casual_doc_model::v1::{Alignment, RgbColor};
 use casual_doc_model::v1::{
     BlockNode, BorderEdge, CellMargins, CellVerticalAlignment, GridColumn, HeightRule,
     MAX_TABLE_DEPTH, Paragraph, ParagraphProperties, Table, TableBorders, TableCell,
-    TableCellProperties, TableLayout, TableProperties, TableRow, TableRowProperties, TextDirection,
-    VerticalMerge,
+    TableCellProperties, TableLayout, TableOverlap, TableProperties, TableRow, TableRowProperties,
+    TextDirection, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 
@@ -243,6 +243,69 @@ impl TableStack {
     pub(crate) fn set_table_layout(&mut self, layout: TableLayout) {
         if let Some(properties) = self.table_properties() {
             properties.layout = Some(layout);
+        }
+    }
+
+    /// Sets the table indent in twips (`w:tblInd` dxa).
+    pub(crate) fn set_table_indent(&mut self, twips: i32) {
+        if let Some(properties) = self.table_properties() {
+            properties.indent_twips = Some(twips);
+        }
+    }
+
+    /// Sets the table-level default cell spacing in twips (`w:tblCellSpacing`).
+    pub(crate) fn set_table_cell_spacing(&mut self, twips: i32) {
+        if let Some(properties) = self.table_properties() {
+            properties.cell_spacing_twips = Some(twips);
+        }
+    }
+
+    /// Sets the floating-overlap behavior (`w:tblOverlap`).
+    pub(crate) fn set_table_overlap(&mut self, overlap: TableOverlap) {
+        if let Some(properties) = self.table_properties() {
+            properties.overlap = Some(overlap);
+        }
+    }
+
+    /// Sets the accessibility caption (`w:tblCaption`).
+    pub(crate) fn set_table_caption(&mut self, caption: String) {
+        if let Some(properties) = self.table_properties() {
+            properties.caption = Some(caption);
+        }
+    }
+
+    /// Sets the accessibility description (`w:tblDescription`).
+    pub(crate) fn set_table_description(&mut self, description: String) {
+        if let Some(properties) = self.table_properties() {
+            properties.description = Some(description);
+        }
+    }
+
+    /// Sets the row alignment (`w:trPr > w:jc`).
+    pub(crate) fn set_row_alignment(&mut self, alignment: Alignment) {
+        if let Some(properties) = self.row_properties() {
+            properties.alignment = Some(alignment);
+        }
+    }
+
+    /// Sets the per-row default cell spacing in twips (`w:trPr > w:tblCellSpacing`).
+    pub(crate) fn set_row_cell_spacing(&mut self, twips: i32) {
+        if let Some(properties) = self.row_properties() {
+            properties.cell_spacing_twips = Some(twips);
+        }
+    }
+
+    /// Sets the fit-text flag on the current cell (`w:tcFitText`).
+    pub(crate) fn set_cell_fit_text(&mut self, on: bool) {
+        if let Some(cell) = self.current_cell() {
+            cell.properties.fit_text = on;
+        }
+    }
+
+    /// Sets the hide-mark flag on the current cell (`w:hideMark`).
+    pub(crate) fn set_cell_hide_mark(&mut self, on: bool) {
+        if let Some(cell) = self.current_cell() {
+            cell.properties.hide_mark = on;
         }
     }
 
