@@ -599,9 +599,11 @@ fn valid_table_with_merges_validates_and_round_trips_json() {
                 width_twips: Some(2_880),
             },
         ],
+        properties: TableProperties::default(),
         rows: vec![
             TableRow {
                 id: tid(11),
+                properties: TableRowProperties::default(),
                 cells: vec![
                     cell(
                         tid(12),
@@ -623,6 +625,7 @@ fn valid_table_with_merges_validates_and_round_trips_json() {
             },
             TableRow {
                 id: tid(16),
+                properties: TableRowProperties::default(),
                 cells: vec![
                     cell(
                         tid(17),
@@ -663,10 +666,117 @@ fn valid_table_with_merges_validates_and_round_trips_json() {
 }
 
 #[test]
+fn table_properties_round_trip_and_default_omits_the_key() {
+    // A cell with a default (empty) properties still serializes to {} and a table
+    // with default properties omits the "properties" key entirely — the
+    // load-bearing backward-compat guard for the additive table-property fields.
+    let styled_cell = cell(
+        tid(3),
+        TableCellProperties {
+            vertical_alignment: Some(CellVerticalAlignment::Center),
+            no_wrap: true,
+            ..TableCellProperties::default()
+        },
+        vec![paragraph_block(tid(4))],
+    );
+    let table = Table {
+        id: tid(1),
+        grid: Vec::new(),
+        properties: TableProperties {
+            width_twips: Some(9000),
+            layout: Some(TableLayout::Fixed),
+            look: TableLook {
+                first_row: true,
+                ..TableLook::default()
+            },
+            shading: Shading {
+                fill: Some(RgbColor { r: 1, g: 2, b: 3 }),
+            },
+            ..TableProperties::default()
+        },
+        rows: vec![TableRow {
+            id: tid(2),
+            properties: TableRowProperties {
+                cant_split: true,
+                ..TableRowProperties::default()
+            },
+            cells: vec![styled_cell],
+        }],
+    };
+    let document = table_document(vec![BlockNode::Table(table)]).unwrap();
+    let reloaded =
+        Document::from_json(&document.to_json().unwrap(), SnapshotLimits::default()).unwrap();
+    assert_eq!(document, reloaded);
+
+    // Backward-compat: default table/row properties are omitted from the JSON.
+    let plain = Table {
+        id: tid(1),
+        grid: Vec::new(),
+        properties: TableProperties::default(),
+        rows: vec![TableRow {
+            id: tid(2),
+            properties: TableRowProperties::default(),
+            cells: vec![cell(
+                tid(3),
+                TableCellProperties::default(),
+                vec![paragraph_block(tid(4))],
+            )],
+        }],
+    };
+    // The table and row objects omit their default `properties` key entirely
+    // (byte-compat); the cell keeps its always-present `properties: {}`.
+    let value: serde_json::Value = serde_json::to_value(&plain).unwrap();
+    let table_obj = value.as_object().unwrap();
+    assert!(
+        !table_obj.contains_key("properties"),
+        "default table properties omitted"
+    );
+    let row_obj = value["rows"][0].as_object().unwrap();
+    assert!(
+        !row_obj.contains_key("properties"),
+        "default row properties omitted"
+    );
+    let cell_obj = value["rows"][0]["cells"][0].as_object().unwrap();
+    assert_eq!(
+        cell_obj["properties"],
+        serde_json::json!({}),
+        "cell properties still serialized as {{}}"
+    );
+}
+
+#[test]
+fn over_range_table_width_is_rejected() {
+    let table = Table {
+        id: tid(1),
+        grid: Vec::new(),
+        properties: TableProperties {
+            width_twips: Some(40_000),
+            ..TableProperties::default()
+        },
+        rows: vec![TableRow {
+            id: tid(2),
+            properties: TableRowProperties::default(),
+            cells: vec![cell(
+                tid(3),
+                TableCellProperties::default(),
+                vec![paragraph_block(tid(4))],
+            )],
+        }],
+    };
+    assert!(matches!(
+        table_document(vec![BlockNode::Table(table)]),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "table.width"
+        })
+    ));
+}
+
+#[test]
 fn empty_table_is_rejected() {
     let table = BlockNode::Table(Table {
         id: tid(10),
         grid: Vec::new(),
+        properties: TableProperties::default(),
         rows: Vec::new(),
     });
     assert!(matches!(
@@ -680,8 +790,10 @@ fn table_row_without_cells_is_rejected() {
     let table = BlockNode::Table(Table {
         id: tid(10),
         grid: Vec::new(),
+        properties: TableProperties::default(),
         rows: vec![TableRow {
             id: tid(11),
+            properties: TableRowProperties::default(),
             cells: Vec::new(),
         }],
     });
@@ -696,8 +808,10 @@ fn table_cell_without_blocks_is_rejected() {
     let table = BlockNode::Table(Table {
         id: tid(10),
         grid: Vec::new(),
+        properties: TableProperties::default(),
         rows: vec![TableRow {
             id: tid(11),
+            properties: TableRowProperties::default(),
             cells: vec![cell(tid(12), TableCellProperties::default(), Vec::new())],
         }],
     });
@@ -712,8 +826,10 @@ fn grid_span_out_of_domain_is_rejected() {
     let table = BlockNode::Table(Table {
         id: tid(10),
         grid: Vec::new(),
+        properties: TableProperties::default(),
         rows: vec![TableRow {
             id: tid(11),
+            properties: TableRowProperties::default(),
             cells: vec![cell(
                 tid(12),
                 TableCellProperties {
@@ -738,8 +854,10 @@ fn duplicate_id_inside_a_cell_is_rejected() {
     let table = BlockNode::Table(Table {
         id: tid(10),
         grid: Vec::new(),
+        properties: TableProperties::default(),
         rows: vec![TableRow {
             id: tid(11),
+            properties: TableRowProperties::default(),
             cells: vec![cell(
                 tid(12),
                 TableCellProperties::default(),
@@ -768,8 +886,10 @@ fn wrap_in_tables(depth: u32, counter: &mut u64) -> BlockNode {
     BlockNode::Table(Table {
         id: table_id,
         grid: Vec::new(),
+        properties: TableProperties::default(),
         rows: vec![TableRow {
             id: row_id,
+            properties: TableRowProperties::default(),
             cells: vec![cell(cell_id, TableCellProperties::default(), vec![inner])],
         }],
     })
@@ -799,8 +919,10 @@ fn nested_table_block_count_is_bounded() {
     let table = BlockNode::Table(Table {
         id: tid(10),
         grid: Vec::new(),
+        properties: TableProperties::default(),
         rows: vec![TableRow {
             id: tid(11),
+            properties: TableRowProperties::default(),
             cells: vec![cell(
                 tid(12),
                 TableCellProperties::default(),

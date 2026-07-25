@@ -361,6 +361,100 @@ fn table_is_modeled_as_a_block_with_cell_content() {
 }
 
 #[test]
+fn table_row_and_cell_properties_are_mapped() {
+    use casual_doc_model::v1::{CellVerticalAlignment, HeightRule, RgbColor, TableLayout};
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:tbl>
+            <w:tblPr>
+                <w:jc w:val="center"/>
+                <w:tblW w:type="dxa" w:w="9000"/>
+                <w:tblLayout w:type="fixed"/>
+                <w:tblLook w:firstRow="1" w:noVBand="1"/>
+                <w:shd w:val="clear" w:fill="EEEEEE"/>
+            </w:tblPr>
+            <w:tr>
+                <w:trPr><w:trHeight w:val="500" w:hRule="atLeast"/><w:tblHeader/></w:trPr>
+                <w:tc>
+                    <w:tcPr>
+                        <w:shd w:val="clear" w:fill="FF0000"/>
+                        <w:vAlign w:val="center"/>
+                        <w:noWrap/>
+                        <w:textDirection w:val="tbRl"/>
+                    </w:tcPr>
+                    <w:p><w:r><w:t>c</w:t></w:r></w:p>
+                </w:tc>
+            </w:tr>
+        </w:tbl>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let table = first_table(&import).expect("table modeled");
+    // Table properties.
+    assert_eq!(table.properties.alignment, Some(Alignment::Center));
+    assert_eq!(table.properties.width_twips, Some(9000));
+    assert_eq!(table.properties.layout, Some(TableLayout::Fixed));
+    assert!(table.properties.look.first_row);
+    assert!(table.properties.look.no_v_band);
+    assert!(!table.properties.look.last_row);
+    assert_eq!(
+        table.properties.shading.fill,
+        Some(RgbColor {
+            r: 0xEE,
+            g: 0xEE,
+            b: 0xEE
+        })
+    );
+    // Row properties.
+    let row = &table.rows[0];
+    assert_eq!(row.properties.height.value_twips, Some(500));
+    assert_eq!(row.properties.height.rule, Some(HeightRule::AtLeast));
+    assert!(row.properties.header);
+    assert!(!row.properties.cant_split);
+    // Cell properties.
+    let cell = &row.cells[0];
+    assert_eq!(
+        cell.properties.shading.fill,
+        Some(RgbColor { r: 255, g: 0, b: 0 })
+    );
+    assert_eq!(
+        cell.properties.vertical_alignment,
+        Some(CellVerticalAlignment::Center)
+    );
+    assert!(cell.properties.no_wrap);
+    assert_eq!(
+        cell.properties.text_direction,
+        Some(casual_doc_model::v1::TextDirection::TbRl)
+    );
+}
+
+#[test]
+fn degraded_table_properties_are_reported_not_silently_mapped() {
+    // pct table width, a table jc=both (justify), an unknown vAlign, and a
+    // patterned shd are each reported; the modeled fill is still captured.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:tbl>
+            <w:tblPr><w:tblW w:type="pct" w:w="5000"/><w:jc w:val="both"/></w:tblPr>
+            <w:tr><w:tc>
+                <w:tcPr><w:vAlign w:val="both"/><w:shd w:val="pct25" w:fill="00FF00"/></w:tcPr>
+                <w:p><w:r><w:t>c</w:t></w:r></w:p>
+            </w:tc></w:tr>
+        </w:tbl>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let table = first_table(&import).expect("table modeled");
+    assert_eq!(table.properties.width_twips, None, "pct width not modeled");
+    assert_eq!(table.properties.alignment, None, "justify not modeled");
+    assert!(features(&import).contains(&"tblW"));
+    assert!(features(&import).contains(&"jc"));
+    assert!(features(&import).contains(&"vAlign"));
+    // The patterned shd is reported but its fill is still captured (partial).
+    assert!(features(&import).contains(&"shd"));
+    assert_eq!(
+        table.rows[0].cells[0].properties.shading.fill,
+        Some(casual_doc_model::v1::RgbColor { r: 0, g: 255, b: 0 })
+    );
+}
+
+#[test]
 fn paragraph_direct_formatting_is_mapped() {
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
             <w:p><w:pPr>

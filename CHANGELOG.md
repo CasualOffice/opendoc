@@ -14,6 +14,14 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Added
 
+- Table, row, and cell formatting (attribute-based, first slice): tables model
+  `w:tblPr` (alignment, dxa width, layout, look flags, background shading), rows
+  model `w:trPr` (height + rule, cantSplit, header repeat), and cells gain
+  `w:tcPr` shading, vertical alignment, noWrap, and text direction. Non-dxa
+  widths, table justify, unknown enum tokens, and patterned shading are reported
+  (not silently mapped). Borders and cell margins remain reported (a follow-up
+  slice). Strictly additive — existing snapshots and the migration golden are
+  byte-identical. (`51-SCHEMA-V1-TABLE-PROPERTIES-DESIGN.md`)
 - Run-property long tail (first slice): runs now model the toggle marks
   (`w:caps`/`smallCaps`/`vanish`/`webHidden`/`dstrike`), fonts (`w:rFonts` — the
   ascii/hAnsi/cs/eastAsia named + theme slots, finally populating the existing

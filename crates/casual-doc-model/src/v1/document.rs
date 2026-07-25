@@ -435,6 +435,9 @@ impl Document {
         if table.rows.is_empty() {
             return Err(ModelError::EmptyTable(table.id));
         }
+        if let Some(width) = table.properties.width_twips {
+            check_domain((0..=31_680).contains(&width), "table.width")?;
+        }
         for column in &table.grid {
             if let Some(width) = column.width_twips {
                 check_domain((0..=31_680).contains(&width), "table.grid.column.width")?;
@@ -443,6 +446,9 @@ impl Document {
         for row in &table.rows {
             if row.cells.is_empty() {
                 return Err(ModelError::EmptyTableRow(row.id));
+            }
+            if let Some(height) = row.properties.height.value_twips {
+                check_domain(height <= 31_680, "table.row.height")?;
             }
             for cell in &row.cells {
                 if cell.blocks.is_empty() {

@@ -6,9 +6,11 @@
 //! from `w:tbl`/`w:tr`/`w:tc` events; finished paragraphs (and nested tables)
 //! are routed into the innermost open cell via [`TableStack::push_block`].
 
+use casual_doc_model::v1::{Alignment, RgbColor};
 use casual_doc_model::v1::{
-    BlockNode, GridColumn, MAX_TABLE_DEPTH, Paragraph, ParagraphProperties, Table, TableCell,
-    TableCellProperties, TableRow, VerticalMerge,
+    BlockNode, CellVerticalAlignment, GridColumn, HeightRule, MAX_TABLE_DEPTH, Paragraph,
+    ParagraphProperties, Table, TableCell, TableCellProperties, TableLayout, TableProperties,
+    TableRow, TableRowProperties, TextDirection, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 
@@ -24,6 +26,7 @@ struct CellBuilder {
 /// A row being accumulated inside an open table.
 struct RowBuilder {
     id: NodeId,
+    properties: TableRowProperties,
     cells: Vec<TableCell>,
     cell: Option<CellBuilder>,
 }
@@ -32,6 +35,7 @@ struct RowBuilder {
 struct TableBuilder {
     id: NodeId,
     grid: Vec<GridColumn>,
+    properties: TableProperties,
     rows: Vec<TableRow>,
     row: Option<RowBuilder>,
 }
@@ -68,6 +72,7 @@ impl TableStack {
         self.stack.push(TableBuilder {
             id,
             grid: Vec::new(),
+            properties: TableProperties::default(),
             rows: Vec::new(),
             row: None,
         });
@@ -83,6 +88,7 @@ impl TableStack {
         if let Some(table) = self.stack.last_mut() {
             table.row = Some(RowBuilder {
                 id,
+                properties: TableRowProperties::default(),
                 cells: Vec::new(),
                 cell: None,
             });
@@ -139,6 +145,113 @@ impl TableStack {
         }
     }
 
+    /// Sets the background shading fill on the current cell.
+    pub(crate) fn set_cell_shading(&mut self, fill: Option<RgbColor>) {
+        if let Some(cell) = self.current_cell() {
+            cell.properties.shading.fill = fill;
+        }
+    }
+
+    /// Sets the vertical alignment on the current cell.
+    pub(crate) fn set_cell_vertical_alignment(&mut self, alignment: CellVerticalAlignment) {
+        if let Some(cell) = self.current_cell() {
+            cell.properties.vertical_alignment = Some(alignment);
+        }
+    }
+
+    /// Sets the no-wrap flag on the current cell.
+    pub(crate) fn set_cell_no_wrap(&mut self, no_wrap: bool) {
+        if let Some(cell) = self.current_cell() {
+            cell.properties.no_wrap = no_wrap;
+        }
+    }
+
+    /// Sets the text-flow direction on the current cell.
+    pub(crate) fn set_cell_text_direction(&mut self, direction: TextDirection) {
+        if let Some(cell) = self.current_cell() {
+            cell.properties.text_direction = Some(direction);
+        }
+    }
+
+    /// Mutable access to the innermost open table's properties, if a table is
+    /// open (and, for row properties, a row is open).
+    fn table_properties(&mut self) -> Option<&mut TableProperties> {
+        self.stack.last_mut().map(|table| &mut table.properties)
+    }
+
+    fn row_properties(&mut self) -> Option<&mut TableRowProperties> {
+        self.stack
+            .last_mut()?
+            .row
+            .as_mut()
+            .map(|row| &mut row.properties)
+    }
+
+    /// Sets the table alignment (`w:jc`).
+    pub(crate) fn set_table_alignment(&mut self, alignment: Alignment) {
+        if let Some(properties) = self.table_properties() {
+            properties.alignment = Some(alignment);
+        }
+    }
+
+    /// Sets the preferred table width in twips (`w:tblW` dxa).
+    pub(crate) fn set_table_width(&mut self, width_twips: i32) {
+        if let Some(properties) = self.table_properties() {
+            properties.width_twips = Some(width_twips);
+        }
+    }
+
+    /// Sets the table layout algorithm (`w:tblLayout`).
+    pub(crate) fn set_table_layout(&mut self, layout: TableLayout) {
+        if let Some(properties) = self.table_properties() {
+            properties.layout = Some(layout);
+        }
+    }
+
+    /// Sets the table background shading fill (`w:shd`).
+    pub(crate) fn set_table_shading(&mut self, fill: Option<RgbColor>) {
+        if let Some(properties) = self.table_properties() {
+            properties.shading.fill = fill;
+        }
+    }
+
+    /// Sets one `w:tblLook` conditional-format flag by its attribute name.
+    pub(crate) fn set_table_look_flag(&mut self, flag: &[u8], on: bool) {
+        if let Some(properties) = self.table_properties() {
+            match flag {
+                b"firstRow" => properties.look.first_row = on,
+                b"lastRow" => properties.look.last_row = on,
+                b"firstColumn" => properties.look.first_column = on,
+                b"lastColumn" => properties.look.last_column = on,
+                b"noHBand" => properties.look.no_h_band = on,
+                b"noVBand" => properties.look.no_v_band = on,
+                _ => {}
+            }
+        }
+    }
+
+    /// Sets the row height value and rule (`w:trHeight`).
+    pub(crate) fn set_row_height(&mut self, value_twips: Option<u32>, rule: Option<HeightRule>) {
+        if let Some(properties) = self.row_properties() {
+            properties.height.value_twips = value_twips;
+            properties.height.rule = rule;
+        }
+    }
+
+    /// Sets the row cant-split flag (`w:cantSplit`).
+    pub(crate) fn set_row_cant_split(&mut self, cant_split: bool) {
+        if let Some(properties) = self.row_properties() {
+            properties.cant_split = cant_split;
+        }
+    }
+
+    /// Sets the row header-repeat flag (`w:tblHeader`).
+    pub(crate) fn set_row_header(&mut self, header: bool) {
+        if let Some(properties) = self.row_properties() {
+            properties.header = header;
+        }
+    }
+
     /// Routes a finished block into the innermost open cell. Returns `Some(block)`
     /// when no cell is open, so the caller sends it to the body root instead.
     pub(crate) fn push_block(&mut self, block: BlockNode) -> Option<BlockNode> {
@@ -192,6 +305,7 @@ impl TableStack {
                 }
                 table.rows.push(TableRow {
                     id: row.id,
+                    properties: row.properties,
                     cells: row.cells,
                 });
             }
@@ -236,6 +350,7 @@ impl TableStack {
         Some(Table {
             id: table.id,
             grid: table.grid,
+            properties: table.properties,
             rows: table.rows,
         })
     }

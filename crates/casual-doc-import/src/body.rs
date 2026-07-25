@@ -3,12 +3,13 @@
 use std::collections::BTreeMap;
 
 use casual_doc_model::v1::{
-    BlockNode, Break, BreakKind, Comment, CommentId, CommentReference, Drawing, Extent,
-    ExternalTarget, Field, HeaderFooterId, HeaderFooterKind, HeaderFooterRef, Hyperlink,
-    HyperlinkTarget, InlineNode, InternalTarget, MAX_EMU, MAX_FIELD_INSTRUCTION_BYTES,
-    MAX_REVISION_DEPTH, MAX_TEXTBOX_DEPTH, MediaId, NoteId, NoteKind, NoteReference, PageMargins,
-    PageSize, Paragraph, ParagraphProperties, Revision, RevisionKind, Run, RunProperties,
-    SectionBoundary, SectionColumns, SectionId, StyleKind, Tab, TextBox, VerticalMerge,
+    Alignment, BlockNode, Break, BreakKind, CellVerticalAlignment, Comment, CommentId,
+    CommentReference, Drawing, Extent, ExternalTarget, Field, HeaderFooterId, HeaderFooterKind,
+    HeaderFooterRef, HeightRule, Hyperlink, HyperlinkTarget, InlineNode, InternalTarget, MAX_EMU,
+    MAX_FIELD_INSTRUCTION_BYTES, MAX_REVISION_DEPTH, MAX_TEXTBOX_DEPTH, MediaId, NoteId, NoteKind,
+    NoteReference, PageMargins, PageSize, Paragraph, ParagraphProperties, Revision, RevisionKind,
+    RgbColor, Run, RunProperties, SectionBoundary, SectionColumns, SectionId, StyleKind, Tab,
+    TableLayout, TextBox, TextDirection, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::Reader;
@@ -18,7 +19,7 @@ use crate::config::ImportConfig;
 use crate::error::ImportError;
 use crate::numbering::Numbering;
 use crate::properties::{
-    apply_paragraph_property, apply_run_property, attribute_value, break_kind,
+    apply_paragraph_property, apply_run_property, attribute_value, break_kind, is_true, parse_rgb,
 };
 use crate::report::Reporter;
 use crate::styles::Styles;
@@ -133,6 +134,8 @@ struct ContentFrame {
     wrapper_order: Vec<WrapperKind>,
     tables: TableStack,
     tcpr_depth: u32,
+    tblpr_depth: u32,
+    trpr_depth: u32,
     suppressed_tbl_depth: u32,
     segments: Vec<Segment>,
     blocks: Vec<BlockNode>,
@@ -238,6 +241,10 @@ struct BodyParser<'a> {
     wrapper_order: Vec<WrapperKind>,
     tables: TableStack,
     tcpr_depth: u32,
+    /// Depth of an open `w:tblPr` / `w:trPr` (table / row property container), so
+    /// their property children map into the right level.
+    tblpr_depth: u32,
+    trpr_depth: u32,
     /// Depth of nested tables refused past `MAX_TABLE_DEPTH`; while non-zero the
     /// table structure is suppressed so it cannot corrupt the enclosing table.
     suppressed_tbl_depth: u32,
@@ -340,6 +347,8 @@ impl<'a> BodyParser<'a> {
             wrapper_order: Vec::new(),
             tables: TableStack::default(),
             tcpr_depth: 0,
+            tblpr_depth: 0,
+            trpr_depth: 0,
             suppressed_tbl_depth: 0,
             segments: Vec::new(),
             blocks: Vec::new(),
@@ -943,13 +952,24 @@ impl BodyParser<'_> {
                 self.suppressed_tbl_depth = 1;
                 self.reporter.report(b"tbl");
             }
+            // Table properties (`w:tblPr`), a direct child of `w:tbl` before any
+            // row. Its property children are guarded by `tblpr_depth`.
+            b"tblPr" if self.tables.is_active() && self.suppressed_tbl_depth == 0 => {
+                self.tblpr_depth += 1;
+            }
             b"tr"
                 if self.tables.is_active()
                     && self.suppressed_tbl_depth == 0
                     && !self.paragraph_open
                     && !self.run_open =>
             {
+                // A row starts: table-property context is closed.
+                self.tblpr_depth = 0;
                 self.tables.open_row(&mut *self.ids)?;
+            }
+            // Row properties (`w:trPr`), a child of `w:tr` before any cell.
+            b"trPr" if self.tables.is_active() && self.suppressed_tbl_depth == 0 => {
+                self.trpr_depth += 1;
             }
             b"tc"
                 if self.tables.is_active()
@@ -957,7 +977,9 @@ impl BodyParser<'_> {
                     && !self.paragraph_open
                     && !self.run_open =>
             {
+                // A cell starts: table/row-property contexts are closed.
                 self.tcpr_depth = 0;
+                self.trpr_depth = 0;
                 self.tables.open_cell(&mut *self.ids)?;
             }
             b"tblGrid" if self.tables.is_active() && self.suppressed_tbl_depth == 0 => {}
@@ -995,6 +1017,79 @@ impl BodyParser<'_> {
                 match attr_i32(element, b"w") {
                     Some(width) if is_dxa => self.tables.set_cell_width(width.clamp(0, 31_680)),
                     _ => self.reporter.report(b"tcW"),
+                }
+            }
+            // ---- table properties (`w:tblPr`) --------------------------------
+            b"jc" if self.tblpr_depth > 0 => match table_alignment(element) {
+                Some(alignment) => self.tables.set_table_alignment(alignment),
+                None => self.reporter.report(b"jc"),
+            },
+            b"tblW" if self.tblpr_depth > 0 => {
+                let is_dxa = attribute_value(element, b"type")
+                    .map(|kind| kind == "dxa")
+                    .unwrap_or(true);
+                match attr_i32(element, b"w") {
+                    Some(width) if is_dxa => self.tables.set_table_width(width.clamp(0, 31_680)),
+                    _ => self.reporter.report(b"tblW"),
+                }
+            }
+            b"tblLayout" if self.tblpr_depth > 0 => {
+                match attribute_value(element, b"type").as_deref() {
+                    Some("fixed") => self.tables.set_table_layout(TableLayout::Fixed),
+                    Some("autofit") => self.tables.set_table_layout(TableLayout::Autofit),
+                    _ => self.reporter.report(b"tblLayout"),
+                }
+            }
+            b"tblLook" if self.tblpr_depth > 0 => self.apply_table_look(element),
+            b"shd" if self.tblpr_depth > 0 => {
+                let fill = self.shading_fill(element);
+                self.tables.set_table_shading(fill);
+            }
+            // ---- row properties (`w:trPr`) -----------------------------------
+            b"trHeight" if self.trpr_depth > 0 => {
+                let value = attribute_value(element, b"val")
+                    .and_then(|value| value.parse::<u32>().ok())
+                    .map(|value| value.min(31_680));
+                let rule = match attribute_value(element, b"hRule").as_deref() {
+                    Some("atLeast") => Some(HeightRule::AtLeast),
+                    Some("exact") => Some(HeightRule::Exact),
+                    Some("auto") => Some(HeightRule::Auto),
+                    _ => None,
+                };
+                self.tables.set_row_height(value, rule);
+            }
+            b"cantSplit" if self.trpr_depth > 0 => self
+                .tables
+                .set_row_cant_split(is_true(attribute_value(element, b"val").as_deref())),
+            b"tblHeader" if self.trpr_depth > 0 => self
+                .tables
+                .set_row_header(is_true(attribute_value(element, b"val").as_deref())),
+            // ---- cell property long tail (`w:tcPr`) --------------------------
+            b"shd" if self.tcpr_depth > 0 => {
+                let fill = self.shading_fill(element);
+                self.tables.set_cell_shading(fill);
+            }
+            b"vAlign" if self.tcpr_depth > 0 => match attribute_value(element, b"val").as_deref() {
+                Some("top") => self
+                    .tables
+                    .set_cell_vertical_alignment(CellVerticalAlignment::Top),
+                Some("center") => self
+                    .tables
+                    .set_cell_vertical_alignment(CellVerticalAlignment::Center),
+                Some("bottom") => self
+                    .tables
+                    .set_cell_vertical_alignment(CellVerticalAlignment::Bottom),
+                _ => self.reporter.report(b"vAlign"),
+            },
+            b"noWrap" if self.tcpr_depth > 0 => self
+                .tables
+                .set_cell_no_wrap(is_true(attribute_value(element, b"val").as_deref())),
+            b"textDirection" if self.tcpr_depth > 0 => {
+                match attribute_value(element, b"val").as_deref() {
+                    Some("lrTb") => self.tables.set_cell_text_direction(TextDirection::LrTb),
+                    Some("tbRl") => self.tables.set_cell_text_direction(TextDirection::TbRl),
+                    Some("btLr") => self.tables.set_cell_text_direction(TextDirection::BtLr),
+                    _ => self.reporter.report(b"textDirection"),
                 }
             }
             _ if self.rpr_depth > 0 => {
@@ -1125,6 +1220,8 @@ impl BodyParser<'_> {
             // wrapper (an outer revision/hyperlink) or the paragraph.
             b"ins" | b"del" if self.top_wrapper_is_revision() => self.commit_revision(),
             b"tcPr" => self.tcpr_depth = self.tcpr_depth.saturating_sub(1),
+            b"tblPr" => self.tblpr_depth = self.tblpr_depth.saturating_sub(1),
+            b"trPr" => self.trpr_depth = self.trpr_depth.saturating_sub(1),
             // A refused subtree's own `</w:tbl>` closes suppression, never a real
             // table on the stack; its `</w:tc>`/`</w:tr>` are inert.
             b"tbl" if self.suppressed_tbl_depth > 0 => {
@@ -1189,6 +1286,68 @@ impl BodyParser<'_> {
                 None => self.reporter.report(b"pict"),
             },
             None => self.reporter.report(b"pict"),
+        }
+    }
+
+    /// Parses a `w:shd`'s background fill: an explicit sRGB `@w:fill` becomes an
+    /// `RgbColor`; `auto`/theme fills yield `None`. A real pattern (`@w:val` other
+    /// than `clear`/`nil`) or a non-`auto` pattern color (`@w:color`) is also
+    /// reported (degraded) so no visible shading is silently lost.
+    fn shading_fill(&mut self, element: &BytesStart<'_>) -> Option<RgbColor> {
+        let pattern_modeled = matches!(
+            attribute_value(element, b"val").as_deref(),
+            None | Some("clear") | Some("nil")
+        );
+        let pattern_color_default = matches!(
+            attribute_value(element, b"color").as_deref(),
+            None | Some("auto")
+        );
+        if !pattern_modeled || !pattern_color_default {
+            self.reporter.report(b"shd");
+        }
+        attribute_value(element, b"fill")
+            .filter(|value| value != "auto")
+            .and_then(|value| parse_rgb(&value))
+    }
+
+    /// Applies a `w:tblLook`: either the explicit boolean attributes
+    /// (`firstRow`/`lastRow`/…) or, failing those, the legacy hex `@w:val`
+    /// bitmask (`0x0020` first-row, `0x0040` last-row, `0x0080` first-col,
+    /// `0x0100` last-col, `0x0200` no-h-band, `0x0400` no-v-band).
+    fn apply_table_look(&mut self, element: &BytesStart<'_>) {
+        let flags: [&[u8]; 6] = [
+            b"firstRow",
+            b"lastRow",
+            b"firstColumn",
+            b"lastColumn",
+            b"noHBand",
+            b"noVBand",
+        ];
+        let mut any_explicit = false;
+        for flag in flags {
+            if let Some(value) = attribute_value(element, flag) {
+                any_explicit = true;
+                self.tables.set_table_look_flag(flag, is_true(Some(&value)));
+            }
+        }
+        if any_explicit {
+            return;
+        }
+        if let Some(mask) = attribute_value(element, b"val")
+            .and_then(|value| u32::from_str_radix(value.trim_start_matches("0x"), 16).ok())
+        {
+            self.tables
+                .set_table_look_flag(b"firstRow", mask & 0x0020 != 0);
+            self.tables
+                .set_table_look_flag(b"lastRow", mask & 0x0040 != 0);
+            self.tables
+                .set_table_look_flag(b"firstColumn", mask & 0x0080 != 0);
+            self.tables
+                .set_table_look_flag(b"lastColumn", mask & 0x0100 != 0);
+            self.tables
+                .set_table_look_flag(b"noHBand", mask & 0x0200 != 0);
+            self.tables
+                .set_table_look_flag(b"noVBand", mask & 0x0400 != 0);
         }
     }
 
@@ -1257,6 +1416,8 @@ impl BodyParser<'_> {
             wrapper_order: std::mem::take(&mut self.wrapper_order),
             tables: std::mem::take(&mut self.tables),
             tcpr_depth: std::mem::take(&mut self.tcpr_depth),
+            tblpr_depth: std::mem::take(&mut self.tblpr_depth),
+            trpr_depth: std::mem::take(&mut self.trpr_depth),
             suppressed_tbl_depth: std::mem::take(&mut self.suppressed_tbl_depth),
             segments: std::mem::take(&mut self.segments),
             blocks: std::mem::take(&mut self.blocks),
@@ -1306,6 +1467,8 @@ impl BodyParser<'_> {
         self.wrapper_order = frame.wrapper_order;
         self.tables = frame.tables;
         self.tcpr_depth = frame.tcpr_depth;
+        self.tblpr_depth = frame.tblpr_depth;
+        self.trpr_depth = frame.trpr_depth;
         self.suppressed_tbl_depth = frame.suppressed_tbl_depth;
         self.segments = frame.segments;
         self.blocks = frame.blocks;
@@ -1771,6 +1934,18 @@ fn header_footer_kind(kind: Option<&str>) -> HeaderFooterKind {
 
 fn attr_i32(element: &BytesStart<'_>, name: &[u8]) -> Option<i32> {
     attribute_value(element, name).and_then(|value| value.parse().ok())
+}
+
+/// Maps a table `w:jc@val` to an `Alignment`. Only the horizontal placements
+/// meaningful for a table are accepted; `both`/`distribute` (justify) and any
+/// unknown token yield `None` so the caller reports them.
+fn table_alignment(element: &BytesStart<'_>) -> Option<Alignment> {
+    match attribute_value(element, b"val").as_deref() {
+        Some("start" | "left") => Some(Alignment::Start),
+        Some("center") => Some(Alignment::Center),
+        Some("end" | "right") => Some(Alignment::End),
+        _ => None,
+    }
 }
 
 fn attr_i64(element: &BytesStart<'_>, name: &[u8]) -> Option<i64> {
