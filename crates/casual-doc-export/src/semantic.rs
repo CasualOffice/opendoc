@@ -18,10 +18,11 @@ use std::io::{Cursor, Write};
 
 use casual_doc_model::v1::{
     Alignment, BlockNode, BorderEdge, BreakKind, CellVerticalAlignment, Color, Definitions,
-    Document, FontRef, HeightRule, HyperlinkTarget, InlineNode, ParagraphProperties, RevisionKind,
-    RgbColor, RunFontHint, RunProperties, SdtControlKind, SdtProperties, Table, TableBorders,
-    TableCell, TableCellProperties, TableLayout, TableProperties, TableRow, TableRowProperties,
-    TextDirection, ThemeFontRef, VerticalMerge,
+    Document, EmphasisMark, FontRef, HeightRule, HighlightColor, HyperlinkTarget, InlineNode,
+    ParagraphProperties, RevisionKind, RgbColor, RunFontHint, RunProperties, SdtControlKind,
+    SdtProperties, Table, TableBorders, TableCell, TableCellProperties, TableLayout,
+    TableProperties, TableRow, TableRowProperties, TextDirection, ThemeFontRef, VerticalAlignment,
+    VerticalMerge,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -859,6 +860,11 @@ fn write_run_properties(
         (properties.bold, "w:b"),
         (properties.italic, "w:i"),
         (properties.strike, "w:strike"),
+        (properties.double_strike, "w:dstrike"),
+        (properties.all_caps, "w:caps"),
+        (properties.small_caps, "w:smallCaps"),
+        (properties.hidden, "w:vanish"),
+        (properties.web_hidden, "w:webHidden"),
     ] {
         if let Some(on) = value {
             let mut el = start(name);
@@ -890,6 +896,50 @@ fn write_run_properties(
     if let Some(size) = properties.size_half_points {
         let mut el = start("w:sz");
         el.push_attribute(("w:val", size.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(alignment) = properties.vertical_alignment {
+        let mut el = start("w:vertAlign");
+        el.push_attribute(("w:val", vertical_alignment_token(alignment)));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(highlight) = properties.highlight {
+        let mut el = start("w:highlight");
+        el.push_attribute(("w:val", highlight_token(highlight)));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(emphasis) = properties.emphasis {
+        let mut el = start("w:em");
+        el.push_attribute(("w:val", emphasis_token(emphasis)));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    // Typographic metrics, each a signed/unsigned integer `w:val`.
+    for (value, name) in [
+        (properties.character_spacing_twips, "w:spacing"),
+        (properties.position_half_points, "w:position"),
+    ] {
+        if let Some(v) = value {
+            let mut el = start(name);
+            el.push_attribute(("w:val", v.to_string().as_str()));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+    }
+    if let Some(kern) = properties.kerning_half_points {
+        let mut el = start("w:kern");
+        el.push_attribute(("w:val", kern.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(language) = &properties.language {
+        let mut el = start("w:lang");
+        if let Some(v) = &language.value {
+            el.push_attribute(("w:val", v.as_str()));
+        }
+        if let Some(v) = &language.east_asia {
+            el.push_attribute(("w:eastAsia", v.as_str()));
+        }
+        if let Some(v) = &language.bidi {
+            el.push_attribute(("w:bidi", v.as_str()));
+        }
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
     w.write_event(Event::End(BytesEnd::new("w:rPr")))
@@ -927,6 +977,46 @@ fn font_hint_token(hint: RunFontHint) -> &'static str {
         RunFontHint::Default => "default",
         RunFontHint::EastAsia => "eastAsia",
         RunFontHint::Cs => "cs",
+    }
+}
+
+fn vertical_alignment_token(alignment: VerticalAlignment) -> &'static str {
+    match alignment {
+        VerticalAlignment::Baseline => "baseline",
+        VerticalAlignment::Superscript => "superscript",
+        VerticalAlignment::Subscript => "subscript",
+    }
+}
+
+fn highlight_token(highlight: HighlightColor) -> &'static str {
+    match highlight {
+        HighlightColor::None => "none",
+        HighlightColor::Black => "black",
+        HighlightColor::Blue => "blue",
+        HighlightColor::Cyan => "cyan",
+        HighlightColor::DarkBlue => "darkBlue",
+        HighlightColor::DarkCyan => "darkCyan",
+        HighlightColor::DarkGray => "darkGray",
+        HighlightColor::DarkGreen => "darkGreen",
+        HighlightColor::DarkMagenta => "darkMagenta",
+        HighlightColor::DarkRed => "darkRed",
+        HighlightColor::DarkYellow => "darkYellow",
+        HighlightColor::Green => "green",
+        HighlightColor::LightGray => "lightGray",
+        HighlightColor::Magenta => "magenta",
+        HighlightColor::Red => "red",
+        HighlightColor::White => "white",
+        HighlightColor::Yellow => "yellow",
+    }
+}
+
+fn emphasis_token(emphasis: EmphasisMark) -> &'static str {
+    match emphasis {
+        EmphasisMark::None => "none",
+        EmphasisMark::Dot => "dot",
+        EmphasisMark::Comma => "comma",
+        EmphasisMark::Circle => "circle",
+        EmphasisMark::UnderDot => "underDot",
     }
 }
 

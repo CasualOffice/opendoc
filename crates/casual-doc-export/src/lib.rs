@@ -348,6 +348,38 @@ mod semantic_tests {
     }
 
     #[test]
+    fn all_run_properties_survive_the_semantic_round_trip() {
+        // Every modeled run property (toggles on AND off, the value-carrying
+        // vocabularies, the typographic metrics, and w:lang's three tags) must
+        // round-trip; write_run_properties previously emitted only a handful.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:r><w:rPr>
+                <w:b/><w:i w:val="0"/><w:strike/><w:dstrike/>
+                <w:caps/><w:smallCaps w:val="0"/><w:vanish/><w:webHidden/>
+                <w:u/><w:color w:val="AABBCC"/><w:sz w:val="24"/>
+                <w:vertAlign w:val="superscript"/><w:highlight w:val="cyan"/><w:em w:val="dot"/>
+                <w:spacing w:val="20"/><w:position w:val="-6"/><w:kern w:val="18"/>
+                <w:lang w:val="en-US" w:eastAsia="ja-JP" w:bidi="ar-SA"/>
+            </w:rPr><w:t>x</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+        let m2 = import_package(
+            &mut package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+        assert_eq!(m1, m2, "every run property survives write -> reopen");
+    }
+
+    #[test]
     fn external_hyperlink_url_with_ampersand_survives_the_round_trip() {
         // A query-string URL carries `&` (escaped `&amp;` in the rels Target).
         // The package parser must unescape it so the regenerated relationship
