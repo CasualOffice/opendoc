@@ -594,6 +594,12 @@ impl Document {
         if let Some(width) = table.properties.width_twips {
             check_domain((0..=31_680).contains(&width), "table.width")?;
         }
+        // `both` (justify) is not a valid `ST_JcTable` value, and the table
+        // importer never yields it (it maps `both` -> None). Reject it so an
+        // authored model cannot make the writer emit an invalid `w:jc`.
+        if let Some(alignment) = table.properties.alignment {
+            check_domain(alignment != Alignment::Justify, "table.alignment")?;
+        }
         check_borders(&table.properties.borders, "table.borders")?;
         check_margins(&table.properties.cell_margins, "table.cell_margins")?;
         for column in &table.grid {
