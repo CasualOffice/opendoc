@@ -4,11 +4,13 @@
 //! runs, the mapped run/paragraph properties, tabs/breaks), tables (grid +
 //! table/row/cell properties, merges, nested tables), and the self-contained
 //! inline constructs (hyperlinks with `document.xml.rels` generation, fields,
-//! bookmarks, tracked-change revisions, inline content controls). The
-//! media-backed constructs (drawings, text boxes) and the definition parts
-//! (styles/numbering/notes/headers/comments, and note/comment references) land
-//! in later slices; a model that uses them is written with what is supported and
-//! the rest is skipped (never a malformed part).
+//! bookmarks, tracked-change revisions, inline content controls), and the
+//! font/style definition parts (`fontTable.xml`, `theme1.xml` font scheme,
+//! `styles.xml` with `w:pStyle`/`w:rStyle` references). The media-backed
+//! constructs (drawings, text boxes) and the remaining definition parts
+//! (numbering, notes, headers/footers, comments, and note/comment references)
+//! land in later slices; a model that uses them is written with what is
+//! supported and the rest is skipped (never a malformed part).
 //!
 //! Output is byte-deterministic for a given model: parts in fixed order, a fixed
 //! ZIP timestamp, ids/relationships re-minted in document order.
@@ -17,12 +19,13 @@ use std::collections::BTreeMap;
 use std::io::{Cursor, Write};
 
 use casual_doc_model::v1::{
-    Alignment, BlockNode, BorderEdge, BreakKind, CellVerticalAlignment, Color, Definitions,
-    Document, EmphasisMark, FontCollection, FontDescriptor, FontFamilyKind, FontPitch, FontRef,
-    FontScheme, HeightRule, HighlightColor, HyperlinkTarget, InlineNode, ParagraphProperties,
-    RevisionKind, RgbColor, RunFontHint, RunProperties, SdtControlKind, SdtProperties, Table,
-    TableBorders, TableCell, TableCellProperties, TableLayout, TableProperties, TableRow,
-    TableRowProperties, TextDirection, ThemeFontRef, VerticalAlignment, VerticalMerge,
+    Alignment, BlockNode, BorderEdge, BreakKind, CellVerticalAlignment, Color, DefinitionMap,
+    Definitions, Document, EmphasisMark, FontCollection, FontDescriptor, FontFamilyKind, FontPitch,
+    FontRef, FontScheme, HeightRule, HighlightColor, HyperlinkTarget, InlineNode,
+    ParagraphProperties, RevisionKind, RgbColor, RunFontHint, RunProperties, SdtControlKind,
+    SdtProperties, Style, StyleId, StyleKind, Table, TableBorders, TableCell, TableCellProperties,
+    TableLayout, TableProperties, TableRow, TableRowProperties, TextDirection, ThemeFontRef,
+    VerticalAlignment, VerticalMerge,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -48,7 +51,40 @@ const FONT_TABLE_CT: &str =
 const THEME_REL_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme";
 const THEME_CT: &str = "application/vnd.openxmlformats-officedocument.theme+xml";
+const STYLES_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles";
+const STYLES_CT: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml";
 const A_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
+
+/// A package part beyond `document.xml` (fontTable, theme, styles, …): its part
+/// name, content type, and the relationship (type + `word/`-relative target)
+/// that references it from `document.xml.rels`. `rId`s are assigned after the
+/// hyperlink relationships.
+struct ExtraPart {
+    part_name: &'static str,
+    content_type: &'static str,
+    rel_type: &'static str,
+    target: &'static str,
+    bytes: Vec<u8>,
+}
+
+impl ExtraPart {
+    fn new(
+        part_name: &'static str,
+        content_type: &'static str,
+        rel_type: &'static str,
+        target: &'static str,
+        bytes: Vec<u8>,
+    ) -> Self {
+        Self {
+            part_name,
+            content_type,
+            rel_type,
+            target,
+            bytes,
+        }
+    }
+}
 
 /// A `document.xml.rels` entry: (relationship id, external target URL).
 type RelEntry = (String, String);
@@ -104,33 +140,53 @@ pub fn write_document(
     _media: &BTreeMap<String, Vec<u8>>,
 ) -> Result<Vec<u8>, ExportError> {
     let (document_xml, rels) = document_xml(document)?;
-    let font_table = &document.definitions().font_table;
-    let font_scheme = document.definitions().font_scheme.as_ref();
-    let has_font_table = !font_table.is_empty();
-    let has_theme = font_scheme.is_some();
+    let definitions = document.definitions();
+
+    // Extra parts beyond document.xml, each carrying its content-type override
+    // and a document relationship; they appear only when the model has the
+    // content (byte-identical to the earlier slices otherwise).
+    let mut extras: Vec<ExtraPart> = Vec::new();
+    if !definitions.font_table.is_empty() {
+        extras.push(ExtraPart::new(
+            "word/fontTable.xml",
+            FONT_TABLE_CT,
+            FONT_TABLE_REL_TYPE,
+            "fontTable.xml",
+            font_table_xml(&definitions.font_table)?,
+        ));
+    }
+    if let Some(scheme) = &definitions.font_scheme {
+        extras.push(ExtraPart::new(
+            "word/theme/theme1.xml",
+            THEME_CT,
+            THEME_REL_TYPE,
+            "theme/theme1.xml",
+            theme_xml(scheme)?,
+        ));
+    }
+    if !definitions.styles.is_empty() {
+        extras.push(ExtraPart::new(
+            "word/styles.xml",
+            STYLES_CT,
+            STYLES_REL_TYPE,
+            "styles.xml",
+            styles_xml(&definitions.styles)?,
+        ));
+    }
 
     // Parts are emitted in a deterministic order so the package bytes are
-    // reproducible. The document relationships part carries any external
-    // hyperlink targets collected while writing the body plus the font-table and
-    // theme relationships; those parts and their content-type overrides appear
-    // only when the model carries them (byte-identical otherwise).
+    // reproducible.
     let mut parts: Vec<(&str, Vec<u8>)> = vec![
-        (
-            "[Content_Types].xml",
-            content_types_xml(has_font_table, has_theme)?,
-        ),
+        ("[Content_Types].xml", content_types_xml(&extras)?),
         ("_rels/.rels", root_rels_xml()?),
         ("word/document.xml", document_xml),
         (
             "word/_rels/document.xml.rels",
-            document_rels_xml(&rels, has_font_table, has_theme)?,
+            document_rels_xml(&rels, &extras)?,
         ),
     ];
-    if has_font_table {
-        parts.push(("word/fontTable.xml", font_table_xml(font_table)?));
-    }
-    if let Some(scheme) = font_scheme {
-        parts.push(("word/theme/theme1.xml", theme_xml(scheme)?));
+    for extra in extras {
+        parts.push((extra.part_name, extra.bytes));
     }
 
     let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
@@ -163,7 +219,7 @@ fn start<'a>(name: &'a str) -> BytesStart<'a> {
 
 /// Emits `[Content_Types].xml` with the standard defaults plus the main-document
 /// override.
-fn content_types_xml(has_font_table: bool, has_theme: bool) -> Result<Vec<u8>, ExportError> {
+fn content_types_xml(extras: &[ExtraPart]) -> Result<Vec<u8>, ExportError> {
     let mut w = new_writer();
     let mut types = start("Types");
     types.push_attribute(("xmlns", CT_NS));
@@ -180,17 +236,15 @@ fn content_types_xml(has_font_table: bool, has_theme: bool) -> Result<Vec<u8>, E
         d.push_attribute(("ContentType", ct));
         w.write_event(Event::Empty(d)).map_err(pkg)?;
     }
-    let mut overrides = vec![("/word/document.xml", DOC_CT)];
-    if has_font_table {
-        overrides.push(("/word/fontTable.xml", FONT_TABLE_CT));
-    }
-    if has_theme {
-        overrides.push(("/word/theme/theme1.xml", THEME_CT));
-    }
-    for (part_name, ct) in overrides {
+    let mut over = start("Override");
+    over.push_attribute(("PartName", "/word/document.xml"));
+    over.push_attribute(("ContentType", DOC_CT));
+    w.write_event(Event::Empty(over)).map_err(pkg)?;
+    for extra in extras {
+        let part_name = format!("/{}", extra.part_name);
         let mut over = start("Override");
-        over.push_attribute(("PartName", part_name));
-        over.push_attribute(("ContentType", ct));
+        over.push_attribute(("PartName", part_name.as_str()));
+        over.push_attribute(("ContentType", extra.content_type));
         w.write_event(Event::Empty(over)).map_err(pkg)?;
     }
     w.write_event(Event::End(BytesEnd::new("Types")))
@@ -217,15 +271,11 @@ fn root_rels_xml() -> Result<Vec<u8>, ExportError> {
 /// Emits `word/_rels/document.xml.rels`. With no entries it is the empty
 /// `<Relationships/>` element (byte-identical to the earlier no-relationship
 /// slices); with entries it carries one external hyperlink relationship each.
-fn document_rels_xml(
-    entries: &[RelEntry],
-    has_font_table: bool,
-    has_theme: bool,
-) -> Result<Vec<u8>, ExportError> {
+fn document_rels_xml(entries: &[RelEntry], extras: &[ExtraPart]) -> Result<Vec<u8>, ExportError> {
     let mut w = new_writer();
     let mut rels = start("Relationships");
     rels.push_attribute(("xmlns", REL_NS));
-    if entries.is_empty() && !has_font_table && !has_theme {
+    if entries.is_empty() && extras.is_empty() {
         w.write_event(Event::Empty(rels)).map_err(pkg)?;
         return Ok(finish(w));
     }
@@ -240,20 +290,13 @@ fn document_rels_xml(
     }
     // Fresh internal relationships after the hyperlink ids; the importer resolves
     // these parts by relationship type, not by id.
-    let mut next = entries.len();
-    for (present, rel_type, target) in [
-        (has_font_table, FONT_TABLE_REL_TYPE, "fontTable.xml"),
-        (has_theme, THEME_REL_TYPE, "theme/theme1.xml"),
-    ] {
-        if present {
-            next += 1;
-            let id = format!("rId{next}");
-            let mut rel = start("Relationship");
-            rel.push_attribute(("Id", id.as_str()));
-            rel.push_attribute(("Type", rel_type));
-            rel.push_attribute(("Target", target));
-            w.write_event(Event::Empty(rel)).map_err(pkg)?;
-        }
+    for (offset, extra) in extras.iter().enumerate() {
+        let id = format!("rId{}", entries.len() + offset + 1);
+        let mut rel = start("Relationship");
+        rel.push_attribute(("Id", id.as_str()));
+        rel.push_attribute(("Type", extra.rel_type));
+        rel.push_attribute(("Target", extra.target));
+        w.write_event(Event::Empty(rel)).map_err(pkg)?;
     }
     w.write_event(Event::End(BytesEnd::new("Relationships")))
         .map_err(pkg)?;
@@ -394,6 +437,56 @@ fn write_font_collection(
     }
     w.write_event(Event::End(BytesEnd::new(tag))).map_err(pkg)?;
     Ok(())
+}
+
+/// Emits `word/styles.xml` from the style definitions. The `w:styleId` string is
+/// derived from the internal `StyleId` (as bookmarks derive `w:id`), so a body
+/// `w:pStyle`/`w:rStyle` and a `w:basedOn` that reference the same id emit the
+/// same string and re-import to the same `StyleId`.
+fn styles_xml(styles: &DefinitionMap<StyleId, Style>) -> Result<Vec<u8>, ExportError> {
+    let mut w = new_writer();
+    let mut root = start("w:styles");
+    root.push_attribute(("xmlns:w", W_NS));
+    w.write_event(Event::Start(root)).map_err(pkg)?;
+    for (id, style) in styles.iter() {
+        let style_id = style_id_token(*id);
+        let mut el = start("w:style");
+        el.push_attribute((
+            "w:type",
+            match style.kind {
+                StyleKind::Paragraph => "paragraph",
+                StyleKind::Character => "character",
+            },
+        ));
+        el.push_attribute(("w:styleId", style_id.as_str()));
+        w.write_event(Event::Start(el)).map_err(pkg)?;
+        // The importer ignores `w:name`, but Word requires one; emit the id.
+        let mut name = start("w:name");
+        name.push_attribute(("w:val", style_id.as_str()));
+        w.write_event(Event::Empty(name)).map_err(pkg)?;
+        if let Some(based_on) = style.based_on {
+            let mut el = start("w:basedOn");
+            el.push_attribute(("w:val", style_id_token(based_on).as_str()));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+        if let Some(paragraph) = &style.paragraph {
+            write_paragraph_properties(&mut w, paragraph)?;
+        }
+        if let Some(run) = &style.run {
+            write_run_properties(&mut w, run)?;
+        }
+        w.write_event(Event::End(BytesEnd::new("w:style")))
+            .map_err(pkg)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("w:styles")))
+        .map_err(pkg)?;
+    Ok(finish(w))
+}
+
+/// The `w:styleId`/`w:val` string for a style, derived from its internal id so
+/// references reproduce it deterministically.
+fn style_id_token(id: StyleId) -> String {
+    id.node_id().as_u128().to_string()
 }
 
 /// Emits `word/document.xml` from the model body, returning the bytes plus the
@@ -776,6 +869,11 @@ fn write_paragraph_properties(
         return Ok(());
     }
     w.write_event(Event::Start(start("w:pPr"))).map_err(pkg)?;
+    if let Some(style_ref) = properties.style_ref {
+        let mut el = start("w:pStyle");
+        el.push_attribute(("w:val", style_id_token(style_ref).as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
     if let Some(alignment) = properties.alignment {
         let mut jc = start("w:jc");
         jc.push_attribute(("w:val", alignment_token(alignment)));
@@ -1019,6 +1117,11 @@ fn write_run_properties(
         return Ok(());
     }
     w.write_event(Event::Start(start("w:rPr"))).map_err(pkg)?;
+    if let Some(style_ref) = properties.style_ref {
+        let mut el = start("w:rStyle");
+        el.push_attribute(("w:val", style_id_token(style_ref).as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
     // Fonts (`w:rFonts`): the four slots (each a named family or a `*Theme`
     // reference) and the `@hint`. `w:cs` uses `w:csTheme` to match the importer.
     if properties.font_ref.is_some()

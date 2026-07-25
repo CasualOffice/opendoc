@@ -36,6 +36,14 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Added
 
+- Semantic DOCX writer now emits `word/styles.xml` (definition-part writer, first
+  slice): style definitions (kind, `basedOn`, paragraph + run property overrides)
+  are serialized back, with the `w:styleId` string derived from the internal
+  `StyleId` so a body `w:pStyle`/`w:rStyle` (run/paragraph `style_ref`, previously
+  dropped) and a style's `w:basedOn` reference the same string and re-import to
+  the same style. Emitted with its content-type override and `/styles`
+  relationship. Proven by a fixed-point round-trip. The writer's extra-part
+  handling was generalized so parts scale uniformly.
 - Font management, Phase 1A.2b (theme `fontScheme`): the theme font scheme
   (`theme1.xml` `a:fontScheme`) is now modeled as `Definitions::font_scheme` — a
   `FontScheme` of major/minor `FontCollection`s, each with latin/ea/cs
