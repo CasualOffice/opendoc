@@ -939,7 +939,8 @@ fn styles_xml(styles: &DefinitionMap<StyleId, Style>) -> Result<Vec<u8>, ExportE
             if *paragraph == ParagraphProperties::default() {
                 w.write_event(Event::Empty(start("w:pPr"))).map_err(pkg)?;
             } else {
-                write_paragraph_properties(&mut w, paragraph)?;
+                // A style never carries a section break (that is a body concept).
+                write_paragraph_properties(&mut w, paragraph, None)?;
             }
         }
         if let Some(run) = &style.run {
@@ -1081,8 +1082,9 @@ fn document_xml(
     Ok((finish(w), ctx.rels.entries))
 }
 
-/// Emits a body-level `w:sectPr` with page geometry. Header/footer references
-/// are a later slice.
+/// Emits a `w:sectPr` (header/footer references, page geometry, columns). Used
+/// both for the body-level trailing section and, nested in a paragraph's
+/// `w:pPr`, for a per-paragraph section break.
 fn write_section_properties(
     w: &mut Writer<Cursor<Vec<u8>>>,
     section: &SectionBoundary,
@@ -1467,7 +1469,12 @@ fn write_paragraph(
     ctx: &mut Ctx,
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("w:p"))).map_err(pkg)?;
-    write_paragraph_properties(w, properties)?;
+    // A per-paragraph section break resolves to its boundary in the shared
+    // section table; it is emitted as the last `w:pPr` child.
+    let section = properties
+        .section_break
+        .and_then(|id| ctx.defs.sections.iter().find(|boundary| boundary.id == id));
+    write_paragraph_properties(w, properties, section)?;
     for inline in inlines {
         write_inline(w, inline, ctx, false)?;
     }
@@ -1479,6 +1486,7 @@ fn write_paragraph(
 fn write_paragraph_properties(
     w: &mut Writer<Cursor<Vec<u8>>>,
     properties: &ParagraphProperties,
+    section: Option<&SectionBoundary>,
 ) -> Result<(), ExportError> {
     if *properties == ParagraphProperties::default() {
         return Ok(());
@@ -1593,6 +1601,11 @@ fn write_paragraph_properties(
         }
         w.write_event(Event::End(BytesEnd::new("w:tabs")))
             .map_err(pkg)?;
+    }
+    // The section break is the last `w:pPr` child (CT_PPr places `w:sectPr`
+    // after every property element), marking this paragraph as a section's end.
+    if let Some(section) = section {
+        write_section_properties(w, section)?;
     }
     w.write_event(Event::End(BytesEnd::new("w:pPr")))
         .map_err(pkg)?;

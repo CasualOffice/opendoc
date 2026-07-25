@@ -967,6 +967,50 @@ mod semantic_tests {
     }
 
     #[test]
+    fn multi_section_survives_the_semantic_round_trip() {
+        // Two sections: the first ends at paragraph one via a nested
+        // w:pPr > w:sectPr (distinct geometry + columns); the second is the
+        // trailing body-level section (landscape). The writer must emit the
+        // first section inside the paragraph's pPr and the second at body end,
+        // and both section ids must reproduce in document order.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p>
+                <w:pPr>
+                    <w:sectPr>
+                        <w:pgSz w:w="12240" w:h="15840"/>
+                        <w:pgMar w:top="1440" w:bottom="1440" w:start="1800" w:end="1800"/>
+                        <w:cols w:num="2"/>
+                    </w:sectPr>
+                </w:pPr>
+                <w:r><w:t>section one</w:t></w:r>
+            </w:p>
+            <w:p><w:r><w:t>section two</w:t></w:r></w:p>
+            <w:sectPr>
+                <w:pgSz w:w="15840" w:h="12240"/>
+                <w:pgMar w:top="720" w:bottom="720" w:start="720" w:end="720"/>
+                <w:cols w:num="1"/>
+            </w:sectPr>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        assert_eq!(m1.definitions().sections.len(), 2, "two sections modeled");
+        // The first paragraph carries the break to the first section.
+        let first = m1.definitions().sections[0].id;
+        let casual_doc_model::v1::BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        assert_eq!(
+            paragraph.properties.section_break,
+            Some(first),
+            "paragraph one ends section one"
+        );
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(m1, m2, "multi-section survives write -> reopen");
+    }
+
+    #[test]
     fn headers_footers_survive_the_semantic_round_trip() {
         // A header and a footer referenced from the body sectPr. The writer
         // regenerates the parts, their document relationships, and the sectPr
