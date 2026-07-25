@@ -270,9 +270,9 @@ fn run_fonts_named_and_theme_slots_are_mapped() {
     assert_eq!(
         p.font_ref_east_asia,
         Some(FontRef::Theme(ThemeFont {
-            slot: ThemeFontRef::Minor
+            slot: ThemeFontRef::MinorEastAsia
         })),
-        "eastAsiaTheme=minorEastAsia -> Minor slot"
+        "eastAsiaTheme=minorEastAsia -> MinorEastAsia slot"
     );
 }
 
@@ -306,14 +306,30 @@ fn rfonts_bogus_theme_falls_through_to_the_named_family() {
 }
 
 #[test]
-fn rfonts_with_only_a_hint_is_reported_not_silently_swallowed() {
-    // An rFonts carrying only unmodeled detail (no slot resolves) is reported.
+fn rfonts_with_only_a_recognized_hint_is_modeled() {
+    // A recognized `@hint` is now a first-class value: the rFonts is consumed
+    // (not reported) even when no font slot resolves.
+    use casual_doc_model::v1::RunFontHint;
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
         <w:p><w:r><w:rPr><w:rFonts w:hint="eastAsia"/></w:rPr><w:t>x</w:t></w:r></w:p>
     </w:body></w:document>"#;
     let import = import(xml);
     let p = first_run_props(&import);
     assert!(p.font_ref.is_none());
+    assert_eq!(p.font_hint, Some(RunFontHint::EastAsia));
+    assert!(!features(&import).contains(&"rFonts"));
+}
+
+#[test]
+fn rfonts_with_only_an_unknown_hint_is_reported() {
+    // An rFonts carrying only unmodeled detail (an unrecognized hint, no slot)
+    // resolves nothing and is reported — no silent loss.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:rPr><w:rFonts w:hint="bogus"/></w:rPr><w:t>x</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let p = first_run_props(&import);
+    assert!(p.font_hint.is_none());
     assert!(features(&import).contains(&"rFonts"));
 }
 

@@ -320,6 +320,34 @@ mod semantic_tests {
     }
 
     #[test]
+    fn run_fonts_survive_the_semantic_round_trip() {
+        // A run whose `w:rFonts` mixes named and theme slots across all four axes
+        // plus a `@hint` — the writer must emit `w:rFonts` (it emitted none
+        // before) so the model round-trips.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:r><w:rPr>
+                <w:rFonts w:ascii="Calibri" w:hAnsiTheme="minorHAnsi"
+                    w:eastAsia="MS Mincho" w:csTheme="majorBidi" w:hint="eastAsia"/>
+            </w:rPr><w:t>x</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+        let m2 = import_package(
+            &mut package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+        assert_eq!(m1, m2, "the run-fonts model survives write -> reopen");
+    }
+
+    #[test]
     fn external_hyperlink_url_with_ampersand_survives_the_round_trip() {
         // A query-string URL carries `&` (escaped `&amp;` in the rels Target).
         // The package parser must unescape it so the regenerated relationship

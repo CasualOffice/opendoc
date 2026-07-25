@@ -18,10 +18,10 @@ use std::io::{Cursor, Write};
 
 use casual_doc_model::v1::{
     Alignment, BlockNode, BorderEdge, BreakKind, CellVerticalAlignment, Color, Definitions,
-    Document, HeightRule, HyperlinkTarget, InlineNode, ParagraphProperties, RevisionKind, RgbColor,
-    RunProperties, SdtControlKind, SdtProperties, Table, TableBorders, TableCell,
-    TableCellProperties, TableLayout, TableProperties, TableRow, TableRowProperties, TextDirection,
-    VerticalMerge,
+    Document, FontRef, HeightRule, HyperlinkTarget, InlineNode, ParagraphProperties, RevisionKind,
+    RgbColor, RunFontHint, RunProperties, SdtControlKind, SdtProperties, Table, TableBorders,
+    TableCell, TableCellProperties, TableLayout, TableProperties, TableRow, TableRowProperties,
+    TextDirection, ThemeFontRef, VerticalMerge,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -827,6 +827,29 @@ fn write_run_properties(
         return Ok(());
     }
     w.write_event(Event::Start(start("w:rPr"))).map_err(pkg)?;
+    // Fonts (`w:rFonts`): the four slots (each a named family or a `*Theme`
+    // reference) and the `@hint`. `w:cs` uses `w:csTheme` to match the importer.
+    if properties.font_ref.is_some()
+        || properties.font_ref_h_ansi.is_some()
+        || properties.font_ref_cs.is_some()
+        || properties.font_ref_east_asia.is_some()
+        || properties.font_hint.is_some()
+    {
+        let mut el = start("w:rFonts");
+        push_font_slot(&mut el, "w:ascii", "w:asciiTheme", &properties.font_ref);
+        push_font_slot(&mut el, "w:hAnsi", "w:hAnsiTheme", &properties.font_ref_h_ansi);
+        push_font_slot(
+            &mut el,
+            "w:eastAsia",
+            "w:eastAsiaTheme",
+            &properties.font_ref_east_asia,
+        );
+        push_font_slot(&mut el, "w:cs", "w:csTheme", &properties.font_ref_cs);
+        if let Some(hint) = properties.font_hint {
+            el.push_attribute(("w:hint", font_hint_token(hint)));
+        }
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
     for (value, name) in [
         (properties.bold, "w:b"),
         (properties.italic, "w:i"),
@@ -867,6 +890,39 @@ fn write_run_properties(
     w.write_event(Event::End(BytesEnd::new("w:rPr")))
         .map_err(pkg)?;
     Ok(())
+}
+
+/// Pushes one `w:rFonts` slot: a named family onto `named`, or a theme reference
+/// onto `theme`; nothing when the slot is unset.
+fn push_font_slot(el: &mut BytesStart<'_>, named: &str, theme: &str, slot: &Option<FontRef>) {
+    match slot {
+        Some(FontRef::Named(font)) => el.push_attribute((named, font.name.as_str())),
+        Some(FontRef::Theme(reference)) => {
+            el.push_attribute((theme, theme_font_token(reference.slot)))
+        }
+        None => {}
+    }
+}
+
+fn theme_font_token(slot: ThemeFontRef) -> &'static str {
+    match slot {
+        ThemeFontRef::MajorAscii => "majorAscii",
+        ThemeFontRef::MajorHAnsi => "majorHAnsi",
+        ThemeFontRef::MajorEastAsia => "majorEastAsia",
+        ThemeFontRef::MajorBidi => "majorBidi",
+        ThemeFontRef::MinorAscii => "minorAscii",
+        ThemeFontRef::MinorHAnsi => "minorHAnsi",
+        ThemeFontRef::MinorEastAsia => "minorEastAsia",
+        ThemeFontRef::MinorBidi => "minorBidi",
+    }
+}
+
+fn font_hint_token(hint: RunFontHint) -> &'static str {
+    match hint {
+        RunFontHint::Default => "default",
+        RunFontHint::EastAsia => "eastAsia",
+        RunFontHint::Cs => "cs",
+    }
 }
 
 fn alignment_token(alignment: Alignment) -> &'static str {

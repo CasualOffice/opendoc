@@ -29,6 +29,13 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Added
 
+- Font management, Phase 1A.1 (run-level `w:rFonts` fidelity): the theme-font
+  slot vocabulary is now the full 8-value set (`majorAscii`/`majorHAnsi`/
+  `majorEastAsia`/`majorBidi` and the `minor*` counterparts) instead of a
+  `major`/`minor` collapse, the `w:rFonts@hint` disambiguator is modeled as a
+  first-class value (a recognized hint-only `rFonts` is no longer reported), and
+  the semantic writer now emits `w:rFonts` (the four slots + hint) — proven by a
+  fixed-point round-trip. Additive: existing v1 snapshots are byte-identical.
 - Semantic DOCX writer now emits the self-contained inline constructs:
   hyperlinks (external via generated `document.xml.rels` relationships, internal
   via `w:anchor`, with tooltips), simple fields (`w:fldSimple`), bookmark ranges,
