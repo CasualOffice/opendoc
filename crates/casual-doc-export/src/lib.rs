@@ -800,6 +800,35 @@ mod semantic_tests {
     }
 
     #[test]
+    fn block_content_control_survives_the_semantic_round_trip() {
+        // A block-level content control (w:sdt wrapping block content) with typed
+        // properties — the writer previously emitted only the inner blocks,
+        // dropping the wrapper + properties (found by the completeness audit).
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:sdt>
+                <w:sdtPr><w:alias w:val="Section"/><w:tag w:val="sec"/><w:id w:val="42"/><w:richText/></w:sdtPr>
+                <w:sdtContent>
+                    <w:p><w:r><w:t>inside the control</w:t></w:r></w:p>
+                    <w:p><w:r><w:t>second block</w:t></w:r></w:p>
+                </w:sdtContent>
+            </w:sdt>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        assert!(matches!(
+            m1.body().first(),
+            Some(casual_doc_model::v1::BlockNode::Sdt(_))
+        ));
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(
+            m1, m2,
+            "a block content control + properties survive write -> reopen"
+        );
+    }
+
+    #[test]
     fn all_run_properties_survive_the_semantic_round_trip() {
         // Every modeled run property (toggles on AND off, the value-carrying
         // vocabularies, the typographic metrics, and w:lang's three tags) must

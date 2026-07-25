@@ -934,8 +934,8 @@ fn write_section_properties(
     Ok(())
 }
 
-/// Emits a body/cell block. Content-control block wrappers (`BlockNode::Sdt`)
-/// are a later slice — their inner blocks are emitted directly (no text loss).
+/// Emits a body/cell block: a paragraph, a table, or a block-level content
+/// control (`w:sdt` wrapping block content).
 fn write_block(
     w: &mut Writer<Cursor<Vec<u8>>>,
     block: &BlockNode,
@@ -947,9 +947,17 @@ fn write_block(
         }
         BlockNode::Table(table) => write_table(w, table, ctx),
         BlockNode::Sdt(sdt) => {
+            w.write_event(Event::Start(start("w:sdt"))).map_err(pkg)?;
+            write_sdt_properties(w, &sdt.properties)?;
+            w.write_event(Event::Start(start("w:sdtContent")))
+                .map_err(pkg)?;
             for inner in &sdt.blocks {
                 write_block(w, inner, ctx)?;
             }
+            w.write_event(Event::End(BytesEnd::new("w:sdtContent")))
+                .map_err(pkg)?;
+            w.write_event(Event::End(BytesEnd::new("w:sdt")))
+                .map_err(pkg)?;
             Ok(())
         }
     }
