@@ -3,9 +3,9 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    AbstractNumberingId, BlockNode, BookmarkId, CommentId, DefinitionMap, FontName, HeaderFooterId,
-    MediaId, NoteId, NumberingInstanceId, ParagraphProperties, RunProperties, SectionId, StyleId,
-    StyleKind,
+    AbstractNumberingId, BlockNode, BookmarkId, CommentId, DefinitionMap, FontDescriptor, FontName,
+    HeaderFooterId, MediaId, NoteId, NumberingInstanceId, ParagraphProperties, RunProperties,
+    SectionId, StyleId, StyleKind,
 };
 
 /// A style definition (its id is the map key).
@@ -271,4 +271,9 @@ pub struct Definitions {
     /// Document-wide defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub document_defaults: Option<DocumentDefaults>,
+    /// Font-table descriptors (`word/fontTable.xml`), in document order.
+    /// Additive: omitted when empty so existing snapshots serialize
+    /// byte-identically.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub font_table: Vec<FontDescriptor>,
 }

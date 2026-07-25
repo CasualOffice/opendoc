@@ -20,6 +20,7 @@ fn import_with_styles(document: &[u8], styles: &[u8]) -> Import {
         None,
         None,
         None,
+        None,
         &[],
         &[],
         None,
@@ -35,6 +36,7 @@ fn import_with_numbering(document: &[u8], numbering: &[u8]) -> Import {
         document,
         None,
         Some(numbering),
+        None,
         None,
         None,
         &[],
@@ -61,6 +63,7 @@ fn import_with_notes(document: &[u8], footnotes: Option<&[u8]>, endnotes: Option
         document,
         None,
         None,
+        None,
         footnotes.as_ref(),
         endnotes.as_ref(),
         &[],
@@ -77,6 +80,7 @@ fn import_with_comments(document: &[u8], comments: &[u8]) -> Import {
     let comments = part_sources(comments);
     import_with_sources(
         document,
+        None,
         None,
         None,
         None,
@@ -331,6 +335,30 @@ fn rfonts_with_only_an_unknown_hint_is_reported() {
     let p = first_run_props(&import);
     assert!(p.font_hint.is_none());
     assert!(features(&import).contains(&"rFonts"));
+}
+
+#[test]
+fn font_table_descriptors_are_parsed() {
+    use casual_doc_model::v1::{FontFamilyKind, FontPitch};
+    let xml = br#"<w:fonts xmlns:w="urn:w">
+        <w:font w:name="Calibri"><w:altName w:val="Carlito"/><w:panose1 w:val="020F0502"/>
+            <w:charset w:val="00"/><w:family w:val="swiss"/><w:pitch w:val="variable"/>
+            <w:sig w:usb0="E4002EFF" w:csb0="0000019F"/><w:notTrueType/></w:font>
+        <w:font w:name="Symbol"/>
+    </w:fonts>"#;
+    let fonts = crate::font_table::parse(xml, ImportConfig::default()).unwrap();
+    assert_eq!(fonts.len(), 2);
+    assert_eq!(fonts[0].name, "Calibri");
+    assert_eq!(fonts[0].alt_name.as_deref(), Some("Carlito"));
+    assert_eq!(fonts[0].panose1.as_deref(), Some("020F0502"));
+    assert_eq!(fonts[0].charset.as_deref(), Some("00"));
+    assert_eq!(fonts[0].family, Some(FontFamilyKind::Swiss));
+    assert_eq!(fonts[0].pitch, Some(FontPitch::Variable));
+    assert_eq!(fonts[0].sig.usb0.as_deref(), Some("E4002EFF"));
+    assert_eq!(fonts[0].sig.csb0.as_deref(), Some("0000019F"));
+    assert!(fonts[0].not_true_type);
+    assert_eq!(fonts[1].name, "Symbol");
+    assert!(fonts[1].alt_name.is_none() && !fonts[1].not_true_type);
 }
 
 #[test]
@@ -2469,6 +2497,7 @@ fn revision_wrapping_a_hyperlink_is_modeled() {
         None,
         None,
         None,
+        None,
         &[],
         &[],
         None,
@@ -2499,6 +2528,7 @@ fn revision_inside_a_hyperlink_is_modeled() {
     hyperlinks.insert("rIdLink".to_owned(), "https://example.com/".to_owned());
     let import = import_with_sources(
         document,
+        None,
         None,
         None,
         None,
@@ -2736,6 +2766,7 @@ fn import_with_header_footer(
         None,
         None,
         None,
+        None,
         &headers,
         &footers,
         None,
@@ -2918,6 +2949,7 @@ fn image_inside_a_footnote_is_modeled_via_the_notes_part_relationships() {
         document,
         None,
         None,
+        None,
         Some(&footnotes),
         None,
         &[],
@@ -2967,6 +2999,7 @@ fn external_hyperlink_inside_a_header_is_modeled_via_the_header_part_relationshi
     };
     let import = import_with_sources(
         document,
+        None,
         None,
         None,
         None,
