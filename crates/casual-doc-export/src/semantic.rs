@@ -837,7 +837,12 @@ fn write_run_properties(
     {
         let mut el = start("w:rFonts");
         push_font_slot(&mut el, "w:ascii", "w:asciiTheme", &properties.font_ref);
-        push_font_slot(&mut el, "w:hAnsi", "w:hAnsiTheme", &properties.font_ref_h_ansi);
+        push_font_slot(
+            &mut el,
+            "w:hAnsi",
+            "w:hAnsiTheme",
+            &properties.font_ref_h_ansi,
+        );
         push_font_slot(
             &mut el,
             "w:eastAsia",
