@@ -274,6 +274,35 @@ fn run_fonts_named_and_theme_slots_are_mapped() {
 }
 
 #[test]
+fn rfonts_bogus_theme_falls_through_to_the_named_family() {
+    // Regression (review, no-silent-loss): a theme value outside the
+    // major*/minor* vocabulary must NOT swallow the slot's named fallback — even
+    // when a sibling slot resolves (so the element is consumed and could not be
+    // reported per-slot).
+    use casual_doc_model::v1::{FontName, FontRef};
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:rPr>
+            <w:rFonts w:asciiTheme="bogus" w:ascii="Calibri" w:cs="Arial"/>
+        </w:rPr><w:t>x</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let p = first_run_props(&import);
+    assert_eq!(
+        p.font_ref,
+        Some(FontRef::Named(FontName {
+            name: "Calibri".to_owned()
+        })),
+        "bogus asciiTheme falls through to the named ascii family"
+    );
+    assert_eq!(
+        p.font_ref_cs,
+        Some(FontRef::Named(FontName {
+            name: "Arial".to_owned()
+        }))
+    );
+}
+
+#[test]
 fn rfonts_with_only_a_hint_is_reported_not_silently_swallowed() {
     // An rFonts carrying only unmodeled detail (no slot resolves) is reported.
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
