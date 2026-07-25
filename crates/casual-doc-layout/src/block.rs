@@ -37,6 +37,33 @@ pub struct CellFragment {
     pub blocks: Vec<BlockFragment>,
 }
 
+/// A paragraph's page-break behavior, resolved from `ParagraphProperties`
+/// (`docs/42-…` §2.5, CSS-Break-3 mapped from DOCX). All-false = no constraints.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+pub struct BreakControl {
+    /// Force this paragraph to start a new page (`w:pageBreakBefore`).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub page_break_before: bool,
+    /// Keep on the same page as the next block (`w:keepNext`).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub keep_next: bool,
+    /// Keep all lines together — do not split across pages (`w:keepLines`).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub keep_lines: bool,
+    /// Enforce widow/orphan control when split (`w:widowControl`, on by default in
+    /// Word).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub widow_control: bool,
+}
+
+impl BreakControl {
+    /// Whether no break constraint is set (serializes to nothing).
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// A block fragment in flow order. A paragraph carries its shaped lines; a table
 /// row carries its cells and its split-control flags (the paginator honors
 /// `can_split`/`header` when a row crosses a page boundary).
@@ -50,6 +77,10 @@ pub enum BlockFragment {
         lines: LineLayout,
         /// Surrounding box space.
         box_metrics: BoxMetrics,
+        /// Page-break behavior (`w:pageBreakBefore`/`w:keepNext`/`w:keepLines`/
+        /// `w:widowControl`). The paginator reads it to decide breaks.
+        #[serde(default, skip_serializing_if = "BreakControl::is_default")]
+        break_control: BreakControl,
     },
     /// A table row: cells, whether it may split across a page, and whether it is
     /// a repeated header row (`w:tblHeader`).
@@ -93,6 +124,16 @@ impl BlockFragment {
     pub fn node_id(&self) -> NodeId {
         match self {
             BlockFragment::Paragraph { id, .. } | BlockFragment::TableRow { id, .. } => *id,
+        }
+    }
+
+    /// This fragment's page-break behavior (default — no constraints — for a
+    /// table row, whose own split flags are handled separately).
+    #[must_use]
+    pub fn break_control(&self) -> BreakControl {
+        match self {
+            BlockFragment::Paragraph { break_control, .. } => *break_control,
+            BlockFragment::TableRow { .. } => BreakControl::default(),
         }
     }
 }
