@@ -36,6 +36,12 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ### Added
 
+- Semantic DOCX writer now emits `word/numbering.xml`: abstract definitions
+  (levels with start values) and numbering instances (with their abstract link)
+  are serialized back, and a body paragraph's `w:numPr` (`numId` + `ilvl`,
+  previously not emitted) references the instance. The `abstractNumId`/`numId`
+  strings derive from the internal ids so the num→abstract link and the body
+  reference resolve back to the same ids. Proven by a fixed-point round-trip.
 - Semantic DOCX writer now emits `word/styles.xml` (definition-part writer, first
   slice): style definitions (kind, `basedOn`, paragraph + run property overrides)
   are serialized back, with the `w:styleId` string derived from the internal
