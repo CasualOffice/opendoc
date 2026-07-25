@@ -376,6 +376,35 @@ impl Document {
         if let Some(level) = properties.outline_level {
             check_domain(level <= 9, "paragraph.outline_level")?;
         }
+        for edge in [
+            &properties.borders.top,
+            &properties.borders.bottom,
+            &properties.borders.start,
+            &properties.borders.end,
+            &properties.borders.between,
+            &properties.borders.bar,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            check_domain(
+                !edge.style.is_empty() && edge.style.len() <= 32,
+                "paragraph.borders",
+            )?;
+            if let Some(size) = edge.size_eighth_points {
+                check_domain(size <= 1024, "paragraph.borders")?;
+            }
+            if let Some(space) = edge.space_points {
+                check_domain(space <= 31, "paragraph.borders")?;
+            }
+        }
+        check_domain(properties.tabs.len() <= 128, "paragraph.tabs")?;
+        for tab in &properties.tabs {
+            check_domain(
+                (-31_680..=31_680).contains(&tab.position_twips),
+                "paragraph.tabs",
+            )?;
+        }
         Ok(())
     }
 

@@ -1184,6 +1184,62 @@ fn paragraph_long_tail_properties_round_trip() {
 }
 
 #[test]
+fn paragraph_borders_shading_tabs_round_trip_and_bound() {
+    let properties = ParagraphProperties {
+        borders: ParagraphBorders {
+            top: Some(BorderEdge {
+                style: "single".to_owned(),
+                size_eighth_points: Some(8),
+                color: None,
+                space_points: Some(4),
+            }),
+            ..ParagraphBorders::default()
+        },
+        shading: Shading {
+            fill: Some(RgbColor { r: 1, g: 2, b: 3 }),
+        },
+        tabs: vec![TabStop {
+            position_twips: 2160,
+            alignment: TabAlignment::Center,
+            leader: Some(TabLeader::Dot),
+        }],
+        ..ParagraphProperties::default()
+    };
+    let block = BlockNode::Paragraph(Paragraph {
+        id: tid(1),
+        properties,
+        inlines: vec![run_inline(tid(2), "x")],
+    });
+    let document = table_document(vec![block]).unwrap();
+    let reloaded =
+        Document::from_json(&document.to_json().unwrap(), SnapshotLimits::default()).unwrap();
+    assert_eq!(document, reloaded);
+
+    // Too many tab stops is rejected.
+    let bad = ParagraphProperties {
+        tabs: (0..200)
+            .map(|_| TabStop {
+                position_twips: 100,
+                alignment: TabAlignment::Start,
+                leader: None,
+            })
+            .collect(),
+        ..ParagraphProperties::default()
+    };
+    let bad_block = BlockNode::Paragraph(Paragraph {
+        id: tid(1),
+        properties: bad,
+        inlines: vec![run_inline(tid(2), "x")],
+    });
+    assert!(matches!(
+        table_document(vec![bad_block]),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "paragraph.tabs"
+        })
+    ));
+}
+
+#[test]
 fn out_of_range_outline_level_is_rejected() {
     let block = BlockNode::Paragraph(Paragraph {
         id: tid(1),

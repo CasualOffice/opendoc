@@ -29,6 +29,10 @@ OpenDoc will use semantic versioning when its public package line begins.
   round-trip (the "semantic fixed point") is proven, and output bytes are
   deterministic. The dual of the existing Retention byte-copy writer.
   (`39-PHASE-1B-SEMANTIC-DOCX-WRITER-DESIGN.md`)
+- Paragraph borders (`w:pBdr`), background shading (`w:shd`), and custom tab
+  stops (`w:tabs`) are now modeled on paragraphs (borders reuse the shared
+  border-edge type; a `w:shd` on the paragraph mark's `w:rPr` stays a run
+  property, reported). Additive; the migration golden is byte-identical.
 - Run typographic metrics and language: character spacing (`w:spacing` in
   a run), kerning (`w:kern`), baseline position (`w:position`), and language
   tags (`w:lang` val/eastAsia/bidi) are now modeled on runs; out-of-range
