@@ -198,6 +198,31 @@ pub struct ParagraphProperties {
     /// Spacing.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub spacing: Option<Spacing>,
+    /// Keep this paragraph on the same page as the next (`w:keepNext`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keep_next: bool,
+    /// Keep all lines of this paragraph on one page (`w:keepLines`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keep_lines: bool,
+    /// Force a page break before this paragraph (`w:pageBreakBefore`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub page_break_before: bool,
+    /// Suppress the first/last-line widow/orphan control (`w:widowControl`).
+    ///
+    /// `true` means widow control is ON (OOXML default is on; a value of `false`
+    /// only appears when a producer explicitly disables it).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub widow_control: bool,
+    /// Do not add spacing between paragraphs of the same style
+    /// (`w:contextualSpacing`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub contextual_spacing: bool,
+    /// Suppress line numbers for this paragraph (`w:suppressLineNumbers`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub suppress_line_numbers: bool,
+    /// Outline (heading) level, `0..=9` (`w:outlineLvl`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outline_level: Option<u8>,
 }
 
 /// Run vertical alignment (`w:vertAlign`).

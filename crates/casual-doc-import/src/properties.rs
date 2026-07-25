@@ -191,6 +191,32 @@ pub(crate) fn apply_paragraph_property(
             }
             properties.spacing = Some(spacing);
         }
+        // Toggle flags (`CT_OnOff`): present means on unless `val` is 0/false/off.
+        b"keepNext" => properties.keep_next = is_true(attribute_value(element, b"val").as_deref()),
+        b"keepLines" => {
+            properties.keep_lines = is_true(attribute_value(element, b"val").as_deref())
+        }
+        b"pageBreakBefore" => {
+            properties.page_break_before = is_true(attribute_value(element, b"val").as_deref())
+        }
+        b"widowControl" => {
+            properties.widow_control = is_true(attribute_value(element, b"val").as_deref())
+        }
+        b"contextualSpacing" => {
+            properties.contextual_spacing = is_true(attribute_value(element, b"val").as_deref())
+        }
+        b"suppressLineNumbers" => {
+            properties.suppress_line_numbers = is_true(attribute_value(element, b"val").as_deref())
+        }
+        b"outlineLvl" => {
+            match attribute_value(element, b"val")
+                .and_then(|value| value.parse::<u8>().ok())
+                .filter(|level| *level <= 9)
+            {
+                Some(level) => properties.outline_level = Some(level),
+                None => return false,
+            }
+        }
         _ => return false,
     }
     true
