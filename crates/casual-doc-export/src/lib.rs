@@ -1617,6 +1617,77 @@ mod semantic_tests {
     }
 
     #[test]
+    fn table_style_ref_and_conditional_formatting_survive_the_semantic_round_trip() {
+        // A table associated with a table style (`w:tblStyle`) and drawn
+        // right-to-left (`w:bidiVisual`); its header row and a cell each carry a
+        // `w:cnfStyle` selector that picks the style's `firstRow` region. The
+        // style association and both selectors must survive import -> write ->
+        // reopen unchanged (a fixed point), and the reference must resolve.
+        use casual_doc_model::v1::{BlockNode, StyleKind};
+        let styles = br#"<w:styles xmlns:w="urn:w">
+            <w:style w:type="table" w:styleId="Grid">
+                <w:name w:val="Table Grid"/>
+                <w:tblStylePr w:type="firstRow"><w:rPr><w:b/></w:rPr></w:tblStylePr>
+            </w:style>
+        </w:styles>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:tbl>
+                <w:tblPr>
+                    <w:tblStyle w:val="Grid"/>
+                    <w:bidiVisual/>
+                    <w:tblW w:type="dxa" w:w="9000"/>
+                </w:tblPr>
+                <w:tblGrid><w:gridCol w:w="9000"/></w:tblGrid>
+                <w:tr>
+                    <w:trPr><w:cnfStyle w:val="100000000000"/></w:trPr>
+                    <w:tc>
+                        <w:tcPr><w:cnfStyle w:val="100000000000"/></w:tcPr>
+                        <w:p><w:r><w:t>Header</w:t></w:r></w:p>
+                    </w:tc>
+                </w:tr>
+            </w:tbl>
+        </w:body></w:document>"#;
+        let m1 = reopen(&package_with_styles(document, styles));
+
+        // Sanity: the table resolved its style, is bidi, and both selectors
+        // mapped to the `firstRow` flag.
+        let BlockNode::Table(table) = &m1.body()[0] else {
+            panic!("expected a table");
+        };
+        let style_ref = table
+            .properties
+            .style_ref
+            .expect("the table associates a style");
+        assert!(table.properties.tbl_bidi_visual);
+        assert_eq!(
+            table.rows[0]
+                .properties
+                .conditional_format
+                .map(|c| c.first_row),
+            Some(true)
+        );
+        assert_eq!(
+            table.rows[0].cells[0]
+                .properties
+                .conditional_format
+                .map(|c| c.first_row),
+            Some(true)
+        );
+        assert_eq!(
+            m1.definitions().styles.get(&style_ref).map(|s| s.kind),
+            Some(StyleKind::Table),
+            "the style reference resolves to the table style"
+        );
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(
+            m1, m2,
+            "table style ref + bidiVisual + cnfStyle selectors are a fixed point"
+        );
+    }
+
+    #[test]
     fn paragraph_style_metadata_survives_the_semantic_round_trip() {
         // A paragraph style carrying next/link/uiPriority/qFormat/semiHidden. The
         // `w:link` deliberately points at a character style (the opposite kind);

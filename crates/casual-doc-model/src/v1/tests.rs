@@ -922,6 +922,58 @@ fn table_properties_round_trip_and_default_omits_the_key() {
 }
 
 #[test]
+fn table_style_ref_dangling_is_rejected_and_additive_fields_round_trip() {
+    // A table's `w:tblStyle` (styleRef) must resolve, like paragraph/run refs.
+    let dangling = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+        "body":[{"type":"table","id":"00000000000000030000000000000002",
+          "properties":{"styleRef":"000000000000000000000000000000ff"},
+          "rows":[{"id":"00000000000000030000000000000003",
+            "cells":[{"id":"00000000000000030000000000000004","properties":{},
+              "blocks":[{"type":"paragraph","id":"00000000000000030000000000000005","properties":{},"inlines":[]}]}]}]}],
+        "definitions":{}}"#;
+    assert!(matches!(
+        Document::from_json(dangling, SnapshotLimits::default()),
+        Err(SnapshotError::InvalidModel(ModelError::DanglingStyleRef(_)))
+    ));
+
+    // With the table style defined, the reference resolves and the additive
+    // fields (styleRef, tblBidiVisual, row/cell conditionalFormat) round-trip.
+    let valid = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+        "body":[{"type":"table","id":"00000000000000030000000000000002",
+          "properties":{"styleRef":"0000000000000000000000000000000a","tblBidiVisual":true},
+          "rows":[{"id":"00000000000000030000000000000003",
+            "properties":{"conditionalFormat":{"firstRow":true}},
+            "cells":[{"id":"00000000000000030000000000000004",
+              "properties":{"conditionalFormat":{"firstRowLastColumn":true}},
+              "blocks":[{"type":"paragraph","id":"00000000000000030000000000000005","properties":{},"inlines":[]}]}]}]}],
+        "definitions":{"styles":{"0000000000000000000000000000000a":{"kind":"table"}}}}"#;
+    let document = Document::from_json(valid, SnapshotLimits::default()).unwrap();
+    let reloaded =
+        Document::from_json(&document.to_json().unwrap(), SnapshotLimits::default()).unwrap();
+    assert_eq!(document, reloaded);
+
+    let BlockNode::Table(table) = &document.body()[0] else {
+        panic!("expected a table");
+    };
+    assert!(table.properties.style_ref.is_some());
+    assert!(table.properties.tbl_bidi_visual);
+    assert!(
+        table.rows[0]
+            .properties
+            .conditional_format
+            .unwrap()
+            .first_row
+    );
+    assert!(
+        table.rows[0].cells[0]
+            .properties
+            .conditional_format
+            .unwrap()
+            .first_row_last_column
+    );
+}
+
+#[test]
 fn table_borders_and_margins_round_trip_and_reject_bad_style() {
     let borders = TableBorders {
         top: Some(BorderEdge {

@@ -19,24 +19,25 @@ use std::io::{Cursor, Write};
 use casual_doc_import::{RelationshipOwner, RetainedParts};
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, AnchorHorizontal, AnchorVertical,
-    AnchoredDrawing, AppProperties, BlockNode, BorderEdge, BreakKind, CellVerticalAlignment, Color,
-    ColorScheme, Comment, CommentId, CoreProperties, CustomProperty, CustomValue, DefinitionMap,
-    Definitions, DocGridType, Document, DocumentDefaults, DocumentProtectionEdit, DocumentSettings,
-    EmbeddedKind, EmbeddedObject, EmbeddedPart, EmphasisMark, Extent, FontCollection,
-    FontDescriptor, FontFamilyKind, FontPitch, FontRef, FontScheme, FormCheckBoxSize,
-    FormFieldData, FormFieldKind, FormTextType, HeaderFooterId, HeaderFooterKind, HeightRule,
-    HighlightColor, HorizontalAlign, HorizontalAnchor, HorizontalPosition, HyperlinkTarget,
-    InlineNode, LevelJustification, LevelSuffix, LineNumberRestart, MediaId, MediaReference,
-    MoveKind, Note, NoteId, NoteKind, NoteNumberRestart, NotePosition, NoteProperties,
-    NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel, PageBorderDisplay,
-    PageBorderOffset, PageOrientation, PageVerticalAlignment, ParagraphProperties, Person,
-    ProofState, RevisionKind, RgbColor, RunFontHint, RunProperties, SchemeColor, SdtCheckbox,
-    SdtCheckboxSymbol, SdtControlData, SdtControlKind, SdtDate, SdtListItem, SdtLock,
-    SdtProperties, SectionBoundary, SectionType, Style, StyleId, StyleKind, TabAlignment,
-    TabLeader, Table, TableBorders, TableCell, TableCellProperties, TableLayout, TableOverlap,
-    TableProperties, TableRow, TableRowProperties, TableStyleOverride, TableStyleRegion,
-    TextDirection, ThemeFontRef, VerticalAlign, VerticalAlignment, VerticalAnchor, VerticalMerge,
-    VerticalPosition, VerticalTextAlignment, WrapMode, Zoom, ZoomMode,
+    AnchoredDrawing, AppProperties, BlockNode, BorderEdge, BreakKind, CellVerticalAlignment,
+    CnfStyle, Color, ColorScheme, Comment, CommentId, CoreProperties, CustomProperty, CustomValue,
+    DefinitionMap, Definitions, DocGridType, Document, DocumentDefaults, DocumentProtectionEdit,
+    DocumentSettings, EmbeddedKind, EmbeddedObject, EmbeddedPart, EmphasisMark, Extent,
+    FontCollection, FontDescriptor, FontFamilyKind, FontPitch, FontRef, FontScheme,
+    FormCheckBoxSize, FormFieldData, FormFieldKind, FormTextType, HeaderFooterId, HeaderFooterKind,
+    HeightRule, HighlightColor, HorizontalAlign, HorizontalAnchor, HorizontalPosition,
+    HyperlinkTarget, InlineNode, LevelJustification, LevelSuffix, LineNumberRestart, MediaId,
+    MediaReference, MoveKind, Note, NoteId, NoteKind, NoteNumberRestart, NotePosition,
+    NoteProperties, NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel,
+    PageBorderDisplay, PageBorderOffset, PageOrientation, PageVerticalAlignment,
+    ParagraphProperties, Person, ProofState, RevisionKind, RgbColor, RunFontHint, RunProperties,
+    SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind, SdtDate,
+    SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionType, Style, StyleId, StyleKind,
+    TabAlignment, TabLeader, Table, TableBorders, TableCell, TableCellProperties, TableLayout,
+    TableOverlap, TableProperties, TableRow, TableRowProperties, TableStyleOverride,
+    TableStyleRegion, TextDirection, ThemeFontRef, VerticalAlign, VerticalAlignment,
+    VerticalAnchor, VerticalMerge, VerticalPosition, VerticalTextAlignment, WrapMode, Zoom,
+    ZoomMode,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -2610,6 +2611,12 @@ fn write_table_properties(
         return Ok(());
     }
     w.write_event(Event::Start(start("w:tblPr"))).map_err(pkg)?;
+    // `w:tblStyle` is first in `CT_TblPrBase`.
+    if let Some(style_ref) = properties.style_ref {
+        let mut el = start("w:tblStyle");
+        el.push_attribute(("w:val", style_id_token(style_ref).as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
     if let Some(overlap) = properties.overlap {
         let mut el = start("w:tblOverlap");
         el.push_attribute((
@@ -2620,6 +2627,11 @@ fn write_table_properties(
             },
         ));
         w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    // `w:bidiVisual` follows `w:tblOverlap` in `CT_TblPrBase`.
+    if properties.tbl_bidi_visual {
+        w.write_event(Event::Empty(start("w:bidiVisual")))
+            .map_err(pkg)?;
     }
     if let Some(alignment) = properties.alignment {
         let mut jc = start("w:jc");
@@ -2705,6 +2717,40 @@ fn write_row(
     Ok(())
 }
 
+/// Emits a `w:cnfStyle` selector as the canonical 12-bit `@w:val` binary string
+/// (the same bit order the importer reads). An all-false selector is `None` and
+/// never reaches here. `w:cnfStyle` is the first child of both `CT_TrPr` and
+/// `CT_TcPr`.
+fn write_cnf_style(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    conditional_format: Option<CnfStyle>,
+) -> Result<(), ExportError> {
+    let Some(cnf) = conditional_format else {
+        return Ok(());
+    };
+    let mut val = String::with_capacity(12);
+    for on in [
+        cnf.first_row,
+        cnf.last_row,
+        cnf.first_column,
+        cnf.last_column,
+        cnf.odd_v_band,
+        cnf.even_v_band,
+        cnf.odd_h_band,
+        cnf.even_h_band,
+        cnf.first_row_first_column,
+        cnf.first_row_last_column,
+        cnf.last_row_first_column,
+        cnf.last_row_last_column,
+    ] {
+        val.push(if on { '1' } else { '0' });
+    }
+    let mut el = start("w:cnfStyle");
+    el.push_attribute(("w:val", val.as_str()));
+    w.write_event(Event::Empty(el)).map_err(pkg)?;
+    Ok(())
+}
+
 fn write_row_properties(
     w: &mut Writer<Cursor<Vec<u8>>>,
     properties: &TableRowProperties,
@@ -2713,6 +2759,7 @@ fn write_row_properties(
         return Ok(());
     }
     w.write_event(Event::Start(start("w:trPr"))).map_err(pkg)?;
+    write_cnf_style(w, properties.conditional_format)?;
     if !properties.height.is_empty() {
         let mut el = start("w:trHeight");
         if let Some(value) = properties.height.value_twips {
@@ -2777,6 +2824,7 @@ fn write_cell_properties(
         return Ok(());
     }
     w.write_event(Event::Start(start("w:tcPr"))).map_err(pkg)?;
+    write_cnf_style(w, properties.conditional_format)?;
     if let Some(width) = properties.width_twips {
         let mut el = start("w:tcW");
         el.push_attribute(("w:type", "dxa"));
