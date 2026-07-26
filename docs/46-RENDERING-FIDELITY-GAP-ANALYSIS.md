@@ -167,9 +167,9 @@ documented solid fallback.
 | Surface | Current behavior | Status / next slice |
 | --- | --- | --- |
 | Inline pictures | Media and extent flow to an image paint item. | Implemented for supported raster media. |
-| Floating pictures | Anchor position and z-order are placed; wrap polygons/modes do not reflow body text. | Partial. |
+| Floating pictures | Anchor position and z-order are placed. Paragraph/line-relative `wrapTopAndBottom` now adds a non-painting exclusion to the shared paragraph flow, including table cells and repeated header/footer bands; all four from-text distances round-trip. | **Partial:** square/tight/through, page/margin-relative cross-paragraph exclusion, contour polygons, and fixed-point repagination remain. See doc 51. |
 | DrawingML inline text boxes | Import captures shape fill/stroke/extent, then `commit_shape` discards them for the inline form. Flow substitutes a black 1px border, no fill, fixed inset, and content-derived size. | **Critical correctness:** retain and consume authored appearance/extent. |
-| Floating/group text boxes | Fill and border color survive; stroke width is discarded and composition always paints 1px. `bodyPr` insets, vertical alignment, rotation, and autofit are not modeled. | **High:** preserve stroke width first; design the text-box box model separately. |
+| Floating/group text boxes | Fill and border color survive; stroke width is discarded and composition always paints 1px. Local `wrapTopAndBottom` exclusion shares the picture/group flow path in body, cells, headers, and footers. `bodyPr` insets, vertical alignment, rotation, and autofit are not modeled. | **High:** preserve stroke width first; design the text-box box model separately. |
 | Nested block content | Paragraphs, SDTs, nested tables, and inline images use the shared block flow. | Implemented, subject to the placement defects below. |
 | Floats nested in table cells | Source traversal finds them; the nested-float slice adds fragment-tree paragraph lookup that mirrors composed cell geometry instead of falling back to page 0. | Implemented by `P1F-NESTED-FLOATS`. |
 | Floats in header/footer tables | Selected running-content bands are recursively walked through table cells and nested blocks, so their floats repeat on the correct pages. | Implemented by `P1F-NESTED-FLOATS`. |

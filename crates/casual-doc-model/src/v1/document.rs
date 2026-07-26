@@ -1045,6 +1045,7 @@ impl Document {
                         &drawing.anchor.horizontal.position,
                         &drawing.anchor.vertical.position,
                     )?;
+                    check_wrap_distances(&drawing.anchor.wrap_distances)?;
                     if let Some(descr) = &drawing.descr {
                         check_domain(
                             !descr.is_empty() && descr.len() <= MAX_DESCR_BYTES,
@@ -1146,6 +1147,7 @@ impl Document {
                             &anchor.horizontal.position,
                             &anchor.vertical.position,
                         )?;
+                        check_wrap_distances(&anchor.wrap_distances)?;
                     }
                     if let Some(extent) = &text_box.extent {
                         check_domain(
@@ -1371,6 +1373,7 @@ impl Document {
         }
         if let Some(anchor) = &group.anchor {
             check_anchor_offset(&anchor.horizontal.position, &anchor.vertical.position)?;
+            check_wrap_distances(&anchor.wrap_distances)?;
         }
         check_extent(&group.extent, "group.extent")?;
         check_extent(&group.transform.extent, "group.transform.extent")?;
@@ -2053,6 +2056,22 @@ fn check_anchor_offset(
         check_domain(
             offset.unsigned_abs() <= MAX_EMU as u64,
             "anchoredDrawing.offsetV",
+        )?;
+    }
+    Ok(())
+}
+
+/// Bounds the four non-negative `wp:anchor` text-exclusion distances.
+fn check_wrap_distances(distances: &WrapDistances) -> Result<(), ModelError> {
+    for distance in [
+        distances.top_emu,
+        distances.bottom_emu,
+        distances.start_emu,
+        distances.end_emu,
+    ] {
+        check_domain(
+            (0..=MAX_EMU).contains(&distance),
+            "drawingAnchor.wrapDistances",
         )?;
     }
     Ok(())

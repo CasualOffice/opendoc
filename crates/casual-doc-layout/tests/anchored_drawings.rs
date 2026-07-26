@@ -13,7 +13,8 @@ use casual_doc_layout::anchor::place_floats;
 use casual_doc_layout::block::BlockFragment;
 use casual_doc_layout::compose::compose_page;
 use casual_doc_layout::display::PaintItem;
-use casual_doc_layout::flow::{build_galley, flow_header_footer};
+use casual_doc_layout::flow::{build_galley, build_galley_cached, flow_header_footer};
+use casual_doc_layout::incremental::{DirtySet, GalleyCache};
 use casual_doc_layout::paginate::{PageConfig, paginate};
 use casual_doc_layout::running::{
     HeaderFooter as RunningBand, RunningContent, place_running_content,
@@ -28,7 +29,7 @@ use casual_doc_model::v1::{
     HorizontalPosition, InlineNode, MediaId, MediaReference, Paragraph, ParagraphProperties,
     RowHeight, Run, RunProperties, SectionId, Table, TableCell, TableCellProperties,
     TableProperties, TableRow, TableRowProperties, VerticalAnchor, VerticalMerge, VerticalPosition,
-    WrapMode,
+    WrapDistances, WrapMode,
 };
 
 fn node(id: u64) -> NodeId {
@@ -97,6 +98,7 @@ fn anchored(id: u64, media: MediaId, h_offset: i64, v_offset: i64, behind_doc: b
                 position: VerticalPosition::Offset(v_offset),
             },
             wrap: WrapMode::None,
+            wrap_distances: Default::default(),
             behind_doc,
         },
         descr: Some("A floating logo".to_owned()),
@@ -227,6 +229,7 @@ fn page_anchor(h: i64, v: i64) -> DrawingAnchor {
             position: VerticalPosition::Offset(v),
         },
         wrap: WrapMode::None,
+        wrap_distances: Default::default(),
         behind_doc: false,
     }
 }
@@ -242,8 +245,42 @@ fn paragraph_anchor() -> DrawingAnchor {
             position: VerticalPosition::Offset(0),
         },
         wrap: WrapMode::None,
+        wrap_distances: Default::default(),
         behind_doc: false,
     }
+}
+
+fn top_bottom_anchor(bottom_twips: i64) -> DrawingAnchor {
+    DrawingAnchor {
+        horizontal: AnchorHorizontal {
+            relative_from: HorizontalAnchor::Column,
+            position: HorizontalPosition::Offset(0),
+        },
+        vertical: AnchorVertical {
+            relative_from: VerticalAnchor::Paragraph,
+            position: VerticalPosition::Offset(0),
+        },
+        wrap: WrapMode::TopAndBottom,
+        wrap_distances: WrapDistances {
+            bottom_emu: bottom_twips * 635,
+            ..WrapDistances::default()
+        },
+        behind_doc: false,
+    }
+}
+
+fn top_bottom_drawing(id: u64, media: MediaId, height_twips: i64, bottom_twips: i64) -> InlineNode {
+    InlineNode::AnchoredDrawing(AnchoredDrawing {
+        id: node(id),
+        media,
+        extent: Extent {
+            width_emu: 63_500,
+            height_emu: height_twips * 635,
+        },
+        anchor: top_bottom_anchor(bottom_twips),
+        descr: None,
+        relative_height: None,
+    })
 }
 
 fn anchored_at_paragraph(id: u64, media: MediaId) -> InlineNode {
@@ -288,6 +325,256 @@ fn one_cell_table(
             }],
         }],
     })
+}
+
+fn assert_top_bottom_barrier(fragment: &BlockFragment, expected: Twip) {
+    let BlockFragment::Paragraph { lines, .. } = fragment else {
+        panic!("expected a paragraph fragment");
+    };
+    assert!(lines.lines.len() >= 2, "barrier plus visible text line");
+    let barrier = &lines.lines[0];
+    assert_eq!(barrier.height, expected);
+    assert!(barrier.runs.is_empty());
+    assert!(barrier.images.is_empty());
+    assert!(barrier.text_boxes.is_empty());
+    assert!(barrier.fields.is_empty());
+    assert!(
+        lines.lines[1]
+            .runs
+            .iter()
+            .all(|run| run.origin.y.raw() >= expected.raw()),
+        "visible text begins below the non-painting float exclusion"
+    );
+}
+
+#[test]
+fn top_and_bottom_reflow_coalesces_pictures_text_boxes_and_groups() {
+    let (media_id, definitions) = media_defs();
+    let text_box = InlineNode::TextBox(TextBox {
+        id: node(20),
+        anchor: Some(top_bottom_anchor(0)),
+        relative_height: None,
+        extent: Some(Extent {
+            width_emu: 127_000,
+            height_emu: 200 * 635,
+        }),
+        fill: None,
+        border: None,
+        blocks: vec![BlockNode::Paragraph(Paragraph {
+            id: node(21),
+            properties: ParagraphProperties::default(),
+            inlines: vec![run(22, "inside")],
+        })],
+    });
+    let group_extent = Extent {
+        width_emu: 127_000,
+        height_emu: 300 * 635,
+    };
+    let group = InlineNode::Group(WordprocessingGroup {
+        id: node(30),
+        anchor: Some(top_bottom_anchor(50)),
+        relative_height: None,
+        extent: group_extent,
+        transform: GroupTransform {
+            offset: PointEmu { x_emu: 0, y_emu: 0 },
+            extent: group_extent,
+            child_offset: PointEmu { x_emu: 0, y_emu: 0 },
+            child_extent: group_extent,
+        },
+        children: vec![GroupChild::Shape(GroupShape {
+            id: node(31),
+            offset: PointEmu { x_emu: 0, y_emu: 0 },
+            extent: group_extent,
+            geometry: ShapeGeometry::Rectangle,
+            fill: None,
+            stroke: None,
+        })],
+    });
+    let paragraph = BlockNode::Paragraph(Paragraph {
+        id: node(10),
+        properties: ParagraphProperties::default(),
+        inlines: vec![
+            run(11, "Body text"),
+            top_bottom_drawing(12, media_id, 100, 20),
+            text_box,
+            group,
+        ],
+    });
+    let document = Document::new(node(1), vec![paragraph], definitions).unwrap();
+
+    let shaper = ParleyShaper::new();
+    let galley = build_galley(&document, &shaper, config().content_area().size.width);
+
+    assert_top_bottom_barrier(&galley[0], Twip(350));
+    let BlockFragment::Paragraph { lines, .. } = &galley[0] else {
+        unreachable!();
+    };
+    assert_eq!(
+        lines.lines.len(),
+        2,
+        "overlapping exclusions take their maximum instead of summing"
+    );
+}
+
+#[test]
+fn wrap_clearance_changes_invalidate_the_paragraph_cache() {
+    let document = |height_twips| {
+        let (media_id, definitions) = media_defs();
+        let paragraph = BlockNode::Paragraph(Paragraph {
+            id: node(10),
+            properties: ParagraphProperties::default(),
+            inlines: vec![
+                run(11, "cached"),
+                top_bottom_drawing(12, media_id, height_twips, 0),
+            ],
+        });
+        Document::new(node(1), vec![paragraph], definitions).unwrap()
+    };
+    let first = document(100);
+    let second = document(250);
+    let shaper = ParleyShaper::new();
+    let width = config().content_area().size.width;
+    let mut cache = GalleyCache::default();
+    let first_galley =
+        build_galley_cached(&first, &shaper, width, &mut cache, &DirtySet::everything());
+    assert_top_bottom_barrier(&first_galley[0], Twip(100));
+
+    let second_galley = build_galley_cached(&second, &shaper, width, &mut cache, &DirtySet::new());
+    assert_top_bottom_barrier(&second_galley[0], Twip(250));
+    assert_eq!(
+        second_galley,
+        build_galley(&second, &shaper, width),
+        "the cached path matches a fresh layout after exclusion geometry changes"
+    );
+}
+
+#[test]
+fn unsupported_wrap_frames_remain_flow_neutral() {
+    let (media_id, definitions) = media_defs();
+    let mut square = top_bottom_drawing(12, media_id, 1_440, 100);
+    let InlineNode::AnchoredDrawing(square_drawing) = &mut square else {
+        unreachable!();
+    };
+    square_drawing.anchor.wrap = WrapMode::Square;
+
+    let mut page_relative = top_bottom_drawing(13, media_id, 1_440, 100);
+    let InlineNode::AnchoredDrawing(page_relative_drawing) = &mut page_relative else {
+        unreachable!();
+    };
+    page_relative_drawing.anchor.vertical.relative_from = VerticalAnchor::Page;
+    let paragraph = BlockNode::Paragraph(Paragraph {
+        id: node(10),
+        properties: ParagraphProperties::default(),
+        inlines: vec![run(11, "unchanged"), square, page_relative],
+    });
+    let document = Document::new(node(1), vec![paragraph], definitions).unwrap();
+
+    let shaper = ParleyShaper::new();
+    let galley = build_galley(&document, &shaper, config().content_area().size.width);
+    let BlockFragment::Paragraph { lines, .. } = &galley[0] else {
+        panic!("expected a paragraph");
+    };
+    assert_eq!(
+        lines.lines.len(),
+        1,
+        "square and page-relative exclusions wait for the bounded page-level pass"
+    );
+}
+
+#[test]
+fn top_and_bottom_reflow_survives_an_inline_wrapper_inside_a_table_cell() {
+    use casual_doc_model::v1::{Hyperlink, HyperlinkTarget, InternalTarget};
+
+    let (media_id, definitions) = media_defs();
+    let wrapped_float = InlineNode::Hyperlink(Hyperlink {
+        id: node(45),
+        target: HyperlinkTarget::Internal(InternalTarget {
+            anchor: "bookmark".to_owned(),
+        }),
+        tooltip: None,
+        inlines: vec![top_bottom_drawing(46, media_id, 1_440, 100)],
+    });
+    let table = one_cell_table(40, 41, 42, 43, vec![run(44, "cell text"), wrapped_float]);
+    let document = Document::new(node(1), vec![table], definitions).unwrap();
+
+    let shaper = ParleyShaper::new();
+    let galley = build_galley(&document, &shaper, config().content_area().size.width);
+    let BlockFragment::TableRow { cells, .. } = &galley[0] else {
+        panic!("expected the table row");
+    };
+
+    assert_top_bottom_barrier(&cells[0].blocks[0], Twip(1_540));
+}
+
+#[test]
+fn top_and_bottom_reflow_repeats_in_both_headers_and_footers() {
+    let (media_id, definitions) = media_defs();
+    let header_block = BlockNode::Paragraph(Paragraph {
+        id: node(60),
+        properties: ParagraphProperties::default(),
+        inlines: vec![run(61, "header"), top_bottom_drawing(62, media_id, 200, 20)],
+    });
+    let footer_block = BlockNode::Paragraph(Paragraph {
+        id: node(70),
+        properties: ParagraphProperties::default(),
+        inlines: vec![run(71, "footer"), top_bottom_drawing(72, media_id, 300, 30)],
+    });
+    let body = vec![
+        BlockNode::Paragraph(Paragraph {
+            id: node(80),
+            properties: ParagraphProperties::default(),
+            inlines: vec![run(81, "page one")],
+        }),
+        BlockNode::Paragraph(Paragraph {
+            id: node(82),
+            properties: ParagraphProperties {
+                page_break_before: true,
+                ..ParagraphProperties::default()
+            },
+            inlines: vec![run(83, "page two")],
+        }),
+    ];
+    let document = Document::new(node(1), body, definitions).unwrap();
+    let shaper = ParleyShaper::new();
+    let header = flow_header_footer(
+        &document,
+        &[header_block],
+        &shaper,
+        config().content_area().size.width,
+    );
+    let footer = flow_header_footer(
+        &document,
+        &[footer_block],
+        &shaper,
+        config().content_area().size.width,
+    );
+    assert_top_bottom_barrier(&header[0], Twip(220));
+    assert_top_bottom_barrier(&footer[0], Twip(330));
+
+    let running = RunningContent {
+        header: RunningBand {
+            default: header,
+            ..RunningBand::default()
+        },
+        footer: RunningBand {
+            default: footer,
+            ..RunningBand::default()
+        },
+        ..RunningContent::default()
+    };
+    let mut cfg = config();
+    let (header_height, footer_height) = running.band_heights();
+    cfg.header_height = header_height;
+    cfg.footer_height = footer_height;
+    let galley = build_galley(&document, &shaper, cfg.content_area().size.width);
+    let mut layout = paginate(&galley, &cfg);
+    place_running_content(&mut layout, &running, &cfg);
+
+    assert_eq!(layout.pages.len(), 2);
+    for page in &layout.pages {
+        assert_top_bottom_barrier(&page.header[0].fragment, Twip(220));
+        assert_top_bottom_barrier(&page.footer[0].fragment, Twip(330));
+    }
 }
 
 #[test]

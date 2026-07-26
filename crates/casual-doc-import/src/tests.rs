@@ -2024,7 +2024,7 @@ fn inline_drawing_with_embed_maps_to_a_drawing_node() {
     assert!(!features(&import).contains(&"drawing"));
 }
 
-const DRAWING_ANCHOR: &str = r#"<w:drawing><wp:anchor behindDoc="1" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>914400</wp:posOffset></wp:positionH><wp:positionV relativeFrom="margin"><wp:posOffset>228600</wp:posOffset></wp:positionV><wp:extent cx="1828800" cy="1219200"/><wp:wrapNone/><wp:docPr id="1" name="Pic 1" descr="Company logo"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing>"#;
+const DRAWING_ANCHOR: &str = r#"<w:drawing><wp:anchor behindDoc="1" simplePos="0" distT="12700" distB="25400" distL="38100" distR="50800"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>914400</wp:posOffset></wp:positionH><wp:positionV relativeFrom="margin"><wp:posOffset>228600</wp:posOffset></wp:positionV><wp:extent cx="1828800" cy="1219200"/><wp:wrapNone/><wp:docPr id="1" name="Pic 1" descr="Company logo"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing>"#;
 
 #[test]
 fn anchored_drawing_maps_to_an_anchored_drawing_node() {
@@ -2064,6 +2064,10 @@ fn anchored_drawing_maps_to_an_anchored_drawing_node() {
         VerticalPosition::Offset(228_600)
     );
     assert_eq!(drawing.anchor.wrap, WrapMode::None);
+    assert_eq!(drawing.anchor.wrap_distances.top_emu, 12_700);
+    assert_eq!(drawing.anchor.wrap_distances.bottom_emu, 25_400);
+    assert_eq!(drawing.anchor.wrap_distances.start_emu, 38_100);
+    assert_eq!(drawing.anchor.wrap_distances.end_emu, 50_800);
     assert!(
         drawing.anchor.behind_doc,
         "behindDoc=\"1\" sets the z-order"
@@ -2071,6 +2075,33 @@ fn anchored_drawing_maps_to_an_anchored_drawing_node() {
     assert_eq!(drawing.descr.as_deref(), Some("Company logo"));
     // A resolved, fully-modeled anchored drawing is mapped, not reported.
     assert!(!features(&import).contains(&"drawing"));
+}
+
+#[test]
+fn invalid_anchor_wrap_distances_are_bounded_and_reported() {
+    use casual_doc_model::v1::MAX_EMU;
+
+    let anchor = DRAWING_ANCHOR
+        .replace(r#"distT="12700""#, r#"distT="-1""#)
+        .replace(r#"distB="25400""#, &format!(r#"distB="{}""#, MAX_EMU + 1))
+        .replace(r#"distL="38100""#, r#"distL="not-a-number""#);
+    let document = format!(
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:r>{anchor}</w:r></w:p></w:body></w:document>"#
+    );
+    let media = [("word/media/image1.png", b"PNGDATA".as_slice())];
+    let import = import_bytes(&build_package(document.as_bytes(), IMAGE_REL, &media));
+    let InlineNode::AnchoredDrawing(drawing) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected an anchored drawing");
+    };
+
+    assert_eq!(drawing.anchor.wrap_distances.top_emu, 0);
+    assert_eq!(drawing.anchor.wrap_distances.bottom_emu, MAX_EMU);
+    assert_eq!(drawing.anchor.wrap_distances.start_emu, 0);
+    assert_eq!(drawing.anchor.wrap_distances.end_emu, 50_800);
+    let reported = features(&import);
+    assert!(reported.contains(&"distT"));
+    assert!(reported.contains(&"distB"));
+    assert!(reported.contains(&"distL"));
 }
 
 #[test]

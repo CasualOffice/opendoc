@@ -26,7 +26,8 @@ use casual_doc_model::v1::{
     ShapeGeometry, ShapeStroke, SoftHyphen, StyleKind, Symbol, Tab, TabAlignment, TabLeader,
     TabStop, TableAnchor, TableCellProperties, TableFloatPosition, TableLayout, TableOverlap,
     TableProperties, TableRowProperties, TableXAlign, TableYAlign, TextBox, TextDirection,
-    VerticalAlign, VerticalAnchor, VerticalMerge, VerticalPosition, WordprocessingGroup, WrapMode,
+    VerticalAlign, VerticalAnchor, VerticalMerge, VerticalPosition, WordprocessingGroup,
+    WrapDistances, WrapMode,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::events::{BytesStart, Event};
@@ -212,6 +213,8 @@ struct PendingAnchor {
     v_position: Option<VerticalPosition>,
     /// The `wp:wrap*` mode.
     wrap: Option<WrapMode>,
+    /// The `wp:anchor@distT/distB/distL/distR` text-exclusion distances.
+    wrap_distances: WrapDistances,
     /// The `wp:docPr@descr` alt text (bounded).
     descr: Option<String>,
     /// The axis whose `wp:posOffset`/`wp:align` text is currently being captured.
@@ -239,6 +242,7 @@ impl PendingAnchor {
                 position: self.v_position.unwrap_or(VerticalPosition::Offset(0)),
             },
             wrap: self.wrap.unwrap_or(WrapMode::None),
+            wrap_distances: self.wrap_distances,
             behind_doc: self.behind_doc,
         }
     }
@@ -2042,9 +2046,31 @@ impl BodyParser<'_> {
                 // top) within the behind/front band.
                 let relative_height = attribute_value(element, b"relativeHeight")
                     .and_then(|value| value.parse::<u32>().ok());
+                let mut bounded_distance = |name: &[u8]| {
+                    let Some(raw) = attribute_value(element, name) else {
+                        return 0;
+                    };
+                    match raw.parse::<i64>() {
+                        Ok(value) if (0..=MAX_EMU).contains(&value) => value,
+                        Ok(value) => {
+                            self.reporter.report(name);
+                            value.clamp(0, MAX_EMU)
+                        }
+                        Err(_) => {
+                            self.reporter.report(name);
+                            0
+                        }
+                    }
+                };
                 self.pending_anchor = Some(PendingAnchor {
                     behind_doc,
                     relative_height,
+                    wrap_distances: WrapDistances {
+                        top_emu: bounded_distance(b"distT"),
+                        bottom_emu: bounded_distance(b"distB"),
+                        start_emu: bounded_distance(b"distL"),
+                        end_emu: bounded_distance(b"distR"),
+                    },
                     ..PendingAnchor::default()
                 });
             }
@@ -6178,6 +6204,7 @@ fn vml_anchor_at(
             position: VerticalPosition::Offset(twip_emu_offset(top_twips)),
         },
         wrap: WrapMode::None,
+        wrap_distances: Default::default(),
         behind_doc: position.behind_doc(),
     };
     (anchor, position.z_index.map(vml_rel_height))

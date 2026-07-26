@@ -810,6 +810,7 @@ mod tests {
                 position: vp,
             },
             wrap: WrapMode::None,
+            wrap_distances: Default::default(),
             behind_doc: false,
         }
     }

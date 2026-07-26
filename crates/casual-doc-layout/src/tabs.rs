@@ -92,6 +92,13 @@ pub enum FlowItem<'a> {
     /// and alignment. Laid out on its own line, like an [`FlowItem::Image`];
     /// composition paints it as a filled rect.
     HorizontalRule(InlineRule),
+    /// A non-painting vertical exclusion introduced by a floating object with
+    /// `wrapTopAndBottom`. It reserves `height` at the paragraph start so the
+    /// paragraph's visible content begins below the float.
+    FloatBarrier {
+        /// Required clearance in twips.
+        height: Twip,
+    },
 }
 
 /// Whether an item stream needs the tab/break layer at all: any tab, any hard
@@ -273,13 +280,14 @@ fn split_blocks<'a>(items: &'a [FlowItem<'a>], base: u32) -> Vec<Block<'a>> {
                 has_tab = false;
                 start_offset = byte;
             }
-            // Inline images, fields, and text boxes are handled by their own
+            // Inline images, fields, text boxes, and float barriers are handled by their own
             // layout paths before the stream reaches the tab/break layer, so none
             // reach here.
             FlowItem::Image { .. }
             | FlowItem::Field { .. }
             | FlowItem::TextBox { .. }
-            | FlowItem::HorizontalRule(_) => {}
+            | FlowItem::HorizontalRule(_)
+            | FlowItem::FloatBarrier { .. } => {}
         }
     }
     blocks.push(Block {

@@ -566,7 +566,7 @@ fn anchored_drawing_round_trips_with_offset_align_and_z_order() {
         r#"{{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
             "body":[{{"type":"paragraph","id":"00000000000000030000000000000002","properties":{{}},
               "inlines":[
-                {{"type":"anchored_drawing","id":"00000000000000030000000000000003","media":"0000000000000000000000000000000d","extent":{{"widthEmu":1828800,"heightEmu":1219200}},"anchor":{{"horizontal":{{"relativeFrom":"page","position":{{"offset":914400}}}},"vertical":{{"relativeFrom":"margin","position":{{"offset":-228600}}}},"wrap":"none","behindDoc":true}},"descr":"Company logo"}},
+                {{"type":"anchored_drawing","id":"00000000000000030000000000000003","media":"0000000000000000000000000000000d","extent":{{"widthEmu":1828800,"heightEmu":1219200}},"anchor":{{"horizontal":{{"relativeFrom":"page","position":{{"offset":914400}}}},"vertical":{{"relativeFrom":"margin","position":{{"offset":-228600}}}},"wrap":"none","wrapDistances":{{"topEmu":12700,"bottomEmu":25400,"startEmu":38100,"endEmu":50800}},"behindDoc":true}},"descr":"Company logo"}},
                 {{"type":"anchored_drawing","id":"00000000000000030000000000000004","media":"0000000000000000000000000000000d","extent":{{"widthEmu":914400,"heightEmu":914400}},"anchor":{{"horizontal":{{"relativeFrom":"margin","position":{{"align":"center"}}}},"vertical":{{"relativeFrom":"paragraph","position":{{"offset":0}}}},"wrap":"square","behindDoc":false}}}}
               ]}}],
             {MEDIA_DEFS}}}"#
@@ -576,6 +576,7 @@ fn anchored_drawing_round_trips_with_offset_align_and_z_order() {
     let document = Document::from_json(json.as_bytes(), SnapshotLimits::default()).unwrap();
     let text = String::from_utf8(document.to_json().unwrap()).unwrap();
     assert_eq!(text.matches("descr").count(), 1);
+    assert_eq!(text.matches("wrapDistances").count(), 1);
     assert!(text.contains(r#""behindDoc":true"#));
     assert!(text.contains(r#""align":"center""#));
 }
@@ -604,6 +605,22 @@ fn anchored_drawing_offset_out_of_domain_is_rejected() {
         expect_invalid(json.as_bytes()),
         ModelError::PropertyValueOutOfDomain {
             property: "anchoredDrawing.offsetH"
+        }
+    ));
+}
+
+#[test]
+fn anchored_drawing_wrap_distance_out_of_domain_is_rejected() {
+    let json = format!(
+        r#"{{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{{"type":"paragraph","id":"00000000000000030000000000000002","properties":{{}},
+              "inlines":[{{"type":"anchored_drawing","id":"00000000000000030000000000000003","media":"0000000000000000000000000000000d","extent":{{"widthEmu":1,"heightEmu":1}},"anchor":{{"horizontal":{{"relativeFrom":"page","position":{{"offset":0}}}},"vertical":{{"relativeFrom":"paragraph","position":{{"offset":0}}}},"wrap":"topAndBottom","wrapDistances":{{"topEmu":0,"bottomEmu":-1,"startEmu":0,"endEmu":0}},"behindDoc":false}}}}]}}],
+            {MEDIA_DEFS}}}"#
+    );
+    assert!(matches!(
+        expect_invalid(json.as_bytes()),
+        ModelError::PropertyValueOutOfDomain {
+            property: "drawingAnchor.wrapDistances"
         }
     ));
 }
@@ -1893,6 +1910,7 @@ fn group_with_shape_and_text_box_children_validates_and_round_trips_json() {
                 position: VerticalPosition::Offset(0),
             },
             wrap: WrapMode::None,
+            wrap_distances: Default::default(),
             behind_doc: false,
         }),
         relative_height: Some(251_659_264),
