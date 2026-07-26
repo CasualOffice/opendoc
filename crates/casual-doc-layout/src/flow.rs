@@ -22,9 +22,10 @@ use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     Alignment, BlockNode, BorderEdge, BreakKind, Color, ColorScheme, DefinitionMap, Document,
     Drawing, Extent, FontRef, FontScheme, HeightRule, HighlightColor, InlineNode, LineRule,
-    MediaId, MediaReference, ParagraphProperties, RunProperties, SchemeColor, StyleId,
-    TabAlignment, TabLeader, TabStop, Table, TableBorders, TableCell, TableLayout,
-    TableRowProperties, TextBox, ThemeColorRef, ThemeFontRef, VerticalAlignment,
+    MediaId, MediaReference, ParagraphProperties, RunProperties, SchemeColor, SectionBoundary,
+    SectionId, SectionType, StyleId, TabAlignment, TabLeader, TabStop, Table, TableBorders,
+    TableCell, TableLayout, TableRowProperties, TextBox, ThemeColorRef, ThemeFontRef,
+    VerticalAlignment,
 };
 
 use crate::block::{
@@ -69,6 +70,11 @@ struct FlowCtx<'a> {
     /// before its inlines are collected. Threaded so each run's effective
     /// properties include the paragraph style's `rPr` in the cascade.
     para_style: Option<StyleId>,
+    /// The document's ordered section boundaries (`w:sectPr`). A body paragraph
+    /// whose `w:pPr` carries a section break ends a section; the *following*
+    /// section's start type (`w:type`) decides whether a page break follows it.
+    /// Empty for running content (header/footer), where section breaks are absent.
+    sections: &'a [SectionBoundary],
 }
 
 /// Builds a galley of block fragments from a document's body, shaped to fit
@@ -112,6 +118,7 @@ pub fn build_galley_with_report(
         palette: palette.as_ref(),
         cascade: StyleCascade::new(document.definitions()),
         para_style: None,
+        sections: &document.definitions().sections,
     };
     let galley = flow_blocks(document.body(), shaper, content_width, &mut ctx);
     (galley, report)
@@ -151,6 +158,8 @@ pub fn flow_header_footer(
         palette: palette.as_ref(),
         cascade: StyleCascade::new(document.definitions()),
         para_style: None,
+        // Running content has no section breaks of its own.
+        sections: &[],
     };
     flow_blocks(blocks, shaper, content_width, &mut ctx)
 }
@@ -202,6 +211,7 @@ pub fn build_galley_cached(
         palette: palette.as_ref(),
         cascade: StyleCascade::new(document.definitions()),
         para_style: None,
+        sections: &document.definitions().sections,
     };
     cache.begin_build(content_width);
     let mut galley = Vec::new();
@@ -251,7 +261,13 @@ pub fn build_galley_cached(
                 );
 
                 if !has_text_box && let Some(fragment) = cache.reusable(paragraph.id, hash, dirty) {
-                    galley.push(fragment.clone());
+                    // The cached fragment is section-break-pure (the break is not
+                    // folded into the hash — a *neighboring* paragraph's section-type
+                    // edit can flip this paragraph's break without dirtying it), so
+                    // re-derive and stamp the break from the current section list.
+                    let mut fragment = fragment.clone();
+                    apply_section_break_to_fragment(&mut fragment, &paragraph.properties, &ctx);
+                    galley.push(fragment);
                     continue;
                 }
                 let range = ModelRange::new(
@@ -281,9 +297,13 @@ pub fn build_galley_cached(
                     break_control,
                     decor,
                 };
+                // Cache the section-break-pure fragment, then stamp the break onto
+                // the copy that enters the galley (see the cache-hit path above).
                 if !has_text_box {
                     cache.store(paragraph.id, hash, fragment.clone());
                 }
+                let mut fragment = fragment;
+                apply_section_break_to_fragment(&mut fragment, &paragraph.properties, &ctx);
                 galley.push(fragment);
             }
             BlockNode::Table(table) => {
@@ -377,6 +397,10 @@ fn paragraph_hash(
             FlowItem::Run(run) => {
                 0u8.hash(&mut hasher);
                 run.text.hash(&mut hasher);
+                // The requested family (not just the resolved `font`) is folded in:
+                // under system fonts two runs can resolve to the same bundled
+                // `font` yet shape with different installed faces by requested name.
+                run.requested_family.hash(&mut hasher);
                 run.font.0.hash(&mut hasher);
                 run.size.0.hash(&mut hasher);
                 run.bold.hash(&mut hasher);
@@ -498,6 +522,7 @@ fn flow_blocks(
                     range,
                 );
                 ensure_nonempty_paragraph(&mut lines, &props, ctx, shaper, width, range);
+                apply_section_break(&mut lines, &paragraph.properties, ctx);
                 galley.push(BlockFragment::Paragraph {
                     id: paragraph.id,
                     lines,
@@ -889,6 +914,8 @@ fn block_intrinsic(blocks: &[BlockNode], shaper: &dyn LineShaper, ctx: &FlowCtx)
         palette: ctx.palette,
         cascade: ctx.cascade,
         para_style: ctx.para_style,
+        // Intrinsic width measurement never paginates, so section breaks are moot.
+        sections: &[],
     };
     let mut min = 0;
     let mut preferred = 0;
@@ -1445,6 +1472,9 @@ pub(crate) fn shape_field_run(
 ) -> FieldRunShape {
     let styled = StyledRun {
         text: value.into(),
+        // A field style carries only a resolved face id, not the declared family,
+        // so field glyphs shape with the bundled face (no system-face preference).
+        requested_family: None,
         font: style.font,
         size: style.size,
         bold: style.bold,
@@ -1845,6 +1875,9 @@ fn build_styled_run<'a>(
         // Resolve the declared family to a concrete face so the renderer outlines
         // the same face `parley` shapes with (measured against the shaped text).
         font: resolve_font(text.as_ref(), properties, bold, italic, ctx),
+        // The declared family name, kept so the shaper can prefer a real installed
+        // face of that name over the bundled fallback (`system-fonts`/host faces).
+        requested_family: requested_family(properties, ctx.scheme).map(Cow::Owned),
         text,
         size,
         bold,
@@ -1934,6 +1967,7 @@ fn push_small_caps_runs<'a>(
         strikethrough: properties.strike.unwrap_or(false),
     };
     let highlight = properties.highlight.and_then(highlight_rgba);
+    let family = requested_family(properties, ctx.scheme);
     for (span, was_lower) in small_caps_spans(text) {
         let size = if was_lower {
             Twip(base.raw() * 3 / 4)
@@ -1944,6 +1978,7 @@ fn push_small_caps_runs<'a>(
         let font = resolve_font(&upper, properties, bold, italic, ctx);
         out.push(StyledRun {
             text: Cow::Owned(upper),
+            requested_family: family.clone().map(Cow::Owned),
             font,
             size,
             bold,
@@ -2249,8 +2284,14 @@ fn line_constraints(properties: &ParagraphProperties, width: Twip) -> LineConstr
         Some(s) => match s.line_rule {
             Some(LineRule::Exact) => (None, None, s.line_twips.map(Twip)),
             Some(LineRule::AtLeast) => (None, s.line_twips.map(Twip), None),
-            // An explicit `auto` rule (or none) uses the percent multiple.
-            Some(LineRule::Auto) | None => (s.line_percent, None, None),
+            // An explicit `auto` rule (or none) uses the percent multiple. A
+            // multiple below 1.0 (100%) is floored to single spacing: sub-single
+            // `auto` spacing (e.g. a machine-produced SDS with `w:line="168"`,
+            // 0.70x) otherwise scales the line box under the glyph line, piling
+            // consecutive lines on top of each other. LibreOffice (the oracle) also
+            // does not compress `auto` spacing below the single line, so flooring
+            // here matches its page layout; a genuine multiple >= 1.0 is untouched.
+            Some(LineRule::Auto) | None => (s.line_percent.map(|p| p.max(100)), None, None),
         },
         None => (None, None, None),
     };
@@ -2272,6 +2313,60 @@ fn line_constraints(properties: &ParagraphProperties, width: Twip) -> LineConstr
 /// line rule — a major vertical-rhythm and page-count factor, since documents use
 /// blank paragraphs for spacing. The synthesized line carries no glyphs (nothing
 /// is painted) but the correct height.
+/// Whether a body paragraph that ends section `ended` (its `w:pPr` carried that
+/// section's `w:sectPr`) forces a page break after its last line.
+///
+/// A `w:sectPr` in a paragraph's `w:pPr` marks the paragraph as the *last* of its
+/// section. Whether the content that follows begins on a new page is governed, per
+/// ECMA-376, by the *next* section's start type (`w:type`): `nextPage`/`evenPage`/
+/// `oddPage` — and the unspecified default, which is `nextPage` — begin on a new
+/// page, so a page break follows this paragraph; a `continuous` section (or, in
+/// single-column flow, `nextColumn`) continues on the same page, so no break. The
+/// document's final section is body-level (carried by no paragraph), so a
+/// paragraph-carried section always has a following section; the defensive "no
+/// next section → no break" keeps a malformed document from gaining a stray break.
+fn section_break_forces_page(sections: &[SectionBoundary], ended: SectionId) -> bool {
+    let Some(index) = sections.iter().position(|s| s.id == ended) else {
+        return false;
+    };
+    let Some(next) = sections.get(index + 1) else {
+        return false;
+    };
+    !matches!(
+        next.section_type,
+        Some(SectionType::Continuous | SectionType::NextColumn)
+    )
+}
+
+/// Applies a paragraph-embedded section break to its shaped lines: if the paragraph
+/// ends a section whose successor starts on a new page, force a page break after
+/// the paragraph's last line (the same mechanism a trailing `w:br` type `page`
+/// uses). No-op for a paragraph that carries no section break or whose successor is
+/// continuous. Runs after [`ensure_nonempty_paragraph`], so an empty
+/// section-terminating paragraph (e.g. a lone cover-page `sectPr`) has a line to
+/// carry the break.
+fn apply_section_break(lines: &mut LineLayout, properties: &ParagraphProperties, ctx: &FlowCtx) {
+    if let Some(ended) = properties.section_break
+        && section_break_forces_page(ctx.sections, ended)
+        && let Some(last) = lines.lines.last_mut()
+    {
+        last.page_break_after = true;
+    }
+}
+
+/// [`apply_section_break`] on a built fragment (the incremental cache path stamps
+/// the break onto the fragment rather than baking it into the cached lines). A
+/// non-paragraph fragment (a table row) never carries a paragraph section break.
+fn apply_section_break_to_fragment(
+    fragment: &mut BlockFragment,
+    properties: &ParagraphProperties,
+    ctx: &FlowCtx,
+) {
+    if let BlockFragment::Paragraph { lines, .. } = fragment {
+        apply_section_break(lines, properties, ctx);
+    }
+}
+
 fn ensure_nonempty_paragraph(
     layout: &mut LineLayout,
     props: &ParagraphProperties,
@@ -3185,6 +3280,7 @@ mod tests {
             palette: None,
             cascade: StyleCascade::new(&definitions),
             para_style: None,
+            sections: &[],
         };
         let mut runs = Vec::new();
         collect_runs(&inlines, &mut runs, &mut ctx);
@@ -3553,7 +3649,6 @@ mod tests {
 
     #[test]
     fn a_cambria_run_resolves_to_the_caladea_face_and_is_reported() {
-        use crate::fonts::CALADEA;
         use crate::resolve::Disposition;
         let doc = document(vec![paragraph(
             10,
@@ -3564,15 +3659,24 @@ mod tests {
         let BlockFragment::Paragraph { lines, .. } = &galley[0] else {
             panic!();
         };
-        assert_eq!(
-            lines.lines[0].runs[0].font,
-            CALADEA.face_id(false, false),
-            "Cambria shapes and renders as the Caladea face"
-        );
+        // The resolver's metric-compatible substitution (Cambria -> Caladea) is a
+        // pure function of the bundled face set, so it is always recorded.
         let subs: Vec<_> = report.substitutions().collect();
         assert_eq!(subs.len(), 1);
         assert_eq!(subs[0].resolved_family, "Caladea");
         assert_eq!(subs[0].disposition, Disposition::MetricCompatible);
+        // When no real Cambria face is available to the shaper — every deterministic
+        // / WASM build, and any platform without the font — the run is *shaped* with
+        // the bundled Caladea substitute. With `system-fonts` on a machine that has
+        // Cambria (e.g. Windows CI), `pick_family` prefers the real installed face,
+        // so the shaped FontId is intentionally the interned Cambria, not Caladea.
+        #[cfg(not(feature = "system-fonts"))]
+        assert_eq!(
+            lines.lines[0].runs[0].font,
+            crate::fonts::CALADEA.face_id(false, false),
+            "Cambria shapes and renders as the Caladea face"
+        );
+        let _ = lines;
     }
 
     #[test]

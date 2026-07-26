@@ -12,6 +12,7 @@ use casual_doc_render::{BundledFontSource, NoMediaSource, Surface, render};
 fn styled(text: &str, bold: bool, italic: bool, color: [u8; 4]) -> StyledRun<'_> {
     StyledRun {
         text: text.into(),
+        requested_family: None,
         font: face_id(bold, italic),
         size: Twip::from_points(26),
         bold,

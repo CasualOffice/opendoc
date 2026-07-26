@@ -552,6 +552,8 @@ fn leader_run(
     let s = ch.to_string();
     let probe = StyledRun {
         text: s.as_str().into(),
+        // A tab leader's glyph uses the resolved face; no declared family to prefer.
+        requested_family: None,
         font: style.font,
         size: style.size,
         bold: false,
@@ -664,6 +666,7 @@ mod tests {
     fn styled(text: &str) -> StyledRun<'_> {
         StyledRun {
             text: text.into(),
+            requested_family: None,
             font: FontId(0),
             size: Twip::from_points(11),
             bold: false,

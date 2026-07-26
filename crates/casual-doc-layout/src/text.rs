@@ -254,6 +254,15 @@ pub struct StyledRun<'a> {
     /// when a case transform (`w:caps`/`w:smallCaps`) rewrote it, so the transform
     /// costs an allocation only when it actually applies.
     pub text: Cow<'a, str>,
+    /// The originally requested font family (`w:rFonts`, theme-resolved) before
+    /// bundled substitution, so the shaper can prefer a real installed face of that
+    /// name (e.g. system Arial) over the bundled fallback the resolver picked when
+    /// one is available — the `system-fonts` / host-registry path. `None` when the
+    /// run declared no family (it inherits the bundled default). Deterministic
+    /// builds (no `system-fonts`, no host faces) never find the name in the
+    /// collection, so [`font`](Self::font) — the bundled resolution — is used and
+    /// output is unchanged.
+    pub requested_family: Option<Cow<'a, str>>,
     /// The resolved font.
     pub font: FontId,
     /// Font size.

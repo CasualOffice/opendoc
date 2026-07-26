@@ -571,13 +571,14 @@ impl<'a> Paginator<'a> {
                 box_metrics,
                 break_control,
                 decor,
-            } if lines.lines.len() > 1
-                && (allow_split && !break_control.keep_lines
-                    || lines.lines.iter().any(|l| l.page_break_after)) =>
+            } if lines.lines.iter().any(|l| l.page_break_after)
+                || (lines.lines.len() > 1 && allow_split && !break_control.keep_lines) =>
             {
-                // A paragraph with a forced mid-paragraph page/column break is
-                // always routed through the line splitter (even under `keepLines`
-                // or a keep-group) so the explicit break is honored.
+                // A paragraph with a forced page/column break is always routed
+                // through the line splitter (even under `keepLines`, a keep-group,
+                // or when it is a *single* line — e.g. an empty paragraph carrying a
+                // section break or a lone `w:br`) so the explicit break is honored;
+                // the `_` arm below would place it whole and drop the break.
                 self.place_paragraph(idx, *id, lines, *box_metrics, *break_control, *decor);
             }
             BlockFragment::TableRow {
@@ -869,7 +870,13 @@ impl<'a> Paginator<'a> {
                     line: start as u32,
                 }
             };
-            if start < n {
+            // Flush between the split chunks of this paragraph, and also after a
+            // forced page/column break that fell on the paragraph's *final* line
+            // (`start == n`): the break ends the page so the next fragment starts
+            // fresh. Without this, a trailing break — a section break or a `w:br`
+            // on the last line — would be silently dropped. A flush with nothing
+            // more to place is a no-op, so a document-final break adds no blank page.
+            if start < n || forced {
                 self.flush();
             }
         }

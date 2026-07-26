@@ -789,6 +789,7 @@ mod tests {
         let shaper = ParleyShaper::new();
         let run = StyledRun {
             text: "Hello world".into(),
+            requested_family: None,
             font: FontId(0),
             size: Twip::from_points(11),
             bold: false,
@@ -834,6 +835,7 @@ mod tests {
         let shaper = ParleyShaper::new();
         let run = StyledRun {
             text: text.into(),
+            requested_family: None,
             font: FontId(0),
             size: Twip::from_points(11),
             bold: false,
