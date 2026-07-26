@@ -466,6 +466,7 @@ mod tests {
                     bars: Vec::new(),
                     images: Vec::new(),
                     fields: Vec::new(),
+                    text_boxes: Vec::new(),
                 }],
             }
         }

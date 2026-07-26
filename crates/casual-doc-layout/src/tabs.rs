@@ -18,6 +18,7 @@
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{BreakKind, TabAlignment, TabLeader, TabStop};
 
+use crate::block::BlockFragment;
 use crate::model::{ModelPos, ModelRange};
 use crate::text::{
     Decoration, FieldKind, FieldStyle, Glyph, GlyphRun, Line, LineBreak, LineConstraints,
@@ -70,6 +71,21 @@ pub enum FlowItem<'a> {
         value: String,
         /// The run styling, so the field pass can reshape a new value.
         style: FieldStyle,
+    },
+    /// An inline text box (`wps:txbx` / `v:textbox`): its recursive block content
+    /// already flowed through the shared pipeline into fragments, the box's outer
+    /// size (twips), and its border/fill (RGBA). Laid out as an inline box on its
+    /// own line, like an [`FlowItem::Image`]; composition paints the box and its
+    /// flowed content.
+    TextBox {
+        /// The flowed block fragments (the box's content).
+        blocks: Vec<BlockFragment>,
+        /// The box's outer size in twips (column width × content height + margins).
+        size: Size,
+        /// The border color (RGBA), or `None` for no border.
+        border: Option<[u8; 4]>,
+        /// The background fill (RGBA), or `None` for transparent.
+        fill: Option<[u8; 4]>,
     },
 }
 
@@ -251,9 +267,10 @@ fn split_blocks<'a>(items: &'a [FlowItem<'a>], base: u32) -> Vec<Block<'a>> {
                 has_tab = false;
                 start_offset = byte;
             }
-            // Inline images and fields are handled by their own layout paths
-            // before the stream reaches the tab/break layer, so none reach here.
-            FlowItem::Image { .. } | FlowItem::Field { .. } => {}
+            // Inline images, fields, and text boxes are handled by their own
+            // layout paths before the stream reaches the tab/break layer, so none
+            // reach here.
+            FlowItem::Image { .. } | FlowItem::Field { .. } | FlowItem::TextBox { .. } => {}
         }
     }
     blocks.push(Block {
@@ -377,6 +394,7 @@ fn layout_tabbed_line(
         bars: Vec::new(),
         images: Vec::new(),
         fields: Vec::new(),
+        text_boxes: Vec::new(),
     };
     vec![line]
 }
@@ -598,6 +616,7 @@ fn empty_line(node: NodeId, offset: u32, bars: Vec<Twip>) -> Line {
         bars,
         images: Vec::new(),
         fields: Vec::new(),
+        text_boxes: Vec::new(),
     }
 }
 
