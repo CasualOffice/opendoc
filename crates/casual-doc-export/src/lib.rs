@@ -525,6 +525,32 @@ mod semantic_tests {
     }
 
     #[test]
+    fn wpg_group_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, GroupChild, InlineNode, ShapeGeometry};
+        // A `wpg:wgp` with a rectangle (red fill, green outline) and a text box.
+        let xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic" xmlns:wps="urn:wps" xmlns:wpg="urn:wpg"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="0" relativeHeight="251659264" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="2000000" cy="1000000"/><wp:wrapNone/><wp:docPr id="1" name="Group 1"/><a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2000000" cy="1000000"/><a:chOff x="0" y="0"/><a:chExt cx="2000000" cy="1000000"/></a:xfrm></wpg:grpSpPr><wps:wsp><wps:cNvPr id="2" name="Rectangle"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2000000" cy="1000000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill><a:ln w="9525"><a:solidFill><a:srgbClr val="00FF00"/></a:solidFill></a:ln></wps:spPr><wps:bodyPr/></wps:wsp><wps:wsp><wps:cNvPr id="3" name="Text Box"/><wps:spPr><a:xfrm><a:off x="200000" y="100000"/><a:ext cx="800000" cy="300000"/></a:xfrm><a:prstGeom prst="rect"/></wps:spPr><wps:txbx><w:txbxContent><w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+
+        // The group and its children are modeled with resolved colors + geometry.
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Group(group) = &paragraph.inlines[0] else {
+            panic!("expected a group, got {:?}", paragraph.inlines[0]);
+        };
+        assert_eq!(group.relative_height, Some(251_659_264));
+        assert_eq!(group.children.len(), 2);
+        let GroupChild::Shape(shape) = &group.children[0] else {
+            panic!("expected a shape");
+        };
+        assert_eq!(shape.geometry, ShapeGeometry::Rectangle);
+        assert_eq!(shape.fill.map(|c| [c.r, c.g, c.b]), Some([255, 0, 0]));
+        assert_eq!(shape.stroke.map(|s| s.width_emu), Some(9525));
+
+        assert_eq!(m1, m2, "the group survives write -> reopen");
+    }
+
+    #[test]
     fn omml_math_survives_the_semantic_round_trip() {
         // A paragraph with a run, an opaque equation (`m:oMathPara`), and a
         // trailing run. The retained OMML must be written back verbatim and the
