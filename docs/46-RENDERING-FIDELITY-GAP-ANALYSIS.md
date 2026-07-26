@@ -131,6 +131,65 @@ runs · text wrapping around floats (square/tight/…) · header/footer PAGE fie
 show cached values · non-metric-compatible fonts (Arial/Times → Roboto) · CJK
 line-break quality · drop caps/framePr · cell spacing.
 
+## Focused table, text-box, and object audit (2026-07-27)
+
+This follow-up traces each feature through
+`model → import/export → flow/anchor placement → composition`. It corrects the
+coarser claims above: cell margins, vertical alignment, and the float layer have
+landed, but several modeled properties are still not consumed.
+
+### Table findings
+
+| Surface | Current behavior | Status / next slice |
+| --- | --- | --- |
+| Width, grid span, fixed/autofit, indent | Consumed by the width solver. | Implemented for horizontal spans. |
+| Cell margins and vertical alignment | Resolved in flow and applied in composition. | Implemented. |
+| Table/cell shading | Cell fill is painted; table-level `w:shd` now supplies the fallback when a cell has no overriding fill. | Implemented by `P1F-TBL-TOPO`. |
+| Horizontal border topology | Perimeter vs `insideH` is selected by row position; conflicts inspect abutting cells above/below, including differing grid-span partitions. | Implemented by `P1F-TBL-TOPO`; segmented span edges remain below. |
+| Border conflict details | `nil` suppression and first-in-reading-order ties are handled by the topology slice, but the rank covers only a few styles and uses an approximate luminance tie-break. Non-zero cell spacing needs a different conflict mode. | Follow-up after topology; keep the limitation explicit. |
+| Border appearance | Border color and width reach paint, but the style token does not: double/dashed/dotted/art borders are all painted as a single solid edge. | **High:** extend the resolved-edge/display-list representation before adding style-specific paint. |
+| Vertical merges | `w:vMerge` is modeled/imported/exported but never consumed by layout; continuation cells are rendered independently. | **High:** add merge-region layout, height/content ownership, pagination tests. |
+| Table style and conditional formatting | `style_ref`, `tblLook`, and row/cell `cnfStyle` reach the model but the layout cascade has no table-style layer. | **High:** resolve style defaults and conditional regions before sizing/paint. |
+| Alignment, bidi, and row alignment | `w:jc`, `w:bidiVisual`, and row `w:jc` are modeled but ignored by flow. | **High:** define physical start/end mapping before implementation. |
+| Cell spacing | Table/row spacing is modeled but neither cell geometry nor border conflict mode consumes it. | **High:** needs gap geometry plus separately visible table/cell borders. |
+| Floating tables | `tblpPr`, overlap, and from-text distances are modeled but tables remain inline. | **High/design required:** integrate table boxes with float placement and wrapping. |
+| Cell text behavior | `noWrap`, vertical `textDirection`, `fitText`, and `hideMark` are modeled but ignored. | Medium/high, split into bounded layout slices. |
+
+`CellFragment` currently stores one border per whole edge. When a grid-spanning
+cell abuts several cells whose borders differ, Word can paint independently
+styled edge segments. Correct support therefore needs a segmented-edge
+representation; choosing one winner for the full span is only an interim
+topology fallback and must not be presented as complete fidelity.
+
+### Text boxes, drawings, and embedded objects
+
+| Surface | Current behavior | Status / next slice |
+| --- | --- | --- |
+| Inline pictures | Media and extent flow to an image paint item. | Implemented for supported raster media. |
+| Floating pictures | Anchor position and z-order are placed; wrap polygons/modes do not reflow body text. | Partial. |
+| DrawingML inline text boxes | Import captures shape fill/stroke/extent, then `commit_shape` discards them for the inline form. Flow substitutes a black 1px border, no fill, fixed inset, and content-derived size. | **Critical correctness:** retain and consume authored appearance/extent. |
+| Floating/group text boxes | Fill and border color survive; stroke width is discarded and composition always paints 1px. `bodyPr` insets, vertical alignment, rotation, and autofit are not modeled. | **High:** preserve stroke width first; design the text-box box model separately. |
+| Nested block content | Paragraphs, SDTs, nested tables, and inline images use the shared block flow. | Implemented, subject to the placement defects below. |
+| Floats nested in table cells | Source traversal finds them, but anchor placement looks only for top-level paragraph fragments. A paragraph nested in a `TableRow` falls back to page 0 geometry. | **Critical placement defect.** |
+| Floats in header/footer tables | The band collector visits top-level paragraph fragments only, so anchors inside table cells are skipped. | **Critical visibility defect.** |
+| Multi-section anchors | Placement uses one page geometry; later-section page/margin frames can be wrong. | High; requires per-page section geometry. |
+| Shape geometry | Lines are distinct; ellipse, round-rectangle, and other presets collapse to a rectangular box. Standalone non-text shapes may be reported and dropped on import. | High; add first-class preset/path paint geometry. |
+| Text-box overflow | Nested content is not clipped to an explicit text-box extent. | Medium; define overflow/autofit policy before clipping. |
+| Embedded object previews | Chart/SmartArt/OLE metadata, preview media, and extent are modeled/imported/exported, but `collect_items` has no `EmbeddedObject` arm, so even safe previews are invisible. | **High, bounded:** render an available preview as a non-executable image; keep the object opaque. |
+| Other inline leaves | Symbol, math fallback, no-break/soft hyphen, and positional tabs are modeled but absent or incomplete in flow. | Covered by F6c. |
+
+### Controlled implementation order
+
+1. `P1F-TBL-TOPO`: table perimeter/interior border topology, adjacent-row
+   conflicts, and table-shading fallback.
+2. Preserve inline/floating text-box appearance and stroke width without
+   changing anchor semantics.
+3. Render safe embedded-object previews through the existing image path.
+4. Make anchor lookup recurse through table fragments in body and
+   header/footer bands.
+5. Design the larger table-style/spacing/bidi/floating-table and text-box
+   `bodyPr` slices before implementation.
+
 ## Execution roadmap (controlled sequence, not parallel free-for-all)
 
 Order chosen for maximum fidelity-per-fix and to avoid `flow.rs` merge churn:

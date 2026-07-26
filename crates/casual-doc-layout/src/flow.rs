@@ -24,7 +24,7 @@ use casual_doc_model::v1::{
     Document, Drawing, Extent, FontRef, FontScheme, HeightRule, HighlightColor, Indentation,
     InlineNode, LevelSuffix, LineRule, MediaId, MediaReference, ParagraphProperties, RunProperties,
     SchemeColor, SectionBoundary, SectionId, SectionType, StyleId, TabAlignment, TabLeader,
-    TabStop, Table, TableBorders, TableCell, TableLayout, TableRowProperties, TextBox,
+    TabStop, Table, TableBorders, TableCell, TableLayout, TableRow, TableRowProperties, TextBox,
     ThemeColorRef, ThemeFontRef, VerticalAlignment,
 };
 
@@ -657,7 +657,7 @@ fn flow_table(
     edges.push(x);
     let edge = |col: usize| Twip(edges[col.min(edges.len() - 1)]);
 
-    for row in &table.rows {
+    for (row_index, row) in table.rows.iter().enumerate() {
         let mut cells = Vec::new();
         let mut col = 0usize;
         for (index, cell) in row.cells.iter().enumerate() {
@@ -665,8 +665,16 @@ fn flow_table(
             let cell_x = edge(col);
             let cell_end = edge(col + span);
             let cell_width = Twip((cell_end.raw() - cell_x.raw()).max(1));
-            let borders = resolve_cell_borders(&table.properties.borders, &row.cells, index);
-            let shading = cell.properties.shading.fill.map(|c| [c.r, c.g, c.b, 255]);
+            let borders =
+                resolve_cell_borders(&table.properties.borders, &table.rows, row_index, index);
+            // A cell fill overrides table shading. When the cell omits `w:shd`,
+            // table-level shading applies through the cell extent.
+            let shading = cell
+                .properties
+                .shading
+                .fill
+                .or(table.properties.shading.fill)
+                .map(|c| [c.r, c.g, c.b, 255]);
             // Word insets a cell's content by `w:tcMar` (per-cell), falling back to
             // the table's `w:tblCellMar`, then to Word's built-in default. Content
             // therefore flows at the reduced inner width; composition offsets it by
@@ -1068,16 +1076,29 @@ fn max_line_width(layout: &crate::text::LineLayout) -> i32 {
 }
 
 /// Resolves a cell's four visible borders by OOXML conflict precedence
-/// (ECMA-376 §17.4.66): each edge is the winner among the cell's own border, the
-/// abutting neighbor cell's border, and the table-level border for that edge.
-/// Interior edges use `w:insideH`/`w:insideV`; outer edges use the table's outer
-/// borders. `None` = no explicit border (the default grid line is drawn).
-fn resolve_cell_borders(table: &TableBorders, row: &[TableCell], index: usize) -> CellBorders {
+/// (ECMA-376 §17.4.66): first derive each cell side from its direct border or the
+/// applicable table fallback, then resolve a zero-spacing conflict with the
+/// abutting cell side. Interior edges use `w:insideH`/`w:insideV`; outer edges
+/// use the table perimeter. `None` means no visible border.
+///
+/// A horizontally spanning cell can abut several cells in the preceding or
+/// following row. [`CellBorders`] cannot yet represent independently styled
+/// segments, so the strongest overlapping edge is selected for the full span.
+fn resolve_cell_borders(
+    table: &TableBorders,
+    rows: &[TableRow],
+    row_index: usize,
+    index: usize,
+) -> CellBorders {
+    let row = &rows[row_index].cells;
     let own = &row[index].properties.borders;
     let left = index.checked_sub(1).map(|i| &row[i].properties.borders);
     let right = row.get(index + 1).map(|c| &c.properties.borders);
     let is_first = index == 0;
     let is_last = index + 1 == row.len();
+    let is_top_row = row_index == 0;
+    let is_bottom_row = row_index + 1 == rows.len();
+    let (start_col, end_col) = cell_column_range(row, index);
 
     let start_default = if is_first {
         table.start.as_ref()
@@ -1089,38 +1110,130 @@ fn resolve_cell_borders(table: &TableBorders, row: &[TableCell], index: usize) -
     } else {
         table.inside_v.as_ref()
     };
+
+    // Candidate order follows reading order so exact ties keep the first edge:
+    // row above before current, current before row below; left before right.
+    let top_default = if is_top_row {
+        table.top.as_ref()
+    } else {
+        table.inside_h.as_ref()
+    };
+    let mut top_candidates = Vec::new();
+    if let Some(above) = row_index.checked_sub(1).and_then(|i| rows.get(i)) {
+        push_overlapping_edges(
+            &mut top_candidates,
+            &above.cells,
+            start_col,
+            end_col,
+            table.inside_h.as_ref(),
+            |borders| borders.bottom.as_ref(),
+        );
+    }
+    top_candidates.push(effective_border(own.top.as_ref(), top_default));
+
+    let bottom_default = if is_bottom_row {
+        table.bottom.as_ref()
+    } else {
+        table.inside_h.as_ref()
+    };
+    let mut bottom_candidates = vec![effective_border(own.bottom.as_ref(), bottom_default)];
+    if let Some(below) = rows.get(row_index + 1) {
+        push_overlapping_edges(
+            &mut bottom_candidates,
+            &below.cells,
+            start_col,
+            end_col,
+            table.inside_h.as_ref(),
+            |borders| borders.top.as_ref(),
+        );
+    }
+
+    let own_start = effective_border(own.start.as_ref(), start_default);
+    let left_end =
+        left.map(|borders| effective_border(borders.end.as_ref(), table.inside_v.as_ref()));
+    let own_end = effective_border(own.end.as_ref(), end_default);
+    let right_start =
+        right.map(|borders| effective_border(borders.start.as_ref(), table.inside_v.as_ref()));
+
     CellBorders {
-        top: resolve_edge(&[
-            own.top.as_ref(),
-            table.top.as_ref(),
-            table.inside_h.as_ref(),
-        ]),
-        bottom: resolve_edge(&[
-            own.bottom.as_ref(),
-            table.bottom.as_ref(),
-            table.inside_h.as_ref(),
-        ]),
-        start: resolve_edge(&[
-            own.start.as_ref(),
-            left.and_then(|b| b.end.as_ref()),
-            start_default,
-        ]),
-        end: resolve_edge(&[
-            own.end.as_ref(),
-            right.and_then(|b| b.start.as_ref()),
-            end_default,
-        ]),
+        top: resolve_edge(&top_candidates),
+        bottom: resolve_edge(&bottom_candidates),
+        start: resolve_edge(&[left_end.flatten(), own_start]),
+        end: resolve_edge(&[own_end, right_start.flatten()]),
+    }
+}
+
+/// Returns the half-open grid-column range occupied by `row[index]`.
+fn cell_column_range(row: &[TableCell], index: usize) -> (usize, usize) {
+    let start = row
+        .iter()
+        .take(index)
+        .map(|cell| cell.properties.grid_span.unwrap_or(1).max(1) as usize)
+        .sum::<usize>();
+    let span = row[index].properties.grid_span.unwrap_or(1).max(1) as usize;
+    (start, start.saturating_add(span))
+}
+
+/// Adds the effective side of every cell whose grid-column range overlaps the
+/// current cell. This handles ordinary rows as well as different `w:gridSpan`
+/// partitions above and below the edge.
+fn push_overlapping_edges<'a>(
+    candidates: &mut Vec<Option<&'a BorderEdge>>,
+    row: &'a [TableCell],
+    start_col: usize,
+    end_col: usize,
+    table_default: Option<&'a BorderEdge>,
+    side: impl Fn(&'a TableBorders) -> Option<&'a BorderEdge>,
+) {
+    let mut cell_start = 0usize;
+    for cell in row {
+        let span = cell.properties.grid_span.unwrap_or(1).max(1) as usize;
+        let cell_end = cell_start.saturating_add(span);
+        if cell_start < end_col && start_col < cell_end {
+            candidates.push(effective_border(
+                side(&cell.properties.borders),
+                table_default,
+            ));
+        }
+        cell_start = cell_end;
+        if cell_start >= end_col {
+            break;
+        }
+    }
+}
+
+/// Derives one cell side before adjacent-cell conflict resolution. A direct
+/// visible border (including `nil`, which explicitly suppresses the edge) wins;
+/// omitted/`none` direct borders fall back to the applicable table edge.
+fn effective_border<'a>(
+    cell: Option<&'a BorderEdge>,
+    table: Option<&'a BorderEdge>,
+) -> Option<&'a BorderEdge> {
+    match cell {
+        Some(edge) if matches!(edge.style.as_str(), "" | "none") => table,
+        Some(edge) => Some(edge),
+        None => table,
     }
 }
 
 /// Picks the highest-precedence border among `candidates` and converts it to a
-/// drawable [`ResolvedEdge`] (or `None` if none is a visible border).
+/// drawable [`ResolvedEdge`] (or `None` if none is visible). An explicit `nil`
+/// suppresses the conflicting edge. Exact ranking ties keep the first candidate
+/// in reading order.
 fn resolve_edge(candidates: &[Option<&BorderEdge>]) -> Option<ResolvedEdge> {
-    let winner = candidates
-        .iter()
-        .filter_map(|c| *c)
-        .filter(|e| is_visible_border(e))
-        .max_by(|a, b| border_rank(a).cmp(&border_rank(b)))?;
+    let mut winner: Option<&BorderEdge> = None;
+    for edge in candidates.iter().filter_map(|candidate| *candidate) {
+        if edge.style == "nil" {
+            return None;
+        }
+        if !is_visible_border(edge) {
+            continue;
+        }
+        if winner.is_none_or(|current| border_rank(edge) > border_rank(current)) {
+            winner = Some(edge);
+        }
+    }
+    let winner = winner?;
     let color = winner
         .color
         .map_or([0, 0, 0, 255], |c| [c.r, c.g, c.b, 255]);
@@ -3606,8 +3719,8 @@ mod tests {
     // --- Table layout fidelity (P1D-003) --------------------------------------
 
     use casual_doc_model::v1::{
-        BorderEdge, GridColumn, HeightRule, RowHeight, Table, TableBorders, TableCell,
-        TableCellProperties, TableProperties, TableRow as ModelRow, TableRowProperties,
+        BorderEdge, GridColumn, HeightRule, RgbColor, RowHeight, Shading, Table, TableBorders,
+        TableCell, TableCellProperties, TableProperties, TableRow as ModelRow, TableRowProperties,
     };
 
     fn node(id: u64) -> NodeId {
@@ -3634,11 +3747,23 @@ mod tests {
         }
     }
 
+    fn colored_edge(style: &str, sz: u32, color: RgbColor) -> BorderEdge {
+        BorderEdge {
+            color: Some(color),
+            ..edge(style, sz)
+        }
+    }
+
     /// Builds a single-row table galley and returns the row fragment's cells.
     fn flow_single_row(table: Table, width: Twip) -> BlockFragment {
         let shaper = ParleyShaper::new();
         let mut galley = build_galley(&document(vec![BlockNode::Table(table)]), &shaper, width);
         galley.remove(0)
+    }
+
+    fn flow_table_rows(table: Table, width: Twip) -> Vec<BlockFragment> {
+        let shaper = ParleyShaper::new();
+        build_galley(&document(vec![BlockNode::Table(table)]), &shaper, width)
     }
 
     // --- column-width solver (pure) ---
@@ -4090,6 +4215,381 @@ mod tests {
         };
         let top = cells[0].borders.top.expect("the table top border applies");
         assert_eq!(top.width, Twip(20), "sz 8 eighth-points = 20 twips");
+    }
+
+    #[test]
+    fn a_direct_cell_border_is_derived_before_the_table_fallback() {
+        let table = Table {
+            id: node(50),
+            grid: vec![GridColumn {
+                width_twips: Some(3000),
+            }],
+            grid_change: None,
+            properties: TableProperties {
+                borders: TableBorders {
+                    top: Some(edge("double", 24)),
+                    ..TableBorders::default()
+                },
+                ..TableProperties::default()
+            },
+            rows: vec![ModelRow {
+                id: node(51),
+                properties: TableRowProperties::default(),
+                cells: vec![text_cell(
+                    60,
+                    TableCellProperties {
+                        borders: TableBorders {
+                            top: Some(edge("single", 4)),
+                            ..TableBorders::default()
+                        },
+                        ..TableCellProperties::default()
+                    },
+                    "direct",
+                )],
+            }],
+        };
+        let BlockFragment::TableRow { cells, .. } = flow_single_row(table, Twip(9000)) else {
+            panic!("expected a row");
+        };
+        assert_eq!(
+            cells[0].borders.top.map(|border| border.width),
+            Some(Twip(10)),
+            "the direct cell edge wins before the table edge enters conflict resolution"
+        );
+    }
+
+    #[test]
+    fn table_outer_and_inside_horizontal_borders_apply_to_the_correct_rows() {
+        let red = RgbColor { r: 255, g: 0, b: 0 };
+        let blue = RgbColor { r: 0, g: 0, b: 255 };
+        let green = RgbColor { r: 0, g: 128, b: 0 };
+        let table = Table {
+            id: node(50),
+            grid: vec![GridColumn {
+                width_twips: Some(3000),
+            }],
+            grid_change: None,
+            properties: TableProperties {
+                borders: TableBorders {
+                    top: Some(colored_edge("single", 8, red)),
+                    inside_h: Some(colored_edge("single", 4, blue)),
+                    bottom: Some(colored_edge("single", 12, green)),
+                    ..TableBorders::default()
+                },
+                ..TableProperties::default()
+            },
+            rows: vec![
+                ModelRow {
+                    id: node(51),
+                    properties: TableRowProperties::default(),
+                    cells: vec![text_cell(60, TableCellProperties::default(), "top")],
+                },
+                ModelRow {
+                    id: node(52),
+                    properties: TableRowProperties::default(),
+                    cells: vec![text_cell(61, TableCellProperties::default(), "bottom")],
+                },
+            ],
+        };
+
+        let rows = flow_table_rows(table, Twip(9000));
+        let [
+            BlockFragment::TableRow {
+                cells: top_cells, ..
+            },
+            BlockFragment::TableRow {
+                cells: bottom_cells,
+                ..
+            },
+        ] = rows.as_slice()
+        else {
+            panic!("expected two table rows");
+        };
+
+        assert_eq!(
+            top_cells[0].borders.top,
+            Some(ResolvedEdge {
+                color: [255, 0, 0, 255],
+                width: Twip(20),
+            }),
+            "only the first row receives the table top border"
+        );
+        let inside = Some(ResolvedEdge {
+            color: [0, 0, 255, 255],
+            width: Twip(10),
+        });
+        assert_eq!(top_cells[0].borders.bottom, inside);
+        assert_eq!(
+            bottom_cells[0].borders.top, inside,
+            "both sides of the shared row boundary resolve to insideH"
+        );
+        assert_eq!(
+            bottom_cells[0].borders.bottom,
+            Some(ResolvedEdge {
+                color: [0, 128, 0, 255],
+                width: Twip(30),
+            }),
+            "only the final row receives the table bottom border"
+        );
+    }
+
+    #[test]
+    fn horizontal_border_conflicts_compare_abutting_rows() {
+        let red = RgbColor { r: 255, g: 0, b: 0 };
+        let blue = RgbColor { r: 0, g: 0, b: 255 };
+        let upper = text_cell(
+            60,
+            TableCellProperties {
+                borders: TableBorders {
+                    bottom: Some(colored_edge("single", 4, red)),
+                    ..TableBorders::default()
+                },
+                ..TableCellProperties::default()
+            },
+            "upper",
+        );
+        let lower = text_cell(
+            61,
+            TableCellProperties {
+                borders: TableBorders {
+                    top: Some(colored_edge("double", 24, blue)),
+                    ..TableBorders::default()
+                },
+                ..TableCellProperties::default()
+            },
+            "lower",
+        );
+        let table = Table {
+            id: node(50),
+            grid: vec![GridColumn {
+                width_twips: Some(3000),
+            }],
+            grid_change: None,
+            properties: TableProperties::default(),
+            rows: vec![
+                ModelRow {
+                    id: node(51),
+                    properties: TableRowProperties::default(),
+                    cells: vec![upper],
+                },
+                ModelRow {
+                    id: node(52),
+                    properties: TableRowProperties::default(),
+                    cells: vec![lower],
+                },
+            ],
+        };
+
+        let rows = flow_table_rows(table, Twip(9000));
+        let [
+            BlockFragment::TableRow {
+                cells: upper_cells, ..
+            },
+            BlockFragment::TableRow {
+                cells: lower_cells, ..
+            },
+        ] = rows.as_slice()
+        else {
+            panic!("expected two table rows");
+        };
+        let winner = Some(ResolvedEdge {
+            color: [0, 0, 255, 255],
+            width: Twip(60),
+        });
+        assert_eq!(upper_cells[0].borders.bottom, winner);
+        assert_eq!(lower_cells[0].borders.top, winner);
+    }
+
+    #[test]
+    fn horizontal_conflicts_find_every_cell_overlapping_a_grid_span() {
+        let spanning = text_cell(
+            60,
+            TableCellProperties {
+                grid_span: Some(2),
+                borders: TableBorders {
+                    bottom: Some(edge("single", 4)),
+                    ..TableBorders::default()
+                },
+                ..TableCellProperties::default()
+            },
+            "span",
+        );
+        let lower_left = text_cell(
+            61,
+            TableCellProperties {
+                borders: TableBorders {
+                    top: Some(edge("double", 24)),
+                    ..TableBorders::default()
+                },
+                ..TableCellProperties::default()
+            },
+            "left",
+        );
+        let lower_right = text_cell(
+            62,
+            TableCellProperties {
+                borders: TableBorders {
+                    top: Some(edge("single", 8)),
+                    ..TableBorders::default()
+                },
+                ..TableCellProperties::default()
+            },
+            "right",
+        );
+        let table = Table {
+            id: node(50),
+            grid: vec![
+                GridColumn {
+                    width_twips: Some(3000),
+                },
+                GridColumn {
+                    width_twips: Some(3000),
+                },
+            ],
+            grid_change: None,
+            properties: TableProperties::default(),
+            rows: vec![
+                ModelRow {
+                    id: node(51),
+                    properties: TableRowProperties::default(),
+                    cells: vec![spanning],
+                },
+                ModelRow {
+                    id: node(52),
+                    properties: TableRowProperties::default(),
+                    cells: vec![lower_left, lower_right],
+                },
+            ],
+        };
+
+        let rows = flow_table_rows(table, Twip(9000));
+        let [
+            BlockFragment::TableRow {
+                cells: upper_cells, ..
+            },
+            BlockFragment::TableRow {
+                cells: lower_cells, ..
+            },
+        ] = rows.as_slice()
+        else {
+            panic!("expected two table rows");
+        };
+        assert_eq!(
+            upper_cells[0].borders.bottom.map(|border| border.width),
+            Some(Twip(60)),
+            "the spanning edge inspects both abutting lower cells"
+        );
+        assert_eq!(
+            lower_cells[0].borders.top.map(|border| border.width),
+            Some(Twip(60))
+        );
+        assert_eq!(
+            lower_cells[1].borders.top.map(|border| border.width),
+            Some(Twip(20))
+        );
+    }
+
+    #[test]
+    fn a_nil_cell_border_suppresses_the_abutting_visible_border() {
+        let left = text_cell(
+            60,
+            TableCellProperties {
+                borders: TableBorders {
+                    end: Some(edge("single", 8)),
+                    ..TableBorders::default()
+                },
+                ..TableCellProperties::default()
+            },
+            "left",
+        );
+        let right = text_cell(
+            61,
+            TableCellProperties {
+                borders: TableBorders {
+                    start: Some(edge("nil", 0)),
+                    ..TableBorders::default()
+                },
+                ..TableCellProperties::default()
+            },
+            "right",
+        );
+        let table = Table {
+            id: node(50),
+            grid: vec![
+                GridColumn {
+                    width_twips: Some(3000),
+                },
+                GridColumn {
+                    width_twips: Some(3000),
+                },
+            ],
+            grid_change: None,
+            properties: TableProperties::default(),
+            rows: vec![ModelRow {
+                id: node(51),
+                properties: TableRowProperties::default(),
+                cells: vec![left, right],
+            }],
+        };
+        let BlockFragment::TableRow { cells, .. } = flow_single_row(table, Twip(9000)) else {
+            panic!("expected a row");
+        };
+        assert_eq!(cells[0].borders.end, None);
+        assert_eq!(cells[1].borders.start, None);
+    }
+
+    #[test]
+    fn cell_shading_overrides_the_table_shading_fallback() {
+        let table_fill = RgbColor {
+            r: 240,
+            g: 230,
+            b: 220,
+        };
+        let cell_fill = RgbColor {
+            r: 10,
+            g: 20,
+            b: 30,
+        };
+        let table = Table {
+            id: node(50),
+            grid: vec![
+                GridColumn {
+                    width_twips: Some(3000),
+                },
+                GridColumn {
+                    width_twips: Some(3000),
+                },
+            ],
+            grid_change: None,
+            properties: TableProperties {
+                shading: Shading {
+                    fill: Some(table_fill),
+                },
+                ..TableProperties::default()
+            },
+            rows: vec![ModelRow {
+                id: node(51),
+                properties: TableRowProperties::default(),
+                cells: vec![
+                    text_cell(60, TableCellProperties::default(), "table fill"),
+                    text_cell(
+                        61,
+                        TableCellProperties {
+                            shading: Shading {
+                                fill: Some(cell_fill),
+                            },
+                            ..TableCellProperties::default()
+                        },
+                        "cell fill",
+                    ),
+                ],
+            }],
+        };
+        let BlockFragment::TableRow { cells, .. } = flow_single_row(table, Twip(9000)) else {
+            panic!("expected a row");
+        };
+        assert_eq!(cells[0].shading, Some([240, 230, 220, 255]));
+        assert_eq!(cells[1].shading, Some([10, 20, 30, 255]));
     }
 
     #[test]
