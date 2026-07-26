@@ -1083,6 +1083,40 @@ impl Document {
                     }
                     previous_run_properties = None;
                 }
+                // Move range markers are inert leaves (like bookmark markers):
+                // transparent to `in_wrapper`/`textbox_depth`/`revision_depth` and
+                // a hard merge boundary. The pairing id and name are opaque bounded
+                // tokens (id/date <= 64 bytes, name/author <= 255) carried verbatim
+                // from the producer, mirroring `Revision` metadata. The start/end
+                // pairing is self-contained (the shared `move_id` token), so no
+                // definition-table lookup is required.
+                InlineNode::MoveRangeStart(marker) => {
+                    check_domain(
+                        !marker.move_id.is_empty() && marker.move_id.len() <= 64,
+                        "moveRange.moveId",
+                    )?;
+                    check_domain(
+                        !marker.name.is_empty() && marker.name.len() <= 255,
+                        "moveRange.name",
+                    )?;
+                    if let Some(author) = &marker.author {
+                        check_domain(
+                            !author.is_empty() && author.len() <= 255,
+                            "moveRange.author",
+                        )?;
+                    }
+                    if let Some(date) = &marker.date {
+                        check_domain(!date.is_empty() && date.len() <= 64, "moveRange.date")?;
+                    }
+                    previous_run_properties = None;
+                }
+                InlineNode::MoveRangeEnd(marker) => {
+                    check_domain(
+                        !marker.move_id.is_empty() && marker.move_id.len() <= 64,
+                        "moveRange.moveId",
+                    )?;
+                    previous_run_properties = None;
+                }
                 // An opaque math object is an inert leaf (like a drawing): its
                 // retained OMML is bounded and non-empty; the text fallback,
                 // when present, is bounded by the same budget.
@@ -1353,6 +1387,8 @@ fn accumulate_inline_limits(
         | InlineNode::CommentReference(_)
         | InlineNode::BookmarkStart(_)
         | InlineNode::BookmarkEnd(_)
+        | InlineNode::MoveRangeStart(_)
+        | InlineNode::MoveRangeEnd(_)
         | InlineNode::Symbol(_) => {}
     }
     Ok(())

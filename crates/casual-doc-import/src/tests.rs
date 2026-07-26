@@ -1,7 +1,7 @@
 use casual_doc_model::v1::{
     Alignment, BlockNode, Break, BreakKind, Color, DocumentProtectionEdit, HyperlinkTarget,
-    InlineNode, LevelJustification, LevelSuffix, NumberFormat, Paragraph, ProofState, RevisionKind,
-    RgbColor, SdtControlKind, StyleKind, Symbol,
+    InlineNode, LevelJustification, LevelSuffix, MoveKind, NumberFormat, Paragraph, ProofState,
+    RevisionKind, RgbColor, SdtControlKind, StyleKind, Symbol,
 };
 use casual_doc_ooxml::DocxPackage;
 
@@ -3216,6 +3216,115 @@ fn revision_inside_a_text_box_is_modeled_in_box_content() {
             .any(|i| matches!(i, InlineNode::Revision(_))),
         "the revision is modeled inside the box content"
     );
+}
+
+// ---- tracked moves -------------------------------------------------------
+
+/// Collects the move range markers in paragraph 0, in document order.
+fn move_markers(import: &Import) -> Vec<&InlineNode> {
+    paragraph(import, 0)
+        .inlines
+        .iter()
+        .filter(|i| {
+            matches!(
+                i,
+                InlineNode::MoveRangeStart(_) | InlineNode::MoveRangeEnd(_)
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn move_from_and_move_to_wrappers_map_to_move_revision_kinds() {
+    // The `w:moveFrom` source wrapper (its runs are `w:delText`) and the
+    // `w:moveTo` destination wrapper (its runs are `w:t`) map to the two move
+    // revision kinds, retaining author/date/id and preserving their runs.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:moveFrom w:id="4" w:author="Ada" w:date="2026-07-25T00:00:00Z">
+            <w:r><w:delText>moved text</w:delText></w:r>
+        </w:moveFrom></w:p>
+        <w:p><w:moveTo w:id="5" w:author="Ada" w:date="2026-07-25T00:00:00Z">
+            <w:r><w:t>moved text</w:t></w:r>
+        </w:moveTo></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let InlineNode::Revision(from) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected a moveFrom revision");
+    };
+    assert_eq!(from.kind, RevisionKind::MoveFrom);
+    assert_eq!(from.author.as_deref(), Some("Ada"));
+    assert_eq!(from.revision_id.as_deref(), Some("4"));
+    let InlineNode::Run(run) = &from.inlines[0] else {
+        panic!("moveFrom run not preserved (flattened?)");
+    };
+    assert_eq!(run.text, "moved text");
+
+    let InlineNode::Revision(to) = &paragraph(&import, 1).inlines[0] else {
+        panic!("expected a moveTo revision");
+    };
+    assert_eq!(to.kind, RevisionKind::MoveTo);
+    assert_eq!(to.revision_id.as_deref(), Some("5"));
+    let InlineNode::Run(run) = &to.inlines[0] else {
+        panic!("moveTo run not preserved (flattened?)");
+    };
+    assert_eq!(run.text, "moved text");
+}
+
+#[test]
+fn move_range_markers_are_modeled_with_name_and_pairing_id() {
+    // The four range markers around a move carry their pairing `w:id` and (on the
+    // start) the correlating `w:name` + author/date; the ends carry only the id.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p>
+            <w:moveFromRangeStart w:id="0" w:name="move1" w:author="Ada" w:date="2026-07-25T00:00:00Z"/>
+            <w:moveFrom w:id="1"><w:r><w:delText>x</w:delText></w:r></w:moveFrom>
+            <w:moveFromRangeEnd w:id="0"/>
+        </w:p>
+        <w:p>
+            <w:moveToRangeStart w:id="2" w:name="move1"/>
+            <w:moveTo w:id="3"><w:r><w:t>x</w:t></w:r></w:moveTo>
+            <w:moveToRangeEnd w:id="2"/>
+        </w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let InlineNode::MoveRangeStart(from_start) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected moveFromRangeStart");
+    };
+    assert_eq!(from_start.kind, MoveKind::From);
+    assert_eq!(from_start.move_id, "0");
+    assert_eq!(from_start.name, "move1");
+    assert_eq!(from_start.author.as_deref(), Some("Ada"));
+    assert_eq!(from_start.date.as_deref(), Some("2026-07-25T00:00:00Z"));
+    let InlineNode::MoveRangeEnd(from_end) = &paragraph(&import, 0).inlines[2] else {
+        panic!("expected moveFromRangeEnd");
+    };
+    assert_eq!(from_end.kind, MoveKind::From);
+    assert_eq!(from_end.move_id, "0");
+
+    let InlineNode::MoveRangeStart(to_start) = &paragraph(&import, 1).inlines[0] else {
+        panic!("expected moveToRangeStart");
+    };
+    assert_eq!(to_start.kind, MoveKind::To);
+    assert_eq!(to_start.name, "move1");
+    assert_eq!(to_start.author, None);
+}
+
+#[test]
+fn move_range_start_without_name_is_reported_not_modeled() {
+    // A range start missing its required `w:name` is reported and dropped; the
+    // paired end (id only) still models faithfully as an orphan marker.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p>
+            <w:moveFromRangeStart w:id="0"/>
+            <w:r><w:t>body</w:t></w:r>
+            <w:moveFromRangeEnd w:id="0"/>
+        </w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    assert!(features(&import).contains(&"moveFromRangeStart"));
+    let markers = move_markers(&import);
+    assert_eq!(markers.len(), 1, "only the end marker is modeled");
+    assert!(matches!(markers[0], InlineNode::MoveRangeEnd(_)));
 }
 
 // ---- headers / footers ---------------------------------------------------

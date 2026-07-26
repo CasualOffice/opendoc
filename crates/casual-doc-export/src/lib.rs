@@ -1079,6 +1079,60 @@ mod semantic_tests {
     }
 
     #[test]
+    fn tracked_moves_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{InlineNode, MoveKind, RevisionKind};
+
+        // A tracked move written both ways: a `w:moveFrom` source region (range
+        // markers + a `w:delText` run wrapper) and a `w:moveTo` destination region
+        // (range markers + a `w:t` run wrapper), correlated by the shared `w:name`.
+        // The move semantics (kinds, marker names, pairing ids) and the moved runs
+        // must survive write -> reopen unchanged — moved text is not flattened.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p>
+                <w:moveFromRangeStart w:id="0" w:name="mv" w:author="Ada" w:date="2026-07-25T00:00:00Z"/>
+                <w:moveFrom w:id="1" w:author="Ada" w:date="2026-07-25T00:00:00Z">
+                    <w:r><w:delText xml:space="preserve">relocated sentence</w:delText></w:r></w:moveFrom>
+                <w:moveFromRangeEnd w:id="0"/>
+            </w:p>
+            <w:p>
+                <w:moveToRangeStart w:id="2" w:name="mv" w:author="Ada" w:date="2026-07-25T00:00:00Z"/>
+                <w:moveTo w:id="3" w:author="Ada" w:date="2026-07-25T00:00:00Z">
+                    <w:r><w:t xml:space="preserve">relocated sentence</w:t></w:r></w:moveTo>
+                <w:moveToRangeEnd w:id="2"/>
+            </w:p>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+
+        // The model shape: two move revisions of the right kind (runs preserved)
+        // and four range markers correlated by name.
+        let from_para = &m1.body()[0];
+        let casual_doc_model::v1::BlockNode::Paragraph(from) = from_para else {
+            panic!("expected a paragraph");
+        };
+        assert!(matches!(
+            &from.inlines[0],
+            InlineNode::MoveRangeStart(m) if m.kind == MoveKind::From && m.name == "mv"
+        ));
+        assert!(matches!(
+            &from.inlines[1],
+            InlineNode::Revision(r) if r.kind == RevisionKind::MoveFrom
+        ));
+        assert!(matches!(
+            &from.inlines[2],
+            InlineNode::MoveRangeEnd(m) if m.kind == MoveKind::From
+        ));
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(
+            m1, m2,
+            "the tracked-move model survives write -> reopen unchanged"
+        );
+    }
+
+    #[test]
     fn external_hyperlink_survives_the_semantic_round_trip() {
         // An external hyperlink resolves through a relationship; the writer must
         // regenerate `document.xml.rels` so the reopened model carries the same

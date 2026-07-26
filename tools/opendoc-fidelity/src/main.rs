@@ -157,6 +157,9 @@ fn push_inline_text(inline: &InlineNode, out: &mut String) {
         InlineNode::CommentReference(_) => {}
         // A bookmark marker is a zero-width range anchor with no in-flow text.
         InlineNode::BookmarkStart(_) | InlineNode::BookmarkEnd(_) => {}
+        // A tracked-move range marker is a zero-width anchor with no in-flow text;
+        // the moved text lives in the paired `w:moveFrom`/`w:moveTo` run wrapper.
+        InlineNode::MoveRangeStart(_) | InlineNode::MoveRangeEnd(_) => {}
         // A content control is a transparent wrapper; its wrapped runs are the
         // visible text, so recurse into them.
         InlineNode::Sdt(sdt) => {
