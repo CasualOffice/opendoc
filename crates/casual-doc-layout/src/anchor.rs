@@ -1,168 +1,546 @@
-//! Anchored (floating) drawing placement — the first-cut `P1F-28` positioning.
+//! Floating-object placement — the z-ordered float layer over body and bands.
 //!
-//! An anchored `w:drawing` (`wp:anchor`) sits at an absolute position on the page
-//! rather than in the inline flow. This module is a **post-pagination** pass (like
+//! A floating object (`wp:anchor`) sits at an absolute position on the page rather
+//! than in the inline flow. This is a **post-pagination** pass (like
 //! [`crate::running::place_running_content`] and [`crate::paginate::resolve_fields`]):
-//! it walks the document for [`AnchoredDrawing`] nodes, finds the page each one's
-//! anchoring paragraph landed on, resolves its `wp:positionH`/`wp:positionV` against
-//! the page/margin/paragraph box, and records a [`PlacedAnchor`] on that page.
-//! Composition then paints it behind or above the text per `behind_doc`.
+//! it walks the document for anchored pictures, floating text boxes, and DrawingML
+//! groups, finds the page each one's anchoring paragraph landed on, resolves each
+//! against the page/margin/paragraph box, and records a [`PlacedAnchor`] with a
+//! stacking key ([`AnchorZ`]) on that page. Composition then paints every float in
+//! a single stable z-order, splicing the text layer at its own band.
 //!
-//! Kept off the pagination hot path, so page reuse (the stabilization halt) is
-//! unaffected: `paginate`/`repaginate` produce pages with an empty `anchored`
-//! list, and this pass fills it identically afterward.
+//! A **group** ([`WordprocessingGroup`]) is flattened here: its origin is resolved
+//! like an anchored drawing (sized to the group `wp:extent`), then each child is
+//! placed at `group_origin + transform(child.offset)` sized by its OWN extent — so
+//! a grouped picture is never stretched to the group box, and the children paint in
+//! document order (a shape can sit behind the picture and a later one in front).
+//! Nested groups compose their transforms.
 //!
-//! First cut (this slice): the image is *positioned* correctly; text does not yet
-//! re-flow around it (`wrapSquare`/`wrapTight`/… are modeled but laid out like
-//! `wrapNone` — the image floats over or behind the flow). Multi-section documents
-//! resolve every anchor against the single geometry passed in; per-section anchor
-//! geometry is a follow-up.
+//! First cut (this slice): a float is *positioned* correctly; text does not yet
+//! re-flow around it (`wrapSquare`/… are laid out like `wrapNone`). Multi-section
+//! documents resolve every float against the single geometry passed in.
 
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
-    AnchoredDrawing, BlockNode, Document, DrawingAnchor, Extent, HorizontalAlign, HorizontalAnchor,
-    HorizontalPosition, InlineNode, VerticalAlign, VerticalAnchor, VerticalPosition,
+    BlockNode, Document, DrawingAnchor, Extent, GroupChild, HorizontalAlign, HorizontalAnchor,
+    HorizontalPosition, InlineNode, Rgba, ShapeGeometry, ShapeStroke, VerticalAlign,
+    VerticalAnchor, VerticalPosition, WordprocessingGroup,
 };
 
-use crate::page::{PaginatedLayout, PlacedAnchor};
+use crate::block::BlockFragment;
+use crate::compose::TEXTBOX_INSET;
+use crate::page::{
+    AnchorContent, AnchorStroke, AnchorZ, PaginatedLayout, PlacedAnchor, PlacedFragment,
+};
 use crate::paginate::PageConfig;
+use crate::text::LineShaper;
 use crate::units::{Point, Rect, Size, Twip};
 
-/// An anchored drawing collected from the document, with its media resolved to a
-/// package part name and tagged with the paragraph it is anchored in.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DocAnchor {
-    /// The node id of the paragraph the anchor appears in (used to find the page
-    /// and the paragraph reference box). `None` if the anchor was not inside a
-    /// resolvable paragraph.
-    pub paragraph: Option<NodeId>,
-    /// The media key (package part name) to paint.
-    pub media: String,
-    /// The drawing's size.
-    pub extent: Extent,
-    /// The placement.
-    pub anchor: DrawingAnchor,
-    /// The alt text.
-    pub descr: Option<String>,
-}
-
-/// Collects every anchored drawing in the document body, resolving each one's
-/// media id to its package part name. Anchors whose media id does not resolve are
-/// skipped (nothing to paint), mirroring the inline-image path.
-#[must_use]
-pub fn collect_anchored(document: &Document) -> Vec<DocAnchor> {
-    let mut out = Vec::new();
-    for block in document.body() {
-        collect_block(document, block, &mut out);
+/// Places every floating object in the document (body and header/footer bands)
+/// onto the pages their anchors landed on, with a resolved rectangle and stacking
+/// key, ready for [`compose_page`](crate::compose::compose_page) to paint in
+/// z-order.
+///
+/// `shaper` is needed because a floating (or grouped) text box flows its block
+/// content through the *same* pipeline as the body ([`flow_header_footer`]), at the
+/// box's own width, before being placed.
+///
+/// [`flow_header_footer`]: crate::flow::flow_header_footer
+pub fn place_floats(
+    layout: &mut PaginatedLayout,
+    document: &Document,
+    shaper: &dyn LineShaper,
+    config: &PageConfig,
+) {
+    if layout.pages.is_empty() {
+        return;
     }
-    out
+    let mut ctx = FloatCtx {
+        document,
+        shaper,
+        config,
+        order: 0,
+    };
+    // Body floats: walk the body, resolving each float against the page its
+    // anchoring paragraph landed on.
+    for block in document.body() {
+        collect_block(layout, &mut ctx, block, None, PageScope::Body);
+    }
+    // Header/footer band floats: the SDS's floating objects live in the header
+    // part. Each page's placed header/footer fragments are walked for the drawings
+    // their paragraphs carry, resolved in the band's coordinate space. Collected
+    // by page index first to avoid borrowing `layout` mutably while iterating it.
+    let page_count = layout.pages.len();
+    for page_index in 0..page_count {
+        for band in [PageScope::Header, PageScope::Footer] {
+            let fragments = band_fragments(&layout.pages[page_index], band);
+            for block in fragments {
+                collect_band_block(layout, &mut ctx, &block, page_index, band);
+            }
+        }
+    }
 }
 
-fn collect_block(document: &Document, block: &BlockNode, out: &mut Vec<DocAnchor>) {
+/// The shared context threaded through the float walk.
+struct FloatCtx<'a> {
+    document: &'a Document,
+    shaper: &'a dyn LineShaper,
+    config: &'a PageConfig,
+    /// Monotonic document-order counter, the z-key tiebreaker + intra-group paint
+    /// order.
+    order: u32,
+}
+
+impl FloatCtx<'_> {
+    fn next_order(&mut self) -> u32 {
+        let order = self.order;
+        self.order = self.order.saturating_add(1);
+        order
+    }
+}
+
+/// Which page region a float's anchoring paragraph lives in.
+#[derive(Clone, Copy)]
+enum PageScope {
+    Body,
+    Header,
+    Footer,
+}
+
+/// Clones the placed fragments of a page's band (so the walk can borrow `layout`
+/// mutably to push anchors without aliasing).
+fn band_fragments(page: &crate::page::Page, band: PageScope) -> Vec<PlacedFragment> {
+    match band {
+        PageScope::Header => page.header.clone(),
+        PageScope::Footer => page.footer.clone(),
+        PageScope::Body => Vec::new(),
+    }
+}
+
+// --- Body walk -------------------------------------------------------------
+
+fn collect_block(
+    layout: &mut PaginatedLayout,
+    ctx: &mut FloatCtx<'_>,
+    block: &BlockNode,
+    _reserved: Option<NodeId>,
+    scope: PageScope,
+) {
     match block {
         BlockNode::Paragraph(para) => {
-            collect_inlines(document, &para.inlines, Some(para.id), out);
+            collect_inlines(layout, ctx, &para.inlines, Some(para.id), scope, None);
         }
         BlockNode::Table(table) => {
             for row in &table.rows {
                 for cell in &row.cells {
                     for nested in &cell.blocks {
-                        collect_block(document, nested, out);
+                        collect_block(layout, ctx, nested, None, scope);
                     }
                 }
             }
         }
         BlockNode::Sdt(sdt) => {
             for nested in &sdt.blocks {
-                collect_block(document, nested, out);
+                collect_block(layout, ctx, nested, None, scope);
             }
         }
-        // An alt chunk holds no inline content and hence no anchored drawings.
         BlockNode::AltChunk(_) => {}
     }
 }
 
 fn collect_inlines(
-    document: &Document,
+    layout: &mut PaginatedLayout,
+    ctx: &mut FloatCtx<'_>,
     inlines: &[InlineNode],
     paragraph: Option<NodeId>,
-    out: &mut Vec<DocAnchor>,
+    scope: PageScope,
+    band_origin: Option<(usize, Point)>,
 ) {
     for inline in inlines {
         match inline {
             InlineNode::AnchoredDrawing(drawing) => {
-                if let Some(anchor) = doc_anchor(document, drawing, paragraph) {
-                    out.push(anchor);
-                }
+                let Some(media) = ctx.document.definitions().media.get(&drawing.media) else {
+                    continue;
+                };
+                let media = media.part_name.clone();
+                let z = AnchorZ {
+                    relative_height: drawing.relative_height.unwrap_or(0),
+                    order: ctx.next_order(),
+                };
+                let (page_index, refs) = target(layout, ctx, paragraph, scope, band_origin);
+                let rect = resolve_anchor_rect(&drawing.anchor, drawing.extent, &refs);
+                push(
+                    layout,
+                    page_index,
+                    PlacedAnchor {
+                        content: AnchorContent::Image { media },
+                        rect,
+                        behind_doc: drawing.anchor.behind_doc,
+                        z,
+                        descr: drawing.descr.clone(),
+                    },
+                );
             }
-            // Anchored drawings can appear inside inline wrappers; recurse so
-            // none is missed. A text box is a separate positioning context whose
-            // own anchors are a follow-up, so it is not descended here.
+            InlineNode::TextBox(text_box) if text_box.anchor.is_some() => {
+                let anchor = text_box.anchor.expect("guarded");
+                let extent = text_box.extent.unwrap_or(Extent {
+                    width_emu: 0,
+                    height_emu: 0,
+                });
+                let z = AnchorZ {
+                    relative_height: text_box.relative_height.unwrap_or(0),
+                    order: ctx.next_order(),
+                };
+                let (page_index, refs) = target(layout, ctx, paragraph, scope, band_origin);
+                let rect = resolve_anchor_rect(&anchor, extent, &refs);
+                let blocks = flow_box(ctx, &text_box.blocks, rect.size.width);
+                push(
+                    layout,
+                    page_index,
+                    PlacedAnchor {
+                        content: AnchorContent::TextBox {
+                            blocks,
+                            fill: text_box.fill.map(rgba),
+                            border: text_box.border.map(|b| rgba(b.color)),
+                        },
+                        rect,
+                        behind_doc: anchor.behind_doc,
+                        z,
+                        descr: None,
+                    },
+                );
+            }
+            InlineNode::Group(group) => {
+                let Some(anchor) = group.anchor else {
+                    continue;
+                };
+                let (page_index, refs) = target(layout, ctx, paragraph, scope, band_origin);
+                let origin = resolve_anchor_rect(&anchor, group.extent, &refs).origin;
+                let relative_height = group.relative_height.unwrap_or(0);
+                let behind_doc = anchor.behind_doc;
+                let mapper = GroupMapper::root(group);
+                place_group_children(
+                    layout,
+                    ctx,
+                    group,
+                    page_index,
+                    origin,
+                    &mapper,
+                    relative_height,
+                    behind_doc,
+                );
+            }
             InlineNode::Hyperlink(link) => {
-                collect_inlines(document, &link.inlines, paragraph, out);
+                collect_inlines(layout, ctx, &link.inlines, paragraph, scope, band_origin);
             }
             InlineNode::Field(field) => {
-                collect_inlines(document, &field.inlines, paragraph, out);
+                collect_inlines(layout, ctx, &field.inlines, paragraph, scope, band_origin);
             }
             InlineNode::Revision(revision) => {
-                collect_inlines(document, &revision.inlines, paragraph, out);
+                collect_inlines(
+                    layout,
+                    ctx,
+                    &revision.inlines,
+                    paragraph,
+                    scope,
+                    band_origin,
+                );
             }
             InlineNode::Sdt(sdt) => {
-                collect_inlines(document, &sdt.inlines, paragraph, out);
+                collect_inlines(layout, ctx, &sdt.inlines, paragraph, scope, band_origin);
             }
             _ => {}
         }
     }
 }
 
-fn doc_anchor(
-    document: &Document,
-    drawing: &AnchoredDrawing,
+/// Places every child of a group at `origin + mapper(child.offset)`, each sized by
+/// its own extent, in document (paint) order. Nested groups compose the mapper.
+#[allow(clippy::too_many_arguments)]
+fn place_group_children(
+    layout: &mut PaginatedLayout,
+    ctx: &mut FloatCtx<'_>,
+    group: &WordprocessingGroup,
+    page_index: usize,
+    origin: Point,
+    mapper: &GroupMapper,
+    relative_height: u32,
+    behind_doc: bool,
+) {
+    for child in &group.children {
+        match child {
+            GroupChild::Picture(picture) => {
+                let Some(media) = ctx.document.definitions().media.get(&picture.media) else {
+                    continue;
+                };
+                let media = media.part_name.clone();
+                let rect = mapper.child_rect(origin, picture.offset, picture.extent);
+                let z = AnchorZ {
+                    relative_height,
+                    order: ctx.next_order(),
+                };
+                push(
+                    layout,
+                    page_index,
+                    PlacedAnchor {
+                        content: AnchorContent::Image { media },
+                        rect,
+                        behind_doc,
+                        z,
+                        descr: picture.descr.clone(),
+                    },
+                );
+            }
+            GroupChild::TextBox(text_box) => {
+                let rect = mapper.child_rect(origin, text_box.offset, text_box.extent);
+                let blocks = flow_box(ctx, &text_box.blocks, rect.size.width);
+                let z = AnchorZ {
+                    relative_height,
+                    order: ctx.next_order(),
+                };
+                push(
+                    layout,
+                    page_index,
+                    PlacedAnchor {
+                        content: AnchorContent::TextBox {
+                            blocks,
+                            fill: text_box.fill.map(rgba),
+                            border: text_box.border.map(|b| rgba(b.color)),
+                        },
+                        rect,
+                        behind_doc,
+                        z,
+                        descr: None,
+                    },
+                );
+            }
+            GroupChild::Shape(shape) => {
+                let rect = mapper.child_rect(origin, shape.offset, shape.extent);
+                let z = AnchorZ {
+                    relative_height,
+                    order: ctx.next_order(),
+                };
+                let content = match shape.geometry {
+                    ShapeGeometry::Line => AnchorContent::Line {
+                        from: rect.origin,
+                        to: Point::new(rect.right(), rect.bottom()),
+                        // A line without an explicit stroke still draws a hairline
+                        // in its fill color (Word's connector default).
+                        stroke: shape_stroke(shape.stroke).unwrap_or(AnchorStroke {
+                            color: shape.fill.map_or([0, 0, 0, 255], rgba),
+                            width: Twip::ZERO,
+                        }),
+                    },
+                    _ => AnchorContent::Rectangle {
+                        fill: shape.fill.map(rgba),
+                        stroke: shape_stroke(shape.stroke),
+                    },
+                };
+                push(
+                    layout,
+                    page_index,
+                    PlacedAnchor {
+                        content,
+                        rect,
+                        behind_doc,
+                        z,
+                        descr: None,
+                    },
+                );
+            }
+            GroupChild::Group(nested) => {
+                let nested_mapper = mapper.compose(nested);
+                place_group_children(
+                    layout,
+                    ctx,
+                    nested,
+                    page_index,
+                    origin,
+                    &nested_mapper,
+                    relative_height,
+                    behind_doc,
+                );
+            }
+        }
+    }
+}
+
+/// Flows a text box's block content through the shared body pipeline at the box's
+/// own inner width (its outer width minus the two internal margins), so the box
+/// renders paragraphs, nested tables, and images identically to the body.
+fn flow_box(ctx: &FloatCtx<'_>, blocks: &[BlockNode], outer_width: Twip) -> Vec<BlockFragment> {
+    let inner = Twip((outer_width.raw() - 2 * TEXTBOX_INSET.raw()).max(1));
+    crate::flow::flow_header_footer(ctx.document, blocks, ctx.shaper, inner)
+}
+
+// --- Band walk -------------------------------------------------------------
+
+/// Walks one placed band fragment (a header/footer paragraph or table row) for the
+/// floats its paragraphs carry, resolving them in the band's coordinate space (the
+/// band fragment's placed origin is the reference for `paragraph`/`line` anchors).
+fn collect_band_block(
+    layout: &mut PaginatedLayout,
+    ctx: &mut FloatCtx<'_>,
+    placed: &PlacedFragment,
+    page_index: usize,
+    band: PageScope,
+) {
+    if let BlockFragment::Paragraph { id, .. } = &placed.fragment {
+        // Resolve band floats against the band fragment's placed rectangle.
+        let band_origin = Some((page_index, placed.rect.origin));
+        if let Some(BlockNode::Paragraph(para)) = find_paragraph(ctx.document, *id, band) {
+            collect_inlines(layout, ctx, &para.inlines, Some(para.id), band, band_origin);
+        }
+    }
+}
+
+/// Finds the header/footer source paragraph with `id` in the document's band
+/// definitions (headers or footers), so its floating inlines can be resolved.
+fn find_paragraph(document: &Document, id: NodeId, band: PageScope) -> Option<&BlockNode> {
+    let defs = document.definitions();
+    let stores: Vec<&BlockNode> = match band {
+        PageScope::Header => defs.headers.iter().flat_map(|(_, hf)| &hf.blocks).collect(),
+        PageScope::Footer => defs.footers.iter().flat_map(|(_, hf)| &hf.blocks).collect(),
+        PageScope::Body => return None,
+    };
+    for block in stores {
+        if let Some(found) = find_block_paragraph(block, id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn find_block_paragraph(block: &BlockNode, id: NodeId) -> Option<&BlockNode> {
+    match block {
+        BlockNode::Paragraph(para) if para.id == id => Some(block),
+        BlockNode::Table(table) => table
+            .rows
+            .iter()
+            .flat_map(|row| &row.cells)
+            .flat_map(|cell| &cell.blocks)
+            .find_map(|nested| find_block_paragraph(nested, id)),
+        BlockNode::Sdt(sdt) => sdt
+            .blocks
+            .iter()
+            .find_map(|nested| find_block_paragraph(nested, id)),
+        _ => None,
+    }
+}
+
+// --- Placement helpers -----------------------------------------------------
+
+/// Resolves the page index and reference boxes a float anchored in `paragraph`
+/// resolves against. Body floats use the page geometry; band floats offset the
+/// `paragraph`/`line` reference to the band fragment's placed origin.
+fn target(
+    layout: &PaginatedLayout,
+    ctx: &FloatCtx<'_>,
     paragraph: Option<NodeId>,
-) -> Option<DocAnchor> {
-    let media = document.definitions().media.get(&drawing.media)?;
-    Some(DocAnchor {
-        paragraph,
-        media: media.part_name.clone(),
-        extent: drawing.extent,
-        anchor: drawing.anchor,
-        descr: drawing.descr.clone(),
+    scope: PageScope,
+    band_origin: Option<(usize, Point)>,
+) -> (usize, AnchorRefs) {
+    if let Some((page_index, origin)) = band_origin {
+        // The band fragment's placed rectangle is the paragraph reference; page/
+        // margin references still resolve against the page geometry.
+        let paragraph_box = Rect::new(origin, Size::default());
+        return (page_index, AnchorRefs::new(ctx.config, paragraph_box));
+    }
+    let (page_index, paragraph_box) = locate(layout, paragraph, ctx.config, scope);
+    (page_index, AnchorRefs::new(ctx.config, paragraph_box))
+}
+
+fn push(layout: &mut PaginatedLayout, page_index: usize, anchor: PlacedAnchor) {
+    layout.pages[page_index].anchored.push(anchor);
+}
+
+/// A group's child-space → page-twips mapping: an affine (in EMU) from child
+/// coordinates to the top group's box space, evaluated against the group's placed
+/// `origin`. Composed for nested groups.
+#[derive(Clone, Copy)]
+struct GroupMapper {
+    scale_x: f64,
+    scale_y: f64,
+    tx: f64,
+    ty: f64,
+}
+
+impl GroupMapper {
+    /// The mapper for a top-level group from its transform: child EMU → group-box
+    /// EMU (the group box's top-left is EMU `(0,0)` at the placed `origin`).
+    fn root(group: &WordprocessingGroup) -> Self {
+        Self::from_transform(&group.transform)
+    }
+
+    fn from_transform(t: &casual_doc_model::v1::GroupTransform) -> Self {
+        let scale_x = ratio(t.extent.width_emu, t.child_extent.width_emu);
+        let scale_y = ratio(t.extent.height_emu, t.child_extent.height_emu);
+        Self {
+            scale_x,
+            scale_y,
+            tx: t.offset.x_emu as f64 - t.child_offset.x_emu as f64 * scale_x,
+            ty: t.offset.y_emu as f64 - t.child_offset.y_emu as f64 * scale_y,
+        }
+    }
+
+    /// Composes `self` (parent) with a nested group's transform: the nested
+    /// transform applies first (child → nested-parent space), then `self`.
+    fn compose(&self, nested: &WordprocessingGroup) -> Self {
+        let inner = Self::from_transform(&nested.transform);
+        Self {
+            scale_x: self.scale_x * inner.scale_x,
+            scale_y: self.scale_y * inner.scale_y,
+            tx: self.scale_x * inner.tx + self.tx,
+            ty: self.scale_y * inner.ty + self.ty,
+        }
+    }
+
+    /// The page-twips rectangle of a child at `offset` (child EMU) sized `extent`,
+    /// relative to the group's placed `origin`.
+    fn child_rect(
+        &self,
+        origin: Point,
+        offset: casual_doc_model::v1::PointEmu,
+        extent: Extent,
+    ) -> Rect {
+        let x = self.scale_x * offset.x_emu as f64 + self.tx;
+        let y = self.scale_y * offset.y_emu as f64 + self.ty;
+        let w = self.scale_x * extent.width_emu as f64;
+        let h = self.scale_y * extent.height_emu as f64;
+        Rect::new(
+            Point::new(origin.x + emu_to_twip_f(x), origin.y + emu_to_twip_f(y)),
+            Size::new(emu_to_twip_f(w), emu_to_twip_f(h)),
+        )
+    }
+}
+
+fn ratio(numerator: i64, denominator: i64) -> f64 {
+    if denominator == 0 {
+        1.0
+    } else {
+        numerator as f64 / denominator as f64
+    }
+}
+
+fn rgba(c: Rgba) -> [u8; 4] {
+    [c.r, c.g, c.b, c.a]
+}
+
+fn shape_stroke(stroke: Option<ShapeStroke>) -> Option<AnchorStroke> {
+    stroke.map(|s| AnchorStroke {
+        color: rgba(s.color),
+        width: emu_to_twip(s.width_emu),
     })
 }
 
-/// Resolves and places every anchored drawing onto the page its anchoring
-/// paragraph landed on (falling back to the first page when the paragraph cannot
-/// be located, e.g. it was fully consumed by a header/footer). Each anchor's
-/// rectangle is computed against `config`'s page/margin geometry and the
-/// paragraph's placed rectangle.
-pub fn place_anchored_drawings(
-    layout: &mut PaginatedLayout,
-    anchors: &[DocAnchor],
-    config: &PageConfig,
-) {
-    if layout.pages.is_empty() {
-        return;
-    }
-    for anchor in anchors {
-        let (page_index, paragraph_box) = locate(layout, anchor.paragraph, config);
-        let refs = AnchorRefs::new(config, paragraph_box);
-        let rect = resolve_anchor_rect(&anchor.anchor, &anchor.extent, &refs);
-        layout.pages[page_index].anchored.push(PlacedAnchor {
-            media: anchor.media.clone(),
-            rect,
-            behind_doc: anchor.anchor.behind_doc,
-            descr: anchor.descr.clone(),
-        });
-    }
-}
-
-/// Finds the page and paragraph rectangle for an anchor's paragraph. Returns the
+/// Finds the page and paragraph rectangle for a float's paragraph. Returns the
 /// first page whose placed fragments include that paragraph's node; if the
 /// paragraph is not found (or unknown), the first page and its content area.
 fn locate(
     layout: &PaginatedLayout,
     paragraph: Option<NodeId>,
     config: &PageConfig,
+    _scope: PageScope,
 ) -> (usize, Rect) {
     if let Some(id) = paragraph {
         for (index, page) in layout.pages.iter().enumerate() {
@@ -178,18 +556,13 @@ fn locate(
     (0, config.content_area())
 }
 
-/// The reference boxes an anchor's offsets/alignments resolve against, all in
-/// page-local twips.
+/// The reference boxes a float's offsets/alignments resolve against, in page-local
+/// twips.
 struct AnchorRefs {
-    /// The whole page box (`relativeFrom="page"`).
     page: Rect,
-    /// The text margin box (`margin`/`column`/`character`).
     margin: Rect,
-    /// The left margin strip (`leftMargin`/`insideMargin`).
     left_margin: Rect,
-    /// The right margin strip (`rightMargin`/`outsideMargin`).
     right_margin: Rect,
-    /// The anchoring paragraph's box (`paragraph`/`line`).
     paragraph: Rect,
 }
 
@@ -225,11 +598,10 @@ impl AnchorRefs {
     }
 }
 
-/// Resolves an anchor to its absolute page-local rectangle: the horizontal box
-/// and vertical box are selected by `relativeFrom`, and the offset (`posOffset`,
-/// signed EMU) or alignment (`align`) placed within them. The size is the
-/// `wp:extent` in twips.
-fn resolve_anchor_rect(anchor: &DrawingAnchor, extent: &Extent, refs: &AnchorRefs) -> Rect {
+/// Resolves an anchor to its absolute page-local rectangle for a drawing of the
+/// given `extent`: the horizontal/vertical reference boxes are selected by
+/// `relativeFrom`, and the offset (`posOffset`) or alignment placed within them.
+fn resolve_anchor_rect(anchor: &DrawingAnchor, extent: Extent, refs: &AnchorRefs) -> Rect {
     let size = Size::new(
         emu_to_twip(extent.width_emu),
         emu_to_twip(extent.height_emu),
@@ -238,8 +610,6 @@ fn resolve_anchor_rect(anchor: &DrawingAnchor, extent: &Extent, refs: &AnchorRef
         HorizontalAnchor::Page => refs.page,
         HorizontalAnchor::LeftMargin | HorizontalAnchor::InsideMargin => refs.left_margin,
         HorizontalAnchor::RightMargin | HorizontalAnchor::OutsideMargin => refs.right_margin,
-        // `margin`, `column`, and `character` resolve against the text margin box
-        // in this single-column first cut.
         HorizontalAnchor::Margin | HorizontalAnchor::Column | HorizontalAnchor::Character => {
             refs.margin
         }
@@ -250,10 +620,7 @@ fn resolve_anchor_rect(anchor: &DrawingAnchor, extent: &Extent, refs: &AnchorRef
     };
     let vbox = match anchor.vertical.relative_from {
         VerticalAnchor::Page => refs.page,
-        // `paragraph`/`line` resolve against the anchoring paragraph's box.
         VerticalAnchor::Paragraph | VerticalAnchor::Line => refs.paragraph,
-        // `margin`, `topMargin`, `bottomMargin`, `inside/outsideMargin` resolve
-        // against the text margin box in this first cut.
         VerticalAnchor::Margin
         | VerticalAnchor::TopMargin
         | VerticalAnchor::BottomMargin
@@ -267,7 +634,6 @@ fn resolve_anchor_rect(anchor: &DrawingAnchor, extent: &Extent, refs: &AnchorRef
     Rect::new(Point::new(x, y), size)
 }
 
-/// Places a `width`-wide image horizontally within `hbox` by `align`.
 fn align_horizontal(align: HorizontalAlign, hbox: Rect, width: Twip) -> Twip {
     match align {
         HorizontalAlign::Left | HorizontalAlign::Inside => hbox.origin.x,
@@ -280,7 +646,6 @@ fn align_horizontal(align: HorizontalAlign, hbox: Rect, width: Twip) -> Twip {
     }
 }
 
-/// Places a `height`-tall image vertically within `vbox` by `align`.
 fn align_vertical(align: VerticalAlign, vbox: Rect, height: Twip) -> Twip {
     match align {
         VerticalAlign::Top | VerticalAlign::Inside => vbox.origin.y,
@@ -298,8 +663,16 @@ fn emu_to_twip(emu: i64) -> Twip {
     Twip((emu / 635).clamp(0, i64::from(i32::MAX)) as i32)
 }
 
-/// EMU → twips for a signed offset: `posOffset` may be negative (a drawing that
-/// overhangs its reference edge), so the result is not clamped to non-negative.
+/// EMU (as `f64`, from an affine transform) → twips, clamped to the twip range.
+fn emu_to_twip_f(emu: f64) -> Twip {
+    Twip(
+        (emu / 635.0)
+            .round()
+            .clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32,
+    )
+}
+
+/// EMU → twips for a signed offset (a float may overhang its reference edge).
 fn emu_to_twip_signed(emu: i64) -> Twip {
     Twip((emu / 635).clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32)
 }
@@ -307,6 +680,9 @@ fn emu_to_twip_signed(emu: i64) -> Twip {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use casual_doc_model::v1::{
+        AnchorHorizontal, AnchorVertical, GroupTransform, PointEmu, WrapMode,
+    };
 
     fn config() -> PageConfig {
         use casual_doc_model::v1::SectionId;
@@ -330,7 +706,6 @@ mod tests {
         v: VerticalAnchor,
         vp: VerticalPosition,
     ) -> DrawingAnchor {
-        use casual_doc_model::v1::{AnchorHorizontal, AnchorVertical, WrapMode};
         DrawingAnchor {
             horizontal: AnchorHorizontal {
                 relative_from: h,
@@ -347,7 +722,6 @@ mod tests {
 
     #[test]
     fn page_relative_offset_resolves_to_the_absolute_page_point() {
-        // 914400 EMU = 1 inch = 1440 twips from the page corner.
         let a = anchor(
             HorizontalAnchor::Page,
             HorizontalPosition::Offset(914_400),
@@ -358,49 +732,10 @@ mod tests {
             width_emu: 914_400,
             height_emu: 914_400,
         };
-        let refs = AnchorRefs::new(
-            &config(),
-            Rect::new(Point::new(Twip(0), Twip(0)), Size::default()),
-        );
-        let rect = resolve_anchor_rect(&a, &extent, &refs);
+        let refs = AnchorRefs::new(&config(), Rect::default());
+        let rect = resolve_anchor_rect(&a, extent, &refs);
         assert_eq!(rect.origin, Point::new(Twip(1_440), Twip(2_880)));
         assert_eq!(rect.size, Size::new(Twip(1_440), Twip(1_440)));
-    }
-
-    #[test]
-    fn margin_relative_offset_adds_the_margin_origin() {
-        let a = anchor(
-            HorizontalAnchor::Margin,
-            HorizontalPosition::Offset(0),
-            VerticalAnchor::Margin,
-            VerticalPosition::Offset(0),
-        );
-        let extent = Extent {
-            width_emu: 635_000,
-            height_emu: 635_000,
-        };
-        let refs = AnchorRefs::new(&config(), Rect::default());
-        let rect = resolve_anchor_rect(&a, &extent, &refs);
-        // The margin box origin is the (start, top) margin corner.
-        assert_eq!(rect.origin, Point::new(Twip(1_440), Twip(1_440)));
-    }
-
-    #[test]
-    fn a_negative_offset_overhangs_the_reference_edge() {
-        let a = anchor(
-            HorizontalAnchor::Margin,
-            HorizontalPosition::Offset(-635_000),
-            VerticalAnchor::Page,
-            VerticalPosition::Offset(0),
-        );
-        let extent = Extent {
-            width_emu: 100,
-            height_emu: 100,
-        };
-        let refs = AnchorRefs::new(&config(), Rect::default());
-        let rect = resolve_anchor_rect(&a, &extent, &refs);
-        // 1440 (margin) - 1000 (offset) = 440.
-        assert_eq!(rect.origin.x, Twip(440));
     }
 
     #[test]
@@ -412,13 +747,104 @@ mod tests {
             VerticalPosition::Offset(0),
         );
         let extent = Extent {
-            width_emu: 635_000, // 1000 twips
+            width_emu: 635_000,
             height_emu: 100,
         };
         let refs = AnchorRefs::new(&config(), Rect::default());
-        let rect = resolve_anchor_rect(&a, &extent, &refs);
-        // Margin box: origin x 1440, width 12240-2880 = 9360; center a 1000-wide
-        // image: 1440 + (9360-1000)/2 = 1440 + 4180 = 5620.
+        let rect = resolve_anchor_rect(&a, extent, &refs);
         assert_eq!(rect.origin.x, Twip(5_620));
+    }
+
+    fn ident_transform(w: i64, h: i64) -> GroupTransform {
+        GroupTransform {
+            offset: PointEmu { x_emu: 0, y_emu: 0 },
+            extent: Extent {
+                width_emu: w,
+                height_emu: h,
+            },
+            child_offset: PointEmu { x_emu: 0, y_emu: 0 },
+            child_extent: Extent {
+                width_emu: w,
+                height_emu: h,
+            },
+        }
+    }
+
+    #[test]
+    fn a_group_child_is_placed_at_group_origin_plus_its_own_offset_and_sized_by_its_own_extent() {
+        // Identity transform: a child at EMU offset (635_000, 1_270_000) sized
+        // (1_270_000 x 635_000) placed at group origin (1000, 2000) twips lands at
+        // origin + offset/635 and is sized extent/635 — NOT the group extent.
+        let group = WordprocessingGroup {
+            id: NodeId::from_parts(1, 1).unwrap(),
+            anchor: None,
+            relative_height: None,
+            extent: Extent {
+                width_emu: 6_350_000,
+                height_emu: 6_350_000,
+            },
+            transform: ident_transform(6_350_000, 6_350_000),
+            children: Vec::new(),
+        };
+        let mapper = GroupMapper::root(&group);
+        let rect = mapper.child_rect(
+            Point::new(Twip(1_000), Twip(2_000)),
+            PointEmu {
+                x_emu: 635_000,
+                y_emu: 1_270_000,
+            },
+            Extent {
+                width_emu: 1_270_000,
+                height_emu: 635_000,
+            },
+        );
+        assert_eq!(rect.origin, Point::new(Twip(2_000), Twip(4_000)));
+        assert_eq!(rect.size, Size::new(Twip(2_000), Twip(1_000)));
+    }
+
+    #[test]
+    fn a_nested_group_composes_its_parent_translation() {
+        // Parent identity; nested group offset (28050, 112196) EMU. A child at
+        // nested offset (0,0) lands at the nested group's offset in the parent.
+        let parent = WordprocessingGroup {
+            id: NodeId::from_parts(1, 1).unwrap(),
+            anchor: None,
+            relative_height: None,
+            extent: Extent {
+                width_emu: 2_000_000,
+                height_emu: 800_000,
+            },
+            transform: ident_transform(2_000_000, 800_000),
+            children: Vec::new(),
+        };
+        let mut nested = parent.clone();
+        nested.id = NodeId::from_parts(2, 1).unwrap();
+        nested.transform = GroupTransform {
+            offset: PointEmu {
+                x_emu: 28_050,
+                y_emu: 112_196,
+            },
+            extent: Extent {
+                width_emu: 1_917_065,
+                height_emu: 476_885,
+            },
+            child_offset: PointEmu { x_emu: 0, y_emu: 0 },
+            child_extent: Extent {
+                width_emu: 1_917_065,
+                height_emu: 476_885,
+            },
+        };
+        let mapper = GroupMapper::root(&parent).compose(&nested);
+        let rect = mapper.child_rect(
+            Point::new(Twip::ZERO, Twip::ZERO),
+            PointEmu { x_emu: 0, y_emu: 0 },
+            Extent {
+                width_emu: 1_917_065,
+                height_emu: 476_885,
+            },
+        );
+        // 28050/635 ≈ 44, 112196/635 ≈ 177.
+        assert_eq!(rect.origin, Point::new(Twip(44), Twip(177)));
+        assert_eq!(rect.size, Size::new(Twip(3_019), Twip(751)));
     }
 }

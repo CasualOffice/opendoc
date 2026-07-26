@@ -8,7 +8,7 @@
 
 use crate::block::{BlockFragment, CellBorders, ParagraphDecor};
 use crate::display::{Color, DisplayList, PaintItem, Stroke};
-use crate::page::Page;
+use crate::page::{AnchorContent, Page, PlacedAnchor};
 use crate::text::LineLayout;
 use crate::units::{Point, Rect, Size, Twip};
 
@@ -113,6 +113,13 @@ pub fn compose_paragraph(layout: &LineLayout, origin: Point) -> DisplayList {
     list
 }
 
+/// A shape/line stroke's device-pixel width: the twip width at 96 DPI, floored at
+/// a 1px hairline (matching the inline text-box border). A `0`-twip outline (the
+/// common thin DrawingML `a:ln`) is a hairline.
+fn stroke_px(width: Twip) -> f32 {
+    (width.raw() as f32 * 96.0 / 1440.0).max(1.0)
+}
+
 /// Builds a [`Color`] from a packed RGBA quad.
 fn rgba(c: [u8; 4]) -> Color {
     Color {
@@ -132,15 +139,14 @@ fn rgba(c: [u8; 4]) -> Color {
 #[must_use]
 pub fn compose_page(page: &Page) -> DisplayList {
     let mut list = DisplayList::new();
-    // Anchored (floating) drawings with `behindDoc` paint first, behind every
-    // fragment; the rest paint last, above the text (their z-order, `P1F-28`).
-    for anchor in &page.anchored {
-        if anchor.behind_doc {
-            list.push(PaintItem::Image {
-                media: anchor.media.clone(),
-                rect: anchor.rect,
-            });
-        }
+    // The float layer is a single stable z-order: `behindDoc` floats paint below
+    // the text layer, the rest above, each band ordered by (relativeHeight,
+    // document order) so group children paint in child order and a shape can sit
+    // behind the group's picture while a later shape sits in front.
+    let mut floats: Vec<&PlacedAnchor> = page.anchored.iter().collect();
+    floats.sort_by_key(|anchor| anchor.z);
+    for anchor in floats.iter().filter(|anchor| anchor.behind_doc) {
+        compose_anchor(&mut list, anchor);
     }
     for placed in &page.header {
         compose_fragment(&mut list, &placed.fragment, placed.rect.origin);
@@ -151,15 +157,73 @@ pub fn compose_page(page: &Page) -> DisplayList {
     for placed in &page.footer {
         compose_fragment(&mut list, &placed.fragment, placed.rect.origin);
     }
-    for anchor in &page.anchored {
-        if !anchor.behind_doc {
+    for anchor in floats.iter().filter(|anchor| !anchor.behind_doc) {
+        compose_anchor(&mut list, anchor);
+    }
+    list
+}
+
+/// Paints one placed float at its resolved rectangle: an image blit, a filled/
+/// stroked rectangle, a line/connector, or a text box (fill + border + its flowed
+/// content, offset into the box by the internal margin, exactly like an inline
+/// text box).
+fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor) {
+    match &anchor.content {
+        AnchorContent::Image { media } => {
             list.push(PaintItem::Image {
-                media: anchor.media.clone(),
+                media: media.clone(),
                 rect: anchor.rect,
             });
         }
+        AnchorContent::Rectangle { fill, stroke } => {
+            list.push(PaintItem::Rect {
+                rect: anchor.rect,
+                fill: fill.map(rgba),
+                stroke: stroke.map(|s| Stroke {
+                    color: rgba(s.color),
+                    width: stroke_px(s.width),
+                }),
+            });
+        }
+        AnchorContent::Line { from, to, stroke } => {
+            list.push(PaintItem::Line {
+                from: *from,
+                to: *to,
+                stroke: Stroke {
+                    color: rgba(stroke.color),
+                    width: stroke_px(stroke.width),
+                },
+            });
+        }
+        AnchorContent::TextBox {
+            blocks,
+            fill,
+            border,
+        } => {
+            if let Some(fill) = fill {
+                list.push(PaintItem::Rect {
+                    rect: anchor.rect,
+                    fill: Some(rgba(*fill)),
+                    stroke: None,
+                });
+            }
+            if let Some(border) = border {
+                list.push(PaintItem::Rect {
+                    rect: anchor.rect,
+                    fill: None,
+                    stroke: Some(Stroke {
+                        color: rgba(*border),
+                        width: TEXTBOX_BORDER_WIDTH,
+                    }),
+                });
+            }
+            let content_origin = Point::new(
+                anchor.rect.origin.x + TEXTBOX_INSET,
+                anchor.rect.origin.y + TEXTBOX_INSET,
+            );
+            compose_blocks(list, blocks, content_origin);
+        }
     }
-    list
 }
 
 /// Composes one block fragment at `origin` (top-left, twips) into `list`.

@@ -34,7 +34,7 @@
 
 use casual_doc_model::v1::{Document, HeaderFooterKind, SectionBoundary};
 
-use crate::anchor::{collect_anchored, place_anchored_drawings};
+use crate::anchor::place_floats;
 use crate::flow::{build_galley, flow_header_footer};
 use crate::paginate::{PageConfig, paginate, resolve_fields};
 use crate::running::{HeaderFooter, RunningContent, place_running_content};
@@ -177,7 +177,7 @@ fn variant_mut(
 ///    correct before pagination.
 /// 3. Build the body galley at the content width ([`build_galley`]).
 /// 4. [`paginate`] the galley, then run the post-pagination passes **in order** —
-///    [`place_running_content`], [`resolve_fields`], [`place_anchored_drawings`] —
+///    [`place_running_content`], [`resolve_fields`], [`place_floats`] —
 ///    the order the incremental-golden post-passes require (running content before
 ///    fields so a `Page X of Y` footer resolves; anchors last, off the pagination
 ///    hot path).
@@ -210,8 +210,10 @@ pub fn paginate_document(
     // placed onto the pages their paragraphs landed on.
     place_running_content(&mut layout, &running, &config);
     resolve_fields(&mut layout, shaper);
-    let anchors = collect_anchored(document);
-    place_anchored_drawings(&mut layout, &anchors, &config);
+    // Floating objects last: anchored pictures, floating text boxes, and DrawingML
+    // groups, over body AND header/footer bands, each resolved to a rect + z-key
+    // for the float layer to paint in order.
+    place_floats(&mut layout, document, shaper, &config);
 
     layout
 }
