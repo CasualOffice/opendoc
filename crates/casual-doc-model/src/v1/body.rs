@@ -247,7 +247,13 @@ pub struct CommentReference {
 /// Maximum revision-wrapper nesting depth (a `w:ins` around a `w:del`, ...).
 pub const MAX_REVISION_DEPTH: u32 = 8;
 
-/// Whether a tracked-change range was inserted or deleted.
+/// Whether a tracked-change range was inserted, deleted, or moved.
+///
+/// A move is a two-ended revision: the run range at the source location is a
+/// `MoveFrom` (its runs carry `w:delText`, like a deletion) and the range at the
+/// destination is a `MoveTo` (its runs carry `w:t`, like an insertion). The two
+/// ends are correlated by the enclosing [`MoveRangeStart`]/[`MoveRangeEnd`]
+/// markers that share a move `name`.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RevisionKind {
@@ -255,6 +261,12 @@ pub enum RevisionKind {
     Insertion,
     /// A deleted run range (`w:del`); its runs carry `w:delText` content.
     Deletion,
+    /// The source range of a tracked move (`w:moveFrom`); like a deletion, its
+    /// runs carry `w:delText` content.
+    MoveFrom,
+    /// The destination range of a tracked move (`w:moveTo`); like an insertion,
+    /// its runs carry `w:t` content.
+    MoveTo,
 }
 
 /// A tracked-change (revision) range wrapping inline content (`w:ins`/`w:del`).
@@ -304,6 +316,63 @@ pub struct BookmarkEnd {
     pub id: NodeId,
     /// The bookmark this closes (resolves in `Definitions::bookmarks`).
     pub bookmark: BookmarkId,
+}
+
+/// Whether a move range marks the source or the destination of a tracked move.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MoveKind {
+    /// The source of a move (`w:moveFromRangeStart`/`End`), paired with the
+    /// `w:moveFrom` run wrapper.
+    From,
+    /// The destination of a move (`w:moveToRangeStart`/`End`), paired with the
+    /// `w:moveTo` run wrapper.
+    To,
+}
+
+/// The start marker of a tracked-move range (`w:moveFromRangeStart` /
+/// `w:moveToRangeStart`). A zero-width point; the range is the span to the
+/// [`MoveRangeEnd`] of the same `kind` sharing its `move_id`. Its `name`
+/// correlates the source (`From`) and destination (`To`) ends of one logical
+/// move — Word writes the same `w:name` on all four markers of a move.
+///
+/// The pairing key `move_id` (`w:id`) and the correlating `name` (`w:name`) are
+/// retained as the producer wrote them (opaque, bounded), and `author`/`date`
+/// mirror the `w:moveFrom`/`w:moveTo` wrapper metadata.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MoveRangeStart {
+    /// Stable identity (this marker's own id).
+    pub id: NodeId,
+    /// Whether this opens a move source (`From`) or destination (`To`) range.
+    pub kind: MoveKind,
+    /// The producer's range pairing id (`w:id`) as written (non-empty, at most
+    /// 64 bytes). Opaque; pairs this start with its matching [`MoveRangeEnd`].
+    pub move_id: String,
+    /// The move name (`w:name`) as written (non-empty, at most 255 bytes).
+    /// Correlates the source and destination ends of one logical move.
+    pub name: String,
+    /// The move author, if declared (non-empty, at most 255 bytes).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    /// The move date as written (ISO-8601 string), if declared (<= 64 bytes).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub date: Option<String>,
+}
+
+/// The end marker of a tracked-move range (`w:moveFromRangeEnd` /
+/// `w:moveToRangeEnd`). Closes the [`MoveRangeStart`] of the same `kind` whose
+/// `move_id` it shares.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MoveRangeEnd {
+    /// Stable identity (this marker's own id).
+    pub id: NodeId,
+    /// Whether this closes a move source (`From`) or destination (`To`) range.
+    pub kind: MoveKind,
+    /// The producer's range pairing id (`w:id`) as written (non-empty, at most
+    /// 64 bytes). Pairs this end with its matching [`MoveRangeStart`].
+    pub move_id: String,
 }
 
 /// Maximum content-control (structured document tag) nesting depth (an `sdt`
@@ -454,6 +523,10 @@ pub enum InlineNode {
     BookmarkStart(BookmarkStart),
     /// The end marker of a bookmark range.
     BookmarkEnd(BookmarkEnd),
+    /// The start marker of a tracked-move (source or destination) range.
+    MoveRangeStart(MoveRangeStart),
+    /// The end marker of a tracked-move (source or destination) range.
+    MoveRangeEnd(MoveRangeEnd),
     /// An inline-level content control wrapping inline content.
     Sdt(InlineSdt),
     /// An opaque inline math object retaining its OMML subtree verbatim.
@@ -478,6 +551,8 @@ impl InlineNode {
             Self::Revision(revision) => revision.id,
             Self::BookmarkStart(node) => node.id,
             Self::BookmarkEnd(node) => node.id,
+            Self::MoveRangeStart(node) => node.id,
+            Self::MoveRangeEnd(node) => node.id,
             Self::Sdt(sdt) => sdt.id,
             Self::Math(math) => math.id,
         }

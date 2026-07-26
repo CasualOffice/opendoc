@@ -9,11 +9,12 @@ use casual_doc_model::v1::{
     ExternalTarget, Field, HeaderFooterId, HeaderFooterKind, HeaderFooterRef, HeightRule,
     Hyperlink, HyperlinkTarget, InlineNode, InlineSdt, InternalTarget, MAX_EMU,
     MAX_FIELD_INSTRUCTION_BYTES, MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH,
-    MAX_TEXTBOX_DEPTH, Math, MediaId, NoteId, NoteKind, NoteReference, PageMargins, PageNumbering,
-    PageSize, PageVerticalAlignment, Paragraph, ParagraphProperties, Revision, RevisionKind,
-    RgbColor, Run, RunProperties, SdtControlKind, SdtProperties, SectionBoundary, SectionColumns,
-    SectionId, SectionType, StyleKind, Tab, TabAlignment, TabLeader, TabStop, TableLayout,
-    TableOverlap, TextBox, TextDirection, VerticalMerge,
+    MAX_TEXTBOX_DEPTH, Math, MediaId, MoveKind, MoveRangeEnd, MoveRangeStart, NoteId, NoteKind,
+    NoteReference, PageMargins, PageNumbering, PageSize, PageVerticalAlignment, Paragraph,
+    ParagraphProperties, Revision, RevisionKind, RgbColor, Run, RunProperties, SdtControlKind,
+    SdtProperties, SectionBoundary, SectionColumns, SectionId, SectionType, StyleKind, Tab,
+    TabAlignment, TabLeader, TabStop, TableLayout, TableOverlap, TextBox, TextDirection,
+    VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::events::{BytesStart, Event};
@@ -90,6 +91,19 @@ enum Segment {
     /// The end marker of a bookmark range.
     BookmarkEnd {
         bookmark: BookmarkId,
+    },
+    /// The start marker of a tracked-move (source/destination) range.
+    MoveRangeStart {
+        kind: MoveKind,
+        move_id: String,
+        name: String,
+        author: Option<String>,
+        date: Option<String>,
+    },
+    /// The end marker of a tracked-move (source/destination) range.
+    MoveRangeEnd {
+        kind: MoveKind,
+        move_id: String,
     },
     /// An inline-level content control (`w:sdt`) wrapping inline content.
     Sdt {
@@ -1232,6 +1246,58 @@ impl BodyParser<'_> {
                     None => self.reporter.report(b"bookmarkEnd"),
                 }
             }
+            // A tracked-move range start marker (`w:moveFromRangeStart` /
+            // `w:moveToRangeStart`, self-closing → an Empty event, handled here;
+            // its `on_end` falls to `_ => {}`). Modeled only in paragraph flow, with
+            // a bounded pairing `w:id` and a bounded non-empty `w:name`. The `w:id`
+            // is preserved verbatim (opaque, like a revision's grouping key) so the
+            // matching end re-pairs on re-import — no id registration is needed. A
+            // missing/oversized id or name is reported+dropped. `w:author`/`w:date`
+            // mirror the wrapper metadata; `w:colFirst`/`colLast`/
+            // `displacedByCustomXml` are ignored.
+            b"moveFromRangeStart" | b"moveToRangeStart"
+                if self.paragraph_open && !self.run_open =>
+            {
+                let kind = if local == b"moveFromRangeStart" {
+                    MoveKind::From
+                } else {
+                    MoveKind::To
+                };
+                match (
+                    attribute_value(element, b"id").filter(|id| !id.is_empty() && id.len() <= 64),
+                    attribute_value(element, b"name")
+                        .filter(|name| !name.is_empty() && name.len() <= 255),
+                ) {
+                    (Some(move_id), Some(name)) => {
+                        self.push_segment(Segment::MoveRangeStart {
+                            kind,
+                            move_id,
+                            name,
+                            author: attribute_value(element, b"author")
+                                .filter(|value| !value.is_empty() && value.len() <= 255),
+                            date: attribute_value(element, b"date")
+                                .filter(|value| !value.is_empty() && value.len() <= 64),
+                        });
+                    }
+                    _ => self.reporter.report(local),
+                }
+            }
+            // A tracked-move range end marker (`w:moveFromRangeEnd` /
+            // `w:moveToRangeEnd`). Modeled with its bounded pairing `w:id`; an
+            // orphan end (no matching start) still round-trips faithfully by its
+            // verbatim id. A missing/oversized id is reported+dropped.
+            b"moveFromRangeEnd" | b"moveToRangeEnd" if self.paragraph_open && !self.run_open => {
+                let kind = if local == b"moveFromRangeEnd" {
+                    MoveKind::From
+                } else {
+                    MoveKind::To
+                };
+                match attribute_value(element, b"id").filter(|id| !id.is_empty() && id.len() <= 64)
+                {
+                    Some(move_id) => self.push_segment(Segment::MoveRangeEnd { kind, move_id }),
+                    None => self.reporter.report(local),
+                }
+            }
             // A complex field is delimited by field characters inside runs.
             b"fldChar" if self.run_open => {
                 match attribute_value(element, b"fldCharType").as_deref() {
@@ -1270,7 +1336,9 @@ impl BodyParser<'_> {
                     self.reporter.report(b"hyperlink");
                 }
             }
-            // A tracked change (`w:ins`/`w:del`). Modeled as a run range ONLY when
+            // A tracked change (`w:ins`/`w:del`) or a tracked-move run wrapper
+            // (`w:moveFrom`/`w:moveTo`, which wrap runs exactly like `w:del`/`w:ins`
+            // and share the same nesting rules). Modeled as a run range ONLY when
             // it sits directly in paragraph flow (not inside a run, not inside a
             // property context) and within the nesting bound; every other position
             // — a paragraph-mark revision (`w:pPr>w:rPr>w:ins`), a run-property
@@ -1278,9 +1346,9 @@ impl BodyParser<'_> {
             // range, or a row/cell revision outside a paragraph — is reported and
             // counted (`suppressed_revision_depth`) so its matching close balances
             // and never commits an enclosing real revision. The arm is
-            // UNCONDITIONAL (both branches handle `ins`/`del`) so start and end
-            // stay balanced, exactly like tables' `suppressed_tbl_depth`.
-            b"ins" | b"del" => {
+            // UNCONDITIONAL (both branches handle every wrapper name) so start and
+            // end stay balanced, exactly like tables' `suppressed_tbl_depth`.
+            b"ins" | b"del" | b"moveFrom" | b"moveTo" => {
                 if self.paragraph_open
                     && !self.run_open
                     && self.ppr_depth == 0
@@ -2095,12 +2163,14 @@ impl BodyParser<'_> {
             // the suppression counter — never commit an enclosing real revision.
             // Checked BEFORE the commit arm because an excluded range is always
             // inner to any open real revision, so its close arrives first.
-            b"ins" | b"del" if self.suppressed_revision_depth > 0 => {
+            b"ins" | b"del" | b"moveFrom" | b"moveTo" if self.suppressed_revision_depth > 0 => {
                 self.suppressed_revision_depth -= 1;
             }
-            // A real tracked-change range closes: commit it into the enclosing
+            // A real tracked-change/move range closes: commit it into the enclosing
             // wrapper (an outer revision/hyperlink) or the paragraph.
-            b"ins" | b"del" if self.top_wrapper_is_revision() => self.commit_revision(),
+            b"ins" | b"del" | b"moveFrom" | b"moveTo" if self.top_wrapper_is_revision() => {
+                self.commit_revision()
+            }
             b"tcPr" => self.tcpr_depth = self.tcpr_depth.saturating_sub(1),
             b"tblPr" => self.tblpr_depth = self.tblpr_depth.saturating_sub(1),
             b"trPr" => self.trpr_depth = self.trpr_depth.saturating_sub(1),
@@ -2899,10 +2969,12 @@ impl BodyParser<'_> {
     /// nesting bound and paragraph-flow position; this pushes the accumulator and
     /// its wrapper marker.
     fn open_revision(&mut self, local: &[u8], element: &BytesStart<'_>) {
-        let kind = if local == b"ins" {
-            RevisionKind::Insertion
-        } else {
-            RevisionKind::Deletion
+        let kind = match local {
+            b"ins" => RevisionKind::Insertion,
+            b"del" => RevisionKind::Deletion,
+            b"moveFrom" => RevisionKind::MoveFrom,
+            // The caller only routes `ins`/`del`/`moveFrom`/`moveTo` here.
+            _ => RevisionKind::MoveTo,
         };
         self.revisions.push(RevisionAccumulator {
             kind,
@@ -2928,6 +3000,8 @@ impl BodyParser<'_> {
                 self.reporter.report(match accumulator.kind {
                     RevisionKind::Insertion => b"ins",
                     RevisionKind::Deletion => b"del",
+                    RevisionKind::MoveFrom => b"moveFrom",
+                    RevisionKind::MoveTo => b"moveTo",
                 });
             } else {
                 self.push_segment(Segment::Revision {
@@ -3275,6 +3349,27 @@ impl BodyParser<'_> {
             Segment::BookmarkEnd { bookmark } => {
                 let id = self.next_id()?;
                 Ok(InlineNode::BookmarkEnd(BookmarkEnd { id, bookmark }))
+            }
+            Segment::MoveRangeStart {
+                kind,
+                move_id,
+                name,
+                author,
+                date,
+            } => {
+                let id = self.next_id()?;
+                Ok(InlineNode::MoveRangeStart(MoveRangeStart {
+                    id,
+                    kind,
+                    move_id,
+                    name,
+                    author,
+                    date,
+                }))
+            }
+            Segment::MoveRangeEnd { kind, move_id } => {
+                let id = self.next_id()?;
+                Ok(InlineNode::MoveRangeEnd(MoveRangeEnd { id, kind, move_id }))
             }
             Segment::Sdt {
                 properties,

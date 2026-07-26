@@ -24,14 +24,14 @@ use casual_doc_model::v1::{
     DocumentDefaults, DocumentProtectionEdit, DocumentSettings, EmbeddedKind, EmbeddedObject,
     EmbeddedPart, EmphasisMark, Extent, FontCollection, FontDescriptor, FontFamilyKind, FontPitch,
     FontRef, FontScheme, HeaderFooterId, HeaderFooterKind, HeightRule, HighlightColor,
-    HyperlinkTarget, InlineNode, LevelJustification, LevelSuffix, MediaId, MediaReference, Note,
-    NoteId, NoteKind, NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel,
-    PageVerticalAlignment, ParagraphProperties, Person, ProofState, RevisionKind, RgbColor,
-    RunFontHint, RunProperties, SchemeColor, SdtControlKind, SdtProperties, SectionBoundary,
-    SectionType, Style, StyleId, StyleKind, TabAlignment, TabLeader, Table, TableBorders,
-    TableCell, TableCellProperties, TableLayout, TableOverlap, TableProperties, TableRow,
-    TableRowProperties, TableStyleOverride, TableStyleRegion, TextDirection, ThemeFontRef,
-    VerticalAlignment, VerticalMerge, VerticalTextAlignment, Zoom, ZoomMode,
+    HyperlinkTarget, InlineNode, LevelJustification, LevelSuffix, MediaId, MediaReference,
+    MoveKind, Note, NoteId, NoteKind, NumberFormat, NumberingInstance, NumberingInstanceId,
+    NumberingLevel, PageVerticalAlignment, ParagraphProperties, Person, ProofState, RevisionKind,
+    RgbColor, RunFontHint, RunProperties, SchemeColor, SdtControlKind, SdtProperties,
+    SectionBoundary, SectionType, Style, StyleId, StyleKind, TabAlignment, TabLeader, Table,
+    TableBorders, TableCell, TableCellProperties, TableLayout, TableOverlap, TableProperties,
+    TableRow, TableRowProperties, TableStyleOverride, TableStyleRegion, TextDirection,
+    ThemeFontRef, VerticalAlignment, VerticalMerge, VerticalTextAlignment, Zoom, ZoomMode,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -3033,12 +3033,17 @@ fn write_inline(
             w.write_event(Event::End(BytesEnd::new("w:fldSimple")))
                 .map_err(pkg)?;
         }
-        // A tracked-change range. Its own runs are deleted text when this is a
-        // deletion (or when already inside one); insertions keep the flag.
+        // A tracked-change or tracked-move run wrapper. Its own runs are deleted
+        // text when this deletes (a `Deletion` or a move-source `MoveFrom`) or
+        // when already inside a deletion; an insertion or move-destination keeps
+        // the inherited flag. `w:moveFrom` runs carry `w:delText`, `w:moveTo` runs
+        // carry `w:t` — exactly like `w:del`/`w:ins`.
         InlineNode::Revision(revision) => {
             let (name, deleted) = match revision.kind {
                 RevisionKind::Insertion => ("w:ins", in_deletion),
                 RevisionKind::Deletion => ("w:del", true),
+                RevisionKind::MoveFrom => ("w:moveFrom", true),
+                RevisionKind::MoveTo => ("w:moveTo", in_deletion),
             };
             let mut el = start(name);
             if let Some(author) = &revision.author {
@@ -3072,6 +3077,35 @@ fn write_inline(
             let id = marker.bookmark.node_id().as_u128().to_string();
             let mut el = start("w:bookmarkEnd");
             el.push_attribute(("w:id", id.as_str()));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+        // A tracked-move range marker (zero-width). The pairing `w:id` and the
+        // move `w:name` are re-emitted verbatim; `w:author`/`w:date` restore the
+        // move metadata. The start/end pair is self-contained (the shared
+        // `move_id`), so no definition table is consulted.
+        InlineNode::MoveRangeStart(marker) => {
+            let element = match marker.kind {
+                MoveKind::From => "w:moveFromRangeStart",
+                MoveKind::To => "w:moveToRangeStart",
+            };
+            let mut el = start(element);
+            el.push_attribute(("w:id", marker.move_id.as_str()));
+            el.push_attribute(("w:name", marker.name.as_str()));
+            if let Some(author) = &marker.author {
+                el.push_attribute(("w:author", author.as_str()));
+            }
+            if let Some(date) = &marker.date {
+                el.push_attribute(("w:date", date.as_str()));
+            }
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+        InlineNode::MoveRangeEnd(marker) => {
+            let element = match marker.kind {
+                MoveKind::From => "w:moveFromRangeEnd",
+                MoveKind::To => "w:moveToRangeEnd",
+            };
+            let mut el = start(element);
+            el.push_attribute(("w:id", marker.move_id.as_str()));
             w.write_event(Event::Empty(el)).map_err(pkg)?;
         }
         // An inline content control: typed `w:sdtPr` (omitted when default) plus
