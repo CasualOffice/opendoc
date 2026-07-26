@@ -207,6 +207,11 @@ pub const MAX_FIELD_INSTRUCTION_BYTES: usize = 4096;
 /// code (`w:instr` / concatenated `w:instrText`) and `inlines` is the producer's
 /// cached result (the runs a reader last computed). `inlines` may be empty and,
 /// like a hyperlink, contains only leaf inlines — never a nested wrapper.
+///
+/// A legacy form field (Word's FORMTEXT / FORMCHECKBOX / FORMDROPDOWN, delimited
+/// by `w:fldChar` with a `w:ffData` block) additionally carries `form` — its
+/// input configuration (field name, type, default, entries, checkbox state).
+/// `None` for an ordinary field.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Field {
@@ -217,6 +222,139 @@ pub struct Field {
     /// The cached-result inline content (possibly empty; leaf inlines only).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inlines: Vec<InlineNode>,
+    /// Legacy form-field configuration (`w:ffData`), when this field is a legacy
+    /// form field. `None` for an ordinary field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub form: Option<FormFieldData>,
+}
+
+/// Maximum length, in UTF-8 bytes, of a form-field string (name, default text,
+/// help/status text, macro name, format, or a drop-down list entry).
+pub const MAX_FORM_FIELD_STRING_BYTES: usize = 255;
+
+/// Maximum number of entries in a form drop-down list (`w:ddList`).
+pub const MAX_FORM_FIELD_ENTRIES: usize = 512;
+
+/// Legacy form-field configuration (`w:ffData`): the common `CT_FFData`
+/// properties plus exactly one kind-specific payload (text input, checkbox, or
+/// drop-down). Attached to a [`Field`] whose instruction is FORMTEXT /
+/// FORMCHECKBOX / FORMDROPDOWN.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FormFieldData {
+    /// The form-field name (`w:name@w:val`), if declared (non-empty, bounded).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Whether the field accepts input (`w:enabled`, `CT_OnOff`), if declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// Whether to recalculate fields on exit (`w:calcOnExit`), if declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub calc_on_exit: Option<bool>,
+    /// Associated help text (`w:helpText@w:val`), if declared (bounded).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub help_text: Option<String>,
+    /// Associated status-bar text (`w:statusText@w:val`), if declared (bounded).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_text: Option<String>,
+    /// Macro run on entry (`w:entryMacro@w:val`), if declared (bounded).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_macro: Option<String>,
+    /// Macro run on exit (`w:exitMacro@w:val`), if declared (bounded).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_macro: Option<String>,
+    /// The kind-specific payload; must agree with the field's instruction.
+    pub kind: FormFieldKind,
+}
+
+/// The kind-specific payload of a [`FormFieldData`] (`CT_FFData`'s one-of
+/// `w:textInput` / `w:checkBox` / `w:ddList`).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub enum FormFieldKind {
+    /// A text-input form field (`w:textInput`, FORMTEXT).
+    TextInput(FormTextInput),
+    /// A checkbox form field (`w:checkBox`, FORMCHECKBOX).
+    CheckBox(FormCheckBox),
+    /// A drop-down form field (`w:ddList`, FORMDROPDOWN).
+    DropDown(FormDropDown),
+}
+
+/// The value type of a text-input form field (`w:textInput/w:type@w:val`,
+/// `ST_FFTextType`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FormTextType {
+    /// Unconstrained text (`regular`).
+    Regular,
+    /// A number (`number`).
+    Number,
+    /// A date (`date`).
+    Date,
+    /// The current time (`currentTime`).
+    CurrentTime,
+    /// The current date (`currentDate`).
+    CurrentDate,
+    /// A calculated result (`calculated`).
+    Calculation,
+}
+
+/// A text-input form field's configuration (`w:textInput`).
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FormTextInput {
+    /// The value type (`w:type`), if declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_type: Option<FormTextType>,
+    /// The default text (`w:default@w:val`), if declared (bounded).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
+    /// The maximum input length (`w:maxLength@w:val`), if declared. `0` means
+    /// unlimited, mirroring the OOXML sentinel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_length: Option<u32>,
+    /// The text format string (`w:format@w:val`), if declared (bounded).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
+}
+
+/// The size of a checkbox form field (`w:checkBox`'s `w:size` / `w:sizeAuto`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub enum FormCheckBoxSize {
+    /// An explicit size in half-points (`w:size@w:val`, `CT_HpsMeasure`).
+    Explicit(u32),
+    /// Automatically sized to the surrounding text (`w:sizeAuto`).
+    Auto,
+}
+
+/// A checkbox form field's configuration (`w:checkBox`).
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FormCheckBox {
+    /// The checkbox size (`w:size` / `w:sizeAuto`), if declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<FormCheckBoxSize>,
+    /// The default checked state (`w:default`, `CT_OnOff`), if declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<bool>,
+    /// The current checked state (`w:checked`, `CT_OnOff`), if declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked: Option<bool>,
+}
+
+/// A drop-down form field's configuration (`w:ddList`).
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FormDropDown {
+    /// The selected entry index (`w:result@w:val`), if declared. Zero-based into
+    /// `entries`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<u32>,
+    /// The list entries (`w:listEntry@w:val`), in document order (each bounded;
+    /// at most `MAX_FORM_FIELD_ENTRIES`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub entries: Vec<String>,
 }
 
 /// Maximum text-box nesting depth (a text box inside a text box inside ...).

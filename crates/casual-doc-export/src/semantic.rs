@@ -23,16 +23,17 @@ use casual_doc_model::v1::{
     CustomProperty, CustomValue, DefinitionMap, Definitions, DocGridType, Document,
     DocumentDefaults, DocumentProtectionEdit, DocumentSettings, EmbeddedKind, EmbeddedObject,
     EmbeddedPart, EmphasisMark, Extent, FontCollection, FontDescriptor, FontFamilyKind, FontPitch,
-    FontRef, FontScheme, HeaderFooterId, HeaderFooterKind, HeightRule, HighlightColor,
-    HyperlinkTarget, InlineNode, LevelJustification, LevelSuffix, MediaId, MediaReference, Note,
-    NoteId, NoteKind, NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel,
-    PageVerticalAlignment, ParagraphProperties, Person, ProofState, RevisionKind, RgbColor,
-    RunFontHint, RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData,
-    SdtControlKind, SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionType,
-    Style, StyleId, StyleKind, TabAlignment, TabLeader, Table, TableBorders, TableCell,
-    TableCellProperties, TableLayout, TableOverlap, TableProperties, TableRow, TableRowProperties,
-    TableStyleOverride, TableStyleRegion, TextDirection, ThemeFontRef, VerticalAlignment,
-    VerticalMerge, VerticalTextAlignment, Zoom, ZoomMode,
+    FontRef, FontScheme, FormCheckBoxSize, FormFieldData, FormFieldKind, FormTextType,
+    HeaderFooterId, HeaderFooterKind, HeightRule, HighlightColor, HyperlinkTarget, InlineNode,
+    LevelJustification, LevelSuffix, MediaId, MediaReference, Note, NoteId, NoteKind, NumberFormat,
+    NumberingInstance, NumberingInstanceId, NumberingLevel, PageVerticalAlignment,
+    ParagraphProperties, Person, ProofState, RevisionKind, RgbColor, RunFontHint, RunProperties,
+    SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind, SdtDate,
+    SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionType, Style, StyleId, StyleKind,
+    TabAlignment, TabLeader, Table, TableBorders, TableCell, TableCellProperties, TableLayout,
+    TableOverlap, TableProperties, TableRow, TableRowProperties, TableStyleOverride,
+    TableStyleRegion, TextDirection, ThemeFontRef, VerticalAlignment, VerticalMerge,
+    VerticalTextAlignment, Zoom, ZoomMode,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -2273,6 +2274,126 @@ fn write_section_properties(
     Ok(())
 }
 
+/// Emits a legacy form field's `w:ffData` block (inside a complex field's
+/// `fldChar begin`), in `CT_FFData` order: name, enabled, calcOnExit, entry/exit
+/// macros, help/status text, then the one kind-specific payload.
+fn write_form_field_data(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    form: &FormFieldData,
+) -> Result<(), ExportError> {
+    w.write_event(Event::Start(start("w:ffData")))
+        .map_err(pkg)?;
+    write_ff_string(w, "w:name", form.name.as_deref())?;
+    write_ff_on_off(w, "w:enabled", form.enabled)?;
+    write_ff_on_off(w, "w:calcOnExit", form.calc_on_exit)?;
+    write_ff_string(w, "w:entryMacro", form.entry_macro.as_deref())?;
+    write_ff_string(w, "w:exitMacro", form.exit_macro.as_deref())?;
+    write_ff_string(w, "w:helpText", form.help_text.as_deref())?;
+    write_ff_string(w, "w:statusText", form.status_text.as_deref())?;
+    match &form.kind {
+        FormFieldKind::TextInput(text) => {
+            w.write_event(Event::Start(start("w:textInput")))
+                .map_err(pkg)?;
+            if let Some(text_type) = text.text_type {
+                let mut el = start("w:type");
+                el.push_attribute(("w:val", form_text_type_token(text_type)));
+                w.write_event(Event::Empty(el)).map_err(pkg)?;
+            }
+            write_ff_string(w, "w:default", text.default.as_deref())?;
+            if let Some(max_length) = text.max_length {
+                let mut el = start("w:maxLength");
+                el.push_attribute(("w:val", max_length.to_string().as_str()));
+                w.write_event(Event::Empty(el)).map_err(pkg)?;
+            }
+            write_ff_string(w, "w:format", text.format.as_deref())?;
+            w.write_event(Event::End(BytesEnd::new("w:textInput")))
+                .map_err(pkg)?;
+        }
+        FormFieldKind::CheckBox(check) => {
+            w.write_event(Event::Start(start("w:checkBox")))
+                .map_err(pkg)?;
+            match check.size {
+                Some(FormCheckBoxSize::Explicit(half_points)) => {
+                    let mut el = start("w:size");
+                    el.push_attribute(("w:val", half_points.to_string().as_str()));
+                    w.write_event(Event::Empty(el)).map_err(pkg)?;
+                }
+                Some(FormCheckBoxSize::Auto) => {
+                    w.write_event(Event::Empty(start("w:sizeAuto")))
+                        .map_err(pkg)?;
+                }
+                None => {}
+            }
+            write_ff_on_off(w, "w:default", check.default)?;
+            write_ff_on_off(w, "w:checked", check.checked)?;
+            w.write_event(Event::End(BytesEnd::new("w:checkBox")))
+                .map_err(pkg)?;
+        }
+        FormFieldKind::DropDown(list) => {
+            w.write_event(Event::Start(start("w:ddList")))
+                .map_err(pkg)?;
+            if let Some(result) = list.result {
+                let mut el = start("w:result");
+                el.push_attribute(("w:val", result.to_string().as_str()));
+                w.write_event(Event::Empty(el)).map_err(pkg)?;
+            }
+            for entry in &list.entries {
+                let mut el = start("w:listEntry");
+                el.push_attribute(("w:val", entry.as_str()));
+                w.write_event(Event::Empty(el)).map_err(pkg)?;
+            }
+            w.write_event(Event::End(BytesEnd::new("w:ddList")))
+                .map_err(pkg)?;
+        }
+    }
+    w.write_event(Event::End(BytesEnd::new("w:ffData")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits an optional `w:val`-carrying `w:ffData` child (empty is a valid value).
+fn write_ff_string(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    name: &'static str,
+    value: Option<&str>,
+) -> Result<(), ExportError> {
+    if let Some(value) = value {
+        let mut el = start(name);
+        el.push_attribute(("w:val", value));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    Ok(())
+}
+
+/// Emits an optional `CT_OnOff` `w:ffData` child: bare for `true`, `w:val="0"`
+/// for `false`, nothing when unset.
+fn write_ff_on_off(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    name: &'static str,
+    value: Option<bool>,
+) -> Result<(), ExportError> {
+    if let Some(value) = value {
+        let mut el = start(name);
+        if !value {
+            el.push_attribute(("w:val", "0"));
+        }
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    Ok(())
+}
+
+/// The `w:textInput/w:type@w:val` token (`ST_FFTextType`) for a form text type.
+fn form_text_type_token(text_type: FormTextType) -> &'static str {
+    match text_type {
+        FormTextType::Regular => "regular",
+        FormTextType::Number => "number",
+        FormTextType::Date => "date",
+        FormTextType::CurrentTime => "currentTime",
+        FormTextType::CurrentDate => "currentDate",
+        FormTextType::Calculation => "calculated",
+    }
+}
+
 /// Emits a body/cell block: a paragraph, a table, or a block-level content
 /// control (`w:sdt` wrapping block content).
 fn write_block(
@@ -3029,17 +3150,63 @@ fn write_inline(
             w.write_event(Event::End(BytesEnd::new("w:hyperlink")))
                 .map_err(pkg)?;
         }
-        // A simple field: the instruction inline, the cached result as children.
-        InlineNode::Field(field) => {
-            let mut el = start("w:fldSimple");
-            el.push_attribute(("w:instr", field.instruction.as_str()));
-            w.write_event(Event::Start(el)).map_err(pkg)?;
-            for child in &field.inlines {
-                write_inline(w, child, ctx, in_deletion)?;
+        // A field. An ordinary field is a self-contained `w:fldSimple`. A legacy
+        // form field carries a `w:ffData` block, which is only valid inside a
+        // complex field's `fldChar begin` — so it is re-emitted as the four-run
+        // complex-field sequence begin(+ffData) / instrText / separate / end,
+        // with the cached result between separate and end.
+        InlineNode::Field(field) => match &field.form {
+            None => {
+                let mut el = start("w:fldSimple");
+                el.push_attribute(("w:instr", field.instruction.as_str()));
+                w.write_event(Event::Start(el)).map_err(pkg)?;
+                for child in &field.inlines {
+                    write_inline(w, child, ctx, in_deletion)?;
+                }
+                w.write_event(Event::End(BytesEnd::new("w:fldSimple")))
+                    .map_err(pkg)?;
             }
-            w.write_event(Event::End(BytesEnd::new("w:fldSimple")))
-                .map_err(pkg)?;
-        }
+            Some(form) => {
+                // `fldChar begin` carrying the ffData block.
+                w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
+                let mut begin = start("w:fldChar");
+                begin.push_attribute(("w:fldCharType", "begin"));
+                w.write_event(Event::Start(begin)).map_err(pkg)?;
+                write_form_field_data(w, form)?;
+                w.write_event(Event::End(BytesEnd::new("w:fldChar")))
+                    .map_err(pkg)?;
+                w.write_event(Event::End(BytesEnd::new("w:r")))
+                    .map_err(pkg)?;
+                // The field instruction (`w:instrText`, whitespace preserved).
+                w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
+                let mut instr = start("w:instrText");
+                instr.push_attribute(("xml:space", "preserve"));
+                w.write_event(Event::Start(instr)).map_err(pkg)?;
+                w.write_event(Event::Text(BytesText::new(&field.instruction)))
+                    .map_err(pkg)?;
+                w.write_event(Event::End(BytesEnd::new("w:instrText")))
+                    .map_err(pkg)?;
+                w.write_event(Event::End(BytesEnd::new("w:r")))
+                    .map_err(pkg)?;
+                // `fldChar separate`, then the cached-result inlines.
+                w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
+                let mut separate = start("w:fldChar");
+                separate.push_attribute(("w:fldCharType", "separate"));
+                w.write_event(Event::Empty(separate)).map_err(pkg)?;
+                w.write_event(Event::End(BytesEnd::new("w:r")))
+                    .map_err(pkg)?;
+                for child in &field.inlines {
+                    write_inline(w, child, ctx, in_deletion)?;
+                }
+                // `fldChar end`.
+                w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
+                let mut end = start("w:fldChar");
+                end.push_attribute(("w:fldCharType", "end"));
+                w.write_event(Event::Empty(end)).map_err(pkg)?;
+                w.write_event(Event::End(BytesEnd::new("w:r")))
+                    .map_err(pkg)?;
+            }
+        },
         // A tracked-change range. Its own runs are deleted text when this is a
         // deletion (or when already inside one); insertions keep the flag.
         InlineNode::Revision(revision) => {

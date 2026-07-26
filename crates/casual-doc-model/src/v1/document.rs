@@ -961,6 +961,7 @@ impl Document {
                             && field.instruction.len() <= MAX_FIELD_INSTRUCTION_BYTES,
                         "field.instruction",
                     )?;
+                    check_form_field(field)?;
                     // A field's cached result may be empty; when present it is
                     // validated as leaf inlines (in_wrapper rejects any wrapper).
                     self.validate_inlines(
@@ -1542,6 +1543,76 @@ fn check_opt_bound(
 ) -> Result<(), ModelError> {
     if let Some(value) = value {
         check_domain(!value.is_empty() && value.len() <= max, property)?;
+    }
+    Ok(())
+}
+
+/// Validates a legacy form field's configuration (`w:ffData`): every present
+/// string is at most `MAX_FORM_FIELD_STRING_BYTES`, a drop-down carries at most
+/// `MAX_FORM_FIELD_ENTRIES` entries, and the kind-specific payload agrees with
+/// the field instruction's `FORM…` token (a `TextInput` payload only on a
+/// FORMTEXT field, and so on). Absent (`None`) for an ordinary field.
+fn check_form_field(field: &Field) -> Result<(), ModelError> {
+    let Some(form) = &field.form else {
+        return Ok(());
+    };
+    // Common strings are length-bounded; empty is permitted (an explicit empty
+    // value round-trips, and a blank drop-down entry is legitimate).
+    for value in [
+        &form.name,
+        &form.help_text,
+        &form.status_text,
+        &form.entry_macro,
+        &form.exit_macro,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        check_domain(
+            value.len() <= MAX_FORM_FIELD_STRING_BYTES,
+            "field.form.string",
+        )?;
+    }
+    // The payload variant must match the instruction's field token.
+    let token = field
+        .instruction
+        .split_whitespace()
+        .next()
+        .unwrap_or_default();
+    let expected = match form.kind {
+        FormFieldKind::TextInput(_) => "FORMTEXT",
+        FormFieldKind::CheckBox(_) => "FORMCHECKBOX",
+        FormFieldKind::DropDown(_) => "FORMDROPDOWN",
+    };
+    check_domain(token.eq_ignore_ascii_case(expected), "field.form.kind")?;
+    match &form.kind {
+        FormFieldKind::TextInput(text) => {
+            if let Some(default) = &text.default {
+                check_domain(
+                    default.len() <= MAX_FORM_FIELD_STRING_BYTES,
+                    "field.form.textInput.default",
+                )?;
+            }
+            if let Some(format) = &text.format {
+                check_domain(
+                    format.len() <= MAX_FORM_FIELD_STRING_BYTES,
+                    "field.form.textInput.format",
+                )?;
+            }
+        }
+        FormFieldKind::CheckBox(_) => {}
+        FormFieldKind::DropDown(list) => {
+            check_domain(
+                list.entries.len() <= MAX_FORM_FIELD_ENTRIES,
+                "field.form.ddList.entries",
+            )?;
+            for entry in &list.entries {
+                check_domain(
+                    entry.len() <= MAX_FORM_FIELD_STRING_BYTES,
+                    "field.form.ddList.entry",
+                )?;
+            }
+        }
     }
     Ok(())
 }
