@@ -2282,6 +2282,115 @@ fn vml_textbox_maps_to_an_inline_text_box_with_flowed_content() {
 }
 
 #[test]
+fn vml_hr_rect_maps_to_a_full_width_horizontal_rule() {
+    use casual_doc_model::v1::HorizontalRuleAlign;
+
+    // Word's "Insert → Horizontal Line": a `v:rect` with `o:hr="t"`. Its CSS
+    // `width:0` is ignored (an `o:hr` spans the full content width); `height` is
+    // the thickness, `fillcolor` the color, `o:hralign` the alignment. It must map
+    // to a first-class inline horizontal rule, not be dropped or floated as a
+    // zero-width rectangle.
+    let pict = r##"<w:pict><v:rect style="width:0.0pt;height:1.5pt" o:hr="t" o:hrstd="t" o:hralign="center" fillcolor="#A0A0A0" stroked="f"/></w:pict>"##;
+    let document = format!(
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:v="urn:v" xmlns:o="urn:o"><w:body><w:p><w:r>{pict}</w:r></w:p></w:body></w:document>"#
+    );
+    let import = import(document.as_bytes());
+
+    let InlineNode::HorizontalRule(rule) = &paragraph(&import, 0).inlines[0] else {
+        panic!(
+            "expected a horizontal rule, got {:?}",
+            paragraph(&import, 0).inlines[0]
+        );
+    };
+    assert_eq!(rule.align, HorizontalRuleAlign::Center);
+    // No `o:hrpct` → full width (1000 per-mille).
+    assert_eq!(rule.width_permille, 1000);
+    // 1.5pt == 30 twips thick, carried as EMU (30 * 635).
+    assert_eq!(rule.thickness_emu, 30 * 635);
+    assert_eq!(
+        [rule.color.r, rule.color.g, rule.color.b],
+        [0xA0, 0xA0, 0xA0]
+    );
+}
+
+#[test]
+fn vml_hr_rect_without_height_or_fill_uses_grey_and_default_thickness() {
+    // A bare `o:hr` with no `height`/`fillcolor` falls back to Word's ~1.5pt grey
+    // rule rather than vanishing.
+    let pict = r##"<w:pict><v:rect style="width:0" o:hr="t"/></w:pict>"##;
+    let document = format!(
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:v="urn:v" xmlns:o="urn:o"><w:body><w:p><w:r>{pict}</w:r></w:p></w:body></w:document>"#
+    );
+    let import = import(document.as_bytes());
+    let InlineNode::HorizontalRule(rule) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected a horizontal rule");
+    };
+    assert_eq!(rule.thickness_emu, 30 * 635);
+    assert_eq!(
+        [rule.color.r, rule.color.g, rule.color.b],
+        [0xA0, 0xA0, 0xA0]
+    );
+}
+
+#[test]
+fn header_vml_text_box_with_absolute_position_is_a_positioned_float() {
+    use casual_doc_model::v1::HorizontalAnchor;
+
+    // The SDS header's date boxes: two `v:shape`/`t202` text boxes absolutely
+    // positioned (page-relative, distinct `margin-left`/`top`) so they sit side by
+    // side. In a header/footer part they must become floats at their VML box (so
+    // the header lays them out horizontally), NOT stack inline.
+    let box1 = r##"<w:pict><v:shape style="position:absolute;margin-left:257.5pt;margin-top:135.4pt;width:94.75pt;height:12pt;mso-position-horizontal-relative:page;mso-position-vertical-relative:page;z-index:-16120832" type="#_x0000_t202" id="d1" filled="false" stroked="false"><v:textbox inset="0,0,0,0"><w:txbxContent><w:p><w:r><w:t>修订日期</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict>"##;
+    let header = format!(
+        r#"<w:hdr xmlns:w="urn:w" xmlns:v="urn:v" xmlns:o="urn:o"><w:p><w:r>{box1}</w:r></w:p></w:hdr>"#
+    );
+    let document = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r"><w:body>
+        <w:p><w:r><w:t>Body.</w:t></w:r></w:p>
+        <w:sectPr><w:headerReference w:type="default" r:id="rId2"/>
+            <w:pgSz w:w="11906" w:h="16838"/></w:sectPr>
+    </w:body></w:document>"#;
+    let import = import_with_header_footer(document, &[("rId2", header.as_bytes())], &[]);
+
+    let section = &import.document.definitions().sections[0];
+    let hf = import
+        .document
+        .definitions()
+        .headers
+        .get(&section.headers[0].reference)
+        .expect("header definition resolves");
+    let BlockNode::Paragraph(para) = &hf.blocks[0] else {
+        panic!("expected a header paragraph");
+    };
+    let text_box = find_textbox(&para.inlines).expect("header text box is modeled");
+    let anchor = text_box
+        .anchor
+        .expect("a positioned header text box is a float carrying its VML anchor");
+    assert_eq!(anchor.horizontal.relative_from, HorizontalAnchor::Page);
+    assert!(
+        text_box.extent.is_some(),
+        "a floating header box carries its absolute extent"
+    );
+    assert_eq!(tb_block_text(&text_box.blocks), "修订日期");
+}
+
+#[test]
+fn body_vml_text_box_stays_inline_not_floated() {
+    // The de-overlap guard: a VML text box in the BODY keeps the inline behavior
+    // (no anchor), so the SDS content-page callouts do not overprint each other.
+    let pict = r##"<w:pict><v:shape style="position:absolute;margin-left:70pt;margin-top:36pt;width:157pt;height:28pt;mso-position-horizontal-relative:page;mso-position-vertical-relative:page;z-index:-16121856" type="#_x0000_t202" id="tb" filled="false" stroked="false"><v:textbox inset="0,0,0,0"><w:txbxContent><w:p><w:r><w:t>Body box</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict>"##;
+    let document = format!(
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:v="urn:v" xmlns:o="urn:o"><w:body><w:p><w:r>{pict}</w:r></w:p></w:body></w:document>"#
+    );
+    let import = import(document.as_bytes());
+    let text_box =
+        find_textbox(&paragraph(&import, 0).inlines).expect("body text box is modeled inline");
+    assert!(
+        text_box.anchor.is_none(),
+        "a body VML text box stays inline (not floated at its absolute VML box)"
+    );
+}
+
+#[test]
 fn drawing_with_a_dangling_embed_is_reported_and_dropped() {
     // The blip references rId9, which has no relationship: no media, no node.
     let document = r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:a="urn:a"><w:body><w:p><w:r><w:drawing><a:blip r:embed="rId9"/></w:drawing></w:r></w:p></w:body></w:document>"#;

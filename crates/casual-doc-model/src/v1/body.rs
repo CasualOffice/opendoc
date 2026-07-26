@@ -119,6 +119,45 @@ pub struct PositionalTab {
     pub leader: PositionalTabLeader,
 }
 
+/// The horizontal alignment of an inline horizontal rule within the content
+/// width (VML `o:hralign`). A rule narrower than the content width (a
+/// [`HorizontalRule::width_permille`] below full) sits at this edge or centered.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HorizontalRuleAlign {
+    /// Flush with the content's leading edge.
+    Left,
+    /// Centered in the content width.
+    Center,
+    /// Flush with the content's trailing edge.
+    Right,
+}
+
+/// Full width, in per-mille, for a [`HorizontalRule`] with no `o:hrpct`.
+pub const HR_FULL_WIDTH_PERMILLE: u16 = 1000;
+
+/// An inline horizontal rule (`w:pict` / `v:rect` with `o:hr="t"`): Word's
+/// "Insert → Horizontal Line". Unlike an ordinary VML rectangle, an `o:hr` shape
+/// spans the full content width (its CSS `width` is ignored), is `height` twips
+/// thick, and is filled with its `fillcolor`. It occupies its paragraph's own
+/// line, like an inline image. An inert leaf — it carries only its geometry.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HorizontalRule {
+    /// Stable identity.
+    pub id: NodeId,
+    /// Alignment within the content width (`o:hralign`).
+    pub align: HorizontalRuleAlign,
+    /// Rule width as a fraction of the content width in per-mille (`o:hrpct`,
+    /// `1000` = full width). Clamped to `1..=1000`.
+    pub width_permille: u16,
+    /// Rule thickness in EMU (`v:rect` `height`; the drawing's `width` is ignored
+    /// for a horizontal rule). Positive.
+    pub thickness_emu: i64,
+    /// Rule color (`fillcolor`).
+    pub color: Rgba,
+}
+
 /// The upper bound on a [`Symbol`] font name, in bytes.
 pub const MAX_SYMBOL_FONT_LEN: usize = 255;
 
@@ -1388,6 +1427,9 @@ pub enum InlineNode {
     Math(Math),
     /// An inline symbol glyph (a font plus a code point).
     Symbol(Symbol),
+    /// An inline horizontal rule (`w:pict` / `v:rect@o:hr`): a full-content-width
+    /// filled line occupying its paragraph's own line.
+    HorizontalRule(HorizontalRule),
     /// A non-breaking hyphen glyph (`w:noBreakHyphen`).
     NoBreakHyphen(NoBreakHyphen),
     /// A soft (optional) hyphen glyph (`w:softHyphen`).
@@ -1423,6 +1465,7 @@ impl InlineNode {
             Self::Sdt(sdt) => sdt.id,
             Self::Math(math) => math.id,
             Self::Symbol(symbol) => symbol.id,
+            Self::HorizontalRule(rule) => rule.id,
             Self::NoBreakHyphen(hyphen) => hyphen.id,
             Self::SoftHyphen(hyphen) => hyphen.id,
             Self::PositionalTab(tab) => tab.id,

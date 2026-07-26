@@ -1303,6 +1303,7 @@ mod tests {
             images: Vec::new(),
             fields: Vec::new(),
             text_boxes: Vec::new(),
+            rules: Vec::new(),
         };
         BlockFragment::Paragraph {
             id: node,
@@ -1351,6 +1352,7 @@ mod tests {
                     images: Vec::new(),
                     fields: Vec::new(),
                     text_boxes: Vec::new(),
+                    rules: Vec::new(),
                 }
             })
             .collect();

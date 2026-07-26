@@ -3780,6 +3780,32 @@ mod semantic_tests {
     }
 
     #[test]
+    fn vml_horizontal_rule_round_trips_as_a_pict() {
+        use casual_doc_model::v1::{BlockNode, HorizontalRuleAlign, InlineNode};
+
+        // Word's "Insert → Horizontal Line": an `o:hr` `v:rect` inside a `w:pict`.
+        // It must survive import → export (`w:pict`/`v:rect@o:hr`) → re-import as the
+        // same first-class horizontal rule (a model fixed point).
+        let xml = br##"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"><w:body><w:p><w:r><w:pict><v:rect style="width:0.0pt;height:1.5pt" o:hr="t" o:hrstd="t" o:hralign="center" fillcolor="#A0A0A0" stroked="f"/></w:pict></w:r></w:p></w:body></w:document>"##;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(m1, m2, "an o:hr horizontal rule is a fixed point");
+
+        let BlockNode::Paragraph(paragraph) = &m2.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::HorizontalRule(rule) = &paragraph.inlines[0] else {
+            panic!("expected a horizontal rule, got {:?}", paragraph.inlines[0]);
+        };
+        assert_eq!(rule.align, HorizontalRuleAlign::Center);
+        assert_eq!(rule.width_permille, 1000);
+        assert_eq!(rule.thickness_emu, 30 * 635);
+        assert_eq!(
+            [rule.color.r, rule.color.g, rule.color.b],
+            [0xA0, 0xA0, 0xA0]
+        );
+    }
+
+    #[test]
     fn alt_chunk_round_trips_as_an_editable_reference() {
         use casual_doc_model::v1::{BlockNode, Document};
 

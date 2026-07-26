@@ -26,9 +26,9 @@ use casual_doc_model::v1::{
     FontCollection, FontDescriptor, FontFamilyKind, FontPitch, FontRef, FontScheme,
     FormCheckBoxSize, FormFieldData, FormFieldKind, FormTextType, GridColumn, GroupChild,
     GroupShape, GroupTextBox, GroupTransform, HeaderFooterId, HeaderFooterKind, HeightRule,
-    HighlightColor, HorizontalAlign, HorizontalAnchor, HorizontalPosition, HyperlinkTarget,
-    InlineNode, LevelJustification, LevelSuffix, LineNumberRestart, LineRule, MediaId,
-    MediaReference, MoveKind, Note, NoteId, NoteKind, NoteNumberRestart, NotePosition,
+    HighlightColor, HorizontalAlign, HorizontalAnchor, HorizontalPosition, HorizontalRuleAlign,
+    HyperlinkTarget, InlineNode, LevelJustification, LevelSuffix, LineNumberRestart, LineRule,
+    MediaId, MediaReference, MoveKind, Note, NoteId, NoteKind, NoteNumberRestart, NotePosition,
     NoteProperties, NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel,
     PageBorderDisplay, PageBorderOffset, PageOrientation, PageVerticalAlignment,
     ParagraphProperties, Person, PointEmu, PositionalTabAlignment, PositionalTabLeader,
@@ -3846,6 +3846,43 @@ fn write_inline(
             sym.push_attribute(("w:font", symbol.font.as_str()));
             sym.push_attribute(("w:char", char.as_str()));
             w.write_event(Event::Empty(sym)).map_err(pkg)?;
+            w.write_event(Event::End(BytesEnd::new("w:r")))
+                .map_err(pkg)?;
+        }
+        // A horizontal rule: a `w:pict` wrapping a `v:rect` with `o:hr="t"` (Word's
+        // "Insert → Horizontal Line"). The rule spans the full content width, so a
+        // `width:0` style is written (Word ignores it for an `o:hr`); `height` is the
+        // thickness (points), `fillcolor` the color, `o:hralign` the alignment, and
+        // `o:hrpct` the width fraction (per-mille) — omitted at full width, matching
+        // Word. The `v:`/`o:` prefixes are declared on the `w:document` root.
+        InlineNode::HorizontalRule(rule) => {
+            w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
+            w.write_event(Event::Start(start("w:pict"))).map_err(pkg)?;
+            let mut rect = start("v:rect");
+            let thickness_pt = rule.thickness_emu as f64 / 12700.0;
+            rect.push_attribute(("style", format!("width:0;height:{thickness_pt}pt").as_str()));
+            rect.push_attribute(("o:hr", "t"));
+            rect.push_attribute(("o:hrstd", "t"));
+            rect.push_attribute((
+                "o:hralign",
+                match rule.align {
+                    HorizontalRuleAlign::Left => "left",
+                    HorizontalRuleAlign::Center => "center",
+                    HorizontalRuleAlign::Right => "right",
+                },
+            ));
+            if rule.width_permille < 1000 {
+                rect.push_attribute(("o:hrpct", rule.width_permille.to_string().as_str()));
+            }
+            let fillcolor = format!(
+                "#{:02X}{:02X}{:02X}",
+                rule.color.r, rule.color.g, rule.color.b
+            );
+            rect.push_attribute(("fillcolor", fillcolor.as_str()));
+            rect.push_attribute(("stroked", "f"));
+            w.write_event(Event::Empty(rect)).map_err(pkg)?;
+            w.write_event(Event::End(BytesEnd::new("w:pict")))
+                .map_err(pkg)?;
             w.write_event(Event::End(BytesEnd::new("w:r")))
                 .map_err(pkg)?;
         }

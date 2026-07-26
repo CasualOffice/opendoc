@@ -1328,6 +1328,18 @@ impl Document {
                 // positional tab's alignment/relativeTo/leader are typed enums that
                 // cannot hold an out-of-domain value. Each forms a hard merge
                 // boundary (like a tab), so `previous_run_properties` resets.
+                // A horizontal rule is an inert leaf whose fields are typed and
+                // bounded (an align enum, a per-mille width, a positive thickness,
+                // an RGBA color); the width is clamped to a valid fraction so it
+                // cannot hold an out-of-domain value. It forms a hard merge boundary.
+                InlineNode::HorizontalRule(rule) => {
+                    check_domain(
+                        rule.width_permille >= 1 && rule.width_permille <= HR_FULL_WIDTH_PERMILLE,
+                        "horizontalRule.widthPermille",
+                    )?;
+                    check_domain(rule.thickness_emu > 0, "horizontalRule.thicknessEmu")?;
+                    previous_run_properties = None;
+                }
                 InlineNode::Tab(_)
                 | InlineNode::Break(_)
                 | InlineNode::CommentRangeStart(_)
@@ -1666,6 +1678,7 @@ fn accumulate_inline_limits(
         | InlineNode::MoveRangeStart(_)
         | InlineNode::MoveRangeEnd(_)
         | InlineNode::Symbol(_)
+        | InlineNode::HorizontalRule(_)
         | InlineNode::NoBreakHyphen(_)
         | InlineNode::SoftHyphen(_)
         | InlineNode::PositionalTab(_) => {}

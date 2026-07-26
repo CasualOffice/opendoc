@@ -21,8 +21,8 @@ use casual_doc_model::v1::{BreakKind, TabAlignment, TabLeader, TabStop};
 use crate::block::BlockFragment;
 use crate::model::{ModelPos, ModelRange};
 use crate::text::{
-    Decoration, FieldKind, FieldStyle, Glyph, GlyphRun, Line, LineBreak, LineConstraints,
-    LineLayout, LineShaper, StyledRun, TextBoxStroke,
+    Decoration, FieldKind, FieldStyle, Glyph, GlyphRun, InlineRule, Line, LineBreak,
+    LineConstraints, LineLayout, LineShaper, StyledRun, TextBoxStroke,
 };
 use crate::units::{Point, Size, Twip};
 
@@ -87,6 +87,11 @@ pub enum FlowItem<'a> {
         /// The background fill (RGBA), or `None` for transparent.
         fill: Option<[u8; 4]>,
     },
+    /// An inline horizontal rule (`w:pict` / `v:rect@o:hr`): a filled full-content-
+    /// width line, already resolved (origin, size, color) against the content width
+    /// and alignment. Laid out on its own line, like an [`FlowItem::Image`];
+    /// composition paints it as a filled rect.
+    HorizontalRule(InlineRule),
 }
 
 /// Whether an item stream needs the tab/break layer at all: any tab, any hard
@@ -271,7 +276,10 @@ fn split_blocks<'a>(items: &'a [FlowItem<'a>], base: u32) -> Vec<Block<'a>> {
             // Inline images, fields, and text boxes are handled by their own
             // layout paths before the stream reaches the tab/break layer, so none
             // reach here.
-            FlowItem::Image { .. } | FlowItem::Field { .. } | FlowItem::TextBox { .. } => {}
+            FlowItem::Image { .. }
+            | FlowItem::Field { .. }
+            | FlowItem::TextBox { .. }
+            | FlowItem::HorizontalRule(_) => {}
         }
     }
     blocks.push(Block {
@@ -421,6 +429,7 @@ fn layout_tabbed_line(
         images: Vec::new(),
         fields: Vec::new(),
         text_boxes: Vec::new(),
+        rules: Vec::new(),
     };
     vec![line]
 }
@@ -645,6 +654,7 @@ fn empty_line(node: NodeId, offset: u32, bars: Vec<Twip>) -> Line {
         images: Vec::new(),
         fields: Vec::new(),
         text_boxes: Vec::new(),
+        rules: Vec::new(),
     }
 }
 

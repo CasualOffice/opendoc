@@ -21,12 +21,12 @@ use std::hash::{Hash, Hasher};
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     Alignment, BlockNode, BorderEdge, BreakKind, Color, ColorScheme, DefinitionMap, Definitions,
-    Document, Drawing, Extent, FontRef, FontScheme, HeightRule, HighlightColor, Indentation,
-    InlineNode, LevelSuffix, LineRule, MediaId, MediaReference, ParagraphProperties, Rgba,
-    RunProperties, SchemeColor, SectionBoundary, SectionId, SectionType, ShapeStroke, StyleId,
-    Symbol, TabAlignment, TabLeader, TabStop, Table, TableBorders, TableCell, TableLayout,
-    TableRow, TableRowProperties, TextBox, ThemeColorRef, ThemeFontRef, VerticalAlignment,
-    VerticalMerge,
+    Document, Drawing, Extent, FontRef, FontScheme, HeightRule, HighlightColor,
+    HorizontalRule as ModelHorizontalRule, HorizontalRuleAlign, Indentation, InlineNode,
+    LevelSuffix, LineRule, MediaId, MediaReference, ParagraphProperties, Rgba, RunProperties,
+    SchemeColor, SectionBoundary, SectionId, SectionType, ShapeStroke, StyleId, Symbol,
+    TabAlignment, TabLeader, TabStop, Table, TableBorders, TableCell, TableLayout, TableRow,
+    TableRowProperties, TextBox, ThemeColorRef, ThemeFontRef, VerticalAlignment, VerticalMerge,
 };
 
 use crate::block::{
@@ -42,7 +42,7 @@ use crate::resolve::{FaceRequest, FontResolutionReport, FontResolver};
 use crate::tabs::{self, FlowItem};
 use crate::text::{
     Decoration, FieldKind, FieldMarker, FieldStyle, FontId, Glyph, GlyphRun, InlineImage,
-    InlineTextBox, Line, LineBreak, LineConstraints, LineLayout, LineShaper, StyledRun,
+    InlineRule, InlineTextBox, Line, LineBreak, LineConstraints, LineLayout, LineShaper, StyledRun,
     TextAlignment, TextBoxStroke,
 };
 use crate::units::{Point, Size, Twip};
@@ -515,6 +515,13 @@ fn paragraph_hash(
                 size.height.0.hash(&mut hasher);
                 border.hash(&mut hasher);
                 fill.hash(&mut hasher);
+            }
+            FlowItem::HorizontalRule(rule) => {
+                6u8.hash(&mut hasher);
+                rule.origin.x.0.hash(&mut hasher);
+                rule.size.width.0.hash(&mut hasher);
+                rule.size.height.0.hash(&mut hasher);
+                rule.color.hash(&mut hasher);
             }
         }
     }
@@ -1658,6 +1665,7 @@ fn collect_items<'a>(
                 }
             }
             InlineNode::Field(field) => out.push(field_item(field, ctx)),
+            InlineNode::HorizontalRule(rule) => out.push(hr_item(rule, width)),
             // A floating text box (`anchor` set) is removed from the inline flow —
             // it is placed absolutely by the float layer ([`crate::anchor`]). Only
             // an inline text box flows here.
@@ -1819,6 +1827,31 @@ fn image_item(drawing: &Drawing, ctx: &FlowCtx) -> Option<FlowItem<'static>> {
     (size.width.raw() > 0 && size.height.raw() > 0).then_some(FlowItem::Image { media: part, size })
 }
 
+/// Maps an inline horizontal rule (`v:rect@o:hr`) to an [`FlowItem::HorizontalRule`],
+/// resolving its width against the available content `width` (`width_permille` of
+/// it) and its horizontal offset against its alignment. The rule box is `width`
+/// wide (a fraction, for a partial-width rule) and `thickness_emu` tall; the box
+/// origin's `y` is `0` (the box owns its line — [`stack_lines`] shifts it into
+/// paragraph-absolute space).
+fn hr_item(rule: &ModelHorizontalRule, width: Twip) -> FlowItem<'static> {
+    let thickness = emu_to_twip(rule.thickness_emu).max(Twip(1));
+    let permille = i64::from(rule.width_permille).clamp(1, 1000);
+    let rule_width = Twip(
+        ((i64::from(width.raw()) * permille) / 1000).clamp(1, i64::from(width.raw().max(1))) as i32,
+    );
+    let slack = Twip((width.raw() - rule_width.raw()).max(0));
+    let left = match rule.align {
+        HorizontalRuleAlign::Left => Twip::ZERO,
+        HorizontalRuleAlign::Center => Twip(slack.raw() / 2),
+        HorizontalRuleAlign::Right => slack,
+    };
+    FlowItem::HorizontalRule(InlineRule {
+        origin: Point::new(left, Twip::ZERO),
+        size: Size::new(rule_width, thickness),
+        color: [rule.color.r, rule.color.g, rule.color.b, rule.color.a],
+    })
+}
+
 /// Converts a drawing's EMU extent to a twip box size.
 fn extent_to_size(extent: &Extent) -> Size {
     Size::new(
@@ -1853,8 +1886,12 @@ fn shape_paragraph_items(
     if items.iter().any(|i| matches!(i, FlowItem::Field { .. })) {
         return shape_fielded_paragraph(shaper, items, tab_stops, default_tab, constraints, range);
     }
-    let is_box =
-        |item: &FlowItem<'_>| matches!(item, FlowItem::Image { .. } | FlowItem::TextBox { .. });
+    let is_box = |item: &FlowItem<'_>| {
+        matches!(
+            item,
+            FlowItem::Image { .. } | FlowItem::TextBox { .. } | FlowItem::HorizontalRule(_)
+        )
+    };
     if !items.iter().any(is_box) {
         return shape_text_items(shaper, items, tab_stops, default_tab, constraints, range);
     }
@@ -1876,6 +1913,11 @@ fn shape_paragraph_items(
                 fill,
             } => {
                 let line = textbox_line(blocks.clone(), *size, *border, *fill, range);
+                stack_lines(&mut out, vec![line], &mut cursor_y);
+                i += 1;
+            }
+            FlowItem::HorizontalRule(rule) => {
+                let line = hr_line(*rule, range);
                 stack_lines(&mut out, vec![line], &mut cursor_y);
                 i += 1;
             }
@@ -1943,6 +1985,7 @@ fn image_line(media: String, size: Size, range: ModelRange) -> Line {
         }],
         fields: Vec::new(),
         text_boxes: Vec::new(),
+        rules: Vec::new(),
     }
 }
 
@@ -1975,11 +2018,34 @@ fn textbox_line(
             border,
             fill,
         }],
+        rules: Vec::new(),
+    }
+}
+
+/// A line holding a single inline horizontal rule at the paragraph's leading edge,
+/// its height equal to the rule's thickness so following content stacks below it.
+/// The rule's own `origin.x` (already resolved for alignment) is preserved; its
+/// `origin.y` is `0` (line-relative), shifted into paragraph-absolute space by
+/// [`stack_lines`].
+fn hr_line(rule: InlineRule, range: ModelRange) -> Line {
+    Line {
+        runs: Vec::new(),
+        ascent: rule.size.height,
+        descent: Twip::ZERO,
+        height: rule.size.height,
+        range,
+        line_break: LineBreak::Wrap,
+        page_break_after: false,
+        bars: Vec::new(),
+        images: Vec::new(),
+        fields: Vec::new(),
+        text_boxes: Vec::new(),
+        rules: vec![rule],
     }
 }
 
 /// Appends `lines` below the ones already in `out`, shifting each line's runs,
-/// images, and text boxes down by `cursor_y` (into paragraph-absolute y) and
+/// images, text boxes, and rules down by `cursor_y` (into paragraph-absolute y) and
 /// advancing `cursor_y` past them.
 fn stack_lines(out: &mut Vec<Line>, mut lines: Vec<Line>, cursor_y: &mut Twip) {
     for line in &mut lines {
@@ -1991,6 +2057,9 @@ fn stack_lines(out: &mut Vec<Line>, mut lines: Vec<Line>, cursor_y: &mut Twip) {
         }
         for text_box in &mut line.text_boxes {
             text_box.origin.y = text_box.origin.y + *cursor_y;
+        }
+        for rule in &mut line.rules {
+            rule.origin.y = rule.origin.y + *cursor_y;
         }
         *cursor_y = *cursor_y + line.height;
     }
@@ -2279,6 +2348,7 @@ fn layout_fielded_line(
         images: Vec::new(),
         fields,
         text_boxes: Vec::new(),
+        rules: Vec::new(),
     }
 }
 
@@ -6115,6 +6185,7 @@ mod tests {
                         images: Vec::new(),
                         fields: Vec::new(),
                         text_boxes: Vec::new(),
+                        rules: Vec::new(),
                     }],
                 },
                 box_metrics: BoxMetrics::default(),
@@ -6281,5 +6352,79 @@ mod tests {
             bullet_runs > plain.lines[0].runs.len(),
             "the bullet item has a marker run the plain paragraph lacks"
         );
+    }
+
+    fn hr_node(id: u64, align: HorizontalRuleAlign, width_permille: u16) -> InlineNode {
+        InlineNode::HorizontalRule(ModelHorizontalRule {
+            id: NodeId::from_parts(id, 1).unwrap(),
+            align,
+            width_permille,
+            thickness_emu: 30 * 635,
+            color: Rgba {
+                r: 0xA0,
+                g: 0xA0,
+                b: 0xA0,
+                a: 255,
+            },
+        })
+    }
+
+    #[test]
+    fn a_full_width_horizontal_rule_paints_a_content_width_line() {
+        let shaper = ParleyShaper::new();
+        let doc = document(vec![paragraph(
+            10,
+            vec![hr_node(11, HorizontalRuleAlign::Center, 1000)],
+        )]);
+        let width = Twip::from_points(400);
+        let galley = build_galley(&doc, &shaper, width);
+        let BlockFragment::Paragraph { lines, .. } = &galley[0] else {
+            panic!("expected a paragraph fragment");
+        };
+        assert_eq!(lines.lines.len(), 1, "the rule owns a single line");
+        let line = &lines.lines[0];
+        assert_eq!(line.rules.len(), 1);
+        let rule = &line.rules[0];
+        // Full width spans the whole content column, at the leading edge.
+        assert_eq!(rule.origin.x, Twip::ZERO);
+        assert_eq!(rule.size.width, width);
+        // 1.5pt thick (30 twips), and the line reserves exactly that height.
+        assert_eq!(rule.size.height, Twip(30));
+        assert_eq!(line.height, rule.size.height);
+        assert_eq!(rule.color, [0xA0, 0xA0, 0xA0, 255]);
+    }
+
+    #[test]
+    fn hr_item_positions_a_partial_width_rule_by_alignment() {
+        let width = Twip(8000);
+        let make = |align| {
+            let FlowItem::HorizontalRule(rule) = hr_item(&hr_model(align, 500), width) else {
+                panic!("expected a horizontal-rule flow item");
+            };
+            rule
+        };
+        // 500 per-mille == half the content width, so 4000 twips of slack.
+        let left = make(HorizontalRuleAlign::Left);
+        assert_eq!(left.origin.x, Twip::ZERO);
+        assert_eq!(left.size.width, Twip(4000));
+        let center = make(HorizontalRuleAlign::Center);
+        assert_eq!(center.origin.x, Twip(2000));
+        let right = make(HorizontalRuleAlign::Right);
+        assert_eq!(right.origin.x, Twip(4000));
+    }
+
+    fn hr_model(align: HorizontalRuleAlign, width_permille: u16) -> ModelHorizontalRule {
+        ModelHorizontalRule {
+            id: NodeId::from_parts(11, 1).unwrap(),
+            align,
+            width_permille,
+            thickness_emu: 30 * 635,
+            color: Rgba {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
+        }
     }
 }

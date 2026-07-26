@@ -659,6 +659,7 @@ impl ParleyShaper {
                 images: Vec::new(),
                 fields: Vec::new(),
                 text_boxes: Vec::new(),
+                rules: Vec::new(),
             });
         }
         (LineLayout { lines }, cjk_fallback)
