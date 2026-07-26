@@ -90,6 +90,7 @@ name = "casual-doc-layout"
 version = "0.0.1"
 dependencies = [
  "casual-doc-model",
+ "fontique",
  "parley",
  "serde",
  "serde_json",

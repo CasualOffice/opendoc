@@ -15,7 +15,7 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use parley::fontique::{Blob, Script};
+use fontique::{Blob, Script};
 use parley::{
     Alignment, AlignmentOptions, FontContext, FontFamily, FontStyle, FontWeight, IndentOptions,
     LayoutContext, LineHeight, PositionedLayoutItem, StyleProperty,

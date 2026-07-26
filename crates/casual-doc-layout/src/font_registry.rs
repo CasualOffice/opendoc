@@ -31,7 +31,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use parley::fontique::Blob;
+use fontique::Blob;
 
 use crate::text::FontId;
 
