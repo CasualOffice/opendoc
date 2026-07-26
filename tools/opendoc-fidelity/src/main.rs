@@ -170,6 +170,9 @@ fn push_inline_text(inline: &InlineNode, out: &mut String) {
         // A math object's visible text is its plain-text fallback (the OMML
         // subtree itself is opaque markup, not in-flow text).
         InlineNode::Math(math) => out.push_str(&math.text),
+        // A symbol is a font-bound glyph (typically a Private Use Area code
+        // point); it has no extractable plain-text form, so it contributes none.
+        InlineNode::Symbol(_) => {}
     }
 }
 

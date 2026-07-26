@@ -1443,6 +1443,68 @@ fn empty_field_instruction_is_rejected() {
     ));
 }
 
+fn symbol_paragraph(symbol: Symbol) -> BlockNode {
+    BlockNode::Paragraph(Paragraph {
+        id: tid(1),
+        properties: ParagraphProperties::default(),
+        inlines: vec![InlineNode::Symbol(symbol)],
+    })
+}
+
+#[test]
+fn symbol_validates_and_round_trips_json() {
+    // A Wingdings glyph in the Private Use Area (`0xF0FC`, a checkmark) is the
+    // canonical `w:sym`; the font binding and code point must survive JSON.
+    let symbol = Symbol {
+        id: tid(10),
+        font: "Wingdings".to_owned(),
+        char: 0xF0FC,
+    };
+    let document = table_document(vec![symbol_paragraph(symbol)]).unwrap();
+    let json = document.to_json().unwrap();
+    let reloaded = Document::from_json(&json, SnapshotLimits::default()).unwrap();
+    assert_eq!(document, reloaded);
+
+    let BlockNode::Paragraph(paragraph) = &document.body()[0] else {
+        panic!("expected a paragraph");
+    };
+    let InlineNode::Symbol(symbol) = &paragraph.inlines[0] else {
+        panic!("expected a symbol");
+    };
+    assert_eq!(symbol.font, "Wingdings");
+    assert_eq!(symbol.char, 0xF0FC);
+}
+
+#[test]
+fn empty_symbol_font_is_rejected() {
+    let symbol = Symbol {
+        id: tid(10),
+        font: String::new(),
+        char: 0xF0FC,
+    };
+    assert!(matches!(
+        table_document(vec![symbol_paragraph(symbol)]),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "symbol.font"
+        })
+    ));
+}
+
+#[test]
+fn over_long_symbol_font_is_rejected() {
+    let symbol = Symbol {
+        id: tid(10),
+        font: "W".repeat(MAX_SYMBOL_FONT_LEN + 1),
+        char: 0x2022,
+    };
+    assert!(matches!(
+        table_document(vec![symbol_paragraph(symbol)]),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "symbol.font"
+        })
+    ));
+}
+
 #[test]
 fn field_inside_a_hyperlink_is_rejected() {
     let inner_field = InlineNode::Field(Field {

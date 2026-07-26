@@ -1,7 +1,7 @@
 use casual_doc_model::v1::{
     Alignment, BlockNode, Break, BreakKind, Color, DocumentProtectionEdit, HyperlinkTarget,
     InlineNode, LevelJustification, LevelSuffix, MoveKind, NumberFormat, Paragraph, ProofState,
-    RevisionKind, RgbColor, SdtControlKind, StyleKind,
+    RevisionKind, RgbColor, SdtControlKind, StyleKind, Symbol,
 };
 use casual_doc_ooxml::DocxPackage;
 
@@ -4697,4 +4697,53 @@ fn omml_math_is_retained_opaquely_and_never_leaks_into_run_text() {
     );
     // The plain-text fallback is the concatenated `m:t` text.
     assert_eq!(math.text, "x+1");
+}
+
+#[test]
+fn symbol_run_is_mapped_to_a_symbol_node() {
+    // A `w:sym` (Wingdings checkmark, PUA `0xF0FC`) must map to a first-class
+    // Symbol node — not fall through to the catch-all and vanish — with its font
+    // binding and code point preserved (the hex `w:char` parsed to a scalar).
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:t>a</w:t></w:r>
+            <w:r><w:sym w:font="Wingdings" w:char="F0FC"/></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let paragraph = paragraph(&import, 0);
+    let Some(InlineNode::Symbol(Symbol { font, char, .. })) = paragraph
+        .inlines
+        .iter()
+        .find(|inline| matches!(inline, InlineNode::Symbol(_)))
+    else {
+        panic!("expected a symbol node");
+    };
+    assert_eq!(font, "Wingdings");
+    assert_eq!(*char, 0xF0FC);
+    assert!(
+        !features(&import).contains(&"sym"),
+        "a well-formed symbol is mapped, not reported"
+    );
+}
+
+#[test]
+fn symbol_without_a_font_is_reported_not_mapped() {
+    // A `w:sym` missing its `w:font` (or carrying an unparseable `w:char`) cannot
+    // be modeled without inventing a binding; it must be reported so the loss is
+    // visible rather than silently swallowed by the catch-all.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:sym w:char="F0FC"/></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let paragraph = paragraph(&import, 0);
+    assert!(
+        !paragraph
+            .inlines
+            .iter()
+            .any(|inline| matches!(inline, InlineNode::Symbol(_))),
+        "a font-less symbol is not modeled"
+    );
+    assert!(
+        features(&import).contains(&"sym"),
+        "the unmodeled symbol is reported"
+    );
 }
