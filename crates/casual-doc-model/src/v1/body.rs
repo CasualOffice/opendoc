@@ -595,6 +595,30 @@ pub struct CommentReference {
     pub comment: CommentId,
 }
 
+/// The start marker of a comment's anchored range (`w:commentRangeStart`). A
+/// zero-width point; the commented span runs from here to the [`CommentRangeEnd`]
+/// sharing its `comment`. The comment's content and metadata live in
+/// `Definitions::comments`, reached through the paired [`CommentReference`].
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CommentRangeStart {
+    /// Stable identity (this marker's own id).
+    pub id: NodeId,
+    /// The comment this range opens (resolves in `Definitions::comments`).
+    pub comment: CommentId,
+}
+
+/// The end marker of a comment's anchored range (`w:commentRangeEnd`). Closes the
+/// [`CommentRangeStart`] sharing its `comment`.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CommentRangeEnd {
+    /// Stable identity (this marker's own id).
+    pub id: NodeId,
+    /// The comment this range closes (resolves in `Definitions::comments`).
+    pub comment: CommentId,
+}
+
 /// Maximum revision-wrapper nesting depth (a `w:ins` around a `w:del`, ...).
 pub const MAX_REVISION_DEPTH: u32 = 8;
 
@@ -1002,6 +1026,10 @@ pub enum InlineNode {
     NoteReference(NoteReference),
     /// An inline reference to a comment.
     CommentReference(CommentReference),
+    /// The start marker of a comment's anchored range.
+    CommentRangeStart(CommentRangeStart),
+    /// The end marker of a comment's anchored range.
+    CommentRangeEnd(CommentRangeEnd),
     /// A tracked-change (insertion/deletion) range wrapping inline content.
     Revision(Revision),
     /// The start marker of a bookmark range.
@@ -1036,6 +1064,8 @@ impl InlineNode {
             Self::TextBox(text_box) => text_box.id,
             Self::NoteReference(note) => note.id,
             Self::CommentReference(comment) => comment.id,
+            Self::CommentRangeStart(node) => node.id,
+            Self::CommentRangeEnd(node) => node.id,
             Self::Revision(revision) => revision.id,
             Self::BookmarkStart(node) => node.id,
             Self::BookmarkEnd(node) => node.id,

@@ -1207,7 +1207,16 @@ impl Document {
                     )?;
                     previous_run_properties = None;
                 }
-                InlineNode::Tab(_) | InlineNode::Break(_) => {
+                // Comment range markers are inert leaves (like a tab): a zero-width
+                // point that carries no validated payload. Each forms a hard merge
+                // boundary so two equal runs separated by a marker are not merged
+                // (position-preserving). The commented span's comment resolves
+                // through the paired `CommentReference`, so no lookup is repeated
+                // here.
+                InlineNode::Tab(_)
+                | InlineNode::Break(_)
+                | InlineNode::CommentRangeStart(_)
+                | InlineNode::CommentRangeEnd(_) => {
                     previous_run_properties = None;
                 }
             }
@@ -1456,6 +1465,8 @@ fn accumulate_inline_limits(
         | InlineNode::EmbeddedObject(_)
         | InlineNode::NoteReference(_)
         | InlineNode::CommentReference(_)
+        | InlineNode::CommentRangeStart(_)
+        | InlineNode::CommentRangeEnd(_)
         | InlineNode::BookmarkStart(_)
         | InlineNode::BookmarkEnd(_)
         | InlineNode::MoveRangeStart(_)

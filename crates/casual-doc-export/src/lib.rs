@@ -2114,6 +2114,64 @@ mod semantic_tests {
     }
 
     #[test]
+    fn comment_range_markers_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::InlineNode;
+
+        // A comment anchored to a SPAN: `w:commentRangeStart`/`End` bracket the
+        // commented run and a `w:commentReference` points at the comment part.
+        // Before the range markers were modeled the span collapsed to the
+        // reference point on write; now the start/end brackets must survive
+        // write -> reopen so the commented range is preserved.
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p>
+                <w:commentRangeStart w:id="1"/>
+                <w:r><w:t>Reviewed</w:t></w:r>
+                <w:commentRangeEnd w:id="1"/>
+                <w:r><w:commentReference w:id="1"/></w:r>
+            </w:p>
+        </w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="comments.xml"/></Relationships>"#;
+        let comments = br#"<w:comments xmlns:w="urn:w"><w:comment w:id="1" w:author="Alice" w:initials="AC" w:date="2020-01-02T03:04:05Z"><w:p><w:r><w:t>a note</w:t></w:r></w:p></w:comment></w:comments>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/comments.xml", comments),
+        ]);
+        let m1 = reopen(&source);
+
+        // The model shape: the span is a start marker, the commented run, an end
+        // marker, then the reference — all three markers on the one comment.
+        let casual_doc_model::v1::BlockNode::Paragraph(para) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::CommentRangeStart(range_start) = &para.inlines[0] else {
+            panic!("expected a comment range start");
+        };
+        assert!(matches!(&para.inlines[1], InlineNode::Run(run) if run.text == "Reviewed"));
+        let InlineNode::CommentRangeEnd(range_end) = &para.inlines[2] else {
+            panic!("expected a comment range end");
+        };
+        let reference = para.inlines.iter().find_map(|i| match i {
+            InlineNode::CommentReference(c) => Some(c),
+            _ => None,
+        });
+        let reference = reference.expect("comment reference modeled");
+        assert_eq!(range_start.comment, reference.comment);
+        assert_eq!(range_end.comment, reference.comment);
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(
+            m1, m2,
+            "the comment range markers survive write -> reopen (the span is preserved)"
+        );
+    }
+
+    #[test]
     fn note_internal_hyperlink_routes_to_the_part_own_rels() {
         // A hyperlink inside a footnote must resolve through the footnote part's
         // OWN rels (word/_rels/footnotes.xml.rels), not document.xml.rels. The
