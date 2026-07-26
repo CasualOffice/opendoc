@@ -2134,6 +2134,77 @@ mod semantic_tests {
     }
 
     #[test]
+    fn section_long_tail_survives_the_semantic_round_trip() {
+        // The section long tail (P1F-36): page borders, line numbering, a
+        // per-section footnotePr, text direction, bidi, paper source, and a
+        // landscape page orientation. The writer must emit each in CT_SectPr order
+        // so the reopened model is a fixed point.
+        use casual_doc_model::v1::{
+            LineNumberRestart, NoteNumberRestart, NotePosition, PageBorderDisplay,
+            PageBorderOffset, PageOrientation, TextDirection,
+        };
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:r><w:t>x</w:t></w:r></w:p>
+            <w:sectPr>
+                <w:footnotePr>
+                    <w:pos w:val="beneathText"/>
+                    <w:numFmt w:val="lowerRoman"/>
+                    <w:numStart w:val="2"/>
+                    <w:numRestart w:val="eachSect"/>
+                </w:footnotePr>
+                <w:pgSz w:w="15840" w:h="12240" w:orient="landscape"/>
+                <w:pgMar w:top="1440" w:bottom="1440" w:start="1440" w:end="1440"/>
+                <w:paperSrc w:first="4" w:other="1"/>
+                <w:pgBorders w:display="allPages" w:offsetFrom="page">
+                    <w:top w:val="single" w:sz="24" w:color="FF0000" w:space="24"/>
+                    <w:left w:val="single" w:sz="24" w:space="24"/>
+                    <w:bottom w:val="single" w:sz="24" w:space="24"/>
+                    <w:right w:val="single" w:sz="24" w:space="24"/>
+                </w:pgBorders>
+                <w:lnNumType w:countBy="1" w:start="1" w:distance="360" w:restart="newSection"/>
+                <w:cols w:num="1"/>
+                <w:textDirection w:val="tbRl"/>
+                <w:bidi/>
+            </w:sectPr>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        let section = &m1.definitions().sections[0];
+        assert_eq!(section.orientation, Some(PageOrientation::Landscape));
+        assert_eq!(section.paper_source.first, Some(4));
+        assert_eq!(
+            section.page_borders.display,
+            Some(PageBorderDisplay::AllPages)
+        );
+        assert_eq!(
+            section.page_borders.offset_from,
+            Some(PageBorderOffset::Page)
+        );
+        assert!(section.page_borders.top.is_some());
+        assert!(section.page_borders.end.is_some());
+        assert_eq!(
+            section.line_numbering.restart,
+            Some(LineNumberRestart::NewSection)
+        );
+        assert_eq!(
+            section.footnote_props.position,
+            Some(NotePosition::BeneathText)
+        );
+        assert_eq!(
+            section.footnote_props.number_restart,
+            Some(NoteNumberRestart::EachSection)
+        );
+        assert_eq!(section.footnote_props.number_start, Some(2));
+        assert_eq!(section.text_direction, Some(TextDirection::TbRl));
+        assert!(section.bidi);
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(m1, m2, "section long tail survives write -> reopen");
+    }
+
+    #[test]
     fn multi_section_survives_the_semantic_round_trip() {
         // Two sections: the first ends at paragraph one via a nested
         // w:pPr > w:sectPr (distinct geometry + columns); the second is the
