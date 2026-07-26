@@ -7,16 +7,16 @@ use casual_doc_model::v1::{
     Break, BreakKind, CellVerticalAlignment, Comment, CommentId, CommentReference, DefinitionMap,
     DocGrid, DocGridType, Drawing, Extent, ExternalTarget, Field, HeaderFooterId, HeaderFooterKind,
     HeaderFooterRef, HeightRule, Hyperlink, HyperlinkTarget, InlineNode, InlineSdt, InternalTarget,
-    MAX_EMU, MAX_FIELD_INSTRUCTION_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH, MAX_TEXTBOX_DEPTH,
-    MediaId, NoteId, NoteKind, NoteReference, PageMargins, PageNumbering, PageSize,
-    PageVerticalAlignment, Paragraph, ParagraphProperties, Revision, RevisionKind, RgbColor, Run,
-    RunProperties, SdtControlKind, SdtProperties, SectionBoundary, SectionColumns, SectionId,
-    SectionType, StyleKind, Tab, TabAlignment, TabLeader, TabStop, TableLayout, TableOverlap,
-    TextBox, TextDirection, VerticalMerge,
+    MAX_EMU, MAX_FIELD_INSTRUCTION_BYTES, MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH,
+    MAX_TEXTBOX_DEPTH, Math, MediaId, NoteId, NoteKind, NoteReference, PageMargins, PageNumbering,
+    PageSize, PageVerticalAlignment, Paragraph, ParagraphProperties, Revision, RevisionKind,
+    RgbColor, Run, RunProperties, SdtControlKind, SdtProperties, SectionBoundary, SectionColumns,
+    SectionId, SectionType, StyleKind, Tab, TabAlignment, TabLeader, TabStop, TableLayout,
+    TableOverlap, TextBox, TextDirection, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
-use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
+use quick_xml::{Reader, Writer};
 
 use crate::config::ImportConfig;
 use crate::error::ImportError;
@@ -85,6 +85,11 @@ enum Segment {
     Sdt {
         properties: SdtProperties,
         children: Vec<Segment>,
+    },
+    /// An opaque math object: the retained OMML subtree plus its text fallback.
+    Math {
+        omml: String,
+        text: String,
     },
 }
 
@@ -419,6 +424,20 @@ struct BodyParser<'a> {
     /// across paragraphs. Part-scoped (NOT swapped in `ContentFrame`): a bookmark
     /// opened in body flow and closed inside a text box still pairs.
     bookmark_ids: BTreeMap<String, BookmarkId>,
+    /// Nesting depth inside an OMML math subtree (`m:oMath`/`m:oMathPara`); 0 when
+    /// not capturing. While non-zero, every event is buffered verbatim into
+    /// `math_writer` and NOT dispatched to the `w:`-namespace handlers, so a math
+    /// run's `m:r`/`m:t` can never be mistaken for a `w:r`/`w:t`.
+    math_depth: u32,
+    /// The re-serializer that reconstructs the retained OMML subtree while
+    /// `math_depth > 0`; taken (and reset) when the subtree's root closes.
+    math_writer: Option<Writer<Vec<u8>>>,
+    /// The best-effort plain-text fallback accumulated from the captured `m:t`
+    /// runs (search/accessibility only; not authoritative).
+    math_text: String,
+    /// Whether the innermost open captured element is an `m:t` (so its text is
+    /// collected into `math_text`).
+    math_in_t: bool,
 }
 
 /// Resolution tables the body parser consults while mapping constructs.
@@ -520,6 +539,10 @@ impl<'a> BodyParser<'a> {
             comment_ids: inputs.comment_ids,
             bookmarks,
             bookmark_ids: BTreeMap::new(),
+            math_depth: 0,
+            math_writer: None,
+            math_text: String::new(),
+            math_in_t: false,
         }
     }
 }
@@ -709,6 +732,15 @@ impl BodyParser<'_> {
             let event = reader
                 .read_event_into(&mut buffer)
                 .map_err(|_| ImportError::MalformedXml)?;
+            // While capturing an OMML subtree, every event is buffered verbatim
+            // and NOT dispatched to the `w:`-namespace element handlers — this is
+            // the C1 namespace guard, so a math run's `m:r`/`m:t` can never be
+            // mistaken for a `w:r`/`w:t` and flatten into the paragraph text.
+            if self.math_depth > 0 {
+                self.capture_math_event(event)?;
+                buffer.clear();
+                continue;
+            }
             match event {
                 Event::Eof => break,
                 Event::DocType(_) => return Err(ImportError::MalformedXml),
@@ -717,11 +749,20 @@ impl BodyParser<'_> {
                     if self.depth > self.config.max_depth {
                         return Err(ImportError::LimitExceeded { limit: "xml_depth" });
                     }
-                    self.on_start(element.local_name().as_ref(), &element)?;
+                    if is_math_root(element.local_name().as_ref()) && self.math_allowed() {
+                        self.begin_math(&element)?;
+                    } else {
+                        self.on_start(element.local_name().as_ref(), &element)?;
+                    }
                 }
                 Event::Empty(element) => {
-                    self.on_start(element.local_name().as_ref(), &element)?;
-                    self.on_end(element.local_name().as_ref())?;
+                    if is_math_root(element.local_name().as_ref()) && self.math_allowed() {
+                        // A degenerate self-closing math root: retain the lone tag.
+                        self.emit_empty_math(&element)?;
+                    } else {
+                        self.on_start(element.local_name().as_ref(), &element)?;
+                        self.on_end(element.local_name().as_ref())?;
+                    }
                 }
                 Event::End(element) => {
                     self.on_end(element.local_name().as_ref())?;
@@ -745,6 +786,116 @@ impl BodyParser<'_> {
             }
             buffer.clear();
         }
+        Ok(())
+    }
+
+    /// Whether an OMML `m:oMath`/`m:oMathPara` may begin capture here: only in
+    /// genuine inline flow (an open paragraph, not inside a property container,
+    /// a skipped alternate-content branch, or a property-change subtree). Outside
+    /// those, the element falls through to the catch-all reporter unchanged.
+    fn math_allowed(&self) -> bool {
+        self.paragraph_open
+            && self.mc_skip_depth == 0
+            && self.pr_change_depth == 0
+            && self.sdt_prop_depth == 0
+            && self.ppr_depth == 0
+            && self.rpr_depth == 0
+    }
+
+    /// Begins capturing an OMML subtree: opens a fresh re-serializer and writes
+    /// the root's start tag. `self.depth` was already incremented for this Start.
+    fn begin_math(&mut self, element: &BytesStart<'_>) -> Result<(), ImportError> {
+        let mut writer = Writer::new(Vec::new());
+        writer
+            .write_event(Event::Start(element.borrow()))
+            .map_err(|_| ImportError::MalformedXml)?;
+        self.math_writer = Some(writer);
+        self.math_text.clear();
+        self.math_in_t = false;
+        self.math_depth = 1;
+        Ok(())
+    }
+
+    /// Retains a self-closing math root (`<m:oMath/>`) as an empty-text math node.
+    fn emit_empty_math(&mut self, element: &BytesStart<'_>) -> Result<(), ImportError> {
+        let mut writer = Writer::new(Vec::new());
+        writer
+            .write_event(Event::Empty(element.borrow()))
+            .map_err(|_| ImportError::MalformedXml)?;
+        let omml = String::from_utf8(writer.into_inner()).map_err(|_| ImportError::MalformedXml)?;
+        self.push_segment(Segment::Math {
+            omml,
+            text: String::new(),
+        });
+        Ok(())
+    }
+
+    /// Buffers one event of an in-progress OMML capture verbatim, tracking the
+    /// nesting depth and the plain-text fallback. On the root's matching close it
+    /// finalizes the retained [`Segment::Math`].
+    fn capture_math_event(&mut self, event: Event<'_>) -> Result<(), ImportError> {
+        match &event {
+            Event::Start(el) => {
+                self.depth += 1;
+                if self.depth > self.config.max_depth {
+                    return Err(ImportError::LimitExceeded { limit: "xml_depth" });
+                }
+                self.math_depth += 1;
+                // An `m:t` (any namespace prefix; local name `t`) carries literal
+                // equation text collected into the fallback.
+                self.math_in_t = el.local_name().as_ref() == b"t";
+            }
+            Event::End(_) => {
+                self.depth = self.depth.saturating_sub(1);
+                self.math_depth -= 1;
+                self.math_in_t = false;
+            }
+            Event::Eof => return Err(ImportError::MalformedXml),
+            Event::Text(text) if self.math_in_t => {
+                let raw = text.decode().map_err(|_| ImportError::MalformedXml)?;
+                let decoded =
+                    quick_xml::escape::unescape(&raw).map_err(|_| ImportError::MalformedXml)?;
+                self.push_math_text(&decoded)?;
+            }
+            _ => {}
+        }
+        let writer = self
+            .math_writer
+            .as_mut()
+            .expect("math writer present while capturing");
+        writer
+            .write_event(event)
+            .map_err(|_| ImportError::MalformedXml)?;
+        if writer.get_ref().len() > MAX_MATH_BYTES {
+            return Err(ImportError::LimitExceeded {
+                limit: "math_bytes",
+            });
+        }
+        if self.math_depth == 0 {
+            self.finish_math()?;
+        }
+        Ok(())
+    }
+
+    /// Appends fallback text, counting it against the aggregate text budget.
+    fn push_math_text(&mut self, text: &str) -> Result<(), ImportError> {
+        self.text_bytes = self.text_bytes.saturating_add(text.len());
+        if self.text_bytes > self.config.max_text_bytes {
+            return Err(ImportError::LimitExceeded {
+                limit: "text_bytes",
+            });
+        }
+        self.math_text.push_str(text);
+        Ok(())
+    }
+
+    /// Finalizes a completed OMML capture into a retained [`Segment::Math`].
+    fn finish_math(&mut self) -> Result<(), ImportError> {
+        let writer = self.math_writer.take().expect("math writer present");
+        let omml = String::from_utf8(writer.into_inner()).map_err(|_| ImportError::MalformedXml)?;
+        let text = std::mem::take(&mut self.math_text);
+        self.math_in_t = false;
+        self.push_segment(Segment::Math { omml, text });
         Ok(())
     }
 
@@ -2792,6 +2943,10 @@ impl BodyParser<'_> {
                     inlines,
                 }))
             }
+            Segment::Math { omml, text } => {
+                let id = self.next_id()?;
+                Ok(InlineNode::Math(Math { id, omml, text }))
+            }
             // A text box is already fully built (id and inner ids allocated while
             // parsing its content), so it converts directly.
             Segment::TextBox(text_box) => Ok(InlineNode::TextBox(text_box)),
@@ -2909,6 +3064,16 @@ fn attr_i64(element: &BytesStart<'_>, name: &[u8]) -> Option<i64> {
 /// Whether a local element name is known DrawingML scaffolding for an embedded
 /// picture (consumed silently while inside a `w:drawing`). Anything not listed
 /// still reports, so genuinely unmodeled drawing content is never lost.
+/// Whether a local element name is an OMML equation root (`m:oMath` or
+/// `m:oMathPara`). Matched on local name because these names are unique to the
+/// math namespace — no `w:` element shares them — and the retained-subtree
+/// capture then swallows every inner `m:` element, so a per-prefix namespace
+/// lookup is unnecessary. `m:oMathPara` wraps `m:oMath`, so detecting the
+/// outermost root first retains the whole equation as one node.
+fn is_math_root(local: &[u8]) -> bool {
+    matches!(local, b"oMath" | b"oMathPara")
+}
+
 fn is_drawing_scaffolding(local: &[u8]) -> bool {
     matches!(
         local,

@@ -86,6 +86,7 @@ const A_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
 const WP_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
 const PIC_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/picture";
 const WPS_NS: &str = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape";
+const M_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/math";
 const IMAGE_REL_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
 const FONT_REL_TYPE: &str =
@@ -1370,6 +1371,9 @@ fn document_xml(
     doc.push_attribute(("xmlns:a", A_NS));
     doc.push_attribute(("xmlns:pic", PIC_NS));
     doc.push_attribute(("xmlns:wps", WPS_NS));
+    // `xmlns:m` binds the OMML prefix so a retained `m:oMath` subtree is
+    // well-formed (the captured markup carries no local namespace declaration).
+    doc.push_attribute(("xmlns:m", M_NS));
     w.write_event(Event::Start(doc)).map_err(pkg)?;
     w.write_event(Event::Start(start("w:body"))).map_err(pkg)?;
 
@@ -2267,6 +2271,13 @@ fn write_inline(
         // suspended run flow when it closes.
         InlineNode::TextBox(text_box) => {
             write_text_box(w, &text_box.blocks, ctx)?;
+        }
+        // An opaque math object: write the retained OMML subtree verbatim (a
+        // direct inline child of `w:p`, like a hyperlink). The `m:` prefix is
+        // declared on the `w:document` root; the plain-text fallback is not
+        // re-emitted (the OMML carries the authoritative `m:t` runs).
+        InlineNode::Math(math) => {
+            w.get_mut().write_all(math.omml.as_bytes()).map_err(pkg)?;
         }
     }
     Ok(())

@@ -20,7 +20,7 @@ use casual_doc_layout::units::Rect;
 use skrifa::instance::{LocationRef, Size};
 use skrifa::outline::{DrawSettings, OutlinePen};
 use skrifa::{FontRef, GlyphId, MetadataProvider};
-use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
+use tiny_skia::{Color, FillRule, Mask, Paint, PathBuilder, Pixmap, Stroke, Transform};
 
 /// Supplies the raw font bytes (and face index) for a [`FontId`] so the renderer
 /// can extract glyph outlines from the exact face the shaper used.
@@ -68,9 +68,15 @@ impl Surface {
 /// per inch × zoom) to the twip-space display list. Glyph outlines are taken from
 /// `fonts`; a glyph whose font is unknown is skipped.
 pub fn render(list: &DisplayList, surface: &mut Surface, dpi: f32, fonts: &dyn GlyphSource) {
+    // A stack of clip masks: each entry is the *effective* clip (the intersection
+    // of every enclosing `PushClip` rectangle). While non-empty, its top is
+    // passed to every paint call so content outside an `exact`-height row's clip
+    // rect is not drawn.
+    let mut clip_stack: Vec<Mask> = Vec::new();
     for item in &list.items {
         match item {
             PaintItem::Rect { rect, fill, stroke } => {
+                let clip = clip_stack.last();
                 if let Some(color) = fill {
                     let mut paint = Paint::default();
                     paint.set_color_rgba8(color.r, color.g, color.b, color.a);
@@ -81,7 +87,7 @@ pub fn render(list: &DisplayList, surface: &mut Surface, dpi: f32, fonts: &dyn G
                             &paint,
                             FillRule::Winding,
                             Transform::identity(),
-                            None,
+                            clip,
                         );
                     }
                 }
@@ -103,21 +109,65 @@ pub fn render(list: &DisplayList, surface: &mut Surface, dpi: f32, fonts: &dyn G
                                 ..Stroke::default()
                             },
                             Transform::identity(),
-                            None,
+                            clip,
                         );
                     }
                 }
             }
-            PaintItem::Glyphs { run } => render_glyph_run(run, surface, dpi, fonts),
-            PaintItem::Image { .. } | PaintItem::PushClip(_) | PaintItem::PopClip => {
-                // Images and clipping land with later slices.
+            PaintItem::Glyphs { run } => {
+                render_glyph_run(run, surface, dpi, fonts, clip_stack.last());
+            }
+            // Push the clip rectangle, intersecting it with any enclosing clip so
+            // nested clips compose. Coordinates are twips, scaled here like rects.
+            PaintItem::PushClip(rect) => {
+                if let Some(mask) = build_clip_mask(&surface.pixmap, *rect, dpi, clip_stack.last())
+                {
+                    clip_stack.push(mask);
+                } else if let Some(parent) = clip_stack.last() {
+                    // Degenerate rect (unreachable for a valid surface): inherit
+                    // the parent clip so the stack stays balanced with `PopClip`.
+                    let inherited = parent.clone();
+                    clip_stack.push(inherited);
+                }
+            }
+            PaintItem::PopClip => {
+                clip_stack.pop();
+            }
+            PaintItem::Image { .. } => {
+                // Images land with a later slice.
             }
         }
     }
 }
 
-/// Rasterizes one glyph run by outlining each glyph from its face.
-fn render_glyph_run(run: &GlyphRun, surface: &mut Surface, dpi: f32, fonts: &dyn GlyphSource) {
+/// Builds the effective clip mask for a `PushClip(rect)`: the rectangle painted
+/// into an 8-bit alpha mask, intersected with the enclosing clip (`parent`) so
+/// nested clips compose. Returns `None` only for a degenerate (zero-area) rect.
+fn build_clip_mask(pixmap: &Pixmap, rect: Rect, dpi: f32, parent: Option<&Mask>) -> Option<Mask> {
+    let path = rect_path(rect, dpi)?;
+    match parent {
+        Some(parent) => {
+            let mut mask = parent.clone();
+            mask.intersect_path(&path, FillRule::Winding, true, Transform::identity());
+            Some(mask)
+        }
+        None => {
+            let mut mask = Mask::new(pixmap.width(), pixmap.height())?;
+            mask.fill_path(&path, FillRule::Winding, true, Transform::identity());
+            Some(mask)
+        }
+    }
+}
+
+/// Rasterizes one glyph run by outlining each glyph from its face, clipped to
+/// `clip` (the current clip mask, if any).
+fn render_glyph_run(
+    run: &GlyphRun,
+    surface: &mut Surface,
+    dpi: f32,
+    fonts: &dyn GlyphSource,
+    clip: Option<&Mask>,
+) {
     let Some(bytes) = fonts.font_data(run.font) else {
         return;
     };
@@ -155,7 +205,7 @@ fn render_glyph_run(run: &GlyphRun, surface: &mut Surface, dpi: f32, fonts: &dyn
             &paint,
             FillRule::Winding,
             Transform::identity(),
-            None,
+            clip,
         );
     }
 }
@@ -330,5 +380,89 @@ mod tests {
         let fonts = SingleFontSource::new(ROBOTO_REGULAR); // only serves FontId(0)
         render(&list, &mut surface, 96.0, &fonts); // FontId(9) unknown -> skipped
         assert_eq!(dark_pixel_count(&surface), 0, "unknown font paints nothing");
+    }
+
+    #[test]
+    fn a_push_clip_prevents_painting_outside_the_clip_rect() {
+        use casual_doc_layout::display::Color as DisplayColor;
+        use casual_doc_layout::units::{Rect, Size};
+
+        // At 1440 dpi, one twip maps to exactly one device pixel, so the clip and
+        // fill rects are stated directly in pixels.
+        let dpi = 1440.0;
+        let mut surface = Surface::new(100, 100).unwrap();
+
+        let clip = Rect::new(Point::new(Twip(0), Twip(0)), Size::new(Twip(40), Twip(40)));
+        let full = Rect::new(
+            Point::new(Twip(0), Twip(0)),
+            Size::new(Twip(100), Twip(100)),
+        );
+
+        // A full-page black fill, clipped to the top-left 40x40 rect: content
+        // beyond the clip (as an `exact`-height row emits) must not be drawn.
+        let mut list = DisplayList::new();
+        list.push(PaintItem::PushClip(clip));
+        list.push(PaintItem::Rect {
+            rect: full,
+            fill: Some(DisplayColor::BLACK),
+            stroke: None,
+        });
+        list.push(PaintItem::PopClip);
+
+        let fonts = SingleFontSource::new(ROBOTO_REGULAR);
+        render(&list, &mut surface, dpi, &fonts);
+
+        let pixel = |x: usize, y: usize| {
+            let i = (y * 100 + x) * 4;
+            let px = &surface.data()[i..i + 4];
+            [px[0], px[1], px[2], px[3]]
+        };
+        // Inside the clip: painted black.
+        let inside = pixel(10, 10);
+        assert!(
+            inside[0] < 40 && inside[1] < 40 && inside[2] < 40,
+            "content inside the clip is painted (got {inside:?})"
+        );
+        // Outside the clip but inside the fill rect: left as background (white).
+        assert_eq!(
+            pixel(60, 60),
+            [255, 255, 255, 255],
+            "content beyond the clip rect is not drawn"
+        );
+    }
+
+    #[test]
+    fn a_popped_clip_no_longer_restricts_painting() {
+        use casual_doc_layout::display::Color as DisplayColor;
+        use casual_doc_layout::units::{Rect, Size};
+
+        let dpi = 1440.0;
+        let mut surface = Surface::new(100, 100).unwrap();
+        let clip = Rect::new(Point::new(Twip(0), Twip(0)), Size::new(Twip(40), Twip(40)));
+        let full = Rect::new(
+            Point::new(Twip(0), Twip(0)),
+            Size::new(Twip(100), Twip(100)),
+        );
+
+        // After the clip is popped, a subsequent fill paints unrestricted.
+        let mut list = DisplayList::new();
+        list.push(PaintItem::PushClip(clip));
+        list.push(PaintItem::PopClip);
+        list.push(PaintItem::Rect {
+            rect: full,
+            fill: Some(DisplayColor::BLACK),
+            stroke: None,
+        });
+
+        let fonts = SingleFontSource::new(ROBOTO_REGULAR);
+        render(&list, &mut surface, dpi, &fonts);
+
+        let i = (60 * 100 + 60) * 4;
+        let px = &surface.data()[i..i + 4];
+        assert!(
+            px[0] < 40 && px[1] < 40 && px[2] < 40,
+            "with the clip popped, the whole rect is painted (got {:?})",
+            &px[..4]
+        );
     }
 }
