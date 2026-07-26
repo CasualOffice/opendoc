@@ -5,21 +5,22 @@ use std::collections::{BTreeMap, BTreeSet};
 use casual_doc_model::v1::{
     Alignment, AnchorHorizontal, AnchorVertical, AnchoredDrawing, BlockNode, BlockSdt, Bookmark,
     BookmarkEnd, BookmarkId, BookmarkStart, BorderEdge, Break, BreakKind, CellVerticalAlignment,
-    CnfStyle, Comment, CommentId, CommentReference, DefinitionMap, DocGrid, DocGridType, Drawing,
-    DrawingAnchor, EmbeddedKind, EmbeddedObject, EmbeddedPart, Extent, ExternalTarget, Field,
-    FormCheckBox, FormCheckBoxSize, FormDropDown, FormFieldData, FormFieldKind, FormTextInput,
-    FormTextType, HeaderFooterId, HeaderFooterKind, HeaderFooterRef, HeightRule, HorizontalAlign,
-    HorizontalAnchor, HorizontalPosition, Hyperlink, HyperlinkTarget, InlineNode, InlineSdt,
-    InternalTarget, LineNumberRestart, LineNumbering, MAX_DESCR_BYTES, MAX_EMU,
-    MAX_FIELD_INSTRUCTION_BYTES, MAX_FORM_FIELD_ENTRIES, MAX_FORM_FIELD_STRING_BYTES,
-    MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH, MAX_TEXTBOX_DEPTH, Math, MediaId, MoveKind,
-    MoveRangeEnd, MoveRangeStart, NoteId, NoteKind, NoteNumberRestart, NotePosition,
-    NoteProperties, NoteReference, PageBorderDisplay, PageBorderOffset, PageBorders, PageMargins,
-    PageNumbering, PageOrientation, PageSize, PageVerticalAlignment, PaperSource, Paragraph,
-    ParagraphProperties, Revision, RevisionKind, RgbColor, Run, RunProperties, SdtCheckbox,
-    SdtCheckboxSymbol, SdtControlData, SdtControlKind, SdtDataBinding, SdtDate, SdtListItem,
-    SdtLock, SdtProperties, SectionBoundary, SectionColumns, SectionId, SectionType, StyleKind,
-    Symbol, Tab, TabAlignment, TabLeader, TabStop, TableLayout, TableOverlap, TextBox,
+    CnfStyle, Comment, CommentId, CommentRangeEnd, CommentRangeStart, CommentReference,
+    DefinitionMap, DocGrid, DocGridType, Drawing, DrawingAnchor, EmbeddedKind, EmbeddedObject,
+    EmbeddedPart, Extent, ExternalTarget, Field, FormCheckBox, FormCheckBoxSize, FormDropDown,
+    FormFieldData, FormFieldKind, FormTextInput, FormTextType, HeaderFooterId, HeaderFooterKind,
+    HeaderFooterRef, HeightRule, HorizontalAlign, HorizontalAnchor, HorizontalPosition, Hyperlink,
+    HyperlinkTarget, InlineNode, InlineSdt, InternalTarget, LineNumberRestart, LineNumbering,
+    MAX_DESCR_BYTES, MAX_EMU, MAX_FIELD_INSTRUCTION_BYTES, MAX_FORM_FIELD_ENTRIES,
+    MAX_FORM_FIELD_STRING_BYTES, MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH,
+    MAX_TEXTBOX_DEPTH, Math, MediaId, MoveKind, MoveRangeEnd, MoveRangeStart, NoteId, NoteKind,
+    NoteNumberRestart, NotePosition, NoteProperties, NoteReference, PageBorderDisplay,
+    PageBorderOffset, PageBorders, PageMargins, PageNumbering, PageOrientation, PageSize,
+    PageVerticalAlignment, PaperSource, Paragraph, ParagraphProperties, Revision, RevisionKind,
+    RgbColor, Run, RunProperties, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind,
+    SdtDataBinding, SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionColumns,
+    SectionId, SectionType, StyleKind, Symbol, Tab, TabAlignment, TabLeader, TabStop, TableAnchor,
+    TableFloatPosition, TableLayout, TableOverlap, TableXAlign, TableYAlign, TextBox,
     TextDirection, VerticalAlign, VerticalAnchor, VerticalMerge, VerticalPosition, WrapMode,
 };
 use casual_doc_model::{IdGenerator, NodeId};
@@ -83,6 +84,14 @@ enum Segment {
     },
     /// A reference to a comment definition.
     CommentReference {
+        comment: CommentId,
+    },
+    /// The start marker of a comment's anchored range.
+    CommentRangeStart {
+        comment: CommentId,
+    },
+    /// The end marker of a comment's anchored range.
+    CommentRangeEnd {
         comment: CommentId,
     },
     /// A tracked-change (insertion/deletion) range wrapping inline content.
@@ -1341,15 +1350,36 @@ impl BodyParser<'_> {
                     None => self.reporter.report(b"endnoteReference"),
                 }
             }
-            // A comment reference (inside a run) resolves to a comment id; the
-            // comment-range markers (`commentRangeStart`/`End`) are not modeled
-            // and fall through to the report arm.
+            // A comment reference (inside a run) resolves to a comment id.
             b"commentReference" if self.run_open => {
                 match attribute_value(element, b"id")
                     .and_then(|id| self.comment_ids.get(&id).copied())
                 {
                     Some(comment) => self.push_segment(Segment::CommentReference { comment }),
                     None => self.reporter.report(b"commentReference"),
+                }
+            }
+            // A comment range marker (`w:commentRangeStart`/`End`, self-closing →
+            // an Empty event, handled here; its `on_end` falls to `_ => {}`).
+            // These bracket the commented span; they sit in paragraph flow (like
+            // bookmark markers), not inside a run. Each resolves its `w:id` to a
+            // modeled comment via the same index the reference uses — an
+            // unresolved id (a dropped/oversized comment) is reported+dropped, so
+            // the start/end/reference triad drops together and stays balanced.
+            b"commentRangeStart" if self.paragraph_open && !self.run_open => {
+                match attribute_value(element, b"id")
+                    .and_then(|id| self.comment_ids.get(&id).copied())
+                {
+                    Some(comment) => self.push_segment(Segment::CommentRangeStart { comment }),
+                    None => self.reporter.report(b"commentRangeStart"),
+                }
+            }
+            b"commentRangeEnd" if self.paragraph_open && !self.run_open => {
+                match attribute_value(element, b"id")
+                    .and_then(|id| self.comment_ids.get(&id).copied())
+                {
+                    Some(comment) => self.push_segment(Segment::CommentRangeEnd { comment }),
+                    None => self.reporter.report(b"commentRangeEnd"),
                 }
             }
             // A bookmark start marker (`w:bookmarkStart`, self-closing → an Empty
@@ -2126,6 +2156,10 @@ impl BodyParser<'_> {
                     Some("overlap") => self.tables.set_table_overlap(TableOverlap::Overlap),
                     _ => self.reporter.report(b"tblOverlap"),
                 }
+            }
+            b"tblpPr" if self.tblpr_depth > 0 => {
+                self.tables
+                    .set_table_float_position(table_float_position(element));
             }
             b"tblCaption" if self.tblpr_depth > 0 => match attribute_value(element, b"val") {
                 Some(v) if !v.is_empty() && v.len() <= 255 => self.tables.set_table_caption(v),
@@ -4149,6 +4183,17 @@ impl BodyParser<'_> {
                     comment,
                 }))
             }
+            Segment::CommentRangeStart { comment } => {
+                let id = self.next_id()?;
+                Ok(InlineNode::CommentRangeStart(CommentRangeStart {
+                    id,
+                    comment,
+                }))
+            }
+            Segment::CommentRangeEnd { comment } => {
+                let id = self.next_id()?;
+                Ok(InlineNode::CommentRangeEnd(CommentRangeEnd { id, comment }))
+            }
             Segment::Revision {
                 kind,
                 author,
@@ -4288,6 +4333,50 @@ fn table_alignment(element: &BytesStart<'_>) -> Option<Alignment> {
 
 fn attr_i64(element: &BytesStart<'_>, name: &[u8]) -> Option<i64> {
     attribute_value(element, name).and_then(|value| value.parse().ok())
+}
+
+/// Parses a `w:tblpPr` (`CT_TblPPr`) into a [`TableFloatPosition`]. Unrecognized
+/// anchor/spec tokens drop the individual attribute (leaving it `None`); signed
+/// offsets clamp to `-31_680..=31_680` and unsigned from-text distances to
+/// `0..=31_680`, matching the twip bounds the other table properties enforce.
+fn table_float_position(element: &BytesStart<'_>) -> TableFloatPosition {
+    let anchor = |name: &[u8]| match attribute_value(element, name).as_deref() {
+        Some("text") => Some(TableAnchor::Text),
+        Some("margin") => Some(TableAnchor::Margin),
+        Some("page") => Some(TableAnchor::Page),
+        _ => None,
+    };
+    let x_spec = match attribute_value(element, b"tblpXSpec").as_deref() {
+        Some("left") => Some(TableXAlign::Left),
+        Some("center") => Some(TableXAlign::Center),
+        Some("right") => Some(TableXAlign::Right),
+        Some("inside") => Some(TableXAlign::Inside),
+        Some("outside") => Some(TableXAlign::Outside),
+        _ => None,
+    };
+    let y_spec = match attribute_value(element, b"tblpYSpec").as_deref() {
+        Some("inline") => Some(TableYAlign::Inline),
+        Some("top") => Some(TableYAlign::Top),
+        Some("center") => Some(TableYAlign::Center),
+        Some("bottom") => Some(TableYAlign::Bottom),
+        Some("inside") => Some(TableYAlign::Inside),
+        Some("outside") => Some(TableYAlign::Outside),
+        _ => None,
+    };
+    let signed = |name: &[u8]| attr_i32(element, name).map(|v| v.clamp(-31_680, 31_680));
+    let from_text = |name: &[u8]| attr_i32(element, name).map(|v| v.clamp(0, 31_680));
+    TableFloatPosition {
+        horz_anchor: anchor(b"horzAnchor"),
+        vert_anchor: anchor(b"vertAnchor"),
+        tbl_px_twips: signed(b"tblpX"),
+        tbl_py_twips: signed(b"tblpY"),
+        x_spec,
+        y_spec,
+        left_from_text_twips: from_text(b"leftFromText"),
+        right_from_text_twips: from_text(b"rightFromText"),
+        top_from_text_twips: from_text(b"topFromText"),
+        bottom_from_text_twips: from_text(b"bottomFromText"),
+    }
 }
 
 /// Parses a `w:cnfStyle` (`CT_Cnf`) selector. Word writes the whole selector as

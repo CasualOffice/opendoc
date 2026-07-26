@@ -2095,6 +2095,50 @@ fn comment_reference_resolves_and_round_trips() {
 }
 
 #[test]
+fn comment_range_markers_bracket_a_span_and_round_trip() {
+    // A comment anchored to a SPAN: a start marker, the commented run, an end
+    // marker, and the reference — all keyed to the one comment. The inert range
+    // markers validate and survive the strict JSON round-trip, so the commented
+    // span is preserved rather than collapsing to the reference point.
+    let comment = CommentId::new(tid(20));
+    let mut definitions = Definitions::default();
+    definitions.comments.insert(
+        comment,
+        Comment {
+            blocks: vec![paragraph_block(tid(30))],
+            ..Comment::default()
+        },
+    );
+    let body = vec![BlockNode::Paragraph(Paragraph {
+        id: tid(1),
+        properties: ParagraphProperties::default(),
+        inlines: vec![
+            InlineNode::CommentRangeStart(CommentRangeStart {
+                id: tid(2),
+                comment,
+            }),
+            InlineNode::Run(Run {
+                id: tid(3),
+                text: "commented".to_owned(),
+                properties: RunProperties::default(),
+            }),
+            InlineNode::CommentRangeEnd(CommentRangeEnd {
+                id: tid(4),
+                comment,
+            }),
+            InlineNode::CommentReference(CommentReference {
+                id: tid(5),
+                comment,
+            }),
+        ],
+    })];
+    let document = Document::new(tid(99), body, definitions).unwrap();
+    let json = document.to_json().unwrap();
+    let reloaded = Document::from_json(&json, SnapshotLimits::default()).unwrap();
+    assert_eq!(document, reloaded);
+}
+
+#[test]
 fn comment_threading_and_identity_round_trip_through_json() {
     // A resolved root plus a reply, with a linked collaborator identity, survives
     // the strict JSON round-trip and validation.

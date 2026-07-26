@@ -1617,6 +1617,50 @@ mod semantic_tests {
     }
 
     #[test]
+    fn floating_table_position_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, TableAnchor, TableYAlign};
+        // A positioned (floating) table: `w:tblpPr` with both anchors, absolute
+        // horizontal + named vertical placement, and all four from-text wrap
+        // distances. Editing then saving must not snap it back into inline flow;
+        // the modeled float position is a write -> reopen fixed point.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:tbl>
+                <w:tblPr>
+                    <w:tblpPr w:leftFromText="180" w:rightFromText="181"
+                              w:topFromText="90" w:bottomFromText="91"
+                              w:vertAnchor="page" w:horzAnchor="margin"
+                              w:tblpX="1440" w:tblpYSpec="center"/>
+                </w:tblPr>
+                <w:tr><w:tc><w:p><w:r><w:t>c</w:t></w:r></w:p></w:tc></w:tr>
+            </w:tbl>
+        </w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(
+            m1, m2,
+            "the floating-table position survives write -> reopen"
+        );
+
+        let BlockNode::Table(table) = &m1.body()[0] else {
+            panic!("expected a table block");
+        };
+        let float = table
+            .properties
+            .float_position
+            .as_ref()
+            .expect("float position modeled");
+        assert_eq!(float.horz_anchor, Some(TableAnchor::Margin));
+        assert_eq!(float.vert_anchor, Some(TableAnchor::Page));
+        assert_eq!(float.tbl_px_twips, Some(1440));
+        assert_eq!(float.tbl_py_twips, None);
+        assert_eq!(float.x_spec, None);
+        assert_eq!(float.y_spec, Some(TableYAlign::Center));
+        assert_eq!(float.left_from_text_twips, Some(180));
+        assert_eq!(float.right_from_text_twips, Some(181));
+        assert_eq!(float.top_from_text_twips, Some(90));
+        assert_eq!(float.bottom_from_text_twips, Some(91));
+    }
+
+    #[test]
     fn table_style_ref_and_conditional_formatting_survive_the_semantic_round_trip() {
         // A table associated with a table style (`w:tblStyle`) and drawn
         // right-to-left (`w:bidiVisual`); its header row and a cell each carry a
@@ -2111,6 +2155,64 @@ mod semantic_tests {
         let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
         let m2 = reopen(&bytes);
         assert_eq!(m1, m2, "comments + refs survive write -> reopen");
+    }
+
+    #[test]
+    fn comment_range_markers_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::InlineNode;
+
+        // A comment anchored to a SPAN: `w:commentRangeStart`/`End` bracket the
+        // commented run and a `w:commentReference` points at the comment part.
+        // Before the range markers were modeled the span collapsed to the
+        // reference point on write; now the start/end brackets must survive
+        // write -> reopen so the commented range is preserved.
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p>
+                <w:commentRangeStart w:id="1"/>
+                <w:r><w:t>Reviewed</w:t></w:r>
+                <w:commentRangeEnd w:id="1"/>
+                <w:r><w:commentReference w:id="1"/></w:r>
+            </w:p>
+        </w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="comments.xml"/></Relationships>"#;
+        let comments = br#"<w:comments xmlns:w="urn:w"><w:comment w:id="1" w:author="Alice" w:initials="AC" w:date="2020-01-02T03:04:05Z"><w:p><w:r><w:t>a note</w:t></w:r></w:p></w:comment></w:comments>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/comments.xml", comments),
+        ]);
+        let m1 = reopen(&source);
+
+        // The model shape: the span is a start marker, the commented run, an end
+        // marker, then the reference — all three markers on the one comment.
+        let casual_doc_model::v1::BlockNode::Paragraph(para) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::CommentRangeStart(range_start) = &para.inlines[0] else {
+            panic!("expected a comment range start");
+        };
+        assert!(matches!(&para.inlines[1], InlineNode::Run(run) if run.text == "Reviewed"));
+        let InlineNode::CommentRangeEnd(range_end) = &para.inlines[2] else {
+            panic!("expected a comment range end");
+        };
+        let reference = para.inlines.iter().find_map(|i| match i {
+            InlineNode::CommentReference(c) => Some(c),
+            _ => None,
+        });
+        let reference = reference.expect("comment reference modeled");
+        assert_eq!(range_start.comment, reference.comment);
+        assert_eq!(range_end.comment, reference.comment);
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(
+            m1, m2,
+            "the comment range markers survive write -> reopen (the span is preserved)"
+        );
     }
 
     #[test]

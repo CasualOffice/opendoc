@@ -33,11 +33,11 @@ use casual_doc_model::v1::{
     ParagraphProperties, Person, ProofState, RevisionKind, RgbColor, RunFontHint, RunProperties,
     SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind, SdtDate,
     SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionType, Style, StyleId, StyleKind,
-    TabAlignment, TabLeader, Table, TableBorders, TableCell, TableCellProperties, TableLayout,
-    TableOverlap, TableProperties, TableRow, TableRowProperties, TableStyleOverride,
-    TableStyleRegion, TextDirection, ThemeFontRef, VerticalAlign, VerticalAlignment,
-    VerticalAnchor, VerticalMerge, VerticalPosition, VerticalTextAlignment, WrapMode, Zoom,
-    ZoomMode,
+    TabAlignment, TabLeader, Table, TableAnchor, TableBorders, TableCell, TableCellProperties,
+    TableFloatPosition, TableLayout, TableOverlap, TableProperties, TableRow, TableRowProperties,
+    TableStyleOverride, TableStyleRegion, TableXAlign, TableYAlign, TextDirection, ThemeFontRef,
+    VerticalAlign, VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition,
+    VerticalTextAlignment, WrapMode, Zoom, ZoomMode,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -2617,6 +2617,10 @@ fn write_table_properties(
         el.push_attribute(("w:val", style_id_token(style_ref).as_str()));
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
+    // `w:tblpPr` follows `w:tblStyle` and precedes `w:tblOverlap`.
+    if let Some(float) = &properties.float_position {
+        write_table_float_position(w, float)?;
+    }
     if let Some(overlap) = properties.overlap {
         let mut el = start("w:tblOverlap");
         el.push_attribute((
@@ -2699,6 +2703,73 @@ fn write_table_properties(
     }
     w.write_event(Event::End(BytesEnd::new("w:tblPr")))
         .map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits `w:tblpPr` (`CT_TblPPr`) from a [`TableFloatPosition`], in the
+/// attribute order of the schema declaration. Absent (`None`) attributes are
+/// omitted; an all-default position still emits an empty `<w:tblpPr/>` so the
+/// element round-trips as a fixed point.
+fn write_table_float_position(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    float: &TableFloatPosition,
+) -> Result<(), ExportError> {
+    let anchor_token = |anchor: TableAnchor| match anchor {
+        TableAnchor::Text => "text",
+        TableAnchor::Margin => "margin",
+        TableAnchor::Page => "page",
+    };
+    let mut el = start("w:tblpPr");
+    if let Some(v) = float.left_from_text_twips {
+        el.push_attribute(("w:leftFromText", v.to_string().as_str()));
+    }
+    if let Some(v) = float.right_from_text_twips {
+        el.push_attribute(("w:rightFromText", v.to_string().as_str()));
+    }
+    if let Some(v) = float.top_from_text_twips {
+        el.push_attribute(("w:topFromText", v.to_string().as_str()));
+    }
+    if let Some(v) = float.bottom_from_text_twips {
+        el.push_attribute(("w:bottomFromText", v.to_string().as_str()));
+    }
+    if let Some(anchor) = float.vert_anchor {
+        el.push_attribute(("w:vertAnchor", anchor_token(anchor)));
+    }
+    if let Some(anchor) = float.horz_anchor {
+        el.push_attribute(("w:horzAnchor", anchor_token(anchor)));
+    }
+    if let Some(spec) = float.x_spec {
+        el.push_attribute((
+            "w:tblpXSpec",
+            match spec {
+                TableXAlign::Left => "left",
+                TableXAlign::Center => "center",
+                TableXAlign::Right => "right",
+                TableXAlign::Inside => "inside",
+                TableXAlign::Outside => "outside",
+            },
+        ));
+    }
+    if let Some(v) = float.tbl_px_twips {
+        el.push_attribute(("w:tblpX", v.to_string().as_str()));
+    }
+    if let Some(spec) = float.y_spec {
+        el.push_attribute((
+            "w:tblpYSpec",
+            match spec {
+                TableYAlign::Inline => "inline",
+                TableYAlign::Top => "top",
+                TableYAlign::Center => "center",
+                TableYAlign::Bottom => "bottom",
+                TableYAlign::Inside => "inside",
+                TableYAlign::Outside => "outside",
+            },
+        ));
+    }
+    if let Some(v) = float.tbl_py_twips {
+        el.push_attribute(("w:tblpY", v.to_string().as_str()));
+    }
+    w.write_event(Event::Empty(el)).map_err(pkg)?;
     Ok(())
 }
 
@@ -3517,6 +3588,20 @@ fn write_inline(
             w.write_event(Event::Empty(el)).map_err(pkg)?;
             w.write_event(Event::End(BytesEnd::new("w:r")))
                 .map_err(pkg)?;
+        }
+        // A comment range marker (zero-width). It brackets the commented span in
+        // paragraph flow — a sibling of runs, not wrapped in `w:r` — and its
+        // `w:id` derives from the shared `CommentId` (the same token the
+        // `w:commentReference` and the comment part carry).
+        InlineNode::CommentRangeStart(marker) => {
+            let mut el = start("w:commentRangeStart");
+            el.push_attribute(("w:id", comment_id_token(marker.comment).as_str()));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+        InlineNode::CommentRangeEnd(marker) => {
+            let mut el = start("w:commentRangeEnd");
+            el.push_attribute(("w:id", comment_id_token(marker.comment).as_str()));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
         }
         // An inline drawing: the minimal `w:drawing`/`wp:inline`/`pic:pic`
         // scaffold whose one load-bearing attribute is `a:blip@r:embed`, the
