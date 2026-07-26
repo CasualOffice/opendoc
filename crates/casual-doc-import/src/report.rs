@@ -32,11 +32,13 @@ pub enum RetentionOutcome {
 }
 
 /// A whole-part disposition: an admitted package part the semantic model does
-/// not consume. On a semantic edit→save such a part is regenerated away (only
-/// the parts the model consumes are re-emitted), so it is `omitted` +
-/// `not-retained` in Semantic mode and `omitted` + `preserved` in Retention
-/// mode (kept verbatim by the source byte floor). Carries the part name and its
-/// declared content type so the loss is auditable per `35-DISPOSITION-TAXONOMY`.
+/// not consume. Such a part is `omitted` (never in the model). Its retention
+/// outcome depends on preservation (P1F-2): a part carried verbatim through the
+/// semantic writer via the opaque side-table is `preserved`; a digital signature
+/// (not preserved, because editing invalidates it) is `not-retained` on the
+/// semantic path. In Retention mode the source byte floor keeps every part, so
+/// all are `preserved`. Carries the part name and its declared content type so
+/// the disposition is auditable per `35-DISPOSITION-TAXONOMY`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PartDisposition {
     /// Normalized package part name (e.g. `customXml/item1.xml`).
@@ -145,17 +147,17 @@ impl Reporter {
 
 impl CompatibilityReport {
     /// Appends a whole-part disposition for every admitted part the semantic
-    /// model does not consume, closing the silent-whole-part-loss class: on a
-    /// semantic edit→save these parts are regenerated away, so each is recorded
-    /// `omitted` + `retention` (`not-retained` in Semantic, `preserved` in
-    /// Retention) with its part name and content type. Re-sorts deterministically
+    /// model does not consume, closing the silent-whole-part-loss class. Each
+    /// part carries its own retention outcome (P1F-2): a part preserved through
+    /// the semantic writer via the opaque side-table is `omitted` + `preserved`;
+    /// a digital signature — deliberately not preserved on the semantic path —
+    /// is `omitted` + `not-retained` in Semantic mode. Re-sorts deterministically
     /// by feature so the report order is stable regardless of insertion order.
     pub(crate) fn add_part_dispositions(
         &mut self,
-        parts: impl IntoIterator<Item = PartDisposition>,
-        retention: RetentionOutcome,
+        parts: impl IntoIterator<Item = (PartDisposition, RetentionOutcome)>,
     ) {
-        for part in parts {
+        for (part, retention) in parts {
             self.entries.push(CompatibilityEntry {
                 feature: part.part_name.clone(),
                 occurrences: 1,

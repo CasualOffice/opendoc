@@ -4208,7 +4208,9 @@ fn semantic_import_reports_each_unconsumed_admitted_part_once() {
         )]
     );
 
-    // In Semantic mode the part is dropped: omitted from the model, not retained.
+    // In Semantic mode the part is not modeled (`omitted`) but is now carried
+    // verbatim through the semantic writer via the opaque side-table (P1F-2), so
+    // it is `preserved`, not dropped.
     let entry = import
         .report
         .entries
@@ -4218,7 +4220,15 @@ fn semantic_import_reports_each_unconsumed_admitted_part_once() {
     assert_eq!(entry.feature, "customXml/item1.xml");
     assert_eq!(entry.occurrences, 1);
     assert_eq!(entry.model_outcome, ModelOutcome::Omitted);
-    assert_eq!(entry.retention_outcome, RetentionOutcome::NotRetained);
+    assert_eq!(entry.retention_outcome, RetentionOutcome::Preserved);
+
+    // The side-table carries the part's bytes and declared content type.
+    let retained = &import.retained_parts;
+    assert_eq!(retained.parts.len(), 1);
+    let part = &retained.parts[0];
+    assert_eq!(part.part_name, "customXml/item1.xml");
+    assert_eq!(part.content_type.as_deref(), Some("application/xml"));
+    assert_eq!(part.bytes, EXTRA_CUSTOM_XML);
 }
 
 #[test]
