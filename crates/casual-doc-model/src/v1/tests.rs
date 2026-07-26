@@ -472,6 +472,56 @@ fn drawing_between_equal_runs_is_accepted() {
 }
 
 #[test]
+fn embedded_object_chart_and_ole_round_trip() {
+    // A chart (part only) and an OLE object (primary part + preview media +
+    // progId + extra part) both serialize and validate, with optional keys
+    // omitted when empty.
+    let json = format!(
+        r#"{{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{{"type":"paragraph","id":"00000000000000030000000000000002","properties":{{}},
+              "inlines":[
+                {{"type":"embedded_object","id":"00000000000000030000000000000003","kind":"chart","part":{{"relationshipId":"rId5","relationshipType":"http://x/chart","partName":"word/charts/chart1.xml"}},"extent":{{"widthEmu":914400,"heightEmu":304800}}}},
+                {{"type":"embedded_object","id":"00000000000000030000000000000004","kind":"ole_object","part":{{"relationshipId":"rId7","relationshipType":"http://x/oleObject","partName":"word/embeddings/o.bin"}},"extraParts":[{{"relationshipId":"rId8","relationshipType":"http://x/package","partName":"word/embeddings/p.bin"}}],"preview":"0000000000000000000000000000000d","extent":{{"widthEmu":914400,"heightEmu":457200}},"progId":"Excel.Sheet.12"}}
+              ]}}],
+            {MEDIA_DEFS}}}"#
+    );
+    roundtrips(json.as_bytes());
+    // The chart's empty optional keys are omitted.
+    let document = Document::from_json(json.as_bytes(), SnapshotLimits::default()).unwrap();
+    let text = String::from_utf8(document.to_json().unwrap()).unwrap();
+    assert_eq!(text.matches("extraParts").count(), 1);
+    assert_eq!(text.matches("progId").count(), 1);
+    assert!(text.contains(r#""kind":"chart""#));
+    assert!(text.contains(r#""kind":"ole_object""#));
+}
+
+#[test]
+fn embedded_object_with_absent_preview_media_is_rejected() {
+    let json = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{"type":"paragraph","id":"00000000000000030000000000000002","properties":{},
+              "inlines":[{"type":"embedded_object","id":"00000000000000030000000000000003","kind":"chart","part":{"relationshipId":"rId5","relationshipType":"http://x/chart","partName":"word/charts/chart1.xml"},"preview":"0000000000000000000000000000000e","extent":{"widthEmu":1,"heightEmu":1}}]}],
+            "definitions":{}}"#;
+    assert!(matches!(
+        expect_invalid(json),
+        ModelError::DanglingMediaRef(_)
+    ));
+}
+
+#[test]
+fn embedded_object_extent_out_of_domain_is_rejected() {
+    let json = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{"type":"paragraph","id":"00000000000000030000000000000002","properties":{},
+              "inlines":[{"type":"embedded_object","id":"00000000000000030000000000000003","kind":"chart","part":{"relationshipId":"rId5","relationshipType":"http://x/chart","partName":"word/charts/chart1.xml"},"extent":{"widthEmu":27273042316901,"heightEmu":1}}]}],
+            "definitions":{}}"#;
+    assert!(matches!(
+        expect_invalid(json),
+        ModelError::PropertyValueOutOfDomain {
+            property: "embeddedObject.extent.width"
+        }
+    ));
+}
+
+#[test]
 fn hyperlink_targets_round_trip() {
     let json = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
             "body":[{"type":"paragraph","id":"00000000000000030000000000000002","properties":{},

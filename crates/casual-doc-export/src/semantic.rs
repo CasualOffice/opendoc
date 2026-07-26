@@ -21,16 +21,17 @@ use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, AppProperties, BlockNode, BorderEdge,
     BreakKind, CellVerticalAlignment, Color, ColorScheme, Comment, CommentId, CoreProperties,
     CustomProperty, CustomValue, DefinitionMap, Definitions, DocGridType, Document,
-    DocumentDefaults, DocumentProtectionEdit, DocumentSettings, EmphasisMark, Extent,
-    FontCollection, FontDescriptor, FontFamilyKind, FontPitch, FontRef, FontScheme, HeaderFooterId,
-    HeaderFooterKind, HeightRule, HighlightColor, HyperlinkTarget, InlineNode, LevelJustification,
-    LevelSuffix, MediaId, MediaReference, Note, NoteId, NoteKind, NumberFormat, NumberingInstance,
-    NumberingInstanceId, NumberingLevel, PageVerticalAlignment, ParagraphProperties, ProofState,
-    RevisionKind, RgbColor, RunFontHint, RunProperties, SchemeColor, SdtControlKind, SdtProperties,
-    SectionBoundary, SectionType, Style, StyleId, StyleKind, TabAlignment, TabLeader, Table,
-    TableBorders, TableCell, TableCellProperties, TableLayout, TableOverlap, TableProperties,
-    TableRow, TableRowProperties, TextDirection, ThemeFontRef, VerticalAlignment, VerticalMerge,
-    VerticalTextAlignment, Zoom, ZoomMode,
+    DocumentDefaults, DocumentProtectionEdit, DocumentSettings, EmbeddedKind, EmbeddedObject,
+    EmbeddedPart, EmphasisMark, Extent, FontCollection, FontDescriptor, FontFamilyKind, FontPitch,
+    FontRef, FontScheme, HeaderFooterId, HeaderFooterKind, HeightRule, HighlightColor,
+    HyperlinkTarget, InlineNode, LevelJustification, LevelSuffix, MediaId, MediaReference, Note,
+    NoteId, NoteKind, NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel,
+    PageVerticalAlignment, ParagraphProperties, ProofState, RevisionKind, RgbColor, RunFontHint,
+    RunProperties, SchemeColor, SdtControlKind, SdtProperties, SectionBoundary, SectionType, Style,
+    StyleId, StyleKind, TabAlignment, TabLeader, Table, TableBorders, TableCell,
+    TableCellProperties, TableLayout, TableOverlap, TableProperties, TableRow, TableRowProperties,
+    TextDirection, ThemeFontRef, VerticalAlignment, VerticalMerge, VerticalTextAlignment, Zoom,
+    ZoomMode,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -90,6 +91,18 @@ const WP_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/wordproces
 const PIC_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/picture";
 const WPS_NS: &str = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape";
 const M_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/math";
+/// VML shape namespace (prefix `v`), for a legacy `w:object` OLE preview shape.
+const V_NS: &str = "urn:schemas-microsoft-com:vml";
+/// VML office-drawing namespace (prefix `o`), for `o:OLEObject`.
+const O_NS: &str = "urn:schemas-microsoft-com:office:office";
+/// DrawingML chart namespace (prefix `c`), for a `c:chart` reference.
+const C_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/chart";
+/// DrawingML diagram namespace (prefix `dgm`), for a `dgm:relIds` reference.
+const DGM_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/diagram";
+/// The `a:graphicData@uri` marking a chart payload.
+const CHART_URI: &str = "http://schemas.openxmlformats.org/drawingml/2006/chart";
+/// The `a:graphicData@uri` marking a SmartArt diagram payload.
+const DIAGRAM_URI: &str = "http://schemas.openxmlformats.org/drawingml/2006/diagram";
 const IMAGE_REL_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
 const FONT_REL_TYPE: &str =
@@ -292,14 +305,23 @@ pub fn write_document_with_retained_parts(
     retained_parts: &RetainedParts,
 ) -> Result<Vec<u8>, ExportError> {
     let definitions = document.definitions();
+    // Embedded-object (chart/diagram/OLE) part relationships, emitted with their
+    // verbatim ids so the body reference and the relationship agree. Collected
+    // before the body is written so their ids are reserved against hyperlink
+    // minting; the referenced part BYTES come from the side-table (P1F-2).
+    let embedded_rels = collect_embedded_rels(document);
     // Media relationships are emitted with their verbatim ids so the model
-    // round-trips; reserve them so hyperlink/part rids do not collide.
-    let media_rel_ids: BTreeSet<String> = definitions
+    // round-trips; reserve them (and the embedded-object ids) so hyperlink/part
+    // rids do not collide.
+    let mut reserved_rel_ids: BTreeSet<String> = definitions
         .media
         .iter()
         .map(|(_, reference)| reference.relationship_id.clone())
         .collect();
-    let (document_xml, rels) = document_xml(document, media_rel_ids)?;
+    for (id, _, _) in &embedded_rels {
+        reserved_rel_ids.insert(id.clone());
+    }
+    let (document_xml, rels) = document_xml(document, reserved_rel_ids)?;
 
     // Extra parts beyond document.xml, each carrying its content-type override
     // and a document relationship; they appear only when the model has the
@@ -468,7 +490,13 @@ pub fn write_document_with_retained_parts(
         ("word/document.xml".to_owned(), document_xml),
         (
             "word/_rels/document.xml.rels".to_owned(),
-            document_rels_xml(&rels, &extras, &definitions.media, retained_parts)?,
+            document_rels_xml(
+                &rels,
+                &extras,
+                &definitions.media,
+                &embedded_rels,
+                retained_parts,
+            )?,
         ),
     ];
     for docprop in &docprops {
@@ -942,6 +970,7 @@ fn document_rels_xml(
     entries: &[RelEntry],
     extras: &[ExtraPart],
     media: &DefinitionMap<MediaId, MediaReference>,
+    embedded_rels: &[EmbeddedRelEntry],
     retained_parts: &RetainedParts,
 ) -> Result<Vec<u8>, ExportError> {
     let has_retained_document_rels = retained_parts
@@ -951,7 +980,12 @@ fn document_rels_xml(
     let mut w = new_writer();
     let mut rels = start("Relationships");
     rels.push_attribute(("xmlns", REL_NS));
-    if entries.is_empty() && extras.is_empty() && media.is_empty() && !has_retained_document_rels {
+    if entries.is_empty()
+        && extras.is_empty()
+        && media.is_empty()
+        && embedded_rels.is_empty()
+        && !has_retained_document_rels
+    {
         w.write_event(Event::Empty(rels)).map_err(pkg)?;
         return Ok(finish(w));
     }
@@ -973,6 +1007,18 @@ fn document_rels_xml(
         rel.push_attribute(("Id", reference.relationship_id.as_str()));
         rel.push_attribute(("Type", IMAGE_REL_TYPE));
         rel.push_attribute(("Target", media_target(&reference.part_name)));
+        w.write_event(Event::Empty(rel)).map_err(pkg)?;
+    }
+    // Embedded-object (chart/diagram/OLE) part relationships with their verbatim
+    // ids, so the body's `r:id` and this relationship agree; the target part's
+    // bytes are re-emitted from the side-table (P1F-2), which — coordinated on
+    // import — does NOT also re-add this relationship as an orphan.
+    for (id, relationship_type, target) in embedded_rels {
+        reserved.insert(id.clone());
+        let mut rel = start("Relationship");
+        rel.push_attribute(("Id", id.as_str()));
+        rel.push_attribute(("Type", relationship_type.as_str()));
+        rel.push_attribute(("Target", target.as_str()));
         w.write_event(Event::Empty(rel)).map_err(pkg)?;
     }
     // Internal relationships after the hyperlink ids. A part with an explicit
@@ -1782,6 +1828,12 @@ fn document_xml(
     // `xmlns:m` binds the OMML prefix so a retained `m:oMath` subtree is
     // well-formed (the captured markup carries no local namespace declaration).
     doc.push_attribute(("xmlns:m", M_NS));
+    // Embedded-object prefixes: `c`/`dgm` for chart/diagram graphic references,
+    // `v`/`o` for a legacy `w:object` OLE preview shape and its `o:OLEObject`.
+    doc.push_attribute(("xmlns:c", C_NS));
+    doc.push_attribute(("xmlns:dgm", DGM_NS));
+    doc.push_attribute(("xmlns:v", V_NS));
+    doc.push_attribute(("xmlns:o", O_NS));
     w.write_event(Event::Start(doc)).map_err(pkg)?;
     w.write_event(Event::Start(start("w:body"))).map_err(pkg)?;
 
@@ -2505,6 +2557,105 @@ fn write_paragraph_properties(
     Ok(())
 }
 
+/// One embedded-object part relationship to emit in `document.xml.rels`:
+/// (relationship id, relationship type URI, `word/`-relative target).
+type EmbeddedRelEntry = (String, String, String);
+
+/// Collects every embedded-object part relationship in document order, deduped
+/// by relationship id (the first occurrence wins). Walked before the body is
+/// written so the ids can be reserved against hyperlink minting.
+fn collect_embedded_rels(document: &Document) -> Vec<EmbeddedRelEntry> {
+    let mut out = Vec::new();
+    let mut seen = BTreeSet::new();
+    for block in document.body() {
+        collect_block_embedded_rels(block, &mut out, &mut seen);
+    }
+    out
+}
+
+fn collect_block_embedded_rels(
+    block: &BlockNode,
+    out: &mut Vec<EmbeddedRelEntry>,
+    seen: &mut BTreeSet<String>,
+) {
+    match block {
+        BlockNode::Paragraph(paragraph) => {
+            for inline in &paragraph.inlines {
+                collect_inline_embedded_rels(inline, out, seen);
+            }
+        }
+        BlockNode::Table(table) => {
+            for row in &table.rows {
+                for cell in &row.cells {
+                    for block in &cell.blocks {
+                        collect_block_embedded_rels(block, out, seen);
+                    }
+                }
+            }
+        }
+        BlockNode::Sdt(sdt) => {
+            for block in &sdt.blocks {
+                collect_block_embedded_rels(block, out, seen);
+            }
+        }
+    }
+}
+
+fn collect_inline_embedded_rels(
+    inline: &InlineNode,
+    out: &mut Vec<EmbeddedRelEntry>,
+    seen: &mut BTreeSet<String>,
+) {
+    match inline {
+        InlineNode::EmbeddedObject(object) => {
+            push_embedded_part(&object.part, out, seen);
+            for part in &object.extra_parts {
+                push_embedded_part(part, out, seen);
+            }
+        }
+        InlineNode::Hyperlink(link) => {
+            for child in &link.inlines {
+                collect_inline_embedded_rels(child, out, seen);
+            }
+        }
+        InlineNode::Field(field) => {
+            for child in &field.inlines {
+                collect_inline_embedded_rels(child, out, seen);
+            }
+        }
+        InlineNode::Revision(revision) => {
+            for child in &revision.inlines {
+                collect_inline_embedded_rels(child, out, seen);
+            }
+        }
+        InlineNode::Sdt(sdt) => {
+            for child in &sdt.inlines {
+                collect_inline_embedded_rels(child, out, seen);
+            }
+        }
+        InlineNode::TextBox(text_box) => {
+            for block in &text_box.blocks {
+                collect_block_embedded_rels(block, out, seen);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn push_embedded_part(
+    part: &EmbeddedPart,
+    out: &mut Vec<EmbeddedRelEntry>,
+    seen: &mut BTreeSet<String>,
+) {
+    if seen.insert(part.relationship_id.clone()) {
+        out.push((
+            part.relationship_id.clone(),
+            part.relationship_type.clone(),
+            media_target(&part.part_name).to_owned(),
+        ));
+    }
+}
+
 /// Emits one inline node. `in_deletion` is true when the node sits inside a
 /// tracked-change deletion range, so a run's text is written as `w:delText`
 /// (which the importer reads back into `run.text`, exactly like `w:t`).
@@ -2674,6 +2825,13 @@ fn write_inline(
                 .unwrap_or((0, 0));
             write_drawing(w, &embed, drawing.extent.as_ref(), cx, cy)?;
         }
+        // An embedded object (chart / SmartArt diagram / OLE): the drawing wrapper
+        // (chart/diagram) or `w:object` (OLE) referencing the preserved part(s) by
+        // their verbatim `r:id`; the relationships are emitted in
+        // `document.xml.rels` (see `collect_embedded_rels`).
+        InlineNode::EmbeddedObject(object) => {
+            write_embedded_object(w, object, ctx)?;
+        }
         // An inline text box: a DrawingML shape whose `w:txbxContent` wraps the
         // block content. The importer triggers on `w:txbxContent`, restoring the
         // suspended run flow when it closes.
@@ -2778,6 +2936,146 @@ fn write_drawing(
     w.write_event(Event::End(BytesEnd::new("wp:inline")))
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("w:drawing")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("w:r")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits an inline embedded object. A chart/diagram is a `w:drawing`/`wp:inline`
+/// whose `a:graphicData` carries a `c:chart`/`dgm:relIds` reference; an OLE object
+/// is a `w:object` with the (optional) preview shape and the `o:OLEObject`. Every
+/// `r:id` is the part's verbatim relationship id (emitted in `document.xml.rels`).
+fn write_embedded_object(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    object: &EmbeddedObject,
+    ctx: &Ctx,
+) -> Result<(), ExportError> {
+    match &object.kind {
+        EmbeddedKind::Chart => write_graphic_object(w, &object.extent, CHART_URI, |w| {
+            let mut chart = start("c:chart");
+            chart.push_attribute(("r:id", object.part.relationship_id.as_str()));
+            w.write_event(Event::Empty(chart)).map_err(pkg)
+        }),
+        EmbeddedKind::Diagram => write_graphic_object(w, &object.extent, DIAGRAM_URI, |w| {
+            let mut rel_ids = start("dgm:relIds");
+            for part in std::iter::once(&object.part).chain(object.extra_parts.iter()) {
+                if let Some(attr) = diagram_rel_attr(&part.relationship_type) {
+                    rel_ids.push_attribute((attr, part.relationship_id.as_str()));
+                }
+            }
+            w.write_event(Event::Empty(rel_ids)).map_err(pkg)
+        }),
+        EmbeddedKind::OleObject => write_ole_object(w, object, ctx),
+        // An unrecognized `a:graphicData` payload: emit the wrapper with its uri.
+        // The referencing relationship is still emitted so the part stays
+        // reachable (the importer does not produce this variant).
+        EmbeddedKind::Other(uri) => write_graphic_object(w, &object.extent, uri, |_| Ok(())),
+    }
+}
+
+/// The `dgm:relIds` attribute a diagram part maps to, by its relationship type.
+fn diagram_rel_attr(relationship_type: &str) -> Option<&'static str> {
+    match relationship_type.rsplit('/').next() {
+        Some("diagramData") => Some("r:dm"),
+        Some("diagramLayout") => Some("r:lo"),
+        Some("diagramQuickStyle") => Some("r:qs"),
+        Some("diagramColors") => Some("r:cs"),
+        _ => None,
+    }
+}
+
+/// Emits the `w:drawing`/`wp:inline`/`a:graphic`/`a:graphicData` frame around a
+/// caller-written graphic reference (`body` writes the `c:chart`/`dgm:relIds`).
+fn write_graphic_object(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    extent: &Extent,
+    uri: &str,
+    body: impl FnOnce(&mut Writer<Cursor<Vec<u8>>>) -> Result<(), ExportError>,
+) -> Result<(), ExportError> {
+    w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
+    w.write_event(Event::Start(start("w:drawing")))
+        .map_err(pkg)?;
+    let mut inline = start("wp:inline");
+    for name in ["distT", "distB", "distL", "distR"] {
+        inline.push_attribute((name, "0"));
+    }
+    w.write_event(Event::Start(inline)).map_err(pkg)?;
+    let mut ext = start("wp:extent");
+    ext.push_attribute(("cx", extent.width_emu.to_string().as_str()));
+    ext.push_attribute(("cy", extent.height_emu.to_string().as_str()));
+    w.write_event(Event::Empty(ext)).map_err(pkg)?;
+    let mut doc_pr = start("wp:docPr");
+    doc_pr.push_attribute(("id", "1"));
+    doc_pr.push_attribute(("name", "Object 1"));
+    w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
+    w.write_event(Event::Start(start("a:graphic")))
+        .map_err(pkg)?;
+    let mut graphic_data = start("a:graphicData");
+    graphic_data.push_attribute(("uri", uri));
+    w.write_event(Event::Start(graphic_data)).map_err(pkg)?;
+    body(w)?;
+    w.write_event(Event::End(BytesEnd::new("a:graphicData")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("a:graphic")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("wp:inline")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("w:drawing")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("w:r")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits an OLE object as a legacy `w:object`: the natural size (`w:dxaOrig`/
+/// `w:dyaOrig`, EMU → twips), an optional `v:shape/v:imagedata` preview, and the
+/// `o:OLEObject` naming the embedding part and its `ProgID`.
+fn write_ole_object(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    object: &EmbeddedObject,
+    ctx: &Ctx,
+) -> Result<(), ExportError> {
+    w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
+    let mut el = start("w:object");
+    let dxa = (object.extent.width_emu / 635).to_string();
+    let dya = (object.extent.height_emu / 635).to_string();
+    el.push_attribute(("w:dxaOrig", dxa.as_str()));
+    el.push_attribute(("w:dyaOrig", dya.as_str()));
+    w.write_event(Event::Start(el)).map_err(pkg)?;
+    // The preview shape, when a preview image resolves in the media table.
+    let preview_rel = object
+        .preview
+        .and_then(|id| ctx.defs.media.get(&id))
+        .map(|reference| reference.relationship_id.clone());
+    if let Some(rel_id) = &preview_rel {
+        let mut shape = start("v:shape");
+        shape.push_attribute(("id", "_x0000_i1025"));
+        shape.push_attribute(("type", "#_x0000_t75"));
+        let style = format!(
+            "width:{:.2}pt;height:{:.2}pt",
+            object.extent.width_emu as f64 / 12_700.0,
+            object.extent.height_emu as f64 / 12_700.0,
+        );
+        shape.push_attribute(("style", style.as_str()));
+        w.write_event(Event::Start(shape)).map_err(pkg)?;
+        let mut imagedata = start("v:imagedata");
+        imagedata.push_attribute(("r:id", rel_id.as_str()));
+        imagedata.push_attribute(("o:title", ""));
+        w.write_event(Event::Empty(imagedata)).map_err(pkg)?;
+        w.write_event(Event::End(BytesEnd::new("v:shape")))
+            .map_err(pkg)?;
+    }
+    let mut ole = start("o:OLEObject");
+    ole.push_attribute(("Type", "Embed"));
+    if let Some(prog_id) = &object.prog_id {
+        ole.push_attribute(("ProgID", prog_id.as_str()));
+    }
+    ole.push_attribute(("ShapeID", "_x0000_i1025"));
+    ole.push_attribute(("DrawAspect", "Content"));
+    ole.push_attribute(("r:id", object.part.relationship_id.as_str()));
+    w.write_event(Event::Empty(ole)).map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("w:object")))
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("w:r")))
         .map_err(pkg)?;

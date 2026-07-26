@@ -30,6 +30,7 @@ fn import_with_styles(document: &[u8], styles: &[u8]) -> Import {
         None,
         &[],
         &std::collections::BTreeMap::new(),
+        &std::collections::BTreeMap::new(),
         ImportConfig::default(),
     )
     .unwrap()
@@ -51,6 +52,7 @@ fn import_with_numbering(document: &[u8], numbering: &[u8]) -> Import {
         None,
         &[],
         &std::collections::BTreeMap::new(),
+        &std::collections::BTreeMap::new(),
         ImportConfig::default(),
     )
     .unwrap()
@@ -71,6 +73,7 @@ fn import_with_settings(document: &[u8], settings: &[u8]) -> Import {
         &[],
         None,
         &[],
+        &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
         ImportConfig::default(),
     )
@@ -102,6 +105,7 @@ fn import_with_notes(document: &[u8], footnotes: Option<&[u8]>, endnotes: Option
         None,
         &[],
         &std::collections::BTreeMap::new(),
+        &std::collections::BTreeMap::new(),
         ImportConfig::default(),
     )
     .unwrap()
@@ -123,6 +127,7 @@ fn import_with_comments(document: &[u8], comments: &[u8]) -> Import {
         &[],
         Some(&comments),
         &[],
+        &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
         ImportConfig::default(),
     )
@@ -1868,6 +1873,47 @@ fn drawing_with_a_dangling_embed_is_reported_and_dropped() {
     );
 }
 
+#[test]
+fn chart_drawing_maps_to_an_embedded_object_and_is_not_reported_dropped() {
+    use casual_doc_model::v1::EmbeddedKind;
+
+    let document = r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:c="urn:c"><w:body><w:p><w:r><w:drawing><wp:inline><wp:extent cx="914400" cy="304800"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart r:id="rId5"/></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p></w:body></w:document>"#;
+    let chart_rel = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="charts/chart1.xml"/></Relationships>"#;
+    let chart = br#"<c:chartSpace xmlns:c="urn:c"/>"#;
+    let import = import_bytes(&build_package(
+        document.as_bytes(),
+        chart_rel,
+        &[("word/charts/chart1.xml", chart)],
+    ));
+
+    let inlines = &paragraph(&import, 0).inlines;
+    let InlineNode::EmbeddedObject(object) = &inlines[0] else {
+        panic!("expected an embedded object, got {:?}", inlines[0]);
+    };
+    assert_eq!(object.kind, EmbeddedKind::Chart);
+    assert_eq!(object.part.relationship_id, "rId5");
+    assert_eq!(object.part.part_name, "word/charts/chart1.xml");
+    assert_eq!(object.extent.width_emu, 914400);
+    // The chart is modeled, not reported as a dropped drawing.
+    assert!(!features(&import).contains(&"drawing"));
+    // The chart part is byte-preserved but NOT re-orphaned (the writer emits its
+    // relationship from the node).
+    assert!(
+        import
+            .retained_parts
+            .parts
+            .iter()
+            .any(|part| part.part_name == "word/charts/chart1.xml")
+    );
+    assert!(
+        !import
+            .retained_parts
+            .relationships
+            .iter()
+            .any(|rel| rel.target.contains("charts/chart1.xml"))
+    );
+}
+
 const HYPERLINK_REL: &[u8] = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId8" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com/docs" TargetMode="External"/></Relationships>"#;
 
 #[test]
@@ -2824,6 +2870,7 @@ fn revision_wrapping_a_hyperlink_is_modeled() {
         None,
         &[],
         &hyperlinks,
+        &std::collections::BTreeMap::new(),
         ImportConfig::default(),
     )
     .unwrap();
@@ -2862,6 +2909,7 @@ fn revision_inside_a_hyperlink_is_modeled() {
         None,
         &[],
         &hyperlinks,
+        &std::collections::BTreeMap::new(),
         ImportConfig::default(),
     )
     .unwrap();
@@ -3099,6 +3147,7 @@ fn import_with_header_footer(
         None,
         &[],
         &std::collections::BTreeMap::new(),
+        &std::collections::BTreeMap::new(),
         ImportConfig::default(),
     )
     .unwrap()
@@ -3287,6 +3336,7 @@ fn image_inside_a_footnote_is_modeled_via_the_notes_part_relationships() {
         None,
         &[],
         &std::collections::BTreeMap::new(),
+        &std::collections::BTreeMap::new(),
         ImportConfig::default(),
     )
     .unwrap();
@@ -3341,6 +3391,7 @@ fn external_hyperlink_inside_a_header_is_modeled_via_the_header_part_relationshi
         &[],
         None,
         &[],
+        &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
         ImportConfig::default(),
     )
