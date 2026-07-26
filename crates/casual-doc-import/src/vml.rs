@@ -30,15 +30,15 @@
 //! far rather than an error, matching the "render what we can" fallback (a VML
 //! document renders nothing today, so any recovered shape is strictly better).
 //!
-//! This module does **not** wire anything into layout or paint, and it does not
-//! recursively flow text-box content — it only records the raw XML range. The
-//! integration is a tracked follow-up (see below) that lands on top of the
-//! floating-object layer (F4).
+//! This module does **not** depend on the document model, layout, or paint. It
+//! records neutral position/alignment, wrap, appearance, and text-box metadata;
+//! `body.rs` maps that intermediate onto the shared drawing/text-box model and
+//! routes `w:txbxContent` through the normal recursive block importer.
 //!
 //! # Integration spec — how `VmlDrawing` maps onto the float layer (P1F-VML)
 //!
-//! Once the floating-object layer lands, a follow-up maps each `VmlDrawing` onto
-//! it as follows (no wiring is implemented here):
+//! The body importer maps each `VmlDrawing` onto the floating-object layer as
+//! follows:
 //!
 //! * **Anchor / z-order.** [`VmlPosition::left`]/[`VmlPosition::top`] are the
 //!   page-absolute (or, for a `page`/`margin`-relative frame, frame-relative)
@@ -46,6 +46,8 @@
 //!   `VmlPosition::behind_doc()` (a negative z-index) maps to the anchored
 //!   drawing's `behindDoc` flag. [`VmlPosition::h_relative`]/
 //!   [`VmlPosition::v_relative`] map onto the anchor's `relativeFrom` frames.
+//!   Relative alignments, wrapping mode, and four text-clearance distances map
+//!   to the corresponding shared anchor fields.
 //! * **`Rect`/`RoundRect`/`Line`/`Oval`/`Shape`** → the float layer's shape
 //!   paint: a filled/stroked rectangle (with the corner radius for `RoundRect`),
 //!   a stroked segment for `Line` (endpoints from [`VmlShapeKind::Line`], else
@@ -57,10 +59,12 @@
 //!   media at the VML box (position + size), instead of the current inline,
 //!   size-less mapping.
 //! * **`textbox`** → flow [`VmlTextbox::content_xml`] through the shared block
-//!   pipeline (the uniform-flow invariant — the identical `flow_blocks` path the
-//!   body, headers/footers, and cells use) and place the resulting fragments at
-//!   the VML box, insetting by [`VmlTextbox::inset_twips`]; the box's fill/stroke
-//!   paint behind the flowed content.
+//!   pipeline (the uniform-flow invariant — the identical block path the body,
+//!   headers/footers, and cells use). Header/footer boxes keep their absolute
+//!   placement. Body boxes float only for the local paragraph/text/line-relative
+//!   top-and-bottom case the current reflow engine can honor; unsafe page-level
+//!   overlays remain inline. Insets, vertical text anchor, shape autofit, fill,
+//!   and stroke survive either path.
 
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
@@ -192,6 +196,18 @@ pub enum VmlRelFrame {
     Column,
     /// The paragraph.
     Paragraph,
+    /// The physical left margin strip.
+    LeftMargin,
+    /// The physical right margin strip.
+    RightMargin,
+    /// The physical top margin strip.
+    TopMargin,
+    /// The physical bottom margin strip.
+    BottomMargin,
+    /// The mirrored inside margin area.
+    InsideMargin,
+    /// The mirrored outside margin area.
+    OutsideMargin,
     /// Any frame not modeled above (verbatim token preserved by the follow-up).
     Other,
 }
@@ -206,7 +222,73 @@ impl VmlRelFrame {
             "line" => Self::Line,
             "column" => Self::Column,
             "paragraph" => Self::Paragraph,
+            "left-margin" => Self::LeftMargin,
+            "right-margin" => Self::RightMargin,
+            "top-margin" => Self::TopMargin,
+            "bottom-margin" => Self::BottomMargin,
+            "inner-margin-area" => Self::InsideMargin,
+            "outer-margin-area" => Self::OutsideMargin,
             _ => Self::Other,
+        }
+    }
+}
+
+/// Relative horizontal placement within a VML reference frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VmlHorizontalAlign {
+    /// Flush left.
+    Left,
+    /// Centered.
+    Center,
+    /// Flush right.
+    Right,
+    /// Mirrored inside edge.
+    Inside,
+    /// Mirrored outside edge.
+    Outside,
+}
+
+impl VmlHorizontalAlign {
+    fn parse(token: &str) -> Option<Self> {
+        match token.trim().to_ascii_lowercase().as_str() {
+            "left" => Some(Self::Left),
+            "center" => Some(Self::Center),
+            "right" => Some(Self::Right),
+            "inside" => Some(Self::Inside),
+            "outside" => Some(Self::Outside),
+            // `absolute` selects the authored margin-left offset.
+            "absolute" => None,
+            _ => None,
+        }
+    }
+}
+
+/// Relative vertical placement within a VML reference frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VmlVerticalAlign {
+    /// Flush top.
+    Top,
+    /// Centered.
+    Center,
+    /// Flush bottom.
+    Bottom,
+    /// Mirrored inside edge.
+    Inside,
+    /// Mirrored outside edge.
+    Outside,
+}
+
+impl VmlVerticalAlign {
+    fn parse(token: &str) -> Option<Self> {
+        match token.trim().to_ascii_lowercase().as_str() {
+            "top" => Some(Self::Top),
+            "center" => Some(Self::Center),
+            "bottom" => Some(Self::Bottom),
+            "inside" => Some(Self::Inside),
+            "outside" => Some(Self::Outside),
+            // `absolute` selects the authored margin-top offset.
+            "absolute" => None,
+            _ => None,
         }
     }
 }
@@ -230,6 +312,10 @@ pub struct VmlPosition {
     pub h_relative: Option<VmlRelFrame>,
     /// The vertical reference frame.
     pub v_relative: Option<VmlRelFrame>,
+    /// Relative horizontal alignment. `None` means use the absolute `left`.
+    pub h_align: Option<VmlHorizontalAlign>,
+    /// Relative vertical alignment. `None` means use the absolute `top`.
+    pub v_align: Option<VmlVerticalAlign>,
 }
 
 impl VmlPosition {
@@ -238,6 +324,46 @@ impl VmlPosition {
     pub fn behind_doc(&self) -> bool {
         matches!(self.z_index, Some(z) if z < 0)
     }
+}
+
+/// VML text wrapping around a positioned shape.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VmlWrapMode {
+    /// Rectangular side wrapping.
+    Square,
+    /// Contour wrapping.
+    Tight,
+    /// Through-contour wrapping.
+    Through,
+    /// Text only above and below.
+    TopAndBottom,
+    /// No exclusion.
+    None,
+}
+
+impl VmlWrapMode {
+    fn parse(token: &str) -> Option<Self> {
+        match token.trim().to_ascii_lowercase().as_str() {
+            "square" => Some(Self::Square),
+            "tight" => Some(Self::Tight),
+            "through" => Some(Self::Through),
+            "topandbottom" | "top-and-bottom" => Some(Self::TopAndBottom),
+            "none" => Some(Self::None),
+            _ => None,
+        }
+    }
+}
+
+/// Wrap mode and independent text-clearance distances for a VML shape.
+///
+/// `mode == None` means the source did not declare a wrapping mode; it is
+/// distinct from an explicit [`VmlWrapMode::None`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct VmlWrap {
+    /// The authored wrapping mode.
+    pub mode: Option<VmlWrapMode>,
+    /// Top, bottom, left, and right clearance in twips.
+    pub distances_twips: [Option<i64>; 4],
 }
 
 /// A shape's fill: whether it is filled, and the solid RGBA color if given.
@@ -268,8 +394,38 @@ pub struct VmlTextbox {
     /// The internal margins from `v:textbox@inset` (left, top, right, bottom),
     /// in twips; each entry is `None` when that inset was absent.
     pub inset_twips: [Option<i64>; 4],
+    /// Vertical placement of text inside the box (`v-text-anchor`).
+    pub vertical_anchor: Option<VmlTextAnchor>,
+    /// Whether the shape grows to contain the text (`mso-fit-shape-to-text`).
+    pub fit_shape_to_text: bool,
     /// The raw inner XML of `w:txbxContent`, if present.
     pub content_xml: Option<String>,
+}
+
+/// The supported vertical portion of VML's `v-text-anchor` vocabulary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VmlTextAnchor {
+    /// Top-aligned, including top baseline/center variants.
+    Top,
+    /// Vertically centered.
+    Middle,
+    /// Bottom-aligned, including bottom baseline/center variants.
+    Bottom,
+}
+
+impl VmlTextAnchor {
+    fn parse(token: &str) -> Option<Self> {
+        let token = token.trim().to_ascii_lowercase();
+        if token.starts_with("top") {
+            Some(Self::Top)
+        } else if token.starts_with("middle") {
+            Some(Self::Middle)
+        } else if token.starts_with("bottom") {
+            Some(Self::Bottom)
+        } else {
+            None
+        }
+    }
 }
 
 /// The geometric kind of a VML shape.
@@ -341,6 +497,8 @@ pub struct VmlDrawing {
     pub fill: VmlFill,
     /// The stroke.
     pub stroke: VmlStroke,
+    /// Text wrapping and clearance around the shape.
+    pub wrap: VmlWrap,
     /// The media relationship id from `v:imagedata@r:id`, if present.
     pub image_rid: Option<String>,
     /// The text-box marker, if the shape carried a `v:textbox`.
@@ -380,6 +538,44 @@ impl StyleProps {
 
     fn len(&self, key: &str) -> Option<Len> {
         self.get(key).and_then(parse_len)
+    }
+}
+
+impl VmlWrap {
+    fn from_style(style: &StyleProps) -> Self {
+        Self {
+            mode: style.get("mso-wrap-mode").and_then(VmlWrapMode::parse),
+            distances_twips: [
+                style.len("mso-wrap-distance-top").map(Len::to_twips),
+                style.len("mso-wrap-distance-bottom").map(Len::to_twips),
+                style.len("mso-wrap-distance-left").map(Len::to_twips),
+                style.len("mso-wrap-distance-right").map(Len::to_twips),
+            ],
+        }
+    }
+
+    fn inherit(mut self, parent: Option<Self>) -> Self {
+        let Some(parent) = parent else {
+            return self;
+        };
+        if self.mode.is_none() {
+            self.mode = parent.mode;
+        }
+        for (distance, inherited) in self.distances_twips.iter_mut().zip(parent.distances_twips) {
+            if distance.is_none() {
+                *distance = inherited;
+            }
+        }
+        self
+    }
+
+    fn apply_element(&mut self, element: &BytesStart<'_>) {
+        if let Some(mode) = attr(element, b"type")
+            .as_deref()
+            .and_then(VmlWrapMode::parse)
+        {
+            self.mode = Some(mode);
+        }
     }
 }
 
@@ -510,6 +706,9 @@ struct GroupCtx {
     z_index: Option<i32>,
     h_relative: Option<VmlRelFrame>,
     v_relative: Option<VmlRelFrame>,
+    h_align: Option<VmlHorizontalAlign>,
+    v_align: Option<VmlVerticalAlign>,
+    wrap: VmlWrap,
 }
 
 impl GroupCtx {
@@ -585,6 +784,15 @@ fn build_group_ctx(
             .get("mso-position-vertical-relative")
             .map(VmlRelFrame::parse)
             .or_else(|| parent.and_then(|p| p.v_relative)),
+        h_align: style
+            .get("mso-position-horizontal")
+            .and_then(VmlHorizontalAlign::parse)
+            .or_else(|| parent.and_then(|p| p.h_align)),
+        v_align: style
+            .get("mso-position-vertical")
+            .and_then(VmlVerticalAlign::parse)
+            .or_else(|| parent.and_then(|p| p.v_align)),
+        wrap: VmlWrap::from_style(style).inherit(parent.map(|p| p.wrap)),
     }
 }
 
@@ -636,6 +844,7 @@ struct ShapeBuilder {
     to: Option<String>,
     textbox: Option<VmlTextbox>,
     hr: Option<VmlHr>,
+    wrap: VmlWrap,
 }
 
 impl ShapeBuilder {
@@ -665,6 +874,7 @@ impl ShapeBuilder {
             to: attr(element, b"to"),
             textbox: None,
             hr: parse_hr(element),
+            wrap: VmlWrap::from_style(&style),
             style,
         }
     }
@@ -692,6 +902,10 @@ impl ShapeBuilder {
         }
     }
 
+    fn apply_wrap(&mut self, element: &BytesStart<'_>) {
+        self.wrap.apply_element(element);
+    }
+
     fn finalize(self, group: Option<&GroupCtx>) -> VmlDrawing {
         let position = self.resolve_position(group);
         let fill = VmlFill {
@@ -716,6 +930,7 @@ impl ShapeBuilder {
             position,
             fill,
             stroke,
+            wrap: self.wrap.inherit(group.map(|ctx| ctx.wrap)),
             image_rid: self.image_rid,
             textbox: self.textbox,
             hr: self.hr,
@@ -762,6 +977,16 @@ impl ShapeBuilder {
                 .get("mso-position-vertical-relative")
                 .map(VmlRelFrame::parse)
                 .or_else(|| group.and_then(|g| g.v_relative)),
+            h_align: self
+                .style
+                .get("mso-position-horizontal")
+                .and_then(VmlHorizontalAlign::parse)
+                .or_else(|| group.and_then(|g| g.h_align)),
+            v_align: self
+                .style
+                .get("mso-position-vertical")
+                .and_then(VmlVerticalAlign::parse)
+                .or_else(|| group.and_then(|g| g.v_align)),
         }
     }
 
@@ -980,6 +1205,14 @@ fn on_open(
         *shape = Some(ShapeBuilder::new(local, element));
         return;
     }
+    if name == b"wrap" {
+        if let Some(builder) = shape.as_mut() {
+            builder.apply_wrap(element);
+        } else if let Some(group) = groups.last_mut() {
+            group.wrap.apply_element(element);
+        }
+        return;
+    }
     let Some(builder) = shape.as_mut() else {
         return;
     };
@@ -992,11 +1225,20 @@ fn on_open(
             }
         }
         b"textbox" => {
+            let style = StyleProps::parse(&attr(element, b"style").unwrap_or_default());
+            let vertical_anchor = style
+                .get("v-text-anchor")
+                .map(str::to_owned)
+                .or_else(|| attr(element, b"v-text-anchor"))
+                .as_deref()
+                .and_then(VmlTextAnchor::parse);
             let inset = attr(element, b"inset")
                 .map(|value| parse_inset(&value))
                 .unwrap_or([None; 4]);
             builder.textbox = Some(VmlTextbox {
                 inset_twips: inset,
+                vertical_anchor,
+                fit_shape_to_text: style.get("mso-fit-shape-to-text").is_some_and(parse_bool),
                 content_xml: None,
             });
         }
@@ -1056,6 +1298,8 @@ fn capture_txbx(
             None => {
                 builder.textbox = Some(VmlTextbox {
                     inset_twips: [None; 4],
+                    vertical_anchor: None,
+                    fit_shape_to_text: false,
                     content_xml: content,
                 });
             }
@@ -1266,6 +1510,36 @@ mod tests {
         // The content is NOT flowed into shapes here.
         assert!(!d.fill.on);
         assert!(!d.stroke.on);
+    }
+
+    #[test]
+    fn textbox_preserves_alignment_wrap_distances_insets_anchor_and_autofit() {
+        let xml = r##"<v:shape style="position:absolute;width:100pt;height:30pt;mso-position-horizontal:center;mso-position-horizontal-relative:left-margin;mso-position-vertical:bottom;mso-position-vertical-relative:bottom-margin;mso-wrap-distance-top:1pt;mso-wrap-distance-bottom:2pt;mso-wrap-distance-left:3pt;mso-wrap-distance-right:4pt" type="#_x0000_t202"><v:textbox inset="1pt,2pt,3pt,4pt" style="v-text-anchor:middle;mso-fit-shape-to-text:t"><w:txbxContent><w:p/></w:txbxContent></v:textbox><w10:wrap type="topAndBottom"/></v:shape>"##;
+        let drawing = &parse_vml_pict(xml)[0];
+        assert_eq!(drawing.position.h_relative, Some(VmlRelFrame::LeftMargin));
+        assert_eq!(drawing.position.v_relative, Some(VmlRelFrame::BottomMargin));
+        assert_eq!(drawing.position.h_align, Some(VmlHorizontalAlign::Center));
+        assert_eq!(drawing.position.v_align, Some(VmlVerticalAlign::Bottom));
+        assert_eq!(drawing.wrap.mode, Some(VmlWrapMode::TopAndBottom));
+        assert_eq!(
+            drawing.wrap.distances_twips,
+            [Some(20), Some(40), Some(60), Some(80)]
+        );
+        let textbox = drawing.textbox.as_ref().expect("textbox is parsed");
+        assert_eq!(
+            textbox.inset_twips,
+            [Some(20), Some(40), Some(60), Some(80)]
+        );
+        assert_eq!(textbox.vertical_anchor, Some(VmlTextAnchor::Middle));
+        assert!(textbox.fit_shape_to_text);
+    }
+
+    #[test]
+    fn group_wrap_metadata_is_inherited_by_child_shapes() {
+        let xml = r##"<v:group style="position:absolute;margin-left:1pt;margin-top:2pt;width:10pt;height:10pt;mso-wrap-mode:square;mso-wrap-distance-left:3pt" coordsize="200,200"><w10:wrap type="topAndBottom"/><v:rect style="left:0;top:0;width:200;height:200"/></v:group>"##;
+        let drawing = &parse_vml_pict(xml)[0];
+        assert_eq!(drawing.wrap.mode, Some(VmlWrapMode::TopAndBottom));
+        assert_eq!(drawing.wrap.distances_twips[2], Some(60));
     }
 
     #[test]

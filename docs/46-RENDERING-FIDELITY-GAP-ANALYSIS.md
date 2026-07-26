@@ -77,7 +77,7 @@ Replace the binary `behindDoc` split with a single z-ordered float layer over
 Files: `anchor.rs collect:53/place:138/resolve:232`, `flow.rs textbox_item:1012`,
 `compose.rs z-order:135`, model `body.rs TextBox:667`, import `commit_drawing:3083`.
 
-### F5 — VML shape layout + paint (High) — DONE (P1F-VML, `feat/vml-paint`)
+### F5 — VML shape layout + paint (High) — PARTIAL (P1F-VML + P1F-VML-POS)
 VML (`v:rect`/`v:line`/`v:oval`/`v:shape` + `v:imagedata` + `v:textbox`) was
 modeled only as inline image/textbox; positioned VML shapes/lines were dropped
 entirely, so VML-primary docs (SDS: 32 `w:pict` + 8 `v:shape` — rules, callouts,
@@ -85,14 +85,17 @@ text boxes) rendered empty of graphics. **Resolved:** `commit_pict` re-parses ea
 `w:pict`'s raw XML via `parse_vml_pict` (P1F-VML) and maps every `VmlDrawing` onto
 the F4 float layer — `v:rect`/`roundrect`/`oval` → anchored `GroupShape`
 (group-of-one), `v:line` → `Line` float, `v:imagedata` → positioned
-`AnchoredDrawing` (shared media index), `v:textbox` → floating `TextBox` (blocks
-flowed through the shared block pipeline); `style` left/top/width/height →
-EMU anchor offsets/extent, `z-index<0` → `behindDoc` + monotonic `relativeHeight`.
-Header/footer VML rides F4's band walk. SDS page 0 now shows the horizon rules,
-callout-box outline, right-positioned header date/title text boxes, and footer
-bar (vs LibreOffice); 16 pages preserved. **Deferred:** exact `v:shape` path
-geometry (approximated by its bounding-box OUTLINE), gradient fills,
-anti-diagonal `v:line` orientation.
+`AnchoredDrawing` (shared media index). Header/footer `v:textbox` objects use
+their positioned box; body boxes use that position only for the local
+paragraph/text/line-relative `topAndBottom` envelope the layout engine can
+reflow, while unsafe page/no-wrap/side-wrap body cases remain inline to preserve
+readability. P1F-VML-POS carries relative alignments, physical/mirrored margin
+frames, wrap mode/distances, non-uniform inset, vertical text anchor, shape
+autofit, fill, and stroke into the shared model for pictures, shapes, and text
+boxes. Header/footer VML rides F4's repeated band walk. **Deferred:** page-level
+and side-wrap fixed-point reflow, percentage positions, exact mirrored parity,
+exact `v:shape` path geometry (currently a bounding-box outline), gradients,
+vertical writing/rotation, and anti-diagonal `v:line` orientation.
 
 ### F6a — Header/footer band nesting (P0, systematic over-pagination)
 `PageConfig::content_area()` (`paginate.rs:63`) subtracts measured header + footer
@@ -169,7 +172,7 @@ documented solid fallback.
 | Inline pictures | Media and extent flow to an image paint item. | Implemented for supported raster media. |
 | Floating pictures | Anchor position and z-order are placed. Paragraph/line-relative `wrapTopAndBottom` now adds a non-painting exclusion to the shared paragraph flow, including table cells and repeated header/footer bands; all four from-text distances round-trip. | **Partial:** square/tight/through, page/margin-relative cross-paragraph exclusion, contour polygons, and fixed-point repagination remain. See doc 51. |
 | DrawingML inline text boxes | Extent, fill, outline width/color, the four independent `bodyPr` insets, top/center/bottom anchoring, overflow policy, shape autofit, and normal-autofit authored scale now flow to paint. | Implemented by P1F-50/P1F-52; rotation/vertical writing and exact ellipsis remain. |
-| Floating/group text boxes | The same resolved box model and recursive block flow now feed floating/group boxes in body, cells, headers, and footers; local `wrapTopAndBottom` exclusion shares the picture/group flow path. | Implemented for the P1F-52 body-property subset. VML-specific inset/CSS behavior remains separate. |
+| Floating/group text boxes | The same resolved box model and recursive block flow now feed floating/group boxes in body, cells, headers, and footers; local `wrapTopAndBottom` exclusion shares the picture/group flow path. VML explicit insets, vertical text anchor, shape autofit, alignments, margin frames, wrap modes/distances, fill, and stroke now bridge to that shared path. | Implemented for the P1F-52 DrawingML subset and the bounded P1F-VML-POS legacy bridge. Page-level/side-wrap VML body boxes deliberately remain inline until fixed-point exclusion exists. |
 | Nested block content | Paragraphs, SDTs, nested tables, and inline images use the shared block flow. | Implemented, subject to the placement defects below. |
 | Floats nested in table cells | Source traversal finds them; the nested-float slice adds fragment-tree paragraph lookup that mirrors composed cell geometry instead of falling back to page 0. | Implemented by `P1F-NESTED-FLOATS`. |
 | Floats in header/footer tables | Selected running-content bands are recursively walked through table cells and nested blocks, so their floats repeat on the correct pages. | Implemented by `P1F-NESTED-FLOATS`. |

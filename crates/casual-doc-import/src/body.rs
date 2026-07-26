@@ -45,8 +45,8 @@ use crate::report::Reporter;
 use crate::styles::Styles;
 use crate::tables::TableStack;
 use crate::vml::{
-    VmlColor, VmlDrawing, VmlFill, VmlHr, VmlHrAlign, VmlPosition, VmlRelFrame, VmlShapeKind,
-    VmlStroke, parse_vml_pict,
+    VmlColor, VmlDrawing, VmlFill, VmlHorizontalAlign, VmlHr, VmlHrAlign, VmlPosition, VmlRelFrame,
+    VmlShapeKind, VmlStroke, VmlTextAnchor, VmlVerticalAlign, VmlWrap, VmlWrapMode, parse_vml_pict,
 };
 
 /// A run/tab/break/drawing/hyperlink/field segment before ids and normalization.
@@ -735,13 +735,12 @@ struct BodyParser<'a> {
     /// The raw XML of the most-recently-closed `w:pict`, handed to
     /// [`Self::commit_pict`] to map its VML drawings onto the float layer.
     pending_pict_xml: Option<String>,
-    /// FIFO queue of a header/footer VML text box's flowed content awaiting
-    /// placement by [`Self::commit_pict`], which knows the shape's absolute
-    /// position. A page-furniture (`hf_root`) `v:textbox` is deferred here — a
-    /// genuinely positioned one becomes a side-by-side float, a degenerate one
-    /// inline — while a *body* `v:textbox` is emitted inline immediately (its box
-    /// positions overlap the body text, so it must stay in the flow). Paired in
-    /// document order with the pict's text-box drawings.
+    /// FIFO queue of a VML text box's flowed content awaiting placement by
+    /// [`Self::commit_pict`], which knows the shape's position, wrap, appearance,
+    /// and inset metadata. Paired in document order with the pict's text-box
+    /// drawings. Header/footer boxes keep their positioned behavior; body boxes
+    /// float only inside the local top-and-bottom reflow envelope and otherwise
+    /// drain inline so the known page-level overprint regression stays fixed.
     pending_vml_textboxes: Vec<(NodeId, Vec<BlockNode>)>,
     /// `a:graphicData` payload pointers for the open drawing (chart/diagram).
     pending_graphic: PendingGraphic,
@@ -4098,9 +4097,9 @@ impl BodyParser<'_> {
                 emitted = true;
             }
         }
-        // Any deferred header/footer text box not matched to a parsed drawing (a
-        // malformed pict, or a box whose `v:shape` the parser did not surface) is
-        // emitted inline so its content is never lost.
+        // Any deferred text box not matched to a parsed drawing (a malformed pict,
+        // or a box whose `v:shape` the parser did not surface) is emitted inline so
+        // its content is never lost.
         for (id, blocks) in std::mem::take(&mut self.pending_vml_textboxes) {
             self.push_segment(Segment::TextBox(TextBox {
                 id,
@@ -4109,7 +4108,7 @@ impl BodyParser<'_> {
                 extent: None,
                 fill: None,
                 border: None,
-                body_properties: vml_text_box_body_properties([None; 4]),
+                body_properties: vml_text_box_body_properties(None),
                 blocks,
             }));
             emitted = true;
@@ -4139,11 +4138,9 @@ impl BodyParser<'_> {
         Ok(())
     }
 
-    /// Maps one parsed [`VmlDrawing`] onto a float-layer [`Segment`]. Returns `None`
-    /// when the drawing is not mappable (an unresolved image rid, a deferred generic
-    /// path shape) or is a `v:textbox` — a text box's flowed content was already
-    /// emitted as an inline `TextBox` segment when its `w:txbxContent` closed (see
-    /// [`Self::exit_frame`]), so it must not also be painted as a float.
+    /// Maps one parsed [`VmlDrawing`] onto a shared drawing/text-box [`Segment`].
+    /// Returns `None` when an image relationship is unresolved or when no deferred
+    /// text-box blocks can be paired with a parsed `v:textbox`.
     fn vml_segment(&mut self, drawing: &VmlDrawing) -> Result<Option<Segment>, ImportError> {
         // A horizontal rule (`v:rect@o:hr="t"`, Word's "Insert → Horizontal Line"):
         // a full-content-width filled line on its paragraph's own line, regardless
@@ -4160,7 +4157,7 @@ impl BodyParser<'_> {
                 return Ok(None);
             };
             if vml_is_floating(&drawing.position) {
-                let (anchor, relative_height) = vml_anchor(&drawing.position);
+                let (anchor, relative_height) = vml_anchor(drawing);
                 return Ok(Some(Segment::AnchoredDrawing {
                     media,
                     extent: vml_extent(&drawing.position),
@@ -4175,12 +4172,9 @@ impl BodyParser<'_> {
                 extent: None,
             }));
         }
-        // A VML text box (`v:textbox`): placement depends on its container. A *body*
-        // box's flowed blocks were already emitted as an inline `TextBox` segment, in
-        // document order, when `w:txbxContent` closed (see `exit_frame`), so it is
-        // skipped here (its absolute VML box positions overlap the body text). A
-        // *header/footer* box's blocks were deferred to the queue instead, so they can
-        // be placed now that this drawing carries the parsed absolute position.
+        // A VML text box (`v:textbox`): placement depends on both its container and
+        // whether the layout engine can honor its exclusion semantics. Its flowed
+        // blocks were deferred until this parsed shape metadata became available.
         if drawing.textbox.is_some() {
             return Ok(self.vml_textbox_segment(drawing));
         }
@@ -4188,26 +4182,21 @@ impl BodyParser<'_> {
         self.vml_shape_segment(drawing)
     }
 
-    /// Places a header/footer VML text box whose flowed blocks were deferred to
-    /// [`Self::pending_vml_textboxes`]. A genuinely positioned box (a distinct
-    /// absolute `left`/`top`) becomes a float carrying its anchor, extent, fill, and
-    /// border — so the header's side-by-side boxes sit horizontally rather than
-    /// stacking; a degenerate one (no absolute placement) falls back to inline. When
-    /// the queue is empty this is a *body* text box, already emitted inline by
-    /// [`Self::exit_frame`], so it is skipped (`None`) — the pre-existing behavior.
+    /// Places a deferred VML text box. A genuine header/footer position becomes a
+    /// float as before. A body box floats only for the explicit local
+    /// paragraph/text/line-relative top-and-bottom case that the shared reflow path
+    /// can honor; all other body cases stay inline to preserve readable document
+    /// order and avoid the historical page-level overlap regression.
     fn vml_textbox_segment(&mut self, drawing: &VmlDrawing) -> Option<Segment> {
         if self.pending_vml_textboxes.is_empty() {
             return None;
         }
         let (id, blocks) = self.pending_vml_textboxes.remove(0);
-        // The box's authored `v:textbox@inset` (an explicit `inset="0,0,0,0"` must
-        // survive so the content box is not shrunk by a default inset).
-        let inset = drawing
-            .textbox
-            .as_ref()
-            .map_or([None; 4], |textbox| textbox.inset_twips);
-        if vml_textbox_is_positioned(&drawing.position) {
-            let (anchor, relative_height) = vml_anchor(&drawing.position);
+        let body_properties = vml_text_box_body_properties(drawing.textbox.as_ref());
+        let positioned = vml_textbox_is_positioned(&drawing.position)
+            && (self.hf_root.is_some() || vml_body_textbox_can_float(drawing));
+        if positioned {
+            let (anchor, relative_height) = vml_anchor(drawing);
             Some(Segment::TextBox(TextBox {
                 id,
                 anchor: Some(anchor),
@@ -4215,7 +4204,7 @@ impl BodyParser<'_> {
                 extent: Some(vml_extent(&drawing.position)),
                 fill: vml_fill(&drawing.fill),
                 border: vml_stroke(&drawing.stroke),
-                body_properties: vml_text_box_body_properties(inset),
+                body_properties,
                 blocks,
             }))
         } else {
@@ -4224,9 +4213,9 @@ impl BodyParser<'_> {
                 anchor: None,
                 relative_height: None,
                 extent: None,
-                fill: None,
-                border: None,
-                body_properties: vml_text_box_body_properties(inset),
+                fill: vml_fill(&drawing.fill),
+                border: vml_stroke(&drawing.stroke),
+                body_properties,
                 blocks,
             }))
         }
@@ -4267,7 +4256,7 @@ impl BodyParser<'_> {
             ),
         };
         let extent = vml_extent(&drawing.position);
-        let (anchor, relative_height) = vml_anchor(&drawing.position);
+        let (anchor, relative_height) = vml_anchor(drawing);
         let child = GroupChild::Shape(GroupShape {
             id: self.next_id()?,
             offset: PointEmu { x_emu: 0, y_emu: 0 },
@@ -4301,7 +4290,7 @@ impl BodyParser<'_> {
             width_emu: twip_emu_len((fx - tx).abs()),
             height_emu: twip_emu_len((fy - ty).abs()),
         };
-        let (anchor, relative_height) = vml_anchor_at(&drawing.position, left, top);
+        let (anchor, relative_height) = vml_anchor_at(drawing, left, top);
         let child = GroupChild::Shape(GroupShape {
             id: self.next_id()?,
             offset: PointEmu { x_emu: 0, y_emu: 0 },
@@ -4801,27 +4790,18 @@ impl BodyParser<'_> {
                     // a group child or a floating/inline text box; `frame.node_id`
                     // is unused (the shape's own id identifies the box).
                     shape.textbox_blocks = Some(blocks);
-                } else if self.hf_root.is_some() {
-                    // A VML `v:textbox` in a header/footer part (page furniture):
-                    // defer to `commit_pict`, which knows the shape's absolute
-                    // position. A genuinely positioned header box (a distinct
-                    // `margin-left`/`top`) is placed as a float so the header's
-                    // side-by-side boxes sit horizontally (their pre-#135 behavior);
-                    // a degenerate one falls back to inline. The blocks are paired,
-                    // in document order, with the pict's text-box drawings.
+                } else if self.pict_depth > 0 {
+                    // A legacy VML `v:textbox`: defer both body and running-content
+                    // boxes until `commit_pict` has parsed the enclosing shape's
+                    // position, wrap, appearance, and inset metadata. The commit path
+                    // keeps genuine header/footer page furniture positioned, restores
+                    // only locally reflowable body floats, and drains every unsafe or
+                    // degenerate body case inline.
                     self.pending_vml_textboxes.push((frame.node_id, blocks));
                 } else {
-                    // A legacy VML `v:textbox` in the *body* (`w:pict`): emit its
-                    // flowed blocks as an inline `TextBox` segment in document order —
-                    // whether or not it sits inside an open `w:pict` capture. Body VML
-                    // text boxes render inline (their pre-VML-paint behavior), NOT as
-                    // floats at their absolute `v:shape` box: those box positions
-                    // overlap each other and the body text on real documents (the SDS
-                    // content pages). The box's fill/border/position are intentionally
-                    // dropped here — inline is the known-good, readable result. The
-                    // enclosing `commit_pict` skips the matching `v:textbox` drawing so
-                    // the box is not also painted as a float; positioned VML shapes and
-                    // images still float.
+                    // A malformed/bare `w:txbxContent` with no DrawingML shape and no
+                    // enclosing VML pict still keeps its content through the safe
+                    // legacy inline fallback.
                     self.push_segment(Segment::TextBox(TextBox {
                         id: frame.node_id,
                         anchor: None,
@@ -4829,7 +4809,7 @@ impl BodyParser<'_> {
                         extent: None,
                         fill: None,
                         border: None,
-                        body_properties: vml_text_box_body_properties([None; 4]),
+                        body_properties: vml_text_box_body_properties(None),
                         blocks,
                     }));
                 }
@@ -6287,28 +6267,47 @@ fn normalize_segments(segments: Vec<Segment>) -> Vec<Segment> {
 /// EMU per twip (`914400 EMU/in ÷ 1440 twips/in`).
 const EMU_PER_TWIP: i64 = 635;
 
-/// Resolves a VML text box's internal margins from its `v:textbox@inset` (twips,
-/// `[left, top, right, bottom]`). An authored side — including an explicit `0`, as
-/// the SDS header date boxes use — is honored so the content box is not shrunk by a
-/// default inset (which would wrap the box's text a line early). An unauthored side
-/// keeps the established legacy-VML 0.05-inch margin, so boxes without an explicit
-/// `inset` are byte-identical. DrawingML's asymmetric defaults apply only to
-/// `wps:bodyPr`; VML's own `inset` syntax is a separate compatibility slice.
-fn vml_text_box_body_properties(inset_twips: [Option<i64>; 4]) -> TextBoxBodyProperties {
-    let side = |twips: Option<i64>| {
-        twips.map_or(TextBoxInsets::DEFAULT_VERTICAL_EMU, |twips| {
-            (twips * EMU_PER_TWIP) as i32
-        })
+/// Maps the supported VML text-body properties onto the shared text-box model.
+///
+/// An absent side keeps the established legacy-VML 0.05-inch fallback. Word
+/// always honors an explicit `v:textbox@inset`; `v-text-anchor` and
+/// `mso-fit-shape-to-text` map to the same vertical-placement and shape-autofit
+/// behavior used by DrawingML text boxes.
+fn vml_text_box_body_properties(textbox: Option<&crate::vml::VmlTextbox>) -> TextBoxBodyProperties {
+    let default = TextBoxInsets::DEFAULT_VERTICAL_EMU;
+    let inset = |index: usize| {
+        textbox
+            .and_then(|value| value.inset_twips[index])
+            .map(twip_emu_i32)
+            .unwrap_or(default)
+    };
+    let vertical_anchor = match textbox.and_then(|value| value.vertical_anchor) {
+        Some(VmlTextAnchor::Middle) => TextBoxVerticalAnchor::Center,
+        Some(VmlTextAnchor::Bottom) => TextBoxVerticalAnchor::Bottom,
+        Some(VmlTextAnchor::Top) | None => TextBoxVerticalAnchor::Top,
+    };
+    let auto_fit = if textbox.is_some_and(|value| value.fit_shape_to_text) {
+        TextBoxAutoFit::Shape
+    } else {
+        TextBoxAutoFit::None
     };
     TextBoxBodyProperties {
         insets: TextBoxInsets {
-            left_emu: side(inset_twips[0]),
-            top_emu: side(inset_twips[1]),
-            right_emu: side(inset_twips[2]),
-            bottom_emu: side(inset_twips[3]),
+            left_emu: inset(0),
+            top_emu: inset(1),
+            right_emu: inset(2),
+            bottom_emu: inset(3),
         },
+        vertical_anchor,
+        auto_fit,
         ..TextBoxBodyProperties::default()
     }
+}
+
+fn twip_emu_i32(twips: i64) -> i32 {
+    twips
+        .saturating_mul(EMU_PER_TWIP)
+        .clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
 }
 
 /// A twip length (non-negative extent) to EMU, clamped to the model's coordinate
@@ -6335,46 +6334,75 @@ fn vml_extent(position: &VmlPosition) -> Extent {
 /// Whether a VML shape is a positioned float (an absolute left/top or an explicit
 /// z-order) rather than a genuinely inline shape.
 fn vml_is_floating(position: &VmlPosition) -> bool {
-    position.left.is_some() || position.top.is_some() || position.z_index.is_some()
+    position.left.is_some()
+        || position.top.is_some()
+        || position.h_align.is_some()
+        || position.v_align.is_some()
+        || position.z_index.is_some()
 }
 
-/// Whether a (header/footer) VML text box carries a genuine absolute placement — a
-/// distinct `margin-left`/`top` that positions it out of the normal top-left flow —
-/// so it should be a float. A bare z-order alone is not enough: two header boxes sit
-/// side by side only when each names its own `left`/`top`, so an absent left/top
-/// keeps the box inline (the safe default) rather than stacking floats at the origin.
+/// Whether a VML text box carries a genuine position and usable dimensions.
+/// A bare z-order is not enough: without an axis placement or positive box size,
+/// the safe behavior is inline rather than stacking zero-size floats at the origin.
 fn vml_textbox_is_positioned(position: &VmlPosition) -> bool {
-    position.left.is_some() || position.top.is_some()
+    let has_axis_position = position.left.is_some()
+        || position.top.is_some()
+        || position.h_align.is_some()
+        || position.v_align.is_some();
+    let has_extent = position.width.is_some_and(|value| value > 0)
+        && position.height.is_some_and(|value| value > 0);
+    has_axis_position && has_extent
+}
+
+/// The body-only safety gate. Local top-and-bottom objects can use the existing
+/// paragraph barrier and therefore move following text below the box. Page/margin
+/// overlays and side-wrap modes require the separate page-level fixed-point work,
+/// so those remain inline rather than reintroducing the historical overprint.
+fn vml_body_textbox_can_float(drawing: &VmlDrawing) -> bool {
+    drawing.wrap.mode == Some(VmlWrapMode::TopAndBottom)
+        && matches!(
+            drawing.position.v_relative,
+            Some(VmlRelFrame::Text | VmlRelFrame::Paragraph | VmlRelFrame::Line)
+        )
 }
 
 /// Resolves a VML box into a float-layer [`DrawingAnchor`] plus its z key, using
 /// the shape's own left/top offsets.
-fn vml_anchor(position: &VmlPosition) -> (DrawingAnchor, Option<u32>) {
+fn vml_anchor(drawing: &VmlDrawing) -> (DrawingAnchor, Option<u32>) {
     vml_anchor_at(
-        position,
-        position.left.unwrap_or(0),
-        position.top.unwrap_or(0),
+        drawing,
+        drawing.position.left.unwrap_or(0),
+        drawing.position.top.unwrap_or(0),
     )
 }
 
 /// [`vml_anchor`] with explicit left/top twip offsets (a `v:line` anchors at its
 /// segment's bounding-box corner, which its style box does not carry).
 fn vml_anchor_at(
-    position: &VmlPosition,
+    drawing: &VmlDrawing,
     left_twips: i64,
     top_twips: i64,
 ) -> (DrawingAnchor, Option<u32>) {
+    let position = &drawing.position;
     let anchor = DrawingAnchor {
         horizontal: AnchorHorizontal {
             relative_from: vml_h_anchor(position.h_relative),
-            position: HorizontalPosition::Offset(twip_emu_offset(left_twips)),
+            position: position
+                .h_align
+                .map(vml_h_align)
+                .map(HorizontalPosition::Align)
+                .unwrap_or_else(|| HorizontalPosition::Offset(twip_emu_offset(left_twips))),
         },
         vertical: AnchorVertical {
             relative_from: vml_v_anchor(position.v_relative),
-            position: VerticalPosition::Offset(twip_emu_offset(top_twips)),
+            position: position
+                .v_align
+                .map(vml_v_align)
+                .map(VerticalPosition::Align)
+                .unwrap_or_else(|| VerticalPosition::Offset(twip_emu_offset(top_twips))),
         },
-        wrap: WrapMode::None,
-        wrap_distances: Default::default(),
+        wrap: vml_wrap_mode(drawing.wrap.mode),
+        wrap_distances: vml_wrap_distances(drawing.wrap),
         behind_doc: position.behind_doc(),
     };
     (anchor, position.z_index.map(vml_rel_height))
@@ -6393,11 +6421,14 @@ fn vml_h_anchor(frame: Option<VmlRelFrame>) -> HorizontalAnchor {
     match frame {
         Some(VmlRelFrame::Page) => HorizontalAnchor::Page,
         Some(VmlRelFrame::Margin) => HorizontalAnchor::Margin,
-        Some(VmlRelFrame::Column) => HorizontalAnchor::Column,
+        Some(VmlRelFrame::Text | VmlRelFrame::Column) => HorizontalAnchor::Column,
         Some(VmlRelFrame::Char) => HorizontalAnchor::Character,
-        // `text` is the content area (the text margin box); everything else
-        // (line/paragraph/other/unset) falls back to the text margin, which the
-        // float layer resolves identically to the column.
+        Some(VmlRelFrame::LeftMargin) => HorizontalAnchor::LeftMargin,
+        Some(VmlRelFrame::RightMargin) => HorizontalAnchor::RightMargin,
+        Some(VmlRelFrame::InsideMargin) => HorizontalAnchor::InsideMargin,
+        Some(VmlRelFrame::OutsideMargin) => HorizontalAnchor::OutsideMargin,
+        // Everything else (line/paragraph/other/unset) falls back to the text
+        // margin.
         _ => HorizontalAnchor::Margin,
     }
 }
@@ -6406,13 +6437,56 @@ fn vml_h_anchor(frame: Option<VmlRelFrame>) -> HorizontalAnchor {
 fn vml_v_anchor(frame: Option<VmlRelFrame>) -> VerticalAnchor {
     match frame {
         Some(VmlRelFrame::Page) => VerticalAnchor::Page,
-        Some(VmlRelFrame::Margin) | Some(VmlRelFrame::Text) | Some(VmlRelFrame::Column) => {
-            VerticalAnchor::Margin
-        }
+        Some(VmlRelFrame::Margin) | Some(VmlRelFrame::Column) => VerticalAnchor::Margin,
+        Some(VmlRelFrame::Text | VmlRelFrame::Paragraph) => VerticalAnchor::Paragraph,
         Some(VmlRelFrame::Line) => VerticalAnchor::Line,
-        // `paragraph` and everything else (char/other/unset) resolve against the
-        // anchoring paragraph, the float layer's vertical default.
+        Some(VmlRelFrame::TopMargin) => VerticalAnchor::TopMargin,
+        Some(VmlRelFrame::BottomMargin) => VerticalAnchor::BottomMargin,
+        Some(VmlRelFrame::InsideMargin) => VerticalAnchor::InsideMargin,
+        Some(VmlRelFrame::OutsideMargin) => VerticalAnchor::OutsideMargin,
+        // Everything else (char/other/unset) resolves against the anchoring
+        // paragraph, the float layer's vertical default.
         _ => VerticalAnchor::Paragraph,
+    }
+}
+
+fn vml_h_align(align: VmlHorizontalAlign) -> HorizontalAlign {
+    match align {
+        VmlHorizontalAlign::Left => HorizontalAlign::Left,
+        VmlHorizontalAlign::Center => HorizontalAlign::Center,
+        VmlHorizontalAlign::Right => HorizontalAlign::Right,
+        VmlHorizontalAlign::Inside => HorizontalAlign::Inside,
+        VmlHorizontalAlign::Outside => HorizontalAlign::Outside,
+    }
+}
+
+fn vml_v_align(align: VmlVerticalAlign) -> VerticalAlign {
+    match align {
+        VmlVerticalAlign::Top => VerticalAlign::Top,
+        VmlVerticalAlign::Center => VerticalAlign::Center,
+        VmlVerticalAlign::Bottom => VerticalAlign::Bottom,
+        VmlVerticalAlign::Inside => VerticalAlign::Inside,
+        VmlVerticalAlign::Outside => VerticalAlign::Outside,
+    }
+}
+
+fn vml_wrap_mode(mode: Option<VmlWrapMode>) -> WrapMode {
+    match mode {
+        Some(VmlWrapMode::Square) => WrapMode::Square,
+        Some(VmlWrapMode::Tight) => WrapMode::Tight,
+        Some(VmlWrapMode::Through) => WrapMode::Through,
+        Some(VmlWrapMode::TopAndBottom) => WrapMode::TopAndBottom,
+        Some(VmlWrapMode::None) | None => WrapMode::None,
+    }
+}
+
+fn vml_wrap_distances(wrap: VmlWrap) -> WrapDistances {
+    let distance = |index: usize| twip_emu_len(wrap.distances_twips[index].unwrap_or(0).max(0));
+    WrapDistances {
+        top_emu: distance(0),
+        bottom_emu: distance(1),
+        start_emu: distance(2),
+        end_emu: distance(3),
     }
 }
 

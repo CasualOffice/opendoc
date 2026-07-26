@@ -2250,15 +2250,46 @@ fn vml_rect_horizon_rule_maps_to_a_behind_text_shape_float() {
 }
 
 #[test]
+fn vml_shape_preserves_mirrored_margin_frames_and_relative_alignment() {
+    use casual_doc_model::v1::{
+        HorizontalAlign, HorizontalAnchor, HorizontalPosition, VerticalAlign, VerticalAnchor,
+        VerticalPosition,
+    };
+
+    let pict = r##"<w:pict><v:rect style="position:absolute;width:50pt;height:20pt;mso-position-horizontal:inside;mso-position-horizontal-relative:inner-margin-area;mso-position-vertical:outside;mso-position-vertical-relative:outer-margin-area" fillcolor="#010203"/></w:pict>"##;
+    let document = format!(
+        r#"<w:document xmlns:w="urn:w" xmlns:v="urn:v"><w:body><w:p><w:r>{pict}</w:r></w:p></w:body></w:document>"#
+    );
+    let import = import(document.as_bytes());
+    let InlineNode::Group(group) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected a positioned VML shape");
+    };
+    let anchor = group.anchor.expect("relative alignment creates a float");
+    assert_eq!(
+        anchor.horizontal.relative_from,
+        HorizontalAnchor::InsideMargin
+    );
+    assert_eq!(
+        anchor.horizontal.position,
+        HorizontalPosition::Align(HorizontalAlign::Inside)
+    );
+    assert_eq!(anchor.vertical.relative_from, VerticalAnchor::OutsideMargin);
+    assert_eq!(
+        anchor.vertical.position,
+        VerticalPosition::Align(VerticalAlign::Outside)
+    );
+}
+
+#[test]
 fn vml_imagedata_shape_maps_to_a_positioned_picture() {
-    use casual_doc_model::v1::{HorizontalAnchor, HorizontalPosition, VerticalAnchor};
+    use casual_doc_model::v1::{HorizontalAnchor, HorizontalPosition, VerticalAnchor, WrapMode};
 
     // A positioned `v:shape` carrying `v:imagedata@r:id` must resolve through the
     // media table into an AnchoredDrawing placed at its absolute VML box (rather
     // than the old inline, size-less mapping).
-    let pict = r##"<w:pict><v:shape style="position:absolute;margin-left:10pt;margin-top:20pt;width:100pt;height:50pt;z-index:-5;mso-position-horizontal-relative:page;mso-position-vertical-relative:page" type="#_x0000_t75" id="img"><v:imagedata r:id="rId7" o:title=""/></v:shape></w:pict>"##;
+    let pict = r##"<w:pict><v:shape style="position:absolute;margin-left:10pt;margin-top:20pt;width:100pt;height:50pt;z-index:-5;mso-position-horizontal-relative:page;mso-position-vertical-relative:page;mso-wrap-distance-top:1pt;mso-wrap-distance-bottom:2pt;mso-wrap-distance-left:3pt;mso-wrap-distance-right:4pt" type="#_x0000_t75" id="img"><v:imagedata r:id="rId7" o:title=""/><w10:wrap type="topAndBottom"/></v:shape></w:pict>"##;
     let document = format!(
-        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:v="urn:v" xmlns:o="urn:o"><w:body><w:p><w:r>{pict}</w:r></w:p></w:body></w:document>"#
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:v="urn:v" xmlns:o="urn:o" xmlns:w10="urn:w10"><w:body><w:p><w:r>{pict}</w:r></w:p></w:body></w:document>"#
     );
     let media = [("word/media/image1.png", b"PNGDATA".as_slice())];
     let import = import_bytes(&build_package(document.as_bytes(), IMAGE_REL, &media));
@@ -2288,6 +2319,11 @@ fn vml_imagedata_shape_maps_to_a_positioned_picture() {
         drawing.anchor.behind_doc,
         "a negative z-index paints behind"
     );
+    assert_eq!(drawing.anchor.wrap, WrapMode::TopAndBottom);
+    assert_eq!(drawing.anchor.wrap_distances.top_emu, 20 * 635);
+    assert_eq!(drawing.anchor.wrap_distances.bottom_emu, 40 * 635);
+    assert_eq!(drawing.anchor.wrap_distances.start_emu, 60 * 635);
+    assert_eq!(drawing.anchor.wrap_distances.end_emu, 80 * 635);
 }
 
 #[test]
@@ -2431,11 +2467,15 @@ fn header_vml_text_box_with_absolute_position_is_a_positioned_float() {
 
 #[test]
 fn body_vml_text_box_stays_inline_not_floated() {
+    use casual_doc_model::v1::{TextBoxAutoFit, TextBoxVerticalAnchor};
+
     // The de-overlap guard: a VML text box in the BODY keeps the inline behavior
-    // (no anchor), so the SDS content-page callouts do not overprint each other.
-    let pict = r##"<w:pict><v:shape style="position:absolute;margin-left:70pt;margin-top:36pt;width:157pt;height:28pt;mso-position-horizontal-relative:page;mso-position-vertical-relative:page;z-index:-16121856" type="#_x0000_t202" id="tb" filled="false" stroked="false"><v:textbox inset="0,0,0,0"><w:txbxContent><w:p><w:r><w:t>Body box</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict>"##;
+    // (no anchor) for an unsafe page-relative/no-wrap overlay, so the SDS
+    // content-page callouts do not overprint each other. Its appearance and
+    // text-body properties are still retained on that safe fallback.
+    let pict = r##"<w:pict><v:shape style="position:absolute;margin-left:70pt;margin-top:36pt;width:157pt;height:28pt;mso-position-horizontal-relative:page;mso-position-vertical-relative:page;z-index:-16121856" type="#_x0000_t202" id="tb" filled="true" fillcolor="#112233" stroked="true" strokecolor="#445566" strokeweight="2pt"><v:textbox inset="1pt,2pt,3pt,4pt" style="v-text-anchor:bottom;mso-fit-shape-to-text:t"><w:txbxContent><w:p><w:r><w:t>Body box</w:t></w:r></w:p></w:txbxContent></v:textbox><w10:wrap type="none"/></v:shape></w:pict>"##;
     let document = format!(
-        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:v="urn:v" xmlns:o="urn:o"><w:body><w:p><w:r>{pict}</w:r></w:p></w:body></w:document>"#
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:v="urn:v" xmlns:o="urn:o" xmlns:w10="urn:w10"><w:body><w:p><w:r>{pict}</w:r></w:p></w:body></w:document>"#
     );
     let import = import(document.as_bytes());
     let text_box =
@@ -2444,6 +2484,145 @@ fn body_vml_text_box_stays_inline_not_floated() {
         text_box.anchor.is_none(),
         "a body VML text box stays inline (not floated at its absolute VML box)"
     );
+    assert!(
+        text_box.extent.is_none(),
+        "the safety fallback does not force a potentially undersized absolute box"
+    );
+    assert_eq!(
+        text_box.fill.map(|color| [color.r, color.g, color.b]),
+        Some([0x11, 0x22, 0x33])
+    );
+    assert_eq!(
+        text_box.border.map(|stroke| (
+            [stroke.color.r, stroke.color.g, stroke.color.b],
+            stroke.width_emu
+        )),
+        Some(([0x44, 0x55, 0x66], 40 * 635))
+    );
+    assert_eq!(text_box.body_properties.insets.left_emu, 20 * 635);
+    assert_eq!(text_box.body_properties.insets.top_emu, 40 * 635);
+    assert_eq!(text_box.body_properties.insets.right_emu, 60 * 635);
+    assert_eq!(text_box.body_properties.insets.bottom_emu, 80 * 635);
+    assert_eq!(
+        text_box.body_properties.vertical_anchor,
+        TextBoxVerticalAnchor::Bottom
+    );
+    assert_eq!(text_box.body_properties.auto_fit, TextBoxAutoFit::Shape);
+}
+
+#[test]
+fn local_top_and_bottom_vml_text_box_in_a_body_cell_is_positioned() {
+    use casual_doc_model::v1::{HorizontalAnchor, VerticalAnchor, WrapMode};
+
+    // The bounded body restoration: this box is explicitly paragraph-relative
+    // and top-and-bottom wrapped, so the shared local barrier can move following
+    // text below it even when its anchor paragraph lives inside a table cell.
+    let pict = r##"<w:pict><v:shape style="position:absolute;margin-left:5pt;margin-top:2pt;width:100pt;height:30pt;mso-position-horizontal-relative:text;mso-position-vertical-relative:text;mso-wrap-distance-top:1pt;mso-wrap-distance-bottom:2pt" type="#_x0000_t202" filled="false" stroked="false"><v:textbox inset="0,0,0,0"><w:txbxContent><w:p><w:r><w:t>Cell callout</w:t></w:r></w:p></w:txbxContent></v:textbox><w10:wrap type="topAndBottom"/></v:shape></w:pict>"##;
+    let document = format!(
+        r#"<w:document xmlns:w="urn:w" xmlns:v="urn:v" xmlns:w10="urn:w10"><w:body><w:tbl><w:tr><w:tc><w:p><w:r>{pict}</w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"#
+    );
+    let import = import(document.as_bytes());
+    let BlockNode::Table(table) = &import.document.body()[0] else {
+        panic!("expected the body table");
+    };
+    let BlockNode::Paragraph(paragraph) = &table.rows[0].cells[0].blocks[0] else {
+        panic!("expected the cell paragraph");
+    };
+    let text_box = find_textbox(&paragraph.inlines).expect("cell VML box is modeled");
+    let anchor = text_box
+        .anchor
+        .expect("the locally reflowable body box is positioned");
+    assert_eq!(anchor.horizontal.relative_from, HorizontalAnchor::Column);
+    assert_eq!(anchor.vertical.relative_from, VerticalAnchor::Paragraph);
+    assert_eq!(anchor.wrap, WrapMode::TopAndBottom);
+    assert_eq!(anchor.wrap_distances.top_emu, 20 * 635);
+    assert_eq!(anchor.wrap_distances.bottom_emu, 40 * 635);
+    assert_eq!(
+        text_box.extent.expect("float keeps extent").width_emu,
+        2000 * 635
+    );
+    assert_eq!(tb_block_text(&text_box.blocks), "Cell callout");
+}
+
+#[test]
+fn unmatched_vml_text_box_content_drains_inline_without_loss() {
+    // Malformed producer output can leave a `v:textbox` without a surfaceable
+    // enclosing shape. The deferred queue must drain at `w:pict` close rather
+    // than dropping or leaking the nested content into a later picture.
+    let pict = r##"<w:pict><v:textbox inset="0,0,0,0"><w:txbxContent><w:p><w:r><w:t>Recovered</w:t></w:r></w:p></w:txbxContent></v:textbox></w:pict>"##;
+    let document = format!(
+        r#"<w:document xmlns:w="urn:w" xmlns:v="urn:v"><w:body><w:p><w:r>{pict}</w:r></w:p></w:body></w:document>"#
+    );
+    let import = import(document.as_bytes());
+    let text_box =
+        find_textbox(&paragraph(&import, 0).inlines).expect("unmatched content drains inline");
+    assert!(text_box.anchor.is_none());
+    assert_eq!(tb_block_text(&text_box.blocks), "Recovered");
+}
+
+#[test]
+fn footer_vml_text_box_preserves_relative_alignment_and_body_properties() {
+    use casual_doc_model::v1::{
+        HorizontalAlign, HorizontalAnchor, HorizontalPosition, TextBoxAutoFit,
+        TextBoxVerticalAnchor, VerticalAlign, VerticalAnchor, VerticalPosition,
+    };
+
+    let pict = r##"<w:pict><v:shape style="position:absolute;width:100pt;height:20pt;mso-position-horizontal:right;mso-position-horizontal-relative:right-margin;mso-position-vertical:bottom;mso-position-vertical-relative:bottom-margin;z-index:2" type="#_x0000_t202" filled="true" fillcolor="#abcdef" stroked="true" strokecolor="#102030" strokeweight="1pt"><v:textbox inset=".5pt,1pt,1.5pt,2pt" style="v-text-anchor:middle;mso-fit-shape-to-text:t"><w:txbxContent><w:p><w:r><w:t>Footer box</w:t></w:r></w:p></w:txbxContent></v:textbox><w10:wrap type="none"/></v:shape></w:pict>"##;
+    let footer = format!(
+        r#"<w:ftr xmlns:w="urn:w" xmlns:v="urn:v" xmlns:w10="urn:w10"><w:p><w:r>{pict}</w:r></w:p></w:ftr>"#
+    );
+    let document = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r"><w:body>
+        <w:p><w:r><w:t>Body.</w:t></w:r></w:p>
+        <w:sectPr><w:footerReference w:type="default" r:id="rId3"/>
+            <w:pgSz w:w="11906" w:h="16838"/></w:sectPr>
+    </w:body></w:document>"#;
+    let import = import_with_header_footer(document, &[], &[("rId3", footer.as_bytes())]);
+    let section = &import.document.definitions().sections[0];
+    let running = import
+        .document
+        .definitions()
+        .footers
+        .get(&section.footers[0].reference)
+        .expect("footer definition resolves");
+    let BlockNode::Paragraph(paragraph) = &running.blocks[0] else {
+        panic!("expected a footer paragraph");
+    };
+    let text_box = find_textbox(&paragraph.inlines).expect("footer text box is modeled");
+    let anchor = text_box.anchor.expect("footer text box remains positioned");
+    assert_eq!(
+        anchor.horizontal.relative_from,
+        HorizontalAnchor::RightMargin
+    );
+    assert_eq!(
+        anchor.horizontal.position,
+        HorizontalPosition::Align(HorizontalAlign::Right)
+    );
+    assert_eq!(anchor.vertical.relative_from, VerticalAnchor::BottomMargin);
+    assert_eq!(
+        anchor.vertical.position,
+        VerticalPosition::Align(VerticalAlign::Bottom)
+    );
+    assert_eq!(text_box.body_properties.insets.left_emu, 10 * 635);
+    assert_eq!(text_box.body_properties.insets.top_emu, 20 * 635);
+    assert_eq!(text_box.body_properties.insets.right_emu, 30 * 635);
+    assert_eq!(text_box.body_properties.insets.bottom_emu, 40 * 635);
+    assert_eq!(
+        text_box.body_properties.vertical_anchor,
+        TextBoxVerticalAnchor::Center
+    );
+    assert_eq!(text_box.body_properties.auto_fit, TextBoxAutoFit::Shape);
+    assert_eq!(
+        text_box.fill.map(|color| [color.r, color.g, color.b]),
+        Some([0xab, 0xcd, 0xef])
+    );
+    assert_eq!(
+        text_box.border.map(|stroke| (
+            [stroke.color.r, stroke.color.g, stroke.color.b],
+            stroke.width_emu
+        )),
+        Some(([0x10, 0x20, 0x30], 20 * 635))
+    );
+    assert_eq!(tb_block_text(&text_box.blocks), "Footer box");
 }
 
 #[test]
