@@ -1,133 +1,59 @@
 # OpenDoc
 
 [![Status: Pre-release](https://img.shields.io/badge/status-pre--release-orange.svg)](docs/06-ROADMAP-AND-DELIVERY.md)
-[![Rust: 1.85+](https://img.shields.io/badge/rust-1.85%2B-black.svg?logo=rust)](rust-toolchain.toml)
+[![Rust: 1.88+](https://img.shields.io/badge/rust-1.88%2B-black.svg?logo=rust)](rust-toolchain.toml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-OpenDoc is an open-source, deterministic document runtime written in Rust. It
-is being built for native, WebAssembly, and headless applications that need a
-shared document model, transactional editing, layout, rendering, and
-loss-aware document interchange.
+**OpenDoc is a deterministic, embeddable Word-document engine written in Rust.**
+It reads and writes `.docx`, holds the document in a normalized editable model,
+and lays it out and renders it to pixels — for native, WebAssembly, and headless
+applications that need real DOCX fidelity without a browser, a server, or a UI
+framework.
 
-The project is developed by [CasualOffice](https://github.com/CasualOffice) as
-the future document engine for Casual Docs and as an embeddable SDK for other
-applications.
+It is developed by [CasualOffice](https://github.com/CasualOffice) as the future
+document engine for Casual Docs and as an SDK other applications can embed.
 
-> [!IMPORTANT]
-> OpenDoc is in pre-release development. **Phase 0, Phase 1A (semantic modeling —
-> every WordprocessingML construct family is a first-class, editable model
-> value), and Phase 1B (the semantic writer, model → editable `.docx`) are
-> complete.** A `.docx` reads end-to-end into the normalized model and writes
-> back to a LibreOffice-valid `.docx` that reopens to an identical model
-> (semantic fixed point over the real-producer corpus). The layout, pagination,
-> and rendering path is now under active construction: typography and block
-> layout (Phase 1C) and pagination (Phase 1D — including line-level splitting and
-> incremental re-pagination) are in progress, and CPU rendering (Phase 1E) has an
-> initial end-to-end implementation — real DOCX pages and tables shape through
-> parley and rasterize to PNG via tiny-skia. This is a functional rendering
-> **spine**, not yet a Word/LibreOffice-grade high-fidelity renderer. The crates
-> are not published and the public API is not stable; an end-user editor is not
-> available yet.
+## Why OpenDoc
 
-## Design Goals
+Most ways to work with `.docx` force a trade-off: a full office suite you can't
+embed, a converter that silently drops anything it doesn't understand, or a
+browser editor that treats the DOM as the source of truth. OpenDoc is built the
+other way around:
 
-- **Deterministic behavior:** identical inputs and configuration should produce
-  identical model, layout, and serialization results.
-- **Transactional editing:** every mutation is validated, revisioned, mapped,
-  and applied atomically.
-- **Portable core:** the same runtime architecture targets Rust hosts,
-  `wasm32-unknown-unknown`, desktop applications, and headless services.
-- **Secure document handling:** untrusted packages are processed with explicit
-  entry, path, size, expansion, and resource limits.
-- **Loss-aware interoperability:** unsupported document content must be
-  preserved, rejected, or reported explicitly, never silently discarded.
-- **Host independence:** the runtime does not require a browser DOM, a UI
-  framework, a server, or a collaboration provider.
+- **Loss-aware by design.** Content the semantic model doesn't yet represent is
+  preserved and reproduced verbatim, or reported — never silently discarded.
+- **Deterministic.** The same input, fonts, and engine version produce the same
+  model, layout, and bytes, every time — so rendering can be regression-tested.
+- **Embeddable and host-agnostic.** No mandatory DOM, server, React, or
+  collaboration provider. The core targets Rust hosts, `wasm32-unknown-unknown`,
+  desktop, and headless services alike.
+- **Safe with untrusted files.** Packages are parsed under explicit entry, path,
+  size, expansion, and resource limits.
 
-## Current Capabilities
+## Features
 
-Phase 0 (runtime + package safety), Phase 1A (semantic import — every construct
-family modeled), and Phase 1B (the semantic writer) are complete; the writer
-round-trips the full modeled surface (import → write → reopen = identical model)
-and its output opens cleanly in LibreOffice:
+- **DOCX import** into a normalized, editable model: paragraphs and runs with the
+  full property tail, styles (`basedOn` chains) and theme, numbering, sections
+  and page geometry, tables (merged cells, nested tables, borders, shading, cell
+  margins), images and drawings, hyperlinks, fields, text boxes, footnotes and
+  endnotes, headers and footers, comments, tracked changes, bookmarks, and
+  content controls.
+- **DOCX export** in two modes: byte-identical reconstruction of an unedited
+  package, and a semantic writer that re-emits an *edited* model as a valid
+  `.docx` that opens cleanly in LibreOffice.
+- **Editing primitives**: grapheme-aware inserts/deletes, paragraph split/join,
+  atomic transactions with semantic inverses, position mapping, revision-checked
+  undo/redo, directed caret/range selection, and bounded ordered events.
+- **Layout and rendering**: text shaping and line breaking via
+  [`parley`](https://github.com/linebender/parley), an effective-property style
+  cascade, pagination with break control, a backend-neutral display list, and a
+  CPU raster backend that renders real pages and tables to PNG via
+  [`tiny-skia`](https://github.com/RazrFalcon/tiny-skia) and glyph outlines from
+  [`skrifa`](https://github.com/googlefonts/fontations).
 
-| Area | Available today |
-| --- | --- |
-| Document model | Deterministic paragraph/text model (schema v0) and a typed schema v1 (properties, styles, numbering, sections, media refs) with strict validation and total v0→v1 migration |
-| Snapshot I/O | Strict, bounded normalized JSON import/export for v0 and v1 |
-| Transactions | Grapheme-aware insert/delete, paragraph split/join, position mapping, and semantic inverses |
-| History / Selection / Events | Revision-checked undo/redo; directed caret/range selection; bounded ordered event subscriptions |
-| DOCX package reader | Security-bounded ZIP admission; relationship-based main-document discovery (transitional + ISO Strict); content-type and relationship-graph resolution; deterministic source snapshot |
-| Semantic DOCX import | `.docx` → v1 model: paragraphs, runs, text (tab/break), direct run properties (bold/italic/underline/strike/size/RGB), paragraph formatting (alignment/indentation/spacing), styles (with `basedOn`), numbering (`numPr`), body section geometry, media references, inline drawings (embedded pictures → media-referencing drawing nodes), hyperlinks (external/internal, wrapping their runs), tables (grid/rows/cells with nested block content, `gridSpan`/`vMerge` merge geometry, nested tables), fields (simple `w:fldSimple` and complex `fldChar` sequences → instruction + cached result), text boxes (`w:txbxContent` in DrawingML or VML → an inline box holding block content, with `mc:AlternateContent` branch selection), footnotes/endnotes (the note parts parsed into note definitions with an inline reference from the body), and headers/footers (the header/footer parts parsed into definitions, referenced by page type from each section) — everything unmapped dispositioned in a deterministic compatibility report (no silent loss) |
-| Round-trip | Retention mode retains the source package byte-for-byte and `casual-doc-export` reconstructs it, so an unedited `.docx` round-trips exactly — every tag, nested element, and part — verified by re-import producing an identical model. A LibreOffice differential harness measures text-content fidelity |
-| Engineering | Reproducible benchmarks, generated + real-producer fixtures, dependency policy, package-reader fuzzing; every crate decomposed into focused modules |
-| Portability | Required CI on Linux, macOS ARM64, Windows x64, WASM, and Rust 1.85 MSRV |
+## Quickstart
 
-Every WordprocessingML construct is in scope for round-trip: what the semantic
-model does not yet represent is preserved verbatim and reproduced.
-
-**Phase 1A (semantic modeling) is complete:** every construct family is a
-first-class, editable model value — paragraphs, runs (with the full property
-tail), styles, numbering, sections, media, drawings, hyperlinks, tables (with
-borders, shading, and margins), fields, text boxes, footnotes/endnotes,
-headers/footers, comments, tracked changes, bookmarks, and content controls;
-anything a producer wrote that is not yet modeled is reported and round-trips
-via Retention (no silent loss).
-
-**Phase 1B (the semantic writer) is complete:** `write_document` re-emits an
-*edited* model as a valid `.docx` — body, tables, all inline constructs,
-run/paragraph/section properties, styles, numbering, fontTable (incl. embedded
-fonts), theme fontScheme, notes, comments, sections (including multi-section /
-per-paragraph `sectPr`), headers/footers, and settings all survive the
-model-fixed-point round-trip (import → write → reopen = identical model), and the
-output opens cleanly in LibreOffice.
-
-The **layout, pagination, and rendering path is now in active construction** —
-this is a functional end-to-end rendering *spine*, not yet a Word-grade
-high-fidelity renderer:
-
-- **typography & block layout (Phase 1C, in progress)**: a `casual-doc-layout`
-  crate shapes styled paragraphs into positioned lines via `parley` (UAX#14 line
-  breaking, bidi, bold/italic face selection) and builds a block/flow galley from
-  the model, including tables (columns taken from grid widths, or distributed
-  evenly when absent); full run/paragraph property mapping, tab stops, and DOCX
-  font-name resolution/fallback are still ahead;
-- **pagination (Phase 1D, in progress)**: a single-section paginator slices the
-  galley into pages with break control (page-break-before, keep-next/keep-lines,
-  widow/orphan) and line-level paragraph splitting; incremental re-pagination
-  reuses the unchanged page prefix and re-flows only from the edit onward
-  (field-for-field identical to a full paginate); cross-page table row splitting,
-  header repeat, footnotes, and multi-section pagination are still ahead;
-- **CPU rendering (Phase 1E, initial end-to-end implementation)**: a
-  `casual-doc-render` backend executes the backend-neutral display list on a
-  `tiny-skia` pixmap, rasterizing glyph runs from real `skrifa` outlines of the
-  same face the shaper used — real DOCX pages and tables render to PNG.
-
-The following are **not started yet** (nothing is excluded — this is the
-progression):
-
-- **font management** beyond the modeled data: all OOXML font data (rFonts +
-  hint, fontTable, theme fontScheme, and embedded fonts) is modeled and
-  round-tripped, but runtime font resolution/substitution/metrics and fallback is
-  designed and accepted (full scope), not yet implemented;
-- **hit-testing, caret, and selection over rendered pages**, and WASM/Canvas and
-  GPU render backends;
-- the **Tauri desktop viewer/editor**;
-- **stable public SDK and WASM/C-ABI/npm distribution surfaces**;
-- collaboration adapters and production application integration.
-
-See the [Phase 0 exit report](docs/31-PHASE-0-EXIT-REPORT.md) for accepted
-evidence and the [support matrix](docs/18-SUPPORT-MATRIX.md) for the distinction
-between current and target support.
-
-The current DOCX design keeps the normalized OpenDoc model as the future live
-editing source of truth while proposing bounded source provenance and typed
-preservation for fidelity. Semantic JSON is a deterministic model artifact, not
-a replacement for OOXML or a standalone round-trip guarantee.
-
-## Getting Started
-
-OpenDoc currently builds from source. Install
+OpenDoc builds from source. Install
 [Rust](https://www.rust-lang.org/tools/install), then clone and test the
 workspace:
 
@@ -137,41 +63,90 @@ cd opendoc
 cargo test --workspace --all-features --locked
 ```
 
-The repository pins Rust 1.96.0 through `rust-toolchain.toml` and supports Rust
-1.85.0 as its minimum Rust version. Every pull request runs the primary build,
-test, lint, docs, and WASM gates on the pinned development toolchain and a
-separate locked all-target check on Rust 1.85.0. The pinned toolchain also
-installs Clippy, rustfmt, and the WASM target.
-
-Run the primary local quality gates with:
+Render the first page of a bundled sample document to a PNG — the full pipeline
+(import → paginate → compose → raster):
 
 ```sh
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-cargo test --workspace --all-features --locked
-cargo test --doc --workspace --all-features --locked
-cargo check --workspace --all-features --locked \
-  --target wasm32-unknown-unknown
-cargo +1.85.0 check --workspace --all-targets --all-features --locked
-RUSTDOCFLAGS="-D warnings" \
-  cargo doc --workspace --all-features --no-deps --locked
+cargo run -p casual-doc-render --example render_docx_page -- page.png
 ```
 
-Run the deterministic benchmark smoke suite with:
+On a machine with system fonts you can let the shaper fall back to installed
+faces (useful for CJK, symbol, and complex-script text the bundled Latin faces
+do not cover):
 
 ```sh
-cargo run -p opendoc-benchmark --release --locked -- \
-  --smoke \
-  --output target/benchmarks/local-smoke.json
+cargo run -p casual-doc-render --example render_docx_page \
+  --features system-fonts -- page.png
 ```
 
-CI additionally enforces dependency licenses and sources, RustSec advisories,
-fixture checksums, locked metadata, the platform matrix, and fuzz-target
-compilation.
+The repository pins Rust **1.96.0** through `rust-toolchain.toml` and supports
+Rust **1.88.0** as its minimum supported version (MSRV). Every pull request runs
+the build, test, lint, docs, and WASM gates on the pinned toolchain plus a
+separate locked all-target check on the MSRV.
+
+## Example
+
+Import a `.docx` into the model and read back its content:
+
+```rust
+use casual_doc_import::{import_package, ImportConfig, ImportMode};
+use casual_doc_ooxml::{DocxPackage, PackageLimits};
+
+let bytes = std::fs::read("document.docx")?;
+let mut package = DocxPackage::open(&bytes, PackageLimits::default())?;
+let outcome = import_package(
+    &mut package,
+    ImportConfig { mode: ImportMode::Semantic, ..ImportConfig::default() },
+)?;
+
+let document = outcome.document;
+// `document` is the normalized model: paragraphs, runs, styles, tables, …
+// Anything not yet modeled is captured in the compatibility report, not lost.
+```
+
+## Status & limitations
+
+OpenDoc is in **pre-release development**: the crates are unpublished and the
+public API is not yet stable. It is a maturing engine, not a finished product —
+here is an honest picture of where it stands.
+
+**What works today**
+
+- The full DOCX **import → model → semantic write-back** path is complete: a
+  `.docx` reads into the normalized model and writes back to a LibreOffice-valid
+  `.docx` that reopens to an identical model (a semantic fixed point over the
+  real-producer fixture corpus). An unedited package can also be reconstructed
+  byte-for-byte.
+- The **layout and rendering path is structurally strong.** Recent fidelity work
+  (PRs #126–#135) added an effective-property style cascade
+  (`docDefaults → styles/basedOn → direct`, giving correct sizes, families,
+  bold/italic, theme colors, and paragraph/line spacing), Word header/footer band
+  nesting, table cell margins (`tcMar`) and vertical alignment (`vAlign`),
+  block-level SDT flow (which recovers tables of contents), a floating-object
+  layer with real z-order (DrawingML `wpg` groups, floating text boxes,
+  header/footer floats), VML shapes parsed and painted, and page-background color.
+- Measured against **LibreOffice as the layout oracle**, page counts on the
+  sample corpus are exact on 3 of 5 documents and within ±1 on the other 2.
+
+**Known limitations (not yet done)**
+
+The renderer is structurally strong but **not yet pixel-perfect Word-grade**:
+text wrapping around floats is not yet implemented, so body text can overlap a
+float; CJK fallback-font line metrics run slightly tall; a couple of ±1
+page-count gaps remain; footer `PAGE`/`NUMPAGES` recompute has edge cases where
+cached values can show; and floating-text-box export drops its anchor on
+round-trip. Footnote and endnote **body** placement, inline math (OMML) layout,
+and multi-column section layout are not done yet. Hit-testing over rendered
+pages, WASM/GPU render backends, the Tauri desktop viewer, and a stable public
+SDK are not started.
+
+See the [rendering fidelity gap analysis](docs/46-RENDERING-FIDELITY-GAP-ANALYSIS.md)
+for the evidence-backed diagnosis and prioritized roadmap, and the
+[support matrix](docs/18-SUPPORT-MATRIX.md) for current-vs-target support.
 
 ## Workspace
 
-| Package | Responsibility |
+| Crate | Responsibility |
 | --- | --- |
 | `casual-doc-sdk` | Host-facing engine and document-session facade |
 | `casual-doc-model` | Normalized document values, IDs, invariants, and snapshot I/O |
@@ -179,69 +154,41 @@ compilation.
 | `casual-doc-selection` | Logical caret/range validation and mapping |
 | `casual-doc-ooxml` | Security-bounded OOXML package inspection |
 | `casual-doc-import` | WordprocessingML semantic import into the normalized model |
-| `casual-doc-export` | DOCX writers: Retention (byte-identical reconstruction) and the semantic model → WordprocessingML writer (`write_document`) |
-| `casual-doc-layout` | Device-independent geometry, text shaping (`parley`), block/flow galley, pagination, and the backend-neutral display list |
+| `casual-doc-export` | DOCX writers: byte-identical reconstruction and the semantic model → WordprocessingML writer |
+| `casual-doc-layout` | Geometry, text shaping (`parley`), style cascade, block/flow galley, pagination, and the backend-neutral display list |
 | `casual-doc-render` | CPU render backend: executes the display list on a `tiny-skia` pixmap, rasterizing glyphs from `skrifa` outlines |
-| `opendoc-benchmark` | Reproducible workload and baseline reporting |
-| `opendoc-fidelity` | LibreOffice differential text-fidelity harness |
-| `opendoc-fuzz` | Independently locked package-reader fuzz targets |
 
-Internal crates are deliberately unpublished while architecture and public API
-contracts evolve.
+Supporting tooling lives outside `crates/`: `tools/opendoc-benchmark`
+(reproducible workloads and baselines), `tools/opendoc-fidelity` (LibreOffice
+differential fidelity harness), and `fuzz/` (`opendoc-fuzz`, independently locked
+package-reader fuzz targets). Internal crates are deliberately unpublished while
+the architecture and public API contracts evolve.
 
 ## Roadmap
 
 OpenDoc follows capability-gated delivery rather than feature claims based only
-on design:
+on design.
 
 | Phase | Outcome | Status |
 | --- | --- | --- |
 | 0 | Runtime, model, package-safety, CI, corpus, and benchmark foundation | Complete |
-| 1A | Semantic DOCX import + modeling (every construct family a first-class, editable model value), normalized snapshots, compatibility reports, and font-data modeling | **Complete** |
-| 1B | Semantic writer (model → valid editable `.docx`) | **Complete** |
-| 1C | Typography and paragraph/block layout | In progress |
-| 1D | Pagination and backend-neutral display list (incl. line splitting + incremental re-pagination) | In progress |
-| 1E | CPU rendering (native), then WASM/GPU backends and hit testing | Initial end-to-end (CPU) implementation; hit-testing and other backends not started |
+| 1A | Semantic DOCX import + modeling (every construct family a first-class model value) | Complete |
+| 1B | Semantic writer (model → valid editable `.docx`) | Complete |
+| 1C | Typography and paragraph/block layout | Substantially implemented |
+| 1D | Pagination and backend-neutral display list | Substantially implemented |
+| 1E | CPU rendering; then WASM/GPU backends and hit testing | CPU rendering implemented; other backends and hit testing not started |
 | 2 | Core editing SDK and DOCX save/reopen workflow | Planned |
 | 3 | Advanced office-document features | Planned |
 | 4 | Stable SDK surfaces and third-party embedding | Planned |
 | 5 | Collaboration adapters and product migration | Planned |
 | 6 | Stable 1.0 release | Planned |
 
-> [!NOTE]
-> Product sequencing: the **Tauri desktop application** is positioned **before the
-> public editing SDK and the WASM/third-party embedding surfaces**. The rendering
-> engine now exists as an initial CPU spine (Phase 1E); once it reaches visual
-> fidelity the desktop app is built next, and the SDK and WASM/embedding surfaces
-> follow it. Tauri is the product goal, not a current deliverable — it is not
-> started.
-
-Detailed deliverables and exit gates are maintained in the
-[roadmap](docs/06-ROADMAP-AND-DELIVERY.md). Work does not begin until its design
-is accepted and its tracker entry defines the verification gates.
-
-### Immediate Milestone
-
-Import → model → semantic write-back is complete. The current milestone is the
-end-to-end **rendering spine** — turning the model into pixels:
-
-```text
-.docx
-  -> secure package reader -> semantic import -> normalized OpenDoc model
-  -> text shaping + block/flow galley (casual-doc-layout, parley)
-  -> pagination (single-section, break control, line splitting, incremental)
-  -> backend-neutral display list
-  -> CPU raster to PNG (casual-doc-render, tiny-skia + skrifa)
-```
-
-This is a functional spine, **not yet a Word/LibreOffice-grade high-fidelity
-renderer**: full table fidelity (auto-fit, min widths, row splitting, header
-repeat, border-conflict resolution), font resolution/fallback, tabs/justification
-/hanging indents, multi-section pagination, footnotes, and hit-testing are still
-ahead. UI and Tauri integration remain out of scope for this milestone. See the
-[Phase 1C–1E layout/rendering design](docs/43-PHASE-1C-LAYOUT-RENDERING-DESIGN.md),
-the [rendering architecture research](docs/42-RENDERING-ARCHITECTURE-RESEARCH.md), and
-the [schema v1 design reference](docs/38-SCHEMA-V1-DESIGN-REFERENCE.md).
+Phases 1C–1E are structurally in place and improving in fidelity; they are not
+yet declared complete. Product sequencing positions the **Tauri desktop
+application** before the public editing SDK and the WASM/embedding surfaces — but
+it is not started, and none of the rendering work above is a Word-grade or
+release claim. Detailed deliverables and exit gates live in the
+[roadmap](docs/06-ROADMAP-AND-DELIVERY.md).
 
 ## Documentation
 
@@ -256,16 +203,12 @@ the [schema v1 design reference](docs/38-SCHEMA-V1-DESIGN-REFERENCE.md).
 - [Execution tracker](docs/14-EXECUTION-TRACKER.md)
 - [CI and release gates](docs/15-CI-AND-RELEASE-GATES.md)
 - [Support matrix](docs/18-SUPPORT-MATRIX.md)
-- [Phase 0 exit report](docs/31-PHASE-0-EXIT-REPORT.md)
-- [DOCX engine competitor research](docs/33-DOCX-ENGINE-COMPETITOR-RESEARCH.md)
-- [Proposed OOXML fidelity architecture](docs/34-OOXML-FIDELITY-ARCHITECTURE.md)
-- [Import disposition taxonomy](docs/35-DISPOSITION-TAXONOMY.md)
-- [ADR-027 acceptance record](docs/36-ADR-027-ACCEPTANCE-RECORD.md)
-- [Phase 1A decision research (Word/ONLYOFFICE/LibreOffice)](docs/37-PHASE-1A-DECISION-RESEARCH.md)
-- [Schema v1 design reference (consolidated: import architecture, base schema, and every modeled construct)](docs/38-SCHEMA-V1-DESIGN-REFERENCE.md)
-- [Phase 1B exit report (semantic writer)](docs/41-PHASE-1B-EXIT-REPORT.md)
+- [Schema v1 design reference](docs/38-SCHEMA-V1-DESIGN-REFERENCE.md)
 - [Rendering architecture research](docs/42-RENDERING-ARCHITECTURE-RESEARCH.md)
-- [Phase 1C–1E layout/pagination/rendering design](docs/43-PHASE-1C-LAYOUT-RENDERING-DESIGN.md)
+- [Layout/pagination/rendering design (Phases 1C–1E)](docs/43-PHASE-1C-LAYOUT-RENDERING-DESIGN.md)
+- [Coverage gap audit](docs/44-COVERAGE-GAP-AUDIT.md)
+- [Extensibility & collaboration seams](docs/45-EXTENSIBILITY-AND-COLLABORATION-SEAMS.md)
+- [Rendering fidelity gap analysis & roadmap](docs/46-RENDERING-FIDELITY-GAP-ANALYSIS.md)
 
 The numbered documents in `docs/` are the source of truth for accepted
 architecture, behavior, delivery status, and compatibility claims.
@@ -281,13 +224,20 @@ design-first workflow for substantial behavior and architecture changes:
 4. Create or update the execution tracker item.
 5. Implement with tests, documentation, and CI coverage.
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) before starting work. Governance and
-decision ownership are documented in [GOVERNANCE.md](GOVERNANCE.md).
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before starting work, and please follow
+our [Code of Conduct](CODE_OF_CONDUCT.md). Governance and decision ownership are
+documented in [GOVERNANCE.md](GOVERNANCE.md).
+
+## Community
+
+- **Questions and ideas:** open a
+  [GitHub issue](https://github.com/CasualOffice/opendoc/issues).
+- **Bugs:** file an issue with a minimal, non-confidential reproduction.
 
 ## Security
 
-Do not report vulnerabilities, malicious fixtures, or confidential documents
-in public issues. Follow [SECURITY.md](SECURITY.md) and use
+Do not report vulnerabilities, malicious fixtures, or confidential documents in
+public issues. Follow [SECURITY.md](SECURITY.md) and use
 [GitHub private vulnerability reporting](https://github.com/CasualOffice/opendoc/security/advisories/new).
 
 ## License

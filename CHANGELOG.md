@@ -8,6 +8,53 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ## Unreleased
 
+### Rendering fidelity — 2026-07-27
+
+Layout and rendering now consume the data the importer already models. Driven by
+the gap analysis in `docs/46-RENDERING-FIDELITY-GAP-ANALYSIS.md` and measured
+against LibreOffice as the layout oracle, page counts on the sample corpus are
+now exact on 3 of 5 documents and within ±1 on the other 2 (PRs #126–#135).
+
+- Fidelity gap analysis and prioritized fix roadmap (`docs/46`) added (#126).
+- **Effective-property style cascade** (F1+F2): layout resolves each run's and
+  paragraph's effective properties through `docDefaults → styles/basedOn →
+  direct` instead of reading direct properties only — correct font sizes,
+  families, bold/italic, and theme colors, plus paragraph spacing and the
+  `w:lineRule` line-spacing rules (auto/atLeast/exact) (#127).
+- **Header/footer band nesting**: the header/footer bands nest inside the page
+  margins using Word's `max(margin, dist + band_height)` geometry instead of
+  subtracting band height on top of the full margins, fixing systematic
+  over-pagination on every header/footer document (#128).
+- **Table cell margins + vertical alignment**: `w:tcMar`/`tblCellMar` cell margins
+  and `w:vAlign` (top/center/bottom) are applied during table flow and compose,
+  fixing cramped cells and mis-placed labels (#129).
+- **Block-level SDT flow**: `BlockNode::Sdt` content is now flowed instead of
+  dropped at zero height, recovering wrapped tables of contents and form-control
+  paragraphs (#130).
+- **VML shape parser**: positioned VML (`v:rect`/`v:line`/`v:oval`/`v:shape` +
+  `v:imagedata` + `v:textbox`) is parsed from each `w:pict`'s raw XML, so
+  VML-primary documents no longer render empty of graphics (#131).
+- **Floating-object layer with real z-order** (F4): a single z-ordered float layer
+  over both the body and the header/footer bands replaces the binary `behindDoc`
+  split — DrawingML groups (`wpg`), floating text boxes, per-shape/group
+  `relativeHeight` z-order, and header/footer floats. Groups are also written back
+  to OOXML on export (#132).
+- **Page background color**: `w:background` is painted instead of always-white
+  pages (#133).
+- **VML shape paint**: parsed VML shapes are mapped onto the float layer and
+  painted (rectangles/lines/ovals/images as floats, text boxes with their blocks
+  flowed through the shared pipeline), including header/footer VML (#134).
+- **VML text-box de-overlap**: VML text boxes render inline so their content no
+  longer overlaps the surrounding body, while shape and image floats are retained
+  (#135).
+
+Known residual limitations after this work are documented in `README.md`
+("Status & limitations") and `docs/46`: text wrapping around floats, slightly
+tall CJK fallback line metrics, a couple of ±1 page-count gaps, footer
+`PAGE`/`NUMPAGES` recompute edge cases, floating-text-box export dropping its
+anchor, and unlaid-out footnote/endnote bodies, inline math, and multi-column
+sections.
+
 ### Fixed
 
 - The semantic DOCX writer now emits the structured paragraph properties it

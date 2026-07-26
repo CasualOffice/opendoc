@@ -74,6 +74,7 @@ The runtime is not a UI toolkit and is not a DOCX-only editor. It is a determini
 43. `43-PHASE-1C-LAYOUT-RENDERING-DESIGN.md` — proposed production layout/pagination/rendering engine design (Phases 1C–1E).
 44. `44-COVERAGE-GAP-AUDIT.md` — evidence-backed inventory of unhandled/partial/lossy constructs (WML content, package parts, layout/render), tiered by severity; source of the P1F-* tracker rows.
 45. `45-EXTENSIBILITY-AND-COLLABORATION-SEAMS.md` — the four invariants that keep collaboration (OT/CRDT), MCP/agentic, and RAG/vector layers additive (ADR-030); review checklist for model/mutation PRs.
+46. `46-RENDERING-FIDELITY-GAP-ANALYSIS.md` — evidence-based diagnosis of the layout/render fidelity gaps (measured against LibreOffice as the layout oracle) and the prioritized fix roadmap (F1 style cascade through F7 appearance details).
 
 Also present (not in the numbered sequence): `PHASE-1A-SEMANTIC-MODELING-TRACKER.md`.
 
@@ -82,7 +83,8 @@ Also present (not in the numbered sequence): `PHASE-1A-SEMANTIC-MODELING-TRACKER
 The former per-construct schema-v1 design docs (32 and 38–53, sixteen files) were
 consolidated into the single `38-SCHEMA-V1-DESIGN-REFERENCE.md`; the originals were
 deleted with no information loss. Number 32 is intentionally retired (its content
-lives in the "Import architecture" section of doc 38). Numbers 44–53 are now free.
+lives in the "Import architecture" section of doc 38). Numbers 44, 45, and 46 are
+now in use (see the list above); 47–53 remain free.
 
 ## Recommended project names
 
