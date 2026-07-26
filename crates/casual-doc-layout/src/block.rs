@@ -92,9 +92,8 @@ impl ParagraphDecor {
     }
 }
 
-/// The four resolved visible borders of a cell (`None` = fall back to the
-/// default grid line). Produced by border-conflict resolution in the flow engine
-/// and drawn by composition.
+/// The four resolved visible borders of a cell (`None` = draw no edge). Produced
+/// by border-conflict resolution in the flow engine and drawn by composition.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct CellBorders {
     /// Top edge.
