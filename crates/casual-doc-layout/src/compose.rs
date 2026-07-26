@@ -12,10 +12,6 @@ use crate::page::Page;
 use crate::text::LineLayout;
 use crate::units::{Point, Rect, Size, Twip};
 
-/// Table cell grid-line color and width.
-const CELL_BORDER: Color = Color::rgb(160, 160, 160);
-const CELL_BORDER_WIDTH: f32 = 1.0;
-
 /// Width (twips) of a `bar` tab stop's vertical rule (~0.5pt, Word's hairline).
 const BAR_TAB_WIDTH: Twip = Twip(10);
 
@@ -25,8 +21,7 @@ const BAR_TAB_WIDTH: Twip = Twip(10);
 /// content by it.
 pub(crate) const TEXTBOX_INSET: Twip = Twip(72);
 
-/// Stroke width (device px) of an inline text box's border, matching the table
-/// grid-line hairline ([`CELL_BORDER_WIDTH`]).
+/// Stroke width (device px) of an inline text box's border (a hairline).
 const TEXTBOX_BORDER_WIDTH: f32 = 1.0;
 
 /// Builds a display list for one paragraph's shaped lines, placed with the
@@ -212,16 +207,10 @@ fn compose_fragment(list: &mut DisplayList, fragment: &BlockFragment, origin: Po
                         stroke: None,
                     });
                 }
-                // The default grid line (drawn behind the content); resolved
-                // conflict-winning borders are painted over it per edge.
-                list.push(PaintItem::Rect {
-                    rect: cell_rect,
-                    fill: None,
-                    stroke: Some(Stroke {
-                        color: CELL_BORDER,
-                        width: CELL_BORDER_WIDTH,
-                    }),
-                });
+                // Only the cell's RESOLVED borders are drawn — no default grid
+                // line. Word draws nothing for a border-less cell (common in
+                // layout tables); a gray default grid would show boundaries Word
+                // hides. Bordered tables get their borders via the resolved edges.
                 compose_cell_borders(list, cell_rect, &cell.borders);
                 // An `exact` row height clips content that overflows the cell.
                 if *clip {
