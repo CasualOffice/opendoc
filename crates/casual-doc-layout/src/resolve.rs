@@ -10,23 +10,19 @@
 //!
 //! - **Whole-face substitution** — a requested family is mapped to a bundled
 //!   face. Metric-compatible substitutes (same advances, so line breaks are
-//!   preserved) are used where an Apache-2.0 partner exists: Cambria → Caladea.
-//!   Families with no bundled metric-compatible partner (Calibri, Arial, Times
-//!   New Roman, …) fall back visually to the bundled default (Roboto). Every
+//!   preserved) are used where a bundled partner exists: Calibri → Carlito and
+//!   Cambria → Caladea. Families with no bundled metric-compatible partner (Arial,
+//!   Times New Roman, …) fall back visually to the bundled default (Roboto). Every
 //!   non-exact outcome is recorded in a [`FontResolutionReport`].
 //! - **Per-glyph coverage fallback** — if the resolved face lacks a glyph for a
 //!   code point, the resolver walks the remaining families (preserving the
 //!   bold/italic face) to the first that covers it, recording the substitution.
-//!
-//! Calibri's metric-compatible partner is Carlito, which ships only under the SIL
-//! Open Font License — outside the repository's license allowlist — so it is not
-//! bundled and Calibri resolves to the documented visual fallback.
 
 use std::collections::BTreeMap;
 
 use skrifa::{FontRef, MetadataProvider};
 
-use crate::fonts::{self, BundledFamily, CALADEA, ROBOTO};
+use crate::fonts::{self, BundledFamily, CALADEA, CARLITO, ROBOTO};
 use crate::text::FontId;
 
 /// Distinct-entry ceiling per report bucket; excess requests are counted against
@@ -164,16 +160,15 @@ fn substitute(family: &str) -> (&'static BundledFamily, Disposition) {
         // Bundled families requested directly.
         "roboto" => (&ROBOTO, Disposition::Exact),
         "caladea" => (&CALADEA, Disposition::Exact),
-        // Metric-compatible Apache-2.0 substitute for Cambria.
+        "carlito" => (&CARLITO, Disposition::Exact),
+        // Metric-compatible substitutes: matching advances preserve line breaks.
+        "calibri" => (&CARLITO, Disposition::MetricCompatible),
         "cambria" => (&CALADEA, Disposition::MetricCompatible),
-        // Common families with no bundled metric-compatible partner. Calibri's
-        // partner (Carlito) is OFL-licensed and thus not bundled; Arial/Helvetica/
-        // Times New Roman have Apache partners (Arimo/Tinos) that are not bundled
-        // by this slice. All resolve to the documented visual fallback.
-        "calibri" | "carlito" | "arial" | "helvetica" | "helvetica neue" | "times new roman"
-        | "times" | "tinos" | "arimo" | "courier new" | "courier" | "cousine" => {
-            (&ROBOTO, Disposition::Fallback)
-        }
+        // Common families with no bundled metric-compatible partner. Arial/
+        // Helvetica/Times New Roman have Apache partners (Arimo/Tinos) that are
+        // not bundled by this slice. All resolve to the documented visual fallback.
+        "arial" | "helvetica" | "helvetica neue" | "times new roman" | "times" | "tinos"
+        | "arimo" | "courier new" | "courier" | "cousine" => (&ROBOTO, Disposition::Fallback),
         _ => (&ROBOTO, Disposition::Fallback),
     }
 }
@@ -309,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn calibri_falls_back_deterministically_and_is_reported() {
+    fn calibri_resolves_to_the_carlito_face_metric_compatible() {
         let resolver = FontResolver::new();
         let mut report = FontResolutionReport::new();
         let m = resolver.resolve(&FaceRequest {
@@ -317,16 +312,28 @@ mod tests {
             bold: false,
             italic: false,
         });
-        // No Apache-2.0 metric-compatible partner is bundled, so Calibri falls
-        // back to the default family (deterministic).
-        assert_eq!(m.family, "Roboto");
-        assert_eq!(m.disposition, Disposition::Fallback);
+        // Carlito is Calibri's metric-compatible partner (matching advances), so
+        // line breaking and pagination are preserved.
+        assert_eq!(m.family, "Carlito");
+        assert_eq!(m.face, CARLITO.face_id(false, false));
+        assert_eq!(m.disposition, Disposition::MetricCompatible);
         report.note_resolution("Calibri", &m);
         let subs: Vec<_> = report.substitutions().collect();
         assert_eq!(subs.len(), 1);
         assert_eq!(subs[0].requested, "Calibri");
-        assert_eq!(subs[0].resolved_family, "Roboto");
-        assert_eq!(subs[0].disposition, Disposition::Fallback);
+        assert_eq!(subs[0].resolved_family, "Carlito");
+        assert_eq!(subs[0].disposition, Disposition::MetricCompatible);
+    }
+
+    #[test]
+    fn calibri_substitution_preserves_the_bold_italic_face() {
+        let resolver = FontResolver::new();
+        let m = resolver.resolve(&FaceRequest {
+            family: "calibri",
+            bold: true,
+            italic: true,
+        });
+        assert_eq!(m.face, CARLITO.face_id(true, true));
     }
 
     #[test]
