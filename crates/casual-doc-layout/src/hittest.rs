@@ -534,6 +534,7 @@ mod tests {
                 origin: Point::new(Twip::ZERO, Twip(baseline)),
                 bidi_level: 0,
                 decoration: Decoration::default(),
+                highlight: None,
                 glyphs,
             };
             off += len;
@@ -557,6 +558,7 @@ mod tests {
             lines: LineLayout { lines },
             box_metrics: BoxMetrics::default(),
             break_control: BreakControl::default(),
+            decor: crate::block::ParagraphDecor::default(),
         }
     }
 
@@ -578,6 +580,7 @@ mod tests {
             origin: Point::new(Twip::ZERO, Twip(LINE_H)),
             bidi_level: 1,
             decoration: Decoration::default(),
+            highlight: None,
             glyphs,
         };
         let line = Line {
@@ -593,6 +596,7 @@ mod tests {
             lines: LineLayout { lines: vec![line] },
             box_metrics: BoxMetrics::default(),
             break_control: BreakControl::default(),
+            decor: crate::block::ParagraphDecor::default(),
         }
     }
 
@@ -778,6 +782,7 @@ mod tests {
             letter_spacing: Twip::ZERO,
             color: [0, 0, 0, 255],
             decoration: Decoration::default(),
+            highlight: None,
         };
         let shaped = shaper.shape_paragraph(&[run], LineConstraints::default(), range);
         let frag = BlockFragment::Paragraph {
@@ -785,6 +790,7 @@ mod tests {
             lines: shaped,
             box_metrics: BoxMetrics::default(),
             break_control: BreakControl::default(),
+            decor: crate::block::ParagraphDecor::default(),
         };
         let paginated = layout(&[frag]);
         let snap = LayoutSnapshot::new(&paginated);
@@ -820,6 +826,7 @@ mod tests {
             letter_spacing: Twip::ZERO,
             color: [0, 0, 0, 255],
             decoration: Decoration::default(),
+            highlight: None,
         };
         // A wide column keeps it on one line so every offset is present.
         let shaped = shaper.shape_paragraph(
@@ -840,6 +847,7 @@ mod tests {
             lines: shaped,
             box_metrics: BoxMetrics::default(),
             break_control: BreakControl::default(),
+            decor: crate::block::ParagraphDecor::default(),
         };
         let paginated = layout(&[frag]);
         let snap = LayoutSnapshot::new(&paginated);

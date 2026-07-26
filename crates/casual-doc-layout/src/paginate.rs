@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::SectionId;
 
-use crate::block::{BlockFragment, BoxMetrics, BreakControl, CellFragment};
+use crate::block::{BlockFragment, BoxMetrics, BreakControl, CellFragment, ParagraphDecor};
 use crate::model::ModelPos;
 use crate::page::{FlowPos, FlowSpan, Page, PaginatedLayout, PlacedFragment};
 use crate::text::LineLayout;
@@ -492,8 +492,9 @@ impl<'a> Paginator<'a> {
                 lines,
                 box_metrics,
                 break_control,
+                decor,
             } if allow_split && !break_control.keep_lines && lines.lines.len() > 1 => {
-                self.place_paragraph(idx, *id, lines, *box_metrics, *break_control);
+                self.place_paragraph(idx, *id, lines, *box_metrics, *break_control, *decor);
             }
             BlockFragment::TableRow {
                 table,
@@ -670,6 +671,7 @@ impl<'a> Paginator<'a> {
         lines: &LineLayout,
         box_metrics: BoxMetrics,
         break_control: BreakControl,
+        decor: ParagraphDecor,
     ) {
         let n = lines.lines.len();
         let widow = break_control.widow_control;
@@ -744,9 +746,8 @@ impl<'a> Paginator<'a> {
                 lines,
                 box_metrics,
                 break_control,
+                decor,
                 start..start + take,
-                is_head,
-                is_tail,
             );
             self.push(chunk, Twip(used + space_before + space_after));
             start += take;
@@ -767,18 +768,21 @@ impl<'a> Paginator<'a> {
     }
 }
 
-/// Builds a paragraph fragment for `lines[start..end]`, re-basing each line's run
+/// Builds a paragraph fragment for `lines[range]`, re-basing each line's run
 /// origins so the first placed line sits at the fragment top, and keeping
-/// `space_before`/`space_after` only on the head/tail chunk.
+/// `space_before`/`space_after` only on the head/tail chunk. Whether this slice is
+/// the paragraph's head (starts at line 0) and/or tail (ends at the last line) is
+/// derived from `range` — a slice covering the whole paragraph is both.
 fn slice_paragraph(
     id: NodeId,
     lines: &LineLayout,
     box_metrics: BoxMetrics,
     break_control: BreakControl,
+    decor: ParagraphDecor,
     range: core::ops::Range<usize>,
-    is_head: bool,
-    is_tail: bool,
 ) -> BlockFragment {
+    let is_head = range.start == 0;
+    let is_tail = range.end == lines.lines.len();
     let y_offset: i32 = lines.lines[..range.start]
         .iter()
         .map(|l| l.height.raw())
@@ -810,6 +814,7 @@ fn slice_paragraph(
             ..box_metrics
         },
         break_control,
+        decor,
     }
 }
 
@@ -895,9 +900,10 @@ fn split_blocks(
                 lines,
                 box_metrics,
                 break_control,
+                decor,
             } if lines.lines.len() > 1 && !break_control.keep_lines => {
                 let (head_frag, tail_frag, used) =
-                    split_paragraph_at(*id, lines, *box_metrics, *break_control, avail - y);
+                    split_paragraph_at(*id, lines, *box_metrics, *break_control, *decor, avail - y);
                 if let Some(head_frag) = head_frag {
                     head.push(head_frag);
                     y += used;
@@ -921,6 +927,7 @@ fn split_paragraph_at(
     lines: &LineLayout,
     box_metrics: BoxMetrics,
     break_control: BreakControl,
+    decor: ParagraphDecor,
     avail: i32,
 ) -> (Option<BlockFragment>, Option<BlockFragment>, i32) {
     let n = lines.lines.len();
@@ -937,11 +944,11 @@ fn split_paragraph_at(
         take += 1;
     }
     if take == 0 {
-        let whole = slice_paragraph(id, lines, box_metrics, break_control, 0..n, true, true);
+        let whole = slice_paragraph(id, lines, box_metrics, break_control, decor, 0..n);
         return (None, Some(whole), 0);
     }
-    let head = slice_paragraph(id, lines, box_metrics, break_control, 0..take, true, false);
-    let tail = slice_paragraph(id, lines, box_metrics, break_control, take..n, false, true);
+    let head = slice_paragraph(id, lines, box_metrics, break_control, decor, 0..take);
+    let tail = slice_paragraph(id, lines, box_metrics, break_control, decor, take..n);
     (Some(head), Some(tail), space_before + used)
 }
 
@@ -1009,6 +1016,7 @@ mod tests {
             lines: LineLayout { lines: vec![line] },
             box_metrics: BoxMetrics::default(),
             break_control,
+            decor: ParagraphDecor::default(),
         }
     }
 
@@ -1033,6 +1041,7 @@ mod tests {
                         origin: Point::new(Twip::ZERO, baseline),
                         bidi_level: 0,
                         decoration: crate::text::Decoration::default(),
+                        highlight: None,
                         glyphs: vec![Glyph {
                             id: 1,
                             advance: line_h,
@@ -1052,6 +1061,7 @@ mod tests {
             lines: LineLayout { lines },
             box_metrics: BoxMetrics::default(),
             break_control,
+            decor: ParagraphDecor::default(),
         }
     }
 
@@ -1553,6 +1563,7 @@ mod tests {
             width: Twip(3000),
             blocks,
             borders: CellBorders::default(),
+            shading: None,
         }
     }
 

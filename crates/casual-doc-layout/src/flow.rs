@@ -18,13 +18,14 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use casual_doc_model::v1::{
-    Alignment, BlockNode, BorderEdge, Color, Document, FontRef, FontScheme, HeightRule, InlineNode,
-    ParagraphProperties, RunProperties, Table, TableBorders, TableCell, TableLayout,
-    TableRowProperties, ThemeFontRef,
+    Alignment, BlockNode, BorderEdge, Color, Document, FontRef, FontScheme, HeightRule,
+    HighlightColor, InlineNode, ParagraphProperties, RunProperties, Table, TableBorders, TableCell,
+    TableLayout, TableRowProperties, ThemeFontRef,
 };
 
 use crate::block::{
-    BlockFragment, BoxMetrics, BreakControl, CellBorders, CellFragment, ResolvedEdge,
+    BlockBorders, BlockFragment, BoxMetrics, BreakControl, CellBorders, CellFragment,
+    ParagraphDecor, ResolvedEdge,
 };
 use crate::incremental::{DirtySet, GalleyCache};
 use crate::model::{ModelPos, ModelRange};
@@ -120,21 +121,17 @@ pub fn build_galley_cached(
                 // Resolving here sets each run's resolved `font`, which
                 // `paragraph_hash` hashes — so the cache key tracks the face.
                 collect_runs(&paragraph.inlines, &mut runs, &mut ctx);
-                let spacing = paragraph.properties.spacing.as_ref();
-                let constraints = LineConstraints {
-                    max_width: content_width,
-                    rtl: false,
-                    alignment: alignment(&paragraph.properties),
-                    line_height_percent: spacing.and_then(|s| s.line_percent),
-                };
+                let constraints = line_constraints(&paragraph.properties, content_width);
                 let box_metrics = box_metrics(&paragraph.properties);
                 let break_control = break_control(&paragraph.properties);
+                let decor = paragraph_decor(&paragraph.properties, content_width);
                 let hash = paragraph_hash(
                     paragraph.id,
                     &runs,
                     &constraints,
                     box_metrics,
                     break_control,
+                    decor,
                 );
 
                 if let Some(fragment) = cache.reusable(paragraph.id, hash, dirty) {
@@ -151,6 +148,7 @@ pub fn build_galley_cached(
                     lines,
                     box_metrics,
                     break_control,
+                    decor,
                 };
                 cache.store(paragraph.id, hash, fragment.clone());
                 galley.push(fragment);
@@ -175,6 +173,7 @@ fn paragraph_hash(
     constraints: &LineConstraints,
     box_metrics: BoxMetrics,
     break_control: BreakControl,
+    decor: ParagraphDecor,
 ) -> u64 {
     let mut hasher = DefaultHasher::new();
     id.as_u128().hash(&mut hasher);
@@ -188,11 +187,13 @@ fn paragraph_hash(
         run.color.hash(&mut hasher);
         run.decoration.underline.hash(&mut hasher);
         run.decoration.strikethrough.hash(&mut hasher);
+        run.highlight.hash(&mut hasher);
     }
     constraints.max_width.0.hash(&mut hasher);
     constraints.rtl.hash(&mut hasher);
     (constraints.alignment as u8).hash(&mut hasher);
     constraints.line_height_percent.hash(&mut hasher);
+    constraints.first_line_indent.0.hash(&mut hasher);
     box_metrics.space_before.0.hash(&mut hasher);
     box_metrics.space_after.0.hash(&mut hasher);
     box_metrics.indent_start.0.hash(&mut hasher);
@@ -201,6 +202,20 @@ fn paragraph_hash(
     break_control.keep_next.hash(&mut hasher);
     break_control.keep_lines.hash(&mut hasher);
     break_control.widow_control.hash(&mut hasher);
+    decor.shading.hash(&mut hasher);
+    decor.width.0.hash(&mut hasher);
+    for e in [
+        decor.borders.top,
+        decor.borders.bottom,
+        decor.borders.start,
+        decor.borders.end,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        e.color.hash(&mut hasher);
+        e.width.0.hash(&mut hasher);
+    }
     hasher.finish()
 }
 
@@ -223,15 +238,9 @@ fn flow_blocks(
                     ModelPos::new(paragraph.id, 0),
                     ModelPos::new(paragraph.id, 0),
                 );
-                let spacing = paragraph.properties.spacing.as_ref();
                 let lines = shaper.shape_paragraph(
                     &runs,
-                    LineConstraints {
-                        max_width: width,
-                        rtl: false,
-                        alignment: alignment(&paragraph.properties),
-                        line_height_percent: spacing.and_then(|s| s.line_percent),
-                    },
+                    line_constraints(&paragraph.properties, width),
                     range,
                 );
                 galley.push(BlockFragment::Paragraph {
@@ -239,6 +248,7 @@ fn flow_blocks(
                     lines,
                     box_metrics: box_metrics(&paragraph.properties),
                     break_control: break_control(&paragraph.properties),
+                    decor: paragraph_decor(&paragraph.properties, width),
                 });
             }
             BlockNode::Table(table) => flow_table(table, shaper, width, &mut galley, ctx),
@@ -294,6 +304,7 @@ fn flow_table(
             let cell_end = edge(col + span);
             let cell_width = Twip((cell_end.raw() - cell_x.raw()).max(1));
             let borders = resolve_cell_borders(&table.properties.borders, &row.cells, index);
+            let shading = cell.properties.shading.fill.map(|c| [c.r, c.g, c.b, 255]);
             cells.push(CellFragment {
                 id: cell.id,
                 grid_span: span as u32,
@@ -301,6 +312,7 @@ fn flow_table(
                 width: cell_width,
                 blocks: flow_blocks(&cell.blocks, shaper, cell_width, ctx),
                 borders,
+                shading,
             });
             col += span;
         }
@@ -769,6 +781,7 @@ fn styled_run<'a>(text: &'a str, properties: &RunProperties, ctx: &mut FlowCtx) 
             underline: properties.underline.unwrap_or(false),
             strikethrough: properties.strike.unwrap_or(false),
         },
+        highlight: properties.highlight.and_then(highlight_rgba),
     }
 }
 
@@ -873,6 +886,93 @@ fn box_metrics(properties: &ParagraphProperties) -> BoxMetrics {
         indent_start: indent.and_then(|i| i.start_twips).map_or(Twip::ZERO, Twip),
         indent_end: indent.and_then(|i| i.end_twips).map_or(Twip::ZERO, Twip),
     }
+}
+
+/// Builds the shaper constraints for a paragraph flowed into `width`: the wrap
+/// width is the column width less the start/end indents (so lines wrap at the
+/// indented column), and the first-line indent carries `w:ind@firstLine`
+/// (positive) or `w:ind@hanging` (negative, protruding). Hanging wins when both
+/// are present, matching Word.
+fn line_constraints(properties: &ParagraphProperties, width: Twip) -> LineConstraints {
+    let spacing = properties.spacing.as_ref();
+    let metrics = box_metrics(properties);
+    let indent = properties.indentation.as_ref();
+    let first_line_indent = match indent {
+        Some(i) if i.hanging_twips.unwrap_or(0) != 0 => Twip(-i.hanging_twips.unwrap_or(0)),
+        Some(i) => Twip(i.first_line_twips.unwrap_or(0)),
+        None => Twip::ZERO,
+    };
+    let max_width =
+        Twip((width.raw() - metrics.indent_start.raw() - metrics.indent_end.raw()).max(1));
+    LineConstraints {
+        max_width,
+        rtl: false,
+        alignment: alignment(properties),
+        line_height_percent: spacing.and_then(|s| s.line_percent),
+        first_line_indent,
+    }
+}
+
+/// Builds the paint-only decoration (background shading + borders) of a paragraph
+/// box flowed into `width`. Empty (serializes to nothing) for a plain paragraph.
+fn paragraph_decor(properties: &ParagraphProperties, width: Twip) -> ParagraphDecor {
+    let shading = properties.shading.fill.map(|c| [c.r, c.g, c.b, 255]);
+    let b = &properties.borders;
+    let borders = BlockBorders {
+        top: single_edge(b.top.as_ref()),
+        bottom: single_edge(b.bottom.as_ref()),
+        start: single_edge(b.start.as_ref()),
+        end: single_edge(b.end.as_ref()),
+    };
+    if shading.is_none() && borders.is_empty() {
+        return ParagraphDecor::default();
+    }
+    ParagraphDecor {
+        shading,
+        borders,
+        width,
+    }
+}
+
+/// Converts a single model border edge to a drawable [`ResolvedEdge`] (no
+/// conflict resolution — paragraph borders have a single candidate per edge),
+/// returning `None` for an absent or invisible (`nil`/`none`) edge.
+fn single_edge(edge: Option<&BorderEdge>) -> Option<ResolvedEdge> {
+    let edge = edge?;
+    if !is_visible_border(edge) {
+        return None;
+    }
+    let color = edge.color.map_or([0, 0, 0, 255], |c| [c.r, c.g, c.b, 255]);
+    // `w:sz` is in eighths of a point; a point is 20 twips.
+    let width = edge
+        .size_eighth_points
+        .map_or(Twip(10), |sz| Twip(((sz * 20) / 8).max(1) as i32));
+    Some(ResolvedEdge { color, width })
+}
+
+/// Resolves a named `w:highlight` color to an opaque RGBA fill. `None`
+/// (`ST_HighlightColor` `none`) yields no highlight.
+fn highlight_rgba(color: HighlightColor) -> Option<[u8; 4]> {
+    let (r, g, b) = match color {
+        HighlightColor::None => return None,
+        HighlightColor::Black => (0, 0, 0),
+        HighlightColor::Blue => (0, 0, 255),
+        HighlightColor::Cyan => (0, 255, 255),
+        HighlightColor::DarkBlue => (0, 0, 139),
+        HighlightColor::DarkCyan => (0, 139, 139),
+        HighlightColor::DarkGray => (169, 169, 169),
+        HighlightColor::DarkGreen => (0, 100, 0),
+        HighlightColor::DarkMagenta => (139, 0, 139),
+        HighlightColor::DarkRed => (139, 0, 0),
+        HighlightColor::DarkYellow => (153, 153, 0),
+        HighlightColor::Green => (0, 255, 0),
+        HighlightColor::LightGray => (211, 211, 211),
+        HighlightColor::Magenta => (255, 0, 255),
+        HighlightColor::Red => (255, 0, 0),
+        HighlightColor::White => (255, 255, 255),
+        HighlightColor::Yellow => (255, 255, 0),
+    };
+    Some([r, g, b, 255])
 }
 
 #[cfg(test)]
@@ -1007,6 +1107,80 @@ mod tests {
         assert!(
             run.size.raw() >= Twip::from_points(20).raw(),
             "24pt size flows through"
+        );
+    }
+
+    #[test]
+    fn a_start_end_indent_reduces_the_wrap_width_and_carries_into_box_metrics() {
+        use casual_doc_model::v1::{Indentation, Paragraph, ParagraphProperties};
+        let text = "Hello world this is a longer paragraph that wraps onto lines";
+        let plain = document(vec![paragraph(
+            10,
+            vec![run_node(11, text, RunProperties::default())],
+        )]);
+        let indented = document(vec![BlockNode::Paragraph(Paragraph {
+            id: NodeId::from_parts(10, 1).unwrap(),
+            properties: ParagraphProperties {
+                indentation: Some(Indentation {
+                    start_twips: Some(2000),
+                    end_twips: Some(2000),
+                    ..Indentation::default()
+                }),
+                ..ParagraphProperties::default()
+            },
+            inlines: vec![run_node(11, text, RunProperties::default())],
+        })]);
+        let shaper = ParleyShaper::new();
+        let width = Twip::from_points(300);
+        let plain_lines = {
+            let g = build_galley(&plain, &shaper, width);
+            let BlockFragment::Paragraph { lines, .. } = &g[0] else {
+                panic!()
+            };
+            lines.lines.len()
+        };
+        let g = build_galley(&indented, &shaper, width);
+        let BlockFragment::Paragraph {
+            lines, box_metrics, ..
+        } = &g[0]
+        else {
+            panic!()
+        };
+        assert_eq!(
+            box_metrics.indent_start,
+            Twip(2000),
+            "the start indent is carried"
+        );
+        assert_eq!(
+            box_metrics.indent_end,
+            Twip(2000),
+            "the end indent is carried"
+        );
+        assert!(
+            lines.lines.len() > plain_lines,
+            "the 4000-twip indent narrows the column so the text wraps into more lines \
+             ({} vs {plain_lines})",
+            lines.lines.len()
+        );
+    }
+
+    #[test]
+    fn a_highlighted_run_carries_its_resolved_fill_into_the_shaped_run() {
+        use casual_doc_model::v1::HighlightColor;
+        let props = RunProperties {
+            highlight: Some(HighlightColor::Yellow),
+            ..RunProperties::default()
+        };
+        let doc = document(vec![paragraph(10, vec![run_node(11, "lit", props)])]);
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&doc, &shaper, Twip::from_points(400));
+        let BlockFragment::Paragraph { lines, .. } = &galley[0] else {
+            panic!();
+        };
+        assert_eq!(
+            lines.lines[0].runs[0].highlight,
+            Some([255, 255, 0, 255]),
+            "the yellow highlight resolves to RGBA and rides the shaped run"
         );
     }
 
