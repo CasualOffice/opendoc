@@ -3655,7 +3655,11 @@ impl BodyParser<'_> {
         match self.pending_anchor.take() {
             Some(pending) => {
                 // A floating text box: carry its anchor + extent + fill/border.
-                let extent = self.pending_extent.take().unwrap_or(ZERO_EXTENT);
+                let extent = self
+                    .pending_extent
+                    .take()
+                    .or((shape.extent != ZERO_EXTENT).then_some(shape.extent))
+                    .unwrap_or(ZERO_EXTENT);
                 self.push_segment(Segment::TextBox(TextBox {
                     id: shape.id,
                     anchor: Some(pending.resolve()),
@@ -3667,14 +3671,19 @@ impl BodyParser<'_> {
                 }));
             }
             None => {
-                // An inline text box (unchanged behavior).
+                // Preserve an inline shape's authored appearance and size. Do not
+                // take `pending_extent`: the same drawing can contain a sibling
+                // picture whose commit path still needs the shared `wp:extent`.
+                let extent = self
+                    .pending_extent
+                    .or((shape.extent != ZERO_EXTENT).then_some(shape.extent));
                 self.push_segment(Segment::TextBox(TextBox {
                     id: shape.id,
                     anchor: None,
                     relative_height: None,
-                    extent: None,
-                    fill: None,
-                    border: None,
+                    extent,
+                    fill: shape.fill,
+                    border: shape.stroke,
                     blocks,
                 }));
             }

@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::block::BlockFragment;
 use crate::model::ModelPos;
+use crate::text::TextBoxStroke;
 use crate::units::{Point, Rect, Twip};
 
 /// A position in the galley's flow: a fragment (by index) and a line offset
@@ -118,8 +119,8 @@ pub enum AnchorContent {
         blocks: Vec<BlockFragment>,
         /// The box background fill (RGBA), if any.
         fill: Option<[u8; 4]>,
-        /// The box border color (RGBA), if any.
-        border: Option<[u8; 4]>,
+        /// The box border color and width, if any.
+        border: Option<TextBoxStroke>,
     },
 }
 

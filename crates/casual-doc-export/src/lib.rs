@@ -2303,15 +2303,20 @@ mod semantic_tests {
 
     #[test]
     fn text_box_survives_the_semantic_round_trip() {
-        // An inline text box (w:txbxContent) holding block content — the writer
-        // regenerates the DrawingML shape scaffold the importer triggers on.
+        // An inline text box holding block content and authored appearance.
         let xml = br#"<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps"><w:body>
-            <w:p><w:r><w:drawing><wp:inline><a:graphic><a:graphicData><wps:wsp><wps:txbx>
-                <w:txbxContent>
-                    <w:p><w:r><w:rPr><w:b/></w:rPr><w:t>boxed text</w:t></w:r></w:p>
-                    <w:p><w:r><w:t>second line</w:t></w:r></w:p>
-                </w:txbxContent>
-            </wps:txbx></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>
+            <w:p><w:r><w:drawing><wp:inline><wp:extent cx="1270000" cy="635000"/>
+                <a:graphic><a:graphicData><wps:wsp>
+                    <wps:spPr>
+                        <a:solidFill><a:srgbClr val="112233"><a:alpha val="50196"/></a:srgbClr></a:solidFill>
+                        <a:ln w="19050"><a:solidFill><a:srgbClr val="445566"><a:alpha val="25098"/></a:srgbClr></a:solidFill></a:ln>
+                    </wps:spPr>
+                    <wps:txbx><w:txbxContent>
+                        <w:p><w:r><w:rPr><w:b/></w:rPr><w:t>boxed text</w:t></w:r></w:p>
+                        <w:p><w:r><w:t>second line</w:t></w:r></w:p>
+                    </w:txbxContent></wps:txbx>
+                </wps:wsp></a:graphicData></a:graphic>
+            </wp:inline></w:drawing></w:r></w:p>
         </w:body></w:document>"#;
         let m1 = import_main_document_xml(xml, ImportConfig::default())
             .unwrap()
@@ -2325,6 +2330,54 @@ mod semantic_tests {
         let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
         let m2 = reopen(&bytes);
         assert_eq!(m1, m2, "an inline text box survives write -> reopen");
+    }
+
+    #[test]
+    fn floating_text_box_anchor_and_appearance_survive_the_semantic_round_trip() {
+        let xml = br#"<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps"><w:body>
+            <w:p><w:r><w:drawing>
+                <wp:anchor behindDoc="1" relativeHeight="17" simplePos="0">
+                    <wp:simplePos x="0" y="0"/>
+                    <wp:positionH relativeFrom="page"><wp:posOffset>914400</wp:posOffset></wp:positionH>
+                    <wp:positionV relativeFrom="margin"><wp:posOffset>-228600</wp:posOffset></wp:positionV>
+                    <wp:extent cx="1828800" cy="1219200"/>
+                    <wp:wrapSquare wrapText="bothSides"/>
+                    <wp:docPr id="1" name="Text Box 1"/>
+                    <a:graphic><a:graphicData><wps:wsp>
+                        <wps:spPr>
+                            <a:solidFill><a:srgbClr val="A0B0C0"/></a:solidFill>
+                            <a:ln w="25400"><a:solidFill><a:srgbClr val="102030"/></a:solidFill></a:ln>
+                        </wps:spPr>
+                        <wps:txbx><w:txbxContent>
+                            <w:p><w:r><w:t>floating</w:t></w:r></w:p>
+                        </w:txbxContent></wps:txbx>
+                    </wps:wsp></a:graphicData></a:graphic>
+                </wp:anchor>
+            </w:drawing></w:r></w:p>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        assert!(matches!(
+            m1.body().first(),
+            Some(casual_doc_model::v1::BlockNode::Paragraph(p))
+                if matches!(
+                    p.inlines.first(),
+                    Some(casual_doc_model::v1::InlineNode::TextBox(text_box))
+                        if text_box.anchor.is_some()
+                            && text_box.relative_height == Some(17)
+                            && text_box.extent == Some(casual_doc_model::v1::Extent {
+                                width_emu: 1_828_800,
+                                height_emu: 1_219_200,
+                            })
+                )
+        ));
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(
+            m1, m2,
+            "a floating text box preserves anchor, extent, z key, and appearance"
+        );
     }
 
     #[test]

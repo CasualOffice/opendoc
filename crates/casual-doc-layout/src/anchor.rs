@@ -33,7 +33,7 @@ use crate::page::{
     AnchorContent, AnchorStroke, AnchorZ, PaginatedLayout, PlacedAnchor, PlacedFragment,
 };
 use crate::paginate::PageConfig;
-use crate::text::LineShaper;
+use crate::text::{LineShaper, TextBoxStroke};
 use crate::units::{Point, Rect, Size, Twip};
 
 /// Places every floating object in the document (body and header/footer bands)
@@ -201,7 +201,7 @@ fn collect_inlines(
                         content: AnchorContent::TextBox {
                             blocks,
                             fill: text_box.fill.map(rgba),
-                            border: text_box.border.map(|b| rgba(b.color)),
+                            border: text_box.border.map(text_box_stroke),
                         },
                         rect,
                         behind_doc: anchor.behind_doc,
@@ -305,7 +305,7 @@ fn place_group_children(
                         content: AnchorContent::TextBox {
                             blocks,
                             fill: text_box.fill.map(rgba),
-                            border: text_box.border.map(|b| rgba(b.color)),
+                            border: text_box.border.map(text_box_stroke),
                         },
                         rect,
                         behind_doc,
@@ -531,6 +531,13 @@ fn shape_stroke(stroke: Option<ShapeStroke>) -> Option<AnchorStroke> {
         color: rgba(s.color),
         width: emu_to_twip(s.width_emu),
     })
+}
+
+fn text_box_stroke(stroke: ShapeStroke) -> TextBoxStroke {
+    TextBoxStroke {
+        color: rgba(stroke.color),
+        width: emu_to_twip(stroke.width_emu),
+    }
 }
 
 /// Finds the page and paragraph rectangle for a float's paragraph. Returns the

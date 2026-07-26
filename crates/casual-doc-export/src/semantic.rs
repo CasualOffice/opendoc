@@ -38,9 +38,9 @@ use casual_doc_model::v1::{
     ShapeStroke, Style, StyleId, StyleKind, TabAlignment, TabLeader, Table, TableAnchor,
     TableBorders, TableCell, TableCellProperties, TableFloatPosition, TableLayout, TableOverlap,
     TableProperties, TableRow, TableRowProperties, TableStyleOverride, TableStyleRegion,
-    TableXAlign, TableYAlign, TextDirection, ThemeFontRef, VerticalAlign, VerticalAlignment,
-    VerticalAnchor, VerticalMerge, VerticalPosition, VerticalTextAlignment, WordprocessingGroup,
-    WrapMode, Zoom, ZoomMode,
+    TableXAlign, TableYAlign, TextBox, TextDirection, ThemeFontRef, VerticalAlign,
+    VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition, VerticalTextAlignment,
+    WordprocessingGroup, WrapMode, Zoom, ZoomMode,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -3817,11 +3817,10 @@ fn write_inline(
         InlineNode::EmbeddedObject(object) => {
             write_embedded_object(w, object, ctx)?;
         }
-        // An inline text box: a DrawingML shape whose `w:txbxContent` wraps the
-        // block content. The importer triggers on `w:txbxContent`, restoring the
-        // suspended run flow when it closes.
+        // A DrawingML text box: preserve whether it is inline or floating along
+        // with its extent, anchor, z key, fill, and outline.
         InlineNode::TextBox(text_box) => {
-            write_text_box(w, &text_box.blocks, ctx)?;
+            write_text_box(w, text_box, ctx)?;
         }
         // A DrawingML group: a floating `w:drawing`/`wp:anchor` wrapping a
         // `wpg:wgp` of positioned children (pictures, text boxes, shapes, nested
@@ -4338,6 +4337,9 @@ fn write_group_text_box(
     write_prst_geom(w, "rect")?;
     if let Some(fill) = text_box.fill {
         write_solid_fill(w, fill)?;
+    } else {
+        w.write_event(Event::Empty(start("a:noFill")))
+            .map_err(pkg)?;
     }
     write_outline(w, text_box.border)?;
     w.write_event(Event::End(BytesEnd::new("wps:spPr")))
@@ -4400,7 +4402,17 @@ fn write_solid_fill(w: &mut Writer<Cursor<Vec<u8>>>, color: Rgba) -> Result<(), 
         .map_err(pkg)?;
     let mut srgb = start("a:srgbClr");
     srgb.push_attribute(("val", hex_rgb(color).as_str()));
-    w.write_event(Event::Empty(srgb)).map_err(pkg)?;
+    if color.a == u8::MAX {
+        w.write_event(Event::Empty(srgb)).map_err(pkg)?;
+    } else {
+        w.write_event(Event::Start(srgb)).map_err(pkg)?;
+        let mut alpha = start("a:alpha");
+        let alpha_value = (u32::from(color.a) * 100_000 + 127) / 255;
+        alpha.push_attribute(("val", alpha_value.to_string().as_str()));
+        w.write_event(Event::Empty(alpha)).map_err(pkg)?;
+        w.write_event(Event::End(BytesEnd::new("a:srgbClr")))
+            .map_err(pkg)?;
+    }
     w.write_event(Event::End(BytesEnd::new("a:solidFill")))
         .map_err(pkg)?;
     Ok(())
@@ -4717,38 +4729,124 @@ fn write_ole_object(
     Ok(())
 }
 
-/// Emits an inline text box: the minimal DrawingML shape (`wps:wsp`/`wps:txbx`)
-/// wrapping a `w:txbxContent` that holds the block content — the scaffold the
-/// importer round-trips (it triggers on `w:txbxContent`, discarding the rest).
+/// Emits a DrawingML text box, preserving its inline/floating frame, extent,
+/// anchor, z-order key, fill, outline, and block content.
 fn write_text_box(
     w: &mut Writer<Cursor<Vec<u8>>>,
-    blocks: &[BlockNode],
+    text_box: &TextBox,
     ctx: &mut Ctx,
 ) -> Result<(), ExportError> {
-    for tag in ["w:r", "w:drawing", "wp:inline", "a:graphic"] {
-        w.write_event(Event::Start(start(tag))).map_err(pkg)?;
-    }
+    w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
+    w.write_event(Event::Start(start("w:drawing")))
+        .map_err(pkg)?;
+
+    let frame_tag = if let Some(anchor) = &text_box.anchor {
+        let mut frame = start("wp:anchor");
+        for name in ["distT", "distB", "distL", "distR"] {
+            frame.push_attribute((name, "0"));
+        }
+        frame.push_attribute(("simplePos", "0"));
+        if let Some(relative_height) = text_box.relative_height {
+            frame.push_attribute(("relativeHeight", relative_height.to_string().as_str()));
+        }
+        frame.push_attribute(("behindDoc", if anchor.behind_doc { "1" } else { "0" }));
+        frame.push_attribute(("locked", "0"));
+        frame.push_attribute(("layoutInCell", "1"));
+        frame.push_attribute(("allowOverlap", "1"));
+        w.write_event(Event::Start(frame)).map_err(pkg)?;
+
+        let mut simple_pos = start("wp:simplePos");
+        simple_pos.push_attribute(("x", "0"));
+        simple_pos.push_attribute(("y", "0"));
+        w.write_event(Event::Empty(simple_pos)).map_err(pkg)?;
+        write_position_h(w, &anchor.horizontal)?;
+        write_position_v(w, &anchor.vertical)?;
+        write_text_box_extent(
+            w,
+            text_box.extent.unwrap_or(Extent {
+                width_emu: 0,
+                height_emu: 0,
+            }),
+        )?;
+        write_wrap(w, anchor.wrap)?;
+        "wp:anchor"
+    } else {
+        let mut frame = start("wp:inline");
+        for name in ["distT", "distB", "distL", "distR"] {
+            frame.push_attribute((name, "0"));
+        }
+        w.write_event(Event::Start(frame)).map_err(pkg)?;
+        if let Some(extent) = text_box.extent {
+            write_text_box_extent(w, extent)?;
+        }
+        "wp:inline"
+    };
+
+    let mut doc_pr = start("wp:docPr");
+    doc_pr.push_attribute(("id", "1"));
+    doc_pr.push_attribute(("name", "Text Box 1"));
+    w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
+    w.write_event(Event::Start(start("a:graphic")))
+        .map_err(pkg)?;
     let mut graphic_data = start("a:graphicData");
     graphic_data.push_attribute(("uri", WPS_NS));
     w.write_event(Event::Start(graphic_data)).map_err(pkg)?;
-    for tag in ["wps:wsp", "wps:txbx", "w:txbxContent"] {
-        w.write_event(Event::Start(start(tag))).map_err(pkg)?;
+    w.write_event(Event::Start(start("wps:wsp"))).map_err(pkg)?;
+    let mut c_nv_pr = start("wps:cNvPr");
+    c_nv_pr.push_attribute(("id", "0"));
+    c_nv_pr.push_attribute(("name", "Text Box"));
+    w.write_event(Event::Empty(c_nv_pr)).map_err(pkg)?;
+    w.write_event(Event::Empty(start("wps:cNvSpPr")))
+        .map_err(pkg)?;
+    w.write_event(Event::Start(start("wps:spPr")))
+        .map_err(pkg)?;
+    write_shape_xfrm(
+        w,
+        PointEmu { x_emu: 0, y_emu: 0 },
+        text_box.extent.unwrap_or(Extent {
+            width_emu: 0,
+            height_emu: 0,
+        }),
+    )?;
+    write_prst_geom(w, "rect")?;
+    if let Some(fill) = text_box.fill {
+        write_solid_fill(w, fill)?;
     }
-    for block in blocks {
+    write_outline(w, text_box.border)?;
+    w.write_event(Event::End(BytesEnd::new("wps:spPr")))
+        .map_err(pkg)?;
+    w.write_event(Event::Start(start("wps:txbx")))
+        .map_err(pkg)?;
+    w.write_event(Event::Start(start("w:txbxContent")))
+        .map_err(pkg)?;
+    for block in &text_box.blocks {
         write_block(w, block, ctx)?;
     }
-    for tag in [
-        "w:txbxContent",
-        "wps:txbx",
-        "wps:wsp",
-        "a:graphicData",
-        "a:graphic",
-        "wp:inline",
-        "w:drawing",
-        "w:r",
-    ] {
+    for tag in ["w:txbxContent", "wps:txbx"] {
         w.write_event(Event::End(BytesEnd::new(tag))).map_err(pkg)?;
     }
+    w.write_event(Event::Empty(start("wps:bodyPr")))
+        .map_err(pkg)?;
+    for tag in ["wps:wsp", "a:graphicData", "a:graphic"] {
+        w.write_event(Event::End(BytesEnd::new(tag))).map_err(pkg)?;
+    }
+    w.write_event(Event::End(BytesEnd::new(frame_tag)))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("w:drawing")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("w:r")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+fn write_text_box_extent(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    extent: Extent,
+) -> Result<(), ExportError> {
+    let mut el = start("wp:extent");
+    el.push_attribute(("cx", extent.width_emu.to_string().as_str()));
+    el.push_attribute(("cy", extent.height_emu.to_string().as_str()));
+    w.write_event(Event::Empty(el)).map_err(pkg)?;
     Ok(())
 }
 

@@ -22,7 +22,7 @@ use crate::block::BlockFragment;
 use crate::model::{ModelPos, ModelRange};
 use crate::text::{
     Decoration, FieldKind, FieldStyle, Glyph, GlyphRun, Line, LineBreak, LineConstraints,
-    LineLayout, LineShaper, StyledRun,
+    LineLayout, LineShaper, StyledRun, TextBoxStroke,
 };
 use crate::units::{Point, Size, Twip};
 
@@ -80,10 +80,10 @@ pub enum FlowItem<'a> {
     TextBox {
         /// The flowed block fragments (the box's content).
         blocks: Vec<BlockFragment>,
-        /// The box's outer size in twips (column width × content height + margins).
+        /// The box's resolved outer size in twips.
         size: Size,
-        /// The border color (RGBA), or `None` for no border.
-        border: Option<[u8; 4]>,
+        /// The authored border color and width, or `None` for no border.
+        border: Option<TextBoxStroke>,
         /// The background fill (RGBA), or `None` for transparent.
         fill: Option<[u8; 4]>,
     },

@@ -867,9 +867,9 @@ pub struct FormDropDown {
 /// Maximum text-box nesting depth (a text box inside a text box inside ...).
 pub const MAX_TEXTBOX_DEPTH: u32 = 8;
 
-/// An inline text box holding block content (a DrawingML `wps:txbx` or a legacy
-/// VML `v:textbox`). A text box is inline-anchored but carries block-level
-/// content, so its `blocks` reuse the recursive block model.
+/// A text box holding block content (a DrawingML `wps:txbx` or a legacy VML
+/// `v:textbox`). It may participate in inline flow or carry a floating anchor;
+/// its `blocks` reuse the recursive block model in either case.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TextBox {
@@ -885,8 +885,9 @@ pub struct TextBox {
     /// [`AnchoredDrawing::relative_height`]. `None` for an inline text box.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relative_height: Option<u32>,
-    /// The box's rendered size (`wp:extent`, EMU) when floating. `None` for an
-    /// inline text box (which sizes to the column width and its content height).
+    /// The box's authored size (`wp:extent`/`a:xfrm/a:ext`, EMU), for either an
+    /// inline or floating box. A missing dimension is resolved from the flow
+    /// context and content during layout.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extent: Option<Extent>,
     /// The box background fill (`a:solidFill`), if any.
