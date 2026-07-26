@@ -26,16 +26,17 @@ use casual_doc_model::v1::{
     FontDescriptor, FontFamilyKind, FontPitch, FontRef, FontScheme, FormCheckBoxSize,
     FormFieldData, FormFieldKind, FormTextType, HeaderFooterId, HeaderFooterKind, HeightRule,
     HighlightColor, HorizontalAlign, HorizontalAnchor, HorizontalPosition, HyperlinkTarget,
-    InlineNode, LevelJustification, LevelSuffix, MediaId, MediaReference, MoveKind, Note, NoteId,
-    NoteKind, NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel,
-    PageVerticalAlignment, ParagraphProperties, Person, ProofState, RevisionKind, RgbColor,
-    RunFontHint, RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData,
-    SdtControlKind, SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionType,
-    Style, StyleId, StyleKind, TabAlignment, TabLeader, Table, TableBorders, TableCell,
-    TableCellProperties, TableLayout, TableOverlap, TableProperties, TableRow, TableRowProperties,
-    TableStyleOverride, TableStyleRegion, TextDirection, ThemeFontRef, VerticalAlign,
-    VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition, VerticalTextAlignment,
-    WrapMode, Zoom, ZoomMode,
+    InlineNode, LevelJustification, LevelSuffix, LineNumberRestart, MediaId, MediaReference,
+    MoveKind, Note, NoteId, NoteKind, NoteNumberRestart, NotePosition, NoteProperties,
+    NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel, PageBorderDisplay,
+    PageBorderOffset, PageOrientation, PageVerticalAlignment, ParagraphProperties, Person,
+    ProofState, RevisionKind, RgbColor, RunFontHint, RunProperties, SchemeColor, SdtCheckbox,
+    SdtCheckboxSymbol, SdtControlData, SdtControlKind, SdtDate, SdtListItem, SdtLock,
+    SdtProperties, SectionBoundary, SectionType, Style, StyleId, StyleKind, TabAlignment,
+    TabLeader, Table, TableBorders, TableCell, TableCellProperties, TableLayout, TableOverlap,
+    TableProperties, TableRow, TableRowProperties, TableStyleOverride, TableStyleRegion,
+    TextDirection, ThemeFontRef, VerticalAlign, VerticalAlignment, VerticalAnchor, VerticalMerge,
+    VerticalPosition, VerticalTextAlignment, WrapMode, Zoom, ZoomMode,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -2181,6 +2182,8 @@ fn write_section_properties(
             w.write_event(Event::Empty(el)).map_err(pkg)?;
         }
     }
+    write_section_note_props(w, "w:footnotePr", &section.footnote_props)?;
+    write_section_note_props(w, "w:endnotePr", &section.endnote_props)?;
     if let Some(section_type) = section.section_type {
         let mut el = start("w:type");
         el.push_attribute((
@@ -2198,6 +2201,15 @@ fn write_section_properties(
     let mut pg_sz = start("w:pgSz");
     pg_sz.push_attribute(("w:w", section.page_size.width_twips.to_string().as_str()));
     pg_sz.push_attribute(("w:h", section.page_size.height_twips.to_string().as_str()));
+    if let Some(orientation) = section.orientation {
+        pg_sz.push_attribute((
+            "w:orient",
+            match orientation {
+                PageOrientation::Portrait => "portrait",
+                PageOrientation::Landscape => "landscape",
+            },
+        ));
+    }
     w.write_event(Event::Empty(pg_sz)).map_err(pkg)?;
     let mut pg_mar = start("w:pgMar");
     pg_mar.push_attribute(("w:top", section.page_margins.top_twips.to_string().as_str()));
@@ -2211,6 +2223,78 @@ fn write_section_properties(
     ));
     pg_mar.push_attribute(("w:end", section.page_margins.end_twips.to_string().as_str()));
     w.write_event(Event::Empty(pg_mar)).map_err(pkg)?;
+    if !section.paper_source.is_empty() {
+        let mut el = start("w:paperSrc");
+        if let Some(first) = section.paper_source.first {
+            el.push_attribute(("w:first", first.to_string().as_str()));
+        }
+        if let Some(other) = section.paper_source.other {
+            el.push_attribute(("w:other", other.to_string().as_str()));
+        }
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if !section.page_borders.is_empty() {
+        let borders = &section.page_borders;
+        let mut el = start("w:pgBorders");
+        if let Some(display) = borders.display {
+            el.push_attribute((
+                "w:display",
+                match display {
+                    PageBorderDisplay::AllPages => "allPages",
+                    PageBorderDisplay::FirstPage => "firstPage",
+                    PageBorderDisplay::NotFirstPage => "notFirstPage",
+                },
+            ));
+        }
+        if let Some(offset_from) = borders.offset_from {
+            el.push_attribute((
+                "w:offsetFrom",
+                match offset_from {
+                    PageBorderOffset::Page => "page",
+                    PageBorderOffset::Text => "text",
+                },
+            ));
+        }
+        w.write_event(Event::Start(el)).map_err(pkg)?;
+        // CT_PageBorders orders the edges top, left, bottom, right; the model's
+        // start/end map back to the `w:left`/`w:right` page-border edge names.
+        for (edge, name) in [
+            (&borders.top, "w:top"),
+            (&borders.start, "w:left"),
+            (&borders.bottom, "w:bottom"),
+            (&borders.end, "w:right"),
+        ] {
+            if let Some(edge) = edge {
+                write_border_edge(w, name, edge)?;
+            }
+        }
+        w.write_event(Event::End(BytesEnd::new("w:pgBorders")))
+            .map_err(pkg)?;
+    }
+    if !section.line_numbering.is_empty() {
+        let line = &section.line_numbering;
+        let mut el = start("w:lnNumType");
+        if let Some(count_by) = line.count_by {
+            el.push_attribute(("w:countBy", count_by.to_string().as_str()));
+        }
+        if let Some(start_num) = line.start {
+            el.push_attribute(("w:start", start_num.to_string().as_str()));
+        }
+        if let Some(distance) = line.distance {
+            el.push_attribute(("w:distance", distance.to_string().as_str()));
+        }
+        if let Some(restart) = line.restart {
+            el.push_attribute((
+                "w:restart",
+                match restart {
+                    LineNumberRestart::NewPage => "newPage",
+                    LineNumberRestart::NewSection => "newSection",
+                    LineNumberRestart::Continuous => "continuous",
+                },
+            ));
+        }
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
     if !section.page_numbering.is_empty() {
         let mut el = start("w:pgNumType");
         if let Some(format) = &section.page_numbering.format {
@@ -2250,6 +2334,21 @@ fn write_section_properties(
         }
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
+    if let Some(direction) = section.text_direction {
+        let mut el = start("w:textDirection");
+        el.push_attribute((
+            "w:val",
+            match direction {
+                TextDirection::LrTb => "lrTb",
+                TextDirection::TbRl => "tbRl",
+                TextDirection::BtLr => "btLr",
+            },
+        ));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if section.bidi {
+        w.write_event(Event::Empty(start("w:bidi"))).map_err(pkg)?;
+    }
     if !section.doc_grid.is_empty() {
         let mut el = start("w:docGrid");
         if let Some(grid_type) = section.doc_grid.grid_type {
@@ -2273,6 +2372,56 @@ fn write_section_properties(
     }
     w.write_event(Event::End(BytesEnd::new("w:sectPr")))
         .map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits a per-section `w:footnotePr`/`w:endnotePr` when non-empty, in `CT_FtnProps`
+/// order (`pos`, `numFmt`, `numStart`, `numRestart`).
+fn write_section_note_props(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    tag: &str,
+    props: &NoteProperties,
+) -> Result<(), ExportError> {
+    if props.is_empty() {
+        return Ok(());
+    }
+    w.write_event(Event::Start(start(tag))).map_err(pkg)?;
+    if let Some(position) = props.position {
+        let mut el = start("w:pos");
+        el.push_attribute((
+            "w:val",
+            match position {
+                NotePosition::PageBottom => "pageBottom",
+                NotePosition::BeneathText => "beneathText",
+                NotePosition::SectionEnd => "sectEnd",
+                NotePosition::DocumentEnd => "docEnd",
+            },
+        ));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(format) = &props.number_format {
+        let mut el = start("w:numFmt");
+        el.push_attribute(("w:val", format.as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(start_num) = props.number_start {
+        let mut el = start("w:numStart");
+        el.push_attribute(("w:val", start_num.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(restart) = props.number_restart {
+        let mut el = start("w:numRestart");
+        el.push_attribute((
+            "w:val",
+            match restart {
+                NoteNumberRestart::Continuous => "continuous",
+                NoteNumberRestart::EachSection => "eachSect",
+                NoteNumberRestart::EachPage => "eachPage",
+            },
+        ));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    w.write_event(Event::End(BytesEnd::new(tag))).map_err(pkg)?;
     Ok(())
 }
 
@@ -4143,8 +4292,12 @@ fn write_run_properties(
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
     for (value, name) in [
+        // CT_RPr schema order: each Latin toggle is immediately followed by its
+        // complex-script counterpart (`w:b`→`w:bCs`, `w:i`→`w:iCs`).
         (properties.bold, "w:b"),
+        (properties.bold_complex, "w:bCs"),
         (properties.italic, "w:i"),
+        (properties.italic_complex, "w:iCs"),
         (properties.strike, "w:strike"),
         (properties.double_strike, "w:dstrike"),
         (properties.all_caps, "w:caps"),
@@ -4188,6 +4341,12 @@ fn write_run_properties(
     }
     if let Some(size) = properties.size_half_points {
         let mut el = start("w:sz");
+        el.push_attribute(("w:val", size.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    // Complex-script size (`w:szCs`) follows `w:sz` in CT_RPr schema order.
+    if let Some(size) = properties.size_complex_half_points {
+        let mut el = start("w:szCs");
         el.push_attribute(("w:val", size.to_string().as_str()));
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }

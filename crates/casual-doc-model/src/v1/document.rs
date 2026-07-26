@@ -322,6 +322,42 @@ impl Document {
             {
                 check_domain((0..=31_680).contains(&value), "section.doc_grid")?;
             }
+            check_page_borders(&section.page_borders)?;
+            for value in [
+                section.line_numbering.count_by,
+                section.line_numbering.start,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                check_domain((0..=32_767).contains(&value), "section.line_numbering")?;
+            }
+            if let Some(distance) = section.line_numbering.distance {
+                check_domain(
+                    (0..=31_680).contains(&distance),
+                    "section.line_numbering.distance",
+                )?;
+            }
+            for value in [section.paper_source.first, section.paper_source.other]
+                .into_iter()
+                .flatten()
+            {
+                check_domain((0..=32_767).contains(&value), "section.paper_source")?;
+            }
+            for props in [&section.footnote_props, &section.endnote_props] {
+                if let Some(format) = &props.number_format {
+                    check_domain(
+                        !format.is_empty() && format.len() <= 32,
+                        "section.note_props.number_format",
+                    )?;
+                }
+                if let Some(start) = props.number_start {
+                    check_domain(
+                        (0..=1_000_000).contains(&start),
+                        "section.note_props.number_start",
+                    )?;
+                }
+            }
             for header in &section.headers {
                 if !self.definitions.headers.contains_key(&header.reference) {
                     return Err(ModelError::DanglingHeaderFooterRef(
@@ -1732,6 +1768,30 @@ fn check_borders(borders: &TableBorders, property: &'static str) -> Result<(), M
         if let Some(space) = edge.space_points {
             check_domain(space <= 31, property)?;
         }
+    }
+    Ok(())
+}
+
+/// Bounds a single border edge (style token length, size, and space) — the same
+/// domain the table-border edges use, reused for page borders.
+fn check_border_edge(edge: &BorderEdge, property: &'static str) -> Result<(), ModelError> {
+    check_domain(!edge.style.is_empty() && edge.style.len() <= 32, property)?;
+    if let Some(size) = edge.size_eighth_points {
+        check_domain(size <= 1024, property)?;
+    }
+    if let Some(space) = edge.space_points {
+        check_domain(space <= 31, property)?;
+    }
+    Ok(())
+}
+
+/// Bounds every present edge of a section's page borders.
+fn check_page_borders(borders: &PageBorders) -> Result<(), ModelError> {
+    for edge in [&borders.top, &borders.bottom, &borders.start, &borders.end]
+        .into_iter()
+        .flatten()
+    {
+        check_border_edge(edge, "section.page_borders")?;
     }
     Ok(())
 }

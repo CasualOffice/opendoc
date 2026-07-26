@@ -1926,6 +1926,14 @@ fn valid_section(
         vertical_alignment: None,
         page_numbering: PageNumbering::default(),
         doc_grid: DocGrid::default(),
+        orientation: None,
+        paper_source: PaperSource::default(),
+        page_borders: PageBorders::default(),
+        line_numbering: LineNumbering::default(),
+        footnote_props: NoteProperties::default(),
+        endnote_props: NoteProperties::default(),
+        text_direction: None,
+        bidi: false,
     }
 }
 

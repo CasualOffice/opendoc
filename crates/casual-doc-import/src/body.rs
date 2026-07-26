@@ -10,10 +10,12 @@ use casual_doc_model::v1::{
     FormCheckBox, FormCheckBoxSize, FormDropDown, FormFieldData, FormFieldKind, FormTextInput,
     FormTextType, HeaderFooterId, HeaderFooterKind, HeaderFooterRef, HeightRule, HorizontalAlign,
     HorizontalAnchor, HorizontalPosition, Hyperlink, HyperlinkTarget, InlineNode, InlineSdt,
-    InternalTarget, MAX_DESCR_BYTES, MAX_EMU, MAX_FIELD_INSTRUCTION_BYTES, MAX_FORM_FIELD_ENTRIES,
-    MAX_FORM_FIELD_STRING_BYTES, MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH,
-    MAX_TEXTBOX_DEPTH, Math, MediaId, MoveKind, MoveRangeEnd, MoveRangeStart, NoteId, NoteKind,
-    NoteReference, PageMargins, PageNumbering, PageSize, PageVerticalAlignment, Paragraph,
+    InternalTarget, LineNumberRestart, LineNumbering, MAX_DESCR_BYTES, MAX_EMU,
+    MAX_FIELD_INSTRUCTION_BYTES, MAX_FORM_FIELD_ENTRIES, MAX_FORM_FIELD_STRING_BYTES,
+    MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH, MAX_TEXTBOX_DEPTH, Math, MediaId, MoveKind,
+    MoveRangeEnd, MoveRangeStart, NoteId, NoteKind, NoteNumberRestart, NotePosition,
+    NoteProperties, NoteReference, PageBorderDisplay, PageBorderOffset, PageBorders, PageMargins,
+    PageNumbering, PageOrientation, PageSize, PageVerticalAlignment, PaperSource, Paragraph,
     ParagraphProperties, Revision, RevisionKind, RgbColor, Run, RunProperties, SdtCheckbox,
     SdtCheckboxSymbol, SdtControlData, SdtControlKind, SdtDataBinding, SdtDate, SdtListItem,
     SdtLock, SdtProperties, SectionBoundary, SectionColumns, SectionId, SectionType, StyleKind,
@@ -295,6 +297,8 @@ enum EdgeScope {
     Margins,
     /// A `w:pBdr` paragraph-border container (edges route to the paragraph).
     ParagraphBorders,
+    /// A `w:pgBorders` section page-border container (edges route to the section).
+    PageBorders,
 }
 
 /// A tracked-change range (`w:ins`/`w:del`) being accumulated.
@@ -444,6 +448,32 @@ struct SectionAccumulator {
     doc_grid_char_space: Option<i32>,
     headers: Vec<HeaderFooterRef>,
     footers: Vec<HeaderFooterRef>,
+    orientation: Option<PageOrientation>,
+    paper_first: Option<i32>,
+    paper_other: Option<i32>,
+    page_border_display: Option<PageBorderDisplay>,
+    page_border_offset: Option<PageBorderOffset>,
+    page_border_top: Option<BorderEdge>,
+    page_border_bottom: Option<BorderEdge>,
+    page_border_start: Option<BorderEdge>,
+    page_border_end: Option<BorderEdge>,
+    line_count_by: Option<i32>,
+    line_start: Option<i32>,
+    line_distance: Option<i32>,
+    line_restart: Option<LineNumberRestart>,
+    footnote_props: NoteProperties,
+    endnote_props: NoteProperties,
+    text_direction: Option<TextDirection>,
+    bidi: bool,
+}
+
+/// Which per-section note-properties container (if any) is open, so its
+/// `w:pos`/`w:numFmt`/`w:numStart`/`w:numRestart` children route to the section's
+/// footnote or endnote properties.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SectionNoteScope {
+    Footnote,
+    Endnote,
 }
 
 struct BodyParser<'a> {
@@ -546,6 +576,10 @@ struct BodyParser<'a> {
     /// frame (like the depth counters) so an inner table's edge container cannot
     /// clobber the outer scope and drop the enclosing table's borders.
     edge_scope: EdgeScope,
+    /// Which per-section note-properties container (`w:footnotePr`/`w:endnotePr`)
+    /// is open, so its child elements route to the section accumulator. A section
+    /// never appears inside a text-box frame, so this is not saved/restored.
+    section_note_scope: Option<SectionNoteScope>,
     /// Whether a `w:tabs` container is open (its `w:tab` children are tab stops,
     /// not the inline run tab). Never spans a text box.
     in_tabs: bool,
@@ -711,6 +745,7 @@ impl<'a> BodyParser<'a> {
             trpr_depth: 0,
             pr_change_depth: 0,
             edge_scope: EdgeScope::None,
+            section_note_scope: None,
             in_tabs: false,
             mark_rpr_depth: 0,
             mark_rpr_seen: false,
@@ -1689,9 +1724,21 @@ impl BodyParser<'_> {
                 self.section = Some(SectionAccumulator::default());
             }
             b"pgSz" if self.section.is_some() => {
+                // `w:orient` is a hint Word derives from (and keeps consistent
+                // with) the width/height; an unknown token is reported, never kept.
+                let orientation = match attribute_value(element, b"orient").as_deref() {
+                    Some("portrait") => Some(PageOrientation::Portrait),
+                    Some("landscape") => Some(PageOrientation::Landscape),
+                    None => None,
+                    _ => {
+                        self.reporter.report(b"pgSz");
+                        None
+                    }
+                };
                 if let Some(section) = self.section.as_mut() {
                     section.page_width = attr_i32(element, b"w");
                     section.page_height = attr_i32(element, b"h");
+                    section.orientation = orientation;
                 }
             }
             b"pgMar" if self.section.is_some() => {
@@ -1774,6 +1821,125 @@ impl BodyParser<'_> {
                     section.doc_grid_type = grid_type;
                     section.doc_grid_line_pitch = line_pitch;
                     section.doc_grid_char_space = char_space;
+                }
+            }
+            // Printer paper-source bins (`w:paperSrc`).
+            b"paperSrc" if self.section.is_some() => {
+                let first = attr_i32(element, b"first");
+                let other = attr_i32(element, b"other");
+                if let Some(section) = self.section.as_mut() {
+                    section.paper_first = first;
+                    section.paper_other = other;
+                }
+            }
+            // Section page borders (`w:pgBorders`): open an edge-capture scope so
+            // its `w:top`/`w:left`/`w:bottom`/`w:right` children route to the
+            // section, and record `display`/`offsetFrom`.
+            b"pgBorders" if self.section.is_some() => {
+                let display = match attribute_value(element, b"display").as_deref() {
+                    Some("allPages") => Some(PageBorderDisplay::AllPages),
+                    Some("firstPage") => Some(PageBorderDisplay::FirstPage),
+                    Some("notFirstPage") => Some(PageBorderDisplay::NotFirstPage),
+                    _ => None,
+                };
+                let offset_from = match attribute_value(element, b"offsetFrom").as_deref() {
+                    Some("page") => Some(PageBorderOffset::Page),
+                    Some("text") => Some(PageBorderOffset::Text),
+                    _ => None,
+                };
+                self.edge_scope = EdgeScope::PageBorders;
+                if let Some(section) = self.section.as_mut() {
+                    section.page_border_display = display;
+                    section.page_border_offset = offset_from;
+                }
+            }
+            // Section line numbering (`w:lnNumType`).
+            b"lnNumType" if self.section.is_some() => {
+                let count_by = attr_i32(element, b"countBy");
+                let start = attr_i32(element, b"start");
+                let distance = attr_i32(element, b"distance");
+                let restart = match attribute_value(element, b"restart").as_deref() {
+                    Some("newPage") => Some(LineNumberRestart::NewPage),
+                    Some("newSection") => Some(LineNumberRestart::NewSection),
+                    Some("continuous") => Some(LineNumberRestart::Continuous),
+                    _ => None,
+                };
+                if let Some(section) = self.section.as_mut() {
+                    section.line_count_by = count_by;
+                    section.line_start = start;
+                    section.line_distance = distance;
+                    section.line_restart = restart;
+                }
+            }
+            // Per-section footnote/endnote property containers: open a note scope
+            // so the shared `w:pos`/`w:numFmt`/`w:numStart`/`w:numRestart` children
+            // route to the right side of the section accumulator.
+            b"footnotePr" if self.section.is_some() => {
+                self.section_note_scope = Some(SectionNoteScope::Footnote);
+            }
+            b"endnotePr" if self.section.is_some() => {
+                self.section_note_scope = Some(SectionNoteScope::Endnote);
+            }
+            b"pos" if self.section_note_scope.is_some() => {
+                let position = match attribute_value(element, b"val").as_deref() {
+                    Some("pageBottom") => Some(NotePosition::PageBottom),
+                    Some("beneathText") => Some(NotePosition::BeneathText),
+                    Some("sectEnd") => Some(NotePosition::SectionEnd),
+                    Some("docEnd") => Some(NotePosition::DocumentEnd),
+                    _ => None,
+                };
+                match (position, self.section_note_props()) {
+                    (Some(value), Some(props)) => props.position = Some(value),
+                    (None, _) => self.reporter.report(b"pos"),
+                    _ => {}
+                }
+            }
+            b"numFmt" if self.section_note_scope.is_some() => {
+                let format =
+                    attribute_value(element, b"val").filter(|v| !v.is_empty() && v.len() <= 32);
+                if let Some(props) = self.section_note_props() {
+                    props.number_format = format;
+                }
+            }
+            b"numStart" if self.section_note_scope.is_some() => {
+                let start = attr_i32(element, b"val");
+                if let Some(props) = self.section_note_props() {
+                    props.number_start = start;
+                }
+            }
+            b"numRestart" if self.section_note_scope.is_some() => {
+                let restart = match attribute_value(element, b"val").as_deref() {
+                    Some("continuous") => Some(NoteNumberRestart::Continuous),
+                    Some("eachSect") => Some(NoteNumberRestart::EachSection),
+                    Some("eachPage") => Some(NoteNumberRestart::EachPage),
+                    _ => None,
+                };
+                match (restart, self.section_note_props()) {
+                    (Some(value), Some(props)) => props.number_restart = Some(value),
+                    (None, _) => self.reporter.report(b"numRestart"),
+                    _ => {}
+                }
+            }
+            // Section text-flow direction (`w:textDirection`), reusing the shared
+            // `TextDirection` vocabulary; an unmodeled token is reported.
+            b"textDirection" if self.section.is_some() => {
+                let direction = match attribute_value(element, b"val").as_deref() {
+                    Some("lrTb") => Some(TextDirection::LrTb),
+                    Some("tbRl") => Some(TextDirection::TbRl),
+                    Some("btLr") => Some(TextDirection::BtLr),
+                    _ => None,
+                };
+                match (direction, self.section.as_mut()) {
+                    (Some(value), Some(section)) => section.text_direction = Some(value),
+                    (None, _) => self.reporter.report(b"textDirection"),
+                    _ => {}
+                }
+            }
+            // Right-to-left section layout (`w:bidi`).
+            b"bidi" if self.section.is_some() => {
+                let on = is_true(attribute_value(element, b"val").as_deref());
+                if let Some(section) = self.section.as_mut() {
+                    section.bidi = on;
                 }
             }
             b"headerReference" if self.section.is_some() => {
@@ -2527,9 +2693,12 @@ impl BodyParser<'_> {
             b"tcPr" => self.tcpr_depth = self.tcpr_depth.saturating_sub(1),
             b"tblPr" => self.tblpr_depth = self.tblpr_depth.saturating_sub(1),
             b"trPr" => self.trpr_depth = self.trpr_depth.saturating_sub(1),
-            b"tblBorders" | b"tcBorders" | b"tblCellMar" | b"tcMar" | b"pBdr" => {
+            b"tblBorders" | b"tcBorders" | b"tblCellMar" | b"tcMar" | b"pBdr" | b"pgBorders" => {
                 self.edge_scope = EdgeScope::None;
             }
+            // A per-section note-properties container closes: leave the note scope
+            // so trailing siblings do not route into it.
+            b"footnotePr" | b"endnotePr" => self.section_note_scope = None,
             b"tabs" => self.in_tabs = false,
             // A refused subtree's own `</w:tbl>` closes suppression, never a real
             // table on the stack; its `</w:tc>`/`</w:tr>` are inert.
@@ -2840,8 +3009,34 @@ impl BodyParser<'_> {
                 }
                 None => self.reporter.report(b"pBdr"),
             },
+            EdgeScope::PageBorders => match self.build_border_edge(element) {
+                Some(edge) => {
+                    if let Some(section) = self.section.as_mut() {
+                        match local {
+                            b"top" => section.page_border_top = Some(edge),
+                            b"bottom" => section.page_border_bottom = Some(edge),
+                            b"start" | b"left" => section.page_border_start = Some(edge),
+                            b"end" | b"right" => section.page_border_end = Some(edge),
+                            _ => {}
+                        }
+                    }
+                }
+                None => self.reporter.report(b"pgBorders"),
+            },
             EdgeScope::None => {}
         }
+    }
+
+    /// The open section's footnote or endnote property accumulator, selected by
+    /// the current [`SectionNoteScope`]. `None` when no section or note scope is
+    /// open (the caller then drops the value).
+    fn section_note_props(&mut self) -> Option<&mut NoteProperties> {
+        let scope = self.section_note_scope?;
+        let section = self.section.as_mut()?;
+        Some(match scope {
+            SectionNoteScope::Footnote => &mut section.footnote_props,
+            SectionNoteScope::Endnote => &mut section.endnote_props,
+        })
     }
 
     /// Maps a `w:tabs > w:tab` custom tab stop. A `clear` or unknown alignment, a
@@ -2974,6 +3169,28 @@ impl BodyParser<'_> {
             line_pitch: accumulator.doc_grid_line_pitch.map(|v| v.clamp(0, 31_680)),
             char_space: accumulator.doc_grid_char_space.map(|v| v.clamp(0, 31_680)),
         };
+        let paper_source = PaperSource {
+            first: accumulator.paper_first.map(|v| v.clamp(0, 32_767)),
+            other: accumulator.paper_other.map(|v| v.clamp(0, 32_767)),
+        };
+        let page_borders = PageBorders {
+            display: accumulator.page_border_display,
+            offset_from: accumulator.page_border_offset,
+            top: accumulator.page_border_top,
+            bottom: accumulator.page_border_bottom,
+            start: accumulator.page_border_start,
+            end: accumulator.page_border_end,
+        };
+        let line_numbering = LineNumbering {
+            count_by: accumulator.line_count_by.map(|v| v.clamp(0, 32_767)),
+            start: accumulator.line_start.map(|v| v.clamp(0, 32_767)),
+            distance: accumulator.line_distance.map(|v| v.clamp(0, 31_680)),
+            restart: accumulator.line_restart,
+        };
+        let clamp_note = |mut props: NoteProperties| -> NoteProperties {
+            props.number_start = props.number_start.map(|v| v.clamp(0, 1_000_000));
+            props
+        };
         self.sections.push(SectionBoundary {
             id,
             page_size,
@@ -2986,6 +3203,14 @@ impl BodyParser<'_> {
             vertical_alignment: accumulator.vertical_alignment,
             page_numbering,
             doc_grid,
+            orientation: accumulator.orientation,
+            paper_source,
+            page_borders,
+            line_numbering,
+            footnote_props: clamp_note(accumulator.footnote_props),
+            endnote_props: clamp_note(accumulator.endnote_props),
+            text_direction: accumulator.text_direction,
+            bidi: accumulator.bidi,
         });
         Ok(id)
     }

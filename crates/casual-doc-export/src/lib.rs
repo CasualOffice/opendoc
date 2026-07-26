@@ -405,6 +405,75 @@ mod semantic_tests {
         assert_eq!(m1, m2, "the model survives write -> reopen unchanged");
     }
 
+    /// The complex-script run properties (P1F-37): `w:bCs`/`w:iCs`/`w:szCs`. A run
+    /// carrying all three must import them to the dedicated CS fields (independent
+    /// of the Latin `w:b`/`w:i`/`w:sz`) and survive write -> reopen unchanged; the
+    /// `w:iCs w:val="0"` explicit-off must be preserved (tri-state).
+    #[test]
+    fn complex_script_run_properties_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, InlineNode};
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:r><w:rPr>
+                <w:b/><w:bCs/><w:i w:val="0"/><w:iCs w:val="0"/>
+                <w:sz w:val="24"/><w:szCs w:val="32"/>
+            </w:rPr><w:t>bidi text</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(
+            m1, m2,
+            "the complex-script run properties survive write -> reopen unchanged"
+        );
+
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Run(run) = &paragraph.inlines[0] else {
+            panic!("expected a run");
+        };
+        // The three CS toggles/size are populated and independent of their Latin
+        // counterparts (the Latin `w:i` is off; the CS `w:iCs` is an explicit off).
+        assert_eq!(run.properties.bold, Some(true));
+        assert_eq!(run.properties.bold_complex, Some(true));
+        assert_eq!(run.properties.italic, Some(false));
+        assert_eq!(run.properties.italic_complex, Some(false));
+        assert_eq!(run.properties.size_half_points, Some(24));
+        assert_eq!(run.properties.size_complex_half_points, Some(32));
+    }
+
+    /// Additive omission: a run with only the Latin `w:b`/`w:i`/`w:sz` (no CS
+    /// properties) leaves the CS fields `None` and emits no `w:bCs`/`w:iCs`/`w:szCs`
+    /// — a document that never used them is written exactly as before.
+    #[test]
+    fn absent_complex_script_run_properties_are_not_emitted() {
+        use casual_doc_model::v1::{BlockNode, InlineNode};
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:r><w:rPr><w:b/><w:i/><w:sz w:val="24"/></w:rPr><w:t>plain</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Run(run) = &paragraph.inlines[0] else {
+            panic!("expected a run");
+        };
+        assert_eq!(run.properties.bold_complex, None);
+        assert_eq!(run.properties.italic_complex, None);
+        assert_eq!(run.properties.size_complex_half_points, None);
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+        let document_xml = package.read_part("word/document.xml").unwrap();
+        let document_xml = std::str::from_utf8(&document_xml).unwrap();
+        assert!(!document_xml.contains("w:bCs"), "no w:bCs emitted");
+        assert!(!document_xml.contains("w:iCs"), "no w:iCs emitted");
+        assert!(!document_xml.contains("w:szCs"), "no w:szCs emitted");
+
+        let m2 = reopen(&bytes);
+        assert_eq!(m1, m2, "the CS-free run survives write -> reopen unchanged");
+    }
+
     #[test]
     fn anchored_drawing_survives_the_semantic_round_trip() {
         use casual_doc_model::v1::{
@@ -2112,6 +2181,77 @@ mod semantic_tests {
             m1, m2,
             "expanded section properties survive write -> reopen"
         );
+    }
+
+    #[test]
+    fn section_long_tail_survives_the_semantic_round_trip() {
+        // The section long tail (P1F-36): page borders, line numbering, a
+        // per-section footnotePr, text direction, bidi, paper source, and a
+        // landscape page orientation. The writer must emit each in CT_SectPr order
+        // so the reopened model is a fixed point.
+        use casual_doc_model::v1::{
+            LineNumberRestart, NoteNumberRestart, NotePosition, PageBorderDisplay,
+            PageBorderOffset, PageOrientation, TextDirection,
+        };
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:r><w:t>x</w:t></w:r></w:p>
+            <w:sectPr>
+                <w:footnotePr>
+                    <w:pos w:val="beneathText"/>
+                    <w:numFmt w:val="lowerRoman"/>
+                    <w:numStart w:val="2"/>
+                    <w:numRestart w:val="eachSect"/>
+                </w:footnotePr>
+                <w:pgSz w:w="15840" w:h="12240" w:orient="landscape"/>
+                <w:pgMar w:top="1440" w:bottom="1440" w:start="1440" w:end="1440"/>
+                <w:paperSrc w:first="4" w:other="1"/>
+                <w:pgBorders w:display="allPages" w:offsetFrom="page">
+                    <w:top w:val="single" w:sz="24" w:color="FF0000" w:space="24"/>
+                    <w:left w:val="single" w:sz="24" w:space="24"/>
+                    <w:bottom w:val="single" w:sz="24" w:space="24"/>
+                    <w:right w:val="single" w:sz="24" w:space="24"/>
+                </w:pgBorders>
+                <w:lnNumType w:countBy="1" w:start="1" w:distance="360" w:restart="newSection"/>
+                <w:cols w:num="1"/>
+                <w:textDirection w:val="tbRl"/>
+                <w:bidi/>
+            </w:sectPr>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        let section = &m1.definitions().sections[0];
+        assert_eq!(section.orientation, Some(PageOrientation::Landscape));
+        assert_eq!(section.paper_source.first, Some(4));
+        assert_eq!(
+            section.page_borders.display,
+            Some(PageBorderDisplay::AllPages)
+        );
+        assert_eq!(
+            section.page_borders.offset_from,
+            Some(PageBorderOffset::Page)
+        );
+        assert!(section.page_borders.top.is_some());
+        assert!(section.page_borders.end.is_some());
+        assert_eq!(
+            section.line_numbering.restart,
+            Some(LineNumberRestart::NewSection)
+        );
+        assert_eq!(
+            section.footnote_props.position,
+            Some(NotePosition::BeneathText)
+        );
+        assert_eq!(
+            section.footnote_props.number_restart,
+            Some(NoteNumberRestart::EachSection)
+        );
+        assert_eq!(section.footnote_props.number_start, Some(2));
+        assert_eq!(section.text_direction, Some(TextDirection::TbRl));
+        assert!(section.bidi);
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(m1, m2, "section long tail survives write -> reopen");
     }
 
     #[test]
