@@ -19,7 +19,7 @@ use crate::units::{Point, Twip};
 pub struct FontId(pub u32);
 
 /// One positioned glyph within a [`GlyphRun`].
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct Glyph {
     /// Glyph index within the font (not a Unicode scalar).
     pub id: u32,
@@ -42,7 +42,7 @@ pub struct Decoration {
 /// A run of glyphs sharing one font, size, color, and bidi level, positioned at
 /// `origin` (the run's left edge on the baseline). Produced by the shaper and
 /// carried verbatim into the display list.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct GlyphRun {
     /// The resolved font.
     pub font: FontId,
@@ -73,7 +73,7 @@ pub enum LineBreak {
 
 /// One laid-out line: its glyph runs (visually ordered), vertical metrics, the
 /// model range it covers (for hit-testing), and how it ends.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct Line {
     /// Glyph runs on this line, left to right.
     pub runs: Vec<GlyphRun>,
@@ -90,7 +90,7 @@ pub struct Line {
 }
 
 /// The result of shaping one paragraph: its ordered lines.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct LineLayout {
     /// The paragraph's lines, top to bottom.
     pub lines: Vec<Line>,
