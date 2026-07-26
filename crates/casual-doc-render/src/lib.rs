@@ -72,8 +72,19 @@ pub struct Surface {
 impl Surface {
     /// Creates a `width × height` surface filled with white.
     pub fn new(width: u32, height: u32) -> Result<Self, RenderError> {
+        Self::with_background(width, height, [255, 255, 255])
+    }
+
+    /// Creates a `width × height` surface filled with the given opaque sRGB
+    /// color — the document's page background (`w:background`). Painted behind
+    /// the whole page before the display list.
+    pub fn with_background(
+        width: u32,
+        height: u32,
+        [r, g, b]: [u8; 3],
+    ) -> Result<Self, RenderError> {
         let mut pixmap = Pixmap::new(width, height).ok_or(RenderError::InvalidSize)?;
-        pixmap.fill(Color::WHITE);
+        pixmap.fill(Color::from_rgba8(r, g, b, 255));
         Ok(Self { pixmap })
     }
 

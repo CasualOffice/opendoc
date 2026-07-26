@@ -1127,6 +1127,7 @@ pub(crate) fn import_with_sources(
         blocks: mut body,
         sections,
         embedded_part_names,
+        page_background,
     } = body::parse(
         document_xml,
         &mut ids,
@@ -1182,7 +1183,12 @@ pub(crate) fn import_with_sources(
         settings,
         people,
     };
-    let document = Document::new(document_id, body, definitions).map_err(ImportError::Model)?;
+    let mut document = Document::new(document_id, body, definitions).map_err(ImportError::Model)?;
+    if let Some(color) = page_background {
+        document = document
+            .with_background(color)
+            .map_err(ImportError::Model)?;
+    }
     Ok(Import {
         document,
         report: reporter.into_report(retention),

@@ -679,6 +679,8 @@ struct BodyParser<'a> {
     text_bytes: usize,
     in_document: bool,
     in_body: bool,
+    /// The page background color (`w:background`), captured before the body opens.
+    page_background: Option<RgbColor>,
     paragraph_open: bool,
     paragraph_id: Option<NodeId>,
     paragraph_properties: ParagraphProperties,
@@ -931,6 +933,7 @@ impl<'a> BodyParser<'a> {
             text_bytes: 0,
             in_document: false,
             in_body: false,
+            page_background: None,
             paragraph_open: false,
             paragraph_id: None,
             paragraph_properties: ParagraphProperties::default(),
@@ -1027,6 +1030,10 @@ pub(crate) struct BodyParse {
     pub blocks: Vec<BlockNode>,
     pub sections: Vec<SectionBoundary>,
     pub embedded_part_names: BTreeSet<String>,
+    /// The page background color (`w:background@w:color`), if the document sets a
+    /// concrete sRGB one. A theme/image background is reported (degraded), not
+    /// carried here.
+    pub page_background: Option<RgbColor>,
 }
 
 /// Parses main-document body bytes into ordered block nodes, allocating ids.
@@ -1058,6 +1065,7 @@ pub(crate) fn parse<'a>(
         blocks: parser.blocks,
         sections: parser.sections,
         embedded_part_names: parser.embedded_part_names,
+        page_background: parser.page_background,
     })
 }
 
@@ -1507,6 +1515,18 @@ impl BodyParser<'_> {
             // historical properties are reported via the container above).
             _ if self.pr_change_depth > 0 => {}
             b"document" => self.in_document = true,
+            // `w:background` is a document-level sibling of `w:body` (it precedes
+            // it). Capture its concrete sRGB `@w:color`; a theme/image background
+            // is not modeled as sRGB, so report it (degraded) rather than lose it.
+            b"background" if self.in_document && !self.in_body => {
+                self.page_background = attribute_value(element, b"color")
+                    .filter(|value| value != "auto")
+                    .and_then(|value| parse_rgb(&value));
+                let has_theme = attribute_value(element, b"themeColor").is_some();
+                if self.page_background.is_none() || has_theme {
+                    self.reporter.report(b"background");
+                }
+            }
             b"body"
                 if self.in_document && self.note_container.is_none() && self.hf_root.is_none() =>
             {
