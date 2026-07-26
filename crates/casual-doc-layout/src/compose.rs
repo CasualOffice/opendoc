@@ -6,7 +6,10 @@
 //! rendering backend applies the device scale (DPI × zoom) when it paints, which
 //! is the "scale only at paint" rule from `43-…`.
 
-use crate::block::{BlockFragment, CellBorders, CellVerticalMerge, ParagraphDecor};
+use crate::block::{
+    BlockFragment, BorderPattern, CellBorders, CellVerticalMerge, ParagraphDecor,
+    ResolvedBorderSegment, ResolvedEdge,
+};
 use crate::display::{Color, DisplayList, PaintItem, Stroke};
 use crate::page::{AnchorContent, Page, PlacedAnchor};
 use crate::text::LineLayout;
@@ -317,51 +320,213 @@ fn compose_fragment(list: &mut DisplayList, fragment: &BlockFragment, origin: Po
     }
 }
 
-/// Paints a cell's resolved (border-conflict-winning) edges as filled rects, one
-/// per present side, on top of the default grid line.
+/// Maximum number of on-runs expanded from one dashed edge. A pathological
+/// sub-twip pattern falls back to one solid band instead of growing the display
+/// list without bound.
+const MAX_BORDER_PATTERN_RECTS: usize = 2_048;
+
+#[derive(Clone, Copy)]
+enum BorderAxis {
+    Horizontal,
+    Vertical,
+}
+
+/// Paints a cell's resolved (border-conflict-winning) edges. Horizontal sides
+/// may be independently resolved at abutting grid boundaries.
 fn compose_cell_borders(list: &mut DisplayList, rect: Rect, borders: &CellBorders) {
-    let mut edge = |r: Rect, color: [u8; 4]| {
-        list.push(PaintItem::Rect {
-            rect: r,
-            fill: Some(Color {
-                r: color[0],
-                g: color[1],
-                b: color[2],
-                a: color[3],
-            }),
-            stroke: None,
-        });
-    };
-    if let Some(e) = borders.top {
-        edge(
-            Rect::new(rect.origin, Size::new(rect.size.width, e.width)),
-            e.color,
-        );
-    }
-    if let Some(e) = borders.bottom {
-        edge(
-            Rect::new(
-                Point::new(rect.origin.x, rect.bottom() - e.width),
-                Size::new(rect.size.width, e.width),
-            ),
-            e.color,
-        );
-    }
+    compose_horizontal_border(list, rect, borders.top, &borders.top_segments, false);
+    compose_horizontal_border(list, rect, borders.bottom, &borders.bottom_segments, true);
     if let Some(e) = borders.start {
-        edge(
+        paint_border(
+            list,
             Rect::new(rect.origin, Size::new(e.width, rect.size.height)),
-            e.color,
+            e,
+            BorderAxis::Vertical,
         );
     }
     if let Some(e) = borders.end {
-        edge(
+        paint_border(
+            list,
             Rect::new(
                 Point::new(rect.right() - e.width, rect.origin.y),
                 Size::new(e.width, rect.size.height),
             ),
-            e.color,
+            e,
+            BorderAxis::Vertical,
         );
     }
+}
+
+fn compose_horizontal_border(
+    list: &mut DisplayList,
+    rect: Rect,
+    fallback: Option<ResolvedEdge>,
+    segments: &[ResolvedBorderSegment],
+    bottom: bool,
+) {
+    if segments.is_empty() {
+        let Some(edge) = fallback else {
+            return;
+        };
+        let y = if bottom {
+            rect.bottom() - edge.width
+        } else {
+            rect.origin.y
+        };
+        paint_border(
+            list,
+            Rect::new(
+                Point::new(rect.origin.x, y),
+                Size::new(rect.size.width, edge.width),
+            ),
+            edge,
+            BorderAxis::Horizontal,
+        );
+        return;
+    }
+    for segment in segments {
+        let y = if bottom {
+            rect.bottom() - segment.edge.width
+        } else {
+            rect.origin.y
+        };
+        paint_border(
+            list,
+            Rect::new(
+                Point::new(rect.origin.x + segment.offset, y),
+                Size::new(segment.length, segment.edge.width),
+            ),
+            segment.edge,
+            BorderAxis::Horizontal,
+        );
+    }
+}
+
+fn paint_border(list: &mut DisplayList, rect: Rect, edge: ResolvedEdge, axis: BorderAxis) {
+    match edge.pattern {
+        BorderPattern::Solid => push_border_rect(list, rect, edge.color),
+        BorderPattern::Double => {
+            let thickness = match axis {
+                BorderAxis::Horizontal => rect.size.height,
+                BorderAxis::Vertical => rect.size.width,
+            };
+            let band = Twip((thickness.raw() / 3).max(1));
+            match axis {
+                BorderAxis::Horizontal => {
+                    push_border_rect(
+                        list,
+                        Rect::new(rect.origin, Size::new(rect.size.width, band)),
+                        edge.color,
+                    );
+                    push_border_rect(
+                        list,
+                        Rect::new(
+                            Point::new(rect.origin.x, rect.bottom() - band),
+                            Size::new(rect.size.width, band),
+                        ),
+                        edge.color,
+                    );
+                }
+                BorderAxis::Vertical => {
+                    push_border_rect(
+                        list,
+                        Rect::new(rect.origin, Size::new(band, rect.size.height)),
+                        edge.color,
+                    );
+                    push_border_rect(
+                        list,
+                        Rect::new(
+                            Point::new(rect.right() - band, rect.origin.y),
+                            Size::new(band, rect.size.height),
+                        ),
+                        edge.color,
+                    );
+                }
+            }
+        }
+        pattern => {
+            if let Some(rects) = patterned_rects(rect, edge.width, pattern, axis) {
+                for dash in rects {
+                    push_border_rect(list, dash, edge.color);
+                }
+            } else {
+                push_border_rect(list, rect, edge.color);
+            }
+        }
+    }
+}
+
+fn patterned_rects(
+    rect: Rect,
+    width: Twip,
+    pattern: BorderPattern,
+    axis: BorderAxis,
+) -> Option<Vec<Rect>> {
+    let runs: &[(i32, i32)] = match pattern {
+        BorderPattern::Dotted => &[(1, 1)],
+        BorderPattern::Dashed => &[(3, 2)],
+        BorderPattern::DotDash => &[(1, 1), (3, 1)],
+        BorderPattern::DotDotDash => &[(1, 1), (1, 1), (3, 1)],
+        BorderPattern::Solid | BorderPattern::Double => return Some(vec![rect]),
+    };
+    let start = match axis {
+        BorderAxis::Horizontal => rect.origin.x.raw(),
+        BorderAxis::Vertical => rect.origin.y.raw(),
+    };
+    let total = match axis {
+        BorderAxis::Horizontal => rect.size.width.raw(),
+        BorderAxis::Vertical => rect.size.height.raw(),
+    }
+    .max(0);
+    let end = start.saturating_add(total);
+    let unit = width.raw().max(1);
+    let cycle_units = runs
+        .iter()
+        .map(|(on, off)| on.saturating_add(*off))
+        .sum::<i32>();
+    let cycle = unit.saturating_mul(cycle_units).max(1);
+    let mut out = Vec::new();
+    let mut cursor = start - start.rem_euclid(cycle);
+    let mut run_index = 0usize;
+    while cursor < end {
+        let (on_units, off_units) = runs[run_index % runs.len()];
+        let on = unit.saturating_mul(on_units);
+        let paint_start = cursor.max(start);
+        let paint_end = cursor.saturating_add(on).min(end);
+        if paint_start < paint_end {
+            if out.len() == MAX_BORDER_PATTERN_RECTS {
+                return None;
+            }
+            let dash = match axis {
+                BorderAxis::Horizontal => Rect::new(
+                    Point::new(Twip(paint_start), rect.origin.y),
+                    Size::new(Twip(paint_end - paint_start), rect.size.height),
+                ),
+                BorderAxis::Vertical => Rect::new(
+                    Point::new(rect.origin.x, Twip(paint_start)),
+                    Size::new(rect.size.width, Twip(paint_end - paint_start)),
+                ),
+            };
+            out.push(dash);
+        }
+        cursor = cursor.saturating_add(on);
+        cursor = cursor.saturating_add(unit.saturating_mul(off_units));
+        run_index += 1;
+    }
+    Some(out)
+}
+
+fn push_border_rect(list: &mut DisplayList, rect: Rect, color: [u8; 4]) {
+    list.push(PaintItem::Rect {
+        rect,
+        fill: Some(Color {
+            r: color[0],
+            g: color[1],
+            b: color[2],
+            a: color[3],
+        }),
+        stroke: None,
+    });
 }
 
 /// Paints a paragraph's background shading (`w:shd`) as a fill covering `rect`
@@ -374,42 +539,43 @@ fn compose_paragraph_decor(list: &mut DisplayList, rect: Rect, decor: &Paragraph
             stroke: None,
         });
     }
-    let mut edge = |r: Rect, color: [u8; 4]| {
-        list.push(PaintItem::Rect {
-            rect: r,
-            fill: Some(rgba(color)),
-            stroke: None,
-        });
-    };
     let b = &decor.borders;
     if let Some(e) = b.top {
-        edge(
+        paint_border(
+            list,
             Rect::new(rect.origin, Size::new(rect.size.width, e.width)),
-            e.color,
+            e,
+            BorderAxis::Horizontal,
         );
     }
     if let Some(e) = b.bottom {
-        edge(
+        paint_border(
+            list,
             Rect::new(
                 Point::new(rect.origin.x, rect.bottom() - e.width),
                 Size::new(rect.size.width, e.width),
             ),
-            e.color,
+            e,
+            BorderAxis::Horizontal,
         );
     }
     if let Some(e) = b.start {
-        edge(
+        paint_border(
+            list,
             Rect::new(rect.origin, Size::new(e.width, rect.size.height)),
-            e.color,
+            e,
+            BorderAxis::Vertical,
         );
     }
     if let Some(e) = b.end {
-        edge(
+        paint_border(
+            list,
             Rect::new(
                 Point::new(rect.right() - e.width, rect.origin.y),
                 Size::new(e.width, rect.size.height),
             ),
-            e.color,
+            e,
+            BorderAxis::Vertical,
         );
     }
 }
@@ -491,6 +657,7 @@ mod tests {
                 bottom: Some(ResolvedEdge {
                     color: [10, 20, 30, 255],
                     width: Twip(40),
+                    pattern: BorderPattern::Solid,
                 }),
                 ..CellBorders::default()
             },
@@ -534,6 +701,216 @@ mod tests {
         assert_eq!(color.r, 10);
         assert_eq!(color.g, 20);
         assert_eq!(color.b, 30);
+    }
+
+    #[test]
+    fn common_border_patterns_expand_to_deterministic_geometry() {
+        let rect = Rect::new(
+            Point::new(Twip::ZERO, Twip::ZERO),
+            Size::new(Twip(100), Twip(10)),
+        );
+        let cases = [
+            (
+                BorderPattern::Dotted,
+                vec![(0, 10), (20, 10), (40, 10), (60, 10), (80, 10)],
+            ),
+            (BorderPattern::Dashed, vec![(0, 30), (50, 30)]),
+            (
+                BorderPattern::DotDash,
+                vec![(0, 10), (20, 30), (60, 10), (80, 20)],
+            ),
+            (
+                BorderPattern::DotDotDash,
+                vec![(0, 10), (20, 10), (40, 30), (80, 10)],
+            ),
+        ];
+        for (pattern, expected) in cases {
+            let mut list = DisplayList::new();
+            paint_border(
+                &mut list,
+                rect,
+                ResolvedEdge {
+                    color: [1, 2, 3, 255],
+                    width: Twip(10),
+                    pattern,
+                },
+                BorderAxis::Horizontal,
+            );
+            let actual: Vec<(i32, i32)> = list
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    PaintItem::Rect { rect, .. } => {
+                        Some((rect.origin.x.raw(), rect.size.width.raw()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(actual, expected, "{pattern:?} keeps a stable phase");
+        }
+    }
+
+    #[test]
+    fn shared_dashes_keep_the_same_phase_across_different_segment_partitions() {
+        let make_rect = |x, width| {
+            Rect::new(
+                Point::new(Twip(x), Twip::ZERO),
+                Size::new(Twip(width), Twip(10)),
+            )
+        };
+        let covered = |rects: Vec<Rect>| {
+            rects
+                .into_iter()
+                .flat_map(|rect| rect.origin.x.raw()..rect.right().raw())
+                .collect::<std::collections::BTreeSet<_>>()
+        };
+        let whole = covered(
+            patterned_rects(
+                make_rect(13, 100),
+                Twip(10),
+                BorderPattern::DotDash,
+                BorderAxis::Horizontal,
+            )
+            .unwrap(),
+        );
+        let partitioned = covered(
+            [
+                patterned_rects(
+                    make_rect(13, 37),
+                    Twip(10),
+                    BorderPattern::DotDash,
+                    BorderAxis::Horizontal,
+                )
+                .unwrap(),
+                patterned_rects(
+                    make_rect(50, 63),
+                    Twip(10),
+                    BorderPattern::DotDash,
+                    BorderAxis::Horizontal,
+                )
+                .unwrap(),
+            ]
+            .concat(),
+        );
+        assert_eq!(
+            whole, partitioned,
+            "both cells sharing an edge paint the same on/off twips"
+        );
+    }
+
+    #[test]
+    fn a_double_border_paints_two_parallel_bands_inside_the_total_width() {
+        let mut list = DisplayList::new();
+        paint_border(
+            &mut list,
+            Rect::new(
+                Point::new(Twip(100), Twip(200)),
+                Size::new(Twip(500), Twip(60)),
+            ),
+            ResolvedEdge {
+                color: [1, 2, 3, 255],
+                width: Twip(60),
+                pattern: BorderPattern::Double,
+            },
+            BorderAxis::Horizontal,
+        );
+        let bands: Vec<(i32, i32)> = list
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                PaintItem::Rect { rect, .. } => Some((rect.origin.y.raw(), rect.size.height.raw())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(bands, vec![(200, 20), (240, 20)]);
+    }
+
+    #[test]
+    fn pathological_dash_expansion_falls_back_to_one_bounded_solid_band() {
+        let rect = Rect::new(
+            Point::new(Twip::ZERO, Twip::ZERO),
+            Size::new(Twip(10_000), Twip(1)),
+        );
+        let mut list = DisplayList::new();
+        paint_border(
+            &mut list,
+            rect,
+            ResolvedEdge {
+                color: [1, 2, 3, 255],
+                width: Twip(1),
+                pattern: BorderPattern::Dotted,
+            },
+            BorderAxis::Horizontal,
+        );
+        assert_eq!(list.items.len(), 1);
+        assert!(matches!(
+            list.items[0],
+            PaintItem::Rect {
+                rect: painted,
+                ..
+            } if painted == rect
+        ));
+    }
+
+    #[test]
+    fn horizontal_border_segments_override_the_whole_side_fallback() {
+        let mut list = DisplayList::new();
+        let borders = CellBorders {
+            bottom: Some(ResolvedEdge {
+                color: [255, 0, 255, 255],
+                width: Twip(5),
+                pattern: BorderPattern::Solid,
+            }),
+            bottom_segments: vec![
+                ResolvedBorderSegment {
+                    offset: Twip(0),
+                    length: Twip(50),
+                    edge: ResolvedEdge {
+                        color: [255, 0, 0, 255],
+                        width: Twip(10),
+                        pattern: BorderPattern::Solid,
+                    },
+                },
+                ResolvedBorderSegment {
+                    offset: Twip(50),
+                    length: Twip(50),
+                    edge: ResolvedEdge {
+                        color: [0, 0, 255, 255],
+                        width: Twip(10),
+                        pattern: BorderPattern::Solid,
+                    },
+                },
+            ],
+            ..CellBorders::default()
+        };
+        compose_cell_borders(
+            &mut list,
+            Rect::new(
+                Point::new(Twip(20), Twip(30)),
+                Size::new(Twip(100), Twip(40)),
+            ),
+            &borders,
+        );
+        let painted: Vec<(i32, i32, Color)> = list
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                PaintItem::Rect {
+                    rect,
+                    fill: Some(color),
+                    ..
+                } => Some((rect.origin.x.raw(), rect.size.width.raw(), *color)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            painted,
+            vec![
+                (20, 50, Color::rgb(255, 0, 0)),
+                (70, 50, Color::rgb(0, 0, 255)),
+            ],
+            "segment geometry and colors paint independently; magenta fallback is absent"
+        );
     }
 
     use crate::block::{BlockBorders, BoxMetrics, ParagraphDecor, ResolvedEdge};
@@ -701,6 +1078,7 @@ mod tests {
         let edge = ResolvedEdge {
             color: [10, 20, 30, 255],
             width: Twip(40),
+            pattern: BorderPattern::Solid,
         };
         let frag = BlockFragment::Paragraph {
             id: node(1),
