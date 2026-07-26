@@ -186,12 +186,31 @@ impl ParleyShaper {
     /// the requested name — every deterministic / WASM build, and any machine
     /// missing the font — the bundled resolution stands, so nothing changes there.
     fn pick_family<'r>(&'r self, fonts: &mut FontContext, run: &'r StyledRun<'_>) -> &'r str {
-        if let Some(name) = run.requested_family.as_deref()
-            && fonts.collection.family_id(name).is_some()
-        {
-            return name;
+        if let Some(name) = run.requested_family.as_deref() {
+            if fonts.collection.family_id(name).is_some() {
+                return name;
+            }
+            // Requested family is missing: shape with the bundled
+            // metric-compatible substitute (Liberation Sans/Serif/Mono, Carlito,
+            // Caladea) so line breaking matches LibreOffice instead of the
+            // wrong-metric default. Falls through to `family_for` if the
+            // substitute is somehow not registered.
+            if let Some(sub) = crate::font_substitution::substitute(name)
+                && let Some(registered) = self.registered_name(sub.family.base)
+            {
+                return registered;
+            }
         }
         self.family_for(run.font)
+    }
+
+    /// The family name `parley` registered a bundled family under, keyed by the
+    /// family's base [`FontId`] (an exact match, unlike [`Self::family_for`]).
+    fn registered_name(&self, base: u32) -> Option<&str> {
+        self.families
+            .iter()
+            .find(|(b, _)| *b == base)
+            .map(|(_, name)| name.as_str())
     }
 
     /// The registered family name for a run's resolved [`FontId`] (the family

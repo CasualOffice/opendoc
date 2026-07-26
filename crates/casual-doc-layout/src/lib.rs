@@ -30,6 +30,7 @@ pub mod display;
 pub mod document_layout;
 pub mod flow;
 pub mod font_registry;
+pub mod font_substitution;
 pub mod fonts;
 pub mod hittest;
 pub mod incremental;

@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 
 use skrifa::{FontRef, MetadataProvider};
 
-use crate::fonts::{self, BundledFamily, CALADEA, CARLITO, ROBOTO};
+use crate::fonts::{self, BundledFamily, ROBOTO};
 use crate::text::FontId;
 
 /// Distinct-entry ceiling per report bucket; excess requests are counted against
@@ -152,24 +152,29 @@ pub fn cover_fallback(primary: FontId, ch: char) -> Option<FontId> {
 }
 
 /// Maps a requested family name (case- and whitespace-insensitive) to a bundled
-/// family and the fidelity of the substitution. The table covers the common Word
-/// families; anything unknown falls back to the default family.
+/// family and the fidelity of the substitution, delegating to
+/// [`crate::font_substitution`] — the single source of truth shared with the
+/// shaper's [`pick_family`](crate::shape::ParleyShaper), so the face a run is
+/// *shaped* with equals the face it is *rasterized* with (the [`FontId`] chosen
+/// here rides the run to the renderer). Arial/Helvetica → Liberation Sans, Times
+/// → Liberation Serif, Courier → Liberation Mono, Calibri → Carlito, Cambria →
+/// Caladea (all metric-compatible); an unknown family is classified by generic
+/// family. A blank name keeps the default family.
 fn substitute(family: &str) -> (&'static BundledFamily, Disposition) {
-    let key = family.trim().to_ascii_lowercase();
-    match key.as_str() {
-        // Bundled families requested directly.
-        "roboto" => (&ROBOTO, Disposition::Exact),
-        "caladea" => (&CALADEA, Disposition::Exact),
-        "carlito" => (&CARLITO, Disposition::Exact),
-        // Metric-compatible substitutes: matching advances preserve line breaks.
-        "calibri" => (&CARLITO, Disposition::MetricCompatible),
-        "cambria" => (&CALADEA, Disposition::MetricCompatible),
-        // Common families with no bundled metric-compatible partner. Arial/
-        // Helvetica/Times New Roman have Apache partners (Arimo/Tinos) that are
-        // not bundled by this slice. All resolve to the documented visual fallback.
-        "arial" | "helvetica" | "helvetica neue" | "times new roman" | "times" | "tinos"
-        | "arimo" | "courier new" | "courier" | "cousine" => (&ROBOTO, Disposition::Fallback),
-        _ => (&ROBOTO, Disposition::Fallback),
+    match crate::font_substitution::substitute(family) {
+        Some(sub) => (sub.family, disposition(sub.kind)),
+        None => (&ROBOTO, Disposition::Fallback),
+    }
+}
+
+/// Maps a [`crate::font_substitution::SubstituteKind`] to the resolver's
+/// report [`Disposition`].
+fn disposition(kind: crate::font_substitution::SubstituteKind) -> Disposition {
+    use crate::font_substitution::SubstituteKind;
+    match kind {
+        SubstituteKind::Bundled => Disposition::Exact,
+        SubstituteKind::MetricCompatible => Disposition::MetricCompatible,
+        SubstituteKind::Generic => Disposition::Fallback,
     }
 }
 
@@ -278,6 +283,7 @@ impl FontResolutionReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fonts::{CALADEA, CARLITO, LIBERATION_MONO, LIBERATION_SANS, LIBERATION_SERIF};
 
     #[test]
     fn cambria_resolves_to_the_caladea_face_metric_compatible() {
@@ -345,13 +351,41 @@ mod tests {
             bold: false,
             italic: false,
         });
-        assert_eq!(m.family, "Roboto");
+        // An unknown family is classified by generic family, defaulting to sans:
+        // Liberation Sans (not Roboto) so its Latin metrics are plausible. The
+        // outcome is still a reported (non-exact) `Fallback`.
+        assert_eq!(m.family, "Liberation Sans");
         assert_eq!(m.disposition, Disposition::Fallback);
         report.note_resolution("Totally Made Up Font", &m);
         report.note_resolution("Totally Made Up Font", &m);
         let subs: Vec<_> = report.substitutions().collect();
         assert_eq!(subs.len(), 1, "the same family aggregates");
         assert_eq!(subs[0].occurrences, 2);
+    }
+
+    #[test]
+    fn arial_resolves_to_liberation_sans_metric_compatible() {
+        // The keystone fix: a missing Arial (Times/Courier) resolves to the
+        // bundled Liberation face LibreOffice substitutes, so advances — and
+        // therefore line breaking and page counts — match, instead of the
+        // wrong-metric Roboto/Caladea default it used before.
+        let resolver = FontResolver::new();
+        for (family, expected, base) in [
+            ("Arial", "Liberation Sans", LIBERATION_SANS),
+            ("Helvetica", "Liberation Sans", LIBERATION_SANS),
+            ("Times New Roman", "Liberation Serif", LIBERATION_SERIF),
+            ("Courier New", "Liberation Mono", LIBERATION_MONO),
+        ] {
+            let m = resolver.resolve(&FaceRequest {
+                family,
+                bold: true,
+                italic: false,
+            });
+            assert_eq!(m.family, expected, "{family}");
+            assert_eq!(m.disposition, Disposition::MetricCompatible, "{family}");
+            // The bold face of the substitute family is preserved.
+            assert_eq!(m.face, base.face_id(true, false), "{family} bold face");
+        }
     }
 
     #[test]

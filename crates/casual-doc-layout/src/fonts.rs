@@ -19,12 +19,22 @@
 //!   for Cambria.
 //! - `FontId(8)..=11` — **Carlito** (SIL OFL-1.1), a metric-compatible substitute
 //!   for Calibri.
+//! - `FontId(12)..=15` — **Liberation Sans** (SIL OFL-1.1), a metric-compatible
+//!   substitute for Arial/Helvetica.
+//! - `FontId(16)..=19` — **Liberation Serif** (SIL OFL-1.1), a metric-compatible
+//!   substitute for Times New Roman.
+//! - `FontId(20)..=23` — **Liberation Mono** (SIL OFL-1.1), a metric-compatible
+//!   substitute for Courier New.
 //!
-//! Carlito ships under the SIL Open Font License 1.1: a permissive license that
-//! governs only the font file (not this Apache-2.0 code) and carries no copyleft
-//! effect. Because the faces are embedded as `include_bytes!` asset bytes rather
-//! than as a crate dependency, `cargo-deny` does not scan them; the OFL text is
-//! shipped alongside the font in `fonts/LICENSES/` (see `fonts/README.md`).
+//! Carlito and the Liberation families ship under the SIL Open Font License 1.1:
+//! a permissive license that governs only the font file (not this Apache-2.0
+//! code) and carries no copyleft effect. Because the faces are embedded as
+//! `include_bytes!` asset bytes rather than as a crate dependency, `cargo-deny`
+//! does not scan them; the OFL text is shipped alongside the fonts in
+//! `fonts/LICENSES/` (see `fonts/README.md`). The Liberation set is
+//! LibreOffice's own metric-compatible substitute family, so substituting a
+//! missing Arial/Times/Courier request to it reproduces LibreOffice's line
+//! breaking and pagination (`font_substitution`).
 
 use crate::text::FontId;
 
@@ -54,6 +64,45 @@ pub const CARLITO_BOLD: &[u8] = include_bytes!("../fonts/Carlito-Bold.ttf");
 pub const CARLITO_ITALIC: &[u8] = include_bytes!("../fonts/Carlito-Italic.ttf");
 /// Carlito Bold Italic.
 pub const CARLITO_BOLD_ITALIC: &[u8] = include_bytes!("../fonts/Carlito-BoldItalic.ttf");
+
+/// Liberation Sans Regular (SIL OFL-1.1) — metric-compatible with Arial/Helvetica.
+pub const LIBERATION_SANS_REGULAR: &[u8] =
+    include_bytes!("../fonts/liberation/LiberationSans-Regular.ttf");
+/// Liberation Sans Bold.
+pub const LIBERATION_SANS_BOLD: &[u8] =
+    include_bytes!("../fonts/liberation/LiberationSans-Bold.ttf");
+/// Liberation Sans Italic.
+pub const LIBERATION_SANS_ITALIC: &[u8] =
+    include_bytes!("../fonts/liberation/LiberationSans-Italic.ttf");
+/// Liberation Sans Bold Italic.
+pub const LIBERATION_SANS_BOLD_ITALIC: &[u8] =
+    include_bytes!("../fonts/liberation/LiberationSans-BoldItalic.ttf");
+
+/// Liberation Serif Regular (SIL OFL-1.1) — metric-compatible with Times New Roman.
+pub const LIBERATION_SERIF_REGULAR: &[u8] =
+    include_bytes!("../fonts/liberation/LiberationSerif-Regular.ttf");
+/// Liberation Serif Bold.
+pub const LIBERATION_SERIF_BOLD: &[u8] =
+    include_bytes!("../fonts/liberation/LiberationSerif-Bold.ttf");
+/// Liberation Serif Italic.
+pub const LIBERATION_SERIF_ITALIC: &[u8] =
+    include_bytes!("../fonts/liberation/LiberationSerif-Italic.ttf");
+/// Liberation Serif Bold Italic.
+pub const LIBERATION_SERIF_BOLD_ITALIC: &[u8] =
+    include_bytes!("../fonts/liberation/LiberationSerif-BoldItalic.ttf");
+
+/// Liberation Mono Regular (SIL OFL-1.1) — metric-compatible with Courier New.
+pub const LIBERATION_MONO_REGULAR: &[u8] =
+    include_bytes!("../fonts/liberation/LiberationMono-Regular.ttf");
+/// Liberation Mono Bold.
+pub const LIBERATION_MONO_BOLD: &[u8] =
+    include_bytes!("../fonts/liberation/LiberationMono-Bold.ttf");
+/// Liberation Mono Italic.
+pub const LIBERATION_MONO_ITALIC: &[u8] =
+    include_bytes!("../fonts/liberation/LiberationMono-Italic.ttf");
+/// Liberation Mono Bold Italic.
+pub const LIBERATION_MONO_BOLD_ITALIC: &[u8] =
+    include_bytes!("../fonts/liberation/LiberationMono-BoldItalic.ttf");
 
 /// A bundled fallback family: four faces (regular, bold, italic, bold-italic)
 /// addressed by a contiguous [`FontId`] block starting at `base`. The face for a
@@ -125,13 +174,59 @@ pub const CARLITO: BundledFamily = BundledFamily {
     ],
 };
 
+/// Liberation Sans — a metric-compatible substitute for Arial/Helvetica
+/// (LibreOffice's own Arial substitute, so line breaking matches it).
+pub const LIBERATION_SANS: BundledFamily = BundledFamily {
+    name: "Liberation Sans",
+    base: 12,
+    faces: [
+        LIBERATION_SANS_REGULAR,
+        LIBERATION_SANS_BOLD,
+        LIBERATION_SANS_ITALIC,
+        LIBERATION_SANS_BOLD_ITALIC,
+    ],
+};
+
+/// Liberation Serif — a metric-compatible substitute for Times New Roman
+/// (LibreOffice's own Times substitute).
+pub const LIBERATION_SERIF: BundledFamily = BundledFamily {
+    name: "Liberation Serif",
+    base: 16,
+    faces: [
+        LIBERATION_SERIF_REGULAR,
+        LIBERATION_SERIF_BOLD,
+        LIBERATION_SERIF_ITALIC,
+        LIBERATION_SERIF_BOLD_ITALIC,
+    ],
+};
+
+/// Liberation Mono — a metric-compatible substitute for Courier New
+/// (LibreOffice's own Courier substitute).
+pub const LIBERATION_MONO: BundledFamily = BundledFamily {
+    name: "Liberation Mono",
+    base: 20,
+    faces: [
+        LIBERATION_MONO_REGULAR,
+        LIBERATION_MONO_BOLD,
+        LIBERATION_MONO_ITALIC,
+        LIBERATION_MONO_BOLD_ITALIC,
+    ],
+};
+
 /// Every bundled family, in `base`-id order — the resolver's fallback chain and
 /// the shaper's registration order.
-pub const FAMILIES: [&BundledFamily; 3] = [&ROBOTO, &CALADEA, &CARLITO];
+pub const FAMILIES: [&BundledFamily; 6] = [
+    &ROBOTO,
+    &CALADEA,
+    &CARLITO,
+    &LIBERATION_SANS,
+    &LIBERATION_SERIF,
+    &LIBERATION_MONO,
+];
 
 /// Every bundled face, `(FontId, bytes)`, in id order — the shaper registration
 /// and renderer lookup table.
-pub const BUNDLED_FACES: [(FontId, &[u8]); 12] = [
+pub const BUNDLED_FACES: [(FontId, &[u8]); 24] = [
     (FontId(0), ROBOTO_REGULAR),
     (FontId(1), ROBOTO_BOLD),
     (FontId(2), ROBOTO_ITALIC),
@@ -144,6 +239,18 @@ pub const BUNDLED_FACES: [(FontId, &[u8]); 12] = [
     (FontId(9), CARLITO_BOLD),
     (FontId(10), CARLITO_ITALIC),
     (FontId(11), CARLITO_BOLD_ITALIC),
+    (FontId(12), LIBERATION_SANS_REGULAR),
+    (FontId(13), LIBERATION_SANS_BOLD),
+    (FontId(14), LIBERATION_SANS_ITALIC),
+    (FontId(15), LIBERATION_SANS_BOLD_ITALIC),
+    (FontId(16), LIBERATION_SERIF_REGULAR),
+    (FontId(17), LIBERATION_SERIF_BOLD),
+    (FontId(18), LIBERATION_SERIF_ITALIC),
+    (FontId(19), LIBERATION_SERIF_BOLD_ITALIC),
+    (FontId(20), LIBERATION_MONO_REGULAR),
+    (FontId(21), LIBERATION_MONO_BOLD),
+    (FontId(22), LIBERATION_MONO_ITALIC),
+    (FontId(23), LIBERATION_MONO_BOLD_ITALIC),
 ];
 
 /// The [`FontId`] of the bundled *default* (Roboto) face for the given bold/italic
@@ -204,6 +311,20 @@ mod tests {
     }
 
     #[test]
+    fn liberation_blocks_follow_carlito() {
+        assert_eq!(LIBERATION_SANS.face_id(false, false), FontId(12));
+        assert_eq!(LIBERATION_SANS.face_id(true, true), FontId(15));
+        assert_eq!(LIBERATION_SERIF.face_id(false, false), FontId(16));
+        assert_eq!(LIBERATION_SERIF.face_id(true, true), FontId(19));
+        assert_eq!(LIBERATION_MONO.face_id(false, false), FontId(20));
+        assert_eq!(LIBERATION_MONO.face_id(true, true), FontId(23));
+        assert!(!CARLITO.contains(FontId(12)));
+        assert!(LIBERATION_SANS.contains(FontId(12)) && LIBERATION_SANS.contains(FontId(15)));
+        assert!(LIBERATION_SERIF.contains(FontId(16)) && LIBERATION_SERIF.contains(FontId(19)));
+        assert!(LIBERATION_MONO.contains(FontId(20)) && LIBERATION_MONO.contains(FontId(23)));
+    }
+
+    #[test]
     fn family_name_maps_each_block() {
         assert_eq!(family_name(FontId(0)), "Roboto");
         assert_eq!(family_name(FontId(3)), "Roboto");
@@ -211,8 +332,28 @@ mod tests {
         assert_eq!(family_name(FontId(7)), "Caladea");
         assert_eq!(family_name(FontId(8)), "Carlito");
         assert_eq!(family_name(FontId(11)), "Carlito");
+        assert_eq!(family_name(FontId(12)), "Liberation Sans");
+        assert_eq!(family_name(FontId(15)), "Liberation Sans");
+        assert_eq!(family_name(FontId(16)), "Liberation Serif");
+        assert_eq!(family_name(FontId(19)), "Liberation Serif");
+        assert_eq!(family_name(FontId(20)), "Liberation Mono");
+        assert_eq!(family_name(FontId(23)), "Liberation Mono");
         // Unknown ids fall back to the default family name.
         assert_eq!(family_name(FontId(99)), "Roboto");
+    }
+
+    /// Every bundled Liberation face is valid TrueType the shaper can register
+    /// (guards against a truncated or placeholder asset landing in the tree).
+    #[test]
+    fn liberation_faces_are_valid_truetype() {
+        for family in [&LIBERATION_SANS, &LIBERATION_SERIF, &LIBERATION_MONO] {
+            for offset in 0..4u32 {
+                let bytes = family.face_bytes(offset);
+                assert!(bytes.len() > 10_000, "{} face looks truncated", family.name);
+                // TrueType sfnt version 0x00010000.
+                assert_eq!(&bytes[0..4], &[0x00, 0x01, 0x00, 0x00]);
+            }
+        }
     }
 
     #[test]
