@@ -302,7 +302,7 @@ mod tests {
         let node = NodeId::from_parts(1, 1).unwrap();
         let layout = shaper.shape_paragraph(
             &[StyledRun {
-                text: "Hi",
+                text: "Hi".into(),
                 font: FontId(0),
                 size: Twip::from_points(11),
                 bold: false,
@@ -311,6 +311,7 @@ mod tests {
                 color: [0, 0, 0, 255],
                 decoration: Decoration::default(),
                 highlight: None,
+                baseline_shift: Twip::ZERO,
             }],
             LineConstraints {
                 max_width: Twip::from_points(500),

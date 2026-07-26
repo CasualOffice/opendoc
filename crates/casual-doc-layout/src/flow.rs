@@ -14,15 +14,17 @@
 //! table splitting (`P1D-003`) are the following slices; unmapped inline nodes
 //! contribute no text yet (never panic).
 
+use std::borrow::Cow;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
-    Alignment, BlockNode, BorderEdge, BreakKind, Color, DefinitionMap, Document, Drawing, Extent,
-    FontRef, FontScheme, HeightRule, HighlightColor, InlineNode, MediaId, MediaReference,
-    ParagraphProperties, RunProperties, TabAlignment, TabLeader, TabStop, Table, TableBorders,
-    TableCell, TableLayout, TableRowProperties, ThemeFontRef,
+    Alignment, BlockNode, BorderEdge, BreakKind, Color, ColorScheme, DefinitionMap, Document,
+    Drawing, Extent, FontRef, FontScheme, HeightRule, HighlightColor, InlineNode, MediaId,
+    MediaReference, ParagraphProperties, RunProperties, SchemeColor, TabAlignment, TabLeader,
+    TabStop, Table, TableBorders, TableCell, TableLayout, TableRowProperties, ThemeColorRef,
+    ThemeFontRef, VerticalAlignment,
 };
 
 use crate::block::{
@@ -52,6 +54,11 @@ struct FlowCtx<'a> {
     /// The document's media table, so an inline drawing's [`MediaId`] resolves to
     /// its package part name (the display list's stable media key).
     media: &'a DefinitionMap<MediaId, MediaReference>,
+    /// The document's theme color palette (`a:clrScheme`) resolved to RGBA per
+    /// slot, so a run's `w:themeColor` resolves to the real theme color rather than
+    /// silently falling back to black. `None` when the document declares no theme
+    /// color scheme.
+    palette: Option<&'a ResolvedPalette>,
 }
 
 /// Builds a galley of block fragments from a document's body, shaped to fit
@@ -79,12 +86,20 @@ pub fn build_galley_with_report(
 ) -> (Vec<BlockFragment>, FontResolutionReport) {
     let resolver = FontResolver::new();
     let mut report = FontResolutionReport::new();
+    // Resolve the theme color palette once so every run's `w:themeColor` resolves
+    // against the real scheme colors (not a black fallback).
+    let palette = document
+        .definitions()
+        .color_scheme
+        .as_ref()
+        .map(resolve_palette);
     let mut ctx = FlowCtx {
         resolver: &resolver,
         scheme: document.definitions().font_scheme.as_ref(),
         report: &mut report,
         default_tab: tabs::default_tab_stop(document.definitions().settings.default_tab_stop),
         media: &document.definitions().media,
+        palette: palette.as_ref(),
     };
     let galley = flow_blocks(document.body(), shaper, content_width, &mut ctx);
     (galley, report)
@@ -108,12 +123,20 @@ pub fn flow_header_footer(
 ) -> Vec<BlockFragment> {
     let resolver = FontResolver::new();
     let mut report = FontResolutionReport::new();
+    // Resolve the theme color palette once so every run's `w:themeColor` resolves
+    // against the real scheme colors (not a black fallback).
+    let palette = document
+        .definitions()
+        .color_scheme
+        .as_ref()
+        .map(resolve_palette);
     let mut ctx = FlowCtx {
         resolver: &resolver,
         scheme: document.definitions().font_scheme.as_ref(),
         report: &mut report,
         default_tab: tabs::default_tab_stop(document.definitions().settings.default_tab_stop),
         media: &document.definitions().media,
+        palette: palette.as_ref(),
     };
     flow_blocks(blocks, shaper, content_width, &mut ctx)
 }
@@ -149,12 +172,20 @@ pub fn build_galley_cached(
     // [`build_galley_with_report`].
     let resolver = FontResolver::new();
     let mut report = FontResolutionReport::new();
+    // Resolve the theme color palette once so every run's `w:themeColor` resolves
+    // against the real scheme colors (not a black fallback).
+    let palette = document
+        .definitions()
+        .color_scheme
+        .as_ref()
+        .map(resolve_palette);
     let mut ctx = FlowCtx {
         resolver: &resolver,
         scheme: document.definitions().font_scheme.as_ref(),
         report: &mut report,
         default_tab: tabs::default_tab_stop(document.definitions().settings.default_tab_stop),
         media: &document.definitions().media,
+        palette: palette.as_ref(),
     };
     cache.begin_build(content_width);
     let mut galley = Vec::new();
@@ -283,6 +314,7 @@ fn paragraph_hash(
                 run.decoration.underline.hash(&mut hasher);
                 run.decoration.strikethrough.hash(&mut hasher);
                 run.highlight.hash(&mut hasher);
+                run.baseline_shift.0.hash(&mut hasher);
             }
             FlowItem::Tab => 1u8.hash(&mut hasher),
             FlowItem::Break(kind) => {
@@ -711,6 +743,7 @@ fn block_intrinsic(blocks: &[BlockNode], shaper: &dyn LineShaper, ctx: &FlowCtx)
         report: &mut scratch,
         default_tab: ctx.default_tab,
         media: ctx.media,
+        palette: ctx.palette,
     };
     let mut min = 0;
     let mut preferred = 0;
@@ -875,7 +908,7 @@ fn collect_runs<'a>(inlines: &'a [InlineNode], out: &mut Vec<StyledRun<'a>>, ctx
     for inline in inlines {
         match inline {
             InlineNode::Run(run) if run.properties.hidden == Some(true) => {}
-            InlineNode::Run(run) => out.push(styled_run(&run.text, &run.properties, ctx)),
+            InlineNode::Run(run) => push_styled_runs(&run.text, &run.properties, ctx, out),
             InlineNode::Tab(_) => out.push(styled_run("\t", &RunProperties::default(), ctx)),
             InlineNode::Hyperlink(hyperlink) => collect_runs(&hyperlink.inlines, out, ctx),
             InlineNode::Revision(revision) => collect_runs(&revision.inlines, out, ctx),
@@ -895,7 +928,9 @@ fn collect_items<'a>(inlines: &'a [InlineNode], out: &mut Vec<FlowItem<'a>>, ctx
         match inline {
             InlineNode::Run(run) if run.properties.hidden == Some(true) => {}
             InlineNode::Run(run) => {
-                out.push(FlowItem::Run(styled_run(&run.text, &run.properties, ctx)));
+                let mut styled = Vec::new();
+                push_styled_runs(&run.text, &run.properties, ctx, &mut styled);
+                out.extend(styled.into_iter().map(FlowItem::Run));
             }
             InlineNode::Tab(_) => out.push(FlowItem::Tab),
             InlineNode::Break(node) => out.push(FlowItem::Break(node.kind)),
@@ -1145,7 +1180,7 @@ pub(crate) fn shape_field_run(
     origin: Point,
 ) -> FieldRunShape {
     let styled = StyledRun {
-        text: value,
+        text: value.into(),
         font: style.font,
         size: style.size,
         bold: style.bold,
@@ -1154,6 +1189,7 @@ pub(crate) fn shape_field_run(
         color: style.color,
         decoration: style.decoration,
         highlight: None,
+        baseline_shift: Twip::ZERO,
     };
     let node = NodeId::from_parts(1, 1).expect("1/1 is a valid node id");
     let dummy = ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, 0));
@@ -1515,34 +1551,269 @@ fn measure_fielded_segment(
 /// Maps a run's text + properties to a styled run, resolving its declared font
 /// family (`w:rFonts`, direct or theme) to a concrete bundled face via the
 /// [`FontResolver`] and recording any substitution/coverage fallback (`P1C-002b`).
+///
+/// Run appearance beyond the face is applied here too: `w:vertAlign` super/subscript
+/// (a baseline shift plus a reduced shaped size) and `w:position` (a half-point
+/// baseline raise/lower with no resize) fold into `size`/`baseline_shift`; `w:caps`
+/// and `w:smallCaps` uppercase the text; and `w:color` resolves against the theme
+/// palette. Small-caps per-letter size-splitting is done by [`push_styled_runs`],
+/// so this single-run path uppercases without the per-letter size step.
 fn styled_run<'a>(text: &'a str, properties: &RunProperties, ctx: &mut FlowCtx) -> StyledRun<'a> {
-    // `w:sz` is in half-points; a half-point is 10 twips (a point is 20). Default
-    // to 11pt (Word's default body size) when unset.
-    let size = properties
-        .size_half_points
-        .map_or(Twip::from_points(11), |hp| Twip(hp as i32 * 10));
-    let color = match properties.color {
-        Some(Color::Rgb(rgb)) => [rgb.r, rgb.g, rgb.b, 255],
-        _ => [0, 0, 0, 255],
-    };
+    let (size, baseline_shift) = run_metrics(properties);
+    let text = case_transform(text, properties);
     let bold = properties.bold.unwrap_or(false);
     let italic = properties.italic.unwrap_or(false);
     StyledRun {
-        text,
         // Resolve the declared family to a concrete face so the renderer outlines
-        // the same face `parley` shapes with.
-        font: resolve_font(text, properties, bold, italic, ctx),
+        // the same face `parley` shapes with (measured against the shaped text).
+        font: resolve_font(text.as_ref(), properties, bold, italic, ctx),
+        text,
         size,
         bold,
         italic,
         letter_spacing: properties.character_spacing_twips.map_or(Twip::ZERO, Twip),
-        color,
+        color: run_color(properties.color, ctx.palette),
         decoration: Decoration {
             underline: properties.underline.unwrap_or(false),
             strikethrough: properties.strike.unwrap_or(false),
         },
         highlight: properties.highlight.and_then(highlight_rgba),
+        baseline_shift,
     }
+}
+
+/// The size (twips) a run shapes at and its baseline shift (twips, positive =
+/// raised toward the top of the line), from `w:vertAlign` and `w:position`.
+/// Super/subscript raise (~1/3 of the size) / lower (~1/6) the baseline and shrink
+/// the glyphs to ~2/3; `w:position` adds a half-point baseline raise(+)/lower(−)
+/// with no resize. The two compose.
+fn run_metrics(properties: &RunProperties) -> (Twip, Twip) {
+    // `w:sz` is in half-points; a half-point is 10 twips (a point is 20). Default
+    // to 11pt (Word's default body size) when unset.
+    let base = properties
+        .size_half_points
+        .map_or(Twip::from_points(11), |hp| Twip(hp as i32 * 10));
+    let (size, mut shift) = match properties.vertical_alignment {
+        Some(VerticalAlignment::Superscript) => (Twip(base.raw() * 2 / 3), Twip(base.raw() / 3)),
+        Some(VerticalAlignment::Subscript) => (Twip(base.raw() * 2 / 3), Twip(-base.raw() / 6)),
+        Some(VerticalAlignment::Baseline) | None => (base, Twip::ZERO),
+    };
+    // `w:position` is a half-point baseline offset (positive raises), no resize.
+    if let Some(hp) = properties.position_half_points {
+        shift = Twip(shift.raw() + hp * 10);
+    }
+    (size, shift)
+}
+
+/// Applies `w:caps`/`w:smallCaps` casing: both uppercase the run text (small-caps
+/// per-letter sizing is layered on by [`push_styled_runs`]). Untransformed text is
+/// borrowed, so the common case stays allocation-free.
+fn case_transform<'a>(text: &'a str, properties: &RunProperties) -> Cow<'a, str> {
+    if properties.all_caps == Some(true) || properties.small_caps == Some(true) {
+        Cow::Owned(text.to_uppercase())
+    } else {
+        Cow::Borrowed(text)
+    }
+}
+
+/// Pushes the styled run(s) for a model run. `w:smallCaps` splits the run so that
+/// originally-lowercase letters are uppercased and shaped at ~3/4 size while the
+/// rest keep full size (Word's small-caps look); every other run yields exactly one
+/// styled run via [`styled_run`].
+fn push_styled_runs<'a>(
+    text: &'a str,
+    properties: &RunProperties,
+    ctx: &mut FlowCtx,
+    out: &mut Vec<StyledRun<'a>>,
+) {
+    if properties.small_caps == Some(true) {
+        push_small_caps_runs(text, properties, ctx, out);
+    } else {
+        out.push(styled_run(text, properties, ctx));
+    }
+}
+
+/// Splits a small-caps run into uppercased spans, shaping originally-lowercase
+/// spans at ~3/4 of the run size and every other span at full size. Each span's
+/// text is owned (uppercased), so the pushed runs borrow nothing from `text`.
+fn push_small_caps_runs<'a>(
+    text: &str,
+    properties: &RunProperties,
+    ctx: &mut FlowCtx,
+    out: &mut Vec<StyledRun<'a>>,
+) {
+    let (base, baseline_shift) = run_metrics(properties);
+    let bold = properties.bold.unwrap_or(false);
+    let italic = properties.italic.unwrap_or(false);
+    let letter_spacing = properties.character_spacing_twips.map_or(Twip::ZERO, Twip);
+    let color = run_color(properties.color, ctx.palette);
+    let decoration = Decoration {
+        underline: properties.underline.unwrap_or(false),
+        strikethrough: properties.strike.unwrap_or(false),
+    };
+    let highlight = properties.highlight.and_then(highlight_rgba);
+    for (span, was_lower) in small_caps_spans(text) {
+        let size = if was_lower {
+            Twip(base.raw() * 3 / 4)
+        } else {
+            base
+        };
+        let upper = span.to_uppercase();
+        let font = resolve_font(&upper, properties, bold, italic, ctx);
+        out.push(StyledRun {
+            text: Cow::Owned(upper),
+            font,
+            size,
+            bold,
+            italic,
+            letter_spacing,
+            color,
+            decoration,
+            highlight,
+            baseline_shift,
+        });
+    }
+}
+
+/// Splits `text` into maximal spans that are each either all originally-lowercase
+/// letters or all other characters, in order, tagging each span with whether it was
+/// the lowercase group (which small-caps shrinks).
+fn small_caps_spans(text: &str) -> Vec<(&str, bool)> {
+    let mut spans = Vec::new();
+    let mut start = 0;
+    let mut group: Option<bool> = None;
+    for (i, ch) in text.char_indices() {
+        let lower = ch.is_lowercase();
+        match group {
+            Some(g) if g == lower => {}
+            Some(g) => {
+                spans.push((&text[start..i], g));
+                start = i;
+            }
+            None => {}
+        }
+        group = Some(lower);
+    }
+    if let Some(g) = group {
+        spans.push((&text[start..], g));
+    }
+    spans
+}
+
+/// Resolves a run's `w:color` to opaque RGBA: an explicit `w:color@val` sRGB is
+/// itself; a `w:themeColor` resolves against the document's theme palette (with any
+/// tint/shade applied); an absent color (`w:color@val="auto"` / unset) is black.
+fn run_color(color: Option<Color>, palette: Option<&ResolvedPalette>) -> [u8; 4] {
+    match color {
+        Some(Color::Rgb(rgb)) => [rgb.r, rgb.g, rgb.b, 255],
+        Some(Color::Theme(theme)) => match palette {
+            // The model carries no tint/shade on a theme color yet, so the factors
+            // are `None` today; routing every theme color through `apply_tint_shade`
+            // keeps the resolution complete for when the model gains them.
+            Some(palette) => apply_tint_shade(palette.slot(theme.slot), None, None),
+            None => [0, 0, 0, 255],
+        },
+        None => [0, 0, 0, 255],
+    }
+}
+
+/// The document's theme color scheme (`a:clrScheme`) resolved to one opaque RGBA
+/// per slot, so a `w:themeColor` reference resolves to the real color rather than
+/// silently rendering black.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ResolvedPalette {
+    /// The twelve slots, in `ColorScheme` field order (see [`theme_slot_index`]).
+    slots: [[u8; 4]; 12],
+}
+
+impl ResolvedPalette {
+    /// The resolved RGBA for a theme color slot.
+    fn slot(&self, slot: ThemeColorRef) -> [u8; 4] {
+        self.slots[theme_slot_index(slot)]
+    }
+}
+
+/// The [`ResolvedPalette`] index for a theme color slot (matching [`ColorScheme`]'s
+/// OOXML child order: dk1, lt1, dk2, lt2, accent1..6, hlink, folHlink).
+fn theme_slot_index(slot: ThemeColorRef) -> usize {
+    match slot {
+        ThemeColorRef::Dark1 => 0,
+        ThemeColorRef::Light1 => 1,
+        ThemeColorRef::Dark2 => 2,
+        ThemeColorRef::Light2 => 3,
+        ThemeColorRef::Accent1 => 4,
+        ThemeColorRef::Accent2 => 5,
+        ThemeColorRef::Accent3 => 6,
+        ThemeColorRef::Accent4 => 7,
+        ThemeColorRef::Accent5 => 8,
+        ThemeColorRef::Accent6 => 9,
+        ThemeColorRef::Hyperlink => 10,
+        ThemeColorRef::FollowedHyperlink => 11,
+    }
+}
+
+/// Resolves a document's [`ColorScheme`] to a [`ResolvedPalette`]: each slot's
+/// `a:srgbClr` becomes its RGB and each `a:sysClr` resolves to its `lastClr` (or a
+/// sensible default for the named system color when none was recorded).
+fn resolve_palette(scheme: &ColorScheme) -> ResolvedPalette {
+    ResolvedPalette {
+        slots: [
+            resolve_scheme_color(&scheme.dark1),
+            resolve_scheme_color(&scheme.light1),
+            resolve_scheme_color(&scheme.dark2),
+            resolve_scheme_color(&scheme.light2),
+            resolve_scheme_color(&scheme.accent1),
+            resolve_scheme_color(&scheme.accent2),
+            resolve_scheme_color(&scheme.accent3),
+            resolve_scheme_color(&scheme.accent4),
+            resolve_scheme_color(&scheme.accent5),
+            resolve_scheme_color(&scheme.accent6),
+            resolve_scheme_color(&scheme.hyperlink),
+            resolve_scheme_color(&scheme.followed_hyperlink),
+        ],
+    }
+}
+
+/// Resolves one scheme color slot to opaque RGBA: an `a:srgbClr` is its RGB; an
+/// `a:sysClr` uses its recorded `lastClr`, falling back to the conventional value
+/// for the named system color (see [`default_system_color`]).
+fn resolve_scheme_color(color: &SchemeColor) -> [u8; 4] {
+    match color {
+        SchemeColor::Srgb(rgb) => [rgb.r, rgb.g, rgb.b, 255],
+        SchemeColor::System(sys) => match sys.last_color {
+            Some(rgb) => [rgb.r, rgb.g, rgb.b, 255],
+            None => default_system_color(&sys.value),
+        },
+    }
+}
+
+/// The conventional sRGB for a named `a:sysClr` token when no `lastClr` was
+/// recorded: the light "surface" tokens are white, everything else (text-like) is
+/// black — enough to keep an unrecorded system color legible.
+fn default_system_color(value: &str) -> [u8; 4] {
+    match value {
+        "window" | "background" | "btnFace" | "menu" | "3dLight" => [255, 255, 255, 255],
+        _ => [0, 0, 0, 255],
+    }
+}
+
+/// Applies an OOXML `tint` (lightens toward white) and/or `shade` (darkens toward
+/// black) to an RGB, each a `0.0..=1.0` factor; `None` leaves the channel
+/// unchanged. Alpha is preserved. Ready for when the model carries theme
+/// tint/shade — [`run_color`] routes every resolved theme color through it.
+fn apply_tint_shade(rgb: [u8; 4], tint: Option<f32>, shade: Option<f32>) -> [u8; 4] {
+    let adjust = |c: u8| -> u8 {
+        let mut v = f32::from(c);
+        if let Some(t) = tint {
+            let t = t.clamp(0.0, 1.0);
+            v = v * t + 255.0 * (1.0 - t);
+        }
+        if let Some(s) = shade {
+            v *= s.clamp(0.0, 1.0);
+        }
+        v.round().clamp(0.0, 255.0) as u8
+    };
+    [adjust(rgb[0]), adjust(rgb[1]), adjust(rgb[2]), rgb[3]]
 }
 
 /// Resolves a run's declared font family to a bundled face, records any
@@ -1960,6 +2231,280 @@ mod tests {
         );
     }
 
+    /// A run with the given size (half-points) and extra run properties.
+    fn sized_run(id: u64, text: &str, half_points: u32, properties: RunProperties) -> InlineNode {
+        run_node(
+            id,
+            text,
+            RunProperties {
+                size_half_points: Some(half_points),
+                ..properties
+            },
+        )
+    }
+
+    #[test]
+    fn superscript_raises_and_shrinks_the_run() {
+        use casual_doc_model::v1::VerticalAlignment;
+        // A baseline run and a superscript run share the line; the superscript is
+        // raised (smaller screen-y, which grows downward) and shaped smaller (~2/3).
+        let base = sized_run(11, "x", 24, RunProperties::default());
+        let sup = sized_run(
+            12,
+            "2",
+            24,
+            RunProperties {
+                vertical_alignment: Some(VerticalAlignment::Superscript),
+                ..RunProperties::default()
+            },
+        );
+        let doc = document(vec![paragraph(10, vec![base, sup])]);
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&doc, &shaper, Twip::from_points(400));
+        let runs = &first_paragraph_lines(&galley).lines[0].runs;
+        assert!(runs.len() >= 2, "base + superscript are distinct runs");
+        let big = runs.iter().max_by_key(|r| r.size.raw()).unwrap();
+        let small = runs.iter().min_by_key(|r| r.size.raw()).unwrap();
+        assert!(
+            small.size.raw() < big.size.raw(),
+            "superscript shapes smaller ({} < {})",
+            small.size.raw(),
+            big.size.raw()
+        );
+        assert!(
+            small.origin.y.raw() < big.origin.y.raw(),
+            "superscript is raised above the baseline ({} < {})",
+            small.origin.y.raw(),
+            big.origin.y.raw()
+        );
+    }
+
+    #[test]
+    fn subscript_lowers_the_run() {
+        use casual_doc_model::v1::VerticalAlignment;
+        let base = sized_run(11, "x", 24, RunProperties::default());
+        let sub = sized_run(
+            12,
+            "2",
+            24,
+            RunProperties {
+                vertical_alignment: Some(VerticalAlignment::Subscript),
+                ..RunProperties::default()
+            },
+        );
+        let doc = document(vec![paragraph(10, vec![base, sub])]);
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&doc, &shaper, Twip::from_points(400));
+        let runs = &first_paragraph_lines(&galley).lines[0].runs;
+        let big = runs.iter().max_by_key(|r| r.size.raw()).unwrap();
+        let small = runs.iter().min_by_key(|r| r.size.raw()).unwrap();
+        assert!(
+            small.size.raw() < big.size.raw(),
+            "subscript shapes smaller"
+        );
+        assert!(
+            small.origin.y.raw() > big.origin.y.raw(),
+            "subscript is lowered below the baseline ({} > {})",
+            small.origin.y.raw(),
+            big.origin.y.raw()
+        );
+    }
+
+    #[test]
+    fn position_raises_the_baseline_without_resizing() {
+        // `w:position` is a pure baseline offset — same size, only the origin moves.
+        let base = sized_run(11, "x", 24, RunProperties::default());
+        let raised = sized_run(
+            12,
+            "y",
+            24,
+            RunProperties {
+                position_half_points: Some(6), // +6 half-points = +60 twips (raise)
+                ..RunProperties::default()
+            },
+        );
+        let doc = document(vec![paragraph(10, vec![base, raised])]);
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&doc, &shaper, Twip::from_points(400));
+        let runs = &first_paragraph_lines(&galley).lines[0].runs;
+        assert!(runs.len() >= 2, "base + positioned are distinct runs");
+        assert!(
+            runs.iter().all(|r| r.size == runs[0].size),
+            "w:position must not resize the run"
+        );
+        let min_y = runs.iter().map(|r| r.origin.y.raw()).min().unwrap();
+        let max_y = runs.iter().map(|r| r.origin.y.raw()).max().unwrap();
+        assert!(
+            min_y < max_y,
+            "the positioned run is raised above the baseline"
+        );
+    }
+
+    /// The glyph-id sequence of a galley's first paragraph (visual order).
+    fn glyph_ids(galley: &[BlockFragment]) -> Vec<u32> {
+        first_paragraph_lines(galley)
+            .lines
+            .iter()
+            .flat_map(|l| &l.runs)
+            .flat_map(|r| &r.glyphs)
+            .map(|g| g.id)
+            .collect()
+    }
+
+    #[test]
+    fn all_caps_shapes_like_pre_uppercased_text() {
+        let shaper = ParleyShaper::new();
+        let caps = document(vec![paragraph(
+            10,
+            vec![run_node(
+                11,
+                "abc",
+                RunProperties {
+                    all_caps: Some(true),
+                    ..RunProperties::default()
+                },
+            )],
+        )]);
+        let plain = document(vec![paragraph(
+            20,
+            vec![run_node(21, "ABC", RunProperties::default())],
+        )]);
+        let caps_glyphs = glyph_ids(&build_galley(&caps, &shaper, Twip::from_points(400)));
+        let plain_glyphs = glyph_ids(&build_galley(&plain, &shaper, Twip::from_points(400)));
+        assert!(!caps_glyphs.is_empty(), "the all-caps run shaped to glyphs");
+        assert_eq!(
+            caps_glyphs, plain_glyphs,
+            "all-caps `abc` shapes to the same glyphs as literal `ABC`"
+        );
+    }
+
+    #[test]
+    fn small_caps_splits_lowercase_at_three_quarter_size() {
+        // `aB`: the originally-lowercase `a` shapes at 3/4 size, the `B` at full
+        // size, so the run splits into two spans of distinct size.
+        let doc = document(vec![paragraph(
+            10,
+            vec![sized_run(
+                11,
+                "aB",
+                24, // 12pt -> 240 twips; lowercase span shapes at 180 twips (3/4)
+                RunProperties {
+                    small_caps: Some(true),
+                    ..RunProperties::default()
+                },
+            )],
+        )]);
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&doc, &shaper, Twip::from_points(400));
+        let runs = &first_paragraph_lines(&galley).lines[0].runs;
+        let sizes: std::collections::BTreeSet<i32> = runs.iter().map(|r| r.size.raw()).collect();
+        assert_eq!(
+            sizes,
+            [180, 240].into_iter().collect(),
+            "the lowercase span is 3/4 size (180) and the rest full size (240): {sizes:?}"
+        );
+    }
+
+    #[test]
+    fn a_theme_colored_run_resolves_to_the_scheme_slot_not_black() {
+        use casual_doc_model::v1::{
+            Color, ColorScheme, RgbColor, SchemeColor, ThemeColor, ThemeColorRef,
+        };
+        // A distinct accent-1 slot color, referenced by a run's `w:themeColor`.
+        let scheme = ColorScheme {
+            accent1: SchemeColor::Srgb(RgbColor {
+                r: 0x11,
+                g: 0x22,
+                b: 0x33,
+            }),
+            ..ColorScheme::default()
+        };
+        let defs = Definitions {
+            color_scheme: Some(scheme),
+            ..Definitions::default()
+        };
+        let props = RunProperties {
+            color: Some(Color::Theme(ThemeColor {
+                slot: ThemeColorRef::Accent1,
+            })),
+            ..RunProperties::default()
+        };
+        let doc = Document::new(
+            NodeId::from_parts(1, 1).unwrap(),
+            vec![paragraph(10, vec![run_node(11, "themed", props)])],
+            defs,
+        )
+        .unwrap();
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&doc, &shaper, Twip::from_points(400));
+        let run = &first_paragraph_lines(&galley).lines[0].runs[0];
+        assert_eq!(
+            run.color,
+            [0x11, 0x22, 0x33, 255],
+            "the theme slot resolves to its real RGB, flowed end to end"
+        );
+        assert_ne!(
+            run.color,
+            [0, 0, 0, 255],
+            "a resolvable theme color is not black"
+        );
+    }
+
+    #[test]
+    fn a_syscolor_slot_resolves_to_its_last_color() {
+        use casual_doc_model::v1::{
+            ColorScheme, RgbColor, SchemeColor, SystemColor, ThemeColorRef,
+        };
+        let scheme = ColorScheme {
+            dark1: SchemeColor::System(SystemColor {
+                value: "windowText".to_owned(),
+                last_color: Some(RgbColor { r: 5, g: 6, b: 7 }),
+            }),
+            ..ColorScheme::default()
+        };
+        let palette = resolve_palette(&scheme);
+        assert_eq!(
+            palette.slot(ThemeColorRef::Dark1),
+            [5, 6, 7, 255],
+            "a sysClr slot resolves to its recorded lastClr"
+        );
+    }
+
+    #[test]
+    fn tint_lightens_and_shade_darkens_a_theme_color() {
+        // shade 0.5 halves each channel toward black; tint 0.5 blends halfway to
+        // white (100*0.5 + 255*0.5 = 177.5 -> 178); no factors is the identity.
+        assert_eq!(
+            apply_tint_shade([100, 100, 100, 255], None, Some(0.5)),
+            [50, 50, 50, 255]
+        );
+        assert_eq!(
+            apply_tint_shade([100, 100, 100, 255], Some(0.5), None),
+            [178, 178, 178, 255]
+        );
+        assert_eq!(
+            apply_tint_shade([12, 34, 56, 255], None, None),
+            [12, 34, 56, 255]
+        );
+    }
+
+    #[test]
+    fn an_auto_or_unresolvable_color_is_black() {
+        use casual_doc_model::v1::{Color, ThemeColor, ThemeColorRef};
+        // An unset (`auto`) color is black.
+        assert_eq!(run_color(None, None), [0, 0, 0, 255]);
+        // A theme color with no palette available also falls back to black.
+        assert_eq!(
+            run_color(
+                Some(Color::Theme(ThemeColor {
+                    slot: ThemeColorRef::Dark1,
+                })),
+                None,
+            ),
+            [0, 0, 0, 255]
+        );
+    }
+
     #[test]
     fn a_start_end_indent_reduces_the_wrap_width_and_carries_into_box_metrics() {
         use casual_doc_model::v1::{Indentation, Paragraph, ParagraphProperties};
@@ -2095,11 +2640,12 @@ mod tests {
             report: &mut report,
             default_tab: crate::tabs::DEFAULT_TAB_STOP,
             media: &media,
+            palette: None,
         };
         let mut runs = Vec::new();
         collect_runs(&inlines, &mut runs, &mut ctx);
         assert_eq!(runs.len(), 1, "only the visible run is collected");
-        assert_eq!(runs[0].text, "shown");
+        assert_eq!(&*runs[0].text, "shown");
     }
 
     #[test]
