@@ -6,8 +6,9 @@
 
 use casual_doc_model::v1::{
     Alignment, BreakKind, Color, EmphasisMark, FontName, FontRef, HighlightColor, Indentation,
-    Language, MAX_SYMBOL_FONT_LEN, ParagraphProperties, RgbColor, RunFontHint, RunProperties,
-    Spacing, StyleKind, ThemeFont, ThemeFontRef, VerticalAlignment, VerticalTextAlignment,
+    Language, LineRule, MAX_SYMBOL_FONT_LEN, ParagraphProperties, RgbColor, RunFontHint,
+    RunProperties, Spacing, StyleKind, ThemeFont, ThemeFontRef, VerticalAlignment,
+    VerticalTextAlignment,
 };
 use quick_xml::events::BytesStart;
 
@@ -265,10 +266,15 @@ pub(crate) fn apply_paragraph_property(
             properties.indentation = Some(indentation);
         }
         b"spacing" => {
+            let (line_percent, line_rule, line_twips) = spacing_line(element);
             let spacing = Spacing {
                 before_twips: spacing_twips(element, b"before"),
                 after_twips: spacing_twips(element, b"after"),
-                line_percent: spacing_line_percent(element),
+                line_percent,
+                line_rule,
+                line_twips,
+                before_auto: spacing_auto(element, b"beforeAutospacing"),
+                after_auto: spacing_auto(element, b"afterAutospacing"),
             };
             if spacing == Spacing::default() {
                 return false;
@@ -431,17 +437,44 @@ fn spacing_twips(element: &BytesStart<'_>, name: &[u8]) -> Option<i32> {
         .filter(|value| (0..=31_680).contains(value))
 }
 
-fn spacing_line_percent(element: &BytesStart<'_>) -> Option<u16> {
-    let line = attribute_value(element, b"line").and_then(|raw| raw.parse::<i64>().ok())?;
+/// Parses the line-spacing attributes of a `w:spacing` element into the model's
+/// `(line_percent, line_rule, line_twips)` triple. `auto` (or an absent rule) is a
+/// multiple of single spacing, converted to a percentage; `atLeast`/`exact` carry
+/// a twip value in `line_twips` and set `line_rule`.
+fn spacing_line(element: &BytesStart<'_>) -> (Option<u16>, Option<LineRule>, Option<i32>) {
+    let Some(line) = attribute_value(element, b"line").and_then(|raw| raw.parse::<i64>().ok())
+    else {
+        return (None, None, None);
+    };
     match attribute_value(element, b"lineRule").as_deref() {
         None | Some("auto") => {
-            let percent = line.checked_mul(100)? / 240;
-            u16::try_from(percent)
-                .ok()
-                .filter(|value| (1..=10_000).contains(value))
+            let percent = line
+                .checked_mul(100)
+                .map(|value| value / 240)
+                .and_then(|value| u16::try_from(value).ok())
+                .filter(|value| (1..=10_000).contains(value));
+            (percent, None, None)
         }
-        _ => None,
+        Some("atLeast") => {
+            let twips = i32::try_from(line)
+                .ok()
+                .filter(|value| (0..=31_680).contains(value));
+            (None, twips.map(|_| LineRule::AtLeast), twips)
+        }
+        Some("exact") => {
+            let twips = i32::try_from(line)
+                .ok()
+                .filter(|value| (0..=31_680).contains(value));
+            (None, twips.map(|_| LineRule::Exact), twips)
+        }
+        _ => (None, None, None),
     }
+}
+
+/// Parses a `w:beforeAutospacing`/`w:afterAutospacing` toggle: present means on
+/// unless `val` is `0`/`false`/`off`. Absent yields `None` (do not autospace).
+fn spacing_auto(element: &BytesStart<'_>, name: &[u8]) -> Option<bool> {
+    attribute_value(element, name).map(|value| is_true(Some(value.as_str())))
 }
 
 pub(crate) fn parse_rgb(value: &str) -> Option<RgbColor> {

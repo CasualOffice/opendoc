@@ -177,6 +177,7 @@ pub fn shape_with_flow(
                 tab_stops,
                 default_tab,
                 first_line_indent,
+                constraints,
             )
         } else {
             layout_wrapped_block(shaper, node, block, constraints, first_line_indent)
@@ -325,6 +326,7 @@ fn layout_tabbed_line(
     tab_stops: &[TabStop],
     default_tab: Twip,
     first_line_indent: Twip,
+    constraints: LineConstraints,
 ) -> Vec<Line> {
     // Measure every segment unwrapped.
     let segments: Vec<Segment> = block
@@ -380,11 +382,35 @@ fn layout_tabbed_line(
         pen = left + seg.width.raw();
     }
 
+    // Apply the paragraph's line-spacing rule to the assembled line box. Unlike the
+    // wrapped path (whose lines come straight from the shaper, which already applied
+    // any `auto` multiple as a `MetricsRelative` factor), a tabbed line is built
+    // here, so the rule — an `auto` multiple, `atLeast`, or `exact` — is applied to
+    // its natural height directly.
+    let natural = Twip(ascent.raw() + descent.raw());
+    // `lineRule="auto"` with an explicit `w:line`: scale the single-line box by the
+    // percent, the extra height falling below the baseline as leading (matching the
+    // `MetricsRelative` growth parley applies on the wrapped path).
+    let (ascent, descent, natural) = match constraints.line_height_percent {
+        Some(percent) if percent != 100 => {
+            let scaled = (natural.raw() as i64 * percent as i64 / 100) as i32;
+            let extra = (scaled - natural.raw()).max(0);
+            (
+                ascent,
+                Twip(descent.raw() + extra),
+                Twip(natural.raw() + extra),
+            )
+        }
+        _ => (ascent, descent, natural),
+    };
+    // `atLeast`/`exact` then reshape the (possibly scaled) box.
+    let (ascent, descent, height) =
+        crate::shape::apply_line_rule(ascent, descent, natural, &constraints);
     let line = Line {
         runs,
         ascent,
         descent,
-        height: ascent + descent,
+        height,
         range: ModelRange::new(
             ModelPos::new(node, block.start_offset),
             ModelPos::new(node, block.end_offset),

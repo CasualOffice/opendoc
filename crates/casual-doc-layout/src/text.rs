@@ -305,6 +305,12 @@ pub struct LineConstraints {
     /// Line height as a percent of the single-spaced height (`w:spacing@line`
     /// with `lineRule="auto"`); `None` = the font's natural line height.
     pub line_height_percent: Option<u16>,
+    /// `w:spacing@lineRule="atLeast"`: the line box is at least this many twips
+    /// tall; taller natural content grows it. `None` unless the rule is atLeast.
+    pub line_at_least: Option<Twip>,
+    /// `w:spacing@lineRule="exact"`: the line box is exactly this many twips tall
+    /// regardless of content (content may clip). `None` unless the rule is exact.
+    pub line_exact: Option<Twip>,
     /// First-line indent applied to the paragraph's first line only, relative to
     /// the (already start-indented) column: positive out-dents the body to the
     /// right (`w:ind@firstLine`), negative protrudes the first line to the left
@@ -319,6 +325,8 @@ impl Default for LineConstraints {
             rtl: false,
             alignment: TextAlignment::Start,
             line_height_percent: None,
+            line_at_least: None,
+            line_exact: None,
             first_line_indent: Twip::ZERO,
         }
     }
