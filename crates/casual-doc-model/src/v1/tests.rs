@@ -2497,6 +2497,16 @@ fn full_sdt_props() -> SdtProperties {
         alias: Some("Full name".to_owned()),
         tag: Some("fullName".to_owned()),
         control_id: Some("1553275".to_owned()),
+        lock: Some(SdtLock::SdtContentLocked),
+        placeholder: Some("DefaultPlaceholder_1081868574".to_owned()),
+        showing_placeholder: true,
+        temporary: false,
+        data_binding: Some(SdtDataBinding {
+            xpath: "/ns0:root[1]/ns0:name[1]".to_owned(),
+            store_item_id: Some("{ABCD0000-0000-0000-0000-000000000000}".to_owned()),
+            prefix_mappings: Some("xmlns:ns0='urn:contoso'".to_owned()),
+        }),
+        data: None,
     }
 }
 
@@ -2530,6 +2540,19 @@ fn block_content_control_validates_and_round_trips_json() {
     assert_eq!(sdt.properties.alias.as_deref(), Some("Full name"));
     assert_eq!(sdt.properties.tag.as_deref(), Some("fullName"));
     assert_eq!(sdt.properties.control_id.as_deref(), Some("1553275"));
+    assert_eq!(sdt.properties.lock, Some(SdtLock::SdtContentLocked));
+    assert_eq!(
+        sdt.properties.placeholder.as_deref(),
+        Some("DefaultPlaceholder_1081868574")
+    );
+    assert!(sdt.properties.showing_placeholder);
+    assert_eq!(
+        sdt.properties
+            .data_binding
+            .as_ref()
+            .map(|binding| binding.xpath.as_str()),
+        Some("/ns0:root[1]/ns0:name[1]")
+    );
     assert_eq!(sdt.blocks.len(), 1);
 }
 
@@ -2716,6 +2739,97 @@ fn oversized_sdt_control_id_is_rejected() {
     assert!(matches!(
         table_document(vec![sdt]),
         Err(ModelError::PropertyValueOutOfDomain { property: "sdt.id" })
+    ));
+}
+
+#[test]
+fn sdt_control_data_variants_validate_and_round_trip_json() {
+    for (kind, data) in [
+        (
+            SdtControlKind::DropDownList,
+            SdtControlData::List(vec![
+                SdtListItem {
+                    display: Some("Red".to_owned()),
+                    value: "r".to_owned(),
+                },
+                SdtListItem {
+                    display: None,
+                    value: "b".to_owned(),
+                },
+            ]),
+        ),
+        (
+            SdtControlKind::Date,
+            SdtControlData::Date(SdtDate {
+                full_date: Some("2026-07-26T00:00:00Z".to_owned()),
+                date_format: Some("M/d/yyyy".to_owned()),
+                calendar: Some("gregorian".to_owned()),
+                lid: Some("en-US".to_owned()),
+                store_mapped_as: Some("dateTime".to_owned()),
+            }),
+        ),
+        (
+            SdtControlKind::Checkbox,
+            SdtControlData::Checkbox(SdtCheckbox {
+                checked: true,
+                checked_state: Some(SdtCheckboxSymbol {
+                    val: "2612".to_owned(),
+                    font: Some("MS Gothic".to_owned()),
+                }),
+                unchecked_state: Some(SdtCheckboxSymbol {
+                    val: "2610".to_owned(),
+                    font: Some("MS Gothic".to_owned()),
+                }),
+            }),
+        ),
+    ] {
+        let properties = SdtProperties {
+            control_kind: Some(kind),
+            data: Some(data),
+            ..SdtProperties::default()
+        };
+        let sdt = block_sdt(tid(10), properties, vec![paragraph_block(tid(11))]);
+        let document = table_document(vec![sdt]).unwrap();
+        let reloaded =
+            Document::from_json(&document.to_json().unwrap(), SnapshotLimits::default()).unwrap();
+        assert_eq!(document, reloaded);
+    }
+}
+
+#[test]
+fn sdt_control_data_mismatched_with_kind_is_rejected() {
+    // List entries on a rich-text control are inconsistent and rejected.
+    let properties = SdtProperties {
+        control_kind: Some(SdtControlKind::RichText),
+        data: Some(SdtControlData::List(Vec::new())),
+        ..SdtProperties::default()
+    };
+    let sdt = block_sdt(tid(10), properties, vec![paragraph_block(tid(11))]);
+    assert!(matches!(
+        table_document(vec![sdt]),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "sdt.data.list"
+        })
+    ));
+}
+
+#[test]
+fn oversized_sdt_data_binding_xpath_is_rejected() {
+    let properties = SdtProperties {
+        control_kind: Some(SdtControlKind::PlainText),
+        data_binding: Some(SdtDataBinding {
+            xpath: "x".repeat(1025),
+            store_item_id: None,
+            prefix_mappings: None,
+        }),
+        ..SdtProperties::default()
+    };
+    let sdt = block_sdt(tid(10), properties, vec![paragraph_block(tid(11))]);
+    assert!(matches!(
+        table_document(vec![sdt]),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "sdt.dataBinding.xpath"
+        })
     ));
 }
 
