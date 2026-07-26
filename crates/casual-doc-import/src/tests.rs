@@ -3856,3 +3856,200 @@ fn content_control_inside_a_text_box_round_trips() {
     assert_eq!(sdt.properties.tag.as_deref(), Some("inBox"));
     assert_eq!(tb_block_text(&sdt.blocks), "Boxed");
 }
+
+// --- Package-manifest disposition pass (P1F-1 / coverage-gap finding F2) ------
+
+/// Builds an in-memory OPC package (a `.docx` zip) from raw part bytes, so a
+/// package-level import can be exercised without a fixture on disk.
+fn zip_package(parts: &[(&str, &[u8])]) -> Vec<u8> {
+    use std::io::{Cursor, Write};
+    use zip::write::SimpleFileOptions;
+    use zip::{CompressionMethod, ZipWriter};
+
+    let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+    for (name, bytes) in parts {
+        writer
+            .start_file(
+                *name,
+                SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
+            )
+            .unwrap();
+        writer.write_all(bytes).unwrap();
+    }
+    writer.finish().unwrap().into_inner()
+}
+
+/// The whole-part dispositions in a report (admitted parts the semantic model
+/// does not consume), as `(part_name, content_type)` pairs in report order.
+fn part_dispositions(import: &Import) -> Vec<(String, Option<String>)> {
+    import
+        .report
+        .entries
+        .iter()
+        .filter_map(|entry| {
+            entry
+                .part
+                .as_ref()
+                .map(|part| (part.part_name.clone(), part.content_type.clone()))
+        })
+        .collect()
+}
+
+/// The custom part bytes carried by [`package_with_extra_part`].
+const EXTRA_CUSTOM_XML: &[u8] =
+    br#"<root xmlns="urn:custom"><value>kept-only-by-retention</value></root>"#;
+
+/// A package whose model consumes the main document and styles, plus one extra
+/// admitted part (`customXml/item1.xml`) that the semantic model never opens.
+fn package_with_extra_part() -> Vec<u8> {
+    let content_types: &[u8] = br#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>"#;
+    let rels: &[u8] = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+    let document_rels: &[u8] = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>"#;
+    let styles: &[u8] = br#"<w:styles xmlns:w="urn:w"><w:style w:type="paragraph" w:styleId="Heading1"><w:rPr><w:b/></w:rPr></w:style></w:styles>"#;
+    let document: &[u8] = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>Body</w:t></w:r></w:p></w:body></w:document>"#;
+
+    zip_package(&[
+        ("[Content_Types].xml", content_types),
+        ("_rels/.rels", rels),
+        ("word/document.xml", document),
+        ("word/_rels/document.xml.rels", document_rels),
+        ("word/styles.xml", styles),
+        ("customXml/item1.xml", EXTRA_CUSTOM_XML),
+    ])
+}
+
+#[test]
+fn semantic_import_reports_each_unconsumed_admitted_part_once() {
+    let bytes = package_with_extra_part();
+    let mut package =
+        DocxPackage::open(&bytes, casual_doc_ooxml::PackageLimits::default()).unwrap();
+    let import = import_package(&mut package, ImportConfig::default()).unwrap();
+
+    // The single unmodeled admitted part is dispositioned exactly once, naming
+    // the part and its declared content type.
+    assert_eq!(
+        part_dispositions(&import),
+        vec![(
+            "customXml/item1.xml".to_owned(),
+            Some("application/xml".to_owned()),
+        )]
+    );
+
+    // In Semantic mode the part is dropped: omitted from the model, not retained.
+    let entry = import
+        .report
+        .entries
+        .iter()
+        .find(|entry| entry.part.is_some())
+        .unwrap();
+    assert_eq!(entry.feature, "customXml/item1.xml");
+    assert_eq!(entry.occurrences, 1);
+    assert_eq!(entry.model_outcome, ModelOutcome::Omitted);
+    assert_eq!(entry.retention_outcome, RetentionOutcome::NotRetained);
+}
+
+#[test]
+fn a_consumed_part_is_not_reported_as_a_dropped_whole_part() {
+    let bytes = package_with_extra_part();
+    let mut package =
+        DocxPackage::open(&bytes, casual_doc_ooxml::PackageLimits::default()).unwrap();
+    let import = import_package(&mut package, ImportConfig::default()).unwrap();
+
+    let dropped: Vec<String> = part_dispositions(&import)
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    // The consumed styles part, the main document, and pure package plumbing are
+    // never whole-part dispositions.
+    assert!(!dropped.contains(&"word/styles.xml".to_owned()));
+    assert!(!dropped.contains(&"word/document.xml".to_owned()));
+    assert!(!dropped.contains(&"[Content_Types].xml".to_owned()));
+    assert!(!dropped.iter().any(|name| name.contains("_rels")));
+}
+
+#[test]
+fn retention_mode_preserves_unconsumed_parts_and_reports_them_preserved() {
+    let bytes = package_with_extra_part();
+    let mut package =
+        DocxPackage::open(&bytes, casual_doc_ooxml::PackageLimits::default()).unwrap();
+    let config = ImportConfig {
+        mode: ImportMode::Retention,
+        ..ImportConfig::default()
+    };
+    let import = import_package(&mut package, config).unwrap();
+
+    // The whole-part disposition still names the part, now marked preserved
+    // (kept verbatim by the retained-source byte floor).
+    let entry = import
+        .report
+        .entries
+        .iter()
+        .find(|entry| entry.part.is_some())
+        .unwrap();
+    assert_eq!(entry.feature, "customXml/item1.xml");
+    assert_eq!(entry.retention_outcome, RetentionOutcome::Preserved);
+
+    // Retention keeps every admitted part byte-for-byte, including the one the
+    // semantic model drops.
+    let retained = import.retained_source.as_ref().unwrap();
+    assert_eq!(
+        retained.parts.get("customXml/item1.xml").map(Vec::as_slice),
+        Some(EXTRA_CUSTOM_XML),
+    );
+}
+
+#[test]
+fn real_producer_corpus_unconsumed_part_count_matches_manifest() {
+    let bytes = include_bytes!("../../../fixtures/corpus/real-producer-libreoffice.docx");
+    let mut package = DocxPackage::open(bytes, casual_doc_ooxml::PackageLimits::default()).unwrap();
+
+    // Compute the expectation straight from the manifest: every admitted part,
+    // minus pure OPC plumbing, minus the parts the model consumes on this
+    // fixture (main document, styles, fontTable, settings).
+    let manifest: Vec<String> = package
+        .entries()
+        .iter()
+        .map(|entry| entry.part_name.clone())
+        .collect();
+    let plumbing = manifest
+        .iter()
+        .filter(|name| {
+            name.as_str() == "[Content_Types].xml"
+                || name.starts_with("_rels/")
+                || name.contains("/_rels/")
+        })
+        .count();
+    let consumed = [
+        "word/document.xml",
+        "word/styles.xml",
+        "word/fontTable.xml",
+        "word/settings.xml",
+    ];
+    let consumed_present = manifest
+        .iter()
+        .filter(|name| consumed.contains(&name.as_str()))
+        .count();
+
+    let import = import_package(&mut package, ImportConfig::default()).unwrap();
+    let dropped = part_dispositions(&import);
+
+    assert_eq!(dropped.len(), manifest.len() - plumbing - consumed_present);
+    // Concretely, the two docProps parts the importer does not consume, each
+    // carrying its declared content type.
+    assert_eq!(
+        dropped,
+        vec![
+            (
+                "docProps/app.xml".to_owned(),
+                Some(
+                    "application/vnd.openxmlformats-officedocument.extended-properties+xml"
+                        .to_owned()
+                ),
+            ),
+            (
+                "docProps/core.xml".to_owned(),
+                Some("application/vnd.openxmlformats-package.core-properties+xml".to_owned()),
+            ),
+        ]
+    );
+}

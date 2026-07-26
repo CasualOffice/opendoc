@@ -222,7 +222,7 @@ correctness bugs (OMML math mangling; hidden `w:vanish` text rendered).
 | P1F-C1 | Math (OMML) namespace guard + opaque node | — | Not started | **Correctness:** `m:r`/`m:t` flatten into garbled text (`import/body.rs:863,881`). Tier 0. |
 | P1F-C2 | Suppress hidden `w:vanish` text | — | Not started | **Correctness:** hidden runs are painted (`properties.rs:757`). Tier 0. |
 | P1F-C3 | Implement `PushClip`/`PopClip` in renderer | — | Not started | **Correctness:** `exact` row clip ignored at paint (`render/lib.rs:112-114`). Tier 0. |
-| P1F-1 | Package-manifest disposition pass | — | Not started | Report every admitted part the semantic writer drops — closes the F2 silent-loss class at once. **Do first.** |
+| P1F-1 | Package-manifest disposition pass | Claude Code | Done | Import enumerates `package.entries()` and emits a whole-part disposition (`omitted` + `not-retained` in Semantic, `preserved` in Retention) for every admitted part the semantic model does not consume, carrying part name + content type. Closes the F2 silent-whole-part-loss class. `import/lib.rs` + `report.rs` (`PartDisposition`); pure OPC plumbing excluded. |
 | P1F-2 | Opaque part side-table through semantic writer | — | Not started | Carry unmodeled parts (glossary/embeddings/charts/webSettings/thumbnail/signatures/customXml) + their content-types/rels. |
 | P1F-3 | Theme `clrScheme`/`fmtScheme` | — | Not started | Theme colors dropped → doc colors collapse on edit (`theme.rs:1-7`). |
 | P1F-4 | Styles `w:docDefaults` | — | Not started | Silent: whole-doc base font/size shifts on edit; model field exists, never set. |
