@@ -58,6 +58,27 @@ pub struct PlacedFragment {
     pub rect: Rect,
 }
 
+/// An anchored (floating) drawing resolved to its absolute rectangle on a page.
+///
+/// Unlike a [`PlacedFragment`], an anchored image does not participate in the
+/// flow: it is placed at the position computed from its `wp:positionH`/
+/// `wp:positionV` against the page/margin/paragraph box (the first-cut `P1F-28`
+/// positioning; text does not yet re-flow around it), then painted behind or
+/// above the text per [`behind_doc`](PlacedAnchor::behind_doc).
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct PlacedAnchor {
+    /// The media key (package part name) the render backend resolves to pixels.
+    pub media: String,
+    /// The absolute rectangle in page-local twip coordinates.
+    pub rect: Rect,
+    /// Whether the image paints behind the document text (its z-order).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub behind_doc: bool,
+    /// The image's alt text (`wp:docPr@descr`), preserved for accessibility.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub descr: Option<String>,
+}
+
 /// One laid-out page.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct Page {
@@ -79,6 +100,12 @@ pub struct Page {
     /// The running footer laid out in the bottom band (see [`Page::header`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub footer: Vec<PlacedFragment>,
+    /// Anchored (floating) drawings resolved onto this page. Empty until the
+    /// anchored-placement pass ([`crate::anchor::place_anchored_drawings`]) fills
+    /// it; kept off the pagination hot path so page reuse (the stabilization halt)
+    /// stays position-free, exactly like the running header/footer.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub anchored: Vec<PlacedAnchor>,
     /// Footnotes placed at the bottom of this page.
     pub footnotes: Vec<PlacedFragment>,
     /// First model position on this page (the stabilization-halt key).

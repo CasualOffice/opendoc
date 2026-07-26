@@ -1043,6 +1043,8 @@ fn build_page(
         placed,
         header: Vec::new(),
         footer: Vec::new(),
+        // Filled by the post-pagination anchored-placement pass, off the hot path.
+        anchored: Vec::new(),
         footnotes: Vec::new(),
         start,
         end,

@@ -406,6 +406,56 @@ mod semantic_tests {
     }
 
     #[test]
+    fn anchored_drawing_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::{
+            BlockNode, HorizontalAnchor, HorizontalPosition, InlineNode, VerticalAnchor,
+            VerticalPosition, WrapMode,
+        };
+
+        // A floating picture anchored at page/margin offsets, behind the text,
+        // with alt text — imported through a package so its `r:embed` resolves.
+        let document_xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="1" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>914400</wp:posOffset></wp:positionH><wp:positionV relativeFrom="margin"><wp:posOffset>-228600</wp:posOffset></wp:positionV><wp:extent cx="1828800" cy="1219200"/><wp:wrapNone/><wp:docPr id="1" name="Pic 1" descr="Company logo"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+
+        let m1 = reopen(&pack(document_xml, document_rels));
+
+        // The anchor is modeled (position, wrap, z-order, alt text).
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::AnchoredDrawing(drawing) = &paragraph.inlines[0] else {
+            panic!(
+                "expected an anchored drawing, got {:?}",
+                paragraph.inlines[0]
+            );
+        };
+        assert_eq!(
+            drawing.anchor.horizontal.relative_from,
+            HorizontalAnchor::Page
+        );
+        assert_eq!(
+            drawing.anchor.horizontal.position,
+            HorizontalPosition::Offset(914_400)
+        );
+        assert_eq!(
+            drawing.anchor.vertical.relative_from,
+            VerticalAnchor::Margin
+        );
+        assert_eq!(
+            drawing.anchor.vertical.position,
+            VerticalPosition::Offset(-228_600)
+        );
+        assert_eq!(drawing.anchor.wrap, WrapMode::None);
+        assert!(drawing.anchor.behind_doc);
+        assert_eq!(drawing.descr.as_deref(), Some("Company logo"));
+
+        // Write it back and reopen: the model is a fixed point (ids included).
+        let written = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&written);
+        assert_eq!(m1, m2, "the anchored drawing survives write -> reopen");
+    }
+
+    #[test]
     fn omml_math_survives_the_semantic_round_trip() {
         // A paragraph with a run, an opaque equation (`m:oMathPara`), and a
         // trailing run. The retained OMML must be written back verbatim and the
