@@ -4,9 +4,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use casual_doc_model::v1::{
     Alignment, BlockNode, BlockSdt, Bookmark, BookmarkEnd, BookmarkId, BookmarkStart, BorderEdge,
-    Break, BreakKind, CellVerticalAlignment, Comment, CommentId, CommentReference, DefinitionMap,
-    DocGrid, DocGridType, Drawing, EmbeddedKind, EmbeddedObject, EmbeddedPart, Extent,
-    ExternalTarget, Field, FormCheckBox, FormCheckBoxSize, FormDropDown, FormFieldData,
+    Break, BreakKind, CellVerticalAlignment, CnfStyle, Comment, CommentId, CommentReference,
+    DefinitionMap, DocGrid, DocGridType, Drawing, EmbeddedKind, EmbeddedObject, EmbeddedPart,
+    Extent, ExternalTarget, Field, FormCheckBox, FormCheckBoxSize, FormDropDown, FormFieldData,
     FormFieldKind, FormTextInput, FormTextType, HeaderFooterId, HeaderFooterKind, HeaderFooterRef,
     HeightRule, Hyperlink, HyperlinkTarget, InlineNode, InlineSdt, InternalTarget,
     LineNumberRestart, LineNumbering, MAX_EMU, MAX_FIELD_INSTRUCTION_BYTES, MAX_FORM_FIELD_ENTRIES,
@@ -1924,6 +1924,15 @@ impl BodyParser<'_> {
                 }
             }
             // ---- table properties (`w:tblPr`) --------------------------------
+            b"tblStyle" if self.tblpr_depth > 0 => {
+                match self.resolve_style(element, StyleKind::Table) {
+                    Some(style) => self.tables.set_table_style(style),
+                    None => self.reporter.report(local),
+                }
+            }
+            b"bidiVisual" if self.tblpr_depth > 0 => self
+                .tables
+                .set_table_bidi_visual(is_true(attribute_value(element, b"val").as_deref())),
             b"jc" if self.tblpr_depth > 0 => match table_alignment(element) {
                 Some(alignment) => self.tables.set_table_alignment(alignment),
                 None => self.reporter.report(b"jc"),
@@ -1986,6 +1995,10 @@ impl BodyParser<'_> {
                 self.tables.set_table_shading(fill);
             }
             // ---- row properties (`w:trPr`) -----------------------------------
+            b"cnfStyle" if self.trpr_depth > 0 => {
+                self.tables
+                    .set_row_conditional_format(parse_cnf_style(element));
+            }
             b"trHeight" if self.trpr_depth > 0 => {
                 let value = attribute_value(element, b"val")
                     .and_then(|value| value.parse::<u32>().ok())
@@ -2018,6 +2031,10 @@ impl BodyParser<'_> {
                 }
             }
             // ---- cell property long tail (`w:tcPr`) --------------------------
+            b"cnfStyle" if self.tcpr_depth > 0 => {
+                self.tables
+                    .set_cell_conditional_format(parse_cnf_style(element));
+            }
             b"shd" if self.tcpr_depth > 0 && self.ppr_depth == 0 => {
                 let fill = self.shading_fill(element);
                 self.tables.set_cell_shading(fill);
@@ -4031,6 +4048,48 @@ fn table_alignment(element: &BytesStart<'_>) -> Option<Alignment> {
 
 fn attr_i64(element: &BytesStart<'_>, name: &[u8]) -> Option<i64> {
     attribute_value(element, name).and_then(|value| value.parse().ok())
+}
+
+/// Parses a `w:cnfStyle` (`CT_Cnf`) selector. Word writes the whole selector as
+/// the 12-bit `@w:val` binary string (`firstRow`, `lastRow`, `firstColumn`,
+/// `lastColumn`, `oddVBand`, `evenVBand`, `oddHBand`, `evenHBand`, then the four
+/// corner cells in NW/NE/SW/SE order); the equivalent explicit boolean
+/// attributes are also accepted and OR in on top. Unset or malformed input
+/// yields an all-false selector, which the caller drops.
+fn parse_cnf_style(element: &BytesStart<'_>) -> CnfStyle {
+    let mut cnf = CnfStyle::default();
+    // The twelve flags, paired with their `CT_Cnf` attribute names, in the same
+    // order as the `@w:val` bit string. Disjoint fields, so one array of `&mut`.
+    let flags: [(&[u8], &mut bool); 12] = [
+        (b"firstRow", &mut cnf.first_row),
+        (b"lastRow", &mut cnf.last_row),
+        (b"firstColumn", &mut cnf.first_column),
+        (b"lastColumn", &mut cnf.last_column),
+        (b"oddVBand", &mut cnf.odd_v_band),
+        (b"evenVBand", &mut cnf.even_v_band),
+        (b"oddHBand", &mut cnf.odd_h_band),
+        (b"evenHBand", &mut cnf.even_h_band),
+        (b"firstRowFirstColumn", &mut cnf.first_row_first_column),
+        (b"firstRowLastColumn", &mut cnf.first_row_last_column),
+        (b"lastRowFirstColumn", &mut cnf.last_row_first_column),
+        (b"lastRowLastColumn", &mut cnf.last_row_last_column),
+    ];
+    // `@w:val` is the canonical form Word writes: a fixed 12-character binary
+    // string, one digit per flag in the array order above. Anything but exactly
+    // twelve characters is ignored; the explicit boolean attributes (accepted
+    // too) then OR in on top so a mixed encoding is never lost.
+    let bits: Option<Vec<bool>> = attribute_value(element, b"val")
+        .map(|val| val.chars().map(|c| c == '1').collect())
+        .filter(|bits: &Vec<bool>| bits.len() == 12);
+    for (index, (attr, slot)) in flags.into_iter().enumerate() {
+        if let Some(bits) = &bits {
+            *slot = bits[index];
+        }
+        if let Some(value) = attribute_value(element, attr) {
+            *slot = is_true(Some(&value));
+        }
+    }
+    cnf
 }
 
 /// Whether a local element name is known DrawingML scaffolding for an embedded

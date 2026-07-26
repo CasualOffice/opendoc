@@ -817,6 +817,13 @@ impl Document {
         if table.rows.is_empty() {
             return Err(ModelError::EmptyTable(table.id));
         }
+        // The associated table style (`w:tblStyle`) must resolve to a defined
+        // style, like paragraph/run style references elsewhere.
+        if let Some(style) = table.properties.style_ref
+            && !self.style_exists(style)
+        {
+            return Err(ModelError::DanglingStyleRef(style.node_id()));
+        }
         if let Some(width) = table.properties.width_twips {
             check_domain((0..=31_680).contains(&width), "table.width")?;
         }

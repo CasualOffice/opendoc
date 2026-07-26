@@ -8,8 +8,8 @@
 
 use casual_doc_model::v1::{Alignment, RgbColor};
 use casual_doc_model::v1::{
-    BlockNode, BorderEdge, CellMargins, CellVerticalAlignment, GridColumn, HeightRule,
-    MAX_TABLE_DEPTH, Paragraph, ParagraphProperties, Table, TableBorders, TableCell,
+    BlockNode, BorderEdge, CellMargins, CellVerticalAlignment, CnfStyle, GridColumn, HeightRule,
+    MAX_TABLE_DEPTH, Paragraph, ParagraphProperties, StyleId, Table, TableBorders, TableCell,
     TableCellProperties, TableLayout, TableOverlap, TableProperties, TableRow, TableRowProperties,
     TextDirection, VerticalMerge,
 };
@@ -225,6 +225,20 @@ impl TableStack {
             .map(|row| &mut row.properties)
     }
 
+    /// Sets the associated table style (`w:tblStyle`).
+    pub(crate) fn set_table_style(&mut self, style: StyleId) {
+        if let Some(properties) = self.table_properties() {
+            properties.style_ref = Some(style);
+        }
+    }
+
+    /// Sets the visually-right-to-left flag (`w:bidiVisual`).
+    pub(crate) fn set_table_bidi_visual(&mut self, on: bool) {
+        if let Some(properties) = self.table_properties() {
+            properties.tbl_bidi_visual = on;
+        }
+    }
+
     /// Sets the table alignment (`w:jc`).
     pub(crate) fn set_table_alignment(&mut self, alignment: Alignment) {
         if let Some(properties) = self.table_properties() {
@@ -350,6 +364,22 @@ impl TableStack {
     pub(crate) fn set_row_header(&mut self, header: bool) {
         if let Some(properties) = self.row_properties() {
             properties.header = header;
+        }
+    }
+
+    /// Sets the row conditional-format selector (`w:trPr > w:cnfStyle`). An
+    /// all-false selector is dropped so it round-trips to nothing.
+    pub(crate) fn set_row_conditional_format(&mut self, cnf: CnfStyle) {
+        if let Some(properties) = self.row_properties() {
+            properties.conditional_format = (!cnf.is_empty()).then_some(cnf);
+        }
+    }
+
+    /// Sets the cell conditional-format selector (`w:tcPr > w:cnfStyle`). An
+    /// all-false selector is dropped so it round-trips to nothing.
+    pub(crate) fn set_cell_conditional_format(&mut self, cnf: CnfStyle) {
+        if let Some(cell) = self.current_cell() {
+            cell.properties.conditional_format = (!cnf.is_empty()).then_some(cnf);
         }
     }
 
