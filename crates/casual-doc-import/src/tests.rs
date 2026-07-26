@@ -1261,16 +1261,29 @@ fn character_spacing_in_rpr_is_the_run_metric_not_paragraph_spacing() {
 }
 
 #[test]
-fn styles_part_unmapped_constructs_are_reported() {
+fn style_metadata_is_modeled_and_truly_unmapped_constructs_are_reported() {
+    // `qFormat`/`uiPriority` are now modeled (not reported); a construct we do
+    // not model (`w:autoRedefine`) is still reported so nothing is silently lost.
     let styles = br#"<w:styles xmlns:w="urn:w">
-        <w:style w:type="paragraph" w:styleId="A"><w:qFormat/><w:uiPriority w:val="1"/></w:style>
+        <w:style w:type="paragraph" w:styleId="A"><w:qFormat/><w:uiPriority w:val="1"/>
+            <w:autoRedefine/></w:style>
     </w:styles>"#;
     let document = br#"<w:document xmlns:w="urn:w"><w:body>
         <w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
     let import = import_with_styles(document, styles);
+    let (_, style) = import
+        .document
+        .definitions()
+        .styles
+        .iter()
+        .next()
+        .expect("one style");
+    assert!(style.q_format);
+    assert_eq!(style.ui_priority, Some(1));
     let feats = features(&import);
-    assert!(feats.contains(&"qFormat"));
-    assert!(feats.contains(&"uiPriority"));
+    assert!(feats.contains(&"autoRedefine"));
+    assert!(!feats.contains(&"qFormat"));
+    assert!(!feats.contains(&"uiPriority"));
 }
 
 #[test]
