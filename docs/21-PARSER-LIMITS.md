@@ -88,6 +88,11 @@ Dimensions and metadata are validated before full decode when the codec permits.
 Decoders must honor cancellation and memory budgets. Untrusted embedded fonts
 are disabled until a sandboxed or separately reviewed font path exists.
 
+The CPU renderer enforces the secure per-image dimension and decoded-pixel
+defaults before PNG/JPEG decode and applies a matching 400,000,000-byte decoder
+allocation ceiling. Media outside either bound follows the renderer's existing
+graceful-skip behavior. Aggregate decoded-image caching remains host policy.
+
 ## Runtime Budgets
 
 Layout, history, scene, image cache, and operation-log budgets are separate from
