@@ -24,20 +24,21 @@ use casual_doc_model::v1::{
     DefinitionMap, Definitions, DocGridType, Document, DocumentDefaults, DocumentProtectionEdit,
     DocumentSettings, EmbeddedKind, EmbeddedObject, EmbeddedPart, EmphasisMark, Extent,
     FontCollection, FontDescriptor, FontFamilyKind, FontPitch, FontRef, FontScheme,
-    FormCheckBoxSize, FormFieldData, FormFieldKind, FormTextType, HeaderFooterId, HeaderFooterKind,
-    HeightRule, HighlightColor, HorizontalAlign, HorizontalAnchor, HorizontalPosition,
-    HyperlinkTarget, InlineNode, LevelJustification, LevelSuffix, LineNumberRestart, MediaId,
-    MediaReference, MoveKind, Note, NoteId, NoteKind, NoteNumberRestart, NotePosition,
-    NoteProperties, NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel,
-    PageBorderDisplay, PageBorderOffset, PageOrientation, PageVerticalAlignment,
-    ParagraphProperties, Person, ProofState, RevisionKind, RgbColor, RunFontHint, RunProperties,
-    SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind, SdtDate,
-    SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionType, Style, StyleId, StyleKind,
-    TabAlignment, TabLeader, Table, TableAnchor, TableBorders, TableCell, TableCellProperties,
-    TableFloatPosition, TableLayout, TableOverlap, TableProperties, TableRow, TableRowProperties,
-    TableStyleOverride, TableStyleRegion, TableXAlign, TableYAlign, TextDirection, ThemeFontRef,
-    VerticalAlign, VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition,
-    VerticalTextAlignment, WrapMode, Zoom, ZoomMode,
+    FormCheckBoxSize, FormFieldData, FormFieldKind, FormTextType, GridColumn, HeaderFooterId,
+    HeaderFooterKind, HeightRule, HighlightColor, HorizontalAlign, HorizontalAnchor,
+    HorizontalPosition, HyperlinkTarget, InlineNode, LevelJustification, LevelSuffix,
+    LineNumberRestart, MediaId, MediaReference, MoveKind, Note, NoteId, NoteKind,
+    NoteNumberRestart, NotePosition, NoteProperties, NumberFormat, NumberingInstance,
+    NumberingInstanceId, NumberingLevel, PageBorderDisplay, PageBorderOffset, PageOrientation,
+    PageVerticalAlignment, ParagraphProperties, Person, ProofState, PropChange, RevisionKind,
+    RgbColor, RunFontHint, RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol,
+    SdtControlData, SdtControlKind, SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary,
+    SectionType, Style, StyleId, StyleKind, TabAlignment, TabLeader, Table, TableAnchor,
+    TableBorders, TableCell, TableCellProperties, TableFloatPosition, TableLayout, TableOverlap,
+    TableProperties, TableRow, TableRowProperties, TableStyleOverride, TableStyleRegion,
+    TableXAlign, TableYAlign, TextDirection, ThemeFontRef, VerticalAlign, VerticalAlignment,
+    VerticalAnchor, VerticalMerge, VerticalPosition, VerticalTextAlignment, WrapMode, Zoom,
+    ZoomMode,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -2582,15 +2583,25 @@ fn write_table(
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("w:tbl"))).map_err(pkg)?;
     write_table_properties(w, &table.properties)?;
-    if !table.grid.is_empty() {
+    // `w:tblGrid` is emitted when it has columns OR carries a grid change (whose
+    // `w:tblGridChange` must nest inside it as its last child).
+    if !table.grid.is_empty() || table.grid_change.is_some() {
         w.write_event(Event::Start(start("w:tblGrid")))
             .map_err(pkg)?;
-        for column in &table.grid {
-            let mut col = start("w:gridCol");
-            if let Some(width) = column.width_twips {
-                col.push_attribute(("w:w", width.to_string().as_str()));
-            }
-            w.write_event(Event::Empty(col)).map_err(pkg)?;
+        write_grid_columns(w, &table.grid)?;
+        // `w:tblGridChange` is the last child of `w:tblGrid`; its `w:tblGrid` is
+        // the prior column grid (CT_TblGridChange carries only a `w:id`).
+        if let Some(change) = &table.grid_change {
+            let mut el = start("w:tblGridChange");
+            push_prop_change_attrs(&mut el, change);
+            w.write_event(Event::Start(el)).map_err(pkg)?;
+            w.write_event(Event::Start(start("w:tblGrid")))
+                .map_err(pkg)?;
+            write_grid_columns(w, change.prior.as_ref())?;
+            w.write_event(Event::End(BytesEnd::new("w:tblGrid")))
+                .map_err(pkg)?;
+            w.write_event(Event::End(BytesEnd::new("w:tblGridChange")))
+                .map_err(pkg)?;
         }
         w.write_event(Event::End(BytesEnd::new("w:tblGrid")))
             .map_err(pkg)?;
@@ -2601,6 +2612,37 @@ fn write_table(
     w.write_event(Event::End(BytesEnd::new("w:tbl")))
         .map_err(pkg)?;
     Ok(())
+}
+
+/// Emits the `w:gridCol` children of a `w:tblGrid` (each with its `w:w` width
+/// when set). Shared by the current grid and a `w:tblGridChange` prior snapshot.
+fn write_grid_columns(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    columns: &[GridColumn],
+) -> Result<(), ExportError> {
+    for column in columns {
+        let mut col = start("w:gridCol");
+        if let Some(width) = column.width_twips {
+            col.push_attribute(("w:w", width.to_string().as_str()));
+        }
+        w.write_event(Event::Empty(col)).map_err(pkg)?;
+    }
+    Ok(())
+}
+
+/// Pushes a format-change revision's `w:author`/`w:date`/`w:id` attributes onto
+/// the `w:*PrChange` element. Each is emitted only when present, mirroring the
+/// `w:ins`/`w:del` metadata convention (a producer-tolerant, non-strict form).
+fn push_prop_change_attrs<P>(el: &mut BytesStart<'_>, change: &PropChange<P>) {
+    if let Some(author) = &change.author {
+        el.push_attribute(("w:author", author.as_str()));
+    }
+    if let Some(date) = &change.date {
+        el.push_attribute(("w:date", date.as_str()));
+    }
+    if let Some(id) = &change.revision_id {
+        el.push_attribute(("w:id", id.as_str()));
+    }
 }
 
 fn write_table_properties(
@@ -2700,6 +2742,21 @@ fn write_table_properties(
         let mut el = start("w:tblDescription");
         el.push_attribute(("w:val", description.as_str()));
         w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    // `w:tblPrChange` is the last child of `w:tblPr`; its `w:tblPr` is the prior
+    // snapshot (CT_TblPrBase — no nested change). An all-default prior still emits
+    // a bare `<w:tblPr/>` so the required child is present.
+    if let Some(change) = &properties.prop_change {
+        let mut el = start("w:tblPrChange");
+        push_prop_change_attrs(&mut el, change);
+        w.write_event(Event::Start(el)).map_err(pkg)?;
+        if change.prior.as_ref() == &TableProperties::default() {
+            w.write_event(Event::Empty(start("w:tblPr"))).map_err(pkg)?;
+        } else {
+            write_table_properties(w, change.prior.as_ref())?;
+        }
+        w.write_event(Event::End(BytesEnd::new("w:tblPrChange")))
+            .map_err(pkg)?;
     }
     w.write_event(Event::End(BytesEnd::new("w:tblPr")))
         .map_err(pkg)?;
@@ -2867,6 +2924,20 @@ fn write_row_properties(
         el.push_attribute(("w:val", alignment_token(alignment)));
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
+    // `w:trPrChange` is the last child of `w:trPr`; its `w:trPr` is the prior
+    // snapshot. An all-default prior still emits a bare `<w:trPr/>`.
+    if let Some(change) = &properties.prop_change {
+        let mut el = start("w:trPrChange");
+        push_prop_change_attrs(&mut el, change);
+        w.write_event(Event::Start(el)).map_err(pkg)?;
+        if change.prior.as_ref() == &TableRowProperties::default() {
+            w.write_event(Event::Empty(start("w:trPr"))).map_err(pkg)?;
+        } else {
+            write_row_properties(w, change.prior.as_ref())?;
+        }
+        w.write_event(Event::End(BytesEnd::new("w:trPrChange")))
+            .map_err(pkg)?;
+    }
     w.write_event(Event::End(BytesEnd::new("w:trPr")))
         .map_err(pkg)?;
     Ok(())
@@ -2952,6 +3023,20 @@ fn write_cell_properties(
     }
     if properties.hide_mark {
         w.write_event(Event::Empty(start("w:hideMark")))
+            .map_err(pkg)?;
+    }
+    // `w:tcPrChange` is the last child of `w:tcPr`; its `w:tcPr` is the prior
+    // snapshot. An all-default prior still emits a bare `<w:tcPr/>`.
+    if let Some(change) = &properties.prop_change {
+        let mut el = start("w:tcPrChange");
+        push_prop_change_attrs(&mut el, change);
+        w.write_event(Event::Start(el)).map_err(pkg)?;
+        if change.prior.as_ref() == &TableCellProperties::default() {
+            w.write_event(Event::Empty(start("w:tcPr"))).map_err(pkg)?;
+        } else {
+            write_cell_properties(w, change.prior.as_ref())?;
+        }
+        w.write_event(Event::End(BytesEnd::new("w:tcPrChange")))
             .map_err(pkg)?;
     }
     w.write_event(Event::End(BytesEnd::new("w:tcPr")))
@@ -3246,10 +3331,26 @@ fn write_paragraph_properties(
             write_run_properties(w, mark_run)?;
         }
     }
-    // The section break is the last `w:pPr` child (CT_PPr places `w:sectPr`
-    // after every property element), marking this paragraph as a section's end.
+    // The section break precedes `w:pPrChange` in CT_PPr; it marks this paragraph
+    // as a section's end.
     if let Some(section) = section {
         write_section_properties(w, section)?;
+    }
+    // `w:pPrChange` is the last child of `w:pPr` (after `w:sectPr`); its `w:pPr`
+    // is the prior snapshot (CT_PPrBase — no mark rPr, sectPr, or nested change,
+    // so it is emitted with no section). An all-default prior still emits a bare
+    // `<w:pPr/>` so the required child is present.
+    if let Some(change) = &properties.prop_change {
+        let mut el = start("w:pPrChange");
+        push_prop_change_attrs(&mut el, change);
+        w.write_event(Event::Start(el)).map_err(pkg)?;
+        if change.prior.as_ref() == &ParagraphProperties::default() {
+            w.write_event(Event::Empty(start("w:pPr"))).map_err(pkg)?;
+        } else {
+            write_paragraph_properties(w, change.prior.as_ref(), None)?;
+        }
+        w.write_event(Event::End(BytesEnd::new("w:pPrChange")))
+            .map_err(pkg)?;
     }
     w.write_event(Event::End(BytesEnd::new("w:pPr")))
         .map_err(pkg)?;
@@ -4530,6 +4631,22 @@ fn write_run_properties(
             el.push_attribute(("w:bidi", v.as_str()));
         }
         w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    // `w:rPrChange` is the last child of `w:rPr` (CT_RPr places it after every
+    // property element); its `w:rPr` is the prior snapshot (CT_RPrOriginal — no
+    // nested change). An all-default prior still emits a bare `<w:rPr/>` so the
+    // required child is present.
+    if let Some(change) = &properties.prop_change {
+        let mut el = start("w:rPrChange");
+        push_prop_change_attrs(&mut el, change);
+        w.write_event(Event::Start(el)).map_err(pkg)?;
+        if change.prior.as_ref() == &RunProperties::default() {
+            w.write_event(Event::Empty(start("w:rPr"))).map_err(pkg)?;
+        } else {
+            write_run_properties(w, change.prior.as_ref())?;
+        }
+        w.write_event(Event::End(BytesEnd::new("w:rPrChange")))
+            .map_err(pkg)?;
     }
     w.write_event(Event::End(BytesEnd::new("w:rPr")))
         .map_err(pkg)?;

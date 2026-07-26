@@ -691,6 +691,12 @@ impl Document {
         if let Some(mark_run) = &properties.mark_run {
             self.check_run_property_refs(mark_run)?;
         }
+        // The `w:pPrChange` prior snapshot: bound its metadata, then validate the
+        // prior properties with the same rules as the current ones.
+        if let Some(change) = &properties.prop_change {
+            check_prop_change_meta(change, "paragraph.propChange")?;
+            self.check_paragraph_property_refs(&change.prior)?;
+        }
         Ok(())
     }
 
@@ -745,6 +751,12 @@ impl Document {
             if let Some(space) = edge.space_points {
                 check_domain(space <= 31, "run.border")?;
             }
+        }
+        // The `w:rPrChange` prior snapshot: bound its metadata, then validate the
+        // prior properties with the same rules as the current ones.
+        if let Some(change) = &properties.prop_change {
+            check_prop_change_meta(change, "run.propChange")?;
+            self.check_run_property_refs(&change.prior)?;
         }
         Ok(())
     }
@@ -817,29 +829,63 @@ impl Document {
         if table.rows.is_empty() {
             return Err(ModelError::EmptyTable(table.id));
         }
+        self.check_table_properties(&table.properties)?;
+        for column in &table.grid {
+            self.check_grid_column(column)?;
+        }
+        // The `w:tblGridChange` prior snapshot: bound its metadata, then validate
+        // each prior column with the same width domain as the current grid.
+        if let Some(change) = &table.grid_change {
+            check_prop_change_meta(change, "table.gridChange")?;
+            for column in change.prior.iter() {
+                self.check_grid_column(column)?;
+            }
+        }
+        for row in &table.rows {
+            if row.cells.is_empty() {
+                return Err(ModelError::EmptyTableRow(row.id));
+            }
+            self.check_row_properties(&row.properties)?;
+            for cell in &row.cells {
+                if cell.blocks.is_empty() {
+                    return Err(ModelError::EmptyTableCell(cell.id));
+                }
+                self.check_cell_properties(&cell.properties)?;
+                for nested in &cell.blocks {
+                    self.validate_block(nested, table_depth + 1, textbox_depth, sdt_depth)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Validates table properties (`w:tblPr`): style-reference resolution, value
+    /// domains, and — recursively — any `w:tblPrChange` prior snapshot. Shared by
+    /// the current properties and every nested prior snapshot.
+    fn check_table_properties(&self, properties: &TableProperties) -> Result<(), ModelError> {
         // The associated table style (`w:tblStyle`) must resolve to a defined
         // style, like paragraph/run style references elsewhere.
-        if let Some(style) = table.properties.style_ref
+        if let Some(style) = properties.style_ref
             && !self.style_exists(style)
         {
             return Err(ModelError::DanglingStyleRef(style.node_id()));
         }
-        if let Some(width) = table.properties.width_twips {
+        if let Some(width) = properties.width_twips {
             check_domain((0..=31_680).contains(&width), "table.width")?;
         }
         // `both` (justify) is not a valid `ST_JcTable` value, and the table
         // importer never yields it (it maps `both` -> None). Reject it so an
         // authored model cannot make the writer emit an invalid `w:jc`.
-        if let Some(alignment) = table.properties.alignment {
+        if let Some(alignment) = properties.alignment {
             check_domain(alignment != Alignment::Justify, "table.alignment")?;
         }
-        if let Some(indent) = table.properties.indent_twips {
+        if let Some(indent) = properties.indent_twips {
             check_domain((-31_680..=31_680).contains(&indent), "table.indent")?;
         }
-        if let Some(spacing) = table.properties.cell_spacing_twips {
+        if let Some(spacing) = properties.cell_spacing_twips {
             check_domain((0..=31_680).contains(&spacing), "table.cell_spacing")?;
         }
-        for value in [&table.properties.caption, &table.properties.description]
+        for value in [&properties.caption, &properties.description]
             .into_iter()
             .flatten()
         {
@@ -848,42 +894,56 @@ impl Document {
                 "table.accessibility",
             )?;
         }
-        check_borders(&table.properties.borders, "table.borders")?;
-        check_margins(&table.properties.cell_margins, "table.cell_margins")?;
-        for column in &table.grid {
-            if let Some(width) = column.width_twips {
-                check_domain((0..=31_680).contains(&width), "table.grid.column.width")?;
-            }
+        check_borders(&properties.borders, "table.borders")?;
+        check_margins(&properties.cell_margins, "table.cell_margins")?;
+        if let Some(change) = &properties.prop_change {
+            check_prop_change_meta(change, "table.propChange")?;
+            self.check_table_properties(&change.prior)?;
         }
-        for row in &table.rows {
-            if row.cells.is_empty() {
-                return Err(ModelError::EmptyTableRow(row.id));
-            }
-            if let Some(height) = row.properties.height.value_twips {
-                check_domain(height <= 31_680, "table.row.height")?;
-            }
-            if let Some(spacing) = row.properties.cell_spacing_twips {
-                check_domain((0..=31_680).contains(&spacing), "table.row.cell_spacing")?;
-            }
-            if let Some(alignment) = row.properties.alignment {
-                check_domain(alignment != Alignment::Justify, "table.row.alignment")?;
-            }
-            for cell in &row.cells {
-                if cell.blocks.is_empty() {
-                    return Err(ModelError::EmptyTableCell(cell.id));
-                }
-                if let Some(span) = cell.properties.grid_span {
-                    check_domain((1..=16_384).contains(&span), "table.cell.grid_span")?;
-                }
-                if let Some(width) = cell.properties.width_twips {
-                    check_domain((0..=31_680).contains(&width), "table.cell.width")?;
-                }
-                check_borders(&cell.properties.borders, "table.cell.borders")?;
-                check_margins(&cell.properties.margins, "table.cell.margins")?;
-                for nested in &cell.blocks {
-                    self.validate_block(nested, table_depth + 1, textbox_depth, sdt_depth)?;
-                }
-            }
+        Ok(())
+    }
+
+    /// Validates one grid column's width domain (`w:gridCol`).
+    fn check_grid_column(&self, column: &GridColumn) -> Result<(), ModelError> {
+        if let Some(width) = column.width_twips {
+            check_domain((0..=31_680).contains(&width), "table.grid.column.width")?;
+        }
+        Ok(())
+    }
+
+    /// Validates table-row properties (`w:trPr`): value domains and — recursively
+    /// — any `w:trPrChange` prior snapshot.
+    fn check_row_properties(&self, properties: &TableRowProperties) -> Result<(), ModelError> {
+        if let Some(height) = properties.height.value_twips {
+            check_domain(height <= 31_680, "table.row.height")?;
+        }
+        if let Some(spacing) = properties.cell_spacing_twips {
+            check_domain((0..=31_680).contains(&spacing), "table.row.cell_spacing")?;
+        }
+        if let Some(alignment) = properties.alignment {
+            check_domain(alignment != Alignment::Justify, "table.row.alignment")?;
+        }
+        if let Some(change) = &properties.prop_change {
+            check_prop_change_meta(change, "table.row.propChange")?;
+            self.check_row_properties(&change.prior)?;
+        }
+        Ok(())
+    }
+
+    /// Validates table-cell properties (`w:tcPr`): value domains and — recursively
+    /// — any `w:tcPrChange` prior snapshot.
+    fn check_cell_properties(&self, properties: &TableCellProperties) -> Result<(), ModelError> {
+        if let Some(span) = properties.grid_span {
+            check_domain((1..=16_384).contains(&span), "table.cell.grid_span")?;
+        }
+        if let Some(width) = properties.width_twips {
+            check_domain((0..=31_680).contains(&width), "table.cell.width")?;
+        }
+        check_borders(&properties.borders, "table.cell.borders")?;
+        check_margins(&properties.margins, "table.cell.margins")?;
+        if let Some(change) = &properties.prop_change {
+            check_prop_change_meta(change, "table.cell.propChange")?;
+            self.check_cell_properties(&change.prior)?;
         }
         Ok(())
     }
@@ -1741,6 +1801,23 @@ fn check_domain(condition: bool, property: &'static str) -> Result<(), ModelErro
     } else {
         Err(ModelError::PropertyValueOutOfDomain { property })
     }
+}
+
+/// Bounds a format-change revision's opaque metadata: `author` is non-empty and
+/// at most 255 bytes; `date`/`revision_id` are non-empty and at most 64 bytes —
+/// the same bounds as `w:ins`/`w:del` revision metadata. `property` names the
+/// change site (e.g. `"run.propChange"`).
+fn check_prop_change_meta<P>(
+    change: &PropChange<P>,
+    property: &'static str,
+) -> Result<(), ModelError> {
+    if let Some(author) = &change.author {
+        check_domain(!author.is_empty() && author.len() <= 255, property)?;
+    }
+    for value in [&change.date, &change.revision_id].into_iter().flatten() {
+        check_domain(!value.is_empty() && value.len() <= 64, property)?;
+    }
+    Ok(())
 }
 
 /// Bounds an anchored drawing's horizontal and vertical offsets. A `posOffset`

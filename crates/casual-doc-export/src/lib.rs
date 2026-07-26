@@ -3421,6 +3421,192 @@ mod semantic_tests {
             );
         }
     }
+
+    #[test]
+    fn run_property_change_prior_bold_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, InlineNode};
+        // `w:rPrChange` carries the run's PRIOR properties (bold on) while the
+        // current run is not bold; author/date/id are retained, and the whole
+        // model is a fixed point across write -> reopen.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:r><w:rPr>
+                <w:rPrChange w:id="7" w:author="Ann" w:date="2021-01-01T00:00:00Z">
+                    <w:rPr><w:b/></w:rPr>
+                </w:rPrChange>
+            </w:rPr><w:t>Hi</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(m1, m2, "the rPrChange model survives write -> reopen");
+
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Run(run) = &paragraph.inlines[0] else {
+            panic!("expected a run");
+        };
+        // The current run is NOT bold; the change's prior snapshot is.
+        assert_eq!(run.properties.bold, None);
+        let change = run
+            .properties
+            .prop_change
+            .as_ref()
+            .expect("rPrChange captured");
+        assert_eq!(change.prior.bold, Some(true));
+        assert_eq!(change.author.as_deref(), Some("Ann"));
+        assert_eq!(change.date.as_deref(), Some("2021-01-01T00:00:00Z"));
+        assert_eq!(change.revision_id.as_deref(), Some("7"));
+    }
+
+    #[test]
+    fn paragraph_property_change_prior_alignment_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::{Alignment, BlockNode};
+        // `w:pPrChange` carries the paragraph's PRIOR properties (centered) while
+        // the current paragraph has no alignment; a fixed point across the trip.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:pPr>
+                <w:pPrChange w:id="3" w:author="Bo" w:date="2022-02-02T00:00:00Z">
+                    <w:pPr><w:jc w:val="center"/></w:pPr>
+                </w:pPrChange>
+            </w:pPr><w:r><w:t>x</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(m1, m2, "the pPrChange model survives write -> reopen");
+
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        assert_eq!(paragraph.properties.alignment, None);
+        let change = paragraph
+            .properties
+            .prop_change
+            .as_ref()
+            .expect("pPrChange captured");
+        assert_eq!(change.prior.alignment, Some(Alignment::Center));
+        assert_eq!(change.author.as_deref(), Some("Bo"));
+        assert_eq!(change.date.as_deref(), Some("2022-02-02T00:00:00Z"));
+        assert_eq!(change.revision_id.as_deref(), Some("3"));
+    }
+
+    #[test]
+    fn table_property_change_prior_props_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{Alignment, BlockNode};
+        // `w:tblPrChange` carries the table's PRIOR properties (centered) while
+        // the current table has no alignment; a fixed point across the trip.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:tbl>
+                <w:tblPr>
+                    <w:tblPrChange w:id="9" w:author="Cy" w:date="2023-03-03T00:00:00Z">
+                        <w:tblPr><w:jc w:val="center"/></w:tblPr>
+                    </w:tblPrChange>
+                </w:tblPr>
+                <w:tblGrid><w:gridCol w:w="100"/></w:tblGrid>
+                <w:tr><w:tc><w:p><w:r><w:t>c</w:t></w:r></w:p></w:tc></w:tr>
+            </w:tbl>
+        </w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(m1, m2, "the tblPrChange model survives write -> reopen");
+
+        let BlockNode::Table(table) = &m1.body()[0] else {
+            panic!("expected a table");
+        };
+        assert_eq!(table.properties.alignment, None);
+        let change = table
+            .properties
+            .prop_change
+            .as_ref()
+            .expect("tblPrChange captured");
+        assert_eq!(change.prior.alignment, Some(Alignment::Center));
+        assert_eq!(change.author.as_deref(), Some("Cy"));
+        assert_eq!(change.date.as_deref(), Some("2023-03-03T00:00:00Z"));
+        assert_eq!(change.revision_id.as_deref(), Some("9"));
+    }
+
+    #[test]
+    fn row_and_cell_property_changes_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::BlockNode;
+        // `w:trPrChange` (prior: header row) and `w:tcPrChange` (prior: no-wrap)
+        // both round-trip, carrying their prior snapshots and metadata.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:tbl>
+                <w:tblGrid><w:gridCol w:w="100"/></w:tblGrid>
+                <w:tr>
+                    <w:trPr>
+                        <w:trPrChange w:id="4" w:author="Di" w:date="2024-04-04T00:00:00Z">
+                            <w:trPr><w:tblHeader/></w:trPr>
+                        </w:trPrChange>
+                    </w:trPr>
+                    <w:tc>
+                        <w:tcPr>
+                            <w:tcPrChange w:id="5" w:author="Eve" w:date="2025-05-05T00:00:00Z">
+                                <w:tcPr><w:noWrap/></w:tcPr>
+                            </w:tcPrChange>
+                        </w:tcPr>
+                        <w:p><w:r><w:t>c</w:t></w:r></w:p>
+                    </w:tc>
+                </w:tr>
+            </w:tbl>
+        </w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(m1, m2, "the row/cell change model survives write -> reopen");
+
+        let BlockNode::Table(table) = &m1.body()[0] else {
+            panic!("expected a table");
+        };
+        let row = &table.rows[0];
+        assert!(!row.properties.header, "current row is not a header");
+        let row_change = row
+            .properties
+            .prop_change
+            .as_ref()
+            .expect("trPrChange captured");
+        assert!(row_change.prior.header, "prior row WAS a header");
+        assert_eq!(row_change.author.as_deref(), Some("Di"));
+
+        let cell = &row.cells[0];
+        assert!(!cell.properties.no_wrap, "current cell wraps");
+        let cell_change = cell
+            .properties
+            .prop_change
+            .as_ref()
+            .expect("tcPrChange captured");
+        assert!(cell_change.prior.no_wrap, "prior cell did NOT wrap");
+        assert_eq!(cell_change.author.as_deref(), Some("Eve"));
+    }
+
+    #[test]
+    fn grid_change_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::BlockNode;
+        // `w:tblGridChange` carries the PRIOR column grid (two columns) while the
+        // current grid has one; it round-trips with its id (no author/date).
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:tbl>
+                <w:tblGrid>
+                    <w:gridCol w:w="5000"/>
+                    <w:tblGridChange w:id="6">
+                        <w:tblGrid>
+                            <w:gridCol w:w="2000"/>
+                            <w:gridCol w:w="3000"/>
+                        </w:tblGrid>
+                    </w:tblGridChange>
+                </w:tblGrid>
+                <w:tr><w:tc><w:p><w:r><w:t>c</w:t></w:r></w:p></w:tc></w:tr>
+            </w:tbl>
+        </w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(m1, m2, "the grid change model survives write -> reopen");
+
+        let BlockNode::Table(table) = &m1.body()[0] else {
+            panic!("expected a table");
+        };
+        assert_eq!(table.grid.len(), 1, "current grid has one column");
+        assert_eq!(table.grid[0].width_twips, Some(5000));
+        let change = table.grid_change.as_ref().expect("tblGridChange captured");
+        assert_eq!(change.revision_id.as_deref(), Some("6"));
+        assert!(change.author.is_none(), "tblGridChange carries no author");
+        assert_eq!(change.prior.len(), 2, "prior grid had two columns");
+        assert_eq!(change.prior[0].width_twips, Some(2000));
+        assert_eq!(change.prior[1].width_twips, Some(3000));
+    }
 }
 
 #[cfg(test)]

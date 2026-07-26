@@ -577,6 +577,7 @@ fn a_header_can_contain_a_nested_table() {
         grid: vec![GridColumn {
             width_twips: Some(2000),
         }],
+        grid_change: None,
         properties: TableProperties::default(),
         rows: vec![TableRow {
             id: node(231),
@@ -593,6 +594,7 @@ fn a_header_can_contain_a_nested_table() {
         grid: vec![GridColumn {
             width_twips: Some(4000),
         }],
+        grid_change: None,
         properties: TableProperties::default(),
         rows: vec![TableRow {
             id: node(221),

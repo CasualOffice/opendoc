@@ -8,19 +8,20 @@ use casual_doc_model::v1::{
     CnfStyle, Comment, CommentId, CommentRangeEnd, CommentRangeStart, CommentReference,
     DefinitionMap, DocGrid, DocGridType, Drawing, DrawingAnchor, EmbeddedKind, EmbeddedObject,
     EmbeddedPart, Extent, ExternalTarget, Field, FormCheckBox, FormCheckBoxSize, FormDropDown,
-    FormFieldData, FormFieldKind, FormTextInput, FormTextType, HeaderFooterId, HeaderFooterKind,
-    HeaderFooterRef, HeightRule, HorizontalAlign, HorizontalAnchor, HorizontalPosition, Hyperlink,
-    HyperlinkTarget, InlineNode, InlineSdt, InternalTarget, LineNumberRestart, LineNumbering,
-    MAX_DESCR_BYTES, MAX_EMU, MAX_FIELD_INSTRUCTION_BYTES, MAX_FORM_FIELD_ENTRIES,
-    MAX_FORM_FIELD_STRING_BYTES, MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH,
-    MAX_TEXTBOX_DEPTH, Math, MediaId, MoveKind, MoveRangeEnd, MoveRangeStart, NoteId, NoteKind,
-    NoteNumberRestart, NotePosition, NoteProperties, NoteReference, PageBorderDisplay,
-    PageBorderOffset, PageBorders, PageMargins, PageNumbering, PageOrientation, PageSize,
-    PageVerticalAlignment, PaperSource, Paragraph, ParagraphProperties, Revision, RevisionKind,
-    RgbColor, Run, RunProperties, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind,
-    SdtDataBinding, SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionColumns,
-    SectionId, SectionType, StyleKind, Symbol, Tab, TabAlignment, TabLeader, TabStop, TableAnchor,
-    TableFloatPosition, TableLayout, TableOverlap, TableXAlign, TableYAlign, TextBox,
+    FormFieldData, FormFieldKind, FormTextInput, FormTextType, GridColumn, HeaderFooterId,
+    HeaderFooterKind, HeaderFooterRef, HeightRule, HorizontalAlign, HorizontalAnchor,
+    HorizontalPosition, Hyperlink, HyperlinkTarget, InlineNode, InlineSdt, InternalTarget,
+    LineNumberRestart, LineNumbering, MAX_DESCR_BYTES, MAX_EMU, MAX_FIELD_INSTRUCTION_BYTES,
+    MAX_FORM_FIELD_ENTRIES, MAX_FORM_FIELD_STRING_BYTES, MAX_MATH_BYTES, MAX_REVISION_DEPTH,
+    MAX_SDT_DEPTH, MAX_TEXTBOX_DEPTH, Math, MediaId, MoveKind, MoveRangeEnd, MoveRangeStart,
+    NoteId, NoteKind, NoteNumberRestart, NotePosition, NoteProperties, NoteReference,
+    PageBorderDisplay, PageBorderOffset, PageBorders, PageMargins, PageNumbering, PageOrientation,
+    PageSize, PageVerticalAlignment, PaperSource, Paragraph, ParagraphProperties, PropChange,
+    Revision, RevisionKind, RgbColor, Run, RunProperties, SdtCheckbox, SdtCheckboxSymbol,
+    SdtControlData, SdtControlKind, SdtDataBinding, SdtDate, SdtListItem, SdtLock, SdtProperties,
+    SectionBoundary, SectionColumns, SectionId, SectionType, StyleKind, Symbol, Tab, TabAlignment,
+    TabLeader, TabStop, TableAnchor, TableCellProperties, TableFloatPosition, TableLayout,
+    TableOverlap, TableProperties, TableRowProperties, TableXAlign, TableYAlign, TextBox,
     TextDirection, VerticalAlign, VerticalAnchor, VerticalMerge, VerticalPosition, WrapMode,
 };
 use casual_doc_model::{IdGenerator, NodeId};
@@ -319,6 +320,76 @@ struct RevisionAccumulator {
     segments: Vec<Segment>,
 }
 
+/// Opaque metadata captured from a `w:*PrChange`'s attributes (`w:author`,
+/// `w:date`, `w:id`), bounded exactly like `w:ins`/`w:del` revision metadata.
+struct PropChangeMeta {
+    author: Option<String>,
+    date: Option<String>,
+    revision_id: Option<String>,
+}
+
+impl PropChangeMeta {
+    fn from_element(element: &BytesStart<'_>) -> Self {
+        Self {
+            author: attribute_value(element, b"author")
+                .filter(|value| !value.is_empty() && value.len() <= 255),
+            date: attribute_value(element, b"date")
+                .filter(|value| !value.is_empty() && value.len() <= 64),
+            revision_id: attribute_value(element, b"id")
+                .filter(|value| !value.is_empty() && value.len() <= 64),
+        }
+    }
+
+    fn into_change<P>(self, prior: P) -> PropChange<P> {
+        PropChange {
+            author: self.author,
+            date: self.date,
+            revision_id: self.revision_id,
+            prior: Box::new(prior),
+        }
+    }
+}
+
+/// An open property-change tracked revision (`w:*PrChange`) being captured. The
+/// PRIOR snapshot accumulates into the live accumulator (reset to `Default` on
+/// open) through the same element routing as the current properties; `saved`
+/// holds the just-completed CURRENT properties, restored — with the built
+/// `prop_change`/`grid_change` attached — on the matching close.
+enum PropChangeCapture {
+    /// A run's `w:rPrChange`. `mark` distinguishes a paragraph-mark run's rPr
+    /// (`mark_run_properties`) from a normal run's rPr (`run_properties`).
+    Run {
+        meta: PropChangeMeta,
+        saved: RunProperties,
+        mark: bool,
+    },
+    /// A paragraph's `w:pPrChange`.
+    Paragraph {
+        meta: PropChangeMeta,
+        saved: ParagraphProperties,
+    },
+    /// A table's `w:tblPrChange`.
+    Table {
+        meta: PropChangeMeta,
+        saved: TableProperties,
+    },
+    /// A row's `w:trPrChange`.
+    Row {
+        meta: PropChangeMeta,
+        saved: TableRowProperties,
+    },
+    /// A cell's `w:tcPrChange`.
+    Cell {
+        meta: PropChangeMeta,
+        saved: TableCellProperties,
+    },
+    /// A table grid's `w:tblGridChange`.
+    Grid {
+        meta: PropChangeMeta,
+        saved: Vec<GridColumn>,
+    },
+}
+
 /// Optional comment metadata captured from a `w:comment`'s attributes (all
 /// `None` for footnotes/endnotes, which reuse the same container machinery).
 #[derive(Default)]
@@ -576,9 +647,16 @@ struct BodyParser<'a> {
     /// their property children map into the right level.
     tblpr_depth: u32,
     trpr_depth: u32,
-    /// Depth of an open property-change tracked revision (`w:*PrChange`), whose
-    /// nested historical property container must not map over the current values.
+    /// Depth of an open reported-and-skipped property-change (`w:sectPrChange` /
+    /// `w:numberingChange`), whose nested historical container must not map over
+    /// the current values (the modeled changes use `prop_change` instead).
     pr_change_depth: u32,
+    /// Open modeled property-change tracked revisions (`w:*PrChange`) being
+    /// captured. A stack for robustness against malformed nesting; well-formed
+    /// input keeps at most one entry (a `w:*PrChange` is the last child of its
+    /// `w:*Pr`). A modeled change never wraps a text box, so it is not saved or
+    /// restored across a content frame.
+    prop_change: Vec<PropChangeCapture>,
     /// Which table border/margin container is currently open (for edge routing).
     /// A well-formed edge container has no box content, but malformed markup can
     /// nest a `w:txbxContent` inside one; it is saved/restored across a text-box
@@ -753,6 +831,7 @@ impl<'a> BodyParser<'a> {
             tblpr_depth: 0,
             trpr_depth: 0,
             pr_change_depth: 0,
+            prop_change: Vec::new(),
             edge_scope: EdgeScope::None,
             section_note_scope: None,
             in_tabs: false,
@@ -1210,15 +1289,66 @@ impl BodyParser<'_> {
             });
         }
         match local {
-            // Property-change tracked revisions carry a nested copy of the
-            // PREVIOUS property container (e.g. `w:tcPrChange > w:tcPr`). Report
-            // the container and skip its entire subtree so the historical values
-            // are never mapped over the current ones. The counter is incremented
-            // here (before the skip catch) so nested changes still balance.
-            b"pPrChange" | b"rPrChange" | b"tblPrChange" | b"trPrChange" | b"tcPrChange"
-            | b"sectPrChange" | b"tblGridChange" | b"numberingChange"
-                if self.in_document =>
+            // Property-change tracked revisions carry a nested copy of the PREVIOUS
+            // property container (e.g. `w:rPrChange > w:rPr`). We snapshot the
+            // just-completed CURRENT properties aside and reset the live
+            // accumulator so the nested prior `w:*Pr` accumulates the historical
+            // values through the exact same element routing; the snapshot is
+            // restored — with its `prop_change` attached — on the matching close.
+            b"rPrChange" if self.in_document && (self.rpr_depth > 0 || self.mark_rpr_depth > 0) => {
+                self.begin_run_prop_change(element);
+            }
+            b"pPrChange" if self.in_document && self.ppr_depth > 0 => {
+                let saved = std::mem::take(&mut self.paragraph_properties);
+                self.prop_change.push(PropChangeCapture::Paragraph {
+                    meta: PropChangeMeta::from_element(element),
+                    saved,
+                });
+            }
+            b"tblPrChange" if self.in_document && self.tblpr_depth > 0 => {
+                if let Some(saved) = self.tables.take_table_properties() {
+                    self.prop_change.push(PropChangeCapture::Table {
+                        meta: PropChangeMeta::from_element(element),
+                        saved,
+                    });
+                }
+            }
+            b"trPrChange" if self.in_document && self.trpr_depth > 0 => {
+                if let Some(saved) = self.tables.take_row_properties() {
+                    self.prop_change.push(PropChangeCapture::Row {
+                        meta: PropChangeMeta::from_element(element),
+                        saved,
+                    });
+                }
+            }
+            b"tcPrChange" if self.in_document && self.tcpr_depth > 0 => {
+                if let Some(saved) = self.tables.take_cell_properties() {
+                    self.prop_change.push(PropChangeCapture::Cell {
+                        meta: PropChangeMeta::from_element(element),
+                        saved,
+                    });
+                }
+            }
+            // `w:tblGridChange` wraps the prior `w:tblGrid`; its `w:gridCol`
+            // children accumulate into the (reset) live grid. It carries only a
+            // `w:id` (no author/date).
+            b"tblGridChange"
+                if self.in_document
+                    && self.tables.is_active()
+                    && self.suppressed_tbl_depth == 0 =>
             {
+                if let Some(saved) = self.tables.take_grid() {
+                    self.prop_change.push(PropChangeCapture::Grid {
+                        meta: PropChangeMeta::from_element(element),
+                        saved,
+                    });
+                }
+            }
+            // A section- or numbering-properties change is not yet modeled: report
+            // the container and skip its subtree so the historical values are never
+            // mapped over the current ones. The counter is incremented here (before
+            // the skip catch) so nested changes still balance.
+            b"sectPrChange" | b"numberingChange" if self.in_document => {
                 self.pr_change_depth += 1;
                 self.reporter.report(local);
             }
@@ -2552,16 +2682,25 @@ impl BodyParser<'_> {
             return Ok(());
         }
         match local {
-            // Close of a property-change revision container (balances the on_start
-            // increment). Placed BEFORE the skip catch so it is not swallowed.
-            b"pPrChange" | b"rPrChange" | b"tblPrChange" | b"trPrChange" | b"tcPrChange"
-            | b"sectPrChange" | b"tblGridChange" | b"numberingChange"
-                if self.pr_change_depth > 0 =>
+            // Close of a modeled property-change capture: the prior snapshot has
+            // accumulated into the live accumulator, so restore the saved current
+            // properties with the built change attached. Placed BEFORE the skip
+            // catch so it is not swallowed; guarded on the capture stack's top so
+            // it only fires for a change we actually opened.
+            b"rPrChange" | b"pPrChange" | b"tblPrChange" | b"trPrChange" | b"tcPrChange"
+            | b"tblGridChange"
+                if self.prop_change_top_matches(local) =>
             {
+                self.finish_prop_change();
+            }
+            // Close of a reported-and-skipped change (`w:sectPrChange` /
+            // `w:numberingChange`); balances the on_start increment. Placed BEFORE
+            // the skip catch so it is not swallowed.
+            b"sectPrChange" | b"numberingChange" if self.pr_change_depth > 0 => {
                 self.pr_change_depth = self.pr_change_depth.saturating_sub(1);
             }
-            // Inside a property-change revision: swallow every close so the nested
-            // historical property containers never decrement the real depth
+            // Inside a reported-and-skipped change: swallow every close so the
+            // nested historical property containers never decrement the real depth
             // counters (they never incremented them — their opens were skipped).
             _ if self.pr_change_depth > 0 => {}
             b"document" => self.in_document = false,
@@ -3804,6 +3943,89 @@ impl BodyParser<'_> {
     /// Opens a tracked-change range (`w:ins`/`w:del`). The caller guarantees the
     /// nesting bound and paragraph-flow position; this pushes the accumulator and
     /// its wrapper marker.
+    /// Begins a run-properties format-change (`w:rPrChange`). Routes to the run's
+    /// own rPr accumulator (`run_properties`) when a run's rPr is open, else to the
+    /// paragraph-mark's rPr accumulator (`mark_run_properties`).
+    fn begin_run_prop_change(&mut self, element: &BytesStart<'_>) {
+        let meta = PropChangeMeta::from_element(element);
+        // `rpr_depth > 0` means a run's own rPr is open; otherwise the open rPr is
+        // the paragraph mark's (the arm guard guarantees one of the two).
+        let mark = self.rpr_depth == 0;
+        let saved = if mark {
+            std::mem::take(&mut self.mark_run_properties)
+        } else {
+            std::mem::take(&mut self.run_properties)
+        };
+        self.prop_change
+            .push(PropChangeCapture::Run { meta, saved, mark });
+    }
+
+    /// Whether the innermost open property-change capture matches the closing
+    /// `w:*PrChange` tag, so a mismatched/orphan close (malformed input) is left
+    /// for the skip catch rather than finishing the wrong capture.
+    fn prop_change_top_matches(&self, local: &[u8]) -> bool {
+        matches!(
+            (local, self.prop_change.last()),
+            (b"rPrChange", Some(PropChangeCapture::Run { .. }))
+                | (b"pPrChange", Some(PropChangeCapture::Paragraph { .. }))
+                | (b"tblPrChange", Some(PropChangeCapture::Table { .. }))
+                | (b"trPrChange", Some(PropChangeCapture::Row { .. }))
+                | (b"tcPrChange", Some(PropChangeCapture::Cell { .. }))
+                | (b"tblGridChange", Some(PropChangeCapture::Grid { .. }))
+        )
+    }
+
+    /// Finishes the innermost open property-change capture (`w:*PrChange`): the
+    /// prior snapshot has accumulated into the live accumulator, so take it out,
+    /// restore the saved current properties, and attach the built change to them.
+    fn finish_prop_change(&mut self) {
+        let Some(capture) = self.prop_change.pop() else {
+            return;
+        };
+        match capture {
+            PropChangeCapture::Run { meta, saved, mark } => {
+                let slot = if mark {
+                    &mut self.mark_run_properties
+                } else {
+                    &mut self.run_properties
+                };
+                let prior = std::mem::replace(slot, saved);
+                slot.prop_change = Some(meta.into_change(prior));
+            }
+            PropChangeCapture::Paragraph { meta, saved } => {
+                let prior = std::mem::replace(&mut self.paragraph_properties, saved);
+                self.paragraph_properties.prop_change = Some(meta.into_change(prior));
+            }
+            PropChangeCapture::Table { meta, saved } => {
+                if let Some(prior) = self.tables.take_table_properties() {
+                    let mut restored = saved;
+                    restored.prop_change = Some(meta.into_change(prior));
+                    self.tables.set_table_properties(restored);
+                }
+            }
+            PropChangeCapture::Row { meta, saved } => {
+                if let Some(prior) = self.tables.take_row_properties() {
+                    let mut restored = saved;
+                    restored.prop_change = Some(meta.into_change(prior));
+                    self.tables.set_row_properties(restored);
+                }
+            }
+            PropChangeCapture::Cell { meta, saved } => {
+                if let Some(prior) = self.tables.take_cell_properties() {
+                    let mut restored = saved;
+                    restored.prop_change = Some(meta.into_change(prior));
+                    self.tables.set_cell_properties(restored);
+                }
+            }
+            PropChangeCapture::Grid { meta, saved } => {
+                if let Some(prior) = self.tables.take_grid() {
+                    self.tables.set_grid(saved);
+                    self.tables.set_grid_change(meta.into_change(prior));
+                }
+            }
+        }
+    }
+
     fn open_revision(&mut self, local: &[u8], element: &BytesStart<'_>) {
         let kind = match local {
             b"ins" => RevisionKind::Insertion,

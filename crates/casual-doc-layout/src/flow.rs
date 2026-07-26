@@ -2155,6 +2155,7 @@ mod tests {
                     width_twips: Some(3000),
                 },
             ],
+            grid_change: None,
             properties: TableProperties::default(),
             rows: vec![TableRow {
                 id: NodeId::from_parts(51, 1).unwrap(),
@@ -2990,6 +2991,7 @@ mod tests {
         let table = Table {
             id: node(50),
             grid: Vec::new(),
+            grid_change: None,
             properties: TableProperties::default(),
             rows: vec![ModelRow {
                 id: node(51),
@@ -3036,6 +3038,7 @@ mod tests {
                     width_twips: Some(4000),
                 },
             ],
+            grid_change: None,
             properties: TableProperties::default(),
             rows: vec![ModelRow {
                 id: node(51),
@@ -3068,6 +3071,7 @@ mod tests {
                     width_twips: Some(3000),
                 },
             ],
+            grid_change: None,
             properties: TableProperties::default(),
             rows: vec![ModelRow {
                 id: node(51),
@@ -3103,6 +3107,7 @@ mod tests {
                     width_twips: Some(3000),
                 },
             ],
+            grid_change: None,
             properties: TableProperties {
                 indent_twips: Some(1000),
                 ..TableProperties::default()
@@ -3129,6 +3134,7 @@ mod tests {
             grid: vec![GridColumn {
                 width_twips: Some(3000),
             }],
+            grid_change: None,
             properties: TableProperties::default(),
             rows: vec![ModelRow {
                 id: node(51),
@@ -3274,6 +3280,7 @@ mod tests {
                     width_twips: Some(3000),
                 },
             ],
+            grid_change: None,
             properties: TableProperties::default(),
             rows: vec![ModelRow {
                 id: node(51),
@@ -3309,6 +3316,7 @@ mod tests {
             grid: vec![GridColumn {
                 width_twips: Some(3000),
             }],
+            grid_change: None,
             properties: TableProperties {
                 borders: TableBorders {
                     top: Some(edge("single", 8)),
