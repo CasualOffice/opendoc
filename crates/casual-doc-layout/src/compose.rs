@@ -99,6 +99,16 @@ fn rgba(c: [u8; 4]) -> Color {
 #[must_use]
 pub fn compose_page(page: &Page) -> DisplayList {
     let mut list = DisplayList::new();
+    // Anchored (floating) drawings with `behindDoc` paint first, behind every
+    // fragment; the rest paint last, above the text (their z-order, `P1F-28`).
+    for anchor in &page.anchored {
+        if anchor.behind_doc {
+            list.push(PaintItem::Image {
+                media: anchor.media.clone(),
+                rect: anchor.rect,
+            });
+        }
+    }
     for placed in &page.header {
         compose_fragment(&mut list, &placed.fragment, placed.rect.origin);
     }
@@ -107,6 +117,14 @@ pub fn compose_page(page: &Page) -> DisplayList {
     }
     for placed in &page.footer {
         compose_fragment(&mut list, &placed.fragment, placed.rect.origin);
+    }
+    for anchor in &page.anchored {
+        if !anchor.behind_doc {
+            list.push(PaintItem::Image {
+                media: anchor.media.clone(),
+                rect: anchor.rect,
+            });
+        }
     }
     list
 }

@@ -129,6 +129,7 @@ fn push_inline_text(inline: &InlineNode, out: &mut String) {
         InlineNode::Tab(_) => out.push('\t'),
         InlineNode::Break(_) => out.push('\n'),
         InlineNode::Drawing(_) => {}
+        InlineNode::AnchoredDrawing(_) => {}
         InlineNode::EmbeddedObject(_) => {}
         InlineNode::Hyperlink(link) => {
             for child in &link.inlines {

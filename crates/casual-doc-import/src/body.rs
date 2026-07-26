@@ -3,22 +3,24 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use casual_doc_model::v1::{
-    Alignment, BlockNode, BlockSdt, Bookmark, BookmarkEnd, BookmarkId, BookmarkStart, BorderEdge,
-    Break, BreakKind, CellVerticalAlignment, Comment, CommentId, CommentReference, DefinitionMap,
-    DocGrid, DocGridType, Drawing, EmbeddedKind, EmbeddedObject, EmbeddedPart, Extent,
-    ExternalTarget, Field, FormCheckBox, FormCheckBoxSize, FormDropDown, FormFieldData,
-    FormFieldKind, FormTextInput, FormTextType, HeaderFooterId, HeaderFooterKind, HeaderFooterRef,
-    HeightRule, Hyperlink, HyperlinkTarget, InlineNode, InlineSdt, InternalTarget,
-    LineNumberRestart, LineNumbering, MAX_EMU, MAX_FIELD_INSTRUCTION_BYTES, MAX_FORM_FIELD_ENTRIES,
-    MAX_FORM_FIELD_STRING_BYTES, MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH,
-    MAX_TEXTBOX_DEPTH, Math, MediaId, MoveKind, MoveRangeEnd, MoveRangeStart, NoteId, NoteKind,
-    NoteNumberRestart, NotePosition, NoteProperties, NoteReference, PageBorderDisplay,
-    PageBorderOffset, PageBorders, PageMargins, PageNumbering, PageOrientation, PageSize,
-    PageVerticalAlignment, PaperSource, Paragraph, ParagraphProperties, Revision, RevisionKind,
-    RgbColor, Run, RunProperties, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind,
-    SdtDataBinding, SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionColumns,
-    SectionId, SectionType, StyleKind, Symbol, Tab, TabAlignment, TabLeader, TabStop, TableLayout,
-    TableOverlap, TextBox, TextDirection, VerticalMerge,
+    Alignment, AnchorHorizontal, AnchorVertical, AnchoredDrawing, BlockNode, BlockSdt, Bookmark,
+    BookmarkEnd, BookmarkId, BookmarkStart, BorderEdge, Break, BreakKind, CellVerticalAlignment,
+    Comment, CommentId, CommentReference, DefinitionMap, DocGrid, DocGridType, Drawing,
+    DrawingAnchor, EmbeddedKind, EmbeddedObject, EmbeddedPart, Extent, ExternalTarget, Field,
+    FormCheckBox, FormCheckBoxSize, FormDropDown, FormFieldData, FormFieldKind, FormTextInput,
+    FormTextType, HeaderFooterId, HeaderFooterKind, HeaderFooterRef, HeightRule, HorizontalAlign,
+    HorizontalAnchor, HorizontalPosition, Hyperlink, HyperlinkTarget, InlineNode, InlineSdt,
+    InternalTarget, LineNumberRestart, LineNumbering, MAX_DESCR_BYTES, MAX_EMU,
+    MAX_FIELD_INSTRUCTION_BYTES, MAX_FORM_FIELD_ENTRIES, MAX_FORM_FIELD_STRING_BYTES,
+    MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH, MAX_TEXTBOX_DEPTH, Math, MediaId, MoveKind,
+    MoveRangeEnd, MoveRangeStart, NoteId, NoteKind, NoteNumberRestart, NotePosition,
+    NoteProperties, NoteReference, PageBorderDisplay, PageBorderOffset, PageBorders, PageMargins,
+    PageNumbering, PageOrientation, PageSize, PageVerticalAlignment, PaperSource, Paragraph,
+    ParagraphProperties, Revision, RevisionKind, RgbColor, Run, RunProperties, SdtCheckbox,
+    SdtCheckboxSymbol, SdtControlData, SdtControlKind, SdtDataBinding, SdtDate, SdtListItem,
+    SdtLock, SdtProperties, SectionBoundary, SectionColumns, SectionId, SectionType, StyleKind,
+    Symbol, Tab, TabAlignment, TabLeader, TabStop, TableLayout, TableOverlap, TextBox,
+    TextDirection, VerticalAlign, VerticalAnchor, VerticalMerge, VerticalPosition, WrapMode,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::events::{BytesStart, Event};
@@ -127,6 +129,13 @@ enum Segment {
         font: String,
         char: u32,
     },
+    /// An anchored (floating) drawing: an embedded picture plus its placement.
+    AnchoredDrawing {
+        media: MediaId,
+        extent: Extent,
+        anchor: DrawingAnchor,
+        descr: Option<String>,
+    },
 }
 
 /// The natural size used for an embedded object whose producer declared none.
@@ -134,6 +143,65 @@ const ZERO_EXTENT: Extent = Extent {
     width_emu: 0,
     height_emu: 0,
 };
+
+/// Which axis of an anchor a `wp:posOffset`/`wp:align` value belongs to (the
+/// enclosing `wp:positionH` or `wp:positionV`).
+#[derive(Clone, Copy)]
+enum AnchorAxis {
+    Horizontal,
+    Vertical,
+}
+
+/// The `wp:anchor` position/wrap/z-order pointers collected while parsing an open
+/// anchored drawing, resolved into an [`AnchoredDrawing`] when the drawing closes.
+/// The `pic:pic`'s `a:blip@r:embed` and `wp:extent` flow through the shared
+/// `pending_embed`/`pending_extent` fields (an anchored picture is an inline
+/// picture with a placement).
+#[derive(Default)]
+struct PendingAnchor {
+    /// `@behindDoc` (z-order behind the text).
+    behind_doc: bool,
+    /// `wp:positionH@relativeFrom`.
+    h_relative: Option<HorizontalAnchor>,
+    /// The resolved horizontal offset or alignment (`wp:posOffset`/`wp:align`).
+    h_position: Option<HorizontalPosition>,
+    /// `wp:positionV@relativeFrom`.
+    v_relative: Option<VerticalAnchor>,
+    /// The resolved vertical offset or alignment.
+    v_position: Option<VerticalPosition>,
+    /// The `wp:wrap*` mode.
+    wrap: Option<WrapMode>,
+    /// The `wp:docPr@descr` alt text (bounded).
+    descr: Option<String>,
+    /// The axis whose `wp:posOffset`/`wp:align` text is currently being captured.
+    capture_axis: Option<AnchorAxis>,
+    /// Whether the value being captured is a `wp:posOffset` (`true`) or a
+    /// `wp:align` (`false`).
+    capture_is_offset: bool,
+    /// The text of the value currently being captured (bounded).
+    capture_buffer: String,
+}
+
+impl PendingAnchor {
+    /// Resolves the collected pointers into a [`DrawingAnchor`], applying OOXML
+    /// defaults for any component the producer omitted (a missing `positionH`
+    /// defaults to a zero offset from the column; a missing `positionV` to a zero
+    /// offset from the paragraph; a missing wrap to `wrapNone`).
+    fn resolve(&self) -> DrawingAnchor {
+        DrawingAnchor {
+            horizontal: AnchorHorizontal {
+                relative_from: self.h_relative.unwrap_or(HorizontalAnchor::Column),
+                position: self.h_position.unwrap_or(HorizontalPosition::Offset(0)),
+            },
+            vertical: AnchorVertical {
+                relative_from: self.v_relative.unwrap_or(VerticalAnchor::Paragraph),
+                position: self.v_position.unwrap_or(VerticalPosition::Offset(0)),
+            },
+            wrap: self.wrap.unwrap_or(WrapMode::None),
+            behind_doc: self.behind_doc,
+        }
+    }
+}
 
 /// A main-document relationship an embedded object can reference, resolved from
 /// the package (`r:id` -> part). The `r:id` is the lookup key.
@@ -285,6 +353,7 @@ struct ContentFrame {
     drawing_extra: bool,
     pict_depth: u32,
     pending_graphic: PendingGraphic,
+    pending_anchor: Option<PendingAnchor>,
     object_depth: u32,
     pending_object: PendingObject,
     hyperlink: Option<HyperlinkAccumulator>,
@@ -451,6 +520,10 @@ struct BodyParser<'a> {
     pict_depth: u32,
     /// `a:graphicData` payload pointers for the open drawing (chart/diagram).
     pending_graphic: PendingGraphic,
+    /// `wp:anchor` placement pointers for the open drawing; `Some` while inside a
+    /// floating anchor, resolved into an [`AnchoredDrawing`] when the drawing
+    /// closes.
+    pending_anchor: Option<PendingAnchor>,
     /// Depth of an open `w:object` (an OLE object wrapper).
     object_depth: u32,
     /// `w:object` pointers collected until the object closes.
@@ -652,6 +725,7 @@ impl<'a> BodyParser<'a> {
             drawing_extra: false,
             pict_depth: 0,
             pending_graphic: PendingGraphic::default(),
+            pending_anchor: None,
             object_depth: 0,
             pending_object: PendingObject::default(),
             hyperlink: None,
@@ -952,6 +1026,18 @@ impl BodyParser<'_> {
                 Event::End(element) => {
                     self.on_end(element.local_name().as_ref())?;
                     self.depth = self.depth.saturating_sub(1);
+                }
+                // A `wp:posOffset`/`wp:align` value: its text is captured into the
+                // open anchor accumulator (bounded), not the paragraph flow.
+                Event::Text(text) if self.capturing_anchor_axis() => {
+                    let raw = text.into_inner();
+                    let raw =
+                        std::str::from_utf8(raw.as_ref()).map_err(|_| ImportError::MalformedXml)?;
+                    if let Some(anchor) = self.pending_anchor.as_mut()
+                        && anchor.capture_buffer.len() + raw.len() <= 64
+                    {
+                        anchor.capture_buffer.push_str(raw);
+                    }
                 }
                 Event::Text(text) if self.in_text || self.in_instr => {
                     let raw = text.into_inner();
@@ -1457,6 +1543,7 @@ impl BodyParser<'_> {
                     self.drawing_extra = false;
                     self.blipfill_depth = 0;
                     self.pending_graphic = PendingGraphic::default();
+                    self.pending_anchor = None;
                 }
             }
             // The `a:graphicData@uri` distinguishes a chart / diagram / picture /
@@ -1492,15 +1579,76 @@ impl BodyParser<'_> {
             b"blip" if self.blipfill_depth > 0 && self.pending_embed.is_none() => {
                 self.pending_embed = attribute_value(element, b"embed");
             }
-            // A floating anchor, alt text, click-link, or SVG dual-blip carries
-            // detail the model does not capture: flag it so a resolved drawing
-            // is still reported (degraded), never silently under-modeled.
-            b"anchor" if self.drawing_depth > 0 => self.drawing_extra = true,
-            b"docPr" if self.drawing_depth > 0 => {
-                if attribute_value(element, b"descr").is_some() {
-                    self.drawing_extra = true;
+            // A floating anchor (`wp:anchor`): open an anchor accumulator so the
+            // drawing's position/wrap/z-order are captured and it commits as an
+            // `AnchoredDrawing` rather than collapsing to inline. `@behindDoc`
+            // ("1"/"true") sets the behind-text z-order.
+            b"anchor" if self.drawing_depth > 0 => {
+                // `@behindDoc` defaults to false when absent, so it is an explicit
+                // truthy check (not `is_true`, whose absent-is-true toggle semantics
+                // suit `<w:b/>`-style flags, not a defaulted attribute).
+                let behind_doc = matches!(
+                    attribute_value(element, b"behindDoc").as_deref(),
+                    Some("1") | Some("true")
+                );
+                self.pending_anchor = Some(PendingAnchor {
+                    behind_doc,
+                    ..PendingAnchor::default()
+                });
+            }
+            // `wp:positionH`/`wp:positionV`: record which reference the following
+            // `wp:posOffset`/`wp:align` is measured from, and mark the axis so its
+            // value text is captured.
+            b"positionH" if self.pending_anchor.is_some() => {
+                let relative = attribute_value(element, b"relativeFrom");
+                if let Some(anchor) = self.pending_anchor.as_mut() {
+                    anchor.h_relative = horizontal_anchor(relative.as_deref());
+                    anchor.capture_axis = Some(AnchorAxis::Horizontal);
                 }
             }
+            b"positionV" if self.pending_anchor.is_some() => {
+                let relative = attribute_value(element, b"relativeFrom");
+                if let Some(anchor) = self.pending_anchor.as_mut() {
+                    anchor.v_relative = vertical_anchor(relative.as_deref());
+                    anchor.capture_axis = Some(AnchorAxis::Vertical);
+                }
+            }
+            // `wp:posOffset` / `wp:align` carry their value as element text; begin
+            // capturing it for the current axis.
+            b"posOffset" if self.capturing_anchor_axis() => {
+                if let Some(anchor) = self.pending_anchor.as_mut() {
+                    anchor.capture_is_offset = true;
+                    anchor.capture_buffer.clear();
+                }
+            }
+            b"align" if self.capturing_anchor_axis() => {
+                if let Some(anchor) = self.pending_anchor.as_mut() {
+                    anchor.capture_is_offset = false;
+                    anchor.capture_buffer.clear();
+                }
+            }
+            // The wrap mode (`wp:wrap*`, an empty element).
+            b"wrapSquare" | b"wrapTight" | b"wrapThrough" | b"wrapTopAndBottom" | b"wrapNone"
+                if self.pending_anchor.is_some() =>
+            {
+                if let Some(anchor) = self.pending_anchor.as_mut() {
+                    anchor.wrap = Some(wrap_mode(local));
+                }
+            }
+            // `wp:docPr@descr` is the drawing's alt text: modeled on an anchor
+            // (accessibility); on an inline drawing it remains reported (the inline
+            // path does not yet carry alt text).
+            b"docPr" if self.drawing_depth > 0 => match attribute_value(element, b"descr") {
+                Some(descr) if !descr.is_empty() && descr.len() <= MAX_DESCR_BYTES => {
+                    if let Some(anchor) = self.pending_anchor.as_mut() {
+                        anchor.descr = Some(descr);
+                    } else {
+                        self.drawing_extra = true;
+                    }
+                }
+                Some(_) => self.drawing_extra = true,
+                None => {}
+            },
             b"hlinkClick" | b"svgBlip" if self.drawing_depth > 0 => self.drawing_extra = true,
             // A legacy VML picture (`w:pict`) carries its image as
             // `v:imagedata@r:id`; resolve it through the same media table.
@@ -2497,6 +2645,15 @@ impl BodyParser<'_> {
             // open field and is finalized when the field commits.
             b"ffData" if self.in_ffdata => self.in_ffdata = false,
             b"blipFill" => self.blipfill_depth = self.blipfill_depth.saturating_sub(1),
+            // A `wp:posOffset`/`wp:align` closes: parse the captured value into the
+            // current axis's position.
+            b"posOffset" | b"align" if self.capturing_anchor_axis() => self.finish_anchor_value(),
+            // A `wp:positionH`/`wp:positionV` closes: clear the capture axis.
+            b"positionH" | b"positionV" if self.pending_anchor.is_some() => {
+                if let Some(anchor) = self.pending_anchor.as_mut() {
+                    anchor.capture_axis = None;
+                }
+            }
             b"drawing" if self.drawing_depth > 0 => {
                 self.drawing_depth -= 1;
                 if self.drawing_depth == 0 {
@@ -2570,11 +2727,59 @@ impl BodyParser<'_> {
         Ok(())
     }
 
+    /// Whether an open anchor is currently capturing a `wp:posOffset`/`wp:align`
+    /// value for one of its axes.
+    fn capturing_anchor_axis(&self) -> bool {
+        self.pending_anchor
+            .as_ref()
+            .is_some_and(|anchor| anchor.capture_axis.is_some())
+    }
+
+    /// Parses the captured `wp:posOffset`/`wp:align` text into the current axis's
+    /// position on the open anchor. An unparseable value leaves the position unset
+    /// (resolved to a zero offset later), never panicking.
+    fn finish_anchor_value(&mut self) {
+        let Some(anchor) = self.pending_anchor.as_mut() else {
+            return;
+        };
+        let Some(axis) = anchor.capture_axis else {
+            return;
+        };
+        let is_offset = anchor.capture_is_offset;
+        let buffer = std::mem::take(&mut anchor.capture_buffer);
+        let value = buffer.trim();
+        match (axis, is_offset) {
+            (AnchorAxis::Horizontal, true) => {
+                if let Ok(emu) = value.parse::<i64>() {
+                    anchor.h_position =
+                        Some(HorizontalPosition::Offset(emu.clamp(-MAX_EMU, MAX_EMU)));
+                }
+            }
+            (AnchorAxis::Vertical, true) => {
+                if let Ok(emu) = value.parse::<i64>() {
+                    anchor.v_position =
+                        Some(VerticalPosition::Offset(emu.clamp(-MAX_EMU, MAX_EMU)));
+                }
+            }
+            (AnchorAxis::Horizontal, false) => {
+                if let Some(align) = horizontal_align(value) {
+                    anchor.h_position = Some(HorizontalPosition::Align(align));
+                }
+            }
+            (AnchorAxis::Vertical, false) => {
+                if let Some(align) = vertical_align(value) {
+                    anchor.v_position = Some(VerticalPosition::Align(align));
+                }
+            }
+        }
+    }
+
     /// Commits the top-level drawing that just closed. A `c:chart`/`dgm:relIds`
     /// payload becomes a first-class `EmbeddedObject` referencing its preserved
-    /// part(s); a resolved `a:blip@r:embed` becomes a `Drawing`; an
-    /// unresolved/dangling reference is reported and dropped. A resolved drawing
-    /// carrying unmodeled detail is also reported.
+    /// part(s); a resolved `a:blip@r:embed` becomes a `Drawing` (inline) or an
+    /// `AnchoredDrawing` (floating `wp:anchor`); an unresolved/dangling reference
+    /// is reported and dropped. A resolved drawing carrying unmodeled detail is
+    /// also reported.
     fn commit_drawing(&mut self) {
         let extent = self.pending_extent.take();
         let extra = self.drawing_extra;
@@ -2620,10 +2825,28 @@ impl BodyParser<'_> {
             });
             return;
         }
-        // Otherwise the embedded-picture path.
+        // Otherwise the embedded-picture path. An open anchor accumulator routes a
+        // resolvable picture to an `AnchoredDrawing` (placed at its position); an
+        // inline picture stays a `Drawing`.
+        let anchor = self.pending_anchor.take();
         match self.pending_embed.take() {
             Some(embed) => match self.media_index.get(&embed) {
                 Some(media) => {
+                    if let Some(anchor) = anchor {
+                        self.push_segment(Segment::AnchoredDrawing {
+                            media: *media,
+                            extent: extent.unwrap_or(ZERO_EXTENT),
+                            anchor: anchor.resolve(),
+                            descr: anchor.descr,
+                        });
+                        // Any remaining unmodeled detail (e.g. a click-link) is
+                        // still surfaced so the anchored drawing is never silently
+                        // under-modeled.
+                        if extra {
+                            self.reporter.report(b"drawing");
+                        }
+                        return;
+                    }
                     if extra {
                         self.reporter.report(b"drawing");
                     }
@@ -3049,6 +3272,7 @@ impl BodyParser<'_> {
             drawing_extra: std::mem::take(&mut self.drawing_extra),
             pict_depth: std::mem::take(&mut self.pict_depth),
             pending_graphic: std::mem::take(&mut self.pending_graphic),
+            pending_anchor: self.pending_anchor.take(),
             object_depth: std::mem::take(&mut self.object_depth),
             pending_object: std::mem::take(&mut self.pending_object),
             hyperlink: self.hyperlink.take(),
@@ -3113,6 +3337,7 @@ impl BodyParser<'_> {
         self.drawing_extra = frame.drawing_extra;
         self.pict_depth = frame.pict_depth;
         self.pending_graphic = frame.pending_graphic;
+        self.pending_anchor = frame.pending_anchor;
         self.object_depth = frame.object_depth;
         self.pending_object = frame.pending_object;
         self.hyperlink = frame.hyperlink;
@@ -3817,6 +4042,21 @@ impl BodyParser<'_> {
                 let id = self.next_id()?;
                 Ok(InlineNode::Drawing(Drawing { id, media, extent }))
             }
+            Segment::AnchoredDrawing {
+                media,
+                extent,
+                anchor,
+                descr,
+            } => {
+                let id = self.next_id()?;
+                Ok(InlineNode::AnchoredDrawing(AnchoredDrawing {
+                    id,
+                    media,
+                    extent,
+                    anchor,
+                    descr,
+                }))
+            }
             Segment::EmbeddedObject {
                 kind,
                 part,
@@ -4068,6 +4308,75 @@ fn ffdata_text_type(element: &BytesStart<'_>) -> Option<FormTextType> {
         Some("currentDate") => Some(FormTextType::CurrentDate),
         Some("calculated") => Some(FormTextType::Calculation),
         _ => None,
+    }
+}
+
+/// Maps a `wp:positionH@relativeFrom` value to its horizontal reference. An
+/// unknown/absent value yields `None` (resolved to the `column` default).
+fn horizontal_anchor(value: Option<&str>) -> Option<HorizontalAnchor> {
+    Some(match value? {
+        "page" => HorizontalAnchor::Page,
+        "margin" => HorizontalAnchor::Margin,
+        "column" => HorizontalAnchor::Column,
+        "character" => HorizontalAnchor::Character,
+        "leftMargin" => HorizontalAnchor::LeftMargin,
+        "rightMargin" => HorizontalAnchor::RightMargin,
+        "insideMargin" => HorizontalAnchor::InsideMargin,
+        "outsideMargin" => HorizontalAnchor::OutsideMargin,
+        _ => return None,
+    })
+}
+
+/// Maps a `wp:positionV@relativeFrom` value to its vertical reference. An
+/// unknown/absent value yields `None` (resolved to the `paragraph` default).
+fn vertical_anchor(value: Option<&str>) -> Option<VerticalAnchor> {
+    Some(match value? {
+        "page" => VerticalAnchor::Page,
+        "margin" => VerticalAnchor::Margin,
+        "paragraph" => VerticalAnchor::Paragraph,
+        "line" => VerticalAnchor::Line,
+        "topMargin" => VerticalAnchor::TopMargin,
+        "bottomMargin" => VerticalAnchor::BottomMargin,
+        "insideMargin" => VerticalAnchor::InsideMargin,
+        "outsideMargin" => VerticalAnchor::OutsideMargin,
+        _ => return None,
+    })
+}
+
+/// Maps a horizontal `wp:align` keyword to its alignment.
+fn horizontal_align(value: &str) -> Option<HorizontalAlign> {
+    Some(match value {
+        "left" => HorizontalAlign::Left,
+        "center" => HorizontalAlign::Center,
+        "right" => HorizontalAlign::Right,
+        "inside" => HorizontalAlign::Inside,
+        "outside" => HorizontalAlign::Outside,
+        _ => return None,
+    })
+}
+
+/// Maps a vertical `wp:align` keyword to its alignment.
+fn vertical_align(value: &str) -> Option<VerticalAlign> {
+    Some(match value {
+        "top" => VerticalAlign::Top,
+        "center" => VerticalAlign::Center,
+        "bottom" => VerticalAlign::Bottom,
+        "inside" => VerticalAlign::Inside,
+        "outside" => VerticalAlign::Outside,
+        _ => return None,
+    })
+}
+
+/// Maps a `wp:wrap*` element's local name to its wrap mode. Only the five wrap
+/// elements reach this (the caller matches them), so the fallback is unreachable
+/// in practice and defaults to `wrapNone`.
+fn wrap_mode(local: &[u8]) -> WrapMode {
+    match local {
+        b"wrapSquare" => WrapMode::Square,
+        b"wrapTight" => WrapMode::Tight,
+        b"wrapThrough" => WrapMode::Through,
+        b"wrapTopAndBottom" => WrapMode::TopAndBottom,
+        _ => WrapMode::None,
     }
 }
 
