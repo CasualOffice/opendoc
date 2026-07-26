@@ -335,12 +335,34 @@ The MSRV CI gate now checks 1.88.0; `06`/`15`/`18` are updated. No existing code
 changes (raising the MSRV never breaks lower-version-compatible code); the bump
 is a prerequisite landed ahead of the `parley` line-shaper slice (P1C-001).
 
+## ADR-030 — Reserve the extensibility seams for collaboration & agentic layers
+
+**Decision:** Accepted 2026-07-26. Commit to four architectural invariants —
+(I1) a single mutation choke point through the operation channel, (I2) a closed,
+serializable, composable + invertible operation set, (I3) `NodeId`-based anchors
+with position math confined to `ModelPos`, and (I4) AI/derived data in a sidecar
+store keyed by `NodeId`, never in the `v1` model — so that concurrent editing
+(OT **or** CRDT), MCP/agent-driven editing, and RAG/vector retrieval can each be
+added later **as adapters, without a core rewrite**. Full rationale and the
+per-layer landing plan: `45-EXTENSIBILITY-AND-COLLABORATION-SEAMS.md`.
+
+**Why:** a remote collaborator, an OT/CRDT peer, and an AI agent all *observe then
+apply operations* — one clean operation channel + observation stream + stable
+anchors future-proofs all three at once. The invariants are cheap to hold now (a
+review-checklist item) and expensive to retrofit later; the only real risk is
+integer-offset assumptions leaking out of `ModelPos` (which I3 prevents).
+
+**Consequence:** the four invariants become a review checklist applied to every
+model/mutation PR (see doc 45 §"Review checklist"), so the in-flight Phase-1F
+construct-family work reinforces the seams. This ADR does **not** choose OT vs CRDT
+(still pending below); it guarantees either remains additive.
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;
 - native renderer: Skia, Vello, tiny-skia, wgpu custom, or hybrid;
 - internal text storage: rope, piece tree, or chunked sequence;
-- collaboration operation model;
+- collaboration operation model: OT vs CRDT (seams reserved by ADR-030 / doc 45);
 - PDF generation backend;
 - schema format: canonical CBOR encoding profile and golden vectors;
 - plugin ABI stability;

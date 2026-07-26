@@ -73,6 +73,7 @@ The runtime is not a UI toolkit and is not a DOCX-only editor. It is a determini
 42. `42-RENDERING-ARCHITECTURE-RESEARCH.md` — prior-art + ecosystem + algorithm research for the Phase 1C layout/pagination/rendering engine.
 43. `43-PHASE-1C-LAYOUT-RENDERING-DESIGN.md` — proposed production layout/pagination/rendering engine design (Phases 1C–1E).
 44. `44-COVERAGE-GAP-AUDIT.md` — evidence-backed inventory of unhandled/partial/lossy constructs (WML content, package parts, layout/render), tiered by severity; source of the P1F-* tracker rows.
+45. `45-EXTENSIBILITY-AND-COLLABORATION-SEAMS.md` — the four invariants that keep collaboration (OT/CRDT), MCP/agentic, and RAG/vector layers additive (ADR-030); review checklist for model/mutation PRs.
 
 Also present (not in the numbered sequence): `PHASE-1A-SEMANTIC-MODELING-TRACKER.md`.
 
