@@ -14,13 +14,14 @@
 //! table splitting (`P1D-003`) are the following slices; unmapped inline nodes
 //! contribute no text yet (never panic).
 
+use std::borrow::Cow;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use casual_doc_model::v1::{
     Alignment, BlockNode, BorderEdge, Color, Document, FontRef, FontScheme, HeightRule, InlineNode,
     ParagraphProperties, RunProperties, Table, TableBorders, TableCell, TableLayout,
-    TableRowProperties, ThemeFontRef,
+    TableRowProperties, ThemeColorRef, ThemeFontRef, VerticalAlignment,
 };
 
 use crate::block::{
@@ -34,11 +35,119 @@ use crate::units::Twip;
 
 /// Context threaded through the flow: the font resolver, the document's theme
 /// font scheme (needed to turn `w:rFonts@*Theme` slots into concrete families),
-/// and the running font-resolution report.
+/// the theme color scheme (needed to resolve `w:color@*Theme` slots to sRGB), and
+/// the running font-resolution report.
 struct FlowCtx<'a> {
     resolver: &'a FontResolver,
     scheme: Option<&'a FontScheme>,
+    color_scheme: Option<&'a ColorScheme>,
     report: &'a mut FontResolutionReport,
+}
+
+/// The document theme's 12 color slots (`a:clrScheme`, ECMA-376 §20.1.6.2)
+/// resolved to sRGB, against which a `w:color@*Theme` run color (`P1F-23`)
+/// resolves.
+///
+/// The palette lives layout-side, threaded as an `Option` into [`FlowCtx`],
+/// because the semantic model does not yet carry the theme color scheme (that is
+/// `P1F-3`; only the *font* scheme is modeled today). Layout consumes the palette
+/// the moment the model provides one — the same forward-compatible seam the
+/// column solver uses for [`WidthSpec::Pct`]. Until then [`build_galley`] threads
+/// `None` and a theme-referenced color falls back to the contextual default.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct ColorScheme {
+    /// The 12 slots in [`ThemeColorRef`] order, each an sRGB triple.
+    slots: [[u8; 3]; 12],
+}
+
+impl ColorScheme {
+    /// The sRGB value of a theme slot.
+    fn resolve(self, slot: ThemeColorRef) -> [u8; 3] {
+        self.slots[Self::index(slot)]
+    }
+
+    /// The dense index of a theme slot within [`Self::slots`].
+    fn index(slot: ThemeColorRef) -> usize {
+        match slot {
+            ThemeColorRef::Dark1 => 0,
+            ThemeColorRef::Light1 => 1,
+            ThemeColorRef::Dark2 => 2,
+            ThemeColorRef::Light2 => 3,
+            ThemeColorRef::Accent1 => 4,
+            ThemeColorRef::Accent2 => 5,
+            ThemeColorRef::Accent3 => 6,
+            ThemeColorRef::Accent4 => 7,
+            ThemeColorRef::Accent5 => 8,
+            ThemeColorRef::Accent6 => 9,
+            ThemeColorRef::Hyperlink => 10,
+            ThemeColorRef::FollowedHyperlink => 11,
+        }
+    }
+}
+
+/// An OOXML `w:themeTint`/`w:themeShade` modifier on a theme color (each a byte,
+/// `0x00..=0xFF`). Both absent is the neutral transform.
+///
+/// Tint/shade are not yet carried on the model's `ThemeColor` (they arrive with
+/// the theme palette in `P1F-3`), so [`resolve_run_color`] applies [`Self::NONE`]
+/// today; [`apply_tint_shade`] implements the transform so it is live and correct
+/// the moment the model supplies real values.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct ThemeTintShade {
+    tint: Option<u8>,
+    shade: Option<u8>,
+}
+
+impl ThemeTintShade {
+    /// The neutral (identity) modifier.
+    const NONE: Self = Self {
+        tint: None,
+        shade: None,
+    };
+}
+
+/// Applies a theme tint/shade to an sRGB slot color (ECMA-376 §17.3.2.6): a
+/// `shade` scales each channel toward black (`channel * shade/255`); a `tint`
+/// blends each channel toward white (`channel * tint/255 + 255 * (1 - tint/255)`).
+/// Shade is applied before tint. [`ThemeTintShade::NONE`] returns the color
+/// unchanged.
+fn apply_tint_shade(rgb: [u8; 3], modifier: ThemeTintShade) -> [u8; 3] {
+    let channel = |c: u8| {
+        let mut value = f32::from(c);
+        if let Some(shade) = modifier.shade {
+            value *= f32::from(shade) / 255.0;
+        }
+        if let Some(tint) = modifier.tint {
+            let t = f32::from(tint) / 255.0;
+            value = value * t + 255.0 * (1.0 - t);
+        }
+        value.round().clamp(0.0, 255.0) as u8
+    };
+    [channel(rgb[0]), channel(rgb[1]), channel(rgb[2])]
+}
+
+/// Resolves a run's `w:color` to an opaque sRGB fill (`P1F-23`):
+///
+/// - an explicit RGB color is taken verbatim;
+/// - a theme-referenced color resolves against `scheme` (with tint/shade, though
+///   the model carries none yet — see [`ThemeTintShade`]); with no palette
+///   available it falls back to the contextual default;
+/// - `auto` (modeled as an absent color) resolves to the contextual default,
+///   black, matching Word on a light background.
+fn resolve_run_color(color: Option<Color>, scheme: Option<&ColorScheme>) -> [u8; 4] {
+    /// The contextual default (`w:color=auto`): black on a light page.
+    const AUTO: [u8; 4] = [0, 0, 0, 255];
+    match color {
+        Some(Color::Rgb(rgb)) => [rgb.r, rgb.g, rgb.b, 255],
+        Some(Color::Theme(theme)) => match scheme {
+            Some(scheme) => {
+                let [r, g, b] = apply_tint_shade(scheme.resolve(theme.slot), ThemeTintShade::NONE);
+                [r, g, b, 255]
+            }
+            None => AUTO,
+        },
+        None => AUTO,
+    }
 }
 
 /// Builds a galley of block fragments from a document's body, shaped to fit
@@ -69,6 +178,10 @@ pub fn build_galley_with_report(
     let mut ctx = FlowCtx {
         resolver: &resolver,
         scheme: document.definitions().font_scheme.as_ref(),
+        // The model does not yet carry a theme color scheme (`P1F-3`); theme-
+        // referenced run colors therefore fall back to the contextual default
+        // until the palette lands and is threaded here.
+        color_scheme: None,
         report: &mut report,
     };
     let galley = flow_blocks(document.body(), shaper, content_width, &mut ctx);
@@ -109,6 +222,8 @@ pub fn build_galley_cached(
     let mut ctx = FlowCtx {
         resolver: &resolver,
         scheme: document.definitions().font_scheme.as_ref(),
+        // No theme color scheme in the model yet (`P1F-3`); see `build_galley`.
+        color_scheme: None,
         report: &mut report,
     };
     cache.begin_build(content_width);
@@ -184,6 +299,7 @@ fn paragraph_hash(
         run.size.0.hash(&mut hasher);
         run.bold.hash(&mut hasher);
         run.italic.hash(&mut hasher);
+        run.baseline_shift.0.hash(&mut hasher);
         run.letter_spacing.0.hash(&mut hasher);
         run.color.hash(&mut hasher);
         run.decoration.underline.hash(&mut hasher);
@@ -565,6 +681,7 @@ fn block_intrinsic(blocks: &[BlockNode], shaper: &dyn LineShaper, ctx: &FlowCtx)
     let mut mctx = FlowCtx {
         resolver: ctx.resolver,
         scheme: ctx.scheme,
+        color_scheme: ctx.color_scheme,
         report: &mut scratch,
     };
     let mut min = 0;
@@ -730,8 +847,8 @@ fn collect_runs<'a>(inlines: &'a [InlineNode], out: &mut Vec<StyledRun<'a>>, ctx
     for inline in inlines {
         match inline {
             InlineNode::Run(run) if run.properties.hidden == Some(true) => {}
-            InlineNode::Run(run) => out.push(styled_run(&run.text, &run.properties, ctx)),
-            InlineNode::Tab(_) => out.push(styled_run("\t", &RunProperties::default(), ctx)),
+            InlineNode::Run(run) => push_run(&run.text, &run.properties, ctx, out),
+            InlineNode::Tab(_) => push_run("\t", &RunProperties::default(), ctx, out),
             InlineNode::Hyperlink(hyperlink) => collect_runs(&hyperlink.inlines, out, ctx),
             InlineNode::Revision(revision) => collect_runs(&revision.inlines, out, ctx),
             InlineNode::Sdt(sdt) => collect_runs(&sdt.inlines, out, ctx),
@@ -740,49 +857,135 @@ fn collect_runs<'a>(inlines: &'a [InlineNode], out: &mut Vec<StyledRun<'a>>, ctx
     }
 }
 
-/// Maps a run's text + properties to a styled run, resolving its declared font
-/// family (`w:rFonts`, direct or theme) to a concrete bundled face via the
-/// [`FontResolver`] and recording any substitution/coverage fallback (`P1C-002b`).
-fn styled_run<'a>(text: &'a str, properties: &RunProperties, ctx: &mut FlowCtx) -> StyledRun<'a> {
+/// Superscript and subscript render at two-thirds of the run's declared size — a
+/// common approximation of Word's automatic super/subscript scaling.
+const SUB_SUPER_SIZE_NUM: i32 = 2;
+const SUB_SUPER_SIZE_DEN: i32 = 3;
+
+/// Small caps render originally-lowercase letters as capitals at three-quarters
+/// of the run's size; uppercase-origin letters keep the full size.
+const SMALL_CAPS_SIZE_NUM: i32 = 3;
+const SMALL_CAPS_SIZE_DEN: i32 = 4;
+
+/// Appends the shaped run(s) for one inline run's `text` + `properties` to `out`,
+/// resolving the declared family to a bundled face (`P1C-002b`) and applying the
+/// run-appearance properties layout previously dropped (`P1F-18`):
+///
+/// - **super/subscript** (`w:vertAlign`) → a baseline shift plus a reduced size;
+/// - **`w:position`** → a baseline shift with no size change (additive with the
+///   super/subscript shift);
+/// - **`w:caps`** → the whole run uppercased at full size;
+/// - **`w:smallCaps`** → every letter as a capital, but letters that were
+///   *originally lowercase* shaped smaller, which splits the run into
+///   originally-lowercase and other spans.
+///
+/// The whole-face substitution is recorded once; per-glyph coverage is recorded
+/// per emitted span (on the text actually shaped, after any case transform).
+fn push_run<'a>(
+    text: &'a str,
+    properties: &RunProperties,
+    ctx: &mut FlowCtx,
+    out: &mut Vec<StyledRun<'a>>,
+) {
     // `w:sz` is in half-points; a half-point is 10 twips (a point is 20). Default
     // to 11pt (Word's default body size) when unset.
-    let size = properties
+    let full_size = properties
         .size_half_points
         .map_or(Twip::from_points(11), |hp| Twip(hp as i32 * 10));
-    let color = match properties.color {
-        Some(Color::Rgb(rgb)) => [rgb.r, rgb.g, rgb.b, 255],
-        _ => [0, 0, 0, 255],
-    };
     let bold = properties.bold.unwrap_or(false);
     let italic = properties.italic.unwrap_or(false);
-    StyledRun {
-        text,
-        // Resolve the declared family to a concrete face so the renderer outlines
-        // the same face `parley` shapes with.
-        font: resolve_font(text, properties, bold, italic, ctx),
-        size,
-        bold,
-        italic,
-        letter_spacing: properties.character_spacing_twips.map_or(Twip::ZERO, Twip),
-        color,
-        decoration: Decoration {
-            underline: properties.underline.unwrap_or(false),
-            strikethrough: properties.strike.unwrap_or(false),
-        },
+
+    // Super/subscript shift the baseline (up for super, down for sub) and shrink
+    // the run; `w:position` shifts the baseline (in half-points, positive = up)
+    // with no size change. The two shifts are additive; screen-y grows downward,
+    // so a positive shift raises the run.
+    let (vertical_shift, size) = match properties.vertical_alignment {
+        Some(VerticalAlignment::Superscript) => (
+            full_size.raw() / 3,
+            Twip(full_size.raw() * SUB_SUPER_SIZE_NUM / SUB_SUPER_SIZE_DEN),
+        ),
+        Some(VerticalAlignment::Subscript) => (
+            -(full_size.raw() / 6),
+            Twip(full_size.raw() * SUB_SUPER_SIZE_NUM / SUB_SUPER_SIZE_DEN),
+        ),
+        Some(VerticalAlignment::Baseline) | None => (0, full_size),
+    };
+    let position_shift = properties.position_half_points.map_or(0, |hp| hp * 10);
+    let baseline_shift = Twip(vertical_shift + position_shift);
+
+    let color = resolve_run_color(properties.color, ctx.color_scheme);
+    let letter_spacing = properties.character_spacing_twips.map_or(Twip::ZERO, Twip);
+    let decoration = Decoration {
+        underline: properties.underline.unwrap_or(false),
+        strikethrough: properties.strike.unwrap_or(false),
+    };
+    // Resolve the declared family to a concrete face once (recording the whole-
+    // face substitution once) so the renderer outlines the face `parley` shapes.
+    let font = resolve_face(properties, bold, italic, ctx);
+
+    let mut emit = |text: Cow<'a, str>, size: Twip, ctx: &mut FlowCtx| {
+        ctx.resolver
+            .record_coverage(font, text.as_ref(), ctx.report);
+        out.push(StyledRun {
+            text,
+            font,
+            size,
+            bold,
+            italic,
+            letter_spacing,
+            color,
+            decoration,
+            baseline_shift,
+        });
+    };
+
+    if properties.all_caps == Some(true) {
+        emit(Cow::Owned(text.to_uppercase()), size, ctx);
+    } else if properties.small_caps == Some(true) {
+        let small = Twip(size.raw() * SMALL_CAPS_SIZE_NUM / SMALL_CAPS_SIZE_DEN);
+        for (segment, was_lowercase) in split_by_lowercase(text) {
+            if was_lowercase {
+                emit(Cow::Owned(segment.to_uppercase()), small, ctx);
+            } else {
+                emit(Cow::Borrowed(segment), size, ctx);
+            }
+        }
+    } else {
+        emit(Cow::Borrowed(text), size, ctx);
     }
 }
 
-/// Resolves a run's declared font family to a bundled face, records any
-/// substitution and per-glyph coverage fallback, and returns the chosen face. A
-/// run with no declared family uses the bundled default (matching weight/style).
-fn resolve_font(
-    text: &str,
-    properties: &RunProperties,
-    bold: bool,
-    italic: bool,
-    ctx: &mut FlowCtx,
-) -> FontId {
-    let face = match requested_family(properties, ctx.scheme) {
+/// Splits `text` into maximal spans that agree on whether their characters are
+/// (Unicode) lowercase, pairing each span with that flag — the segmentation
+/// small-caps needs to shape originally-lowercase letters at a reduced size.
+fn split_by_lowercase(text: &str) -> Vec<(&str, bool)> {
+    let mut segments = Vec::new();
+    let mut start = 0;
+    let mut current: Option<bool> = None;
+    for (index, ch) in text.char_indices() {
+        let lower = ch.is_lowercase();
+        match current {
+            Some(flag) if flag == lower => {}
+            Some(flag) => {
+                segments.push((&text[start..index], flag));
+                start = index;
+                current = Some(lower);
+            }
+            None => current = Some(lower),
+        }
+    }
+    if let Some(flag) = current {
+        segments.push((&text[start..], flag));
+    }
+    segments
+}
+
+/// Resolves a run's declared font family to a bundled face, records any whole-
+/// face substitution, and returns the chosen face. Per-glyph coverage is recorded
+/// by the caller once per emitted span. A run with no declared family uses the
+/// bundled default (matching weight/style).
+fn resolve_face(properties: &RunProperties, bold: bool, italic: bool, ctx: &mut FlowCtx) -> FontId {
+    match requested_family(properties, ctx.scheme) {
         Some(family) => {
             let outcome = ctx.resolver.resolve(&FaceRequest {
                 family: &family,
@@ -793,9 +996,7 @@ fn resolve_font(
             outcome.face
         }
         None => crate::fonts::face_id(bold, italic),
-    };
-    ctx.resolver.record_coverage(face, text, ctx.report);
-    face
+    }
 }
 
 /// The concrete family name a run requests through its ascii `w:rFonts` slot,
@@ -1067,12 +1268,13 @@ mod tests {
         let mut ctx = FlowCtx {
             resolver: &resolver,
             scheme: None,
+            color_scheme: None,
             report: &mut report,
         };
         let mut runs = Vec::new();
         collect_runs(&inlines, &mut runs, &mut ctx);
         assert_eq!(runs.len(), 1, "only the visible run is collected");
-        assert_eq!(runs[0].text, "shown");
+        assert_eq!(runs[0].text.as_ref(), "shown");
     }
 
     #[test]
@@ -1618,5 +1820,255 @@ mod tests {
         };
         let top = cells[0].borders.top.expect("the table top border applies");
         assert_eq!(top.width, Twip(20), "sz 8 eighth-points = 20 twips");
+    }
+
+    // --- Run appearance: super/subscript + w:position (P1F-18a) ----------------
+
+    /// The glyph runs of the first line of a one-paragraph document whose single
+    /// paragraph holds `inlines`.
+    fn first_line_runs(inlines: Vec<InlineNode>) -> Vec<crate::text::GlyphRun> {
+        let doc = document(vec![paragraph(10, inlines)]);
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&doc, &shaper, Twip::from_points(400));
+        let BlockFragment::Paragraph { lines, .. } = &galley[0] else {
+            panic!("expected a paragraph fragment");
+        };
+        lines.lines[0].runs.clone()
+    }
+
+    /// Every glyph id across `runs`, in visual order.
+    fn glyph_ids(runs: &[crate::text::GlyphRun]) -> Vec<u32> {
+        runs.iter()
+            .flat_map(|r| r.glyphs.iter().map(|g| g.id))
+            .collect()
+    }
+
+    #[test]
+    fn superscript_raises_glyphs_above_the_baseline_at_a_reduced_size() {
+        let sup = RunProperties {
+            vertical_alignment: Some(VerticalAlignment::Superscript),
+            ..RunProperties::default()
+        };
+        let runs = first_line_runs(vec![
+            run_node(11, "x", RunProperties::default()),
+            run_node(12, "2", sup),
+        ]);
+        assert_eq!(
+            runs.len(),
+            2,
+            "baseline and superscript shape as separate runs"
+        );
+        let base = runs.iter().max_by_key(|r| r.size.raw()).unwrap();
+        let super_run = runs.iter().min_by_key(|r| r.size.raw()).unwrap();
+        assert!(
+            super_run.size.raw() < base.size.raw(),
+            "superscript shapes smaller: {} vs {}",
+            super_run.size.raw(),
+            base.size.raw()
+        );
+        assert!(
+            super_run.origin.y.raw() < base.origin.y.raw(),
+            "superscript sits above the baseline"
+        );
+    }
+
+    #[test]
+    fn subscript_lowers_glyphs_below_the_baseline_at_a_reduced_size() {
+        let sub = RunProperties {
+            vertical_alignment: Some(VerticalAlignment::Subscript),
+            ..RunProperties::default()
+        };
+        let runs = first_line_runs(vec![
+            run_node(11, "H", RunProperties::default()),
+            run_node(12, "2", sub),
+        ]);
+        assert_eq!(runs.len(), 2);
+        let base = runs.iter().max_by_key(|r| r.size.raw()).unwrap();
+        let sub_run = runs.iter().min_by_key(|r| r.size.raw()).unwrap();
+        assert!(
+            sub_run.size.raw() < base.size.raw(),
+            "subscript shapes smaller"
+        );
+        assert!(
+            sub_run.origin.y.raw() > base.origin.y.raw(),
+            "subscript sits below the baseline"
+        );
+    }
+
+    #[test]
+    fn w_position_raises_the_run_without_resizing() {
+        // `w:position` is in half-points; +6 half-points raises by 60 twips.
+        let raised = RunProperties {
+            position_half_points: Some(6),
+            ..RunProperties::default()
+        };
+        let runs = first_line_runs(vec![
+            run_node(11, "a", RunProperties::default()),
+            run_node(12, "b", raised),
+        ]);
+        assert_eq!(runs.len(), 2);
+        assert!(
+            runs.iter().all(|r| r.size == Twip::from_points(11)),
+            "w:position leaves the size unchanged"
+        );
+        let raised_run = runs.iter().min_by_key(|r| r.origin.y.raw()).unwrap();
+        let normal_run = runs.iter().max_by_key(|r| r.origin.y.raw()).unwrap();
+        assert!(
+            raised_run.origin.y.raw() < normal_run.origin.y.raw(),
+            "w:position raises the run off the baseline"
+        );
+    }
+
+    // --- Run appearance: all-caps / small-caps (P1F-18b) -----------------------
+
+    #[test]
+    fn all_caps_shapes_uppercased_glyphs() {
+        let caps = RunProperties {
+            all_caps: Some(true),
+            ..RunProperties::default()
+        };
+        let lowered = glyph_ids(&first_line_runs(vec![run_node(11, "abc", caps)]));
+        let literal = glyph_ids(&first_line_runs(vec![run_node(
+            12,
+            "ABC",
+            RunProperties::default(),
+        )]));
+        assert!(!literal.is_empty());
+        assert_eq!(
+            lowered, literal,
+            "w:caps shapes the same glyphs as literal uppercase"
+        );
+    }
+
+    #[test]
+    fn small_caps_shapes_uppercase_with_smaller_lowercase_origin_glyphs() {
+        use std::collections::BTreeSet;
+        let small_caps = RunProperties {
+            small_caps: Some(true),
+            ..RunProperties::default()
+        };
+        let runs = first_line_runs(vec![run_node(11, "Abc", small_caps)]);
+        // Every letter renders as its capital: same glyph sequence as "ABC".
+        let literal = glyph_ids(&first_line_runs(vec![run_node(
+            12,
+            "ABC",
+            RunProperties::default(),
+        )]));
+        assert_eq!(glyph_ids(&runs), literal, "small caps renders capitals");
+        assert_eq!(literal.len(), 3);
+        // The originally-uppercase "A" keeps the full size; the "bc"-origin glyphs
+        // are smaller — two distinct sizes on the line.
+        let sizes: BTreeSet<i32> = runs.iter().map(|r| r.size.raw()).collect();
+        assert_eq!(sizes.len(), 2, "full-size A and reduced-size bc: {sizes:?}");
+        let full = runs.iter().max_by_key(|r| r.size.raw()).unwrap();
+        let small = runs.iter().min_by_key(|r| r.size.raw()).unwrap();
+        assert!(
+            small.size.raw() < full.size.raw(),
+            "the bc-origin glyphs are smaller than A"
+        );
+        // The full-size run carries the "A" (byte 0); the small run carries "bc".
+        assert_eq!(full.glyphs[0].cluster, 0, "the A is the full-size run");
+        assert!(small.glyphs[0].cluster >= 1, "the bc glyphs follow the A");
+    }
+
+    // --- Run appearance: theme / auto color resolution (P1F-23) -----------------
+
+    #[test]
+    fn a_theme_slot_color_resolves_to_that_slots_rgb() {
+        use casual_doc_model::v1::ThemeColor;
+        let mut slots = [[0u8; 3]; 12];
+        slots[ColorScheme::index(ThemeColorRef::Accent1)] = [10, 120, 200];
+        let scheme = ColorScheme { slots };
+        let color = resolve_run_color(
+            Some(Color::Theme(ThemeColor {
+                slot: ThemeColorRef::Accent1,
+            })),
+            Some(&scheme),
+        );
+        assert_eq!(
+            color,
+            [10, 120, 200, 255],
+            "the theme run renders the slot RGB, not black"
+        );
+    }
+
+    #[test]
+    fn a_theme_color_without_a_palette_falls_back_to_black() {
+        use casual_doc_model::v1::ThemeColor;
+        let color = resolve_run_color(
+            Some(Color::Theme(ThemeColor {
+                slot: ThemeColorRef::Accent1,
+            })),
+            None,
+        );
+        assert_eq!(color, [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn auto_color_resolves_to_black_on_a_light_background() {
+        assert_eq!(resolve_run_color(None, None), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn tint_lightens_and_shade_darkens_a_slot_color() {
+        // Shade scales each channel toward black.
+        let shaded = apply_tint_shade(
+            [200, 100, 40],
+            ThemeTintShade {
+                tint: None,
+                shade: Some(128),
+            },
+        );
+        assert!(
+            shaded.iter().zip([200, 100, 40]).all(|(a, b)| *a < b),
+            "shade darkens every channel: {shaded:?}"
+        );
+        // Tint blends black toward white.
+        let tinted = apply_tint_shade(
+            [0, 0, 0],
+            ThemeTintShade {
+                tint: Some(128),
+                shade: None,
+            },
+        );
+        assert!(
+            tinted.iter().all(|&c| (100..160).contains(&c)),
+            "tint lightens black toward mid-gray: {tinted:?}"
+        );
+        assert_eq!(
+            apply_tint_shade([50, 90, 130], ThemeTintShade::NONE),
+            [50, 90, 130],
+            "the neutral modifier is the identity"
+        );
+    }
+
+    #[test]
+    fn a_theme_colored_run_shapes_with_the_slot_rgb_through_flowctx() {
+        use casual_doc_model::v1::ThemeColor;
+        let mut slots = [[0u8; 3]; 12];
+        slots[ColorScheme::index(ThemeColorRef::Accent2)] = [30, 90, 150];
+        let scheme = ColorScheme { slots };
+        let resolver = FontResolver::new();
+        let mut report = FontResolutionReport::new();
+        let mut ctx = FlowCtx {
+            resolver: &resolver,
+            scheme: None,
+            color_scheme: Some(&scheme),
+            report: &mut report,
+        };
+        let props = RunProperties {
+            color: Some(Color::Theme(ThemeColor {
+                slot: ThemeColorRef::Accent2,
+            })),
+            ..RunProperties::default()
+        };
+        let mut runs = Vec::new();
+        push_run("themed", &props, &mut ctx, &mut runs);
+        assert_eq!(runs.len(), 1);
+        assert_eq!(
+            runs[0].color,
+            [30, 90, 150, 255],
+            "layout resolves the theme slot through the FlowCtx color scheme"
+        );
     }
 }

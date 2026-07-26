@@ -35,6 +35,10 @@ use crate::units::{Point, Twip};
 struct RunBrush {
     color: [u8; 4],
     font: u32,
+    /// Baseline raise for this run, in twips (positive = up). Carried through the
+    /// brush so the glyph run's origin can be shifted off the line baseline for
+    /// superscript/subscript and `w:position` (`P1F-18a`).
+    baseline_shift: i32,
 }
 
 /// The default `parley`-backed line shaper.
@@ -141,7 +145,7 @@ impl LineShaper for ParleyShaper {
         let mut spans: Vec<(usize, usize, &StyledRun<'_>)> = Vec::with_capacity(runs.len());
         for run in runs {
             let start = text.len();
-            text.push_str(run.text);
+            text.push_str(&run.text);
             spans.push((start, text.len(), run));
         }
 
@@ -176,6 +180,7 @@ impl LineShaper for ParleyShaper {
                 StyleProperty::Brush(RunBrush {
                     color: run.color,
                     font: run.font.0,
+                    baseline_shift: run.baseline_shift.raw(),
                 }),
                 *start..*end,
             );
@@ -220,9 +225,12 @@ impl LineShaper for ParleyShaper {
                 };
                 let style = glyph_run.style();
                 let size = Twip(glyph_run.run().font_size().round() as i32);
+                // Screen y grows downward, so a positive baseline raise (super-
+                // script, positive `w:position`) moves the run to a smaller y and a
+                // negative raise (subscript) to a larger one (`P1F-18a`).
                 let origin = Point::new(
                     Twip(glyph_run.offset().round() as i32),
-                    Twip(glyph_run.baseline().round() as i32),
+                    Twip(glyph_run.baseline().round() as i32 - style.brush.baseline_shift),
                 );
                 // Walk the run's clusters in visual (left-to-right) order — the
                 // same order (and advances) `positioned_glyphs` yields — tagging
@@ -297,7 +305,7 @@ mod tests {
 
     fn run(text: &str) -> StyledRun<'_> {
         StyledRun {
-            text,
+            text: text.into(),
             font: FontId(0),
             size: Twip::from_points(11),
             bold: false,
@@ -305,6 +313,7 @@ mod tests {
             letter_spacing: Twip::ZERO,
             color: [0, 0, 0, 255],
             decoration: Decoration::default(),
+            baseline_shift: Twip::ZERO,
         }
     }
 
@@ -404,7 +413,7 @@ mod tests {
     fn preserves_run_color_and_decoration() {
         let shaper = ParleyShaper::new();
         let styled = StyledRun {
-            text: "x",
+            text: "x".into(),
             font: FontId(0),
             size: Twip::from_points(11),
             bold: false,
@@ -415,6 +424,7 @@ mod tests {
                 underline: true,
                 strikethrough: false,
             },
+            baseline_shift: Twip::ZERO,
         };
         let layout = shaper.shape_paragraph(&[styled], constraints(500), para_range());
         let run = &layout.lines[0].runs[0];

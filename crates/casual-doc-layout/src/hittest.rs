@@ -770,7 +770,7 @@ mod tests {
         let range = ModelRange::new(ModelPos::new(n, 0), ModelPos::new(n, 11));
         let shaper = ParleyShaper::new();
         let run = StyledRun {
-            text: "Hello world",
+            text: "Hello world".into(),
             font: FontId(0),
             size: Twip::from_points(11),
             bold: false,
@@ -778,6 +778,7 @@ mod tests {
             letter_spacing: Twip::ZERO,
             color: [0, 0, 0, 255],
             decoration: Decoration::default(),
+            baseline_shift: Twip::ZERO,
         };
         let shaped = shaper.shape_paragraph(&[run], LineConstraints::default(), range);
         let frag = BlockFragment::Paragraph {
@@ -812,7 +813,7 @@ mod tests {
         let range = ModelRange::new(ModelPos::new(n, 0), ModelPos::new(n, text.len() as u32));
         let shaper = ParleyShaper::new();
         let run = StyledRun {
-            text,
+            text: text.into(),
             font: FontId(0),
             size: Twip::from_points(11),
             bold: false,
@@ -820,6 +821,7 @@ mod tests {
             letter_spacing: Twip::ZERO,
             color: [0, 0, 0, 255],
             decoration: Decoration::default(),
+            baseline_shift: Twip::ZERO,
         };
         // A wide column keeps it on one line so every offset is present.
         let shaped = shaper.shape_paragraph(
