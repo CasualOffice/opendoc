@@ -2309,7 +2309,7 @@ mod semantic_tests {
             <w:p><w:r><w:t>x</w:t></w:r></w:p>
             <w:sectPr>
                 <w:pgSz w:w="12240" w:h="15840"/>
-                <w:pgMar w:top="1440" w:bottom="1440" w:start="1800" w:end="1800"/>
+                <w:pgMar w:top="1440" w:bottom="1440" w:start="1800" w:end="1800" w:header="708" w:footer="709"/>
                 <w:cols w:num="2"/>
             </w:sectPr>
         </w:body></w:document>"#;
@@ -2317,6 +2317,15 @@ mod semantic_tests {
             .unwrap()
             .document;
         assert_eq!(m1.definitions().sections.len(), 1);
+        // The w:header/w:footer band distances survive import and are re-emitted.
+        assert_eq!(
+            m1.definitions().sections[0].page_margins.header_twips,
+            Some(708)
+        );
+        assert_eq!(
+            m1.definitions().sections[0].page_margins.footer_twips,
+            Some(709)
+        );
         let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
         let m2 = reopen(&bytes);
         assert_eq!(m1, m2, "section geometry survives write -> reopen");

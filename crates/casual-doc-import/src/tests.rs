@@ -1801,7 +1801,7 @@ fn body_level_section_geometry_is_mapped() {
         <w:p><w:r><w:t>x</w:t></w:r></w:p>
         <w:sectPr>
             <w:pgSz w:w="12240" w:h="15840"/>
-            <w:pgMar w:top="1440" w:bottom="1440" w:left="1800" w:right="1800"/>
+            <w:pgMar w:top="1440" w:bottom="1440" w:left="1800" w:right="1800" w:header="708" w:footer="709"/>
             <w:cols w:num="2"/>
         </w:sectPr>
     </w:body></w:document>"#;
@@ -1813,6 +1813,9 @@ fn body_level_section_geometry_is_mapped() {
     assert_eq!(section.page_size.height_twips, 15840);
     assert_eq!(section.page_margins.start_twips, 1800); // w:left -> start
     assert_eq!(section.page_margins.end_twips, 1800); // w:right -> end
+    // w:header/w:footer band distances are captured (nested inside the margins).
+    assert_eq!(section.page_margins.header_twips, Some(708));
+    assert_eq!(section.page_margins.footer_twips, Some(709));
     assert_eq!(section.columns.count, 2);
     // sectPr is now mapped, so it is no longer reported.
     assert!(!features(&import).contains(&"sectPr"));

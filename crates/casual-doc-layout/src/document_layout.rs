@@ -49,6 +49,9 @@ const LETTER: Size = Size {
 };
 /// A 1-inch margin in twips — the fallback margin when no section is declared.
 const ONE_INCH: Twip = Twip(1_440);
+/// Word's default header/footer band distance from the page edge (`w:pgMar`
+/// `@w:header`/`@w:footer`), used when the attribute is absent.
+const DEFAULT_BAND_DISTANCE: Twip = Twip(720);
 
 /// Derives the page geometry ([`PageConfig`]) for a document from its first
 /// section, with **zero** header/footer bands — the pure page box and margins.
@@ -71,6 +74,8 @@ pub fn document_page_config(document: &Document) -> PageConfig {
             margin_bottom: ONE_INCH,
             margin_start: ONE_INCH,
             margin_end: ONE_INCH,
+            header_distance: DEFAULT_BAND_DISTANCE,
+            footer_distance: DEFAULT_BAND_DISTANCE,
             header_height: Twip::ZERO,
             footer_height: Twip::ZERO,
         },
@@ -89,6 +94,16 @@ fn section_page_config(section: &SectionBoundary) -> PageConfig {
         margin_bottom: Twip(section.page_margins.bottom_twips),
         margin_start: Twip(section.page_margins.start_twips),
         margin_end: Twip(section.page_margins.end_twips),
+        // The `w:header`/`w:footer` distances the header/footer bands nest at,
+        // falling back to Word's 720-twip default when the attribute is absent.
+        header_distance: section
+            .page_margins
+            .header_twips
+            .map_or(DEFAULT_BAND_DISTANCE, Twip),
+        footer_distance: section
+            .page_margins
+            .footer_twips
+            .map_or(DEFAULT_BAND_DISTANCE, Twip),
         header_height: Twip::ZERO,
         footer_height: Twip::ZERO,
     }

@@ -539,6 +539,8 @@ struct SectionAccumulator {
     margin_bottom: Option<i32>,
     margin_start: Option<i32>,
     margin_end: Option<i32>,
+    margin_header: Option<i32>,
+    margin_footer: Option<i32>,
     columns: Option<u16>,
     column_space: Option<i32>,
     column_separator: Option<bool>,
@@ -1970,6 +1972,11 @@ impl BodyParser<'_> {
                         attr_i32(element, b"start").or_else(|| attr_i32(element, b"left"));
                     section.margin_end =
                         attr_i32(element, b"end").or_else(|| attr_i32(element, b"right"));
+                    // Header/footer band distances from the page edges. Word nests
+                    // the header/footer inside the top/bottom margins (see layout's
+                    // `PageConfig::content_area`); absent means Word's 720-twip default.
+                    section.margin_header = attr_i32(element, b"header");
+                    section.margin_footer = attr_i32(element, b"footer");
                 }
             }
             b"cols" if self.section.is_some() => {
@@ -3454,6 +3461,8 @@ impl BodyParser<'_> {
             bottom_twips: accumulator.margin_bottom.unwrap_or(1_440).clamp(0, 31_680),
             start_twips: accumulator.margin_start.unwrap_or(1_440).clamp(0, 31_680),
             end_twips: accumulator.margin_end.unwrap_or(1_440).clamp(0, 31_680),
+            header_twips: accumulator.margin_header.map(|v| v.clamp(0, 31_680)),
+            footer_twips: accumulator.margin_footer.map(|v| v.clamp(0, 31_680)),
         };
         let columns = SectionColumns {
             count: accumulator.columns.unwrap_or(1).clamp(1, 64),

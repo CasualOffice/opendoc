@@ -2024,6 +2024,8 @@ fn valid_section(
             bottom_twips: 1_440,
             start_twips: 1_440,
             end_twips: 1_440,
+            header_twips: None,
+            footer_twips: None,
         },
         columns: SectionColumns {
             count: 1,

@@ -27,14 +27,27 @@ use crate::text::{FieldKind, GlyphRun, Line, LineLayout, LineShaper};
 use crate::units::{Point, Rect, Size, Twip};
 
 /// The page geometry of a section: the page box, its margins, and the header /
-/// footer bands reserved inside the top and bottom margins.
+/// footer bands **nested inside** the top and bottom margins (Word's geometry).
 ///
-/// The header band sits at the top margin and the footer band at the bottom
-/// margin; the body [`content_area`](PageConfig::content_area) shrinks by both so
-/// running content never overlaps the flow. Band heights are **fixed per section**
-/// (the tallest of the section's header/footer variants), so every page in the
-/// section shares one content area — which is what lets the incremental paginator
-/// reuse pages (it keys reuse on a single `content_area()`).
+/// Word does not stack the header/footer band on top of the margins; it nests
+/// them within. The header sits `header_distance` from the top edge and the
+/// footer `footer_distance` from the bottom edge (the `w:pgMar/@w:header` and
+/// `@w:footer` values), and the body only loses space to a band when that band
+/// extends *past* the margin:
+///
+/// ```text
+/// body_top    = max(margin_top,    header_distance + header_height)
+/// body_bottom = max(margin_bottom, footer_distance + footer_height)
+/// ```
+///
+/// So a header shorter than the top margin costs the body nothing (the common
+/// case) — the previous implementation subtracted the full band height on top of
+/// the full margin, over-reserving `header_height + footer_height` on every page
+/// and over-paginating every header/footer document (`docs/46` §F6a). Band
+/// heights are **fixed per section** (the tallest of the section's header/footer
+/// variants), so every page in the section shares one content area — which is
+/// what lets the incremental paginator reuse pages (it keys reuse on a single
+/// `content_area()`).
 #[derive(Clone, Copy, Debug)]
 pub struct PageConfig {
     /// The section this geometry belongs to.
@@ -49,49 +62,70 @@ pub struct PageConfig {
     pub margin_start: Twip,
     /// Trailing (end) margin.
     pub margin_end: Twip,
-    /// Reserved header-band height at the top of the page (`0` = no header). The
-    /// body content area starts this far below the top margin.
+    /// Distance from the top page edge to the header band (`w:pgMar/@w:header`,
+    /// Word default 720 twips). The header band is anchored here, nested inside
+    /// the top margin.
+    pub header_distance: Twip,
+    /// Distance from the bottom page edge to the footer band (`w:pgMar/@w:footer`,
+    /// Word default 720 twips). The footer band is anchored here, nested inside
+    /// the bottom margin.
+    pub footer_distance: Twip,
+    /// Reserved header-band height (`0` = no header). The body content area only
+    /// starts below the top margin if `header_distance + header_height` exceeds it.
     pub header_height: Twip,
-    /// Reserved footer-band height at the bottom of the page (`0` = no footer). The
-    /// body content area ends this far above the bottom margin.
+    /// Reserved footer-band height (`0` = no footer). The body content area only
+    /// ends above the bottom margin if `footer_distance + footer_height` exceeds it.
     pub footer_height: Twip,
 }
 
 impl PageConfig {
-    /// The content area (page box minus margins and the header/footer bands) —
-    /// where flow content is placed.
+    /// The y of the top of the body content area: the top margin, or the bottom of
+    /// the header band if the band (nested at `header_distance`) reaches past it.
+    #[must_use]
+    fn body_top(&self) -> Twip {
+        self.margin_top
+            .max(self.header_distance + self.header_height)
+    }
+
+    /// The distance from the bottom page edge to the bottom of the body content
+    /// area: the bottom margin, or the top of the footer band if it reaches past it.
+    #[must_use]
+    fn body_bottom(&self) -> Twip {
+        self.margin_bottom
+            .max(self.footer_distance + self.footer_height)
+    }
+
+    /// The content area (page box minus margins, growing only for header/footer
+    /// bands that extend past the margins) — where flow content is placed.
     #[must_use]
     pub fn content_area(&self) -> Rect {
         let width = self.page_size.width - self.margin_start - self.margin_end;
-        let height = self.page_size.height
-            - self.margin_top
-            - self.margin_bottom
-            - self.header_height
-            - self.footer_height;
+        let body_top = self.body_top();
+        let height = self.page_size.height - body_top - self.body_bottom();
         Rect::new(
-            Point::new(self.margin_start, self.margin_top + self.header_height),
+            Point::new(self.margin_start, body_top),
             Size::new(width.max(Twip::ZERO), height.max(Twip::ZERO)),
         )
     }
 
-    /// The header band rectangle (at the top margin, `header_height` tall), where
-    /// the running-content pass lays the selected header. Zero-height when the
-    /// section has no header.
+    /// The header band rectangle (nested `header_distance` from the top edge,
+    /// `header_height` tall), where the running-content pass lays the selected
+    /// header. Zero-height when the section has no header.
     #[must_use]
     pub fn header_band(&self) -> Rect {
         let width = self.page_size.width - self.margin_start - self.margin_end;
         Rect::new(
-            Point::new(self.margin_start, self.margin_top),
+            Point::new(self.margin_start, self.header_distance),
             Size::new(width.max(Twip::ZERO), self.header_height),
         )
     }
 
-    /// The footer band rectangle (just above the bottom margin, `footer_height`
-    /// tall). Zero-height when the section has no footer.
+    /// The footer band rectangle (its bottom `footer_distance` from the bottom
+    /// edge, `footer_height` tall). Zero-height when the section has no footer.
     #[must_use]
     pub fn footer_band(&self) -> Rect {
         let width = self.page_size.width - self.margin_start - self.margin_end;
-        let y = self.page_size.height - self.margin_bottom - self.footer_height;
+        let y = self.page_size.height - self.footer_distance - self.footer_height;
         Rect::new(
             Point::new(self.margin_start, y),
             Size::new(width.max(Twip::ZERO), self.footer_height),
@@ -1183,6 +1217,8 @@ mod tests {
             margin_bottom: Twip(1_440),
             margin_start: Twip(1_440),
             margin_end: Twip(1_440),
+            header_distance: Twip(720),
+            footer_distance: Twip(720),
             header_height: Twip::ZERO,
             footer_height: Twip::ZERO,
         }

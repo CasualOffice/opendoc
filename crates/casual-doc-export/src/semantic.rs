@@ -2224,6 +2224,12 @@ fn write_section_properties(
         section.page_margins.start_twips.to_string().as_str(),
     ));
     pg_mar.push_attribute(("w:end", section.page_margins.end_twips.to_string().as_str()));
+    if let Some(header) = section.page_margins.header_twips {
+        pg_mar.push_attribute(("w:header", header.to_string().as_str()));
+    }
+    if let Some(footer) = section.page_margins.footer_twips {
+        pg_mar.push_attribute(("w:footer", footer.to_string().as_str()));
+    }
     w.write_event(Event::Empty(pg_mar)).map_err(pkg)?;
     if !section.paper_source.is_empty() {
         let mut el = start("w:paperSrc");

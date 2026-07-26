@@ -90,6 +90,14 @@ fn base_config(header_height: Twip, footer_height: Twip) -> PageConfig {
         margin_bottom: Twip(MARGIN),
         margin_start: Twip(MARGIN),
         margin_end: Twip(MARGIN),
+        // These fixtures pin the band distance flush to the margin so the band
+        // extends exactly past the margin edge: under Word's nesting rule
+        // (`body_top = max(margin, distance + band_height)`) that reserves the full
+        // band height for the body, which is what these reservation assertions
+        // exercise. (A band shorter than the margin — the common case — reserves
+        // nothing; that path is covered by the document-level pipeline.)
+        header_distance: Twip(MARGIN),
+        footer_distance: Twip(MARGIN),
         header_height,
         footer_height,
     }
