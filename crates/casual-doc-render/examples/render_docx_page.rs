@@ -1,15 +1,16 @@
 //! Imports a real corpus .docx and renders its first page to a PNG — the full
-//! pipeline: import -> galley -> paginate -> compose -> render. Manual check.
+//! pipeline: import -> `paginate_document` -> compose -> render. Manual check.
+//!
+//! The one-call [`paginate_document`] driver derives the real page geometry from
+//! the document's section (page size + margins), flows the section's
+//! headers/footers, paginates, and runs the running-content / field / anchored
+//! -drawing passes — so this renders a real page at the document's true size, with
+//! its headers/footers and anchored images, rather than a hand-built US-Letter box.
 #![allow(clippy::print_stderr)] // a manual example, not library code
 use casual_doc_import::{ImportConfig, ImportMode, import_package};
-use casual_doc_layout::anchor::{collect_anchored, place_anchored_drawings};
 use casual_doc_layout::compose::compose_page;
-use casual_doc_layout::flow::build_galley;
-use casual_doc_layout::paginate::{PageConfig, paginate};
+use casual_doc_layout::document_layout::{document_page_config, paginate_document};
 use casual_doc_layout::shape::ParleyShaper;
-use casual_doc_layout::units::{Size, Twip};
-use casual_doc_model::NodeId;
-use casual_doc_model::v1::SectionId;
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
 use casual_doc_render::{BundledFontSource, MapMediaSource, Surface, render};
 
@@ -39,22 +40,13 @@ fn main() {
         }
     }
 
-    let config = PageConfig {
-        section: SectionId::new(NodeId::from_parts(9, 1).unwrap()),
-        page_size: Size::new(Twip(12_240), Twip(15_840)), // US Letter
-        margin_top: Twip(1_440),
-        margin_bottom: Twip(1_440),
-        margin_start: Twip(1_440),
-        margin_end: Twip(1_440),
-        header_height: Twip(0),
-        footer_height: Twip(0),
-    };
     let shaper = ParleyShaper::new();
-    let galley = build_galley(&document, &shaper, config.content_area().size.width);
-    let mut pages = paginate(&galley, &config);
-    // Post-pagination pass: resolve every anchored (floating) drawing onto its
-    // page at its computed absolute position (P1F-28).
-    place_anchored_drawings(&mut pages, &collect_anchored(&document), &config);
+    // One call: derive the document's true geometry, flow its headers/footers,
+    // paginate, and run every post-pass (running content, page fields, anchors).
+    let pages = paginate_document(&document, &shaper);
+    // The page dimensions for the render surface come from the same derived
+    // geometry the driver used (full page size, band-independent).
+    let config = document_page_config(&document);
     let page = pages.pages.first().expect("at least one page");
 
     let dpi = 96.0;
@@ -70,8 +62,9 @@ fn main() {
     );
     std::fs::write(&out, surface.encode_png().unwrap()).unwrap();
     eprintln!(
-        "rendered {} paragraphs across {} page(s) -> {out}",
-        galley.len(),
-        pages.page_count()
+        "rendered {} page(s) at {}×{} twips -> {out}",
+        pages.page_count(),
+        config.page_size.width.raw(),
+        config.page_size.height.raw(),
     );
 }

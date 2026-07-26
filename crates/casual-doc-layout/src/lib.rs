@@ -25,6 +25,7 @@ pub mod anchor;
 pub mod block;
 pub mod compose;
 pub mod display;
+pub mod document_layout;
 pub mod flow;
 pub mod fonts;
 pub mod hittest;
