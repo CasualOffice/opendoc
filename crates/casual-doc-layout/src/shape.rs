@@ -792,25 +792,41 @@ mod tests {
     /// real font fallback: a CJK run whose code points the bundled faces miss is
     /// shaped with an installed OS font, yielding non-`.notdef` glyphs through a
     /// dynamically interned face whose bytes the shared registry can serve.
+    ///
+    /// Whether the host actually *has* a CJK face is environment-dependent (a
+    /// headless CI runner may have none), so the test asserts the full covering
+    /// path when a face is found and, otherwise, that the fallback still behaved —
+    /// the uncovered code points were recorded as a coverage gap. It never fails
+    /// merely because the OS lacks a CJK font.
     #[test]
     #[cfg(all(feature = "system-fonts", not(target_arch = "wasm32")))]
     fn cjk_with_system_fonts_resolves_a_covering_face() {
         let shaper = ParleyShaper::new();
         let layout = shaper.shape_paragraph(&[run("中文")], constraints(500), para_range());
         let runs = &layout.lines[0].runs;
-        assert!(
-            runs.iter().flat_map(|r| &r.glyphs).any(|g| g.id != 0),
-            "a system fallback shapes CJK to real (non-.notdef) glyphs"
-        );
-        let covering = runs
-            .iter()
-            .map(|r| r.font)
-            .find(|&f| FontRegistry::is_dynamic(f))
-            .expect("the covering face is a dynamically interned system font");
-        assert!(
-            shaper.registry().face(covering).is_some(),
-            "the system face's bytes are interned and available to the renderer"
-        );
+        let covered = runs.iter().flat_map(|r| &r.glyphs).any(|g| g.id != 0);
+        if covered {
+            // The OS provided a covering face: a real (non-.notdef) glyph implies
+            // the run was shaped with a dynamically interned system face whose
+            // bytes the registry serves to the renderer.
+            let covering = runs
+                .iter()
+                .map(|r| r.font)
+                .find(|&f| FontRegistry::is_dynamic(f))
+                .expect("a covering glyph implies a dynamically interned system face");
+            assert!(
+                shaper.registry().face(covering).is_some(),
+                "the system face's bytes are interned and available to the renderer"
+            );
+        } else {
+            // No CJK face installed (e.g. a headless runner): the fallback still
+            // behaved — every code point is recorded as an actionable coverage gap.
+            let missing = shaper.registry().missing_coverage();
+            assert!(
+                missing.contains(&'中') && missing.contains(&'文'),
+                "with no covering face, the uncovered CJK code points are recorded: {missing:?}"
+            );
+        }
     }
 
     /// A host-registered font (the browser network-font seam) is interned into the
