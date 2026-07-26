@@ -3650,6 +3650,7 @@ mod tests {
                     width_twips: Some(2000),
                 },
             ],
+            grid_change: None,
             properties: TableProperties::default(),
             rows: vec![TableRow {
                 id: NodeId::from_parts(51, 1).unwrap(),
