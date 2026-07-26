@@ -207,3 +207,27 @@ floor for unmodeled long-tail constructs.
 | P1C-TBL | Tables in the galley + rendering | Claude Code | Done | `flow_blocks`/`flow_table` recurse: tables expand to `TableRow` fragments with cells positioned by grid columns (grid_span honored), cell content flowed at column width; nested tables via mutual recursion. `compose_page` renders cell content + grid borders. Verified: real-producer-rich.docx renders its table AND nested table with borders. Cross-page row split + header repeat = P1D-003. 1 test. |
 
 | P1D-002b | Line-level paragraph splitting + widow/orphan | Claude Code | Done | Paginator rewritten as a state machine that splits a paragraph at line boundaries across pages (re-origining the carried lines), honoring keepLines (moved whole) and keepNext (kept together); widow/orphan control keeps >= 2 lines each side of a break; oversized content overflows (terminates). Golden invariant (incremental == full) is P1D-004. 9 tests. |
+
+## Phase 1F — Coverage Gaps (audit 2026-07-26)
+
+Full evidence-backed register (39 rows, `file:line` cited) is `44-COVERAGE-GAP-AUDIT.md`;
+this is the summary. Three structural findings drive the ordering: **F1** model-rich/
+layout-poor (rendering data present but unconsumed — low-risk), **F2** silent data loss on
+the semantic edit→save path (unmodeled parts dropped with no report), **F3** two active
+correctness bugs (OMML math mangling; hidden `w:vanish` text rendered).
+
+| ID | Title | Owner | Status | Notes |
+| --- | --- | --- | --- | --- |
+| P1F-C1 | Math (OMML) namespace guard + opaque node | — | Not started | **Correctness:** `m:r`/`m:t` flatten into garbled text (`import/body.rs:863,881`). Tier 0. |
+| P1F-C2 | Suppress hidden `w:vanish` text | — | Not started | **Correctness:** hidden runs are painted (`properties.rs:757`). Tier 0. |
+| P1F-C3 | Implement `PushClip`/`PopClip` in renderer | — | Not started | **Correctness:** `exact` row clip ignored at paint (`render/lib.rs:112-114`). Tier 0. |
+| P1F-1 | Package-manifest disposition pass | — | Not started | Report every admitted part the semantic writer drops — closes the F2 silent-loss class at once. **Do first.** |
+| P1F-2 | Opaque part side-table through semantic writer | — | Not started | Carry unmodeled parts (glossary/embeddings/charts/webSettings/thumbnail/signatures/customXml) + their content-types/rels. |
+| P1F-3 | Theme `clrScheme`/`fmtScheme` | — | Not started | Theme colors dropped → doc colors collapse on edit (`theme.rs:1-7`). |
+| P1F-4 | Styles `w:docDefaults` | — | Not started | Silent: whole-doc base font/size shifts on edit; model field exists, never set. |
+| P1F-5 | Settings expansion + reporter | — | Not started | Only 3 of ~40 settings; no reporter (`settings.rs`). evenAndOddHeaders/defaultTabStop/protection. |
+| P1F-6 | Numbering format (`numFmt`/`lvlText`/…) | — | Not started | Lists lose their bullet/number glyph on the semantic path. |
+| P1F-7 | docProps core/app/custom | Claude Code | In progress | Metadata gap (this session). Ensure semantic writer emits + HeadingPairs/TitlesOfParts. |
+| P1F-8..10 | customXml+dataBinding · styles depth (table styles) · comment threading | — | Not started | Tier 1 fidelity. See doc 44. |
+| P1F-11..25 | Rendering gaps (F1): images, indents, tabs, hard breaks, underline draw, shading/highlight, headers/footers+PAGE, super/sub+caps, multi-section, line-spacing, columns, footnotes, theme color, per-script slots, cell vAlign/margins/vMerge | — | Not started | Tier 2 — data present, unconsumed; low-risk. Order per doc 44. |
+| P1F-26..39 | Content families: charts/SmartArt/OLE, anchored drawings, floating tables, table style ref, symbols, form fields, SDT data, tracked-move, comment ranges, section long-tail, CS run props, underline style, altChunk/hyphens | — | Not started | Tier 3 — reported-dropped; model + import + write. |
