@@ -27,11 +27,11 @@ use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     AnchorHorizontal, AnchorVertical, AnchoredDrawing, BlockNode, CellVerticalAlignment,
     DefinitionMap, Definitions, Document, DrawingAnchor, Extent, Field, GridColumn,
-    HeaderFooter as ModelHeaderFooter, HeaderFooterId, HeightRule, HorizontalAnchor,
-    HorizontalPosition, InlineNode, MediaId, MediaReference, Paragraph, ParagraphProperties,
-    RowHeight, Run, RunProperties, SectionId, Table, TableCell, TableCellProperties,
-    TableProperties, TableRow, TableRowProperties, VerticalAnchor, VerticalMerge, VerticalPosition,
-    WrapDistances, WrapMode,
+    HeaderFooter as ModelHeaderFooter, HeaderFooterId, HeightRule, HorizontalAlign,
+    HorizontalAnchor, HorizontalPosition, InlineNode, MediaId, MediaReference, PageMargins,
+    PageSize, Paragraph, ParagraphProperties, RowHeight, Run, RunProperties, SectionBoundary,
+    SectionColumns, SectionId, Table, TableCell, TableCellProperties, TableProperties, TableRow,
+    TableRowProperties, VerticalAnchor, VerticalMerge, VerticalPosition, WrapDistances, WrapMode,
 };
 
 fn node(id: u64) -> NodeId {
@@ -296,6 +296,58 @@ fn anchored_at_paragraph(id: u64, media: MediaId) -> InlineNode {
             height_emu: 63_500,
         },
         anchor: paragraph_anchor(),
+        descr: None,
+        relative_height: None,
+    })
+}
+
+fn anchored_at_column_right(id: u64, media: MediaId) -> InlineNode {
+    InlineNode::AnchoredDrawing(AnchoredDrawing {
+        id: node(id),
+        media,
+        extent: Extent {
+            width_emu: 635_000,
+            height_emu: 63_500,
+        },
+        anchor: DrawingAnchor {
+            horizontal: AnchorHorizontal {
+                relative_from: HorizontalAnchor::Column,
+                position: HorizontalPosition::Align(HorizontalAlign::Right),
+            },
+            vertical: AnchorVertical {
+                relative_from: VerticalAnchor::Paragraph,
+                position: VerticalPosition::Offset(0),
+            },
+            wrap: WrapMode::None,
+            wrap_distances: WrapDistances::default(),
+            behind_doc: false,
+        },
+        descr: None,
+        relative_height: None,
+    })
+}
+
+fn anchored_at_page_right(id: u64, media: MediaId) -> InlineNode {
+    InlineNode::AnchoredDrawing(AnchoredDrawing {
+        id: node(id),
+        media,
+        extent: Extent {
+            width_emu: 635_000,
+            height_emu: 63_500,
+        },
+        anchor: DrawingAnchor {
+            horizontal: AnchorHorizontal {
+                relative_from: HorizontalAnchor::Page,
+                position: HorizontalPosition::Align(HorizontalAlign::Right),
+            },
+            vertical: AnchorVertical {
+                relative_from: VerticalAnchor::Paragraph,
+                position: VerticalPosition::Offset(0),
+            },
+            wrap: WrapMode::None,
+            wrap_distances: WrapDistances::default(),
+            behind_doc: false,
+        },
         descr: None,
         relative_height: None,
     })
@@ -634,6 +686,67 @@ fn a_float_in_a_body_table_cell_uses_the_nested_paragraph_on_its_actual_page() {
     assert_eq!(
         layout.pages[1].anchored[0].rect.origin.y, expected_y,
         "paragraph-relative placement includes the table cell content offset"
+    );
+}
+
+#[test]
+fn a_column_relative_float_in_a_nested_cell_uses_the_containing_flow_column() {
+    let (media_id, definitions) = media_defs();
+    let inner = one_cell_table(
+        600,
+        601,
+        602,
+        603,
+        vec![
+            run(604, "nested cell"),
+            anchored_at_column_right(605, media_id),
+        ],
+    );
+    let outer = BlockNode::Table(Table {
+        id: node(500),
+        grid: vec![GridColumn {
+            width_twips: Some(4_000),
+        }],
+        grid_change: None,
+        properties: TableProperties::default(),
+        rows: vec![TableRow {
+            id: node(501),
+            properties: TableRowProperties::default(),
+            cells: vec![TableCell {
+                id: node(502),
+                properties: TableCellProperties::default(),
+                blocks: vec![inner],
+            }],
+        }],
+    });
+    let doc = Document::new(node(1), vec![outer], definitions).unwrap();
+
+    let shaper = ParleyShaper::new();
+    let cfg = config();
+    let galley = build_galley(&doc, &shaper, cfg.content_area().size.width);
+    let mut layout = paginate(&galley, &cfg);
+    let placed_outer_row = layout.pages[0]
+        .placed
+        .iter_mut()
+        .find(|placed| {
+            matches!(
+                placed.fragment,
+                BlockFragment::TableRow { id, .. } if id == node(501)
+            )
+        })
+        .expect("the outer row");
+    // Simulate the outer row being placed in a 2,000-twip newspaper column at
+    // x=5,000. The nested cell itself is not the `column` reference frame.
+    placed_outer_row.rect.origin.x = Twip(5_000);
+    placed_outer_row.rect.size.width = Twip(2_000);
+
+    place_floats(&mut layout, &doc, &shaper, &cfg);
+
+    assert_eq!(layout.pages[0].anchored.len(), 1);
+    assert_eq!(
+        layout.pages[0].anchored[0].rect.origin.x,
+        Twip(6_000),
+        "right alignment uses column right (7,000) minus the 1,000-twip float"
     );
 }
 
@@ -1031,6 +1144,101 @@ fn grouped_text_box_uses_body_properties_and_shape_autofit() {
     };
     assert_eq!(content_layout.origin.x, Twip(30));
     assert_eq!(content_layout.origin.y, Twip(40));
+}
+
+#[test]
+fn a_header_float_uses_the_section_recorded_on_its_page() {
+    let (media_id, mut definitions) = media_defs();
+    let section = SectionBoundary {
+        id: SectionId::new(node(900)),
+        page_size: PageSize {
+            width_twips: 20_000,
+            height_twips: 10_000,
+        },
+        page_margins: PageMargins {
+            top_twips: 2_000,
+            bottom_twips: 500,
+            start_twips: 3_000,
+            end_twips: 1_000,
+            header_twips: None,
+            footer_twips: None,
+        },
+        columns: SectionColumns {
+            count: 1,
+            space_twips: None,
+            separator: None,
+            equal_width: None,
+            columns: Vec::new(),
+        },
+        headers: Vec::new(),
+        footers: Vec::new(),
+        section_type: None,
+        title_page: None,
+        vertical_alignment: None,
+        page_numbering: Default::default(),
+        doc_grid: Default::default(),
+        orientation: None,
+        paper_source: Default::default(),
+        page_borders: Default::default(),
+        line_numbering: Default::default(),
+        footnote_props: Default::default(),
+        endnote_props: Default::default(),
+        text_direction: None,
+        bidi: false,
+    };
+    let section_id = section.id;
+    definitions.sections = vec![section];
+    let header_block = BlockNode::Paragraph(Paragraph {
+        id: node(910),
+        properties: ParagraphProperties::default(),
+        inlines: vec![
+            run(911, "section header"),
+            anchored_at_page_right(912, media_id),
+        ],
+    });
+    definitions.headers.insert(
+        HeaderFooterId::new(node(920)),
+        ModelHeaderFooter {
+            blocks: vec![header_block.clone()],
+        },
+    );
+    let body = vec![BlockNode::Paragraph(Paragraph {
+        id: node(10),
+        properties: ParagraphProperties::default(),
+        inlines: vec![run(11, "body")],
+    })];
+    let doc = Document::new(node(1), body, definitions).unwrap();
+
+    let shaper = ParleyShaper::new();
+    let mut cfg = config();
+    let header = flow_header_footer(
+        &doc,
+        &[header_block],
+        &shaper,
+        cfg.content_area().size.width,
+    );
+    let running = RunningContent {
+        header: RunningBand {
+            default: header,
+            ..RunningBand::default()
+        },
+        ..RunningContent::default()
+    };
+    cfg.header_height = running.header.band_height();
+    let galley = build_galley(&doc, &shaper, cfg.content_area().size.width);
+    let mut layout = paginate(&galley, &cfg);
+    place_running_content(&mut layout, &running, &cfg);
+    // The running-content selector records this page as belonging to the later
+    // section even though the manual paginator config is the first-section one.
+    layout.pages[0].section = section_id;
+    place_floats(&mut layout, &doc, &shaper, &cfg);
+
+    assert_eq!(layout.pages[0].anchored.len(), 1);
+    assert_eq!(
+        layout.pages[0].anchored[0].rect.origin.x,
+        Twip(19_000),
+        "page-right alignment uses the recorded section width (20,000)"
+    );
 }
 
 #[test]

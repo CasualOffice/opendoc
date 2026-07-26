@@ -16,15 +16,15 @@
 //! document order (a shape can sit behind the picture and a later one in front).
 //! Nested groups compose their transforms.
 //!
-//! First cut (this slice): a float is *positioned* correctly; text does not yet
-//! re-flow around it (`wrapSquare`/… are laid out like `wrapNone`). Multi-section
-//! documents resolve every float against the single geometry passed in.
+//! A float is *positioned* against the geometry of the section that owns its
+//! anchoring paragraph. Text does not yet re-flow around it (`wrapSquare`/… are
+//! laid out like `wrapNone`).
 
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     BlockNode, Document, DrawingAnchor, Extent, GroupChild, HorizontalAlign, HorizontalAnchor,
-    HorizontalPosition, InlineNode, Rgba, ShapeGeometry, ShapeStroke, VerticalAlign,
-    VerticalAnchor, VerticalPosition, WordprocessingGroup,
+    HorizontalPosition, InlineNode, Rgba, SectionBoundary, SectionId, ShapeGeometry, ShapeStroke,
+    VerticalAlign, VerticalAnchor, VerticalPosition, WordprocessingGroup,
 };
 
 use crate::block::BlockFragment;
@@ -63,8 +63,9 @@ pub fn place_floats(
     };
     // Body floats: walk the body, resolving each float against the page its
     // anchoring paragraph landed on.
-    for block in document.body() {
-        collect_block(layout, &mut ctx, block, None, PageScope::Body);
+    let body_sections = body_section_ids(document, config.section);
+    for (block, section) in document.body().iter().zip(body_sections) {
+        collect_block(layout, &mut ctx, block, None, PageScope::Body, section);
     }
     // Header/footer band floats: the SDS's floating objects live in the header
     // part. Each page's placed header/footer fragments are walked for the drawings
@@ -72,10 +73,11 @@ pub fn place_floats(
     // by page index first to avoid borrowing `layout` mutably while iterating it.
     let page_count = layout.pages.len();
     for page_index in 0..page_count {
+        let section = layout.pages[page_index].section;
         for band in [PageScope::Header, PageScope::Footer] {
             let fragments = band_fragments(&layout.pages[page_index], band);
             for block in fragments {
-                collect_band_block(layout, &mut ctx, &block, page_index, band);
+                collect_band_block(layout, &mut ctx, &block, page_index, band, section);
             }
         }
     }
@@ -97,6 +99,22 @@ impl FloatCtx<'_> {
         self.order = self.order.saturating_add(1);
         order
     }
+
+    /// Resolves anchor-only page geometry for `section`. The caller-supplied
+    /// config is the deterministic fallback for a sectionless or malformed
+    /// document; header/footer band reservation is deliberately irrelevant to
+    /// OOXML page/margin reference frames.
+    fn geometry(&self, section: SectionId) -> AnchorGeometry {
+        self.document
+            .definitions()
+            .sections
+            .iter()
+            .find(|boundary| boundary.id == section)
+            .map_or_else(
+                || AnchorGeometry::from_config(self.config),
+                AnchorGeometry::from_section,
+            )
+    }
 }
 
 /// Which page region a float's anchoring paragraph lives in.
@@ -105,6 +123,36 @@ enum PageScope {
     Body,
     Header,
     Footer,
+}
+
+/// Mirrors `document_layout::section_break_points`: each top-level paragraph
+/// carrying a section break belongs to the section it closes, while trailing
+/// blocks belong to the final body-level section. Pre-filling with the final
+/// section also gives malformed multi-section input the same deterministic
+/// behavior as the paginator when a break is absent.
+fn body_section_ids(document: &Document, fallback: SectionId) -> Vec<SectionId> {
+    let body = document.body();
+    let sections = &document.definitions().sections;
+    let Some(final_section) = sections.last() else {
+        return vec![fallback; body.len()];
+    };
+    let mut result = vec![final_section.id; body.len()];
+    let mut start = 0usize;
+    for (index, block) in body.iter().enumerate() {
+        let BlockNode::Paragraph(paragraph) = block else {
+            continue;
+        };
+        let Some(section_break) = paragraph.properties.section_break else {
+            continue;
+        };
+        let boundary = sections
+            .iter()
+            .find(|section| section.id == section_break)
+            .unwrap_or(&sections[0]);
+        result[start..=index].fill(boundary.id);
+        start = index.saturating_add(1);
+    }
+    result
 }
 
 /// Clones the placed fragments of a page's band (so the walk can borrow `layout`
@@ -125,23 +173,32 @@ fn collect_block(
     block: &BlockNode,
     _reserved: Option<NodeId>,
     scope: PageScope,
+    section: SectionId,
 ) {
     match block {
         BlockNode::Paragraph(para) => {
-            collect_inlines(layout, ctx, &para.inlines, Some(para.id), scope, None);
+            collect_inlines(
+                layout,
+                ctx,
+                &para.inlines,
+                Some(para.id),
+                scope,
+                section,
+                None,
+            );
         }
         BlockNode::Table(table) => {
             for row in &table.rows {
                 for cell in &row.cells {
                     for nested in &cell.blocks {
-                        collect_block(layout, ctx, nested, None, scope);
+                        collect_block(layout, ctx, nested, None, scope, section);
                     }
                 }
             }
         }
         BlockNode::Sdt(sdt) => {
             for nested in &sdt.blocks {
-                collect_block(layout, ctx, nested, None, scope);
+                collect_block(layout, ctx, nested, None, scope, section);
             }
         }
         BlockNode::AltChunk(_) => {}
@@ -154,6 +211,7 @@ fn collect_inlines(
     inlines: &[InlineNode],
     paragraph: Option<NodeId>,
     scope: PageScope,
+    section: SectionId,
     known_target: Option<(usize, Rect)>,
 ) {
     for inline in inlines {
@@ -167,7 +225,8 @@ fn collect_inlines(
                     relative_height: drawing.relative_height.unwrap_or(0),
                     order: ctx.next_order(),
                 };
-                let (page_index, refs) = target(layout, ctx, paragraph, scope, known_target);
+                let (page_index, refs) =
+                    target(layout, ctx, paragraph, scope, section, known_target);
                 let rect = resolve_anchor_rect(&drawing.anchor, drawing.extent, &refs);
                 push(
                     layout,
@@ -191,7 +250,8 @@ fn collect_inlines(
                     relative_height: text_box.relative_height.unwrap_or(0),
                     order: ctx.next_order(),
                 };
-                let (page_index, refs) = target(layout, ctx, paragraph, scope, known_target);
+                let (page_index, refs) =
+                    target(layout, ctx, paragraph, scope, section, known_target);
                 let mut rect = resolve_anchor_rect(&anchor, extent, &refs);
                 let flowed = flow_anchored_text_box(
                     ctx.document,
@@ -222,7 +282,8 @@ fn collect_inlines(
                 let Some(anchor) = group.anchor else {
                     continue;
                 };
-                let (page_index, refs) = target(layout, ctx, paragraph, scope, known_target);
+                let (page_index, refs) =
+                    target(layout, ctx, paragraph, scope, section, known_target);
                 let origin = resolve_anchor_rect(&anchor, group.extent, &refs).origin;
                 let relative_height = group.relative_height.unwrap_or(0);
                 let behind_doc = anchor.behind_doc;
@@ -239,10 +300,26 @@ fn collect_inlines(
                 );
             }
             InlineNode::Hyperlink(link) => {
-                collect_inlines(layout, ctx, &link.inlines, paragraph, scope, known_target);
+                collect_inlines(
+                    layout,
+                    ctx,
+                    &link.inlines,
+                    paragraph,
+                    scope,
+                    section,
+                    known_target,
+                );
             }
             InlineNode::Field(field) => {
-                collect_inlines(layout, ctx, &field.inlines, paragraph, scope, known_target);
+                collect_inlines(
+                    layout,
+                    ctx,
+                    &field.inlines,
+                    paragraph,
+                    scope,
+                    section,
+                    known_target,
+                );
             }
             InlineNode::Revision(revision) => {
                 collect_inlines(
@@ -251,11 +328,20 @@ fn collect_inlines(
                     &revision.inlines,
                     paragraph,
                     scope,
+                    section,
                     known_target,
                 );
             }
             InlineNode::Sdt(sdt) => {
-                collect_inlines(layout, ctx, &sdt.inlines, paragraph, scope, known_target);
+                collect_inlines(
+                    layout,
+                    ctx,
+                    &sdt.inlines,
+                    paragraph,
+                    scope,
+                    section,
+                    known_target,
+                );
             }
             _ => {}
         }
@@ -392,6 +478,7 @@ fn collect_band_block(
     placed: &PlacedFragment,
     page_index: usize,
     band: PageScope,
+    section: SectionId,
 ) {
     let mut paragraphs = Vec::new();
     collect_paragraph_rects(
@@ -408,6 +495,7 @@ fn collect_band_block(
                 &para.inlines,
                 Some(para.id),
                 band,
+                section,
                 Some((page_index, rect)),
             );
         }
@@ -458,13 +546,23 @@ fn target(
     ctx: &FloatCtx<'_>,
     paragraph: Option<NodeId>,
     scope: PageScope,
+    section: SectionId,
     known_target: Option<(usize, Rect)>,
 ) -> (usize, AnchorRefs) {
+    let geometry = ctx.geometry(section);
     if let Some((page_index, paragraph_box)) = known_target {
-        return (page_index, AnchorRefs::new(ctx.config, paragraph_box));
+        let column_box = geometry.margin_box();
+        return (
+            page_index,
+            AnchorRefs::new(geometry, paragraph_box, column_box),
+        );
     }
-    let (page_index, paragraph_box) = locate(layout, paragraph, ctx.config, scope);
-    (page_index, AnchorRefs::new(ctx.config, paragraph_box))
+    let (page_index, paragraph_box, column_box) =
+        locate(layout, paragraph, geometry.margin_box(), scope);
+    (
+        page_index,
+        AnchorRefs::new(geometry, paragraph_box, column_box),
+    )
 }
 
 fn push(layout: &mut PaginatedLayout, page_index: usize, anchor: PlacedAnchor) {
@@ -558,14 +656,17 @@ fn text_box_stroke(stroke: ShapeStroke) -> TextBoxStroke {
 }
 
 /// Finds the page and paragraph rectangle for a float's paragraph. Returns the
-/// first page whose placed fragments include that paragraph's node; if the
-/// paragraph is not found (or unknown), the first page and its content area.
+/// first page whose placed fragments include that paragraph's node. The returned
+/// column box uses the top-level placed fragment's x/width, so a paragraph nested
+/// in a table still resolves `relativeFrom="column"` against its containing flow
+/// column rather than its cell. If the paragraph is not found (or unknown), the
+/// first page and the supplied section margin box are used.
 fn locate(
     layout: &PaginatedLayout,
     paragraph: Option<NodeId>,
-    config: &PageConfig,
+    fallback: Rect,
     _scope: PageScope,
-) -> (usize, Rect) {
+) -> (usize, Rect, Rect) {
     if let Some(id) = paragraph {
         for (index, page) in layout.pages.iter().enumerate() {
             for placed in &page.placed {
@@ -575,12 +676,16 @@ fn locate(
                     placed.rect.size.width,
                     id,
                 ) {
-                    return (index, rect);
+                    let column = Rect::new(
+                        Point::new(placed.rect.origin.x, fallback.origin.y),
+                        Size::new(placed.rect.size.width, fallback.size.height),
+                    );
+                    return (index, rect, column);
                 }
             }
         }
     }
-    (0, config.content_area())
+    (0, fallback, fallback)
 }
 
 /// Finds one paragraph's page-local box inside a placed fragment tree. Geometry
@@ -658,43 +763,110 @@ fn walk_paragraph_rects(
     }
 }
 
-/// The reference boxes a float's offsets/alignments resolve against, in page-local
-/// twips.
+/// Anchor-only page geometry. Unlike [`PageConfig`], this intentionally excludes
+/// running-band reservation: OOXML page and margin reference frames are defined
+/// by section page size + `w:pgMar`, not the measured header/footer content.
+#[derive(Clone, Copy)]
+struct AnchorGeometry {
+    page_size: Size,
+    margin_top: Twip,
+    margin_bottom: Twip,
+    margin_start: Twip,
+    margin_end: Twip,
+}
+
+impl AnchorGeometry {
+    fn from_config(config: &PageConfig) -> Self {
+        Self {
+            page_size: config.page_size,
+            margin_top: config.margin_top,
+            margin_bottom: config.margin_bottom,
+            margin_start: config.margin_start,
+            margin_end: config.margin_end,
+        }
+    }
+
+    fn from_section(section: &SectionBoundary) -> Self {
+        Self {
+            page_size: Size::new(
+                Twip(section.page_size.width_twips),
+                Twip(section.page_size.height_twips),
+            ),
+            margin_top: Twip(section.page_margins.top_twips),
+            margin_bottom: Twip(section.page_margins.bottom_twips),
+            margin_start: Twip(section.page_margins.start_twips),
+            margin_end: Twip(section.page_margins.end_twips),
+        }
+    }
+
+    fn page_box(self) -> Rect {
+        Rect::new(Point::new(Twip::ZERO, Twip::ZERO), self.page_size)
+    }
+
+    fn margin_box(self) -> Rect {
+        Rect::new(
+            Point::new(self.margin_start, self.margin_top),
+            Size::new(
+                (self.page_size.width - self.margin_start - self.margin_end).max(Twip::ZERO),
+                (self.page_size.height - self.margin_top - self.margin_bottom).max(Twip::ZERO),
+            ),
+        )
+    }
+
+    fn left_margin_box(self) -> Rect {
+        Rect::new(
+            Point::new(Twip::ZERO, Twip::ZERO),
+            Size::new(self.margin_start.max(Twip::ZERO), self.page_size.height),
+        )
+    }
+
+    fn right_margin_box(self) -> Rect {
+        let width = self.margin_end.max(Twip::ZERO);
+        Rect::new(
+            Point::new((self.page_size.width - width).max(Twip::ZERO), Twip::ZERO),
+            Size::new(width, self.page_size.height),
+        )
+    }
+
+    fn top_margin_box(self) -> Rect {
+        Rect::new(
+            Point::new(Twip::ZERO, Twip::ZERO),
+            Size::new(self.page_size.width, self.margin_top.max(Twip::ZERO)),
+        )
+    }
+
+    fn bottom_margin_box(self) -> Rect {
+        let height = self.margin_bottom.max(Twip::ZERO);
+        Rect::new(
+            Point::new(Twip::ZERO, (self.page_size.height - height).max(Twip::ZERO)),
+            Size::new(self.page_size.width, height),
+        )
+    }
+}
+
+/// The reference boxes a float's offsets/alignments resolve against, in
+/// page-local twips.
 struct AnchorRefs {
     page: Rect,
     margin: Rect,
     left_margin: Rect,
     right_margin: Rect,
+    top_margin: Rect,
+    bottom_margin: Rect,
+    column: Rect,
     paragraph: Rect,
 }
 
 impl AnchorRefs {
-    fn new(config: &PageConfig, paragraph: Rect) -> Self {
-        let page = Rect::new(Point::new(Twip::ZERO, Twip::ZERO), config.page_size);
-        let margin = Rect::new(
-            Point::new(config.margin_start, config.margin_top),
-            Size::new(
-                (config.page_size.width - config.margin_start - config.margin_end).max(Twip::ZERO),
-                (config.page_size.height - config.margin_top - config.margin_bottom)
-                    .max(Twip::ZERO),
-            ),
-        );
-        let left_margin = Rect::new(
-            Point::new(Twip::ZERO, Twip::ZERO),
-            Size::new(config.margin_start, config.page_size.height),
-        );
-        let right_margin = Rect::new(
-            Point::new(
-                (config.page_size.width - config.margin_end).max(Twip::ZERO),
-                Twip::ZERO,
-            ),
-            Size::new(config.margin_end, config.page_size.height),
-        );
+    fn new(geometry: AnchorGeometry, paragraph: Rect, column: Rect) -> Self {
         Self {
-            page,
-            margin,
-            left_margin,
-            right_margin,
+            page: geometry.page_box(),
+            margin: geometry.margin_box(),
+            left_margin: geometry.left_margin_box(),
+            right_margin: geometry.right_margin_box(),
+            top_margin: geometry.top_margin_box(),
+            bottom_margin: geometry.bottom_margin_box(),
+            column,
             paragraph,
         }
     }
@@ -712,9 +884,8 @@ fn resolve_anchor_rect(anchor: &DrawingAnchor, extent: Extent, refs: &AnchorRefs
         HorizontalAnchor::Page => refs.page,
         HorizontalAnchor::LeftMargin | HorizontalAnchor::InsideMargin => refs.left_margin,
         HorizontalAnchor::RightMargin | HorizontalAnchor::OutsideMargin => refs.right_margin,
-        HorizontalAnchor::Margin | HorizontalAnchor::Column | HorizontalAnchor::Character => {
-            refs.margin
-        }
+        HorizontalAnchor::Margin | HorizontalAnchor::Character => refs.margin,
+        HorizontalAnchor::Column => refs.column,
     };
     let x = match anchor.horizontal.position {
         HorizontalPosition::Offset(emu) => hbox.origin.x + emu_to_twip_signed(emu),
@@ -723,11 +894,11 @@ fn resolve_anchor_rect(anchor: &DrawingAnchor, extent: Extent, refs: &AnchorRefs
     let vbox = match anchor.vertical.relative_from {
         VerticalAnchor::Page => refs.page,
         VerticalAnchor::Paragraph | VerticalAnchor::Line => refs.paragraph,
-        VerticalAnchor::Margin
-        | VerticalAnchor::TopMargin
-        | VerticalAnchor::BottomMargin
-        | VerticalAnchor::InsideMargin
-        | VerticalAnchor::OutsideMargin => refs.margin,
+        VerticalAnchor::TopMargin => refs.top_margin,
+        VerticalAnchor::BottomMargin => refs.bottom_margin,
+        VerticalAnchor::Margin | VerticalAnchor::InsideMargin | VerticalAnchor::OutsideMargin => {
+            refs.margin
+        }
     };
     let y = match anchor.vertical.position {
         VerticalPosition::Offset(emu) => vbox.origin.y + emu_to_twip_signed(emu),
@@ -835,7 +1006,8 @@ mod tests {
             width_emu: 914_400,
             height_emu: 914_400,
         };
-        let refs = AnchorRefs::new(&config(), Rect::default());
+        let geometry = AnchorGeometry::from_config(&config());
+        let refs = AnchorRefs::new(geometry, Rect::default(), geometry.margin_box());
         let rect = resolve_anchor_rect(&a, extent, &refs);
         assert_eq!(rect.origin, Point::new(Twip(1_440), Twip(2_880)));
         assert_eq!(rect.size, Size::new(Twip(1_440), Twip(1_440)));
@@ -853,9 +1025,42 @@ mod tests {
             width_emu: 635_000,
             height_emu: 100,
         };
-        let refs = AnchorRefs::new(&config(), Rect::default());
+        let geometry = AnchorGeometry::from_config(&config());
+        let refs = AnchorRefs::new(geometry, Rect::default(), geometry.margin_box());
         let rect = resolve_anchor_rect(&a, extent, &refs);
         assert_eq!(rect.origin.x, Twip(5_620));
+    }
+
+    #[test]
+    fn top_and_bottom_margin_frames_are_the_physical_margin_strips() {
+        let geometry = AnchorGeometry::from_config(&config());
+        let refs = AnchorRefs::new(geometry, Rect::default(), geometry.margin_box());
+        let extent = Extent {
+            width_emu: 63_500,
+            height_emu: 457_200, // 720 twips
+        };
+        let top = anchor(
+            HorizontalAnchor::Page,
+            HorizontalPosition::Offset(0),
+            VerticalAnchor::TopMargin,
+            VerticalPosition::Align(VerticalAlign::Bottom),
+        );
+        let bottom = anchor(
+            HorizontalAnchor::Page,
+            HorizontalPosition::Offset(0),
+            VerticalAnchor::BottomMargin,
+            VerticalPosition::Align(VerticalAlign::Top),
+        );
+        assert_eq!(
+            resolve_anchor_rect(&top, extent, &refs).origin.y,
+            Twip(720),
+            "bottom alignment in the 1,440-twip top strip subtracts the float height"
+        );
+        assert_eq!(
+            resolve_anchor_rect(&bottom, extent, &refs).origin.y,
+            Twip(14_400),
+            "the bottom strip begins one margin above the page edge"
+        );
     }
 
     fn ident_transform(w: i64, h: i64) -> GroupTransform {

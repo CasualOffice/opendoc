@@ -20,13 +20,15 @@ use casual_doc_layout::flow::{build_galley, flow_header_footer};
 use casual_doc_layout::paginate::{paginate, resolve_fields};
 use casual_doc_layout::running::{HeaderFooter, RunningContent, place_running_content};
 use casual_doc_layout::shape::ParleyShaper;
-use casual_doc_layout::units::{Size, Twip};
+use casual_doc_layout::units::{Point, Size, Twip};
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
-    BlockNode, DefinitionMap, Definitions, Document, DocumentSettings, Drawing, Extent,
-    HeaderFooter as ModelHeaderFooter, HeaderFooterId, HeaderFooterKind, HeaderFooterRef,
-    InlineNode, MediaId, MediaReference, PageMargins, PageSize, Paragraph, ParagraphProperties,
-    Run, RunProperties, SectionBoundary, SectionColumns, SectionId,
+    AnchorHorizontal, AnchorVertical, AnchoredDrawing, BlockNode, DefinitionMap, Definitions,
+    Document, DocumentSettings, Drawing, DrawingAnchor, Extent, HeaderFooter as ModelHeaderFooter,
+    HeaderFooterId, HeaderFooterKind, HeaderFooterRef, HorizontalAlign, HorizontalAnchor,
+    HorizontalPosition, InlineNode, MediaId, MediaReference, PageMargins, PageSize, Paragraph,
+    ParagraphProperties, Run, RunProperties, SectionBoundary, SectionColumns, SectionId,
+    SectionType, VerticalAlign, VerticalAnchor, VerticalPosition, WrapMode,
 };
 
 fn node(id: u64) -> NodeId {
@@ -59,6 +61,70 @@ fn page_break(id: u64, text: &str) -> BlockNode {
             ..ParagraphProperties::default()
         },
         inlines: vec![run(id + 1, text)],
+    })
+}
+
+fn aligned_float(
+    id: u64,
+    media: MediaId,
+    horizontal: HorizontalAnchor,
+    vertical: VerticalAnchor,
+    descr: &str,
+) -> InlineNode {
+    InlineNode::AnchoredDrawing(AnchoredDrawing {
+        id: node(id),
+        media,
+        extent: Extent {
+            width_emu: 635_000,
+            height_emu: 635_000,
+        },
+        anchor: DrawingAnchor {
+            horizontal: AnchorHorizontal {
+                relative_from: horizontal,
+                position: HorizontalPosition::Align(HorizontalAlign::Right),
+            },
+            vertical: AnchorVertical {
+                relative_from: vertical,
+                position: VerticalPosition::Align(VerticalAlign::Bottom),
+            },
+            wrap: WrapMode::None,
+            wrap_distances: Default::default(),
+            behind_doc: false,
+        },
+        descr: Some(descr.to_owned()),
+        relative_height: None,
+    })
+}
+
+fn offset_float(
+    id: u64,
+    media: MediaId,
+    horizontal: HorizontalAnchor,
+    x_emu: i64,
+    descr: &str,
+) -> InlineNode {
+    InlineNode::AnchoredDrawing(AnchoredDrawing {
+        id: node(id),
+        media,
+        extent: Extent {
+            width_emu: 635_000,
+            height_emu: 635_000,
+        },
+        anchor: DrawingAnchor {
+            horizontal: AnchorHorizontal {
+                relative_from: horizontal,
+                position: HorizontalPosition::Offset(x_emu),
+            },
+            vertical: AnchorVertical {
+                relative_from: VerticalAnchor::Paragraph,
+                position: VerticalPosition::Offset(0),
+            },
+            wrap: WrapMode::None,
+            wrap_distances: Default::default(),
+            behind_doc: false,
+        },
+        descr: Some(descr.to_owned()),
+        relative_height: None,
     })
 }
 
@@ -476,4 +542,176 @@ fn a_header_image_renders_through_the_full_pipeline() {
         img.origin.y.raw() < body_top,
         "the header image paints above the body"
     );
+}
+
+#[test]
+fn later_section_floats_use_that_sections_page_and_margin_geometry() {
+    let shaper = ParleyShaper::new();
+    let media_id = MediaId::new(node(70));
+    let mut media = DefinitionMap::default();
+    media.insert(
+        media_id,
+        MediaReference {
+            relationship_id: "rId7".to_owned(),
+            media_type: "image/png".to_owned(),
+            part_name: "word/media/section.png".to_owned(),
+        },
+    );
+
+    let first = section(9, (12_240, 15_840), 1_440, vec![], vec![], false);
+    let first_id = first.id;
+    let mut second = section(19, (20_000, 10_000), 0, vec![], vec![], false);
+    second.page_margins = PageMargins {
+        top_twips: 2_000,
+        bottom_twips: 500,
+        start_twips: 3_000,
+        end_twips: 1_000,
+        header_twips: None,
+        footer_twips: None,
+    };
+    second.section_type = Some(SectionType::NextPage);
+
+    let body = vec![
+        BlockNode::Paragraph(Paragraph {
+            id: node(100),
+            properties: ParagraphProperties {
+                section_break: Some(first_id),
+                ..ParagraphProperties::default()
+            },
+            inlines: vec![run(101, "First section")],
+        }),
+        BlockNode::Paragraph(Paragraph {
+            id: node(110),
+            properties: ParagraphProperties::default(),
+            inlines: vec![
+                run(111, "Second section"),
+                aligned_float(
+                    112,
+                    media_id,
+                    HorizontalAnchor::Page,
+                    VerticalAnchor::Page,
+                    "page frame",
+                ),
+                aligned_float(
+                    113,
+                    media_id,
+                    HorizontalAnchor::Margin,
+                    VerticalAnchor::Margin,
+                    "margin frame",
+                ),
+            ],
+        }),
+    ];
+    let doc = Document::new(
+        node(1),
+        body,
+        Definitions {
+            sections: vec![first, second],
+            media,
+            ..Definitions::default()
+        },
+    )
+    .unwrap();
+
+    let layout = paginate_document(&doc, &shaper);
+    assert_eq!(layout.page_count(), 2);
+    let page = &layout.pages[1];
+    let page_float = page
+        .anchored
+        .iter()
+        .find(|anchor| anchor.descr.as_deref() == Some("page frame"))
+        .expect("the page-relative second-section float");
+    assert_eq!(
+        page_float.rect.origin,
+        Point::new(Twip(19_000), Twip(9_000))
+    );
+    let margin_float = page
+        .anchored
+        .iter()
+        .find(|anchor| anchor.descr.as_deref() == Some("margin frame"))
+        .expect("the margin-relative second-section float");
+    assert_eq!(
+        margin_float.rect.origin,
+        Point::new(Twip(18_000), Twip(8_500))
+    );
+}
+
+#[test]
+fn continuous_sections_on_one_page_keep_distinct_anchor_margins() {
+    let shaper = ParleyShaper::new();
+    let media_id = MediaId::new(node(70));
+    let mut media = DefinitionMap::default();
+    media.insert(
+        media_id,
+        MediaReference {
+            relationship_id: "rId7".to_owned(),
+            media_type: "image/png".to_owned(),
+            part_name: "word/media/continuous.png".to_owned(),
+        },
+    );
+
+    let mut first = section(9, (12_000, 16_000), 1_000, vec![], vec![], false);
+    first.page_margins.end_twips = 2_000;
+    let first_id = first.id;
+    let mut second = section(19, (12_000, 16_000), 1_000, vec![], vec![], false);
+    second.page_margins.start_twips = 3_000;
+    second.page_margins.end_twips = 500;
+    second.section_type = Some(SectionType::Continuous);
+
+    let doc = Document::new(
+        node(1),
+        vec![
+            BlockNode::Paragraph(Paragraph {
+                id: node(100),
+                properties: ParagraphProperties {
+                    section_break: Some(first_id),
+                    ..ParagraphProperties::default()
+                },
+                inlines: vec![
+                    run(101, "First band"),
+                    offset_float(102, media_id, HorizontalAnchor::Margin, 0, "first margin"),
+                ],
+            }),
+            BlockNode::Paragraph(Paragraph {
+                id: node(110),
+                properties: ParagraphProperties::default(),
+                inlines: vec![
+                    run(111, "Second band"),
+                    offset_float(112, media_id, HorizontalAnchor::Margin, 0, "second margin"),
+                ],
+            }),
+        ],
+        Definitions {
+            sections: vec![first, second],
+            media,
+            ..Definitions::default()
+        },
+    )
+    .unwrap();
+
+    let layout = paginate_document(&doc, &shaper);
+    assert_eq!(
+        layout.page_count(),
+        1,
+        "a continuous section remains on the same page"
+    );
+    let page = &layout.pages[0];
+    let first_x = page
+        .anchored
+        .iter()
+        .find(|anchor| anchor.descr.as_deref() == Some("first margin"))
+        .expect("first-section float")
+        .rect
+        .origin
+        .x;
+    let second_x = page
+        .anchored
+        .iter()
+        .find(|anchor| anchor.descr.as_deref() == Some("second margin"))
+        .expect("second-section float")
+        .rect
+        .origin
+        .x;
+    assert_eq!(first_x, Twip(1_000));
+    assert_eq!(second_x, Twip(3_000));
 }
