@@ -32,6 +32,7 @@ pub mod model;
 pub mod page;
 pub mod paginate;
 pub mod resolve;
+pub mod running;
 pub mod shape;
 pub mod tabs;
 pub mod text;

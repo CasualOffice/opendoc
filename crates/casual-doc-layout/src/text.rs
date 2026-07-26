@@ -94,6 +94,65 @@ pub struct InlineImage {
     pub size: Size,
 }
 
+/// The kind of an inline field, resolved from its `w:instr` instruction. Only the
+/// page-dependent fields are recomputed by the post-pagination field pass
+/// ([`crate::paginate::resolve_fields`]); every other field is displayed from its
+/// cached result verbatim.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FieldKind {
+    /// `PAGE` — the current page's number.
+    Page,
+    /// `NUMPAGES` — the total number of pages.
+    NumPages,
+    /// Any other field: the cached result is shown verbatim, never restamped.
+    Passthrough,
+}
+
+/// The run styling captured for a field so the field pass can reshape a recomputed
+/// value (a new page number / count) with the same face, size, and color the
+/// producer's cached result used.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct FieldStyle {
+    /// Resolved font face.
+    pub font: FontId,
+    /// Font size (twips).
+    pub size: Twip,
+    /// Fill color (RGBA).
+    pub color: [u8; 4],
+    /// Bold weight.
+    pub bold: bool,
+    /// Italic style.
+    pub italic: bool,
+    /// Inter-character spacing (twips).
+    pub letter_spacing: Twip,
+    /// Decorations (underline / strike).
+    pub decoration: Decoration,
+}
+
+/// An inline field placed on a line. It carries only a *marker* through
+/// pagination — never a baked page number — so a page reused by the incremental
+/// paginator never keeps a stale value. The post-pagination field pass
+/// ([`crate::paginate::resolve_fields`]) stamps each `Page`/`NumPages` marker with
+/// the final page number / count and reshapes its glyph run in place.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct FieldMarker {
+    /// The field kind (what value to stamp).
+    pub kind: FieldKind,
+    /// Index into [`Line::runs`] of the glyph run holding this field's value.
+    pub run: u32,
+    /// The field run's flow-time left origin (twips, from the paragraph content
+    /// box). The field pass repositions the run — and the runs after it on the
+    /// line — from this stable anchor, so resolving is idempotent (running it twice
+    /// yields the same layout, which is what keeps `repaginate == paginate`).
+    pub base_x: Twip,
+    /// The styling used to reshape a recomputed value.
+    pub style: FieldStyle,
+    /// The resolved display value — a placeholder (the producer's cached result)
+    /// until the field pass runs, then the stamped page number / count.
+    pub value: String,
+}
+
 /// One laid-out line: its glyph runs (visually ordered), vertical metrics, the
 /// model range it covers (for hit-testing), and how it ends.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -127,6 +186,11 @@ pub struct Line {
     /// byte-identical.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<InlineImage>,
+    /// Inline fields on this line (`PAGE`, `NUMPAGES`, …) — markers the field pass
+    /// resolves after pagination. Empty for the common line; serialized only when
+    /// non-empty so a plain galley stays byte-identical.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<FieldMarker>,
 }
 
 /// The result of shaping one paragraph: its ordered lines.
@@ -255,6 +319,7 @@ mod tests {
             page_break_after: false,
             bars: Vec::new(),
             images: Vec::new(),
+            fields: Vec::new(),
         };
         let layout = LineLayout {
             lines: vec![line(240), line(240), line(200)],
