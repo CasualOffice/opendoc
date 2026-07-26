@@ -1158,15 +1158,13 @@ fn border_rank(edge: &BorderEdge) -> (u32, u32, u32) {
 /// controls). Text-bearing runs and explicit tabs contribute text; other inline
 /// nodes are not yet laid out.
 ///
-/// A run marked hidden (`w:vanish`) is skipped entirely: it is neither shaped nor
-/// painted, matching Word's screen view. The flow layer reads direct run
-/// properties (it does not resolve style inheritance here), so an inherited
-/// `w:vanish` from a character/paragraph style is honored once style resolution
-/// lands upstream.
+/// A run whose effective properties mark it hidden (`w:vanish`) is skipped
+/// entirely: it is neither shaped nor painted, matching Word's screen view.
+/// Visibility is decided in [`push_styled_runs`] after the full run-property
+/// cascade is resolved, so direct formatting can override an inherited value.
 fn collect_runs<'a>(inlines: &'a [InlineNode], out: &mut Vec<StyledRun<'a>>, ctx: &mut FlowCtx) {
     for inline in inlines {
         match inline {
-            InlineNode::Run(run) if run.properties.hidden == Some(true) => {}
             InlineNode::Run(run) => push_styled_runs(&run.text, &run.properties, ctx, out),
             InlineNode::Tab(_) => out.push(styled_run("\t", &RunProperties::default(), ctx)),
             InlineNode::Hyperlink(hyperlink) => collect_runs(&hyperlink.inlines, out, ctx),
@@ -1191,7 +1189,6 @@ fn collect_items<'a>(
 ) {
     for inline in inlines {
         match inline {
-            InlineNode::Run(run) if run.properties.hidden == Some(true) => {}
             InlineNode::Run(run) => {
                 let mut styled = Vec::new();
                 push_styled_runs(&run.text, &run.properties, ctx, &mut styled);
@@ -2019,6 +2016,9 @@ fn push_styled_runs<'a>(
     // style → character style → direct), then build from the resolved value so
     // style-driven size/bold/caps/color are honored, not just direct props.
     let effective = ctx.cascade.resolve_run(ctx.para_style, properties);
+    if effective.hidden == Some(true) {
+        return;
+    }
     if effective.small_caps == Some(true) {
         push_small_caps_runs(text, &effective, ctx, out);
     } else {
@@ -3525,6 +3525,71 @@ mod tests {
         assert_eq!(
             hidden_glyphs, visible_glyphs,
             "the w:vanish run added no glyphs"
+        );
+    }
+
+    #[test]
+    fn inherited_vanish_is_suppressed_but_direct_false_restores_visibility() {
+        use casual_doc_model::v1::DocumentDefaults;
+
+        let definitions = Definitions {
+            document_defaults: Some(DocumentDefaults {
+                paragraph: None,
+                run: Some(RunProperties {
+                    hidden: Some(true),
+                    ..RunProperties::default()
+                }),
+            }),
+            ..Definitions::default()
+        };
+        let inherited_hidden = Document::new(
+            NodeId::from_parts(1, 1).unwrap(),
+            vec![paragraph(
+                10,
+                vec![run_node(11, "inherited secret", RunProperties::default())],
+            )],
+            definitions.clone(),
+        )
+        .unwrap();
+        let direct_visible = Document::new(
+            NodeId::from_parts(2, 1).unwrap(),
+            vec![paragraph(
+                20,
+                vec![run_node(
+                    21,
+                    "shown",
+                    RunProperties {
+                        hidden: Some(false),
+                        ..RunProperties::default()
+                    },
+                )],
+            )],
+            definitions,
+        )
+        .unwrap();
+        let shaper = ParleyShaper::new();
+
+        let glyph_count = |document: &Document| {
+            build_galley(document, &shaper, Twip::from_points(400))
+                .iter()
+                .filter_map(|fragment| match fragment {
+                    BlockFragment::Paragraph { lines, .. } => Some(lines),
+                    BlockFragment::TableRow { .. } => None,
+                })
+                .flat_map(|lines| &lines.lines)
+                .flat_map(|line| &line.runs)
+                .map(|run| run.glyphs.len())
+                .sum::<usize>()
+        };
+
+        assert_eq!(
+            glyph_count(&inherited_hidden),
+            0,
+            "docDefaults w:vanish must suppress an otherwise unformatted run"
+        );
+        assert!(
+            glyph_count(&direct_visible) > 0,
+            "direct w:vanish=false must override the inherited hidden value"
         );
     }
 
