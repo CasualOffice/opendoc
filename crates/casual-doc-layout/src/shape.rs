@@ -295,6 +295,8 @@ impl LineShaper for ParleyShaper {
                 height: Twip(metrics.line_height.round() as i32),
                 range: line_range,
                 line_break,
+                page_break_after: false,
+                bars: Vec::new(),
             });
         }
         LineLayout { lines }

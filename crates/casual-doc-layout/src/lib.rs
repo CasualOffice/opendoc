@@ -33,5 +33,6 @@ pub mod page;
 pub mod paginate;
 pub mod resolve;
 pub mod shape;
+pub mod tabs;
 pub mod text;
 pub mod units;
