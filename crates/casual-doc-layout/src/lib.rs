@@ -27,6 +27,7 @@ pub mod compose;
 pub mod display;
 pub mod document_layout;
 pub mod flow;
+pub mod font_registry;
 pub mod fonts;
 pub mod hittest;
 pub mod incremental;
