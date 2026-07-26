@@ -9,9 +9,9 @@
 use casual_doc_model::v1::{Alignment, RgbColor};
 use casual_doc_model::v1::{
     BlockNode, BorderEdge, CellMargins, CellVerticalAlignment, CnfStyle, GridColumn, HeightRule,
-    MAX_TABLE_DEPTH, Paragraph, ParagraphProperties, StyleId, Table, TableBorders, TableCell,
-    TableCellProperties, TableFloatPosition, TableLayout, TableOverlap, TableProperties, TableRow,
-    TableRowProperties, TextDirection, VerticalMerge,
+    MAX_TABLE_DEPTH, Paragraph, ParagraphProperties, PropChange, StyleId, Table, TableBorders,
+    TableCell, TableCellProperties, TableFloatPosition, TableLayout, TableOverlap, TableProperties,
+    TableRow, TableRowProperties, TextDirection, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 
@@ -36,6 +36,7 @@ struct RowBuilder {
 struct TableBuilder {
     id: NodeId,
     grid: Vec<GridColumn>,
+    grid_change: Option<PropChange<Vec<GridColumn>>>,
     properties: TableProperties,
     rows: Vec<TableRow>,
     row: Option<RowBuilder>,
@@ -110,6 +111,7 @@ impl TableStack {
         self.stack.push(TableBuilder {
             id,
             grid: Vec::new(),
+            grid_change: None,
             properties: TableProperties::default(),
             rows: Vec::new(),
             row: None,
@@ -223,6 +225,71 @@ impl TableStack {
             .row
             .as_mut()
             .map(|row| &mut row.properties)
+    }
+
+    // Swap accessors for `w:*PrChange` prior-snapshot capture: the body parser
+    // takes the just-completed current properties aside, lets the nested prior
+    // `w:*Pr` accumulate into the (now-default) live slot, then restores the
+    // saved current with its `prop_change` attached. Reusing the live slot lets
+    // the prior reuse the exact same element routing as the current properties.
+
+    /// Takes the innermost table's properties, leaving `Default` behind.
+    pub(crate) fn take_table_properties(&mut self) -> Option<TableProperties> {
+        self.table_properties().map(std::mem::take)
+    }
+
+    /// Replaces the innermost table's properties.
+    pub(crate) fn set_table_properties(&mut self, properties: TableProperties) {
+        if let Some(slot) = self.table_properties() {
+            *slot = properties;
+        }
+    }
+
+    /// Takes the innermost open row's properties, leaving `Default` behind.
+    pub(crate) fn take_row_properties(&mut self) -> Option<TableRowProperties> {
+        self.row_properties().map(std::mem::take)
+    }
+
+    /// Replaces the innermost open row's properties.
+    pub(crate) fn set_row_properties(&mut self, properties: TableRowProperties) {
+        if let Some(slot) = self.row_properties() {
+            *slot = properties;
+        }
+    }
+
+    /// Takes the innermost open cell's properties, leaving `Default` behind.
+    pub(crate) fn take_cell_properties(&mut self) -> Option<TableCellProperties> {
+        self.current_cell()
+            .map(|cell| std::mem::take(&mut cell.properties))
+    }
+
+    /// Replaces the innermost open cell's properties.
+    pub(crate) fn set_cell_properties(&mut self, properties: TableCellProperties) {
+        if let Some(cell) = self.current_cell() {
+            cell.properties = properties;
+        }
+    }
+
+    /// Takes the innermost table's column grid, leaving an empty grid behind.
+    pub(crate) fn take_grid(&mut self) -> Option<Vec<GridColumn>> {
+        self.stack
+            .last_mut()
+            .map(|table| std::mem::take(&mut table.grid))
+    }
+
+    /// Replaces the innermost table's column grid.
+    pub(crate) fn set_grid(&mut self, grid: Vec<GridColumn>) {
+        if let Some(table) = self.stack.last_mut() {
+            table.grid = grid;
+        }
+    }
+
+    /// Attaches the grid format-change revision (`w:tblGridChange`) to the
+    /// innermost table.
+    pub(crate) fn set_grid_change(&mut self, change: PropChange<Vec<GridColumn>>) {
+        if let Some(table) = self.stack.last_mut() {
+            table.grid_change = Some(change);
+        }
     }
 
     /// Sets the associated table style (`w:tblStyle`).
@@ -516,6 +583,7 @@ impl TableStack {
         Some(Table {
             id: table.id,
             grid: table.grid,
+            grid_change: table.grid_change,
             properties: table.properties,
             rows: table.rows,
         })

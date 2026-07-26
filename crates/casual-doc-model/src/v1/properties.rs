@@ -4,6 +4,35 @@ use serde::{Deserialize, Serialize};
 
 use super::{BorderEdge, NumberingInstanceId, SectionId, Shading, StyleId};
 
+/// A format-change tracked revision (`w:rPrChange`, `w:pPrChange`,
+/// `w:tblPrChange`, `w:trPrChange`, `w:tcPrChange`, `w:tblGridChange`): the
+/// revision metadata plus the PRIOR value of the properties the change replaced.
+///
+/// It is attached to the CURRENT properties (the values in effect now); `prior`
+/// is a full snapshot of those same properties as they were before the change,
+/// reusing the very type it hangs off (a boxed `P` — the recursion is broken by
+/// the box, and a prior snapshot never itself carries a further `prop_change`).
+///
+/// Author/date/id are retained as the producer wrote them (opaque, bounded),
+/// mirroring [`super::Revision`] metadata. `w:tblGridChange` carries only an id
+/// (no author/date); those fields are simply `None` for it.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PropChange<P> {
+    /// The revision author, if declared (non-empty, at most 255 bytes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    /// The revision date as written (ISO-8601 string), if declared (<= 64 bytes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date: Option<String>,
+    /// The producer's revision id (`w:id`) as written, if declared (<= 64 bytes).
+    /// Opaque and non-unique across changes — a grouping key, not a node identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision_id: Option<String>,
+    /// The prior properties snapshot (the values the change replaced).
+    pub prior: Box<P>,
+}
+
 /// A paragraph border set (`w:pBdr`); any subset of edges. Reuses the shared
 /// `BorderEdge` value type.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -706,6 +735,11 @@ pub struct ParagraphProperties {
     /// default) means the `w:rPr` was present; additive, omitted when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mark_run: Option<Box<RunProperties>>,
+    /// Paragraph-properties format-change revision (`w:pPrChange`): the prior
+    /// paragraph properties plus author/date/id. Additive, omitted when absent;
+    /// re-emitted as the last child of `w:pPr`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prop_change: Option<PropChange<ParagraphProperties>>,
 }
 
 /// Run vertical alignment (`w:vertAlign`).
@@ -894,6 +928,11 @@ pub struct RunProperties {
     /// Run background shading (`w:shd`).
     #[serde(default, skip_serializing_if = "Shading::is_empty")]
     pub shading: Shading,
+    /// Run-properties format-change revision (`w:rPrChange`): the prior run
+    /// properties plus author/date/id. Additive, omitted when absent; re-emitted
+    /// as the last child of `w:rPr`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prop_change: Option<PropChange<RunProperties>>,
 }
 
 /// Run language tags (`w:lang`). Each tag is a producer-written language string

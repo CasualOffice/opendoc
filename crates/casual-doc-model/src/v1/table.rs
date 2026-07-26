@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{Alignment, BlockNode, RgbColor, StyleId};
+use super::{Alignment, BlockNode, PropChange, RgbColor, StyleId};
 use crate::NodeId;
 
 /// Maximum table nesting depth enforced by validation. A root-level table is
@@ -388,6 +388,11 @@ pub struct TableProperties {
     /// bytes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Table-properties format-change revision (`w:tblPrChange`): the prior table
+    /// properties plus author/date/id. Additive, omitted when absent; re-emitted
+    /// as the last child of `w:tblPr`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prop_change: Option<PropChange<TableProperties>>,
 }
 
 impl TableProperties {
@@ -431,7 +436,8 @@ impl RowHeight {
 }
 
 /// Typed table-row properties (`w:trPr`). An empty value serializes to nothing.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+// Not `Copy`: an optional `prop_change` owns a boxed prior snapshot.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TableRowProperties {
     /// Conditional-format selector (`w:cnfStyle`): which table-style region
@@ -453,6 +459,11 @@ pub struct TableRowProperties {
     /// Per-row default cell spacing in twips, `dxa` only (`w:tblCellSpacing`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cell_spacing_twips: Option<i32>,
+    /// Row-properties format-change revision (`w:trPrChange`): the prior row
+    /// properties plus author/date/id. Additive, omitted when absent; re-emitted
+    /// as the last child of `w:trPr`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prop_change: Option<PropChange<TableRowProperties>>,
 }
 
 impl TableRowProperties {
@@ -529,6 +540,11 @@ pub struct TableCellProperties {
     /// Hide the end-of-cell mark; affects auto-fit height (`w:hideMark`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hide_mark: bool,
+    /// Cell-properties format-change revision (`w:tcPrChange`): the prior cell
+    /// properties plus author/date/id. Additive, omitted when absent; re-emitted
+    /// as the last child of `w:tcPr`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prop_change: Option<PropChange<TableCellProperties>>,
 }
 
 /// A table cell holding recursive block content.
@@ -565,6 +581,11 @@ pub struct Table {
     /// The shared column grid (`w:tblGrid`); may be empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub grid: Vec<GridColumn>,
+    /// Grid format-change revision (`w:tblGridChange`): the prior column grid
+    /// plus its id (this change carries no author/date). Additive, omitted when
+    /// absent; re-emitted as the last child of `w:tblGrid`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grid_change: Option<PropChange<Vec<GridColumn>>>,
     /// Table properties (`w:tblPr`); additive, omitted when empty.
     #[serde(default, skip_serializing_if = "TableProperties::is_empty")]
     pub properties: TableProperties,

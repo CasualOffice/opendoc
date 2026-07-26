@@ -267,6 +267,51 @@ fn named_font_round_trips() {
     assert_eq!(reloaded.to_json().unwrap(), reexport);
 }
 
+#[test]
+fn run_property_change_round_trips_and_is_validated() {
+    // A `w:rPrChange` (modeled as `propChange`) round-trips through JSON, and its
+    // metadata + prior snapshot are validated with the same rules as elsewhere.
+    let json = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{"type":"paragraph","id":"00000000000000030000000000000002","properties":{},
+              "inlines":[{"type":"run","id":"00000000000000030000000000000003",
+                "properties":{"propChange":{"author":"Ann","date":"2021-01-01","revisionId":"7","prior":{"bold":true}}},
+                "text":"x"}]}],
+            "definitions":{}}"#;
+    let document = Document::from_json(json, SnapshotLimits::default()).unwrap();
+    let reexport = document.to_json().unwrap();
+    let reloaded = Document::from_json(&reexport, SnapshotLimits::default()).unwrap();
+    assert_eq!(reloaded.to_json().unwrap(), reexport);
+
+    // Oversized change metadata is rejected at the change site.
+    let long_author = "a".repeat(256);
+    let bad_meta = format!(
+        r#"{{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{{"type":"paragraph","id":"00000000000000030000000000000002","properties":{{}},
+              "inlines":[{{"type":"run","id":"00000000000000030000000000000003",
+                "properties":{{"propChange":{{"author":"{long_author}","prior":{{}}}}}},"text":"x"}}]}}],
+            "definitions":{{}}}}"#
+    );
+    assert!(matches!(
+        expect_invalid(bad_meta.as_bytes()),
+        ModelError::PropertyValueOutOfDomain {
+            property: "run.propChange"
+        }
+    ));
+
+    // An out-of-domain value INSIDE the prior snapshot is rejected too.
+    let bad_prior = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{"type":"paragraph","id":"00000000000000030000000000000002","properties":{},
+              "inlines":[{"type":"run","id":"00000000000000030000000000000003",
+                "properties":{"propChange":{"prior":{"sizeHalfPoints":0}}},"text":"x"}]}],
+            "definitions":{}}"#;
+    assert!(matches!(
+        expect_invalid(bad_prior),
+        ModelError::PropertyValueOutOfDomain {
+            property: "run.size_half_points"
+        }
+    ));
+}
+
 fn expect_invalid(json: &[u8]) -> ModelError {
     match Document::from_json(json, SnapshotLimits::default()) {
         Err(SnapshotError::InvalidModel(error)) => error,
@@ -741,6 +786,7 @@ fn valid_table_with_merges_validates_and_round_trips_json() {
                 width_twips: Some(2_880),
             },
         ],
+        grid_change: None,
         properties: TableProperties::default(),
         rows: vec![
             TableRow {
@@ -818,6 +864,7 @@ fn table_alignment_justify_is_rejected() {
             grid: vec![GridColumn {
                 width_twips: Some(2_880),
             }],
+            grid_change: None,
             properties: TableProperties {
                 alignment: Some(alignment),
                 ..TableProperties::default()
@@ -859,6 +906,7 @@ fn table_properties_round_trip_and_default_omits_the_key() {
     let table = Table {
         id: tid(1),
         grid: Vec::new(),
+        grid_change: None,
         properties: TableProperties {
             width_twips: Some(9000),
             layout: Some(TableLayout::Fixed),
@@ -889,6 +937,7 @@ fn table_properties_round_trip_and_default_omits_the_key() {
     let plain = Table {
         id: tid(1),
         grid: Vec::new(),
+        grid_change: None,
         properties: TableProperties::default(),
         rows: vec![TableRow {
             id: tid(2),
@@ -987,6 +1036,7 @@ fn table_borders_and_margins_round_trip_and_reject_bad_style() {
     let table = Table {
         id: tid(1),
         grid: Vec::new(),
+        grid_change: None,
         properties: TableProperties {
             borders: borders.clone(),
             cell_margins: CellMargins {
@@ -1017,6 +1067,7 @@ fn table_borders_and_margins_round_trip_and_reject_bad_style() {
     let bad = Table {
         id: tid(1),
         grid: Vec::new(),
+        grid_change: None,
         properties: TableProperties {
             borders: TableBorders {
                 top: Some(BorderEdge {
@@ -1052,6 +1103,7 @@ fn over_range_table_width_is_rejected() {
     let table = Table {
         id: tid(1),
         grid: Vec::new(),
+        grid_change: None,
         properties: TableProperties {
             width_twips: Some(40_000),
             ..TableProperties::default()
@@ -1079,6 +1131,7 @@ fn empty_table_is_rejected() {
     let table = BlockNode::Table(Table {
         id: tid(10),
         grid: Vec::new(),
+        grid_change: None,
         properties: TableProperties::default(),
         rows: Vec::new(),
     });
@@ -1093,6 +1146,7 @@ fn table_row_without_cells_is_rejected() {
     let table = BlockNode::Table(Table {
         id: tid(10),
         grid: Vec::new(),
+        grid_change: None,
         properties: TableProperties::default(),
         rows: vec![TableRow {
             id: tid(11),
@@ -1111,6 +1165,7 @@ fn table_cell_without_blocks_is_rejected() {
     let table = BlockNode::Table(Table {
         id: tid(10),
         grid: Vec::new(),
+        grid_change: None,
         properties: TableProperties::default(),
         rows: vec![TableRow {
             id: tid(11),
@@ -1129,6 +1184,7 @@ fn grid_span_out_of_domain_is_rejected() {
     let table = BlockNode::Table(Table {
         id: tid(10),
         grid: Vec::new(),
+        grid_change: None,
         properties: TableProperties::default(),
         rows: vec![TableRow {
             id: tid(11),
@@ -1157,6 +1213,7 @@ fn duplicate_id_inside_a_cell_is_rejected() {
     let table = BlockNode::Table(Table {
         id: tid(10),
         grid: Vec::new(),
+        grid_change: None,
         properties: TableProperties::default(),
         rows: vec![TableRow {
             id: tid(11),
@@ -1189,6 +1246,7 @@ fn wrap_in_tables(depth: u32, counter: &mut u64) -> BlockNode {
     BlockNode::Table(Table {
         id: table_id,
         grid: Vec::new(),
+        grid_change: None,
         properties: TableProperties::default(),
         rows: vec![TableRow {
             id: row_id,
@@ -1222,6 +1280,7 @@ fn nested_table_block_count_is_bounded() {
     let table = BlockNode::Table(Table {
         id: tid(10),
         grid: Vec::new(),
+        grid_change: None,
         properties: TableProperties::default(),
         rows: vec![TableRow {
             id: tid(11),
@@ -3136,6 +3195,7 @@ fn nested_table(levels: u32, counter: &mut u64) -> BlockNode {
     BlockNode::Table(Table {
         id: table_id,
         grid: Vec::new(),
+        grid_change: None,
         properties: TableProperties::default(),
         rows: vec![TableRow {
             id: row_id,
@@ -3157,6 +3217,7 @@ fn deep_table_inside_a_block_content_control_validates() {
     let outer = BlockNode::Table(Table {
         id: tid(2),
         grid: Vec::new(),
+        grid_change: None,
         properties: TableProperties::default(),
         rows: vec![TableRow {
             id: tid(3),

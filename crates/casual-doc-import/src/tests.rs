@@ -616,10 +616,10 @@ fn floating_table_position_is_mapped_and_bounded() {
 }
 
 #[test]
-fn cell_property_change_revision_does_not_overwrite_current_properties() {
-    // Regression (adversarial review, major): a w:tcPrChange carries a nested
-    // w:tcPr with the PRE-EDIT properties; schema-ordered last, it must NOT
-    // overwrite the current cell's properties.
+fn cell_property_change_revision_captures_prior_without_overwriting_current() {
+    // A w:tcPrChange carries a nested w:tcPr with the PRE-EDIT properties;
+    // schema-ordered last, it must NOT overwrite the current cell's properties,
+    // and its prior snapshot (FF0000) is modeled on `prop_change`.
     use casual_doc_model::v1::RgbColor;
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
         <w:tbl><w:tr><w:tc>
@@ -639,7 +639,22 @@ fn cell_property_change_revision_does_not_overwrite_current_properties() {
         Some(RgbColor { r: 0, g: 255, b: 0 }),
         "current (00FF00) kept, not the historical FF0000"
     );
-    assert!(features(&import).contains(&"tcPrChange"));
+    let change = cell
+        .properties
+        .prop_change
+        .as_ref()
+        .expect("tcPrChange modeled");
+    assert_eq!(
+        change.prior.shading.fill,
+        Some(RgbColor { r: 255, g: 0, b: 0 }),
+        "prior (FF0000) captured on the change"
+    );
+    assert_eq!(change.author.as_deref(), Some("A"));
+    assert_eq!(change.revision_id.as_deref(), Some("1"));
+    assert!(
+        !features(&import).contains(&"tcPrChange"),
+        "modeled, not reported"
+    );
 }
 
 #[test]
@@ -3149,10 +3164,11 @@ fn revision_inside_a_hyperlink_is_modeled() {
 }
 
 #[test]
-fn paragraph_mark_and_property_change_revisions_are_reported_not_modeled() {
-    // A `w:ins` inside `w:pPr>w:rPr` (paragraph-mark insertion) and a `w:rPrChange`
-    // are not run ranges: they are reported, produce no Revision node, and the
-    // paragraph's real text is intact.
+fn paragraph_mark_insertion_is_reported_and_run_property_change_is_modeled() {
+    // A `w:ins` inside `w:pPr>w:rPr` (paragraph-mark insertion) is not a run
+    // range: it is reported and produces no Revision node. A `w:rPrChange` on the
+    // run IS modeled (its prior snapshot on `prop_change`); the text is intact.
+    use casual_doc_model::v1::InlineNode;
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
         <w:p>
             <w:pPr><w:rPr><w:ins w:id="1"/></w:rPr></w:pPr>
@@ -3171,7 +3187,24 @@ fn paragraph_mark_and_property_change_revisions_are_reported_not_modeled() {
         .for_each(|i| inline_text(i, &mut text));
     assert_eq!(text, "body");
     assert!(features(&import).contains(&"ins"));
-    assert!(features(&import).contains(&"rPrChange"));
+    // The run's rPrChange is modeled (empty prior), not reported.
+    let InlineNode::Run(run) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected a run");
+    };
+    let change = run
+        .properties
+        .prop_change
+        .as_ref()
+        .expect("rPrChange modeled");
+    assert_eq!(change.author.as_deref(), Some("A"));
+    assert_eq!(
+        *change.prior,
+        casual_doc_model::v1::RunProperties::default()
+    );
+    assert!(
+        !features(&import).contains(&"rPrChange"),
+        "modeled, not reported"
+    );
 }
 
 #[test]
