@@ -125,6 +125,8 @@ pub enum ModelError {
     EmptySdt(NodeId),
     /// A content control nested deeper than the supported bound (v1).
     SdtNestingTooDeep(NodeId),
+    /// A DrawingML group nested deeper than the supported bound (v1).
+    GroupNestingTooDeep(NodeId),
 }
 
 impl fmt::Display for ModelError {
@@ -256,6 +258,12 @@ impl fmt::Display for ModelError {
                 write!(
                     formatter,
                     "content control {id} nests deeper than the supported bound"
+                )
+            }
+            Self::GroupNestingTooDeep(id) => {
+                write!(
+                    formatter,
+                    "group {id} nests deeper than the supported bound"
                 )
             }
         }

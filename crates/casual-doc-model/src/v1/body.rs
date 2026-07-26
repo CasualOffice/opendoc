@@ -357,6 +357,209 @@ pub struct AnchoredDrawing {
     /// (non-empty, at most [`MAX_DESCR_BYTES`] bytes).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub descr: Option<String>,
+    /// The stacking key (`wp:anchor@relativeHeight`, `ST_RelFromV`-independent):
+    /// the monotonic z-order Word paints floating objects by (higher paints
+    /// later, i.e. on top), with document order as the tiebreaker. `None` when the
+    /// producer omitted it. `behind_doc` still decides whether the object sits
+    /// below or above the text layer; `relative_height` orders objects *within*
+    /// each of those two bands.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relative_height: Option<u32>,
+}
+
+/// An 8-bit-per-channel RGBA color used by floating-object fills and outlines.
+///
+/// Unlike a run's [`Color`](crate::v1::Color) (a deferred theme-or-RGB reference
+/// resolved at layout), a floating shape's fill/outline is resolved to a concrete
+/// color at import — the DrawingML `a:solidFill` (`a:srgbClr`/`a:schemeClr`/
+/// `a:sysClr`) plus its luminance/tint/shade/alpha modifiers are folded against
+/// the theme color scheme into these four channels.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Rgba {
+    /// Red channel.
+    pub r: u8,
+    /// Green channel.
+    pub g: u8,
+    /// Blue channel.
+    pub b: u8,
+    /// Alpha channel (`255` = opaque).
+    pub a: u8,
+}
+
+/// A point in English Metric Units (EMU): a group child's offset within its
+/// group's child coordinate space (`a:off`), or any DrawingML absolute point.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PointEmu {
+    /// X coordinate in EMU (signed; a child may sit left of the group origin).
+    pub x_emu: i64,
+    /// Y coordinate in EMU (signed).
+    pub y_emu: i64,
+}
+
+/// The outline (`a:ln`) of a floating shape: a resolved color and a width in EMU.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ShapeStroke {
+    /// The resolved outline color.
+    pub color: Rgba,
+    /// The outline width in EMU (`a:ln@w`; `0..=MAX_EMU`).
+    pub width_emu: i64,
+}
+
+/// The preset geometry of a simple DrawingML shape (`a:prstGeom@prst`). Only the
+/// handful of presets that occur as group decorations are distinguished; every
+/// other preset is [`ShapeGeometry::Other`] (drawn as its bounding rectangle).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ShapeGeometry {
+    /// A rectangle (`rect`).
+    Rectangle,
+    /// A rounded rectangle (`roundRect`), drawn as a rectangle in this slice.
+    RoundRectangle,
+    /// An ellipse (`ellipse`).
+    Ellipse,
+    /// A straight line / connector (`line`, or a `wps:cxnSp` straight connector).
+    Line,
+    /// Any other preset, drawn as its bounding rectangle.
+    Other,
+}
+
+/// A group transform (`wpg:grpSpPr`/`a:grpSpPr` `a:xfrm`): the group's box in its
+/// parent's coordinate space (`a:off`/`a:ext`) and the child coordinate space the
+/// children's offsets/extents are expressed in (`a:chOff`/`a:chExt`). A child
+/// point `p` maps to the parent space by
+/// `off + (p - chOff) * (ext / chExt)` per axis, so a group can translate and
+/// scale its children.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GroupTransform {
+    /// The group box origin in the parent space (`a:off`).
+    pub offset: PointEmu,
+    /// The group box size in the parent space (`a:ext`).
+    pub extent: Extent,
+    /// The child-space origin (`a:chOff`).
+    pub child_offset: PointEmu,
+    /// The child-space size (`a:chExt`).
+    pub child_extent: Extent,
+}
+
+/// A picture child of a [`WordprocessingGroup`] (`pic:pic`): an embedded picture
+/// sized by its OWN `a:ext` (not the enclosing group's extent — this is what
+/// keeps a grouped logo from being stretched to the group box).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GroupPicture {
+    /// Stable identity.
+    pub id: NodeId,
+    /// The referenced media entry (resolves in `Definitions::media`).
+    pub media: MediaId,
+    /// The picture's top-left in the group's child coordinate space (`a:off`).
+    pub offset: PointEmu,
+    /// The picture's own size (`a:ext`, EMU).
+    pub extent: Extent,
+    /// The alt text (`wp:docPr@descr`/`pic:cNvPr@descr`), if declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub descr: Option<String>,
+}
+
+/// A text-box child of a [`WordprocessingGroup`] (`wps:wsp` with a `wps:txbx`):
+/// self-positioning block content with an optional fill and outline.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GroupTextBox {
+    /// Stable identity.
+    pub id: NodeId,
+    /// The box's top-left in the group's child coordinate space (`a:off`).
+    pub offset: PointEmu,
+    /// The box's size (`a:ext`, EMU).
+    pub extent: Extent,
+    /// The box's block content (non-empty; paragraphs and nested tables), flowed
+    /// through the same pipeline as the body.
+    pub blocks: Vec<BlockNode>,
+    /// The box background fill (`a:solidFill`), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill: Option<Rgba>,
+    /// The box outline (`a:ln`), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub border: Option<ShapeStroke>,
+}
+
+/// A shape child of a [`WordprocessingGroup`] (`wps:wsp`/`wps:cxnSp` with no
+/// text): a preset geometry with an optional fill and outline. Rectangles and
+/// lines/connectors that layer around the group's pictures are the common case.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GroupShape {
+    /// Stable identity.
+    pub id: NodeId,
+    /// The shape's top-left in the group's child coordinate space (`a:off`).
+    pub offset: PointEmu,
+    /// The shape's size (`a:ext`, EMU). A line's `cy` (or `cx`) may be `0`.
+    pub extent: Extent,
+    /// The preset geometry (`a:prstGeom@prst`).
+    pub geometry: ShapeGeometry,
+    /// The fill (`a:solidFill`), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill: Option<Rgba>,
+    /// The outline (`a:ln`), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stroke: Option<ShapeStroke>,
+}
+
+/// A child of a [`WordprocessingGroup`], in the group's child coordinate space.
+/// The children are stored in DOCUMENT ORDER; Word paints them in that order, so
+/// the child's index in [`WordprocessingGroup::children`] IS its intra-group
+/// z-index (a later child paints on top of an earlier one).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum GroupChild {
+    /// An embedded picture (`pic:pic`).
+    Picture(GroupPicture),
+    /// A text box (`wps:wsp` with `wps:txbx`).
+    TextBox(GroupTextBox),
+    /// A rectangle / line / other preset shape (`wps:wsp`/`wps:cxnSp`).
+    Shape(GroupShape),
+    /// A nested group (`wpg:grpSp`), positioned by its own transform.
+    Group(WordprocessingGroup),
+}
+
+/// The maximum nesting depth of DrawingML groups (a `wpg:grpSp` inside a
+/// `wpg:grpSp` inside …), bounding recursion during import and validation.
+pub const MAX_GROUP_DEPTH: u32 = 16;
+
+/// A DrawingML group (`wpg:wgp` as an anchored object, or `wpg:grpSp` nested):
+/// a positioned container that paints an ordered list of children (pictures, text
+/// boxes, shapes, and nested groups) in its own coordinate space.
+///
+/// The top-level anchored group carries the floating [`anchor`](Self::anchor),
+/// the anchor `wp:extent`, and the [`relative_height`](Self::relative_height) z
+/// key; a nested group leaves those `None`/`0` and is positioned purely by its
+/// [`transform`](Self::transform). Sizing each picture by its OWN extent (rather
+/// than the group's) is what fixes the stretched-logo defect; painting children
+/// in order is what reproduces Word's "one shape behind the image, one in front"
+/// layering.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WordprocessingGroup {
+    /// Stable identity.
+    pub id: NodeId,
+    /// The floating anchor (`wp:anchor`) — `Some` for a top-level anchored group,
+    /// `None` for a nested `wpg:grpSp` (positioned by its parent's child space).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<DrawingAnchor>,
+    /// The stacking key (`wp:anchor@relativeHeight`) for a top-level group; `None`
+    /// for a nested group. See [`AnchoredDrawing::relative_height`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relative_height: Option<u32>,
+    /// The anchor size (`wp:extent`, EMU) for a top-level group. Unused for a
+    /// nested group, whose box is its [`transform`](Self::transform)'s `extent`.
+    pub extent: Extent,
+    /// The group transform (`a:xfrm`): parent-space box + child coordinate space.
+    pub transform: GroupTransform,
+    /// The children, in document (paint) order.
+    pub children: Vec<GroupChild>,
 }
 
 /// The relationship type and package part a first-class embedded object
@@ -672,6 +875,26 @@ pub const MAX_TEXTBOX_DEPTH: u32 = 8;
 pub struct TextBox {
     /// Stable identity.
     pub id: NodeId,
+    /// The floating anchor (`wp:anchor`), when this text box is positioned rather
+    /// than inline. `None` = the inline case (laid out in the run flow, as before);
+    /// `Some` = a self-positioning floating text box placed at its anchor, painted
+    /// through the float layer with its own [`fill`](Self::fill)/[`border`](Self::border).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<DrawingAnchor>,
+    /// The stacking key (`wp:anchor@relativeHeight`) when floating; see
+    /// [`AnchoredDrawing::relative_height`]. `None` for an inline text box.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relative_height: Option<u32>,
+    /// The box's rendered size (`wp:extent`, EMU) when floating. `None` for an
+    /// inline text box (which sizes to the column width and its content height).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extent: Option<Extent>,
+    /// The box background fill (`a:solidFill`), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill: Option<Rgba>,
+    /// The box outline (`a:ln`), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub border: Option<ShapeStroke>,
     /// The text box's block content (non-empty; paragraphs and nested tables).
     pub blocks: Vec<BlockNode>,
 }
@@ -1134,8 +1357,12 @@ pub enum InlineNode {
     Hyperlink(Hyperlink),
     /// An inline field: an instruction and its cached result.
     Field(Field),
-    /// An inline text box holding block content.
+    /// An inline text box holding block content (inline, or floating when it
+    /// carries a [`TextBox::anchor`]).
     TextBox(TextBox),
+    /// A DrawingML group (`wpg:wgp`): a floating, z-ordered container of
+    /// pictures, text boxes, and shapes.
+    Group(WordprocessingGroup),
     /// An inline reference to a footnote or endnote.
     NoteReference(NoteReference),
     /// An inline reference to a comment.
@@ -1182,6 +1409,7 @@ impl InlineNode {
             Self::Hyperlink(hyperlink) => hyperlink.id,
             Self::Field(field) => field.id,
             Self::TextBox(text_box) => text_box.id,
+            Self::Group(group) => group.id,
             Self::NoteReference(note) => note.id,
             Self::CommentReference(comment) => comment.id,
             Self::CommentRangeStart(node) => node.id,
