@@ -298,7 +298,10 @@ enum WidthSpec {
     /// A fixed width in twips.
     Dxa(i32),
     /// A percentage of the containing width, in fiftieths of a percent
-    /// (`5000` = 100%).
+    /// (`5000` = 100%). The v1 model stores `w:tblW` as `dxa` only, so the flow
+    /// path never emits this today; the solver implements it (and it is covered
+    /// by tests) so percentage widths are ready the moment the model carries them.
+    #[allow(dead_code)]
     Pct(u32),
 }
 
