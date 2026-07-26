@@ -18,16 +18,17 @@ use std::io::{Cursor, Write};
 
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, AppProperties, BlockNode, BorderEdge,
-    BreakKind, CellVerticalAlignment, Color, Comment, CommentId, CoreProperties, CustomProperty,
-    CustomValue, DefinitionMap, Definitions, DocGridType, Document, DocumentSettings, EmphasisMark,
-    Extent, FontCollection, FontDescriptor, FontFamilyKind, FontPitch, FontRef, FontScheme,
-    HeaderFooterId, HeaderFooterKind, HeightRule, HighlightColor, HyperlinkTarget, InlineNode,
-    MediaId, MediaReference, Note, NoteId, NoteKind, NumberingInstance, NumberingInstanceId,
-    PageVerticalAlignment, ParagraphProperties, RevisionKind, RgbColor, RunFontHint, RunProperties,
-    SdtControlKind, SdtProperties, SectionBoundary, SectionType, Style, StyleId, StyleKind,
-    TabAlignment, TabLeader, Table, TableBorders, TableCell, TableCellProperties, TableLayout,
-    TableOverlap, TableProperties, TableRow, TableRowProperties, TextDirection, ThemeFontRef,
-    VerticalAlignment, VerticalMerge, VerticalTextAlignment,
+    BreakKind, CellVerticalAlignment, Color, ColorScheme, Comment, CommentId, CoreProperties,
+    CustomProperty, CustomValue, DefinitionMap, Definitions, DocGridType, Document,
+    DocumentDefaults, DocumentSettings, EmphasisMark, Extent, FontCollection, FontDescriptor,
+    FontFamilyKind, FontPitch, FontRef, FontScheme, HeaderFooterId, HeaderFooterKind, HeightRule,
+    HighlightColor, HyperlinkTarget, InlineNode, MediaId, MediaReference, Note, NoteId, NoteKind,
+    NumberingInstance, NumberingInstanceId, PageVerticalAlignment, ParagraphProperties,
+    RevisionKind, RgbColor, RunFontHint, RunProperties, SchemeColor, SdtControlKind, SdtProperties,
+    SectionBoundary, SectionType, Style, StyleId, StyleKind, TabAlignment, TabLeader, Table,
+    TableBorders, TableCell, TableCellProperties, TableLayout, TableOverlap, TableProperties,
+    TableRow, TableRowProperties, TextDirection, ThemeFontRef, VerticalAlignment, VerticalMerge,
+    VerticalTextAlignment,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -288,13 +289,20 @@ pub fn write_document(
         ));
     }
     let has_embedded_fonts = !font_rels.is_empty();
-    if let Some(scheme) = &definitions.font_scheme {
+    if definitions.font_scheme.is_some()
+        || definitions.color_scheme.is_some()
+        || definitions.format_scheme_xml.is_some()
+    {
         extras.push(ExtraPart::new(
             "word/theme/theme1.xml",
             THEME_CT,
             THEME_REL_TYPE,
             "theme/theme1.xml",
-            theme_xml(scheme)?,
+            theme_xml(
+                definitions.font_scheme.as_ref(),
+                definitions.color_scheme.as_ref(),
+                definitions.format_scheme_xml.as_deref(),
+            )?,
         ));
     }
     if !definitions.settings.is_default() {
@@ -306,13 +314,13 @@ pub fn write_document(
             settings_xml(&definitions.settings)?,
         ));
     }
-    if !definitions.styles.is_empty() {
+    if !definitions.styles.is_empty() || definitions.document_defaults.is_some() {
         extras.push(ExtraPart::new(
             "word/styles.xml",
             STYLES_CT,
             STYLES_REL_TYPE,
             "styles.xml",
-            styles_xml(&definitions.styles)?,
+            styles_xml(&definitions.styles, definitions.document_defaults.as_ref())?,
         ));
     }
     if !definitions.abstract_numbering.is_empty() || !definitions.numbering.is_empty() {
@@ -1155,9 +1163,16 @@ fn font_pitch_token(pitch: FontPitch) -> &'static str {
     }
 }
 
-/// Emits `word/theme/theme1.xml` carrying just the font scheme (the colour and
-/// format schemes are the byte-floor's concern, not the semantic model's).
-fn theme_xml(scheme: &FontScheme) -> Result<Vec<u8>, ExportError> {
+/// Emits `word/theme/theme1.xml` from the modeled schemes. `themeElements`
+/// children are emitted in the schema order `clrScheme`, `fontScheme`,
+/// `fmtScheme`: the colour scheme (from the model), the font scheme (from the
+/// model), then the format scheme (retained verbatim). Each is emitted only when
+/// present so the round trip is exact.
+fn theme_xml(
+    font_scheme: Option<&FontScheme>,
+    color_scheme: Option<&ColorScheme>,
+    format_scheme_xml: Option<&str>,
+) -> Result<Vec<u8>, ExportError> {
     let mut w = new_writer();
     let mut root = start("a:theme");
     root.push_attribute(("xmlns:a", A_NS));
@@ -1165,18 +1180,83 @@ fn theme_xml(scheme: &FontScheme) -> Result<Vec<u8>, ExportError> {
     w.write_event(Event::Start(root)).map_err(pkg)?;
     w.write_event(Event::Start(start("a:themeElements")))
         .map_err(pkg)?;
-    let mut font_scheme = start("a:fontScheme");
-    font_scheme.push_attribute(("name", "Office"));
-    w.write_event(Event::Start(font_scheme)).map_err(pkg)?;
-    write_font_collection(&mut w, "a:majorFont", &scheme.major)?;
-    write_font_collection(&mut w, "a:minorFont", &scheme.minor)?;
-    w.write_event(Event::End(BytesEnd::new("a:fontScheme")))
-        .map_err(pkg)?;
+    if let Some(scheme) = color_scheme {
+        write_color_scheme(&mut w, scheme)?;
+    }
+    if let Some(scheme) = font_scheme {
+        let mut font_scheme = start("a:fontScheme");
+        font_scheme.push_attribute(("name", "Office"));
+        w.write_event(Event::Start(font_scheme)).map_err(pkg)?;
+        write_font_collection(&mut w, "a:majorFont", &scheme.major)?;
+        write_font_collection(&mut w, "a:minorFont", &scheme.minor)?;
+        w.write_event(Event::End(BytesEnd::new("a:fontScheme")))
+            .map_err(pkg)?;
+    }
+    if let Some(xml) = format_scheme_xml {
+        // Retained verbatim: write the captured subtree bytes directly (they are
+        // already a serialized `a:fmtScheme` element with `a:`-prefixed names,
+        // which the `xmlns:a` on the root resolves).
+        w.get_mut().write_all(xml.as_bytes()).map_err(pkg)?;
+    }
     w.write_event(Event::End(BytesEnd::new("a:themeElements")))
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("a:theme")))
         .map_err(pkg)?;
     Ok(finish(w))
+}
+
+/// Emits `a:clrScheme` with its twelve named slots in OOXML child order.
+fn write_color_scheme(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    scheme: &ColorScheme,
+) -> Result<(), ExportError> {
+    let mut root = start("a:clrScheme");
+    root.push_attribute(("name", scheme.name.as_str()));
+    w.write_event(Event::Start(root)).map_err(pkg)?;
+    for (tag, color) in [
+        ("a:dk1", &scheme.dark1),
+        ("a:lt1", &scheme.light1),
+        ("a:dk2", &scheme.dark2),
+        ("a:lt2", &scheme.light2),
+        ("a:accent1", &scheme.accent1),
+        ("a:accent2", &scheme.accent2),
+        ("a:accent3", &scheme.accent3),
+        ("a:accent4", &scheme.accent4),
+        ("a:accent5", &scheme.accent5),
+        ("a:accent6", &scheme.accent6),
+        ("a:hlink", &scheme.hyperlink),
+        ("a:folHlink", &scheme.followed_hyperlink),
+    ] {
+        w.write_event(Event::Start(start(tag))).map_err(pkg)?;
+        write_scheme_color(w, color)?;
+        w.write_event(Event::End(BytesEnd::new(tag))).map_err(pkg)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("a:clrScheme")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits a single scheme color value (`a:srgbClr` or `a:sysClr`).
+fn write_scheme_color(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    color: &SchemeColor,
+) -> Result<(), ExportError> {
+    match color {
+        SchemeColor::Srgb(rgb) => {
+            let mut el = start("a:srgbClr");
+            el.push_attribute(("val", rgb_hex(rgb).as_str()));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+        SchemeColor::System(system) => {
+            let mut el = start("a:sysClr");
+            el.push_attribute(("val", system.value.as_str()));
+            if let Some(last) = &system.last_color {
+                el.push_attribute(("lastClr", rgb_hex(last).as_str()));
+            }
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+    }
+    Ok(())
 }
 
 fn write_font_collection(
@@ -1217,11 +1297,45 @@ fn write_font_collection(
 /// derived from the internal `StyleId` (as bookmarks derive `w:id`), so a body
 /// `w:pStyle`/`w:rStyle` and a `w:basedOn` that reference the same id emit the
 /// same string and re-import to the same `StyleId`.
-fn styles_xml(styles: &DefinitionMap<StyleId, Style>) -> Result<Vec<u8>, ExportError> {
+fn styles_xml(
+    styles: &DefinitionMap<StyleId, Style>,
+    document_defaults: Option<&DocumentDefaults>,
+) -> Result<Vec<u8>, ExportError> {
     let mut w = new_writer();
     let mut root = start("w:styles");
     root.push_attribute(("xmlns:w", W_NS));
     w.write_event(Event::Start(root)).map_err(pkg)?;
+    // `w:docDefaults` precedes the styles (schema order): `w:rPrDefault` then
+    // `w:pPrDefault`. A `Some(default)` run/paragraph still emits its (empty)
+    // element so the importer sees the tag's presence across the round trip.
+    if let Some(defaults) = document_defaults {
+        w.write_event(Event::Start(start("w:docDefaults")))
+            .map_err(pkg)?;
+        w.write_event(Event::Start(start("w:rPrDefault")))
+            .map_err(pkg)?;
+        if let Some(run) = &defaults.run {
+            if *run == RunProperties::default() {
+                w.write_event(Event::Empty(start("w:rPr"))).map_err(pkg)?;
+            } else {
+                write_run_properties(&mut w, run)?;
+            }
+        }
+        w.write_event(Event::End(BytesEnd::new("w:rPrDefault")))
+            .map_err(pkg)?;
+        w.write_event(Event::Start(start("w:pPrDefault")))
+            .map_err(pkg)?;
+        if let Some(paragraph) = &defaults.paragraph {
+            if *paragraph == ParagraphProperties::default() {
+                w.write_event(Event::Empty(start("w:pPr"))).map_err(pkg)?;
+            } else {
+                write_paragraph_properties(&mut w, paragraph, None)?;
+            }
+        }
+        w.write_event(Event::End(BytesEnd::new("w:pPrDefault")))
+            .map_err(pkg)?;
+        w.write_event(Event::End(BytesEnd::new("w:docDefaults")))
+            .map_err(pkg)?;
+    }
     for (id, style) in styles.iter() {
         let style_id = style_id_token(*id);
         let mut el = start("w:style");

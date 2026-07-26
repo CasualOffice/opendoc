@@ -202,7 +202,7 @@ pub enum RunFontHint {
 }
 
 /// An explicit sRGB color.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RgbColor {
     /// Red channel.
@@ -488,6 +488,71 @@ pub struct FontScheme {
     pub major: FontCollection,
     /// The minor (body) collection (`a:minorFont`).
     pub minor: FontCollection,
+}
+
+/// A system color (`a:sysClr`, ECMA-376 §20.1.2.3.33): a named system-palette
+/// token plus the last computed sRGB value the producer resolved it to, used as
+/// the fallback when the live system value is unavailable.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SystemColor {
+    /// The system color token (`@val`, e.g. `windowText`, `window`).
+    pub value: String,
+    /// The last computed sRGB value (`@lastClr`), if present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_color: Option<RgbColor>,
+}
+
+/// A theme scheme color slot value (an `a:clrScheme` child such as `a:dk1`):
+/// either an explicit sRGB color (`a:srgbClr`) or a system color (`a:sysClr`).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SchemeColor {
+    /// An explicit sRGB color (`a:srgbClr`).
+    Srgb(RgbColor),
+    /// A system color (`a:sysClr`).
+    System(SystemColor),
+}
+
+impl Default for SchemeColor {
+    fn default() -> Self {
+        SchemeColor::Srgb(RgbColor::default())
+    }
+}
+
+/// The theme color scheme (`theme1.xml` `a:clrScheme`, ECMA-376 §20.1.6.2): the
+/// scheme name and the twelve named color slots that `w:themeColor` references
+/// resolve against. Slot order matches the OOXML child order.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ColorScheme {
+    /// The scheme name (`@name`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    /// Dark 1 (`a:dk1`).
+    pub dark1: SchemeColor,
+    /// Light 1 (`a:lt1`).
+    pub light1: SchemeColor,
+    /// Dark 2 (`a:dk2`).
+    pub dark2: SchemeColor,
+    /// Light 2 (`a:lt2`).
+    pub light2: SchemeColor,
+    /// Accent 1 (`a:accent1`).
+    pub accent1: SchemeColor,
+    /// Accent 2 (`a:accent2`).
+    pub accent2: SchemeColor,
+    /// Accent 3 (`a:accent3`).
+    pub accent3: SchemeColor,
+    /// Accent 4 (`a:accent4`).
+    pub accent4: SchemeColor,
+    /// Accent 5 (`a:accent5`).
+    pub accent5: SchemeColor,
+    /// Accent 6 (`a:accent6`).
+    pub accent6: SchemeColor,
+    /// Hyperlink (`a:hlink`).
+    pub hyperlink: SchemeColor,
+    /// Followed hyperlink (`a:folHlink`).
+    pub followed_hyperlink: SchemeColor,
 }
 
 /// Paragraph indentation in twips.
