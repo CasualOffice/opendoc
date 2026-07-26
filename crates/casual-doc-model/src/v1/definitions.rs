@@ -3,10 +3,10 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    AbstractNumberingId, BlockNode, BookmarkId, ColorScheme, CommentId, DefinitionMap,
+    AbstractNumberingId, BlockNode, BookmarkId, BorderEdge, ColorScheme, CommentId, DefinitionMap,
     FontDescriptor, FontScheme, HeaderFooterId, MediaId, NoteId, NumberingInstanceId,
     ParagraphProperties, RunProperties, SectionId, StyleId, StyleKind, TableCellProperties,
-    TableProperties, TableRowProperties,
+    TableProperties, TableRowProperties, TextDirection,
 };
 
 /// The table region a `w:tblStylePr` conditional format applies to
@@ -421,6 +421,195 @@ pub struct HeaderFooterRef {
     pub reference: HeaderFooterId,
 }
 
+/// Page orientation (`w:pgSz/@w:orient`, `ST_PageOrientation`). Word derives the
+/// printed orientation from this flag; the page size itself stays as written.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PageOrientation {
+    /// Portrait (`portrait`).
+    Portrait,
+    /// Landscape (`landscape`).
+    Landscape,
+}
+
+/// Which pages a section's page border is drawn on (`w:pgBorders/@w:display`,
+/// `ST_PageBorderDisplay`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PageBorderDisplay {
+    /// Every page (`allPages`).
+    AllPages,
+    /// The first page only (`firstPage`).
+    FirstPage,
+    /// Every page except the first (`notFirstPage`).
+    NotFirstPage,
+}
+
+/// What a section's page border is measured from (`w:pgBorders/@w:offsetFrom`,
+/// `ST_PageBorderOffset`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PageBorderOffset {
+    /// Offset from the page edge (`page`).
+    Page,
+    /// Offset from the text extent (`text`).
+    Text,
+}
+
+/// Section page borders (`w:pgBorders`) — the four page edges plus where they are
+/// drawn (`display`) and measured from (`offsetFrom`). Each edge reuses the shared
+/// [`BorderEdge`] value type. Page borders use `w:left`/`w:right`, mapped to
+/// `start`/`end` here.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PageBorders {
+    /// Which pages the border is drawn on (`@w:display`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<PageBorderDisplay>,
+    /// What the border offset is measured from (`@w:offsetFrom`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset_from: Option<PageBorderOffset>,
+    /// Top edge (`w:top`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top: Option<BorderEdge>,
+    /// Bottom edge (`w:bottom`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bottom: Option<BorderEdge>,
+    /// Leading (start) edge (`w:left`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<BorderEdge>,
+    /// Trailing (end) edge (`w:right`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end: Option<BorderEdge>,
+}
+
+impl PageBorders {
+    /// Whether nothing is set (serializes to nothing).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// Where line numbers restart within a section (`w:lnNumType/@w:restart`,
+/// `ST_LineNumberRestart`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LineNumberRestart {
+    /// Restart on every new page (`newPage`).
+    NewPage,
+    /// Restart at the section start (`newSection`).
+    NewSection,
+    /// Never restart (`continuous`).
+    Continuous,
+}
+
+/// Section line numbering (`w:lnNumType`) — margin line numbers and their step,
+/// origin, gap, and restart policy.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LineNumbering {
+    /// Number every Nth line (`@w:countBy`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count_by: Option<i32>,
+    /// First line number (`@w:start`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<i32>,
+    /// Distance from text to the numbers in twips (`@w:distance`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distance: Option<i32>,
+    /// Restart policy (`@w:restart`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restart: Option<LineNumberRestart>,
+}
+
+impl LineNumbering {
+    /// Whether nothing is set (serializes to nothing).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// Where a section's footnotes or endnotes are placed (`w:footnotePr`/`w:endnotePr`
+/// `w:pos`). The union of `ST_FtnPos` (footnotes) and `ST_EdnPos` (endnotes) is
+/// modeled; an unknown token is reported by the importer, never silently kept.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum NotePosition {
+    /// The bottom of the page (`pageBottom`, footnotes).
+    PageBottom,
+    /// Immediately beneath the text (`beneathText`, footnotes).
+    BeneathText,
+    /// The end of the section (`sectEnd`).
+    SectionEnd,
+    /// The end of the document (`docEnd`).
+    DocumentEnd,
+}
+
+/// A section's note numbering restart policy (`w:numRestart/@w:val`,
+/// `ST_RestartNumber`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum NoteNumberRestart {
+    /// Never restart (`continuous`).
+    Continuous,
+    /// Restart each section (`eachSect`).
+    EachSection,
+    /// Restart each page (`eachPage`).
+    EachPage,
+}
+
+/// Per-section footnote or endnote properties (`w:footnotePr`/`w:endnotePr`):
+/// placement plus the numbering format/origin/restart overrides that apply within
+/// the section. The numbering format token (`w:numFmt`) is kept opaque and bounded
+/// like [`PageNumbering::format`]; every field is additive.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NoteProperties {
+    /// Placement of the notes (`w:pos`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<NotePosition>,
+    /// Number format token (`w:numFmt/@w:val`), bounded to 32 bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number_format: Option<String>,
+    /// Starting number (`w:numStart/@w:val`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number_start: Option<i32>,
+    /// Numbering restart policy (`w:numRestart/@w:val`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number_restart: Option<NoteNumberRestart>,
+}
+
+impl NoteProperties {
+    /// Whether nothing is set (serializes to nothing).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// Section paper source bins (`w:paperSrc`) — the printer tray for the first page
+/// and for all other pages.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PaperSource {
+    /// First-page paper bin (`@w:first`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first: Option<i32>,
+    /// Paper bin for all other pages (`@w:other`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub other: Option<i32>,
+}
+
+impl PaperSource {
+    /// Whether nothing is set (serializes to nothing).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// One ordered section boundary.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -454,6 +643,34 @@ pub struct SectionBoundary {
     /// Document grid (`w:docGrid`).
     #[serde(default, skip_serializing_if = "DocGrid::is_empty")]
     pub doc_grid: DocGrid,
+    /// Page orientation (`w:pgSz/@w:orient`). Additive: omitted when absent so
+    /// pre-existing snapshots serialize byte-identically.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orientation: Option<PageOrientation>,
+    /// Paper source bins (`w:paperSrc`). Additive: omitted when empty.
+    #[serde(default, skip_serializing_if = "PaperSource::is_empty")]
+    pub paper_source: PaperSource,
+    /// Page borders (`w:pgBorders`). Additive: omitted when empty.
+    #[serde(default, skip_serializing_if = "PageBorders::is_empty")]
+    pub page_borders: PageBorders,
+    /// Line numbering (`w:lnNumType`). Additive: omitted when empty.
+    #[serde(default, skip_serializing_if = "LineNumbering::is_empty")]
+    pub line_numbering: LineNumbering,
+    /// Per-section footnote properties (`w:footnotePr`). Additive: omitted when
+    /// empty.
+    #[serde(default, skip_serializing_if = "NoteProperties::is_empty")]
+    pub footnote_props: NoteProperties,
+    /// Per-section endnote properties (`w:endnotePr`). Additive: omitted when
+    /// empty.
+    #[serde(default, skip_serializing_if = "NoteProperties::is_empty")]
+    pub endnote_props: NoteProperties,
+    /// Text flow direction for the section (`w:textDirection`). Additive: omitted
+    /// when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_direction: Option<TextDirection>,
+    /// Right-to-left section layout (`w:bidi`). Additive: omitted when false.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub bidi: bool,
 }
 
 /// A header or footer definition (its id is the map key). Its content reuses the
