@@ -9,6 +9,12 @@ repository.workspace = true
 authors.workspace = true
 publish = false
 
+[features]
+# Forwards to `casual-doc-layout/system-fonts`: enables the native OS font
+# fallback so examples/tests that render CJK/complex text pick up installed
+# system faces. OFF by default; compiled out on `wasm32`.
+system-fonts = ["casual-doc-layout/system-fonts"]
+
 [dependencies]
 casual-doc-layout.workspace = true
 skrifa = "0.43"

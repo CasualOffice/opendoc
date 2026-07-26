@@ -12,14 +12,16 @@
 //! font-name matching, fallback — is `P1C-002` (`40-FONT-MANAGEMENT-DESIGN.md`).
 
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::sync::Arc;
 
-use parley::fontique::Blob;
+use fontique::{Blob, Script};
 use parley::{
     Alignment, AlignmentOptions, FontContext, FontFamily, FontStyle, FontWeight, IndentOptions,
     LayoutContext, LineHeight, PositionedLayoutItem, StyleProperty,
 };
 
+use crate::font_registry::FontRegistry;
 use crate::model::{ModelPos, ModelRange};
 use crate::text::{
     Decoration, FontId, Glyph, GlyphRun, Line, LineBreak, LineConstraints, LineLayout, LineShaper,
@@ -55,6 +57,15 @@ pub struct ParleyShaper {
     /// base [`FontId`], in ascending `base` order — used to push the resolved
     /// family per run so `parley` shapes with the same face the resolver chose.
     families: Vec<(u32, String)>,
+    /// The `Blob` ids of the bundled faces. A run whose resolved face is one of
+    /// these keeps its bundled `FontId` (so the bundled/golden path is byte-for-byte
+    /// unchanged); a run resolved to any other face (a `system-fonts` OS fallback or
+    /// a host-registered blob) is interned into [`Self::registry`] instead.
+    bundled_blobs: HashSet<u64>,
+    /// The shared dynamic registry: system- and host-resolved fallback faces the
+    /// renderer fetches bytes from, plus the running coverage gap. Cloned handle —
+    /// call [`Self::registry`] to share it with the renderer.
+    registry: FontRegistry,
 }
 
 impl ParleyShaper {
@@ -67,13 +78,16 @@ impl ParleyShaper {
     pub fn new() -> Self {
         let mut fonts = FontContext::new();
         let mut families: Vec<(u32, String)> = Vec::with_capacity(crate::fonts::FAMILIES.len());
+        let mut bundled_blobs = HashSet::new();
         for family in crate::fonts::FAMILIES {
             let mut family_id = None;
             for offset in 0..4u32 {
                 let bytes = family.face_bytes(offset);
-                let registered = fonts
-                    .collection
-                    .register_fonts(Blob::new(Arc::new(bytes.to_vec())), None);
+                let blob = Blob::new(Arc::new(bytes.to_vec()));
+                // Remember the blob id so a run parley resolves to this exact face
+                // is recognized as bundled (and keeps its bundled `FontId`).
+                bundled_blobs.insert(blob.id());
+                let registered = fonts.collection.register_fonts(blob, None);
                 if family_id.is_none() {
                     family_id = registered.first().map(|(id, _)| *id);
                 }
@@ -92,7 +106,72 @@ impl ParleyShaper {
             layout_cx: RefCell::new(LayoutContext::new()),
             default_family,
             families,
+            bundled_blobs,
+            registry: FontRegistry::new(),
         }
+    }
+
+    /// A shared handle to the dynamic [`FontRegistry`] this shaper populates while
+    /// shaping (system- and host-resolved fallback faces + the coverage gap). Pass
+    /// its [`snapshot`](FontRegistry::snapshot) to the renderer so it can rasterize
+    /// the same fallback faces the shaper used, and query
+    /// [`missing_coverage`](FontRegistry::missing_coverage) to learn which code
+    /// points still have no covering face.
+    #[must_use]
+    pub fn registry(&self) -> FontRegistry {
+        self.registry.clone()
+    }
+
+    /// Registers a host-provided font blob at runtime so the shaper can shape with
+    /// it (by family name) and the renderer can rasterize it — the seam a browser
+    /// uses to feed a network-fetched face (e.g. Noto CJK) and any embedded-font
+    /// path rides. Returns the [`FontId`] of each face registered (a `.ttc`
+    /// collection yields several). To make the face participate in *coverage*
+    /// fallback for scripts the bundled faces miss, use
+    /// [`register_fallback_font`](Self::register_fallback_font).
+    pub fn register_font(&self, bytes: Vec<u8>) -> Vec<FontId> {
+        let blob = Blob::new(Arc::new(bytes));
+        let registered = {
+            let mut fonts = self.fonts.borrow_mut();
+            fonts.collection.register_fonts(blob.clone(), None)
+        };
+        let mut ids = Vec::new();
+        for (_family, infos) in &registered {
+            for info in infos {
+                ids.push(self.registry.intern(blob.clone(), info.index()));
+            }
+        }
+        ids
+    }
+
+    /// Registers a host-provided font blob and wires it as a fallback for the given
+    /// scripts (ISO 15924 codes, e.g. `"Hani"`, `"Hira"`, `"Kana"`, `"Hang"`), so a
+    /// run whose code points the bundled faces do not cover shapes with it. This is
+    /// the browser's Noto-CJK path made functional without the native system
+    /// source: after `register_fallback_font(noto_cjk, &["Hani", "Hira", "Kana",
+    /// "Hang"])`, CJK runs resolve to the host face. Returns the registered faces'
+    /// [`FontId`]s.
+    pub fn register_fallback_font(&self, bytes: Vec<u8>, scripts: &[&str]) -> Vec<FontId> {
+        let blob = Blob::new(Arc::new(bytes));
+        let registered = {
+            let mut fonts = self.fonts.borrow_mut();
+            let registered = fonts.collection.register_fonts(blob.clone(), None);
+            let family_ids: Vec<_> = registered.iter().map(|(family, _)| *family).collect();
+            for code in scripts {
+                let script = Script::from_str_unchecked(code);
+                fonts
+                    .collection
+                    .append_fallbacks(script, family_ids.iter().copied());
+            }
+            registered
+        };
+        let mut ids = Vec::new();
+        for (_family, infos) in &registered {
+            for info in infos {
+                ids.push(self.registry.intern(blob.clone(), info.index()));
+            }
+        }
+        ids
     }
 
     /// The registered family name for a run's resolved [`FontId`] (the family
@@ -252,7 +331,34 @@ impl LineShaper for ParleyShaper {
                     continue;
                 };
                 let style = glyph_run.style();
-                let size = Twip(glyph_run.run().font_size().round() as i32);
+                let run = glyph_run.run();
+                let size = Twip(run.font_size().round() as i32);
+                // The face `parley` actually shaped this run with. When it is a
+                // bundled face (always true with `system-fonts` off and no host
+                // font registered) it equals the resolver's choice, carried on the
+                // brush — so the bundled/golden path is byte-for-byte unchanged.
+                // When it is anything else — an OS fallback picked for uncovered
+                // code points (`system-fonts`) or a host-registered blob — we
+                // intern it so the renderer fetches its bytes by the same `FontId`.
+                let resolved = run.font();
+                let font = if self.bundled_blobs.contains(&resolved.data.id()) {
+                    FontId(style.brush.font)
+                } else {
+                    self.registry.intern(resolved.data.clone(), resolved.index)
+                };
+                // Record any code point that shaped to `.notdef` (glyph id 0) —
+                // no bundled, system, or host face covered it — as a coverage gap
+                // a host can query (`registry.missing_coverage`) and fetch a face
+                // for. Harmless and output-neutral; only populates the registry.
+                for cluster in run.visual_clusters() {
+                    if cluster.glyphs().any(|glyph| glyph.id == 0)
+                        && let Some(slice) = text.get(cluster.text_range())
+                    {
+                        for ch in slice.chars() {
+                            self.registry.note_missing(ch);
+                        }
+                    }
+                }
                 // Screen-y grows downward, so a positive `baseline_shift` (a raise,
                 // e.g. a superscript or a positive `w:position`) subtracts from the
                 // baseline row; a negative shift (subscript / lower) adds to it.
@@ -299,7 +405,7 @@ impl LineShaper for ParleyShaper {
                 // Alpha 0 is the "no highlight" sentinel carried through the brush.
                 let highlight = (style.brush.highlight[3] != 0).then_some(style.brush.highlight);
                 out_runs.push(GlyphRun {
-                    font: FontId(style.brush.font),
+                    font,
                     size,
                     color: style.brush.color,
                     origin,
@@ -645,5 +751,106 @@ mod tests {
             prev_end = line.range.end.offset;
         }
         assert_eq!(prev_end, total, "the last line ends at the paragraph's end");
+    }
+
+    use crate::font_registry::FontRegistry;
+
+    /// With the `system-fonts` feature OFF (the deterministic / WASM path), no
+    /// bundled Latin face covers CJK, so a CJK run shapes to `.notdef`, keeps a
+    /// bundled `FontId`, and its uncovered code points are recorded as a coverage
+    /// gap a host can query and fetch a face for.
+    #[test]
+    #[cfg(not(feature = "system-fonts"))]
+    fn cjk_without_system_fonts_is_notdef_and_recorded_as_a_coverage_gap() {
+        let shaper = ParleyShaper::new();
+        let layout = shaper.shape_paragraph(&[run("中文")], constraints(500), para_range());
+        let glyphs: Vec<_> = layout.lines[0]
+            .runs
+            .iter()
+            .flat_map(|r| &r.glyphs)
+            .collect();
+        assert!(!glyphs.is_empty(), "the CJK run still produces glyphs");
+        assert!(
+            glyphs.iter().all(|g| g.id == 0),
+            "no bundled face covers CJK, so every glyph is .notdef"
+        );
+        assert!(
+            layout.lines[0]
+                .runs
+                .iter()
+                .all(|r| !FontRegistry::is_dynamic(r.font)),
+            "bundled-only: no dynamic fallback face was interned"
+        );
+        let missing = shaper.registry().missing_coverage();
+        assert!(
+            missing.contains(&'中') && missing.contains(&'文'),
+            "the coverage gap records the uncovered CJK code points: {missing:?}"
+        );
+    }
+
+    /// With the `system-fonts` feature ON (native), `parley`/`fontique` perform
+    /// real font fallback: a CJK run whose code points the bundled faces miss is
+    /// shaped with an installed OS font, yielding non-`.notdef` glyphs through a
+    /// dynamically interned face whose bytes the shared registry can serve.
+    #[test]
+    #[cfg(all(feature = "system-fonts", not(target_arch = "wasm32")))]
+    fn cjk_with_system_fonts_resolves_a_covering_face() {
+        let shaper = ParleyShaper::new();
+        let layout = shaper.shape_paragraph(&[run("中文")], constraints(500), para_range());
+        let runs = &layout.lines[0].runs;
+        assert!(
+            runs.iter().flat_map(|r| &r.glyphs).any(|g| g.id != 0),
+            "a system fallback shapes CJK to real (non-.notdef) glyphs"
+        );
+        let covering = runs
+            .iter()
+            .map(|r| r.font)
+            .find(|&f| FontRegistry::is_dynamic(f))
+            .expect("the covering face is a dynamically interned system font");
+        assert!(
+            shaper.registry().face(covering).is_some(),
+            "the system face's bytes are interned and available to the renderer"
+        );
+    }
+
+    /// A host-registered font (the browser network-font seam) is interned into the
+    /// shared registry under a dynamic `FontId` and its exact bytes are served
+    /// back — independent of the `system-fonts` feature (an in-memory blob store,
+    /// WASM-clean).
+    #[test]
+    fn a_host_registered_font_is_interned_and_served() {
+        let shaper = ParleyShaper::new();
+        let ids = shaper.register_font(crate::fonts::CALADEA_REGULAR.to_vec());
+        assert!(
+            !ids.is_empty(),
+            "registering a font yields at least one face id"
+        );
+        let host = ids[0];
+        assert!(
+            FontRegistry::is_dynamic(host),
+            "host faces get dynamic FontIds, disjoint from the bundled block"
+        );
+        assert_eq!(
+            shaper.registry().face(host).unwrap().bytes.as_slice(),
+            crate::fonts::CALADEA_REGULAR,
+            "the registry serves the exact host bytes for rasterization"
+        );
+    }
+
+    /// A host-registered fallback font wired for a script is exposed through the
+    /// same dynamic-`FontId` seam. (Full CJK coverage would need a CJK face, which
+    /// the deterministic suite does not bundle; this exercises the registration +
+    /// serving path that the browser's Noto-CJK slice reuses.)
+    #[test]
+    fn a_host_fallback_font_registers_without_panicking_and_is_served() {
+        let shaper = ParleyShaper::new();
+        let ids = shaper
+            .register_fallback_font(crate::fonts::CARLITO_REGULAR.to_vec(), &["Hani", "Hira"]);
+        assert!(!ids.is_empty());
+        assert!(ids.iter().all(|&id| FontRegistry::is_dynamic(id)));
+        assert_eq!(
+            shaper.registry().face(ids[0]).unwrap().bytes.as_slice(),
+            crate::fonts::CARLITO_REGULAR
+        );
     }
 }
