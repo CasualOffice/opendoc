@@ -36,6 +36,13 @@ impl Twip {
         self.0
     }
 
+    /// Whether this length is exactly zero (used to skip serializing default
+    /// paint metadata).
+    #[must_use]
+    pub const fn is_zero(&self) -> bool {
+        self.0 == 0
+    }
+
     /// Converts to device pixels at the given scale (device pixels per inch,
     /// i.e. dpi × zoom). Rounded to the nearest pixel.
     #[must_use]

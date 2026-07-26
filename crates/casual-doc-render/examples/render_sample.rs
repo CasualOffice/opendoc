@@ -19,6 +19,7 @@ fn styled(text: &str, bold: bool, italic: bool, color: [u8; 4]) -> StyledRun<'_>
         letter_spacing: Twip::ZERO,
         color,
         decoration: Decoration::default(),
+        highlight: None,
     }
 }
 

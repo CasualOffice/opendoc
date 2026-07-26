@@ -37,6 +37,61 @@ pub struct ResolvedEdge {
     pub width: Twip,
 }
 
+/// The four drawable edges of a block box (paragraph borders, `w:pBdr`). Mirrors
+/// [`CellBorders`] but for the leading/trailing/top/bottom edges of a paragraph's
+/// content box; `None` = that edge is not drawn. The `w:between`/`w:bar` edges are
+/// not modeled here.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+pub struct BlockBorders {
+    /// Top edge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top: Option<ResolvedEdge>,
+    /// Bottom edge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bottom: Option<ResolvedEdge>,
+    /// Leading (start) edge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<ResolvedEdge>,
+    /// Trailing (end) edge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end: Option<ResolvedEdge>,
+}
+
+impl BlockBorders {
+    /// Whether no edge is drawn (serializes to nothing).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// The paint-only decoration of a paragraph box: background shading (`w:shd`) and
+/// borders (`w:pBdr`), plus the content-box `width` they span (the flowed column
+/// width; the start/end indents are subtracted at composition). Layout-neutral —
+/// it is consumed by composition, not by the paginator.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+pub struct ParagraphDecor {
+    /// Background fill (`w:shd@fill`), RGBA; `None` = no shading.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shading: Option<[u8; 4]>,
+    /// Border edges (`w:pBdr`).
+    #[serde(default, skip_serializing_if = "BlockBorders::is_empty")]
+    pub borders: BlockBorders,
+    /// The paragraph's flowed content-box width (twips) — the span shading/borders
+    /// cover, before subtracting the start/end indents.
+    #[serde(default, skip_serializing_if = "crate::units::Twip::is_zero")]
+    pub width: Twip,
+}
+
+impl ParagraphDecor {
+    /// Whether the paragraph paints no background or border (serializes to
+    /// nothing, so a plain paragraph's fragment is unchanged).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.shading.is_none() && self.borders.is_empty()
+    }
+}
+
 /// The four resolved visible borders of a cell (`None` = fall back to the
 /// default grid line). Produced by border-conflict resolution in the flow engine
 /// and drawn by composition.
@@ -76,6 +131,10 @@ pub struct CellFragment {
     /// The cell's resolved visible borders (border-conflict winners).
     #[serde(default, skip_serializing_if = "CellBorders::is_empty")]
     pub borders: CellBorders,
+    /// The cell's background fill (`w:shd@fill`), RGBA, painted behind its content;
+    /// `None` = no shading.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shading: Option<[u8; 4]>,
 }
 
 /// A paragraph's page-break behavior, resolved from `ParagraphProperties`
@@ -122,6 +181,10 @@ pub enum BlockFragment {
         /// `w:widowControl`). The paginator reads it to decide breaks.
         #[serde(default, skip_serializing_if = "BreakControl::is_default")]
         break_control: BreakControl,
+        /// Background shading and borders painted behind/around the box
+        /// (`w:shd`/`w:pBdr`). Layout-neutral; consumed only by composition.
+        #[serde(default, skip_serializing_if = "ParagraphDecor::is_empty")]
+        decor: ParagraphDecor,
     },
     /// A table row: cells, whether it may split across a page, and whether it is
     /// a repeated header row (`w:tblHeader`).

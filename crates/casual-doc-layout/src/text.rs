@@ -57,6 +57,10 @@ pub struct GlyphRun {
     pub bidi_level: u8,
     /// Decorations.
     pub decoration: Decoration,
+    /// Text-highlight fill painted behind the run's glyph box (`w:highlight`),
+    /// RGBA; `None` when the run is not highlighted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub highlight: Option<[u8; 4]>,
     /// The positioned glyphs, in visual (left-to-right) order.
     pub glyphs: Vec<Glyph>,
 }
@@ -126,6 +130,9 @@ pub struct StyledRun<'a> {
     pub color: [u8; 4],
     /// Decorations.
     pub decoration: Decoration,
+    /// Text-highlight fill (`w:highlight`) resolved to RGBA, painted behind the
+    /// run's glyph box; `None` when unset.
+    pub highlight: Option<[u8; 4]>,
 }
 
 /// Horizontal alignment of a paragraph's lines.
@@ -145,7 +152,8 @@ pub enum TextAlignment {
 /// The constraints a paragraph is shaped under.
 #[derive(Clone, Copy, Debug)]
 pub struct LineConstraints {
-    /// Available inline width for wrapping.
+    /// Available inline width for wrapping. Already reduced by the paragraph's
+    /// start/end indents so wrapping happens at the indented column.
     pub max_width: Twip,
     /// Base direction (`true` = right-to-left paragraph).
     pub rtl: bool,
@@ -154,6 +162,11 @@ pub struct LineConstraints {
     /// Line height as a percent of the single-spaced height (`w:spacing@line`
     /// with `lineRule="auto"`); `None` = the font's natural line height.
     pub line_height_percent: Option<u16>,
+    /// First-line indent applied to the paragraph's first line only, relative to
+    /// the (already start-indented) column: positive out-dents the body to the
+    /// right (`w:ind@firstLine`), negative protrudes the first line to the left
+    /// (`w:ind@hanging`). The shaper narrows/widens the first line accordingly.
+    pub first_line_indent: Twip,
 }
 
 impl Default for LineConstraints {
@@ -163,6 +176,7 @@ impl Default for LineConstraints {
             rtl: false,
             alignment: TextAlignment::Start,
             line_height_percent: None,
+            first_line_indent: Twip::ZERO,
         }
     }
 }
@@ -219,6 +233,7 @@ mod tests {
             origin: Point::default(),
             bidi_level: 0,
             decoration: Decoration::default(),
+            highlight: None,
             glyphs: vec![Glyph {
                 id: 5,
                 advance: Twip(120),

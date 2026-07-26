@@ -16,8 +16,8 @@ use std::sync::Arc;
 
 use parley::fontique::Blob;
 use parley::{
-    Alignment, AlignmentOptions, FontContext, FontFamily, FontStyle, FontWeight, LayoutContext,
-    LineHeight, PositionedLayoutItem, StyleProperty,
+    Alignment, AlignmentOptions, FontContext, FontFamily, FontStyle, FontWeight, IndentOptions,
+    LayoutContext, LineHeight, PositionedLayoutItem, StyleProperty,
 };
 
 use crate::model::{ModelPos, ModelRange};
@@ -35,6 +35,8 @@ use crate::units::{Point, Twip};
 struct RunBrush {
     color: [u8; 4],
     font: u32,
+    /// The run's resolved highlight fill (RGBA); alpha `0` means no highlight.
+    highlight: [u8; 4],
 }
 
 /// The default `parley`-backed line shaper.
@@ -176,6 +178,7 @@ impl LineShaper for ParleyShaper {
                 StyleProperty::Brush(RunBrush {
                     color: run.color,
                     font: run.font.0,
+                    highlight: run.highlight.unwrap_or([0, 0, 0, 0]),
                 }),
                 *start..*end,
             );
@@ -203,6 +206,17 @@ impl LineShaper for ParleyShaper {
         }
 
         let mut layout = builder.build(&text);
+        // First-line indent (`w:ind@firstLine`/`@hanging`): parley applies the
+        // indent as a start-edge margin on the first line, reducing (or, for a
+        // negative/`hanging` amount, extending) its wrap width and offsetting it.
+        // The start indent itself is applied downstream at composition; here we
+        // only shape the first line's differing width.
+        if constraints.first_line_indent != Twip::ZERO {
+            layout.set_text_indent(
+                constraints.first_line_indent.raw() as f32,
+                IndentOptions::default(),
+            );
+        }
         layout.break_all_lines(Some(constraints.max_width.raw() as f32));
         layout.align(
             alignment(constraints.alignment),
@@ -245,6 +259,8 @@ impl LineShaper for ParleyShaper {
                 // the run's direction (even = LTR, odd = RTL), which is all the
                 // public API exposes and all `hittest` reads.
                 let bidi_level = u8::from(glyph_run.run().is_rtl());
+                // Alpha 0 is the "no highlight" sentinel carried through the brush.
+                let highlight = (style.brush.highlight[3] != 0).then_some(style.brush.highlight);
                 out_runs.push(GlyphRun {
                     font: FontId(style.brush.font),
                     size,
@@ -255,6 +271,7 @@ impl LineShaper for ParleyShaper {
                         underline: style.underline.is_some(),
                         strikethrough: style.strikethrough.is_some(),
                     },
+                    highlight,
                     glyphs,
                 });
             }
@@ -305,6 +322,7 @@ mod tests {
             letter_spacing: Twip::ZERO,
             color: [0, 0, 0, 255],
             decoration: Decoration::default(),
+            highlight: None,
         }
     }
 
@@ -415,6 +433,7 @@ mod tests {
                 underline: true,
                 strikethrough: false,
             },
+            highlight: None,
         };
         let layout = shaper.shape_paragraph(&[styled], constraints(500), para_range());
         let run = &layout.lines[0].runs[0];
@@ -469,6 +488,46 @@ mod tests {
         let fonts: std::collections::BTreeSet<u32> =
             layout.lines[0].runs.iter().map(|r| r.font.0).collect();
         assert_eq!(fonts.len(), 2, "the line carries two distinct faces");
+    }
+
+    #[test]
+    fn first_line_indent_pushes_the_first_line_right() {
+        let shaper = ParleyShaper::new();
+        // A narrow column forces at least two lines; a positive first-line indent
+        // out-dents the first line to the right of the continuation lines.
+        let c = LineConstraints {
+            max_width: Twip::from_points(60),
+            first_line_indent: Twip::from_points(24),
+            ..LineConstraints::default()
+        };
+        let layout = shaper.shape_paragraph(&[run("Hello world this wraps")], c, para_range());
+        assert!(layout.lines.len() >= 2, "the text wraps to multiple lines");
+        let first_x = layout.lines[0].runs[0].origin.x.raw();
+        let second_x = layout.lines[1].runs[0].origin.x.raw();
+        assert!(
+            first_x > second_x,
+            "first-line indent starts the first line ({first_x}) right of the rest ({second_x})"
+        );
+    }
+
+    #[test]
+    fn hanging_indent_protrudes_the_first_line_left() {
+        let shaper = ParleyShaper::new();
+        // A negative first-line indent (a hanging indent) protrudes the first line
+        // to the left of the continuation lines (the bulleted-list shape).
+        let c = LineConstraints {
+            max_width: Twip::from_points(60),
+            first_line_indent: Twip::from_points(-24),
+            ..LineConstraints::default()
+        };
+        let layout = shaper.shape_paragraph(&[run("Hello world this wraps")], c, para_range());
+        assert!(layout.lines.len() >= 2, "the text wraps to multiple lines");
+        let first_x = layout.lines[0].runs[0].origin.x.raw();
+        let second_x = layout.lines[1].runs[0].origin.x.raw();
+        assert!(
+            first_x < second_x,
+            "a hanging indent starts the first line ({first_x}) left of the rest ({second_x})"
+        );
     }
 
     #[test]

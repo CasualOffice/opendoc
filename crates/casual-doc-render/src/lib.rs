@@ -18,9 +18,12 @@ use casual_doc_layout::display::{DisplayList, PaintItem};
 use casual_doc_layout::text::{FontId, GlyphRun};
 use casual_doc_layout::units::Rect;
 use skrifa::instance::{LocationRef, Size};
+use skrifa::metrics::Metrics;
 use skrifa::outline::{DrawSettings, OutlinePen};
 use skrifa::{FontRef, GlyphId, MetadataProvider};
-use tiny_skia::{Color, FillRule, Mask, Paint, PathBuilder, Pixmap, Stroke, Transform};
+use tiny_skia::{
+    Color, FillRule, Mask, Paint, PathBuilder, Pixmap, Rect as SkRect, Stroke, Transform,
+};
 
 /// Supplies the raw font bytes (and face index) for a [`FontId`] so the renderer
 /// can extract glyph outlines from the exact face the shaper used.
@@ -176,7 +179,8 @@ fn render_glyph_run(
     };
     let outlines = font.outline_glyphs();
     let size_px = run.size.to_device_px(dpi);
-    let mut pen_x = run.origin.x.to_device_px(dpi);
+    let start_x = run.origin.x.to_device_px(dpi);
+    let mut pen_x = start_x;
     let baseline_y = run.origin.y.to_device_px(dpi);
 
     let mut builder = PathBuilder::new();
@@ -208,6 +212,82 @@ fn render_glyph_run(
             clip,
         );
     }
+
+    // Underline / strikethrough (`w:u`/`w:strike`): drawn as thin filled rects in
+    // the run color, spanning the run's total advance, over the glyphs. Positions
+    // and thickness come from the face's own metrics, falling back to size-derived
+    // defaults for faces that omit them.
+    if run.decoration.underline || run.decoration.strikethrough {
+        let advance = pen_x - start_x;
+        if advance > 0.0 {
+            let metrics = Metrics::new(&font, Size::new(size_px), LocationRef::default());
+            if run.decoration.underline {
+                // `offset` is the top of the decoration measured up from the
+                // baseline; a device y grows downward, so subtract it. Underlines
+                // sit below the baseline (a negative offset → positive y).
+                let (offset, thickness) = metrics
+                    .underline
+                    .map(|d| (d.offset, d.thickness))
+                    .unwrap_or((-size_px * 0.12, size_px * 0.06));
+                draw_decoration(
+                    surface,
+                    clip,
+                    start_x,
+                    baseline_y - offset,
+                    advance,
+                    thickness,
+                    run.color,
+                );
+            }
+            if run.decoration.strikethrough {
+                let (offset, thickness) = metrics
+                    .strikeout
+                    .map(|d| (d.offset, d.thickness))
+                    .unwrap_or((size_px * 0.26, size_px * 0.06));
+                draw_decoration(
+                    surface,
+                    clip,
+                    start_x,
+                    baseline_y - offset,
+                    advance,
+                    thickness,
+                    run.color,
+                );
+            }
+        }
+    }
+}
+
+/// Fills a thin horizontal decoration line (underline/strikethrough): a rect from
+/// `x` spanning `advance` wide, centered on `y_center`, `thickness` (min 1px) tall.
+fn draw_decoration(
+    surface: &mut Surface,
+    clip: Option<&Mask>,
+    x: f32,
+    y_center: f32,
+    advance: f32,
+    thickness: f32,
+    color: [u8; 4],
+) {
+    let h = thickness.max(1.0);
+    let Some(rect) = SkRect::from_xywh(x, y_center - h / 2.0, advance, h) else {
+        return;
+    };
+    let mut builder = PathBuilder::new();
+    builder.push_rect(rect);
+    let Some(path) = builder.finish() else {
+        return;
+    };
+    let mut paint = Paint::default();
+    paint.set_color_rgba8(color[0], color[1], color[2], color[3]);
+    paint.anti_alias = true;
+    surface.pixmap.fill_path(
+        &path,
+        &paint,
+        FillRule::Winding,
+        Transform::identity(),
+        clip,
+    );
 }
 
 /// A `skrifa` outline pen that appends glyph contours to a `tiny-skia` path,
@@ -334,6 +414,7 @@ mod tests {
                 letter_spacing: Twip::ZERO,
                 color: [0, 0, 0, 255],
                 decoration: Decoration::default(),
+                highlight: None,
             }],
             LineConstraints {
                 max_width: Twip::from_points(500),
@@ -369,6 +450,7 @@ mod tests {
             origin: Point::new(Twip::ZERO, Twip::from_points(12)),
             bidi_level: 0,
             decoration: Decoration::default(),
+            highlight: None,
             glyphs: vec![casual_doc_layout::text::Glyph {
                 id: 5,
                 advance: Twip::from_points(6),
@@ -463,6 +545,127 @@ mod tests {
             px[0] < 40 && px[1] < 40 && px[2] < 40,
             "with the clip popped, the whole rect is painted (got {:?})",
             &px[..4]
+        );
+    }
+
+    /// Surface dimensions used by the decoration tests.
+    const DECO_W: u32 = 300;
+    const DECO_H: u32 = 140;
+
+    /// Renders "Hello" (no descenders below the baseline) with the given
+    /// decoration and returns the surface together with the glyph baseline row (in
+    /// device pixels — parley's baseline sits an ascent below the paragraph top).
+    fn render_decorated(decoration: Decoration) -> (Surface, usize) {
+        let shaper = ParleyShaper::new();
+        let node = NodeId::from_parts(1, 1).unwrap();
+        let origin = Point::new(Twip::from_points(6), Twip::from_points(20));
+        let layout = shaper.shape_paragraph(
+            &[StyledRun {
+                text: "Hello",
+                font: FontId(0),
+                size: Twip::from_points(24),
+                bold: false,
+                italic: false,
+                letter_spacing: Twip::ZERO,
+                color: [0, 0, 0, 255],
+                decoration,
+                highlight: None,
+            }],
+            LineConstraints {
+                max_width: Twip::from_points(500),
+                ..LineConstraints::default()
+            },
+            ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, 0)),
+        );
+        let baseline_twips = origin.y + layout.lines[0].runs[0].origin.y;
+        let baseline_px = baseline_twips.to_device_px(96.0).round() as usize;
+        let list = compose_paragraph(&layout, origin);
+        let mut surface = Surface::new(DECO_W, DECO_H).unwrap();
+        render(
+            &list,
+            &mut surface,
+            96.0,
+            &SingleFontSource::new(ROBOTO_REGULAR),
+        );
+        (surface, baseline_px)
+    }
+
+    /// The number of dark pixels in the horizontal band `[y0, y1)`.
+    fn band_dark(surface: &Surface, y0: usize, y1: usize) -> usize {
+        let mut count = 0;
+        for y in y0..y1 {
+            for x in 0..DECO_W as usize {
+                let i = (y * DECO_W as usize + x) * 4;
+                let px = &surface.data()[i..i + 4];
+                if px[0] < 200 || px[1] < 200 || px[2] < 200 {
+                    count += 1;
+                }
+            }
+        }
+        count
+    }
+
+    /// The widest single-row dark-pixel count within the band `[y0, y1)` — a solid
+    /// decoration line produces a row far denser than sparse glyph ink.
+    fn max_row_dark(surface: &Surface, y0: usize, y1: usize) -> usize {
+        (y0..y1)
+            .map(|y| band_dark(surface, y, y + 1))
+            .max()
+            .unwrap_or(0)
+    }
+
+    #[test]
+    fn underline_draws_a_line_below_the_baseline() {
+        // The band a few pixels below the baseline is empty for plain "Hello"
+        // (it has no descenders) but carries the underline when set.
+        let (plain, baseline) = render_decorated(Decoration::default());
+        let (underlined, _) = render_decorated(Decoration {
+            underline: true,
+            strikethrough: false,
+        });
+        let plain_below = band_dark(&plain, baseline + 2, baseline + 10);
+        let under_below = band_dark(&underlined, baseline + 2, baseline + 10);
+        assert_eq!(
+            plain_below, 0,
+            "a plain run paints nothing below the baseline"
+        );
+        assert!(
+            under_below > 20,
+            "the underline paints a line below the baseline (got {under_below} px)"
+        );
+    }
+
+    #[test]
+    fn strikethrough_draws_a_line_through_the_middle() {
+        // The strike sits above the baseline, through the glyph mid; it makes one
+        // row far denser than any row of the plain glyphs, and adds net ink.
+        let (plain, baseline) = render_decorated(Decoration::default());
+        let (struck, _) = render_decorated(Decoration {
+            underline: false,
+            strikethrough: true,
+        });
+        // Search the mid-band between the baseline and ~cap height above it.
+        let (y0, y1) = (baseline.saturating_sub(20), baseline);
+        let plain_row = max_row_dark(&plain, y0, y1);
+        let struck_row = max_row_dark(&struck, y0, y1);
+        assert!(
+            struck_row > plain_row + 30,
+            "strikethrough makes one dense horizontal row (struck {struck_row} vs plain {plain_row})"
+        );
+        assert!(
+            dark_pixel_count(&struck) > dark_pixel_count(&plain),
+            "the strike adds net ink over the plain glyphs"
+        );
+    }
+
+    #[test]
+    fn a_plain_run_draws_no_decoration_line() {
+        // A plain run has no ink below the baseline (no underline, no descenders).
+        let (plain, baseline) = render_decorated(Decoration::default());
+        assert_eq!(
+            band_dark(&plain, baseline + 2, baseline + 12),
+            0,
+            "a plain run has no underline"
         );
     }
 }
