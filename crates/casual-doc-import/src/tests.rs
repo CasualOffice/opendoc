@@ -581,6 +581,39 @@ fn table_row_and_cell_properties_are_mapped() {
 }
 
 #[test]
+fn floating_table_position_is_mapped_and_bounded() {
+    use casual_doc_model::v1::{TableAnchor, TableXAlign};
+    // A `w:tblpPr` with a named horizontal alignment, an out-of-range from-text
+    // distance (clamped), and an unknown vertical anchor token (dropped). The
+    // named `tblpXSpec` is kept; the invalid `vertAnchor` leaves that field None.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:tbl>
+            <w:tblPr>
+                <w:tblpPr w:horzAnchor="text" w:vertAnchor="bogus"
+                          w:tblpXSpec="center" w:leftFromText="99999"/>
+            </w:tblPr>
+            <w:tr><w:tc><w:p><w:r><w:t>c</w:t></w:r></w:p></w:tc></w:tr>
+        </w:tbl>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let table = first_table(&import).expect("table modeled");
+    let float = table
+        .properties
+        .float_position
+        .as_ref()
+        .expect("float position modeled");
+    assert_eq!(float.horz_anchor, Some(TableAnchor::Text));
+    assert_eq!(float.vert_anchor, None, "unknown anchor token dropped");
+    assert_eq!(float.x_spec, Some(TableXAlign::Center));
+    assert_eq!(float.tbl_px_twips, None, "no absolute offset given");
+    assert_eq!(
+        float.left_from_text_twips,
+        Some(31_680),
+        "from-text distance clamped to the twip bound"
+    );
+}
+
+#[test]
 fn cell_property_change_revision_does_not_overwrite_current_properties() {
     // Regression (adversarial review, major): a w:tcPrChange carries a nested
     // w:tcPr with the PRE-EDIT properties; schema-ordered last, it must NOT

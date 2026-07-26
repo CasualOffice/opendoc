@@ -148,6 +148,104 @@ pub enum TableOverlap {
     Overlap,
 }
 
+/// The reference frame a floating table's position is measured from
+/// (`w:tblpPr/@w:horzAnchor` `ST_HAnchor` and `@w:vertAnchor` `ST_VAnchor`,
+/// which share the same value set).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TableAnchor {
+    /// Anchored to the surrounding text (`w:val="text"`).
+    Text,
+    /// Anchored to the page margin (`w:val="margin"`).
+    Margin,
+    /// Anchored to the page edge (`w:val="page"`).
+    Page,
+}
+
+/// Named relative horizontal alignment of a floating table within its anchor
+/// (`w:tblpPr/@w:tblpXSpec`, `ST_XAlign`). The named form is mutually exclusive
+/// with an absolute `tbl_px_twips` offset and takes precedence when both appear.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TableXAlign {
+    /// Flush to the leading edge (`left`).
+    Left,
+    /// Centered (`center`).
+    Center,
+    /// Flush to the trailing edge (`right`).
+    Right,
+    /// Inside edge relative to the page binding (`inside`).
+    Inside,
+    /// Outside edge relative to the page binding (`outside`).
+    Outside,
+}
+
+/// Named relative vertical alignment of a floating table within its anchor
+/// (`w:tblpPr/@w:tblpYSpec`, `ST_YAlign`). The named form is mutually exclusive
+/// with an absolute `tbl_py_twips` offset and takes precedence when both appear.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TableYAlign {
+    /// In line with the surrounding text (`inline`).
+    Inline,
+    /// Flush to the top (`top`).
+    Top,
+    /// Centered (`center`).
+    Center,
+    /// Flush to the bottom (`bottom`).
+    Bottom,
+    /// Inside edge relative to the page binding (`inside`).
+    Inside,
+    /// Outside edge relative to the page binding (`outside`).
+    Outside,
+}
+
+/// A floating (text-wrapped) table's position (`w:tblpPr`, `CT_TblPPr`,
+/// ECMA-376 §17.4.58). A table carrying this is lifted out of the inline block
+/// flow and positioned relative to its `horz_anchor`/`vert_anchor` frame, with
+/// surrounding text wrapping around it at the `*_from_text_twips` distances.
+///
+/// Horizontal placement is either an absolute `tbl_px_twips` offset or a named
+/// `x_spec` alignment (and likewise the vertical pair); the named form takes
+/// precedence when both appear. Offsets are signed twips
+/// (`ST_SignedTwipsMeasure`, `-31_680..=31_680`); from-text distances are
+/// unsigned twips (`ST_TwipsMeasure`, `0..=31_680`). Bounds are enforced at
+/// import.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TableFloatPosition {
+    /// Horizontal reference frame (`w:horzAnchor`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub horz_anchor: Option<TableAnchor>,
+    /// Vertical reference frame (`w:vertAnchor`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vert_anchor: Option<TableAnchor>,
+    /// Absolute horizontal offset from the anchor in signed twips (`w:tblpX`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tbl_px_twips: Option<i32>,
+    /// Absolute vertical offset from the anchor in signed twips (`w:tblpY`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tbl_py_twips: Option<i32>,
+    /// Named horizontal alignment (`w:tblpXSpec`); wins over `tbl_px_twips`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub x_spec: Option<TableXAlign>,
+    /// Named vertical alignment (`w:tblpYSpec`); wins over `tbl_py_twips`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub y_spec: Option<TableYAlign>,
+    /// Leading text-wrap distance in twips (`w:leftFromText`; `0..=31_680`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub left_from_text_twips: Option<i32>,
+    /// Trailing text-wrap distance in twips (`w:rightFromText`; `0..=31_680`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub right_from_text_twips: Option<i32>,
+    /// Top text-wrap distance in twips (`w:topFromText`; `0..=31_680`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_from_text_twips: Option<i32>,
+    /// Bottom text-wrap distance in twips (`w:bottomFromText`; `0..=31_680`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bottom_from_text_twips: Option<i32>,
+}
+
 /// Conditional-formatting look flags (`w:tblLook`). All-false serializes to
 /// nothing (omitted).
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -279,6 +377,10 @@ pub struct TableProperties {
     /// Floating-overlap behavior (`w:tblOverlap`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overlap: Option<TableOverlap>,
+    /// Floating-table position (`w:tblpPr`); lifts the table out of inline flow
+    /// and positions it relative to an anchor frame with text wrapping around it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub float_position: Option<TableFloatPosition>,
     /// Accessibility caption (`w:tblCaption`); non-empty, at most 255 bytes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub caption: Option<String>,

@@ -1617,6 +1617,50 @@ mod semantic_tests {
     }
 
     #[test]
+    fn floating_table_position_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, TableAnchor, TableYAlign};
+        // A positioned (floating) table: `w:tblpPr` with both anchors, absolute
+        // horizontal + named vertical placement, and all four from-text wrap
+        // distances. Editing then saving must not snap it back into inline flow;
+        // the modeled float position is a write -> reopen fixed point.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:tbl>
+                <w:tblPr>
+                    <w:tblpPr w:leftFromText="180" w:rightFromText="181"
+                              w:topFromText="90" w:bottomFromText="91"
+                              w:vertAnchor="page" w:horzAnchor="margin"
+                              w:tblpX="1440" w:tblpYSpec="center"/>
+                </w:tblPr>
+                <w:tr><w:tc><w:p><w:r><w:t>c</w:t></w:r></w:p></w:tc></w:tr>
+            </w:tbl>
+        </w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(
+            m1, m2,
+            "the floating-table position survives write -> reopen"
+        );
+
+        let BlockNode::Table(table) = &m1.body()[0] else {
+            panic!("expected a table block");
+        };
+        let float = table
+            .properties
+            .float_position
+            .as_ref()
+            .expect("float position modeled");
+        assert_eq!(float.horz_anchor, Some(TableAnchor::Margin));
+        assert_eq!(float.vert_anchor, Some(TableAnchor::Page));
+        assert_eq!(float.tbl_px_twips, Some(1440));
+        assert_eq!(float.tbl_py_twips, None);
+        assert_eq!(float.x_spec, None);
+        assert_eq!(float.y_spec, Some(TableYAlign::Center));
+        assert_eq!(float.left_from_text_twips, Some(180));
+        assert_eq!(float.right_from_text_twips, Some(181));
+        assert_eq!(float.top_from_text_twips, Some(90));
+        assert_eq!(float.bottom_from_text_twips, Some(91));
+    }
+
+    #[test]
     fn table_style_ref_and_conditional_formatting_survive_the_semantic_round_trip() {
         // A table associated with a table style (`w:tblStyle`) and drawn
         // right-to-left (`w:bidiVisual`); its header row and a cell each carry a
