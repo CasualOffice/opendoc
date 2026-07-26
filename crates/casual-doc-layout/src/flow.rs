@@ -3649,7 +3649,6 @@ mod tests {
 
     #[test]
     fn a_cambria_run_resolves_to_the_caladea_face_and_is_reported() {
-        use crate::fonts::CALADEA;
         use crate::resolve::Disposition;
         let doc = document(vec![paragraph(
             10,
@@ -3660,15 +3659,24 @@ mod tests {
         let BlockFragment::Paragraph { lines, .. } = &galley[0] else {
             panic!();
         };
-        assert_eq!(
-            lines.lines[0].runs[0].font,
-            CALADEA.face_id(false, false),
-            "Cambria shapes and renders as the Caladea face"
-        );
+        // The resolver's metric-compatible substitution (Cambria -> Caladea) is a
+        // pure function of the bundled face set, so it is always recorded.
         let subs: Vec<_> = report.substitutions().collect();
         assert_eq!(subs.len(), 1);
         assert_eq!(subs[0].resolved_family, "Caladea");
         assert_eq!(subs[0].disposition, Disposition::MetricCompatible);
+        // When no real Cambria face is available to the shaper — every deterministic
+        // / WASM build, and any platform without the font — the run is *shaped* with
+        // the bundled Caladea substitute. With `system-fonts` on a machine that has
+        // Cambria (e.g. Windows CI), `pick_family` prefers the real installed face,
+        // so the shaped FontId is intentionally the interned Cambria, not Caladea.
+        #[cfg(not(feature = "system-fonts"))]
+        assert_eq!(
+            lines.lines[0].runs[0].font,
+            crate::fonts::CALADEA.face_id(false, false),
+            "Cambria shapes and renders as the Caladea face"
+        );
+        let _ = lines;
     }
 
     #[test]
