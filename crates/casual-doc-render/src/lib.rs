@@ -15,6 +15,7 @@
 #![forbid(unsafe_code)]
 
 use std::collections::HashMap;
+use std::io::Cursor;
 
 use casual_doc_layout::display::{DisplayList, PaintItem};
 use casual_doc_layout::font_registry::{DynFace, FontRegistry};
@@ -28,6 +29,11 @@ use tiny_skia::{
     Color, FillRule, FilterQuality, IntSize, Mask, Paint, PathBuilder, Pixmap, PixmapPaint,
     Rect as SkRect, Stroke, Transform,
 };
+
+/// Secure per-image decode defaults from `docs/21-PARSER-LIMITS.md`.
+const MAX_DECODED_IMAGE_DIMENSION: u32 = 32_768;
+const MAX_DECODED_IMAGE_PIXELS: u64 = 100_000_000;
+const MAX_DECODED_IMAGE_BYTES: u64 = MAX_DECODED_IMAGE_PIXELS * 4;
 
 /// Supplies the raw font bytes (and face index) for a [`FontId`] so the renderer
 /// can extract glyph outlines from the exact face the shaper used.
@@ -250,10 +256,30 @@ fn render_image(
         .draw_pixmap(0, 0, source.as_ref(), &paint, transform, clip);
 }
 
-/// Decodes PNG/JPEG bytes to a premultiplied-RGBA `tiny-skia` pixmap. Returns
-/// `None` for an unsupported/corrupt format or a zero-size image (graceful skip).
+/// Decodes PNG/JPEG bytes to a premultiplied-RGBA `tiny-skia` pixmap.
+///
+/// Dimensions are read and bounded before the full decode, and the decoder gets
+/// a matching allocation ceiling. Unsupported, corrupt, zero-sized, or
+/// over-budget images are skipped without allocating the RGBA output.
 fn decode_to_pixmap(bytes: &[u8]) -> Option<Pixmap> {
-    let image = image::load_from_memory(bytes).ok()?;
+    let format = image::guess_format(bytes).ok()?;
+    let (width, height) = image::ImageReader::with_format(Cursor::new(bytes), format)
+        .into_dimensions()
+        .ok()?;
+    if !image_dimensions_within_limits(width, height) {
+        return None;
+    }
+
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_DECODED_IMAGE_DIMENSION);
+    limits.max_image_height = Some(MAX_DECODED_IMAGE_DIMENSION);
+    limits.max_alloc = Some(MAX_DECODED_IMAGE_BYTES);
+    let mut reader = image::ImageReader::with_format(Cursor::new(bytes), format);
+    reader.limits(limits);
+    let image = reader.decode().ok()?;
+    if !image_dimensions_within_limits(image.width(), image.height()) {
+        return None;
+    }
     let rgba = image.to_rgba8();
     let (w, h) = rgba.dimensions();
     let mut data = rgba.into_raw();
@@ -266,6 +292,16 @@ fn decode_to_pixmap(bytes: &[u8]) -> Option<Pixmap> {
         px[2] = (u16::from(px[2]) * a / 255) as u8;
     }
     Pixmap::from_vec(data, IntSize::from_wh(w, h)?)
+}
+
+fn image_dimensions_within_limits(width: u32, height: u32) -> bool {
+    width > 0
+        && height > 0
+        && width <= MAX_DECODED_IMAGE_DIMENSION
+        && height <= MAX_DECODED_IMAGE_DIMENSION
+        && u64::from(width)
+            .checked_mul(u64::from(height))
+            .is_some_and(|pixels| pixels <= MAX_DECODED_IMAGE_PIXELS)
 }
 
 /// Builds the effective clip mask for a `PushClip(rect)`: the rectangle painted
@@ -956,6 +992,28 @@ mod tests {
             [255, 255, 255, 255],
             "outside the image box stays background white"
         );
+    }
+
+    #[test]
+    fn an_image_over_the_dimension_limit_is_skipped_before_decode() {
+        // A very wide but shallow PNG keeps the regression fixture small while
+        // proving that encoded byte size alone cannot admit an extreme raster.
+        let bytes = solid_image(32_769, 1, [200, 30, 30, 255], image::ImageFormat::Png);
+        let surface = render_one_image(bytes);
+        assert_eq!(
+            dark_pixel_count(&surface),
+            0,
+            "an image wider than the 32,768-pixel decode limit paints nothing"
+        );
+    }
+
+    #[test]
+    fn decoded_image_dimension_and_pixel_boundaries_are_enforced() {
+        assert!(image_dimensions_within_limits(32_768, 1));
+        assert!(image_dimensions_within_limits(10_000, 10_000));
+        assert!(!image_dimensions_within_limits(32_769, 1));
+        assert!(!image_dimensions_within_limits(10_001, 10_000));
+        assert!(!image_dimensions_within_limits(0, 1));
     }
 
     #[test]
