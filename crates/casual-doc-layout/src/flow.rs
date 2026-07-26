@@ -3581,6 +3581,79 @@ mod tests {
     }
 
     #[test]
+    fn a_style_sourced_bottom_border_reaches_the_paragraph_fragment_decor() {
+        // Regression: a paragraph whose *style* (not its direct `w:pPr`) carries a
+        // `w:pBdr` bottom border — a heading rule — must resolve through the cascade
+        // onto the fragment's decoration so compose paints it. Direct paragraph
+        // borders already worked; style-sourced ones were silently dropped when the
+        // styles part was imported (a `w:pBdr` container is not a leaf property).
+        use casual_doc_model::v1::{ParagraphBorders, Style, StyleKind};
+
+        let sid = StyleId::new(NodeId::from_parts(7, 1).unwrap());
+        let heading = Style {
+            kind: StyleKind::Paragraph,
+            is_default: false,
+            name: None,
+            aliases: None,
+            based_on: None,
+            next: None,
+            link: None,
+            hidden: false,
+            ui_priority: None,
+            semi_hidden: false,
+            unhide_when_used: false,
+            q_format: false,
+            locked: false,
+            paragraph: Some(ParagraphProperties {
+                borders: ParagraphBorders {
+                    bottom: Some(BorderEdge {
+                        style: "single".to_owned(),
+                        size_eighth_points: Some(8),
+                        color: None,
+                        space_points: Some(4),
+                    }),
+                    ..ParagraphBorders::default()
+                },
+                ..ParagraphProperties::default()
+            }),
+            run: None,
+            table: None,
+            table_row: None,
+            table_cell: None,
+            conditional: Vec::new(),
+        };
+        let mut definitions = Definitions::default();
+        definitions.styles.insert(sid, heading);
+
+        let para = BlockNode::Paragraph(Paragraph {
+            id: NodeId::from_parts(30, 1).unwrap(),
+            properties: ParagraphProperties {
+                style_ref: Some(sid),
+                ..ParagraphProperties::default()
+            },
+            inlines: vec![run_node(31, "Heading", RunProperties::default())],
+        });
+        let document =
+            Document::new(NodeId::from_parts(1, 1).unwrap(), vec![para], definitions).unwrap();
+
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&document, &shaper, Twip::from_points(400));
+        let BlockFragment::Paragraph { decor, .. } = &galley[0] else {
+            panic!("expected a paragraph fragment");
+        };
+        let bottom = decor
+            .borders
+            .bottom
+            .expect("style-sourced bottom border reaches the fragment decor");
+        // `w:sz` is in eighths of a point (20 twips/pt): 8/8 pt -> 20 twips.
+        assert_eq!(bottom.width, Twip(20));
+        assert!(
+            decor.borders.top.is_none() && decor.borders.start.is_none(),
+            "only the declared edge is present"
+        );
+    }
+
+    #[test]
     fn a_vanished_run_produces_no_glyphs() {
         // End to end: a paragraph of one visible + one vanished run shapes to the
         // same glyphs as the visible run alone — the hidden text paints nothing.

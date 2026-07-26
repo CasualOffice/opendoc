@@ -967,6 +967,58 @@ fn paragraph_borders_shading_and_tabs_are_mapped() {
 }
 
 #[test]
+fn a_paragraph_style_pbdr_bottom_border_is_captured() {
+    use casual_doc_model::v1::RgbColor;
+    // Root cause: a `w:pBdr` in a STYLE's `w:pPr` is a container of edge children,
+    // so the flat leaf-property reader could not read it and the whole border was
+    // dropped — style-sourced heading rules never reached the paragraph. The styles
+    // parser now captures the edges, so the cascade can overlay them.
+    let styles = br#"<w:styles xmlns:w="urn:w">
+        <w:style w:type="paragraph" w:styleId="Title">
+            <w:pPr><w:pBdr>
+                <w:bottom w:val="single" w:sz="8" w:space="4" w:color="4F81BD"/>
+            </w:pBdr></w:pPr>
+        </w:style>
+    </w:styles>"#;
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:pPr><w:pStyle w:val="Title"/></w:pPr><w:r><w:t>x</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import_with_styles(document, styles);
+    let style = import
+        .document
+        .definitions()
+        .styles
+        .iter()
+        .map(|(_, style)| style)
+        .find(|style| {
+            style
+                .paragraph
+                .as_ref()
+                .is_some_and(|p| p.borders.bottom.is_some())
+        })
+        .expect("the Title style carries a bottom paragraph border");
+    let bottom = style
+        .paragraph
+        .as_ref()
+        .unwrap()
+        .borders
+        .bottom
+        .as_ref()
+        .unwrap();
+    assert_eq!(bottom.style, "single");
+    assert_eq!(bottom.size_eighth_points, Some(8));
+    assert_eq!(bottom.space_points, Some(4));
+    assert_eq!(
+        bottom.color,
+        Some(RgbColor {
+            r: 0x4F,
+            g: 0x81,
+            b: 0xBD
+        })
+    );
+}
+
+#[test]
 fn paragraph_mark_rpr_shading_is_not_mapped_as_paragraph_shading() {
     // A `w:shd` inside the paragraph mark's own `w:rPr` is a RUN property, so it
     // must NOT be captured as paragraph shading (it stays reported). This is the
