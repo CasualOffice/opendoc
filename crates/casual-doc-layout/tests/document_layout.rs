@@ -1,0 +1,475 @@
+//! The one-call layout driver (`paginate_document`), end to end.
+//!
+//! These drive the real driver against documents carrying their own section
+//! geometry, header/footer definitions, and drawings, and assert the Word-grade
+//! behaviors the viewer and the fidelity harness depend on:
+//!
+//! - a document with a distinct page size paginates at *that* size, not the old
+//!   hard-coded US-Letter;
+//! - a section header/footer produces non-empty `Page.header`/`Page.footer`;
+//! - a `titlePg` first-page header differs on page 1;
+//! - the driver output equals the hand-wired pipeline (a regression anchor that
+//!   keeps the driver from drifting from the pieces it composes);
+//! - header content flows the full galley pipeline — a header holding an image
+//!   renders (the uniform-flow-pipeline invariant).
+
+use casual_doc_layout::compose::compose_page;
+use casual_doc_layout::display::PaintItem;
+use casual_doc_layout::document_layout::{document_page_config, paginate_document};
+use casual_doc_layout::flow::{build_galley, flow_header_footer};
+use casual_doc_layout::paginate::{paginate, resolve_fields};
+use casual_doc_layout::running::{HeaderFooter, RunningContent, place_running_content};
+use casual_doc_layout::shape::ParleyShaper;
+use casual_doc_layout::units::{Size, Twip};
+use casual_doc_model::NodeId;
+use casual_doc_model::v1::{
+    BlockNode, DefinitionMap, Definitions, Document, DocumentSettings, Drawing, Extent,
+    HeaderFooter as ModelHeaderFooter, HeaderFooterId, HeaderFooterKind, HeaderFooterRef,
+    InlineNode, MediaId, MediaReference, PageMargins, PageSize, Paragraph, ParagraphProperties,
+    Run, RunProperties, SectionBoundary, SectionColumns, SectionId,
+};
+
+fn node(id: u64) -> NodeId {
+    NodeId::from_parts(id, 1).unwrap()
+}
+
+fn run(id: u64, text: &str) -> InlineNode {
+    InlineNode::Run(Run {
+        id: node(id),
+        properties: RunProperties::default(),
+        text: text.to_owned(),
+    })
+}
+
+fn paragraph(id: u64, inlines: Vec<InlineNode>) -> BlockNode {
+    BlockNode::Paragraph(Paragraph {
+        id: node(id),
+        properties: ParagraphProperties::default(),
+        inlines,
+    })
+}
+
+/// A paragraph that forces a page break before it (deterministic page counts,
+/// independent of shaped heights).
+fn page_break(id: u64, text: &str) -> BlockNode {
+    BlockNode::Paragraph(Paragraph {
+        id: node(id),
+        properties: ParagraphProperties {
+            page_break_before: true,
+            ..ParagraphProperties::default()
+        },
+        inlines: vec![run(id + 1, text)],
+    })
+}
+
+/// A single-column section boundary with the given geometry and header/footer
+/// references.
+#[allow(clippy::too_many_arguments)]
+fn section(
+    id: u64,
+    size: (i32, i32),
+    margin: i32,
+    headers: Vec<HeaderFooterRef>,
+    footers: Vec<HeaderFooterRef>,
+    title_page: bool,
+) -> SectionBoundary {
+    SectionBoundary {
+        id: SectionId::new(node(id)),
+        page_size: PageSize {
+            width_twips: size.0,
+            height_twips: size.1,
+        },
+        page_margins: PageMargins {
+            top_twips: margin,
+            bottom_twips: margin,
+            start_twips: margin,
+            end_twips: margin,
+        },
+        columns: SectionColumns {
+            count: 1,
+            space_twips: None,
+            separator: None,
+        },
+        headers,
+        footers,
+        section_type: None,
+        title_page: title_page.then_some(true),
+        vertical_alignment: None,
+        page_numbering: Default::default(),
+        doc_grid: Default::default(),
+        orientation: None,
+        paper_source: Default::default(),
+        page_borders: Default::default(),
+        line_numbering: Default::default(),
+        footnote_props: Default::default(),
+        endnote_props: Default::default(),
+        text_direction: None,
+        bidi: false,
+    }
+}
+
+fn href(kind: HeaderFooterKind, id: u64) -> HeaderFooterRef {
+    HeaderFooterRef {
+        kind,
+        reference: HeaderFooterId::new(node(id)),
+    }
+}
+
+/// US-Letter content width (page 12240 − 2×1440 margins) for a sanity contrast.
+const LETTER_CONTENT_W: i32 = 12_240 - 2 * 1_440;
+
+#[test]
+fn a_distinct_page_size_paginates_at_that_size_not_us_letter() {
+    let shaper = ParleyShaper::new();
+    // A5-ish portrait page (5.83in × 8.27in) with half-inch margins — nothing like
+    // US-Letter.
+    let (w, h, margin) = (8_390, 11_907, 720);
+    let sections = vec![section(9, (w, h), margin, vec![], vec![], false)];
+    let doc = Document::new(
+        node(1),
+        vec![
+            paragraph(100, vec![run(101, "One")]),
+            page_break(110, "Two"),
+            page_break(120, "Three"),
+        ],
+        Definitions {
+            sections,
+            ..Definitions::default()
+        },
+    )
+    .unwrap();
+
+    let layout = paginate_document(&doc, &shaper);
+
+    // Three forced-break paragraphs => three pages, each at the section geometry.
+    assert_eq!(layout.page_count(), 3);
+    let expected_w = Twip(w - 2 * margin);
+    for page in &layout.pages {
+        assert_eq!(
+            page.content_area.size.width, expected_w,
+            "the content width comes from the section, not US-Letter"
+        );
+        assert_ne!(
+            page.content_area.size.width,
+            Twip(LETTER_CONTENT_W),
+            "it is emphatically not the old hard-coded Letter width"
+        );
+    }
+    // The derived config agrees with the page geometry.
+    let config = document_page_config(&doc);
+    assert_eq!(config.page_size, Size::new(Twip(w), Twip(h)));
+}
+
+#[test]
+fn a_short_page_forces_more_breaks_than_letter_would() {
+    let shaper = ParleyShaper::new();
+    // A very short page (7in wide, ~2in tall) with no forced breaks: natural flow
+    // must overflow onto multiple pages where a Letter page would hold everything.
+    let sections = vec![section(9, (10_080, 2_880), 720, vec![], vec![], false)];
+    let body: Vec<BlockNode> = (0..24)
+        .map(|i| paragraph(100 + i, vec![run(500 + i, "A line of body text.")]))
+        .collect();
+    let doc = Document::new(
+        node(1),
+        body,
+        Definitions {
+            sections,
+            ..Definitions::default()
+        },
+    )
+    .unwrap();
+
+    let layout = paginate_document(&doc, &shaper);
+    assert!(
+        layout.page_count() >= 2,
+        "a short page overflows to multiple pages (got {})",
+        layout.page_count()
+    );
+}
+
+/// A document whose first section references a default header and footer, with
+/// those definitions in the store. Returns the document.
+fn doc_with_header_footer() -> Document {
+    let mut headers = DefinitionMap::default();
+    headers.insert(
+        HeaderFooterId::new(node(300)),
+        ModelHeaderFooter {
+            blocks: vec![paragraph(310, vec![run(311, "The running header")])],
+        },
+    );
+    let mut footers = DefinitionMap::default();
+    footers.insert(
+        HeaderFooterId::new(node(400)),
+        ModelHeaderFooter {
+            blocks: vec![paragraph(410, vec![run(411, "The running footer")])],
+        },
+    );
+    let sections = vec![section(
+        9,
+        (12_240, 15_840),
+        1_440,
+        vec![href(HeaderFooterKind::Default, 300)],
+        vec![href(HeaderFooterKind::Default, 400)],
+        false,
+    )];
+    Document::new(
+        node(1),
+        vec![
+            paragraph(100, vec![run(101, "Body one")]),
+            page_break(110, "Body two"),
+        ],
+        Definitions {
+            sections,
+            headers,
+            footers,
+            ..Definitions::default()
+        },
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_section_header_and_footer_produce_non_empty_page_bands() {
+    let shaper = ParleyShaper::new();
+    let doc = doc_with_header_footer();
+    let layout = paginate_document(&doc, &shaper);
+
+    assert_eq!(layout.page_count(), 2);
+    for page in &layout.pages {
+        assert!(
+            !page.header.is_empty(),
+            "page {} has a running header",
+            page.number
+        );
+        assert!(
+            !page.footer.is_empty(),
+            "page {} has a running footer",
+            page.number
+        );
+        // The header sits above the body content, the footer below it.
+        let body_top = page.content_area.origin.y.raw();
+        let body_bottom = page.content_area.bottom().raw();
+        assert!(page.header[0].rect.origin.y.raw() < body_top);
+        assert!(page.footer[0].rect.origin.y.raw() >= body_bottom);
+    }
+}
+
+#[test]
+fn a_title_page_header_differs_on_page_one() {
+    let shaper = ParleyShaper::new();
+    let mut headers = DefinitionMap::default();
+    headers.insert(
+        HeaderFooterId::new(node(300)),
+        ModelHeaderFooter {
+            blocks: vec![paragraph(310, vec![run(311, "Default header")])],
+        },
+    );
+    headers.insert(
+        HeaderFooterId::new(node(320)),
+        ModelHeaderFooter {
+            blocks: vec![paragraph(330, vec![run(331, "First page header")])],
+        },
+    );
+    let sections = vec![section(
+        9,
+        (12_240, 15_840),
+        1_440,
+        vec![
+            href(HeaderFooterKind::Default, 300),
+            href(HeaderFooterKind::First, 320),
+        ],
+        vec![],
+        true, // titlePg
+    )];
+    let doc = Document::new(
+        node(1),
+        vec![
+            paragraph(100, vec![run(101, "One")]),
+            page_break(110, "Two"),
+        ],
+        Definitions {
+            sections,
+            headers,
+            ..Definitions::default()
+        },
+    )
+    .unwrap();
+
+    let layout = paginate_document(&doc, &shaper);
+    // Page 1 uses the first-page header (node 330); page 2 the default (310).
+    assert_eq!(layout.pages[0].header[0].fragment.node_id(), node(330));
+    assert_eq!(layout.pages[1].header[0].fragment.node_id(), node(310));
+}
+
+#[test]
+fn driver_equals_manual_wiring() {
+    let shaper = ParleyShaper::new();
+    let doc = doc_with_header_footer();
+
+    // The driver's output.
+    let driven = paginate_document(&doc, &shaper);
+
+    // The exact hand-wired pipeline a caller used to write by hand.
+    let mut config = document_page_config(&doc);
+    let content_width = config.content_area().size.width;
+    let header = flow_header_footer(
+        &doc,
+        &[paragraph(310, vec![run(311, "The running header")])],
+        &shaper,
+        content_width,
+    );
+    let footer = flow_header_footer(
+        &doc,
+        &[paragraph(410, vec![run(411, "The running footer")])],
+        &shaper,
+        content_width,
+    );
+    let running = RunningContent {
+        header: HeaderFooter {
+            default: header,
+            ..HeaderFooter::default()
+        },
+        footer: HeaderFooter {
+            default: footer,
+            ..HeaderFooter::default()
+        },
+        title_page: false,
+        even_and_odd: false,
+    };
+    let (hh, fh) = running.band_heights();
+    config.header_height = hh;
+    config.footer_height = fh;
+    let galley = build_galley(&doc, &shaper, content_width);
+    let mut manual = paginate(&galley, &config);
+    place_running_content(&mut manual, &running, &config);
+    resolve_fields(&mut manual, &shaper);
+    // (No anchored drawings in this document; the driver's anchor pass is a no-op.)
+
+    assert_eq!(
+        driven, manual,
+        "the driver produces exactly the hand-wired layout"
+    );
+}
+
+#[test]
+fn even_and_odd_headers_setting_is_honored() {
+    let shaper = ParleyShaper::new();
+    let mut headers = DefinitionMap::default();
+    headers.insert(
+        HeaderFooterId::new(node(300)),
+        ModelHeaderFooter {
+            blocks: vec![paragraph(310, vec![run(311, "Odd header")])],
+        },
+    );
+    headers.insert(
+        HeaderFooterId::new(node(340)),
+        ModelHeaderFooter {
+            blocks: vec![paragraph(350, vec![run(351, "Even header")])],
+        },
+    );
+    let sections = vec![section(
+        9,
+        (12_240, 15_840),
+        1_440,
+        vec![
+            href(HeaderFooterKind::Default, 300),
+            href(HeaderFooterKind::Even, 340),
+        ],
+        vec![],
+        false,
+    )];
+    let doc = Document::new(
+        node(1),
+        vec![
+            paragraph(100, vec![run(101, "One")]),
+            page_break(110, "Two"),
+        ],
+        Definitions {
+            sections,
+            headers,
+            settings: DocumentSettings {
+                even_and_odd_headers: true,
+                ..DocumentSettings::default()
+            },
+            ..Definitions::default()
+        },
+    )
+    .unwrap();
+
+    let layout = paginate_document(&doc, &shaper);
+    // Odd page 1 -> default/odd (310); even page 2 -> even (350).
+    assert_eq!(layout.pages[0].header[0].fragment.node_id(), node(310));
+    assert_eq!(layout.pages[1].header[0].fragment.node_id(), node(350));
+}
+
+#[test]
+fn a_header_image_renders_through_the_full_pipeline() {
+    let shaper = ParleyShaper::new();
+    let media_id = MediaId::new(node(70));
+    let mut media = DefinitionMap::default();
+    media.insert(
+        media_id,
+        MediaReference {
+            relationship_id: "rId7".to_owned(),
+            media_type: "image/png".to_owned(),
+            part_name: "word/media/logo.png".to_owned(),
+        },
+    );
+    // The header holds a drawing (300×200 twips from its EMU extent).
+    let mut headers = DefinitionMap::default();
+    headers.insert(
+        HeaderFooterId::new(node(300)),
+        ModelHeaderFooter {
+            blocks: vec![BlockNode::Paragraph(Paragraph {
+                id: node(310),
+                properties: ParagraphProperties::default(),
+                inlines: vec![InlineNode::Drawing(Drawing {
+                    id: node(311),
+                    media: media_id,
+                    extent: Some(Extent {
+                        width_emu: 190_500,
+                        height_emu: 127_000,
+                    }),
+                })],
+            })],
+        },
+    );
+    let sections = vec![section(
+        9,
+        (12_240, 15_840),
+        1_440,
+        vec![href(HeaderFooterKind::Default, 300)],
+        vec![],
+        false,
+    )];
+    let doc = Document::new(
+        node(1),
+        vec![paragraph(100, vec![run(101, "Body")])],
+        Definitions {
+            sections,
+            headers,
+            media,
+            ..Definitions::default()
+        },
+    )
+    .unwrap();
+
+    let layout = paginate_document(&doc, &shaper);
+    let page = &layout.pages[0];
+    let body_top = page.content_area.origin.y.raw();
+    // The image paints in the header band via the same compose machinery as the body.
+    let list = compose_page(page);
+    let img = list
+        .items
+        .iter()
+        .find_map(|i| match i {
+            PaintItem::Image { media, rect } if media == "word/media/logo.png" => Some(*rect),
+            _ => None,
+        })
+        .expect("the header image paints");
+    assert_eq!(img.size, Size::new(Twip(300), Twip(200)));
+    assert!(
+        img.origin.y.raw() < body_top,
+        "the header image paints above the body"
+    );
+}
