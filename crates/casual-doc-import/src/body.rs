@@ -3,21 +3,25 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use casual_doc_model::v1::{
-    Alignment, BlockNode, BlockSdt, Bookmark, BookmarkEnd, BookmarkId, BookmarkStart, BorderEdge,
-    Break, BreakKind, CellVerticalAlignment, Comment, CommentId, CommentReference, DefinitionMap,
-    DocGrid, DocGridType, Drawing, EmbeddedKind, EmbeddedObject, EmbeddedPart, Extent,
-    ExternalTarget, Field, FormCheckBox, FormCheckBoxSize, FormDropDown, FormFieldData,
-    FormFieldKind, FormTextInput, FormTextType, HeaderFooterId, HeaderFooterKind, HeaderFooterRef,
-    HeightRule, Hyperlink, HyperlinkTarget, InlineNode, InlineSdt, InternalTarget, MAX_EMU,
+    Alignment, AnchorHorizontal, AnchorVertical, AnchoredDrawing, BlockNode, BlockSdt, Bookmark,
+    BookmarkEnd, BookmarkId, BookmarkStart, BorderEdge, Break, BreakKind, CellVerticalAlignment,
+    CnfStyle, Comment, CommentId, CommentReference, DefinitionMap, DocGrid, DocGridType, Drawing,
+    DrawingAnchor, EmbeddedKind, EmbeddedObject, EmbeddedPart, Extent, ExternalTarget, Field,
+    FormCheckBox, FormCheckBoxSize, FormDropDown, FormFieldData, FormFieldKind, FormTextInput,
+    FormTextType, HeaderFooterId, HeaderFooterKind, HeaderFooterRef, HeightRule, HorizontalAlign,
+    HorizontalAnchor, HorizontalPosition, Hyperlink, HyperlinkTarget, InlineNode, InlineSdt,
+    InternalTarget, LineNumberRestart, LineNumbering, MAX_DESCR_BYTES, MAX_EMU,
     MAX_FIELD_INSTRUCTION_BYTES, MAX_FORM_FIELD_ENTRIES, MAX_FORM_FIELD_STRING_BYTES,
     MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH, MAX_TEXTBOX_DEPTH, Math, MediaId, MoveKind,
-    MoveRangeEnd, MoveRangeStart, NoteId, NoteKind, NoteReference, PageMargins, PageNumbering,
-    PageSize, PageVerticalAlignment, Paragraph, ParagraphProperties, Revision, RevisionKind,
-    RgbColor, Run, RunProperties, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind,
-    SdtDataBinding, SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionColumns,
-    SectionId, SectionType, StyleKind, Symbol, Tab, TabAlignment, TabLeader, TabStop, TableAnchor,
-    TableFloatPosition, TableLayout, TableOverlap, TableXAlign, TableYAlign, TextBox,
-    TextDirection, VerticalMerge,
+    MoveRangeEnd, MoveRangeStart, NoteId, NoteKind, NoteNumberRestart, NotePosition,
+    NoteProperties, NoteReference, PageBorderDisplay, PageBorderOffset, PageBorders, PageMargins,
+    PageNumbering, PageOrientation, PageSize, PageVerticalAlignment, PaperSource, Paragraph,
+    ParagraphProperties, Revision, RevisionKind, RgbColor, Run, RunProperties, SdtCheckbox,
+    SdtCheckboxSymbol, SdtControlData, SdtControlKind, SdtDataBinding, SdtDate, SdtListItem,
+    SdtLock, SdtProperties, SectionBoundary, SectionColumns, SectionId, SectionType, StyleKind,
+    Symbol, Tab, TabAlignment, TabLeader, TabStop, TableAnchor, TableFloatPosition, TableLayout,
+    TableOverlap, TableXAlign, TableYAlign, TextBox, TextDirection, VerticalAlign, VerticalAnchor,
+    VerticalMerge, VerticalPosition, WrapMode,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::events::{BytesStart, Event};
@@ -126,6 +130,13 @@ enum Segment {
         font: String,
         char: u32,
     },
+    /// An anchored (floating) drawing: an embedded picture plus its placement.
+    AnchoredDrawing {
+        media: MediaId,
+        extent: Extent,
+        anchor: DrawingAnchor,
+        descr: Option<String>,
+    },
 }
 
 /// The natural size used for an embedded object whose producer declared none.
@@ -133,6 +144,65 @@ const ZERO_EXTENT: Extent = Extent {
     width_emu: 0,
     height_emu: 0,
 };
+
+/// Which axis of an anchor a `wp:posOffset`/`wp:align` value belongs to (the
+/// enclosing `wp:positionH` or `wp:positionV`).
+#[derive(Clone, Copy)]
+enum AnchorAxis {
+    Horizontal,
+    Vertical,
+}
+
+/// The `wp:anchor` position/wrap/z-order pointers collected while parsing an open
+/// anchored drawing, resolved into an [`AnchoredDrawing`] when the drawing closes.
+/// The `pic:pic`'s `a:blip@r:embed` and `wp:extent` flow through the shared
+/// `pending_embed`/`pending_extent` fields (an anchored picture is an inline
+/// picture with a placement).
+#[derive(Default)]
+struct PendingAnchor {
+    /// `@behindDoc` (z-order behind the text).
+    behind_doc: bool,
+    /// `wp:positionH@relativeFrom`.
+    h_relative: Option<HorizontalAnchor>,
+    /// The resolved horizontal offset or alignment (`wp:posOffset`/`wp:align`).
+    h_position: Option<HorizontalPosition>,
+    /// `wp:positionV@relativeFrom`.
+    v_relative: Option<VerticalAnchor>,
+    /// The resolved vertical offset or alignment.
+    v_position: Option<VerticalPosition>,
+    /// The `wp:wrap*` mode.
+    wrap: Option<WrapMode>,
+    /// The `wp:docPr@descr` alt text (bounded).
+    descr: Option<String>,
+    /// The axis whose `wp:posOffset`/`wp:align` text is currently being captured.
+    capture_axis: Option<AnchorAxis>,
+    /// Whether the value being captured is a `wp:posOffset` (`true`) or a
+    /// `wp:align` (`false`).
+    capture_is_offset: bool,
+    /// The text of the value currently being captured (bounded).
+    capture_buffer: String,
+}
+
+impl PendingAnchor {
+    /// Resolves the collected pointers into a [`DrawingAnchor`], applying OOXML
+    /// defaults for any component the producer omitted (a missing `positionH`
+    /// defaults to a zero offset from the column; a missing `positionV` to a zero
+    /// offset from the paragraph; a missing wrap to `wrapNone`).
+    fn resolve(&self) -> DrawingAnchor {
+        DrawingAnchor {
+            horizontal: AnchorHorizontal {
+                relative_from: self.h_relative.unwrap_or(HorizontalAnchor::Column),
+                position: self.h_position.unwrap_or(HorizontalPosition::Offset(0)),
+            },
+            vertical: AnchorVertical {
+                relative_from: self.v_relative.unwrap_or(VerticalAnchor::Paragraph),
+                position: self.v_position.unwrap_or(VerticalPosition::Offset(0)),
+            },
+            wrap: self.wrap.unwrap_or(WrapMode::None),
+            behind_doc: self.behind_doc,
+        }
+    }
+}
 
 /// A main-document relationship an embedded object can reference, resolved from
 /// the package (`r:id` -> part). The `r:id` is the lookup key.
@@ -228,6 +298,8 @@ enum EdgeScope {
     Margins,
     /// A `w:pBdr` paragraph-border container (edges route to the paragraph).
     ParagraphBorders,
+    /// A `w:pgBorders` section page-border container (edges route to the section).
+    PageBorders,
 }
 
 /// A tracked-change range (`w:ins`/`w:del`) being accumulated.
@@ -282,6 +354,7 @@ struct ContentFrame {
     drawing_extra: bool,
     pict_depth: u32,
     pending_graphic: PendingGraphic,
+    pending_anchor: Option<PendingAnchor>,
     object_depth: u32,
     pending_object: PendingObject,
     hyperlink: Option<HyperlinkAccumulator>,
@@ -376,6 +449,32 @@ struct SectionAccumulator {
     doc_grid_char_space: Option<i32>,
     headers: Vec<HeaderFooterRef>,
     footers: Vec<HeaderFooterRef>,
+    orientation: Option<PageOrientation>,
+    paper_first: Option<i32>,
+    paper_other: Option<i32>,
+    page_border_display: Option<PageBorderDisplay>,
+    page_border_offset: Option<PageBorderOffset>,
+    page_border_top: Option<BorderEdge>,
+    page_border_bottom: Option<BorderEdge>,
+    page_border_start: Option<BorderEdge>,
+    page_border_end: Option<BorderEdge>,
+    line_count_by: Option<i32>,
+    line_start: Option<i32>,
+    line_distance: Option<i32>,
+    line_restart: Option<LineNumberRestart>,
+    footnote_props: NoteProperties,
+    endnote_props: NoteProperties,
+    text_direction: Option<TextDirection>,
+    bidi: bool,
+}
+
+/// Which per-section note-properties container (if any) is open, so its
+/// `w:pos`/`w:numFmt`/`w:numStart`/`w:numRestart` children route to the section's
+/// footnote or endnote properties.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SectionNoteScope {
+    Footnote,
+    Endnote,
 }
 
 struct BodyParser<'a> {
@@ -422,6 +521,10 @@ struct BodyParser<'a> {
     pict_depth: u32,
     /// `a:graphicData` payload pointers for the open drawing (chart/diagram).
     pending_graphic: PendingGraphic,
+    /// `wp:anchor` placement pointers for the open drawing; `Some` while inside a
+    /// floating anchor, resolved into an [`AnchoredDrawing`] when the drawing
+    /// closes.
+    pending_anchor: Option<PendingAnchor>,
     /// Depth of an open `w:object` (an OLE object wrapper).
     object_depth: u32,
     /// `w:object` pointers collected until the object closes.
@@ -474,6 +577,10 @@ struct BodyParser<'a> {
     /// frame (like the depth counters) so an inner table's edge container cannot
     /// clobber the outer scope and drop the enclosing table's borders.
     edge_scope: EdgeScope,
+    /// Which per-section note-properties container (`w:footnotePr`/`w:endnotePr`)
+    /// is open, so its child elements route to the section accumulator. A section
+    /// never appears inside a text-box frame, so this is not saved/restored.
+    section_note_scope: Option<SectionNoteScope>,
     /// Whether a `w:tabs` container is open (its `w:tab` children are tab stops,
     /// not the inline run tab). Never spans a text box.
     in_tabs: bool,
@@ -619,6 +726,7 @@ impl<'a> BodyParser<'a> {
             drawing_extra: false,
             pict_depth: 0,
             pending_graphic: PendingGraphic::default(),
+            pending_anchor: None,
             object_depth: 0,
             pending_object: PendingObject::default(),
             hyperlink: None,
@@ -638,6 +746,7 @@ impl<'a> BodyParser<'a> {
             trpr_depth: 0,
             pr_change_depth: 0,
             edge_scope: EdgeScope::None,
+            section_note_scope: None,
             in_tabs: false,
             mark_rpr_depth: 0,
             mark_rpr_seen: false,
@@ -918,6 +1027,18 @@ impl BodyParser<'_> {
                 Event::End(element) => {
                     self.on_end(element.local_name().as_ref())?;
                     self.depth = self.depth.saturating_sub(1);
+                }
+                // A `wp:posOffset`/`wp:align` value: its text is captured into the
+                // open anchor accumulator (bounded), not the paragraph flow.
+                Event::Text(text) if self.capturing_anchor_axis() => {
+                    let raw = text.into_inner();
+                    let raw =
+                        std::str::from_utf8(raw.as_ref()).map_err(|_| ImportError::MalformedXml)?;
+                    if let Some(anchor) = self.pending_anchor.as_mut()
+                        && anchor.capture_buffer.len() + raw.len() <= 64
+                    {
+                        anchor.capture_buffer.push_str(raw);
+                    }
                 }
                 Event::Text(text) if self.in_text || self.in_instr => {
                     let raw = text.into_inner();
@@ -1423,6 +1544,7 @@ impl BodyParser<'_> {
                     self.drawing_extra = false;
                     self.blipfill_depth = 0;
                     self.pending_graphic = PendingGraphic::default();
+                    self.pending_anchor = None;
                 }
             }
             // The `a:graphicData@uri` distinguishes a chart / diagram / picture /
@@ -1458,15 +1580,76 @@ impl BodyParser<'_> {
             b"blip" if self.blipfill_depth > 0 && self.pending_embed.is_none() => {
                 self.pending_embed = attribute_value(element, b"embed");
             }
-            // A floating anchor, alt text, click-link, or SVG dual-blip carries
-            // detail the model does not capture: flag it so a resolved drawing
-            // is still reported (degraded), never silently under-modeled.
-            b"anchor" if self.drawing_depth > 0 => self.drawing_extra = true,
-            b"docPr" if self.drawing_depth > 0 => {
-                if attribute_value(element, b"descr").is_some() {
-                    self.drawing_extra = true;
+            // A floating anchor (`wp:anchor`): open an anchor accumulator so the
+            // drawing's position/wrap/z-order are captured and it commits as an
+            // `AnchoredDrawing` rather than collapsing to inline. `@behindDoc`
+            // ("1"/"true") sets the behind-text z-order.
+            b"anchor" if self.drawing_depth > 0 => {
+                // `@behindDoc` defaults to false when absent, so it is an explicit
+                // truthy check (not `is_true`, whose absent-is-true toggle semantics
+                // suit `<w:b/>`-style flags, not a defaulted attribute).
+                let behind_doc = matches!(
+                    attribute_value(element, b"behindDoc").as_deref(),
+                    Some("1") | Some("true")
+                );
+                self.pending_anchor = Some(PendingAnchor {
+                    behind_doc,
+                    ..PendingAnchor::default()
+                });
+            }
+            // `wp:positionH`/`wp:positionV`: record which reference the following
+            // `wp:posOffset`/`wp:align` is measured from, and mark the axis so its
+            // value text is captured.
+            b"positionH" if self.pending_anchor.is_some() => {
+                let relative = attribute_value(element, b"relativeFrom");
+                if let Some(anchor) = self.pending_anchor.as_mut() {
+                    anchor.h_relative = horizontal_anchor(relative.as_deref());
+                    anchor.capture_axis = Some(AnchorAxis::Horizontal);
                 }
             }
+            b"positionV" if self.pending_anchor.is_some() => {
+                let relative = attribute_value(element, b"relativeFrom");
+                if let Some(anchor) = self.pending_anchor.as_mut() {
+                    anchor.v_relative = vertical_anchor(relative.as_deref());
+                    anchor.capture_axis = Some(AnchorAxis::Vertical);
+                }
+            }
+            // `wp:posOffset` / `wp:align` carry their value as element text; begin
+            // capturing it for the current axis.
+            b"posOffset" if self.capturing_anchor_axis() => {
+                if let Some(anchor) = self.pending_anchor.as_mut() {
+                    anchor.capture_is_offset = true;
+                    anchor.capture_buffer.clear();
+                }
+            }
+            b"align" if self.capturing_anchor_axis() => {
+                if let Some(anchor) = self.pending_anchor.as_mut() {
+                    anchor.capture_is_offset = false;
+                    anchor.capture_buffer.clear();
+                }
+            }
+            // The wrap mode (`wp:wrap*`, an empty element).
+            b"wrapSquare" | b"wrapTight" | b"wrapThrough" | b"wrapTopAndBottom" | b"wrapNone"
+                if self.pending_anchor.is_some() =>
+            {
+                if let Some(anchor) = self.pending_anchor.as_mut() {
+                    anchor.wrap = Some(wrap_mode(local));
+                }
+            }
+            // `wp:docPr@descr` is the drawing's alt text: modeled on an anchor
+            // (accessibility); on an inline drawing it remains reported (the inline
+            // path does not yet carry alt text).
+            b"docPr" if self.drawing_depth > 0 => match attribute_value(element, b"descr") {
+                Some(descr) if !descr.is_empty() && descr.len() <= MAX_DESCR_BYTES => {
+                    if let Some(anchor) = self.pending_anchor.as_mut() {
+                        anchor.descr = Some(descr);
+                    } else {
+                        self.drawing_extra = true;
+                    }
+                }
+                Some(_) => self.drawing_extra = true,
+                None => {}
+            },
             b"hlinkClick" | b"svgBlip" if self.drawing_depth > 0 => self.drawing_extra = true,
             // A legacy VML picture (`w:pict`) carries its image as
             // `v:imagedata@r:id`; resolve it through the same media table.
@@ -1542,9 +1725,21 @@ impl BodyParser<'_> {
                 self.section = Some(SectionAccumulator::default());
             }
             b"pgSz" if self.section.is_some() => {
+                // `w:orient` is a hint Word derives from (and keeps consistent
+                // with) the width/height; an unknown token is reported, never kept.
+                let orientation = match attribute_value(element, b"orient").as_deref() {
+                    Some("portrait") => Some(PageOrientation::Portrait),
+                    Some("landscape") => Some(PageOrientation::Landscape),
+                    None => None,
+                    _ => {
+                        self.reporter.report(b"pgSz");
+                        None
+                    }
+                };
                 if let Some(section) = self.section.as_mut() {
                     section.page_width = attr_i32(element, b"w");
                     section.page_height = attr_i32(element, b"h");
+                    section.orientation = orientation;
                 }
             }
             b"pgMar" if self.section.is_some() => {
@@ -1627,6 +1822,125 @@ impl BodyParser<'_> {
                     section.doc_grid_type = grid_type;
                     section.doc_grid_line_pitch = line_pitch;
                     section.doc_grid_char_space = char_space;
+                }
+            }
+            // Printer paper-source bins (`w:paperSrc`).
+            b"paperSrc" if self.section.is_some() => {
+                let first = attr_i32(element, b"first");
+                let other = attr_i32(element, b"other");
+                if let Some(section) = self.section.as_mut() {
+                    section.paper_first = first;
+                    section.paper_other = other;
+                }
+            }
+            // Section page borders (`w:pgBorders`): open an edge-capture scope so
+            // its `w:top`/`w:left`/`w:bottom`/`w:right` children route to the
+            // section, and record `display`/`offsetFrom`.
+            b"pgBorders" if self.section.is_some() => {
+                let display = match attribute_value(element, b"display").as_deref() {
+                    Some("allPages") => Some(PageBorderDisplay::AllPages),
+                    Some("firstPage") => Some(PageBorderDisplay::FirstPage),
+                    Some("notFirstPage") => Some(PageBorderDisplay::NotFirstPage),
+                    _ => None,
+                };
+                let offset_from = match attribute_value(element, b"offsetFrom").as_deref() {
+                    Some("page") => Some(PageBorderOffset::Page),
+                    Some("text") => Some(PageBorderOffset::Text),
+                    _ => None,
+                };
+                self.edge_scope = EdgeScope::PageBorders;
+                if let Some(section) = self.section.as_mut() {
+                    section.page_border_display = display;
+                    section.page_border_offset = offset_from;
+                }
+            }
+            // Section line numbering (`w:lnNumType`).
+            b"lnNumType" if self.section.is_some() => {
+                let count_by = attr_i32(element, b"countBy");
+                let start = attr_i32(element, b"start");
+                let distance = attr_i32(element, b"distance");
+                let restart = match attribute_value(element, b"restart").as_deref() {
+                    Some("newPage") => Some(LineNumberRestart::NewPage),
+                    Some("newSection") => Some(LineNumberRestart::NewSection),
+                    Some("continuous") => Some(LineNumberRestart::Continuous),
+                    _ => None,
+                };
+                if let Some(section) = self.section.as_mut() {
+                    section.line_count_by = count_by;
+                    section.line_start = start;
+                    section.line_distance = distance;
+                    section.line_restart = restart;
+                }
+            }
+            // Per-section footnote/endnote property containers: open a note scope
+            // so the shared `w:pos`/`w:numFmt`/`w:numStart`/`w:numRestart` children
+            // route to the right side of the section accumulator.
+            b"footnotePr" if self.section.is_some() => {
+                self.section_note_scope = Some(SectionNoteScope::Footnote);
+            }
+            b"endnotePr" if self.section.is_some() => {
+                self.section_note_scope = Some(SectionNoteScope::Endnote);
+            }
+            b"pos" if self.section_note_scope.is_some() => {
+                let position = match attribute_value(element, b"val").as_deref() {
+                    Some("pageBottom") => Some(NotePosition::PageBottom),
+                    Some("beneathText") => Some(NotePosition::BeneathText),
+                    Some("sectEnd") => Some(NotePosition::SectionEnd),
+                    Some("docEnd") => Some(NotePosition::DocumentEnd),
+                    _ => None,
+                };
+                match (position, self.section_note_props()) {
+                    (Some(value), Some(props)) => props.position = Some(value),
+                    (None, _) => self.reporter.report(b"pos"),
+                    _ => {}
+                }
+            }
+            b"numFmt" if self.section_note_scope.is_some() => {
+                let format =
+                    attribute_value(element, b"val").filter(|v| !v.is_empty() && v.len() <= 32);
+                if let Some(props) = self.section_note_props() {
+                    props.number_format = format;
+                }
+            }
+            b"numStart" if self.section_note_scope.is_some() => {
+                let start = attr_i32(element, b"val");
+                if let Some(props) = self.section_note_props() {
+                    props.number_start = start;
+                }
+            }
+            b"numRestart" if self.section_note_scope.is_some() => {
+                let restart = match attribute_value(element, b"val").as_deref() {
+                    Some("continuous") => Some(NoteNumberRestart::Continuous),
+                    Some("eachSect") => Some(NoteNumberRestart::EachSection),
+                    Some("eachPage") => Some(NoteNumberRestart::EachPage),
+                    _ => None,
+                };
+                match (restart, self.section_note_props()) {
+                    (Some(value), Some(props)) => props.number_restart = Some(value),
+                    (None, _) => self.reporter.report(b"numRestart"),
+                    _ => {}
+                }
+            }
+            // Section text-flow direction (`w:textDirection`), reusing the shared
+            // `TextDirection` vocabulary; an unmodeled token is reported.
+            b"textDirection" if self.section.is_some() => {
+                let direction = match attribute_value(element, b"val").as_deref() {
+                    Some("lrTb") => Some(TextDirection::LrTb),
+                    Some("tbRl") => Some(TextDirection::TbRl),
+                    Some("btLr") => Some(TextDirection::BtLr),
+                    _ => None,
+                };
+                match (direction, self.section.as_mut()) {
+                    (Some(value), Some(section)) => section.text_direction = Some(value),
+                    (None, _) => self.reporter.report(b"textDirection"),
+                    _ => {}
+                }
+            }
+            // Right-to-left section layout (`w:bidi`).
+            b"bidi" if self.section.is_some() => {
+                let on = is_true(attribute_value(element, b"val").as_deref());
+                if let Some(section) = self.section.as_mut() {
+                    section.bidi = on;
                 }
             }
             b"headerReference" if self.section.is_some() => {
@@ -1759,6 +2073,15 @@ impl BodyParser<'_> {
                 }
             }
             // ---- table properties (`w:tblPr`) --------------------------------
+            b"tblStyle" if self.tblpr_depth > 0 => {
+                match self.resolve_style(element, StyleKind::Table) {
+                    Some(style) => self.tables.set_table_style(style),
+                    None => self.reporter.report(local),
+                }
+            }
+            b"bidiVisual" if self.tblpr_depth > 0 => self
+                .tables
+                .set_table_bidi_visual(is_true(attribute_value(element, b"val").as_deref())),
             b"jc" if self.tblpr_depth > 0 => match table_alignment(element) {
                 Some(alignment) => self.tables.set_table_alignment(alignment),
                 None => self.reporter.report(b"jc"),
@@ -1825,6 +2148,10 @@ impl BodyParser<'_> {
                 self.tables.set_table_shading(fill);
             }
             // ---- row properties (`w:trPr`) -----------------------------------
+            b"cnfStyle" if self.trpr_depth > 0 => {
+                self.tables
+                    .set_row_conditional_format(parse_cnf_style(element));
+            }
             b"trHeight" if self.trpr_depth > 0 => {
                 let value = attribute_value(element, b"val")
                     .and_then(|value| value.parse::<u32>().ok())
@@ -1857,6 +2184,10 @@ impl BodyParser<'_> {
                 }
             }
             // ---- cell property long tail (`w:tcPr`) --------------------------
+            b"cnfStyle" if self.tcpr_depth > 0 => {
+                self.tables
+                    .set_cell_conditional_format(parse_cnf_style(element));
+            }
             b"shd" if self.tcpr_depth > 0 && self.ppr_depth == 0 => {
                 let fill = self.shading_fill(element);
                 self.tables.set_cell_shading(fill);
@@ -2336,6 +2667,15 @@ impl BodyParser<'_> {
             // open field and is finalized when the field commits.
             b"ffData" if self.in_ffdata => self.in_ffdata = false,
             b"blipFill" => self.blipfill_depth = self.blipfill_depth.saturating_sub(1),
+            // A `wp:posOffset`/`wp:align` closes: parse the captured value into the
+            // current axis's position.
+            b"posOffset" | b"align" if self.capturing_anchor_axis() => self.finish_anchor_value(),
+            // A `wp:positionH`/`wp:positionV` closes: clear the capture axis.
+            b"positionH" | b"positionV" if self.pending_anchor.is_some() => {
+                if let Some(anchor) = self.pending_anchor.as_mut() {
+                    anchor.capture_axis = None;
+                }
+            }
             b"drawing" if self.drawing_depth > 0 => {
                 self.drawing_depth -= 1;
                 if self.drawing_depth == 0 {
@@ -2375,9 +2715,12 @@ impl BodyParser<'_> {
             b"tcPr" => self.tcpr_depth = self.tcpr_depth.saturating_sub(1),
             b"tblPr" => self.tblpr_depth = self.tblpr_depth.saturating_sub(1),
             b"trPr" => self.trpr_depth = self.trpr_depth.saturating_sub(1),
-            b"tblBorders" | b"tcBorders" | b"tblCellMar" | b"tcMar" | b"pBdr" => {
+            b"tblBorders" | b"tcBorders" | b"tblCellMar" | b"tcMar" | b"pBdr" | b"pgBorders" => {
                 self.edge_scope = EdgeScope::None;
             }
+            // A per-section note-properties container closes: leave the note scope
+            // so trailing siblings do not route into it.
+            b"footnotePr" | b"endnotePr" => self.section_note_scope = None,
             b"tabs" => self.in_tabs = false,
             // A refused subtree's own `</w:tbl>` closes suppression, never a real
             // table on the stack; its `</w:tc>`/`</w:tr>` are inert.
@@ -2406,11 +2749,59 @@ impl BodyParser<'_> {
         Ok(())
     }
 
+    /// Whether an open anchor is currently capturing a `wp:posOffset`/`wp:align`
+    /// value for one of its axes.
+    fn capturing_anchor_axis(&self) -> bool {
+        self.pending_anchor
+            .as_ref()
+            .is_some_and(|anchor| anchor.capture_axis.is_some())
+    }
+
+    /// Parses the captured `wp:posOffset`/`wp:align` text into the current axis's
+    /// position on the open anchor. An unparseable value leaves the position unset
+    /// (resolved to a zero offset later), never panicking.
+    fn finish_anchor_value(&mut self) {
+        let Some(anchor) = self.pending_anchor.as_mut() else {
+            return;
+        };
+        let Some(axis) = anchor.capture_axis else {
+            return;
+        };
+        let is_offset = anchor.capture_is_offset;
+        let buffer = std::mem::take(&mut anchor.capture_buffer);
+        let value = buffer.trim();
+        match (axis, is_offset) {
+            (AnchorAxis::Horizontal, true) => {
+                if let Ok(emu) = value.parse::<i64>() {
+                    anchor.h_position =
+                        Some(HorizontalPosition::Offset(emu.clamp(-MAX_EMU, MAX_EMU)));
+                }
+            }
+            (AnchorAxis::Vertical, true) => {
+                if let Ok(emu) = value.parse::<i64>() {
+                    anchor.v_position =
+                        Some(VerticalPosition::Offset(emu.clamp(-MAX_EMU, MAX_EMU)));
+                }
+            }
+            (AnchorAxis::Horizontal, false) => {
+                if let Some(align) = horizontal_align(value) {
+                    anchor.h_position = Some(HorizontalPosition::Align(align));
+                }
+            }
+            (AnchorAxis::Vertical, false) => {
+                if let Some(align) = vertical_align(value) {
+                    anchor.v_position = Some(VerticalPosition::Align(align));
+                }
+            }
+        }
+    }
+
     /// Commits the top-level drawing that just closed. A `c:chart`/`dgm:relIds`
     /// payload becomes a first-class `EmbeddedObject` referencing its preserved
-    /// part(s); a resolved `a:blip@r:embed` becomes a `Drawing`; an
-    /// unresolved/dangling reference is reported and dropped. A resolved drawing
-    /// carrying unmodeled detail is also reported.
+    /// part(s); a resolved `a:blip@r:embed` becomes a `Drawing` (inline) or an
+    /// `AnchoredDrawing` (floating `wp:anchor`); an unresolved/dangling reference
+    /// is reported and dropped. A resolved drawing carrying unmodeled detail is
+    /// also reported.
     fn commit_drawing(&mut self) {
         let extent = self.pending_extent.take();
         let extra = self.drawing_extra;
@@ -2456,10 +2847,28 @@ impl BodyParser<'_> {
             });
             return;
         }
-        // Otherwise the embedded-picture path.
+        // Otherwise the embedded-picture path. An open anchor accumulator routes a
+        // resolvable picture to an `AnchoredDrawing` (placed at its position); an
+        // inline picture stays a `Drawing`.
+        let anchor = self.pending_anchor.take();
         match self.pending_embed.take() {
             Some(embed) => match self.media_index.get(&embed) {
                 Some(media) => {
+                    if let Some(anchor) = anchor {
+                        self.push_segment(Segment::AnchoredDrawing {
+                            media: *media,
+                            extent: extent.unwrap_or(ZERO_EXTENT),
+                            anchor: anchor.resolve(),
+                            descr: anchor.descr,
+                        });
+                        // Any remaining unmodeled detail (e.g. a click-link) is
+                        // still surfaced so the anchored drawing is never silently
+                        // under-modeled.
+                        if extra {
+                            self.reporter.report(b"drawing");
+                        }
+                        return;
+                    }
                     if extra {
                         self.reporter.report(b"drawing");
                     }
@@ -2622,8 +3031,34 @@ impl BodyParser<'_> {
                 }
                 None => self.reporter.report(b"pBdr"),
             },
+            EdgeScope::PageBorders => match self.build_border_edge(element) {
+                Some(edge) => {
+                    if let Some(section) = self.section.as_mut() {
+                        match local {
+                            b"top" => section.page_border_top = Some(edge),
+                            b"bottom" => section.page_border_bottom = Some(edge),
+                            b"start" | b"left" => section.page_border_start = Some(edge),
+                            b"end" | b"right" => section.page_border_end = Some(edge),
+                            _ => {}
+                        }
+                    }
+                }
+                None => self.reporter.report(b"pgBorders"),
+            },
             EdgeScope::None => {}
         }
+    }
+
+    /// The open section's footnote or endnote property accumulator, selected by
+    /// the current [`SectionNoteScope`]. `None` when no section or note scope is
+    /// open (the caller then drops the value).
+    fn section_note_props(&mut self) -> Option<&mut NoteProperties> {
+        let scope = self.section_note_scope?;
+        let section = self.section.as_mut()?;
+        Some(match scope {
+            SectionNoteScope::Footnote => &mut section.footnote_props,
+            SectionNoteScope::Endnote => &mut section.endnote_props,
+        })
     }
 
     /// Maps a `w:tabs > w:tab` custom tab stop. A `clear` or unknown alignment, a
@@ -2756,6 +3191,28 @@ impl BodyParser<'_> {
             line_pitch: accumulator.doc_grid_line_pitch.map(|v| v.clamp(0, 31_680)),
             char_space: accumulator.doc_grid_char_space.map(|v| v.clamp(0, 31_680)),
         };
+        let paper_source = PaperSource {
+            first: accumulator.paper_first.map(|v| v.clamp(0, 32_767)),
+            other: accumulator.paper_other.map(|v| v.clamp(0, 32_767)),
+        };
+        let page_borders = PageBorders {
+            display: accumulator.page_border_display,
+            offset_from: accumulator.page_border_offset,
+            top: accumulator.page_border_top,
+            bottom: accumulator.page_border_bottom,
+            start: accumulator.page_border_start,
+            end: accumulator.page_border_end,
+        };
+        let line_numbering = LineNumbering {
+            count_by: accumulator.line_count_by.map(|v| v.clamp(0, 32_767)),
+            start: accumulator.line_start.map(|v| v.clamp(0, 32_767)),
+            distance: accumulator.line_distance.map(|v| v.clamp(0, 31_680)),
+            restart: accumulator.line_restart,
+        };
+        let clamp_note = |mut props: NoteProperties| -> NoteProperties {
+            props.number_start = props.number_start.map(|v| v.clamp(0, 1_000_000));
+            props
+        };
         self.sections.push(SectionBoundary {
             id,
             page_size,
@@ -2768,6 +3225,14 @@ impl BodyParser<'_> {
             vertical_alignment: accumulator.vertical_alignment,
             page_numbering,
             doc_grid,
+            orientation: accumulator.orientation,
+            paper_source,
+            page_borders,
+            line_numbering,
+            footnote_props: clamp_note(accumulator.footnote_props),
+            endnote_props: clamp_note(accumulator.endnote_props),
+            text_direction: accumulator.text_direction,
+            bidi: accumulator.bidi,
         });
         Ok(id)
     }
@@ -2829,6 +3294,7 @@ impl BodyParser<'_> {
             drawing_extra: std::mem::take(&mut self.drawing_extra),
             pict_depth: std::mem::take(&mut self.pict_depth),
             pending_graphic: std::mem::take(&mut self.pending_graphic),
+            pending_anchor: self.pending_anchor.take(),
             object_depth: std::mem::take(&mut self.object_depth),
             pending_object: std::mem::take(&mut self.pending_object),
             hyperlink: self.hyperlink.take(),
@@ -2893,6 +3359,7 @@ impl BodyParser<'_> {
         self.drawing_extra = frame.drawing_extra;
         self.pict_depth = frame.pict_depth;
         self.pending_graphic = frame.pending_graphic;
+        self.pending_anchor = frame.pending_anchor;
         self.object_depth = frame.object_depth;
         self.pending_object = frame.pending_object;
         self.hyperlink = frame.hyperlink;
@@ -3597,6 +4064,21 @@ impl BodyParser<'_> {
                 let id = self.next_id()?;
                 Ok(InlineNode::Drawing(Drawing { id, media, extent }))
             }
+            Segment::AnchoredDrawing {
+                media,
+                extent,
+                anchor,
+                descr,
+            } => {
+                let id = self.next_id()?;
+                Ok(InlineNode::AnchoredDrawing(AnchoredDrawing {
+                    id,
+                    media,
+                    extent,
+                    anchor,
+                    descr,
+                }))
+            }
             Segment::EmbeddedObject {
                 kind,
                 part,
@@ -3857,6 +4339,48 @@ fn table_float_position(element: &BytesStart<'_>) -> TableFloatPosition {
     }
 }
 
+/// Parses a `w:cnfStyle` (`CT_Cnf`) selector. Word writes the whole selector as
+/// the 12-bit `@w:val` binary string (`firstRow`, `lastRow`, `firstColumn`,
+/// `lastColumn`, `oddVBand`, `evenVBand`, `oddHBand`, `evenHBand`, then the four
+/// corner cells in NW/NE/SW/SE order); the equivalent explicit boolean
+/// attributes are also accepted and OR in on top. Unset or malformed input
+/// yields an all-false selector, which the caller drops.
+fn parse_cnf_style(element: &BytesStart<'_>) -> CnfStyle {
+    let mut cnf = CnfStyle::default();
+    // The twelve flags, paired with their `CT_Cnf` attribute names, in the same
+    // order as the `@w:val` bit string. Disjoint fields, so one array of `&mut`.
+    let flags: [(&[u8], &mut bool); 12] = [
+        (b"firstRow", &mut cnf.first_row),
+        (b"lastRow", &mut cnf.last_row),
+        (b"firstColumn", &mut cnf.first_column),
+        (b"lastColumn", &mut cnf.last_column),
+        (b"oddVBand", &mut cnf.odd_v_band),
+        (b"evenVBand", &mut cnf.even_v_band),
+        (b"oddHBand", &mut cnf.odd_h_band),
+        (b"evenHBand", &mut cnf.even_h_band),
+        (b"firstRowFirstColumn", &mut cnf.first_row_first_column),
+        (b"firstRowLastColumn", &mut cnf.first_row_last_column),
+        (b"lastRowFirstColumn", &mut cnf.last_row_first_column),
+        (b"lastRowLastColumn", &mut cnf.last_row_last_column),
+    ];
+    // `@w:val` is the canonical form Word writes: a fixed 12-character binary
+    // string, one digit per flag in the array order above. Anything but exactly
+    // twelve characters is ignored; the explicit boolean attributes (accepted
+    // too) then OR in on top so a mixed encoding is never lost.
+    let bits: Option<Vec<bool>> = attribute_value(element, b"val")
+        .map(|val| val.chars().map(|c| c == '1').collect())
+        .filter(|bits: &Vec<bool>| bits.len() == 12);
+    for (index, (attr, slot)) in flags.into_iter().enumerate() {
+        if let Some(bits) = &bits {
+            *slot = bits[index];
+        }
+        if let Some(value) = attribute_value(element, attr) {
+            *slot = is_true(Some(&value));
+        }
+    }
+    cnf
+}
+
 /// Whether a local element name is known DrawingML scaffolding for an embedded
 /// picture (consumed silently while inside a `w:drawing`). Anything not listed
 /// still reports, so genuinely unmodeled drawing content is never lost.
@@ -3892,6 +4416,75 @@ fn ffdata_text_type(element: &BytesStart<'_>) -> Option<FormTextType> {
         Some("currentDate") => Some(FormTextType::CurrentDate),
         Some("calculated") => Some(FormTextType::Calculation),
         _ => None,
+    }
+}
+
+/// Maps a `wp:positionH@relativeFrom` value to its horizontal reference. An
+/// unknown/absent value yields `None` (resolved to the `column` default).
+fn horizontal_anchor(value: Option<&str>) -> Option<HorizontalAnchor> {
+    Some(match value? {
+        "page" => HorizontalAnchor::Page,
+        "margin" => HorizontalAnchor::Margin,
+        "column" => HorizontalAnchor::Column,
+        "character" => HorizontalAnchor::Character,
+        "leftMargin" => HorizontalAnchor::LeftMargin,
+        "rightMargin" => HorizontalAnchor::RightMargin,
+        "insideMargin" => HorizontalAnchor::InsideMargin,
+        "outsideMargin" => HorizontalAnchor::OutsideMargin,
+        _ => return None,
+    })
+}
+
+/// Maps a `wp:positionV@relativeFrom` value to its vertical reference. An
+/// unknown/absent value yields `None` (resolved to the `paragraph` default).
+fn vertical_anchor(value: Option<&str>) -> Option<VerticalAnchor> {
+    Some(match value? {
+        "page" => VerticalAnchor::Page,
+        "margin" => VerticalAnchor::Margin,
+        "paragraph" => VerticalAnchor::Paragraph,
+        "line" => VerticalAnchor::Line,
+        "topMargin" => VerticalAnchor::TopMargin,
+        "bottomMargin" => VerticalAnchor::BottomMargin,
+        "insideMargin" => VerticalAnchor::InsideMargin,
+        "outsideMargin" => VerticalAnchor::OutsideMargin,
+        _ => return None,
+    })
+}
+
+/// Maps a horizontal `wp:align` keyword to its alignment.
+fn horizontal_align(value: &str) -> Option<HorizontalAlign> {
+    Some(match value {
+        "left" => HorizontalAlign::Left,
+        "center" => HorizontalAlign::Center,
+        "right" => HorizontalAlign::Right,
+        "inside" => HorizontalAlign::Inside,
+        "outside" => HorizontalAlign::Outside,
+        _ => return None,
+    })
+}
+
+/// Maps a vertical `wp:align` keyword to its alignment.
+fn vertical_align(value: &str) -> Option<VerticalAlign> {
+    Some(match value {
+        "top" => VerticalAlign::Top,
+        "center" => VerticalAlign::Center,
+        "bottom" => VerticalAlign::Bottom,
+        "inside" => VerticalAlign::Inside,
+        "outside" => VerticalAlign::Outside,
+        _ => return None,
+    })
+}
+
+/// Maps a `wp:wrap*` element's local name to its wrap mode. Only the five wrap
+/// elements reach this (the caller matches them), so the fallback is unreachable
+/// in practice and defaults to `wrapNone`.
+fn wrap_mode(local: &[u8]) -> WrapMode {
+    match local {
+        b"wrapSquare" => WrapMode::Square,
+        b"wrapTight" => WrapMode::Tight,
+        b"wrapThrough" => WrapMode::Through,
+        b"wrapTopAndBottom" => WrapMode::TopAndBottom,
+        _ => WrapMode::None,
     }
 }
 

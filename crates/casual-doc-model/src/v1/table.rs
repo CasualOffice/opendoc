@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{Alignment, BlockNode, RgbColor};
+use super::{Alignment, BlockNode, RgbColor, StyleId};
 use crate::NodeId;
 
 /// Maximum table nesting depth enforced by validation. A root-level table is
@@ -279,11 +279,73 @@ impl TableLook {
     }
 }
 
+/// Row/cell conditional-format selector (`w:cnfStyle`, `CT_Cnf`, ECMA-376
+/// §17.4.7). Each flag marks the row or cell as belonging to a table-style
+/// region, selecting which `w:tblStylePr` override (see `TableStyleOverride`)
+/// formats it. The twelve flags are the `ST_Cnf` bit positions, in bitmask
+/// order. All-false serializes to nothing (omitted); the value is only carried
+/// as `Some` when at least one flag is set.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CnfStyle {
+    /// First (header) row (`firstRow`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub first_row: bool,
+    /// Last (total) row (`lastRow`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub last_row: bool,
+    /// First column (`firstColumn`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub first_column: bool,
+    /// Last column (`lastColumn`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub last_column: bool,
+    /// Odd vertical band (`oddVBand`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub odd_v_band: bool,
+    /// Even vertical band (`evenVBand`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub even_v_band: bool,
+    /// Odd horizontal band (`oddHBand`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub odd_h_band: bool,
+    /// Even horizontal band (`evenHBand`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub even_h_band: bool,
+    /// Top-left (north-west) corner cell (`firstRowFirstColumn`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub first_row_first_column: bool,
+    /// Top-right (north-east) corner cell (`firstRowLastColumn`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub first_row_last_column: bool,
+    /// Bottom-left (south-west) corner cell (`lastRowFirstColumn`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub last_row_first_column: bool,
+    /// Bottom-right (south-east) corner cell (`lastRowLastColumn`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub last_row_last_column: bool,
+}
+
+impl CnfStyle {
+    /// Whether no flag is set (would serialize to nothing).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// Typed table properties (`w:tblPr`). An empty value serializes to nothing.
 // Not `Copy`: `TableBorders` owns a `String` (a border style token).
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TableProperties {
+    /// Associated table style (`w:tblStyle@w:val`): the style whose defaults and
+    /// `w:tblStylePr` conditional formatting this table draws from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style_ref: Option<StyleId>,
+    /// Render the table right-to-left, mirroring column order (`w:bidiVisual`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub tbl_bidi_visual: bool,
     /// Table alignment (`w:jc`); start/center/end (justify reported at import).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alignment: Option<Alignment>,
@@ -372,6 +434,10 @@ impl RowHeight {
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TableRowProperties {
+    /// Conditional-format selector (`w:cnfStyle`): which table-style region
+    /// formats this row. `None` when no flag is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conditional_format: Option<CnfStyle>,
     /// Row height (`w:trHeight`).
     #[serde(default, skip_serializing_if = "RowHeight::is_empty")]
     pub height: RowHeight,
@@ -426,6 +492,10 @@ pub enum TextDirection {
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TableCellProperties {
+    /// Conditional-format selector (`w:cnfStyle`): which table-style region
+    /// formats this cell. `None` when no flag is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conditional_format: Option<CnfStyle>,
     /// Horizontal merge span in grid columns (`w:gridSpan`; `1..=16384`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub grid_span: Option<u32>,

@@ -90,6 +90,196 @@ pub struct Drawing {
     pub extent: Option<Extent>,
 }
 
+/// Maximum drawing alt-text (`wp:docPr@descr`) length, in UTF-8 bytes.
+pub const MAX_DESCR_BYTES: usize = 2048;
+
+/// What the horizontal position of an anchored drawing is measured from
+/// (`wp:positionH@relativeFrom`). The offset/alignment resolves against this
+/// reference edge or box.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum HorizontalAnchor {
+    /// The page edge (`page`).
+    Page,
+    /// The text margin (`margin`).
+    Margin,
+    /// The current column (`column`).
+    Column,
+    /// The anchoring character (`character`).
+    Character,
+    /// The left margin strip (`leftMargin`).
+    LeftMargin,
+    /// The right margin strip (`rightMargin`).
+    RightMargin,
+    /// The inside margin, for mirrored (odd/even) layouts (`insideMargin`).
+    InsideMargin,
+    /// The outside margin, for mirrored layouts (`outsideMargin`).
+    OutsideMargin,
+}
+
+/// What the vertical position of an anchored drawing is measured from
+/// (`wp:positionV@relativeFrom`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum VerticalAnchor {
+    /// The page edge (`page`).
+    Page,
+    /// The text margin (`margin`).
+    Margin,
+    /// The anchoring paragraph (`paragraph`).
+    Paragraph,
+    /// The current line (`line`).
+    Line,
+    /// The top margin strip (`topMargin`).
+    TopMargin,
+    /// The bottom margin strip (`bottomMargin`).
+    BottomMargin,
+    /// The inside margin, for mirrored layouts (`insideMargin`).
+    InsideMargin,
+    /// The outside margin, for mirrored layouts (`outsideMargin`).
+    OutsideMargin,
+}
+
+/// A relative horizontal alignment within the reference box (`wp:align`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum HorizontalAlign {
+    /// Flush with the reference's left edge (`left`).
+    Left,
+    /// Centered in the reference box (`center`).
+    Center,
+    /// Flush with the reference's right edge (`right`).
+    Right,
+    /// The inside edge, for mirrored layouts (`inside`).
+    Inside,
+    /// The outside edge, for mirrored layouts (`outside`).
+    Outside,
+}
+
+/// A relative vertical alignment within the reference box (`wp:align`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum VerticalAlign {
+    /// Flush with the reference's top edge (`top`).
+    Top,
+    /// Centered in the reference box (`center`).
+    Center,
+    /// Flush with the reference's bottom edge (`bottom`).
+    Bottom,
+    /// The inside edge, for mirrored layouts (`inside`).
+    Inside,
+    /// The outside edge, for mirrored layouts (`outside`).
+    Outside,
+}
+
+/// The horizontal placement of an anchored drawing: either an absolute offset
+/// from the reference edge (`wp:posOffset`, EMU, may be negative) or a relative
+/// alignment within the reference box (`wp:align`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HorizontalPosition {
+    /// An absolute offset in EMU from the reference edge
+    /// (`-MAX_EMU..=MAX_EMU`). Positive is toward the reference's trailing edge.
+    Offset(i64),
+    /// A relative alignment within the reference box.
+    Align(HorizontalAlign),
+}
+
+/// The vertical placement of an anchored drawing (`wp:posOffset` / `wp:align`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VerticalPosition {
+    /// An absolute offset in EMU from the reference edge (`-MAX_EMU..=MAX_EMU`).
+    Offset(i64),
+    /// A relative alignment within the reference box.
+    Align(VerticalAlign),
+}
+
+/// How text flows around an anchored drawing (the `wp:wrap*` element). The enum
+/// is modeled for round-trip fidelity; the first-cut layout places the image at
+/// its resolved rectangle without yet re-flowing text around it (`P1F-28`
+/// follow-up), so only [`WrapMode::None`] currently affects text (the image
+/// floats over or behind the flow).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum WrapMode {
+    /// Text wraps around the drawing's bounding box (`wp:wrapSquare`).
+    Square,
+    /// Text wraps tight to the drawing's contour (`wp:wrapTight`).
+    Tight,
+    /// Text flows through the drawing's transparent regions (`wp:wrapThrough`).
+    Through,
+    /// Text is pushed above and below the drawing (`wp:wrapTopAndBottom`).
+    TopAndBottom,
+    /// No wrapping: the drawing floats over or behind the text (`wp:wrapNone`).
+    None,
+}
+
+/// The horizontal component of an anchor: the reference edge and the placement
+/// against it.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AnchorHorizontal {
+    /// What the position is measured from (`@relativeFrom`).
+    pub relative_from: HorizontalAnchor,
+    /// The offset or alignment within that reference.
+    pub position: HorizontalPosition,
+}
+
+/// The vertical component of an anchor: the reference edge and the placement.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AnchorVertical {
+    /// What the position is measured from (`@relativeFrom`).
+    pub relative_from: VerticalAnchor,
+    /// The offset or alignment within that reference.
+    pub position: VerticalPosition,
+}
+
+/// The position, wrap, and z-order of an anchored (floating) drawing — the
+/// `wp:anchor` frame around a `pic:pic`, as opposed to an inline `wp:inline`.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DrawingAnchor {
+    /// The horizontal placement (`wp:positionH`).
+    pub horizontal: AnchorHorizontal,
+    /// The vertical placement (`wp:positionV`).
+    pub vertical: AnchorVertical,
+    /// How text flows around the drawing (`wp:wrap*`).
+    pub wrap: WrapMode,
+    /// Whether the drawing paints behind the document text (`@behindDoc`),
+    /// i.e. its z-order relative to the flow. Only meaningful for
+    /// [`WrapMode::None`].
+    pub behind_doc: bool,
+}
+
+/// An anchored (floating) drawing: an embedded picture placed at an absolute
+/// position on the page rather than in the inline flow. Unlike [`Drawing`]
+/// (which flows inline), this carries a [`DrawingAnchor`] describing where the
+/// image sits, how text wraps, and its z-order.
+///
+/// The referenced picture's bytes flow through the media table exactly like an
+/// inline drawing; only the *placement* differs. Text-wrap around the image is a
+/// follow-up (`P1F-28`); the first cut positions the image at its resolved
+/// rectangle (behind or above the text per `behind_doc`).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AnchoredDrawing {
+    /// Stable identity.
+    pub id: NodeId,
+    /// The referenced media entry (resolves in `Definitions::media`).
+    pub media: MediaId,
+    /// The drawing's rendered size (`wp:extent`, EMU). Always present on an
+    /// anchor.
+    pub extent: Extent,
+    /// The anchor: position, wrap, and z-order.
+    pub anchor: DrawingAnchor,
+    /// The alt text (`wp:docPr@descr`), preserved for accessibility, if declared
+    /// (non-empty, at most [`MAX_DESCR_BYTES`] bytes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub descr: Option<String>,
+}
+
 /// The relationship type and package part a first-class embedded object
 /// references. The referenced part's BYTES are not modeled (they live in the
 /// preservation side-table, doc-45 invariant I4); this carries only the pointer
@@ -797,6 +987,8 @@ pub enum InlineNode {
     Break(Break),
     /// An inline drawing referencing embedded media.
     Drawing(Drawing),
+    /// An anchored (floating) drawing placed at an absolute page position.
+    AnchoredDrawing(AnchoredDrawing),
     /// An inline embedded object (chart, SmartArt diagram, or OLE object)
     /// referencing preserved package part(s).
     EmbeddedObject(EmbeddedObject),
@@ -837,6 +1029,7 @@ impl InlineNode {
             Self::Tab(tab) => tab.id,
             Self::Break(node) => node.id,
             Self::Drawing(drawing) => drawing.id,
+            Self::AnchoredDrawing(drawing) => drawing.id,
             Self::EmbeddedObject(object) => object.id,
             Self::Hyperlink(hyperlink) => hyperlink.id,
             Self::Field(field) => field.id,

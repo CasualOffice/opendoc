@@ -322,6 +322,42 @@ impl Document {
             {
                 check_domain((0..=31_680).contains(&value), "section.doc_grid")?;
             }
+            check_page_borders(&section.page_borders)?;
+            for value in [
+                section.line_numbering.count_by,
+                section.line_numbering.start,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                check_domain((0..=32_767).contains(&value), "section.line_numbering")?;
+            }
+            if let Some(distance) = section.line_numbering.distance {
+                check_domain(
+                    (0..=31_680).contains(&distance),
+                    "section.line_numbering.distance",
+                )?;
+            }
+            for value in [section.paper_source.first, section.paper_source.other]
+                .into_iter()
+                .flatten()
+            {
+                check_domain((0..=32_767).contains(&value), "section.paper_source")?;
+            }
+            for props in [&section.footnote_props, &section.endnote_props] {
+                if let Some(format) = &props.number_format {
+                    check_domain(
+                        !format.is_empty() && format.len() <= 32,
+                        "section.note_props.number_format",
+                    )?;
+                }
+                if let Some(start) = props.number_start {
+                    check_domain(
+                        (0..=1_000_000).contains(&start),
+                        "section.note_props.number_start",
+                    )?;
+                }
+            }
             for header in &section.headers {
                 if !self.definitions.headers.contains_key(&header.reference) {
                     return Err(ModelError::DanglingHeaderFooterRef(
@@ -781,6 +817,13 @@ impl Document {
         if table.rows.is_empty() {
             return Err(ModelError::EmptyTable(table.id));
         }
+        // The associated table style (`w:tblStyle`) must resolve to a defined
+        // style, like paragraph/run style references elsewhere.
+        if let Some(style) = table.properties.style_ref
+            && !self.style_exists(style)
+        {
+            return Err(ModelError::DanglingStyleRef(style.node_id()));
+        }
         if let Some(width) = table.properties.width_twips {
             check_domain((0..=31_680).contains(&width), "table.width")?;
         }
@@ -892,6 +935,33 @@ impl Document {
                         check_domain(
                             (0..=MAX_EMU).contains(&extent.height_emu),
                             "drawing.extent.height",
+                        )?;
+                    }
+                    previous_run_properties = None;
+                }
+                InlineNode::AnchoredDrawing(drawing) => {
+                    if !self.definitions.media.contains_key(&drawing.media) {
+                        return Err(ModelError::DanglingMediaRef(drawing.media.node_id()));
+                    }
+                    check_domain(
+                        (0..=MAX_EMU).contains(&drawing.extent.width_emu),
+                        "anchoredDrawing.extent.width",
+                    )?;
+                    check_domain(
+                        (0..=MAX_EMU).contains(&drawing.extent.height_emu),
+                        "anchoredDrawing.extent.height",
+                    )?;
+                    // A `posOffset` is signed (`ST_PositionOffset`, xsd:int) but is
+                    // bounded to the positive-coordinate magnitude so it cannot name
+                    // a point unrepresentably far off the page.
+                    check_anchor_offset(
+                        &drawing.anchor.horizontal.position,
+                        &drawing.anchor.vertical.position,
+                    )?;
+                    if let Some(descr) = &drawing.descr {
+                        check_domain(
+                            !descr.is_empty() && descr.len() <= MAX_DESCR_BYTES,
+                            "anchoredDrawing.descr",
                         )?;
                     }
                     previous_run_properties = None;
@@ -1382,6 +1452,7 @@ fn accumulate_inline_limits(
         InlineNode::Tab(_)
         | InlineNode::Break(_)
         | InlineNode::Drawing(_)
+        | InlineNode::AnchoredDrawing(_)
         | InlineNode::EmbeddedObject(_)
         | InlineNode::NoteReference(_)
         | InlineNode::CommentReference(_)
@@ -1661,6 +1732,28 @@ fn check_domain(condition: bool, property: &'static str) -> Result<(), ModelErro
     }
 }
 
+/// Bounds an anchored drawing's horizontal and vertical offsets. A `posOffset`
+/// is signed (`ST_PositionOffset`), so the magnitude — not a `0..` range — is
+/// bounded to the positive-coordinate limit. An alignment carries no magnitude.
+fn check_anchor_offset(
+    horizontal: &HorizontalPosition,
+    vertical: &VerticalPosition,
+) -> Result<(), ModelError> {
+    if let HorizontalPosition::Offset(offset) = horizontal {
+        check_domain(
+            offset.unsigned_abs() <= MAX_EMU as u64,
+            "anchoredDrawing.offsetH",
+        )?;
+    }
+    if let VerticalPosition::Offset(offset) = vertical {
+        check_domain(
+            offset.unsigned_abs() <= MAX_EMU as u64,
+            "anchoredDrawing.offsetV",
+        )?;
+    }
+    Ok(())
+}
+
 /// Bounds every present edge of a border set. `property` is the stable domain
 /// name for the level (`"table.borders"` / `"table.cell.borders"`).
 fn check_borders(borders: &TableBorders, property: &'static str) -> Result<(), ModelError> {
@@ -1682,6 +1775,30 @@ fn check_borders(borders: &TableBorders, property: &'static str) -> Result<(), M
         if let Some(space) = edge.space_points {
             check_domain(space <= 31, property)?;
         }
+    }
+    Ok(())
+}
+
+/// Bounds a single border edge (style token length, size, and space) — the same
+/// domain the table-border edges use, reused for page borders.
+fn check_border_edge(edge: &BorderEdge, property: &'static str) -> Result<(), ModelError> {
+    check_domain(!edge.style.is_empty() && edge.style.len() <= 32, property)?;
+    if let Some(size) = edge.size_eighth_points {
+        check_domain(size <= 1024, property)?;
+    }
+    if let Some(space) = edge.space_points {
+        check_domain(space <= 31, property)?;
+    }
+    Ok(())
+}
+
+/// Bounds every present edge of a section's page borders.
+fn check_page_borders(borders: &PageBorders) -> Result<(), ModelError> {
+    for edge in [&borders.top, &borders.bottom, &borders.start, &borders.end]
+        .into_iter()
+        .flatten()
+    {
+        check_border_edge(edge, "section.page_borders")?;
     }
     Ok(())
 }

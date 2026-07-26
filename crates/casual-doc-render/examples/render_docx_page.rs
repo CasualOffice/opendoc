@@ -2,6 +2,7 @@
 //! pipeline: import -> galley -> paginate -> compose -> render. Manual check.
 #![allow(clippy::print_stderr)] // a manual example, not library code
 use casual_doc_import::{ImportConfig, ImportMode, import_package};
+use casual_doc_layout::anchor::{collect_anchored, place_anchored_drawings};
 use casual_doc_layout::compose::compose_page;
 use casual_doc_layout::flow::build_galley;
 use casual_doc_layout::paginate::{PageConfig, paginate};
@@ -50,7 +51,10 @@ fn main() {
     };
     let shaper = ParleyShaper::new();
     let galley = build_galley(&document, &shaper, config.content_area().size.width);
-    let pages = paginate(&galley, &config);
+    let mut pages = paginate(&galley, &config);
+    // Post-pagination pass: resolve every anchored (floating) drawing onto its
+    // page at its computed absolute position (P1F-28).
+    place_anchored_drawings(&mut pages, &collect_anchored(&document), &config);
     let page = pages.pages.first().expect("at least one page");
 
     let dpi = 96.0;

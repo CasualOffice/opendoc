@@ -514,6 +514,56 @@ fn drawing_between_equal_runs_is_accepted() {
 }
 
 #[test]
+fn anchored_drawing_round_trips_with_offset_align_and_z_order() {
+    // An offset anchor (page/margin, behindDoc, alt text) and an alignment anchor
+    // (margin center / paragraph) both serialize, validate, and round-trip.
+    let json = format!(
+        r#"{{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{{"type":"paragraph","id":"00000000000000030000000000000002","properties":{{}},
+              "inlines":[
+                {{"type":"anchored_drawing","id":"00000000000000030000000000000003","media":"0000000000000000000000000000000d","extent":{{"widthEmu":1828800,"heightEmu":1219200}},"anchor":{{"horizontal":{{"relativeFrom":"page","position":{{"offset":914400}}}},"vertical":{{"relativeFrom":"margin","position":{{"offset":-228600}}}},"wrap":"none","behindDoc":true}},"descr":"Company logo"}},
+                {{"type":"anchored_drawing","id":"00000000000000030000000000000004","media":"0000000000000000000000000000000d","extent":{{"widthEmu":914400,"heightEmu":914400}},"anchor":{{"horizontal":{{"relativeFrom":"margin","position":{{"align":"center"}}}},"vertical":{{"relativeFrom":"paragraph","position":{{"offset":0}}}},"wrap":"square","behindDoc":false}}}}
+              ]}}],
+            {MEDIA_DEFS}}}"#
+    );
+    roundtrips(json.as_bytes());
+    // An absent `descr` emits no key.
+    let document = Document::from_json(json.as_bytes(), SnapshotLimits::default()).unwrap();
+    let text = String::from_utf8(document.to_json().unwrap()).unwrap();
+    assert_eq!(text.matches("descr").count(), 1);
+    assert!(text.contains(r#""behindDoc":true"#));
+    assert!(text.contains(r#""align":"center""#));
+}
+
+#[test]
+fn anchored_drawing_referencing_absent_media_is_rejected() {
+    let json = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{"type":"paragraph","id":"00000000000000030000000000000002","properties":{},
+              "inlines":[{"type":"anchored_drawing","id":"00000000000000030000000000000003","media":"0000000000000000000000000000000e","extent":{"widthEmu":1,"heightEmu":1},"anchor":{"horizontal":{"relativeFrom":"page","position":{"offset":0}},"vertical":{"relativeFrom":"page","position":{"offset":0}},"wrap":"none","behindDoc":false}}]}],
+            "definitions":{}}"#;
+    assert!(matches!(
+        expect_invalid(json),
+        ModelError::DanglingMediaRef(_)
+    ));
+}
+
+#[test]
+fn anchored_drawing_offset_out_of_domain_is_rejected() {
+    let json = format!(
+        r#"{{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{{"type":"paragraph","id":"00000000000000030000000000000002","properties":{{}},
+              "inlines":[{{"type":"anchored_drawing","id":"00000000000000030000000000000003","media":"0000000000000000000000000000000d","extent":{{"widthEmu":1,"heightEmu":1}},"anchor":{{"horizontal":{{"relativeFrom":"page","position":{{"offset":27273042316901}}}},"vertical":{{"relativeFrom":"page","position":{{"offset":0}}}},"wrap":"none","behindDoc":false}}}}]}}],
+            {MEDIA_DEFS}}}"#
+    );
+    assert!(matches!(
+        expect_invalid(json.as_bytes()),
+        ModelError::PropertyValueOutOfDomain {
+            property: "anchoredDrawing.offsetH"
+        }
+    ));
+}
+
+#[test]
 fn embedded_object_chart_and_ole_round_trip() {
     // A chart (part only) and an OLE object (primary part + preview media +
     // progId + extra part) both serialize and validate, with optional keys
@@ -868,6 +918,58 @@ fn table_properties_round_trip_and_default_omits_the_key() {
         cell_obj["properties"],
         serde_json::json!({}),
         "cell properties still serialized as {{}}"
+    );
+}
+
+#[test]
+fn table_style_ref_dangling_is_rejected_and_additive_fields_round_trip() {
+    // A table's `w:tblStyle` (styleRef) must resolve, like paragraph/run refs.
+    let dangling = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+        "body":[{"type":"table","id":"00000000000000030000000000000002",
+          "properties":{"styleRef":"000000000000000000000000000000ff"},
+          "rows":[{"id":"00000000000000030000000000000003",
+            "cells":[{"id":"00000000000000030000000000000004","properties":{},
+              "blocks":[{"type":"paragraph","id":"00000000000000030000000000000005","properties":{},"inlines":[]}]}]}]}],
+        "definitions":{}}"#;
+    assert!(matches!(
+        Document::from_json(dangling, SnapshotLimits::default()),
+        Err(SnapshotError::InvalidModel(ModelError::DanglingStyleRef(_)))
+    ));
+
+    // With the table style defined, the reference resolves and the additive
+    // fields (styleRef, tblBidiVisual, row/cell conditionalFormat) round-trip.
+    let valid = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+        "body":[{"type":"table","id":"00000000000000030000000000000002",
+          "properties":{"styleRef":"0000000000000000000000000000000a","tblBidiVisual":true},
+          "rows":[{"id":"00000000000000030000000000000003",
+            "properties":{"conditionalFormat":{"firstRow":true}},
+            "cells":[{"id":"00000000000000030000000000000004",
+              "properties":{"conditionalFormat":{"firstRowLastColumn":true}},
+              "blocks":[{"type":"paragraph","id":"00000000000000030000000000000005","properties":{},"inlines":[]}]}]}]}],
+        "definitions":{"styles":{"0000000000000000000000000000000a":{"kind":"table"}}}}"#;
+    let document = Document::from_json(valid, SnapshotLimits::default()).unwrap();
+    let reloaded =
+        Document::from_json(&document.to_json().unwrap(), SnapshotLimits::default()).unwrap();
+    assert_eq!(document, reloaded);
+
+    let BlockNode::Table(table) = &document.body()[0] else {
+        panic!("expected a table");
+    };
+    assert!(table.properties.style_ref.is_some());
+    assert!(table.properties.tbl_bidi_visual);
+    assert!(
+        table.rows[0]
+            .properties
+            .conditional_format
+            .unwrap()
+            .first_row
+    );
+    assert!(
+        table.rows[0].cells[0]
+            .properties
+            .conditional_format
+            .unwrap()
+            .first_row_last_column
     );
 }
 
@@ -1876,6 +1978,14 @@ fn valid_section(
         vertical_alignment: None,
         page_numbering: PageNumbering::default(),
         doc_grid: DocGrid::default(),
+        orientation: None,
+        paper_source: PaperSource::default(),
+        page_borders: PageBorders::default(),
+        line_numbering: LineNumbering::default(),
+        footnote_props: NoteProperties::default(),
+        endnote_props: NoteProperties::default(),
+        text_direction: None,
+        bidi: false,
     }
 }
 

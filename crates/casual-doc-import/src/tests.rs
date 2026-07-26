@@ -1903,6 +1903,79 @@ fn inline_drawing_with_embed_maps_to_a_drawing_node() {
     assert!(!features(&import).contains(&"drawing"));
 }
 
+const DRAWING_ANCHOR: &str = r#"<w:drawing><wp:anchor behindDoc="1" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>914400</wp:posOffset></wp:positionH><wp:positionV relativeFrom="margin"><wp:posOffset>228600</wp:posOffset></wp:positionV><wp:extent cx="1828800" cy="1219200"/><wp:wrapNone/><wp:docPr id="1" name="Pic 1" descr="Company logo"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing>"#;
+
+#[test]
+fn anchored_drawing_maps_to_an_anchored_drawing_node() {
+    use casual_doc_model::v1::{
+        HorizontalAnchor, HorizontalPosition, VerticalAnchor, VerticalPosition, WrapMode,
+    };
+
+    let document = format!(
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:r>{DRAWING_ANCHOR}</w:r></w:p></w:body></w:document>"#
+    );
+    let media = [("word/media/image1.png", b"PNGDATA".as_slice())];
+    let import = import_bytes(&build_package(document.as_bytes(), IMAGE_REL, &media));
+
+    let (media_id, _) = import.document.definitions().media.iter().next().unwrap();
+    let inlines = &paragraph(&import, 0).inlines;
+    assert_eq!(inlines.len(), 1);
+    let InlineNode::AnchoredDrawing(drawing) = &inlines[0] else {
+        panic!("expected an anchored drawing, got {:?}", inlines[0]);
+    };
+    assert_eq!(drawing.media, *media_id);
+    assert_eq!(drawing.extent.width_emu, 1_828_800);
+    assert_eq!(drawing.extent.height_emu, 1_219_200);
+    assert_eq!(
+        drawing.anchor.horizontal.relative_from,
+        HorizontalAnchor::Page
+    );
+    assert_eq!(
+        drawing.anchor.horizontal.position,
+        HorizontalPosition::Offset(914_400)
+    );
+    assert_eq!(
+        drawing.anchor.vertical.relative_from,
+        VerticalAnchor::Margin
+    );
+    assert_eq!(
+        drawing.anchor.vertical.position,
+        VerticalPosition::Offset(228_600)
+    );
+    assert_eq!(drawing.anchor.wrap, WrapMode::None);
+    assert!(
+        drawing.anchor.behind_doc,
+        "behindDoc=\"1\" sets the z-order"
+    );
+    assert_eq!(drawing.descr.as_deref(), Some("Company logo"));
+    // A resolved, fully-modeled anchored drawing is mapped, not reported.
+    assert!(!features(&import).contains(&"drawing"));
+}
+
+#[test]
+fn anchored_drawing_with_align_and_default_z_order() {
+    use casual_doc_model::v1::{HorizontalAlign, HorizontalPosition, WrapMode};
+
+    // `wp:align` instead of `wp:posOffset`, no `behindDoc`, a wrapSquare mode.
+    let anchor = r#"<w:drawing><wp:anchor simplePos="0"><wp:positionH relativeFrom="margin"><wp:align>center</wp:align></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="914400" cy="914400"/><wp:wrapSquare wrapText="bothSides"/><wp:docPr id="1" name="Pic 1"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing>"#;
+    let document = format!(
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:r>{anchor}</w:r></w:p></w:body></w:document>"#
+    );
+    let media = [("word/media/image1.png", b"PNGDATA".as_slice())];
+    let import = import_bytes(&build_package(document.as_bytes(), IMAGE_REL, &media));
+
+    let InlineNode::AnchoredDrawing(drawing) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected an anchored drawing");
+    };
+    assert_eq!(
+        drawing.anchor.horizontal.position,
+        HorizontalPosition::Align(HorizontalAlign::Center)
+    );
+    assert_eq!(drawing.anchor.wrap, WrapMode::Square);
+    assert!(!drawing.anchor.behind_doc, "no behindDoc → in front");
+    assert!(drawing.descr.is_none(), "no descr declared");
+}
+
 #[test]
 fn drawing_with_a_dangling_embed_is_reported_and_dropped() {
     // The blip references rId9, which has no relationship: no media, no node.
