@@ -18,9 +18,10 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use casual_doc_model::v1::{
-    Alignment, BlockNode, BorderEdge, Color, Document, FontRef, FontScheme, HeightRule,
-    HighlightColor, InlineNode, ParagraphProperties, RunProperties, Table, TableBorders, TableCell,
-    TableLayout, TableRowProperties, ThemeFontRef,
+    Alignment, BlockNode, BorderEdge, BreakKind, Color, DefinitionMap, Document, Drawing, Extent,
+    FontRef, FontScheme, HeightRule, HighlightColor, InlineNode, MediaId, MediaReference,
+    ParagraphProperties, RunProperties, TabAlignment, TabLeader, TabStop, Table, TableBorders,
+    TableCell, TableLayout, TableRowProperties, ThemeFontRef,
 };
 
 use crate::block::{
@@ -30,8 +31,12 @@ use crate::block::{
 use crate::incremental::{DirtySet, GalleyCache};
 use crate::model::{ModelPos, ModelRange};
 use crate::resolve::{FaceRequest, FontResolutionReport, FontResolver};
-use crate::text::{Decoration, FontId, LineConstraints, LineShaper, StyledRun, TextAlignment};
-use crate::units::Twip;
+use crate::tabs::{self, FlowItem};
+use crate::text::{
+    Decoration, FontId, InlineImage, Line, LineBreak, LineConstraints, LineLayout, LineShaper,
+    StyledRun, TextAlignment,
+};
+use crate::units::{Point, Size, Twip};
 
 /// Context threaded through the flow: the font resolver, the document's theme
 /// font scheme (needed to turn `w:rFonts@*Theme` slots into concrete families),
@@ -40,6 +45,12 @@ struct FlowCtx<'a> {
     resolver: &'a FontResolver,
     scheme: Option<&'a FontScheme>,
     report: &'a mut FontResolutionReport,
+    /// The document's default tab-stop interval (`w:defaultTabStop`), already
+    /// resolved to twips (falling back to the 720-twip standard).
+    default_tab: Twip,
+    /// The document's media table, so an inline drawing's [`MediaId`] resolves to
+    /// its package part name (the display list's stable media key).
+    media: &'a DefinitionMap<MediaId, MediaReference>,
 }
 
 /// Builds a galley of block fragments from a document's body, shaped to fit
@@ -71,6 +82,8 @@ pub fn build_galley_with_report(
         resolver: &resolver,
         scheme: document.definitions().font_scheme.as_ref(),
         report: &mut report,
+        default_tab: tabs::default_tab_stop(document.definitions().settings.default_tab_stop),
+        media: &document.definitions().media,
     };
     let galley = flow_blocks(document.body(), shaper, content_width, &mut ctx);
     (galley, report)
@@ -111,28 +124,28 @@ pub fn build_galley_cached(
         resolver: &resolver,
         scheme: document.definitions().font_scheme.as_ref(),
         report: &mut report,
+        default_tab: tabs::default_tab_stop(document.definitions().settings.default_tab_stop),
+        media: &document.definitions().media,
     };
     cache.begin_build(content_width);
     let mut galley = Vec::new();
     for block in document.body() {
         match block {
             BlockNode::Paragraph(paragraph) => {
-                let mut runs = Vec::new();
+                let mut items = Vec::new();
                 // Resolving here sets each run's resolved `font`, which
                 // `paragraph_hash` hashes — so the cache key tracks the face.
-                collect_runs(&paragraph.inlines, &mut runs, &mut ctx);
-                let constraints = line_constraints(&paragraph.properties, content_width);
+                collect_items(&paragraph.inlines, &mut items, &mut ctx);
+                let shape = ShapeInputs {
+                    items: &items,
+                    tab_stops: &paragraph.properties.tabs,
+                    default_tab: ctx.default_tab,
+                    constraints: line_constraints(&paragraph.properties, content_width),
+                };
                 let box_metrics = box_metrics(&paragraph.properties);
                 let break_control = break_control(&paragraph.properties);
                 let decor = paragraph_decor(&paragraph.properties, content_width);
-                let hash = paragraph_hash(
-                    paragraph.id,
-                    &runs,
-                    &constraints,
-                    box_metrics,
-                    break_control,
-                    decor,
-                );
+                let hash = paragraph_hash(paragraph.id, &shape, box_metrics, break_control, decor);
 
                 if let Some(fragment) = cache.reusable(paragraph.id, hash, dirty) {
                     galley.push(fragment.clone());
@@ -142,7 +155,14 @@ pub fn build_galley_cached(
                     ModelPos::new(paragraph.id, 0),
                     ModelPos::new(paragraph.id, 0),
                 );
-                let lines = shaper.shape_paragraph(&runs, constraints, range);
+                let lines = shape_paragraph_items(
+                    shaper,
+                    shape.items,
+                    shape.tab_stops,
+                    shape.default_tab,
+                    shape.constraints,
+                    range,
+                );
                 let fragment = BlockFragment::Paragraph {
                     id: paragraph.id,
                     lines,
@@ -162,33 +182,99 @@ pub fn build_galley_cached(
     galley
 }
 
+/// The inputs that determine a paragraph's shaped lines: its flattened item
+/// stream (runs + tabs + breaks), the tab-stop context, and the wrap constraints.
+/// Bundled so the hash and the shaper read the exact same values.
+struct ShapeInputs<'a> {
+    items: &'a [FlowItem<'a>],
+    tab_stops: &'a [TabStop],
+    default_tab: Twip,
+    constraints: LineConstraints,
+}
+
+/// A stable per-value key for a run of tab-stop alignment/leader/break enums that
+/// do not derive `Hash` (so they can feed the cache key).
+const fn tab_alignment_key(alignment: TabAlignment) -> u8 {
+    match alignment {
+        TabAlignment::Start => 0,
+        TabAlignment::Center => 1,
+        TabAlignment::End => 2,
+        TabAlignment::Decimal => 3,
+        TabAlignment::Bar => 4,
+    }
+}
+
+/// A stable per-value key for a tab leader (see [`tab_alignment_key`]).
+const fn tab_leader_key(leader: Option<TabLeader>) -> u8 {
+    match leader {
+        None => 0,
+        Some(TabLeader::Dot) => 1,
+        Some(TabLeader::Hyphen) => 2,
+        Some(TabLeader::Underscore) => 3,
+        Some(TabLeader::MiddleDot) => 4,
+        Some(TabLeader::Heavy) => 5,
+    }
+}
+
+/// A stable per-value key for a hard-break kind (see [`tab_alignment_key`]).
+const fn break_kind_key(kind: BreakKind) -> u8 {
+    match kind {
+        BreakKind::Line => 0,
+        BreakKind::Page => 1,
+        BreakKind::Column => 2,
+    }
+}
+
 /// Hashes every input that determines a paragraph's shaped fragment: its node
-/// identity, each run's text and styling, the wrap constraints, and the box/break
-/// metrics. Because the hash is computed from the exact values fed to the shaper
-/// and the fragment builder, a matching hash guarantees an identical fragment —
-/// the [`GalleyCache`] reuse condition.
+/// identity, each run's text and styling, the tab/break structure and tab-stop
+/// context, the wrap constraints, and the box/break metrics. Because the hash is
+/// computed from the exact values fed to the shaper and the fragment builder, a
+/// matching hash guarantees an identical fragment — the [`GalleyCache`] reuse
+/// condition.
 fn paragraph_hash(
     id: casual_doc_model::NodeId,
-    runs: &[StyledRun<'_>],
-    constraints: &LineConstraints,
+    shape: &ShapeInputs<'_>,
     box_metrics: BoxMetrics,
     break_control: BreakControl,
     decor: ParagraphDecor,
 ) -> u64 {
     let mut hasher = DefaultHasher::new();
     id.as_u128().hash(&mut hasher);
-    for run in runs {
-        run.text.hash(&mut hasher);
-        run.font.0.hash(&mut hasher);
-        run.size.0.hash(&mut hasher);
-        run.bold.hash(&mut hasher);
-        run.italic.hash(&mut hasher);
-        run.letter_spacing.0.hash(&mut hasher);
-        run.color.hash(&mut hasher);
-        run.decoration.underline.hash(&mut hasher);
-        run.decoration.strikethrough.hash(&mut hasher);
-        run.highlight.hash(&mut hasher);
+    for item in shape.items {
+        match item {
+            FlowItem::Run(run) => {
+                0u8.hash(&mut hasher);
+                run.text.hash(&mut hasher);
+                run.font.0.hash(&mut hasher);
+                run.size.0.hash(&mut hasher);
+                run.bold.hash(&mut hasher);
+                run.italic.hash(&mut hasher);
+                run.letter_spacing.0.hash(&mut hasher);
+                run.color.hash(&mut hasher);
+                run.decoration.underline.hash(&mut hasher);
+                run.decoration.strikethrough.hash(&mut hasher);
+                run.highlight.hash(&mut hasher);
+            }
+            FlowItem::Tab => 1u8.hash(&mut hasher),
+            FlowItem::Break(kind) => {
+                2u8.hash(&mut hasher);
+                break_kind_key(*kind).hash(&mut hasher);
+            }
+            FlowItem::Image { media, size } => {
+                3u8.hash(&mut hasher);
+                media.hash(&mut hasher);
+                size.width.0.hash(&mut hasher);
+                size.height.0.hash(&mut hasher);
+            }
+        }
     }
+    for stop in shape.tab_stops {
+        stop.position_twips.hash(&mut hasher);
+        tab_alignment_key(stop.alignment).hash(&mut hasher);
+        tab_leader_key(stop.leader).hash(&mut hasher);
+    }
+    shape.default_tab.0.hash(&mut hasher);
+    let constraints = &shape.constraints;
     constraints.max_width.0.hash(&mut hasher);
     constraints.rtl.hash(&mut hasher);
     (constraints.alignment as u8).hash(&mut hasher);
@@ -232,14 +318,17 @@ fn flow_blocks(
     for block in blocks {
         match block {
             BlockNode::Paragraph(paragraph) => {
-                let mut runs = Vec::new();
-                collect_runs(&paragraph.inlines, &mut runs, ctx);
+                let mut items = Vec::new();
+                collect_items(&paragraph.inlines, &mut items, ctx);
                 let range = ModelRange::new(
                     ModelPos::new(paragraph.id, 0),
                     ModelPos::new(paragraph.id, 0),
                 );
-                let lines = shaper.shape_paragraph(
-                    &runs,
+                let lines = shape_paragraph_items(
+                    shaper,
+                    &items,
+                    &paragraph.properties.tabs,
+                    ctx.default_tab,
                     line_constraints(&paragraph.properties, width),
                     range,
                 );
@@ -578,6 +667,8 @@ fn block_intrinsic(blocks: &[BlockNode], shaper: &dyn LineShaper, ctx: &FlowCtx)
         resolver: ctx.resolver,
         scheme: ctx.scheme,
         report: &mut scratch,
+        default_tab: ctx.default_tab,
+        media: ctx.media,
     };
     let mut min = 0;
     let mut preferred = 0;
@@ -750,6 +841,165 @@ fn collect_runs<'a>(inlines: &'a [InlineNode], out: &mut Vec<StyledRun<'a>>, ctx
             _ => {}
         }
     }
+}
+
+/// Flattens a paragraph's inline nodes into a [`FlowItem`] stream — styled runs
+/// interleaved with the explicit tabs (`w:tab`) and hard breaks (`w:br`/`w:cr`)
+/// that control horizontal advance and forced lines. Unlike [`collect_runs`],
+/// tabs and breaks are preserved as first-class items so the tab/break layer can
+/// resolve them; recursion through wrappers matches [`collect_runs`].
+fn collect_items<'a>(inlines: &'a [InlineNode], out: &mut Vec<FlowItem<'a>>, ctx: &mut FlowCtx) {
+    for inline in inlines {
+        match inline {
+            InlineNode::Run(run) if run.properties.hidden == Some(true) => {}
+            InlineNode::Run(run) => {
+                out.push(FlowItem::Run(styled_run(&run.text, &run.properties, ctx)));
+            }
+            InlineNode::Tab(_) => out.push(FlowItem::Tab),
+            InlineNode::Break(node) => out.push(FlowItem::Break(node.kind)),
+            InlineNode::Drawing(drawing) => {
+                if let Some(item) = image_item(drawing, ctx) {
+                    out.push(item);
+                }
+            }
+            InlineNode::Hyperlink(hyperlink) => collect_items(&hyperlink.inlines, out, ctx),
+            InlineNode::Revision(revision) => collect_items(&revision.inlines, out, ctx),
+            InlineNode::Sdt(sdt) => collect_items(&sdt.inlines, out, ctx),
+            _ => {}
+        }
+    }
+}
+
+/// Maps an inline drawing to an [`FlowItem::Image`]: resolves its media id to the
+/// package part name (the display list's stable media key) and its EMU extent to a
+/// twip box. Returns `None` — contributing nothing, never panicking — when the
+/// drawing declares no extent (so it cannot be sized here) or its media id is
+/// absent from the table. Anchored/floating placement is a later slice
+/// (`P1F-28`); this is the inline case.
+fn image_item(drawing: &Drawing, ctx: &FlowCtx) -> Option<FlowItem<'static>> {
+    let part = ctx.media.get(&drawing.media)?.part_name.clone();
+    let size = extent_to_size(drawing.extent.as_ref()?);
+    (size.width.raw() > 0 && size.height.raw() > 0).then_some(FlowItem::Image { media: part, size })
+}
+
+/// Converts a drawing's EMU extent to a twip box size.
+fn extent_to_size(extent: &Extent) -> Size {
+    Size::new(
+        emu_to_twip(extent.width_emu),
+        emu_to_twip(extent.height_emu),
+    )
+}
+
+/// EMU → twips: 914400 EMU/inch ÷ 1440 twips/inch = exactly 635 EMU per twip.
+/// Clamped to a non-negative `i32` twip (the model bounds `Extent` to `MAX_EMU`).
+fn emu_to_twip(emu: i64) -> Twip {
+    Twip((emu / 635).clamp(0, i64::from(i32::MAX)) as i32)
+}
+
+/// Shapes a paragraph's [`FlowItem`] stream into lines. A stream with no inline
+/// image takes the text path directly ([`shape_text_items`]); a stream carrying an
+/// image splits at each image, shaping the intervening text with the same path and
+/// placing each image as its own inline-box line, so reading order and vertical
+/// stacking are preserved. Anchored/floating placement is a later slice
+/// (`P1F-28`); this is the inline case.
+fn shape_paragraph_items(
+    shaper: &dyn LineShaper,
+    items: &[FlowItem<'_>],
+    tab_stops: &[TabStop],
+    default_tab: Twip,
+    constraints: LineConstraints,
+    range: ModelRange,
+) -> LineLayout {
+    if !items.iter().any(|i| matches!(i, FlowItem::Image { .. })) {
+        return shape_text_items(shaper, items, tab_stops, default_tab, constraints, range);
+    }
+
+    let mut out: Vec<Line> = Vec::new();
+    let mut cursor_y = Twip::ZERO;
+    let mut i = 0usize;
+    while i < items.len() {
+        if let FlowItem::Image { media, size } = &items[i] {
+            let line = image_line(media.clone(), *size, range);
+            stack_lines(&mut out, vec![line], &mut cursor_y);
+            i += 1;
+        } else {
+            let start = i;
+            while i < items.len() && !matches!(items[i], FlowItem::Image { .. }) {
+                i += 1;
+            }
+            let chunk = shape_text_items(
+                shaper,
+                &items[start..i],
+                tab_stops,
+                default_tab,
+                constraints,
+                range,
+            );
+            stack_lines(&mut out, chunk.lines, &mut cursor_y);
+        }
+    }
+    LineLayout { lines: out }
+}
+
+/// Shapes an image-free [`FlowItem`] slice. Ordinary text (no tab, no break, no
+/// `bar` tab stop) takes the fast path — the base shaper alone, so its output is
+/// byte-identical to before the flow layer existed; anything with a tab or break
+/// is resolved by [`crate::tabs`].
+fn shape_text_items(
+    shaper: &dyn LineShaper,
+    items: &[FlowItem<'_>],
+    tab_stops: &[TabStop],
+    default_tab: Twip,
+    constraints: LineConstraints,
+    range: ModelRange,
+) -> LineLayout {
+    if !tabs::needs_flow_layout(items, tab_stops) {
+        let runs: Vec<StyledRun<'_>> = items
+            .iter()
+            .filter_map(|item| match item {
+                FlowItem::Run(run) => Some(run.clone()),
+                _ => None,
+            })
+            .collect();
+        return shaper.shape_paragraph(&runs, constraints, range);
+    }
+    tabs::shape_with_flow(shaper, items, tab_stops, default_tab, constraints, range)
+}
+
+/// A line holding a single inline image box at the paragraph's leading edge, its
+/// height equal to the image height so following content stacks below it.
+fn image_line(media: String, size: Size, range: ModelRange) -> Line {
+    Line {
+        runs: Vec::new(),
+        ascent: size.height,
+        descent: Twip::ZERO,
+        height: size.height,
+        range,
+        line_break: LineBreak::Wrap,
+        page_break_after: false,
+        bars: Vec::new(),
+        images: vec![InlineImage {
+            media,
+            origin: Point::new(Twip::ZERO, Twip::ZERO),
+            size,
+        }],
+    }
+}
+
+/// Appends `lines` below the ones already in `out`, shifting each line's runs and
+/// images down by `cursor_y` (into paragraph-absolute y) and advancing `cursor_y`
+/// past them.
+fn stack_lines(out: &mut Vec<Line>, mut lines: Vec<Line>, cursor_y: &mut Twip) {
+    for line in &mut lines {
+        for run in &mut line.runs {
+            run.origin.y = run.origin.y + *cursor_y;
+        }
+        for image in &mut line.images {
+            image.origin.y = image.origin.y + *cursor_y;
+        }
+        *cursor_y = *cursor_y + line.height;
+    }
+    out.extend(lines);
 }
 
 /// Maps a run's text + properties to a styled run, resolving its declared font
@@ -1010,6 +1260,96 @@ mod tests {
         .unwrap()
     }
 
+    /// The lines of the first paragraph fragment in a galley.
+    fn first_paragraph_lines(galley: &[BlockFragment]) -> &crate::text::LineLayout {
+        match &galley[0] {
+            BlockFragment::Paragraph { lines, .. } => lines,
+            BlockFragment::TableRow { .. } => panic!("expected a paragraph fragment"),
+        }
+    }
+
+    #[test]
+    fn a_hard_line_break_splits_a_paragraph_into_two_lines() {
+        use casual_doc_model::v1::{Break, BreakKind};
+        let para = paragraph(
+            10,
+            vec![
+                run_node(11, "before", RunProperties::default()),
+                InlineNode::Break(Break {
+                    id: NodeId::from_parts(12, 1).unwrap(),
+                    kind: BreakKind::Line,
+                }),
+                run_node(13, "after", RunProperties::default()),
+            ],
+        );
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&document(vec![para]), &shaper, Twip::from_points(400));
+        let lines = first_paragraph_lines(&galley);
+        assert_eq!(lines.lines.len(), 2, "the hard break yields two lines");
+        assert!(
+            !lines.lines[0].page_break_after,
+            "a line break is not a page break"
+        );
+    }
+
+    #[test]
+    fn a_page_break_threads_a_marker_to_the_paginator() {
+        use casual_doc_model::v1::{Break, BreakKind};
+        let para = paragraph(
+            10,
+            vec![
+                run_node(11, "before", RunProperties::default()),
+                InlineNode::Break(Break {
+                    id: NodeId::from_parts(12, 1).unwrap(),
+                    kind: BreakKind::Page,
+                }),
+                run_node(13, "after", RunProperties::default()),
+            ],
+        );
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&document(vec![para]), &shaper, Twip::from_points(400));
+        let lines = first_paragraph_lines(&galley);
+        assert_eq!(lines.lines.len(), 2);
+        assert!(
+            lines.lines[0].page_break_after,
+            "the page break sets the paginator marker on the first line"
+        );
+    }
+
+    #[test]
+    fn a_tab_advances_to_the_paragraphs_tab_stop() {
+        use casual_doc_model::v1::{Tab, TabAlignment, TabStop};
+        let properties = ParagraphProperties {
+            tabs: vec![TabStop {
+                position_twips: 3000,
+                alignment: TabAlignment::Start,
+                leader: None,
+            }],
+            ..ParagraphProperties::default()
+        };
+        let para = BlockNode::Paragraph(Paragraph {
+            id: NodeId::from_parts(10, 1).unwrap(),
+            properties,
+            inlines: vec![
+                run_node(11, "A", RunProperties::default()),
+                InlineNode::Tab(Tab {
+                    id: NodeId::from_parts(12, 1).unwrap(),
+                }),
+                run_node(13, "B", RunProperties::default()),
+            ],
+        });
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&document(vec![para]), &shaper, Twip::from_points(400));
+        let lines = first_paragraph_lines(&galley);
+        assert_eq!(lines.lines.len(), 1);
+        let b = lines.lines[0].runs.last().unwrap();
+        assert!(
+            (b.origin.x.raw() - 3000).abs() <= 20,
+            "the tabbed run advances to the stop (3000), got {}",
+            b.origin.x.raw()
+        );
+    }
+
     #[test]
     fn a_table_flows_to_a_row_fragment_with_positioned_cells() {
         use casual_doc_model::v1::{
@@ -1238,10 +1578,13 @@ mod tests {
         ];
         let resolver = FontResolver::new();
         let mut report = FontResolutionReport::new();
+        let media = DefinitionMap::default();
         let mut ctx = FlowCtx {
             resolver: &resolver,
             scheme: None,
             report: &mut report,
+            default_tab: crate::tabs::DEFAULT_TAB_STOP,
+            media: &media,
         };
         let mut runs = Vec::new();
         collect_runs(&inlines, &mut runs, &mut ctx);
@@ -1792,5 +2135,79 @@ mod tests {
         };
         let top = cells[0].borders.top.expect("the table top border applies");
         assert_eq!(top.width, Twip(20), "sz 8 eighth-points = 20 twips");
+    }
+
+    #[test]
+    fn an_inline_drawing_becomes_an_image_paint_item_with_the_extent_derived_rect() {
+        use crate::compose::compose_paragraph;
+        use crate::display::PaintItem;
+        use casual_doc_model::v1::{Drawing, Extent, MediaId, MediaReference};
+
+        // A media table with one embedded PNG, referenced by an inline drawing.
+        let media_id = MediaId::new(NodeId::from_parts(70, 1).unwrap());
+        let mut media = DefinitionMap::default();
+        media.insert(
+            media_id,
+            MediaReference {
+                relationship_id: "rId7".to_owned(),
+                media_type: "image/png".to_owned(),
+                part_name: "word/media/image1.png".to_owned(),
+            },
+        );
+        let definitions = Definitions {
+            media,
+            ..Definitions::default()
+        };
+        let para = BlockNode::Paragraph(Paragraph {
+            id: NodeId::from_parts(10, 1).unwrap(),
+            properties: ParagraphProperties::default(),
+            inlines: vec![InlineNode::Drawing(Drawing {
+                id: NodeId::from_parts(11, 1).unwrap(),
+                media: media_id,
+                // 190500 × 127000 EMU (635 EMU/twip) → 300 × 200 twips.
+                extent: Some(Extent {
+                    width_emu: 190_500,
+                    height_emu: 127_000,
+                }),
+            })],
+        });
+        let doc =
+            Document::new(NodeId::from_parts(1, 1).unwrap(), vec![para], definitions).unwrap();
+
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&doc, &shaper, Twip::from_points(400));
+        let BlockFragment::Paragraph { lines, .. } = &galley[0] else {
+            panic!("expected a paragraph fragment");
+        };
+        // The drawing became an inline image box, sized from the EMU extent and
+        // keyed by its package part name.
+        let image = lines
+            .lines
+            .iter()
+            .flat_map(|l| &l.images)
+            .next()
+            .expect("an inline image was placed");
+        assert_eq!(image.media, "word/media/image1.png");
+        assert_eq!(
+            image.size,
+            Size::new(Twip(300), Twip(200)),
+            "190500×127000 EMU resolves to 300×200 twips"
+        );
+
+        // And it composes to a `PaintItem::Image` carrying that extent-derived rect.
+        let list = compose_paragraph(lines, Point::new(Twip::ZERO, Twip::ZERO));
+        let rect = list
+            .items
+            .iter()
+            .find_map(|item| match item {
+                PaintItem::Image { media, rect } if media == "word/media/image1.png" => Some(*rect),
+                _ => None,
+            })
+            .expect("an image paint item");
+        assert_eq!(
+            rect.size,
+            Size::new(Twip(300), Twip(200)),
+            "the paint rect carries the extent-derived size"
+        );
     }
 }

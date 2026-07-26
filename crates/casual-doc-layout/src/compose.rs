@@ -16,6 +16,9 @@ use crate::units::{Point, Rect, Size, Twip};
 const CELL_BORDER: Color = Color::rgb(160, 160, 160);
 const CELL_BORDER_WIDTH: f32 = 1.0;
 
+/// Width (twips) of a `bar` tab stop's vertical rule (~0.5pt, Word's hairline).
+const BAR_TAB_WIDTH: Twip = Twip(10);
+
 /// Builds a display list for one paragraph's shaped lines, placed with the
 /// paragraph's top-left at `origin` (in twips). The shaper positions each glyph
 /// run relative to the paragraph's own origin (run `origin` = the run's left edge
@@ -23,7 +26,23 @@ const CELL_BORDER_WIDTH: f32 = 1.0;
 #[must_use]
 pub fn compose_paragraph(layout: &LineLayout, origin: Point) -> DisplayList {
     let mut list = DisplayList::new();
+    // Tracks the top of the current line (twips from the paragraph content top) so
+    // `bar` tab stops can be drawn as vertical rules spanning the line's box.
+    let mut line_top = Twip::ZERO;
     for line in &layout.lines {
+        // Bar tab stops (`w:tab@val="bar"`): a thin vertical rule at each stop's x,
+        // spanning the full line height, painted behind the glyphs.
+        for &bar_x in &line.bars {
+            list.push(PaintItem::Rect {
+                rect: Rect::new(
+                    Point::new(origin.x + bar_x, origin.y + line_top),
+                    Size::new(BAR_TAB_WIDTH, line.height),
+                ),
+                fill: Some(Color::BLACK),
+                stroke: None,
+            });
+        }
+        line_top = line_top + line.height;
         for run in &line.runs {
             let placed_x = origin.x + run.origin.x;
             let baseline_y = origin.y + run.origin.y;
@@ -44,6 +63,18 @@ pub fn compose_paragraph(layout: &LineLayout, origin: Point) -> DisplayList {
             let mut placed = run.clone();
             placed.origin = Point::new(placed_x, baseline_y);
             list.push(PaintItem::Glyphs { run: placed });
+        }
+        // Inline images (embedded pictures): the box's `origin` is already
+        // paragraph-absolute; translate into page space and emit a blit. The
+        // backend resolves `media` to pixels and scales them into the box.
+        for image in &line.images {
+            list.push(PaintItem::Image {
+                media: image.media.clone(),
+                rect: Rect::new(
+                    Point::new(origin.x + image.origin.x, origin.y + image.origin.y),
+                    image.size,
+                ),
+            });
         }
     }
     list
@@ -381,8 +412,33 @@ mod tests {
                 height: Twip(250),
                 range: ModelRange::new(ModelPos::new(node(1), 0), ModelPos::new(node(1), 0)),
                 line_break: LineBreak::ParagraphEnd,
+                page_break_after: false,
+                bars: Vec::new(),
+                images: Vec::new(),
             }],
         }
+    }
+
+    #[test]
+    fn a_bar_tab_stop_draws_a_vertical_rule() {
+        // A line carrying a bar-stop x (1500) composes a thin vertical rule at that
+        // x spanning the line height, at the paragraph origin.
+        let mut layout = one_run_line(Twip(500), None);
+        layout.lines[0].bars = vec![Twip(1500)];
+        let list = compose_paragraph(&layout, Point::new(Twip(100), Twip(200)));
+        let bar = list.items.iter().find_map(|i| match i {
+            PaintItem::Rect {
+                rect,
+                fill: Some(fill),
+                stroke: None,
+            } if fill.r == 0 && rect.size.width == BAR_TAB_WIDTH => Some(rect.origin.x.raw()),
+            _ => None,
+        });
+        assert_eq!(
+            bar,
+            Some(100 + 1500),
+            "the bar rule is drawn at the paragraph origin plus the stop x"
+        );
     }
 
     #[test]

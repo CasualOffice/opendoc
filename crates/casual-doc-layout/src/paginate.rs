@@ -493,7 +493,13 @@ impl<'a> Paginator<'a> {
                 box_metrics,
                 break_control,
                 decor,
-            } if allow_split && !break_control.keep_lines && lines.lines.len() > 1 => {
+            } if lines.lines.len() > 1
+                && (allow_split && !break_control.keep_lines
+                    || lines.lines.iter().any(|l| l.page_break_after)) =>
+            {
+                // A paragraph with a forced mid-paragraph page/column break is
+                // always routed through the line splitter (even under `keepLines`
+                // or a keep-group) so the explicit break is honored.
                 self.place_paragraph(idx, *id, lines, *box_metrics, *break_control, *decor);
             }
             BlockFragment::TableRow {
@@ -715,10 +721,29 @@ impl<'a> Paginator<'a> {
                 }
             }
 
+            // A forced page/column break (`w:br` type page/column) caps this chunk:
+            // include up to and through the break line, then flush unconditionally.
+            // This is just another line-split point, so the incremental halt/prefix
+            // bookkeeping (keyed on `{fragment, line}`) is unchanged.
+            let forced = lines.lines[start..start + take]
+                .iter()
+                .position(|l| l.page_break_after);
+            if let Some(k) = forced {
+                let new_take = k + 1;
+                used -= lines.lines[start + new_take..start + take]
+                    .iter()
+                    .map(|l| l.height.raw())
+                    .sum::<i32>();
+                take = new_take;
+            }
+            let forced = forced.is_some();
+
             // Orphan: don't strand fewer than the minimum head lines at a page
             // foot — move the whole paragraph to the next page (only when the page
-            // already has content, else we would loop).
-            if widow
+            // already has content, else we would loop). A forced break defines the
+            // split point itself, so widow/orphan reshuffling is skipped for it.
+            if !forced
+                && widow
                 && is_head
                 && !self.placed.is_empty()
                 && start + take < n
@@ -730,7 +755,12 @@ impl<'a> Paginator<'a> {
             }
             // Widow: don't leave fewer than the minimum lines for the tail — pull a
             // line down (keeping at least one on this page).
-            if widow && start + take < n && (n - start - take) < MIN_WIDOW_ORPHAN && take > 1 {
+            if !forced
+                && widow
+                && start + take < n
+                && (n - start - take) < MIN_WIDOW_ORPHAN
+                && take > 1
+            {
                 take -= 1;
                 used -= lines.lines[start + take].height.raw();
             }
@@ -1010,6 +1040,9 @@ mod tests {
             height,
             range: ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, 0)),
             line_break: LineBreak::ParagraphEnd,
+            page_break_after: false,
+            bars: Vec::new(),
+            images: Vec::new(),
         };
         BlockFragment::Paragraph {
             id: node,
@@ -1053,6 +1086,9 @@ mod tests {
                     height: line_h,
                     range: ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, 0)),
                     line_break: LineBreak::Wrap,
+                    page_break_after: false,
+                    bars: Vec::new(),
+                    images: Vec::new(),
                 }
             })
             .collect();
@@ -1063,6 +1099,64 @@ mod tests {
             break_control,
             decor: ParagraphDecor::default(),
         }
+    }
+
+    /// A multi-line paragraph like [`multiline`] but with a forced page break
+    /// (`w:br` type page) after line index `break_after` — modeling a
+    /// mid-paragraph page break.
+    fn multiline_forced(id: u64, count: usize, line_h: Twip, break_after: usize) -> BlockFragment {
+        let mut fragment = multiline(id, count, line_h, BreakControl::default());
+        if let BlockFragment::Paragraph { lines, .. } = &mut fragment
+            && let Some(line) = lines.lines.get_mut(break_after)
+        {
+            line.page_break_after = true;
+            line.line_break = LineBreak::Hard;
+        }
+        fragment
+    }
+
+    #[test]
+    fn a_forced_page_break_splits_the_paragraph_mid_paragraph() {
+        let config = letter_config();
+        // Four 240-twip lines (960 twips) fit a page easily, but a forced page
+        // break after line 1 must still split the paragraph onto a second page.
+        let fragments = vec![multiline_forced(1, 4, Twip(240), 1)];
+        let layout = paginate(&fragments, &config);
+        assert_eq!(
+            layout.page_count(),
+            2,
+            "the forced break starts a second page"
+        );
+        let head = &layout.pages[0].placed[0].fragment;
+        let tail = &layout.pages[1].placed[0].fragment;
+        let lines_of = |f: &BlockFragment| match f {
+            BlockFragment::Paragraph { lines, .. } => lines.lines.len(),
+            BlockFragment::TableRow { .. } => 0,
+        };
+        assert_eq!(
+            lines_of(head),
+            2,
+            "the head holds the lines up to the break"
+        );
+        assert_eq!(lines_of(tail), 2, "the remainder continues on page 2");
+    }
+
+    #[test]
+    fn incremental_golden_holds_with_a_forced_break_paragraph() {
+        let config = letter_config();
+        // A galley containing a mid-paragraph page break; edit a later paragraph
+        // and assert `repaginate == paginate` still holds field-for-field.
+        let prev = vec![
+            multiline_forced(1, 4, Twip(240), 1),
+            paragraph(2, Twip(240)),
+            paragraph(3, Twip(240)),
+        ];
+        let new = vec![
+            multiline_forced(1, 4, Twip(240), 1),
+            paragraph(2, Twip(600)),
+            paragraph(3, Twip(240)),
+        ];
+        golden(&prev, &new, &config);
     }
 
     #[test]

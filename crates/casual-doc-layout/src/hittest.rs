@@ -549,6 +549,9 @@ mod tests {
                 } else {
                     LineBreak::Wrap
                 },
+                page_break_after: false,
+                bars: Vec::new(),
+                images: Vec::new(),
             });
             baseline += LINE_H;
         }
@@ -590,6 +593,9 @@ mod tests {
             height: Twip(LINE_H),
             range: ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, n)),
             line_break: LineBreak::ParagraphEnd,
+            page_break_after: false,
+            bars: Vec::new(),
+            images: Vec::new(),
         };
         BlockFragment::Paragraph {
             id: node,

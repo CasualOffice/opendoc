@@ -10,7 +10,7 @@ use casual_doc_layout::units::{Size, Twip};
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::SectionId;
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
-use casual_doc_render::{BundledFontSource, Surface, render};
+use casual_doc_render::{BundledFontSource, MapMediaSource, Surface, render};
 
 fn main() {
     let out = std::env::args()
@@ -27,6 +27,16 @@ fn main() {
     )
     .unwrap()
     .document;
+
+    // Serve the package's embedded pictures (`word/media/*`) to the renderer,
+    // keyed by part name — the display list's media key. Mirrors how fonts are
+    // served through a `GlyphSource`.
+    let mut media = MapMediaSource::new();
+    for (_id, reference) in document.definitions().media.iter() {
+        if let Ok(part_bytes) = package.read_part(&reference.part_name) {
+            media.insert(reference.part_name.clone(), part_bytes);
+        }
+    }
 
     let config = PageConfig {
         section: SectionId::new(NodeId::from_parts(9, 1).unwrap()),
@@ -45,7 +55,13 @@ fn main() {
     let w = config.page_size.width.to_device_px(dpi).ceil() as u32;
     let h = config.page_size.height.to_device_px(dpi).ceil() as u32;
     let mut surface = Surface::new(w, h).unwrap();
-    render(&compose_page(page), &mut surface, dpi, &BundledFontSource);
+    render(
+        &compose_page(page),
+        &mut surface,
+        dpi,
+        &BundledFontSource,
+        &media,
+    );
     std::fs::write(&out, surface.encode_png().unwrap()).unwrap();
     eprintln!(
         "rendered {} paragraphs across {} page(s) -> {out}",

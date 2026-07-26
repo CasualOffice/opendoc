@@ -16,6 +16,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Write};
 
+use casual_doc_import::{RelationshipOwner, RetainedParts};
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, AppProperties, BlockNode, BorderEdge,
     BreakKind, CellVerticalAlignment, Color, ColorScheme, Comment, CommentId, CoreProperties,
@@ -259,9 +260,36 @@ struct Ctx<'a> {
 /// Serializes a v1 `Document` to a DOCX package. `media` supplies binary image
 /// bytes by part name (the model carries `MediaReference` metadata, not bytes);
 /// pass an empty map when the model uses no drawings.
+///
+/// This preserves no opaque (unmodeled) package parts; use
+/// [`write_document_with_retained_parts`] to carry an import's side-table
+/// through so unmodeled parts survive a semantic edit→save.
 pub fn write_document(
     document: &Document,
     media: &BTreeMap<String, Vec<u8>>,
+) -> Result<Vec<u8>, ExportError> {
+    write_document_with_retained_parts(document, media, &RetainedParts::default())
+}
+
+/// Serializes a v1 `Document` to a DOCX package, additionally carrying an
+/// import's opaque part side-table (P1F-2) verbatim: every admitted part the
+/// semantic model did not consume (glossary, embeddings, charts, customXml,
+/// webSettings, thumbnail, stylesWithEffects, comment companions, ...) is
+/// re-emitted byte-for-byte, its content-type merged into the generated
+/// `[Content_Types].xml`, its owned `_rels` preserved, and the root/document
+/// relationship that targets it re-added (with a fresh id) so the part stays
+/// reachable. Digital signatures are excluded upstream (they are not in the
+/// side-table), because regenerating the body invalidates them.
+///
+/// A part referenced only from the document *body* (a chart/embedding a dropped
+/// drawing pointed at) is preserved as bytes but may be **orphaned**: the body
+/// is regenerated from the model without that reference, so its relationship
+/// exists (keeping the part in the package graph) but no body id names it.
+/// Re-linking such objects is a future object-node slice, out of scope here.
+pub fn write_document_with_retained_parts(
+    document: &Document,
+    media: &BTreeMap<String, Vec<u8>>,
+    retained_parts: &RetainedParts,
 ) -> Result<Vec<u8>, ExportError> {
     let definitions = document.definitions();
     // Media relationships are emitted with their verbatim ids so the model
@@ -425,13 +453,22 @@ pub fn write_document(
     let mut parts: Vec<(String, Vec<u8>)> = vec![
         (
             "[Content_Types].xml".to_owned(),
-            content_types_xml(&extras, &docprops, &definitions.media, has_embedded_fonts)?,
+            content_types_xml(
+                &extras,
+                &docprops,
+                &definitions.media,
+                has_embedded_fonts,
+                retained_parts,
+            )?,
         ),
-        ("_rels/.rels".to_owned(), root_rels_xml(&docprops)?),
+        (
+            "_rels/.rels".to_owned(),
+            root_rels_xml(&docprops, retained_parts)?,
+        ),
         ("word/document.xml".to_owned(), document_xml),
         (
             "word/_rels/document.xml.rels".to_owned(),
-            document_rels_xml(&rels, &extras, &definitions.media)?,
+            document_rels_xml(&rels, &extras, &definitions.media, retained_parts)?,
         ),
     ];
     for docprop in &docprops {
@@ -445,6 +482,16 @@ pub fn write_document(
             ));
         }
         parts.push((extra.part_name, extra.bytes));
+    }
+    // Opaque preserved parts (P1F-2): each part verbatim, plus its owned `_rels`
+    // companion verbatim (so parts it references stay reachable). Content types
+    // and root/document referencing relationships are merged into the generated
+    // manifests above.
+    for retained in &retained_parts.parts {
+        if let Some(rels) = &retained.rels {
+            parts.push((rels.part_name.clone(), rels.bytes.clone()));
+        }
+        parts.push((retained.part_name.clone(), retained.bytes.clone()));
     }
     // Media parts (image bytes supplied by the caller; the model carries only
     // the reference metadata). An absent entry writes an empty part — the
@@ -502,6 +549,7 @@ fn content_types_xml(
     docprops: &[DocPropPart],
     media: &DefinitionMap<MediaId, MediaReference>,
     has_embedded_fonts: bool,
+    retained_parts: &RetainedParts,
 ) -> Result<Vec<u8>, ExportError> {
     let mut w = new_writer();
     let mut types = start("Types");
@@ -557,6 +605,21 @@ fn content_types_xml(
         over.push_attribute(("ContentType", docprop.content_type));
         w.write_event(Event::Empty(over)).map_err(pkg)?;
     }
+    // Opaque preserved parts (P1F-2): merge each part's declared content type as
+    // an `Override` so it re-imports to the same type. A part whose source type
+    // came from a `Default` extension is still valid as an explicit `Override`.
+    // A part with no declared type falls back to the extension `Default`s above
+    // (e.g. `xml`, `rels`); it gets no `Override`.
+    for retained in &retained_parts.parts {
+        let Some(content_type) = &retained.content_type else {
+            continue;
+        };
+        let part_name = format!("/{}", retained.part_name);
+        let mut over = start("Override");
+        over.push_attribute(("PartName", part_name.as_str()));
+        over.push_attribute(("ContentType", content_type.as_str()));
+        w.write_event(Event::Empty(over)).map_err(pkg)?;
+    }
     w.write_event(Event::End(BytesEnd::new("Types")))
         .map_err(pkg)?;
     Ok(finish(w))
@@ -564,8 +627,13 @@ fn content_types_xml(
 
 /// Emits `_rels/.rels`: the main-document relationship (`rId1`) plus one root
 /// relationship per emitted `docProps/*` part (`rId2`..), in core/app/custom
-/// order. With no metadata this is byte-identical to the earlier slices.
-fn root_rels_xml(docprops: &[DocPropPart]) -> Result<Vec<u8>, ExportError> {
+/// order, plus any root-owned opaque-part relationship (P1F-2) that keeps a
+/// preserved part (customXml, thumbnail, ...) reachable. With no metadata and no
+/// preserved parts this is byte-identical to the earlier slices.
+fn root_rels_xml(
+    docprops: &[DocPropPart],
+    retained_parts: &RetainedParts,
+) -> Result<Vec<u8>, ExportError> {
     let mut w = new_writer();
     let mut rels = start("Relationships");
     rels.push_attribute(("xmlns", REL_NS));
@@ -583,9 +651,39 @@ fn root_rels_xml(docprops: &[DocPropPart]) -> Result<Vec<u8>, ExportError> {
         rel.push_attribute(("Target", docprop.target));
         w.write_event(Event::Empty(rel)).map_err(pkg)?;
     }
+    write_retained_relationships(&mut w, retained_parts, RelationshipOwner::Root)?;
     w.write_event(Event::End(BytesEnd::new("Relationships")))
         .map_err(pkg)?;
     Ok(finish(w))
+}
+
+/// Emits the opaque-part (P1F-2) relationships owned by `owner`, each with a
+/// fresh `rIdOp{n}` id (the `rIdOp` prefix cannot collide with the writer's
+/// numeric `rId{n}` ids). The id is not referenced from any regenerated part —
+/// it exists only to keep the preserved target reachable in the package graph —
+/// so its exact value is immaterial; only in-file uniqueness matters.
+fn write_retained_relationships(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    retained_parts: &RetainedParts,
+    owner: RelationshipOwner,
+) -> Result<(), ExportError> {
+    let mut next = 0_u32;
+    for relationship in &retained_parts.relationships {
+        if relationship.owner != owner {
+            continue;
+        }
+        next += 1;
+        let id = format!("rIdOp{next}");
+        let mut rel = start("Relationship");
+        rel.push_attribute(("Id", id.as_str()));
+        rel.push_attribute(("Type", relationship.relationship_type.as_str()));
+        rel.push_attribute(("Target", relationship.target.as_str()));
+        if relationship.external {
+            rel.push_attribute(("TargetMode", "External"));
+        }
+        w.write_event(Event::Empty(rel)).map_err(pkg)?;
+    }
+    Ok(())
 }
 
 /// Builds the `docProps/*` parts from the document's metadata, one per non-empty
@@ -844,11 +942,16 @@ fn document_rels_xml(
     entries: &[RelEntry],
     extras: &[ExtraPart],
     media: &DefinitionMap<MediaId, MediaReference>,
+    retained_parts: &RetainedParts,
 ) -> Result<Vec<u8>, ExportError> {
+    let has_retained_document_rels = retained_parts
+        .relationships
+        .iter()
+        .any(|relationship| relationship.owner == RelationshipOwner::Document);
     let mut w = new_writer();
     let mut rels = start("Relationships");
     rels.push_attribute(("xmlns", REL_NS));
-    if entries.is_empty() && extras.is_empty() && media.is_empty() {
+    if entries.is_empty() && extras.is_empty() && media.is_empty() && !has_retained_document_rels {
         w.write_event(Event::Empty(rels)).map_err(pkg)?;
         return Ok(finish(w));
     }
@@ -893,6 +996,7 @@ fn document_rels_xml(
         rel.push_attribute(("Target", extra.target.as_str()));
         w.write_event(Event::Empty(rel)).map_err(pkg)?;
     }
+    write_retained_relationships(&mut w, retained_parts, RelationshipOwner::Document)?;
     w.write_event(Event::End(BytesEnd::new("Relationships")))
         .map_err(pkg)?;
     Ok(finish(w))
