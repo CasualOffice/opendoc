@@ -22,7 +22,7 @@ use casual_doc_model::v1::SectionId;
 use crate::block::{BlockFragment, BoxMetrics, BreakControl, CellFragment, ParagraphDecor};
 use crate::flow::shape_field_run;
 use crate::model::ModelPos;
-use crate::page::{FlowPos, FlowSpan, Page, PaginatedLayout, PlacedFragment};
+use crate::page::{AnchorContent, FlowPos, FlowSpan, Page, PaginatedLayout, PlacedFragment};
 use crate::text::{FieldKind, GlyphRun, Line, LineLayout, LineShaper};
 use crate::units::{Point, Rect, Size, Twip};
 
@@ -1162,6 +1162,11 @@ pub(crate) fn build_page(
 /// Body content, headers, and footers are all resolved (a footer may hold a
 /// `Page X of Y`). Call it after pagination and after
 /// [`crate::running::place_running_content`] (so headers/footers exist to stamp).
+///
+/// Fields nested inside table cells and inline text boxes are resolved too (the
+/// pass recurses into both). Fields inside *anchored* (floating) text boxes are
+/// handled by [`resolve_anchored_fields`], which must run after
+/// [`crate::anchor::place_floats`] has populated [`Page::anchored`].
 pub fn resolve_fields(layout: &mut PaginatedLayout, shaper: &dyn LineShaper) {
     let total = layout.pages.len() as u32;
     for page in &mut layout.pages {
@@ -1178,7 +1183,32 @@ pub fn resolve_fields(layout: &mut PaginatedLayout, shaper: &dyn LineShaper) {
     }
 }
 
-/// Resolves fields inside one block fragment, recursing into table cells.
+/// Resolves `PAGE`/`NUMPAGES` fields inside anchored (floating) text boxes — the
+/// footer/header page-number box the SDS corpus uses lives here, a positioned VML
+/// `v:textbox` modeled as an anchored [`AnchorContent::TextBox`].
+///
+/// [`Page::anchored`] is populated by [`crate::anchor::place_floats`], which runs
+/// *after* [`resolve_fields`]; this pass must therefore run last, after floats are
+/// placed, so the box's `PAGE` field shows the current page instead of the cached
+/// result baked into the model. Recursing into table cells and nested text boxes,
+/// it is idempotent for the same reason [`resolve_fields`] is.
+pub fn resolve_anchored_fields(layout: &mut PaginatedLayout, shaper: &dyn LineShaper) {
+    let total = layout.pages.len() as u32;
+    for page in &mut layout.pages {
+        let number = page.number;
+        for anchor in &mut page.anchored {
+            if let AnchorContent::TextBox { blocks, .. } = &mut anchor.content {
+                for block in blocks {
+                    resolve_in_fragment(block, number, total, shaper);
+                }
+            }
+        }
+    }
+}
+
+/// Resolves fields inside one block fragment, recursing into table cells and inline
+/// text boxes (both carry block content flowed through the shared pipeline, which
+/// may hold `PAGE`/`NUMPAGES` fields).
 fn resolve_in_fragment(
     fragment: &mut BlockFragment,
     number: u32,
@@ -1189,6 +1219,11 @@ fn resolve_in_fragment(
         BlockFragment::Paragraph { lines, .. } => {
             for line in &mut lines.lines {
                 resolve_in_line(line, number, total, shaper);
+                for text_box in &mut line.text_boxes {
+                    for block in &mut text_box.blocks {
+                        resolve_in_fragment(block, number, total, shaper);
+                    }
+                }
             }
         }
         BlockFragment::TableRow { cells, .. } => {
