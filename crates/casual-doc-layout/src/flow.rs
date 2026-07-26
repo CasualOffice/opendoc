@@ -18,10 +18,13 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use casual_doc_model::v1::{
-    Alignment, BlockNode, Color, Document, InlineNode, ParagraphProperties, Table,
+    Alignment, BlockNode, BorderEdge, Color, Document, HeightRule, InlineNode, ParagraphProperties,
+    Table, TableBorders, TableCell, TableLayout, TableRowProperties,
 };
 
-use crate::block::{BlockFragment, BoxMetrics, BreakControl, CellFragment};
+use crate::block::{
+    BlockFragment, BoxMetrics, BreakControl, CellBorders, CellFragment, ResolvedEdge,
+};
 use crate::incremental::{DirtySet, GalleyCache};
 use crate::model::{ModelPos, ModelRange};
 use crate::text::{Decoration, LineConstraints, LineShaper, StyledRun, TextAlignment};
@@ -189,78 +192,455 @@ fn flow_blocks(blocks: &[BlockNode], shaper: &dyn LineShaper, width: Twip) -> Ve
     galley
 }
 
-/// Flows a table into one [`BlockFragment::TableRow`] per row. Column widths come
-/// from the grid (`w:gridCol`), distributed evenly when unspecified; a cell's
-/// content is flowed at the width of the grid columns it spans. Cross-page row
-/// splitting and header repetition are `P1D-003`.
+/// Flows a table into one [`BlockFragment::TableRow`] per row at Word-grade
+/// fidelity (`P1D-003`):
+///
+/// - **Column widths** come from the width solver ([`solve_column_widths`]):
+///   preferred `w:tblW`/`w:tcW` widths, the fixed-vs-autofit algorithm,
+///   content-driven minimum/preferred widths, and `w:gridSpan` distribution.
+/// - **Table indent** (`w:tblInd`) offsets every cell's leading edge and reduces
+///   the width available to the columns.
+/// - **Row height** honors the `w:trHeight` rule (`atLeast` grows with content,
+///   `exact` fixes the height and clips overflow).
+/// - **Borders** are resolved by OOXML conflict precedence so composition draws
+///   the winning edge.
+///
+/// Cross-page row splitting and header repetition are the paginator's job
+/// ([`crate::paginate`]); this produces the row fragments it slices.
 fn flow_table(
     table: &Table,
     shaper: &dyn LineShaper,
     width: Twip,
     galley: &mut Vec<BlockFragment>,
 ) {
-    let widths = column_widths(table, width);
-    // Cumulative left edge of each column.
-    let mut edges = Vec::with_capacity(widths.len() + 1);
-    let mut x = Twip::ZERO;
+    let indent = table.properties.indent_twips.unwrap_or(0);
+    let available = (width.raw() - indent).max(1);
+    let widths = solve_table_columns(table, shaper, available);
+
+    // Cumulative left edge of each column, shifted by the table indent.
+    let ncols = widths.len();
+    let mut edges = Vec::with_capacity(ncols + 1);
+    let mut x = indent;
     for w in &widths {
         edges.push(x);
-        x = x + *w;
+        x += w.raw();
     }
     edges.push(x);
+    let edge = |col: usize| Twip(edges[col.min(edges.len() - 1)]);
 
     for row in &table.rows {
         let mut cells = Vec::new();
         let mut col = 0usize;
-        for cell in &row.cells {
+        for (index, cell) in row.cells.iter().enumerate() {
             let span = cell.properties.grid_span.unwrap_or(1).max(1) as usize;
-            let cell_x = edges.get(col).copied().unwrap_or(Twip::ZERO);
-            let cell_end = edges
-                .get((col + span).min(edges.len() - 1))
-                .copied()
-                .unwrap_or(x);
-            let cell_width = cell_end - cell_x;
+            let cell_x = edge(col);
+            let cell_end = edge(col + span);
+            let cell_width = Twip((cell_end.raw() - cell_x.raw()).max(1));
+            let borders = resolve_cell_borders(&table.properties.borders, &row.cells, index);
             cells.push(CellFragment {
                 id: cell.id,
                 grid_span: span as u32,
                 x: cell_x,
                 width: cell_width,
                 blocks: flow_blocks(&cell.blocks, shaper, cell_width),
+                borders,
             });
             col += span;
         }
+        let content_h = BlockFragment::cells_content_height(&cells);
+        let (height, clip) = resolve_row_height(&row.properties, content_h);
         galley.push(BlockFragment::TableRow {
             id: row.id,
+            table: table.id,
             cells,
+            height,
             can_split: !row.properties.cant_split,
             header: row.properties.header,
+            clip,
         });
     }
 }
 
-/// The width of each grid column (twips). Declared widths are used as-is; columns
-/// with no declared width share the remaining space evenly (at least 1 twip).
-fn column_widths(table: &Table, total: Twip) -> Vec<Twip> {
-    if table.grid.is_empty() {
-        return vec![total];
+/// The resolved height of a table row and whether its content must be clipped,
+/// per the `w:trHeight` rule. `atLeast`/`auto` grow to the content when it is
+/// taller; `exact` pins the height and clips overflow (`docs/38-…#tables`).
+fn resolve_row_height(props: &TableRowProperties, content: Twip) -> (Twip, bool) {
+    let val = props.height.value_twips.map_or(0, |v| v as i32);
+    match props.height.rule {
+        Some(HeightRule::Exact) if props.height.value_twips.is_some() => {
+            (Twip(val), content.raw() > val)
+        }
+        // `atLeast`, `auto`, and an `exact` with no value all resolve to "at
+        // least this tall": the larger of the content height and the stated value.
+        _ => (Twip(content.raw().max(val)), false),
     }
-    let declared: i32 = table.grid.iter().filter_map(|c| c.width_twips).sum();
-    let undeclared = table
-        .grid
-        .iter()
-        .filter(|c| c.width_twips.is_none())
-        .count();
-    let leftover = (total.raw() - declared).max(0);
-    let each = if undeclared > 0 {
-        (leftover / undeclared as i32).max(1)
+}
+
+/// A table column's width constraints, the input to [`solve_column_widths`].
+#[derive(Clone, Copy, Debug)]
+struct ColumnConstraint {
+    /// Declared grid width (`w:gridCol`), if any.
+    grid: Option<i32>,
+    /// Minimum content width — the widest run that cannot be broken (twips).
+    min: i32,
+    /// Preferred content width — the natural (unwrapped) width (twips).
+    preferred: i32,
+}
+
+/// A table's preferred-width specification (`w:tblW`). The v1 model stores
+/// `w:tblW` as `dxa` only, so the flow path emits `Auto`/`Dxa`; `Pct` (resolved
+/// against the containing width) is supported and tested at the solver seam so
+/// the algorithm is complete when the model gains percentage widths.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WidthSpec {
+    /// No preferred width — size to content within the available width.
+    Auto,
+    /// A fixed width in twips.
+    Dxa(i32),
+    /// A percentage of the containing width, in fiftieths of a percent
+    /// (`5000` = 100%). The v1 model stores `w:tblW` as `dxa` only, so the flow
+    /// path never emits this today; the solver implements it (and it is covered
+    /// by tests) so percentage widths are ready the moment the model carries them.
+    #[allow(dead_code)]
+    Pct(u32),
+}
+
+/// Solves the grid column widths for a table (twips), measuring each cell's
+/// content min/preferred widths with the shaper and distributing `w:gridSpan`
+/// cells across the columns they cover.
+fn solve_table_columns(table: &Table, shaper: &dyn LineShaper, available: i32) -> Vec<Twip> {
+    let ncols = if table.grid.is_empty() {
+        table
+            .rows
+            .iter()
+            .map(|r| {
+                r.cells
+                    .iter()
+                    .map(|c| c.properties.grid_span.unwrap_or(1).max(1) as usize)
+                    .sum::<usize>()
+            })
+            .max()
+            .unwrap_or(1)
+            .max(1)
     } else {
-        0
+        table.grid.len()
     };
-    table
-        .grid
-        .iter()
-        .map(|c| Twip(c.width_twips.unwrap_or(each).max(1)))
+
+    let mut cols: Vec<ColumnConstraint> = (0..ncols)
+        .map(|i| ColumnConstraint {
+            grid: table.grid.get(i).and_then(|g| g.width_twips),
+            min: 0,
+            preferred: 0,
+        })
+        .collect();
+
+    for row in &table.rows {
+        let mut col = 0usize;
+        for cell in &row.cells {
+            let span = cell.properties.grid_span.unwrap_or(1).max(1) as usize;
+            let (cmin, cmax) = block_intrinsic(&cell.blocks, shaper);
+            let cpref = cmax.max(cell.properties.width_twips.unwrap_or(0));
+            // A spanning cell's demand is shared over the columns it covers.
+            let per_min = div_ceil(cmin, span as i32);
+            let per_pref = div_ceil(cpref, span as i32);
+            for c in cols.iter_mut().skip(col).take(span) {
+                c.min = c.min.max(per_min);
+                c.preferred = c.preferred.max(per_pref);
+            }
+            col += span;
+        }
+    }
+    for c in &mut cols {
+        if let Some(g) = c.grid {
+            c.preferred = c.preferred.max(g);
+        }
+        c.preferred = c.preferred.max(c.min);
+    }
+
+    let spec = table
+        .properties
+        .width_twips
+        .map_or(WidthSpec::Auto, WidthSpec::Dxa);
+    let layout = match table.properties.layout {
+        Some(TableLayout::Fixed) => TableLayout::Fixed,
+        _ => TableLayout::Autofit,
+    };
+    solve_column_widths(&cols, spec, available, layout)
+        .into_iter()
+        .map(Twip)
         .collect()
+}
+
+/// The column-width solver: resolves a table's target width from `spec`, seeds a
+/// base width per column (the grid for fixed layout, the preferred content width
+/// for autofit), then grows or shrinks the columns to hit the target while never
+/// shrinking a column below its content minimum when the target allows.
+fn solve_column_widths(
+    cols: &[ColumnConstraint],
+    spec: WidthSpec,
+    available: i32,
+    layout: TableLayout,
+) -> Vec<i32> {
+    let n = cols.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let available = available.max(1);
+    let grid_sum: i32 = cols.iter().map(|c| c.grid.unwrap_or(0)).sum();
+    let pref_sum: i32 = cols.iter().map(|c| c.preferred.max(1)).sum();
+    let min_sum: i32 = cols.iter().map(|c| c.min.max(1)).sum();
+
+    let target = match spec {
+        WidthSpec::Dxa(v) => v.max(1),
+        WidthSpec::Pct(p) => ((i64::from(available) * i64::from(p)) / 5000).max(1) as i32,
+        WidthSpec::Auto => match layout {
+            TableLayout::Fixed if grid_sum > 0 => grid_sum,
+            TableLayout::Fixed => available,
+            // Autofit sizes to the content, but never wider than the available
+            // width nor narrower than the content minimum.
+            TableLayout::Autofit => pref_sum.clamp(min_sum, available.max(min_sum)),
+        },
+    };
+
+    let base: Vec<i32> = match layout {
+        TableLayout::Fixed => {
+            let undeclared = cols.iter().filter(|c| c.grid.is_none()).count();
+            let each = if undeclared > 0 {
+                ((available - grid_sum).max(0) / undeclared as i32).max(1)
+            } else {
+                0
+            };
+            cols.iter().map(|c| c.grid.unwrap_or(each).max(1)).collect()
+        }
+        TableLayout::Autofit => cols.iter().map(|c| c.preferred.max(1)).collect(),
+    };
+    let mins: Vec<i32> = cols.iter().map(|c| c.min.max(1)).collect();
+    distribute_width(base, &mins, target)
+}
+
+/// Distributes `base` column widths to sum to `target`: extra space is shared in
+/// proportion to each column's base width; a deficit is taken first from each
+/// column's slack above its minimum (in proportion to that slack), and only if
+/// that is not enough are columns shrunk below their minimums proportionally.
+fn distribute_width(base: Vec<i32>, mins: &[i32], target: i32) -> Vec<i32> {
+    let n = base.len();
+    let sum: i32 = base.iter().sum();
+    let mut out = base.clone();
+    if n == 0 || sum == target {
+        for v in &mut out {
+            *v = (*v).max(1);
+        }
+        return out;
+    }
+    if sum < target {
+        let extra = target - sum;
+        let wsum: i64 = base.iter().map(|&b| i64::from(b.max(1))).sum();
+        let mut given = 0;
+        for i in 0..n {
+            let add = if i == n - 1 {
+                extra - given
+            } else {
+                ((i64::from(extra) * i64::from(base[i].max(1))) / wsum) as i32
+            };
+            out[i] += add;
+            given += add;
+        }
+    } else {
+        let deficit = sum - target;
+        let slack: Vec<i32> = (0..n).map(|i| (base[i] - mins[i]).max(0)).collect();
+        let slack_sum: i64 = slack.iter().map(|&s| i64::from(s)).sum();
+        if slack_sum >= i64::from(deficit) && slack_sum > 0 {
+            let last = (0..n).rev().find(|&i| slack[i] > 0).unwrap();
+            let mut taken = 0;
+            for i in 0..n {
+                if slack[i] == 0 {
+                    continue;
+                }
+                let sub = if i == last {
+                    deficit - taken
+                } else {
+                    ((i64::from(deficit) * i64::from(slack[i])) / slack_sum) as i32
+                };
+                out[i] -= sub;
+                taken += sub;
+            }
+        } else {
+            let wsum: i64 = base.iter().map(|&b| i64::from(b.max(1))).sum();
+            let mut taken = 0;
+            for i in 0..n {
+                let sub = if i == n - 1 {
+                    deficit - taken
+                } else {
+                    ((i64::from(deficit) * i64::from(base[i].max(1))) / wsum) as i32
+                };
+                out[i] -= sub;
+                taken += sub;
+            }
+        }
+    }
+    for v in &mut out {
+        *v = (*v).max(1);
+    }
+    out
+}
+
+/// Ceiling of `a / b` for non-negative integers (`b >= 1`).
+fn div_ceil(a: i32, b: i32) -> i32 {
+    (a + b - 1) / b
+}
+
+/// A cell's intrinsic content widths `(min, preferred)` in twips: `min` is the
+/// widest run that cannot be line-broken (measured by shaping at a 1-twip width);
+/// `preferred` is the natural, unwrapped width (shaping at an effectively
+/// unbounded width). Nested tables contribute their declared grid width.
+fn block_intrinsic(blocks: &[BlockNode], shaper: &dyn LineShaper) -> (i32, i32) {
+    let mut min = 0;
+    let mut preferred = 0;
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                let mut runs = Vec::new();
+                collect_runs(&paragraph.inlines, &mut runs);
+                if runs.is_empty() {
+                    continue;
+                }
+                let range = ModelRange::new(
+                    ModelPos::new(paragraph.id, 0),
+                    ModelPos::new(paragraph.id, 0),
+                );
+                let narrow = shaper.shape_paragraph(
+                    &runs,
+                    LineConstraints {
+                        max_width: Twip(1),
+                        ..LineConstraints::default()
+                    },
+                    range,
+                );
+                let wide = shaper.shape_paragraph(
+                    &runs,
+                    LineConstraints {
+                        max_width: Twip(1_000_000),
+                        ..LineConstraints::default()
+                    },
+                    range,
+                );
+                min = min.max(max_line_width(&narrow));
+                preferred = preferred.max(max_line_width(&wide));
+            }
+            BlockNode::Table(table) => {
+                let grid: i32 = table.grid.iter().filter_map(|c| c.width_twips).sum();
+                min = min.max(grid);
+                preferred = preferred.max(grid);
+            }
+            BlockNode::Sdt(_) => {}
+        }
+    }
+    (min, preferred)
+}
+
+/// The widest line in a shaped paragraph (twips) — a run's right edge is its
+/// origin plus the sum of its glyph advances.
+fn max_line_width(layout: &crate::text::LineLayout) -> i32 {
+    layout
+        .lines
+        .iter()
+        .map(|line| {
+            line.runs
+                .iter()
+                .map(|run| {
+                    run.origin.x.raw() + run.glyphs.iter().map(|g| g.advance.raw()).sum::<i32>()
+                })
+                .max()
+                .unwrap_or(0)
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+/// Resolves a cell's four visible borders by OOXML conflict precedence
+/// (ECMA-376 §17.4.66): each edge is the winner among the cell's own border, the
+/// abutting neighbor cell's border, and the table-level border for that edge.
+/// Interior edges use `w:insideH`/`w:insideV`; outer edges use the table's outer
+/// borders. `None` = no explicit border (the default grid line is drawn).
+fn resolve_cell_borders(table: &TableBorders, row: &[TableCell], index: usize) -> CellBorders {
+    let own = &row[index].properties.borders;
+    let left = index.checked_sub(1).map(|i| &row[i].properties.borders);
+    let right = row.get(index + 1).map(|c| &c.properties.borders);
+    let is_first = index == 0;
+    let is_last = index + 1 == row.len();
+
+    let start_default = if is_first {
+        table.start.as_ref()
+    } else {
+        table.inside_v.as_ref()
+    };
+    let end_default = if is_last {
+        table.end.as_ref()
+    } else {
+        table.inside_v.as_ref()
+    };
+    CellBorders {
+        top: resolve_edge(&[
+            own.top.as_ref(),
+            table.top.as_ref(),
+            table.inside_h.as_ref(),
+        ]),
+        bottom: resolve_edge(&[
+            own.bottom.as_ref(),
+            table.bottom.as_ref(),
+            table.inside_h.as_ref(),
+        ]),
+        start: resolve_edge(&[
+            own.start.as_ref(),
+            left.and_then(|b| b.end.as_ref()),
+            start_default,
+        ]),
+        end: resolve_edge(&[
+            own.end.as_ref(),
+            right.and_then(|b| b.start.as_ref()),
+            end_default,
+        ]),
+    }
+}
+
+/// Picks the highest-precedence border among `candidates` and converts it to a
+/// drawable [`ResolvedEdge`] (or `None` if none is a visible border).
+fn resolve_edge(candidates: &[Option<&BorderEdge>]) -> Option<ResolvedEdge> {
+    let winner = candidates
+        .iter()
+        .filter_map(|c| *c)
+        .filter(|e| is_visible_border(e))
+        .max_by(|a, b| border_rank(a).cmp(&border_rank(b)))?;
+    let color = winner
+        .color
+        .map_or([0, 0, 0, 255], |c| [c.r, c.g, c.b, 255]);
+    // `w:sz` is in eighths of a point; a point is 20 twips.
+    let width = winner
+        .size_eighth_points
+        .map_or(Twip(10), |sz| Twip(((sz * 20) / 8).max(1) as i32));
+    Some(ResolvedEdge { color, width })
+}
+
+/// Whether a border edge is a visible line (not `nil`/`none`/empty).
+fn is_visible_border(edge: &BorderEdge) -> bool {
+    !matches!(edge.style.as_str(), "" | "nil" | "none")
+}
+
+/// The border-conflict ranking key (higher wins): a visible border beats none,
+/// then wider beats narrower, then a higher style rank, then a darker color.
+fn border_rank(edge: &BorderEdge) -> (u32, u32, u32) {
+    let width = edge.size_eighth_points.unwrap_or(0);
+    let style: u32 = match edge.style.as_str() {
+        "double" => 3,
+        "single" => 2,
+        "dashed" | "dotted" | "dotDash" | "dashDotStroked" => 1,
+        _ => 0,
+    };
+    // Darker colors win ties: rank by inverse luminance (absent color = black).
+    let luminance = edge
+        .color
+        .map_or(0, |c| u32::from(c.r) + u32::from(c.g) + u32::from(c.b));
+    (width, style, 765 - luminance)
 }
 
 /// Flattens a paragraph's inline nodes into styled text runs, recursing through
@@ -520,5 +900,426 @@ mod tests {
             glyphs >= 12,
             "hyperlink + revision text both shaped (got {glyphs})"
         );
+    }
+
+    // --- Table layout fidelity (P1D-003) --------------------------------------
+
+    use casual_doc_model::v1::{
+        BorderEdge, GridColumn, HeightRule, RowHeight, Table, TableBorders, TableCell,
+        TableCellProperties, TableProperties, TableRow as ModelRow, TableRowProperties,
+    };
+
+    fn node(id: u64) -> NodeId {
+        NodeId::from_parts(id, 1).unwrap()
+    }
+
+    fn text_cell(id: u64, props: TableCellProperties, text: &str) -> TableCell {
+        TableCell {
+            id: node(id),
+            properties: props,
+            blocks: vec![paragraph(
+                id + 1000,
+                vec![run_node(id + 2000, text, RunProperties::default())],
+            )],
+        }
+    }
+
+    fn edge(style: &str, sz: u32) -> BorderEdge {
+        BorderEdge {
+            style: style.to_owned(),
+            size_eighth_points: Some(sz),
+            color: None,
+            space_points: None,
+        }
+    }
+
+    /// Builds a single-row table galley and returns the row fragment's cells.
+    fn flow_single_row(table: Table, width: Twip) -> BlockFragment {
+        let shaper = ParleyShaper::new();
+        let mut galley = build_galley(&document(vec![BlockNode::Table(table)]), &shaper, width);
+        galley.remove(0)
+    }
+
+    // --- column-width solver (pure) ---
+
+    #[test]
+    fn solver_honors_a_preferred_table_width_and_distributes_the_extra() {
+        let cols = [
+            ColumnConstraint {
+                grid: Some(2000),
+                min: 100,
+                preferred: 2000,
+            },
+            ColumnConstraint {
+                grid: Some(2000),
+                min: 100,
+                preferred: 2000,
+            },
+        ];
+        let w = solve_column_widths(&cols, WidthSpec::Dxa(8000), 10_000, TableLayout::Autofit);
+        assert_eq!(
+            w.iter().sum::<i32>(),
+            8000,
+            "columns sum to the preferred width"
+        );
+        assert_eq!(w, vec![4000, 4000], "the extra space is shared evenly");
+    }
+
+    #[test]
+    fn solver_resolves_a_percentage_width_against_the_available_width() {
+        let cols = [
+            ColumnConstraint {
+                grid: None,
+                min: 1,
+                preferred: 3000,
+            },
+            ColumnConstraint {
+                grid: None,
+                min: 1,
+                preferred: 3000,
+            },
+        ];
+        // 100% (5000 fiftieths) of a 10_000-twip content width.
+        let w = solve_column_widths(&cols, WidthSpec::Pct(5000), 10_000, TableLayout::Autofit);
+        assert_eq!(w.iter().sum::<i32>(), 10_000, "the table fills the width");
+        // 50% resolves to half.
+        let half = solve_column_widths(&cols, WidthSpec::Pct(2500), 10_000, TableLayout::Autofit);
+        assert_eq!(half.iter().sum::<i32>(), 5000);
+    }
+
+    #[test]
+    fn solver_keeps_a_column_at_its_minimum_content_width() {
+        // Target narrower than the preferred sum: the deficit is taken from slack,
+        // never shrinking a column below its content minimum.
+        let cols = [
+            ColumnConstraint {
+                grid: None,
+                min: 2500,
+                preferred: 3000,
+            },
+            ColumnConstraint {
+                grid: None,
+                min: 200,
+                preferred: 3000,
+            },
+        ];
+        let w = solve_column_widths(&cols, WidthSpec::Dxa(4000), 10_000, TableLayout::Autofit);
+        assert_eq!(w.iter().sum::<i32>(), 4000);
+        assert!(
+            w[0] >= 2500,
+            "the narrow-min column keeps its minimum: {w:?}"
+        );
+    }
+
+    #[test]
+    fn solver_fixed_layout_uses_the_grid_verbatim() {
+        let cols = [
+            ColumnConstraint {
+                grid: Some(3000),
+                min: 100,
+                preferred: 3000,
+            },
+            ColumnConstraint {
+                grid: Some(5000),
+                min: 100,
+                preferred: 5000,
+            },
+        ];
+        let w = solve_column_widths(&cols, WidthSpec::Auto, 12_000, TableLayout::Fixed);
+        assert_eq!(w, vec![3000, 5000], "fixed layout keeps the declared grid");
+    }
+
+    // --- flow integration ---
+
+    #[test]
+    fn preferred_cell_width_grows_its_column() {
+        // No grid (autofit derives the column count); cell 0 asks for a wide `w:tcW`.
+        let table = Table {
+            id: node(50),
+            grid: Vec::new(),
+            properties: TableProperties::default(),
+            rows: vec![ModelRow {
+                id: node(51),
+                properties: TableRowProperties::default(),
+                cells: vec![
+                    text_cell(
+                        60,
+                        TableCellProperties {
+                            width_twips: Some(4000),
+                            ..TableCellProperties::default()
+                        },
+                        "a",
+                    ),
+                    text_cell(61, TableCellProperties::default(), "b"),
+                ],
+            }],
+        };
+        let BlockFragment::TableRow { cells, .. } = flow_single_row(table, Twip(9000)) else {
+            panic!("expected a row");
+        };
+        assert!(
+            cells[0].width.raw() >= 3500,
+            "the preferred tcW width is honored: {}",
+            cells[0].width.raw()
+        );
+        assert!(
+            cells[0].width.raw() > cells[1].width.raw(),
+            "the wide-preferred column is wider than its neighbor"
+        );
+    }
+
+    #[test]
+    fn a_narrow_column_grows_to_fit_its_content() {
+        // A tiny declared grid column whose cell holds a long unbreakable word:
+        // autofit must grow the column to at least that word's width.
+        let long_word = "Supercalifragilisticexpialidocious";
+        let table = Table {
+            id: node(50),
+            grid: vec![
+                GridColumn {
+                    width_twips: Some(200),
+                },
+                GridColumn {
+                    width_twips: Some(4000),
+                },
+            ],
+            properties: TableProperties::default(),
+            rows: vec![ModelRow {
+                id: node(51),
+                properties: TableRowProperties::default(),
+                cells: vec![
+                    text_cell(60, TableCellProperties::default(), long_word),
+                    text_cell(61, TableCellProperties::default(), "x"),
+                ],
+            }],
+        };
+        let BlockFragment::TableRow { cells, .. } = flow_single_row(table, Twip(9000)) else {
+            panic!("expected a row");
+        };
+        assert!(
+            cells[0].width.raw() > 200,
+            "the narrow column grew past its tiny declared width: {}",
+            cells[0].width.raw()
+        );
+    }
+
+    #[test]
+    fn grid_span_spans_the_covered_columns() {
+        let table = Table {
+            id: node(50),
+            grid: vec![
+                GridColumn {
+                    width_twips: Some(3000),
+                },
+                GridColumn {
+                    width_twips: Some(3000),
+                },
+            ],
+            properties: TableProperties::default(),
+            rows: vec![ModelRow {
+                id: node(51),
+                properties: TableRowProperties::default(),
+                cells: vec![text_cell(
+                    60,
+                    TableCellProperties {
+                        grid_span: Some(2),
+                        ..TableCellProperties::default()
+                    },
+                    "spanning header",
+                )],
+            }],
+        };
+        let BlockFragment::TableRow { cells, .. } = flow_single_row(table, Twip(9000)) else {
+            panic!("expected a row");
+        };
+        assert_eq!(cells.len(), 1);
+        assert_eq!(cells[0].grid_span, 2);
+        assert_eq!(cells[0].x, Twip::ZERO);
+        assert_eq!(cells[0].width, Twip(6000), "the cell spans both columns");
+    }
+
+    #[test]
+    fn table_indent_offsets_the_cells() {
+        let table = Table {
+            id: node(50),
+            grid: vec![
+                GridColumn {
+                    width_twips: Some(3000),
+                },
+                GridColumn {
+                    width_twips: Some(3000),
+                },
+            ],
+            properties: TableProperties {
+                indent_twips: Some(1000),
+                ..TableProperties::default()
+            },
+            rows: vec![ModelRow {
+                id: node(51),
+                properties: TableRowProperties::default(),
+                cells: vec![
+                    text_cell(60, TableCellProperties::default(), "a"),
+                    text_cell(61, TableCellProperties::default(), "b"),
+                ],
+            }],
+        };
+        let BlockFragment::TableRow { cells, .. } = flow_single_row(table, Twip(9000)) else {
+            panic!("expected a row");
+        };
+        assert_eq!(cells[0].x, Twip(1000), "w:tblInd offsets the first cell");
+        assert_eq!(cells[1].x, Twip(4000), "the second cell follows the indent");
+    }
+
+    fn one_cell_table(props: TableRowProperties, text: &str) -> Table {
+        Table {
+            id: node(50),
+            grid: vec![GridColumn {
+                width_twips: Some(3000),
+            }],
+            properties: TableProperties::default(),
+            rows: vec![ModelRow {
+                id: node(51),
+                properties: props,
+                cells: vec![text_cell(60, TableCellProperties::default(), text)],
+            }],
+        }
+    }
+
+    #[test]
+    fn at_least_row_height_grows_to_the_stated_minimum() {
+        let props = TableRowProperties {
+            height: RowHeight {
+                value_twips: Some(6000),
+                rule: Some(HeightRule::AtLeast),
+            },
+            ..TableRowProperties::default()
+        };
+        let row = flow_single_row(one_cell_table(props, "short"), Twip(9000));
+        assert_eq!(
+            row.height(),
+            Twip(6000),
+            "atLeast holds the row to its stated height when content is shorter"
+        );
+    }
+
+    #[test]
+    fn exact_row_height_is_fixed_and_clips_overflow() {
+        let props = TableRowProperties {
+            height: RowHeight {
+                value_twips: Some(300),
+                rule: Some(HeightRule::Exact),
+            },
+            ..TableRowProperties::default()
+        };
+        // A long sentence wraps to several lines in a 3000-twip column, exceeding
+        // the 300-twip exact height.
+        let table = one_cell_table(
+            props,
+            "This is a fairly long sentence that wraps across several lines in a narrow column.",
+        );
+        let BlockFragment::TableRow { height, clip, .. } = flow_single_row(table, Twip(9000))
+        else {
+            panic!("expected a row");
+        };
+        assert_eq!(height, Twip(300), "exact pins the row height");
+        assert!(clip, "content taller than an exact row is clipped");
+    }
+
+    #[test]
+    fn border_conflict_resolution_picks_the_higher_precedence_edge() {
+        // Two adjacent cells share an edge: cell 0's end is a thin single line,
+        // cell 1's start is a thick double line. The thicker/double border wins on
+        // both sides of the shared edge.
+        let cell0 = TableCell {
+            id: node(60),
+            properties: TableCellProperties {
+                borders: TableBorders {
+                    end: Some(edge("single", 4)),
+                    ..TableBorders::default()
+                },
+                ..TableCellProperties::default()
+            },
+            blocks: vec![paragraph(
+                160,
+                vec![run_node(260, "a", RunProperties::default())],
+            )],
+        };
+        let cell1 = TableCell {
+            id: node(61),
+            properties: TableCellProperties {
+                borders: TableBorders {
+                    start: Some(edge("double", 24)),
+                    ..TableBorders::default()
+                },
+                ..TableCellProperties::default()
+            },
+            blocks: vec![paragraph(
+                161,
+                vec![run_node(261, "b", RunProperties::default())],
+            )],
+        };
+        let table = Table {
+            id: node(50),
+            grid: vec![
+                GridColumn {
+                    width_twips: Some(3000),
+                },
+                GridColumn {
+                    width_twips: Some(3000),
+                },
+            ],
+            properties: TableProperties::default(),
+            rows: vec![ModelRow {
+                id: node(51),
+                properties: TableRowProperties::default(),
+                cells: vec![cell0, cell1],
+            }],
+        };
+        let BlockFragment::TableRow { cells, .. } = flow_single_row(table, Twip(9000)) else {
+            panic!("expected a row");
+        };
+        // sz 24 eighth-points = 24*20/8 = 60 twips.
+        let winner = ResolvedEdge {
+            color: [0, 0, 0, 255],
+            width: Twip(60),
+        };
+        assert_eq!(
+            cells[0].borders.end,
+            Some(winner),
+            "the shared edge shows the double border on cell 0"
+        );
+        assert_eq!(
+            cells[1].borders.start,
+            Some(winner),
+            "and the same winner on cell 1"
+        );
+    }
+
+    #[test]
+    fn a_stronger_table_border_overrides_a_missing_cell_border() {
+        // No cell border, but a table outer border: the cell inherits it.
+        let table = Table {
+            id: node(50),
+            grid: vec![GridColumn {
+                width_twips: Some(3000),
+            }],
+            properties: TableProperties {
+                borders: TableBorders {
+                    top: Some(edge("single", 8)),
+                    ..TableBorders::default()
+                },
+                ..TableProperties::default()
+            },
+            rows: vec![ModelRow {
+                id: node(51),
+                properties: TableRowProperties::default(),
+                cells: vec![text_cell(60, TableCellProperties::default(), "a")],
+            }],
+        };
+        let BlockFragment::TableRow { cells, .. } = flow_single_row(table, Twip(9000)) else {
+            panic!("expected a row");
+        };
+        let top = cells[0].borders.top.expect("the table top border applies");
+        assert_eq!(top.width, Twip(20), "sz 8 eighth-points = 20 twips");
     }
 }
