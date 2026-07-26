@@ -119,6 +119,36 @@ pub fn place_running_content(
     }
 }
 
+/// The multi-section running-content pass: each page is routed to *its own*
+/// section's header/footer set and band geometry, matched by
+/// [`Page::section`](crate::page::Page::section). Pass one
+/// `(RunningContent, PageConfig)` per section (the config supplies the section id
+/// via [`PageConfig::section`] and the band rects). A page whose section is not in
+/// the list is left without running content.
+///
+/// Like [`place_running_content`] this is a pure function of the final page list,
+/// so it composes with the incremental paginator; run it before
+/// [`crate::paginate::resolve_fields`].
+pub fn place_running_content_sections(
+    layout: &mut PaginatedLayout,
+    sections: &[(RunningContent, PageConfig)],
+) {
+    let bands: std::collections::HashMap<_, _> = sections
+        .iter()
+        .map(|(content, config)| {
+            (
+                config.section,
+                (content, config.header_band(), config.footer_band()),
+            )
+        })
+        .collect();
+    for page in &mut layout.pages {
+        if let Some((content, header_band, footer_band)) = bands.get(&page.section) {
+            place_page(page, content, *header_band, *footer_band);
+        }
+    }
+}
+
 /// Places one page's header and footer bands.
 fn place_page(page: &mut Page, content: &RunningContent, header_band: Rect, footer_band: Rect) {
     let n = page.number;
