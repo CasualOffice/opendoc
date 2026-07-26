@@ -4081,8 +4081,12 @@ fn write_run_properties(
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
     for (value, name) in [
+        // CT_RPr schema order: each Latin toggle is immediately followed by its
+        // complex-script counterpart (`w:b`→`w:bCs`, `w:i`→`w:iCs`).
         (properties.bold, "w:b"),
+        (properties.bold_complex, "w:bCs"),
         (properties.italic, "w:i"),
+        (properties.italic_complex, "w:iCs"),
         (properties.strike, "w:strike"),
         (properties.double_strike, "w:dstrike"),
         (properties.all_caps, "w:caps"),
@@ -4126,6 +4130,12 @@ fn write_run_properties(
     }
     if let Some(size) = properties.size_half_points {
         let mut el = start("w:sz");
+        el.push_attribute(("w:val", size.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    // Complex-script size (`w:szCs`) follows `w:sz` in CT_RPr schema order.
+    if let Some(size) = properties.size_complex_half_points {
+        let mut el = start("w:szCs");
         el.push_attribute(("w:val", size.to_string().as_str()));
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }

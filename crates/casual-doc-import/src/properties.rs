@@ -20,7 +20,11 @@ pub(crate) fn apply_run_property(
     let value = attribute_value(element, b"val");
     match local {
         b"b" => properties.bold = Some(is_true(value.as_deref())),
+        // Complex-script bold (`w:bCs`), same `CT_OnOff` parse as `w:b`.
+        b"bCs" => properties.bold_complex = Some(is_true(value.as_deref())),
         b"i" => properties.italic = Some(is_true(value.as_deref())),
+        // Complex-script italic (`w:iCs`), same `CT_OnOff` parse as `w:i`.
+        b"iCs" => properties.italic_complex = Some(is_true(value.as_deref())),
         b"u" => properties.underline = Some(value.as_deref() != Some("none")),
         b"strike" => properties.strike = Some(is_true(value.as_deref())),
         b"sz" => {
@@ -30,6 +34,17 @@ pub(crate) fn apply_run_property(
                 .filter(|size| (1..=65_534).contains(size))
             {
                 Some(size) => properties.size_half_points = Some(size),
+                None => return false,
+            }
+        }
+        // Complex-script font size (`w:szCs`), same range/parse as `w:sz`.
+        b"szCs" => {
+            match value
+                .as_deref()
+                .and_then(|value| value.parse::<u32>().ok())
+                .filter(|size| (1..=65_534).contains(size))
+            {
+                Some(size) => properties.size_complex_half_points = Some(size),
                 None => return false,
             }
         }
