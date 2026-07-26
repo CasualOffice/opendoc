@@ -616,6 +616,7 @@ mod tests {
         let layout = shaper.shape_paragraph(
             &[StyledRun {
                 text: "Hello, opendoc!".into(),
+                requested_family: None,
                 font: FontId(0),
                 size: Twip::from_points(24),
                 bold: false,
@@ -772,6 +773,7 @@ mod tests {
         let layout = shaper.shape_paragraph(
             &[StyledRun {
                 text: "Hello".into(),
+                requested_family: None,
                 font: FontId(0),
                 size: Twip::from_points(24),
                 bold: false,
@@ -1020,6 +1022,7 @@ mod tests {
         let layout = shaper.shape_paragraph(
             &[StyledRun {
                 text: "Hi".into(),
+                requested_family: None,
                 font: FontId(0),
                 size: Twip::from_points(28),
                 bold: false,
@@ -1069,6 +1072,7 @@ mod tests {
         let layout = shaper.shape_paragraph(
             &[StyledRun {
                 text: "中文字".into(),
+                requested_family: None,
                 font: FontId(0),
                 size: Twip::from_points(32),
                 bold: false,

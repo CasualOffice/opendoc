@@ -421,6 +421,7 @@ mod tests {
         let layout = shaper.shape_paragraph(
             &[StyledRun {
                 text: "Hi".into(),
+                requested_family: None,
                 font: FontId(0),
                 size: Twip::from_points(11),
                 bold: false,

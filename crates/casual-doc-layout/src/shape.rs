@@ -174,6 +174,26 @@ impl ParleyShaper {
         ids
     }
 
+    /// The family name `parley` should shape a run with: the run's originally
+    /// requested family (`w:rFonts`) when the font collection actually has a face
+    /// under that name — a real system face (`system-fonts`) or a host-registered
+    /// blob — else the bundled family the resolver substituted
+    /// ([`family_for`](Self::family_for)).
+    ///
+    /// This is the seam that makes an installed requested family (e.g. Arial on a
+    /// machine that has it) win over the bundled visual fallback (Roboto), so its
+    /// real metrics drive line breaking and pagination. When the collection lacks
+    /// the requested name — every deterministic / WASM build, and any machine
+    /// missing the font — the bundled resolution stands, so nothing changes there.
+    fn pick_family<'r>(&'r self, fonts: &mut FontContext, run: &'r StyledRun<'_>) -> &'r str {
+        if let Some(name) = run.requested_family.as_deref()
+            && fonts.collection.family_id(name).is_some()
+        {
+            return name;
+        }
+        self.family_for(run.font)
+    }
+
     /// The registered family name for a run's resolved [`FontId`] (the family
     /// whose id block contains it), falling back to the default family name.
     fn family_for(&self, font: FontId) -> &str {
@@ -252,6 +272,18 @@ impl LineShaper for ParleyShaper {
         constraints: LineConstraints,
         range: ModelRange,
     ) -> LineLayout {
+        // A paragraph with no runs (a model-empty paragraph, or a break/section
+        // paragraph whose only content is a zero-width control) has nothing to
+        // shape. Returning no lines — rather than letting `parley` fabricate one at
+        // its default font size (~21 twips) — lets the caller
+        // (`flow::ensure_nonempty_paragraph`) synthesize the single line at the
+        // paragraph mark's own font metrics, which is what Word does. Fabricating a
+        // default-size line here silently discards the mark metrics and mis-sizes
+        // the empty line, shifting pagination.
+        if runs.is_empty() {
+            return LineLayout { lines: Vec::new() };
+        }
+
         let mut fonts = self.fonts.borrow_mut();
         let mut layout_cx = self.layout_cx.borrow_mut();
 
@@ -263,6 +295,19 @@ impl LineShaper for ParleyShaper {
             text.push_str(&run.text);
             spans.push((start, text.len(), run));
         }
+
+        // Resolve each run's family name before `parley` borrows the font context
+        // (the builder takes `&mut fonts`, so the collection cannot be queried once
+        // it exists). Prefer a real installed face of the run's *requested* family
+        // when the collection has one (a system face under `system-fonts`, or a
+        // host-registered blob), else the bundled family the resolver chose. In a
+        // deterministic build (no system fonts, no host faces) the requested name
+        // is never in the collection, so the bundled family is used and output is
+        // byte-identical to before.
+        let families: Vec<&str> = spans
+            .iter()
+            .map(|(_, _, run)| self.pick_family(&mut fonts, run))
+            .collect();
 
         // Byte offsets `parley` reports are indices into `text`, the paragraph's
         // runs concatenated in document order. That is exactly the paragraph
@@ -283,12 +328,13 @@ impl LineShaper for ParleyShaper {
                 f32::from(percent) / 100.0,
             )));
         }
-        for (start, end, run) in &spans {
+        for (i, (start, end, run)) in spans.iter().enumerate() {
             builder.push(StyleProperty::FontSize(run.size.raw() as f32), *start..*end);
-            // Push the run's resolved family so `parley` shapes with the exact
-            // face the resolver selected (the same one the renderer outlines).
+            // Push the run's chosen family (system-preferred or bundled; see
+            // `families` above) so `parley` shapes with the exact face the renderer
+            // will outline for it.
             builder.push(
-                StyleProperty::FontFamily(FontFamily::from(self.family_for(run.font))),
+                StyleProperty::FontFamily(FontFamily::from(families[i])),
                 *start..*end,
             );
             builder.push(
@@ -507,6 +553,7 @@ mod tests {
     fn run(text: &str) -> StyledRun<'_> {
         StyledRun {
             text: text.into(),
+            requested_family: None,
             font: FontId(0),
             size: Twip::from_points(11),
             bold: false,
@@ -616,6 +663,7 @@ mod tests {
         let shaper = ParleyShaper::new();
         let styled = StyledRun {
             text: "x".into(),
+            requested_family: None,
             font: FontId(0),
             size: Twip::from_points(11),
             bold: false,
