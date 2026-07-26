@@ -26,7 +26,8 @@ use casual_doc_model::v1::{
     HeaderFooterKind, HeightRule, HighlightColor, HyperlinkTarget, InlineNode, LevelJustification,
     LevelSuffix, MediaId, MediaReference, Note, NoteId, NoteKind, NumberFormat, NumberingInstance,
     NumberingInstanceId, NumberingLevel, PageVerticalAlignment, ParagraphProperties, Person,
-    ProofState, RevisionKind, RgbColor, RunFontHint, RunProperties, SchemeColor, SdtControlKind,
+    ProofState, RevisionKind, RgbColor, RunFontHint, RunProperties, SchemeColor, SdtCheckbox,
+    SdtCheckboxSymbol, SdtControlData, SdtControlKind, SdtDate, SdtListItem, SdtLock,
     SdtProperties, SectionBoundary, SectionType, Style, StyleId, StyleKind, TabAlignment,
     TabLeader, Table, TableBorders, TableCell, TableCellProperties, TableLayout, TableOverlap,
     TableProperties, TableRow, TableRowProperties, TableStyleOverride, TableStyleRegion,
@@ -1300,6 +1301,9 @@ fn header_footer_xml(
     let mut r = start(root);
     r.push_attribute(("xmlns:w", W_NS));
     r.push_attribute(("xmlns:r", R_NS));
+    // `xmlns:w14` so a content-control checkbox's `w14:checkbox` detail is
+    // well-formed when a block sdt lives in a header/footer.
+    r.push_attribute(("xmlns:w14", W14_NS));
     w.write_event(Event::Start(r)).map_err(pkg)?;
     for block in blocks {
         write_block(&mut w, block, &mut ctx)?;
@@ -2074,6 +2078,9 @@ fn document_xml(
     doc.push_attribute(("xmlns:a", A_NS));
     doc.push_attribute(("xmlns:pic", PIC_NS));
     doc.push_attribute(("xmlns:wps", WPS_NS));
+    // `xmlns:w14` binds the Office 2010 prefix so a content-control checkbox's
+    // `w14:checkbox` detail is well-formed.
+    doc.push_attribute(("xmlns:w14", W14_NS));
     // `xmlns:m` binds the OMML prefix so a retained `m:oMath` subtree is
     // well-formed (the captured markup carries no local namespace declaration).
     doc.push_attribute(("xmlns:m", M_NS));
@@ -3121,9 +3128,10 @@ fn write_text_box(
     Ok(())
 }
 
-/// Emits `w:sdtPr` for an inline content control, or nothing when the control
-/// carries no modeled properties. Children are ordered per `CT_SdtPr` (alias,
-/// tag, id, type marker) for Word validity; the importer is order-independent.
+/// Emits `w:sdtPr` for a content control, or nothing when the control carries no
+/// modeled properties. Children follow the order Word writes (alias/tag/id, then
+/// lock, placeholder, temporary, showingPlcHdr, dataBinding, then the type marker
+/// with its control-specific detail); the importer is order-independent.
 fn write_sdt_properties(
     w: &mut Writer<Cursor<Vec<u8>>>,
     properties: &SdtProperties,
@@ -3138,23 +3146,220 @@ fn write_sdt_properties(
         (&properties.control_id, "w:id"),
     ] {
         if let Some(value) = value {
-            let mut el = start(name);
-            el.push_attribute(("w:val", value.as_str()));
-            w.write_event(Event::Empty(el)).map_err(pkg)?;
+            write_val_element(w, name, value)?;
         }
     }
-    if let Some(kind) = properties.control_kind {
-        w.write_event(Event::Empty(start(sdt_kind_element(kind))))
+    if let Some(lock) = properties.lock {
+        write_val_element(w, "w:lock", sdt_lock_token(lock))?;
+    }
+    if let Some(placeholder) = &properties.placeholder {
+        w.write_event(Event::Start(start("w:placeholder")))
+            .map_err(pkg)?;
+        write_val_element(w, "w:docPart", placeholder)?;
+        w.write_event(Event::End(BytesEnd::new("w:placeholder")))
             .map_err(pkg)?;
     }
+    if properties.temporary {
+        w.write_event(Event::Empty(start("w:temporary")))
+            .map_err(pkg)?;
+    }
+    if properties.showing_placeholder {
+        w.write_event(Event::Empty(start("w:showingPlcHdr")))
+            .map_err(pkg)?;
+    }
+    if let Some(binding) = &properties.data_binding {
+        let mut el = start("w:dataBinding");
+        el.push_attribute(("w:xpath", binding.xpath.as_str()));
+        if let Some(store_item_id) = &binding.store_item_id {
+            el.push_attribute(("w:storeItemID", store_item_id.as_str()));
+        }
+        if let Some(prefix_mappings) = &binding.prefix_mappings {
+            el.push_attribute(("w:prefixMappings", prefix_mappings.as_str()));
+        }
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    write_sdt_control(w, properties)?;
     w.write_event(Event::End(BytesEnd::new("w:sdtPr")))
         .map_err(pkg)?;
     Ok(())
 }
 
+/// Emits the `w:sdtPr` type-marker element for the control kind, carrying its
+/// control-specific detail (list entries, date detail, checkbox detail) when the
+/// kind supports it. Nothing is written when the control has no kind.
+fn write_sdt_control(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    properties: &SdtProperties,
+) -> Result<(), ExportError> {
+    let Some(kind) = properties.control_kind else {
+        return Ok(());
+    };
+    match kind {
+        SdtControlKind::ComboBox | SdtControlKind::DropDownList => {
+            let element = sdt_kind_element(kind);
+            let items = match &properties.data {
+                Some(SdtControlData::List(items)) => items.as_slice(),
+                _ => &[][..],
+            };
+            write_sdt_list(w, element, items)?;
+        }
+        SdtControlKind::Date => {
+            let date = match &properties.data {
+                Some(SdtControlData::Date(date)) => Some(date),
+                _ => None,
+            };
+            write_sdt_date(w, date)?;
+        }
+        SdtControlKind::Checkbox => {
+            let checkbox = match &properties.data {
+                Some(SdtControlData::Checkbox(checkbox)) => Some(checkbox),
+                _ => None,
+            };
+            write_sdt_checkbox(w, checkbox)?;
+        }
+        _ => {
+            w.write_event(Event::Empty(start(sdt_kind_element(kind))))
+                .map_err(pkg)?;
+        }
+    }
+    Ok(())
+}
+
+/// Emits a combo-box / drop-down-list type marker with its `w:listItem` choice
+/// entries (an empty type marker when there are none).
+fn write_sdt_list(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    element: &str,
+    items: &[SdtListItem],
+) -> Result<(), ExportError> {
+    if items.is_empty() {
+        w.write_event(Event::Empty(start(element))).map_err(pkg)?;
+        return Ok(());
+    }
+    w.write_event(Event::Start(start(element))).map_err(pkg)?;
+    for item in items {
+        let mut el = start("w:listItem");
+        if let Some(display) = &item.display {
+            el.push_attribute(("w:displayText", display.as_str()));
+        }
+        el.push_attribute(("w:value", item.value.as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    w.write_event(Event::End(BytesEnd::new(element)))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits a `w:date` type marker with its detail children (in `CT_SdtDate` order:
+/// dateFormat, lid, storeMappedDataAs, calendar). An empty/absent detail writes a
+/// bare `<w:date/>`.
+fn write_sdt_date(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    date: Option<&SdtDate>,
+) -> Result<(), ExportError> {
+    let mut el = start("w:date");
+    if let Some(full_date) = date.and_then(|date| date.full_date.as_deref()) {
+        el.push_attribute(("w:fullDate", full_date));
+    }
+    let has_children = date.is_some_and(|date| {
+        date.date_format.is_some()
+            || date.lid.is_some()
+            || date.store_mapped_as.is_some()
+            || date.calendar.is_some()
+    });
+    if !has_children {
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+        return Ok(());
+    }
+    w.write_event(Event::Start(el)).map_err(pkg)?;
+    let date = date.expect("has_children implies a date detail");
+    if let Some(date_format) = &date.date_format {
+        write_val_element(w, "w:dateFormat", date_format)?;
+    }
+    if let Some(lid) = &date.lid {
+        write_val_element(w, "w:lid", lid)?;
+    }
+    if let Some(store_mapped_as) = &date.store_mapped_as {
+        write_val_element(w, "w:storeMappedDataAs", store_mapped_as)?;
+    }
+    if let Some(calendar) = &date.calendar {
+        write_val_element(w, "w:calendar", calendar)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("w:date")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits a `w14:checkbox` type marker with its `w14:` detail children (the state
+/// glyphs). An absent detail writes a bare `<w14:checkbox/>`.
+fn write_sdt_checkbox(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    checkbox: Option<&SdtCheckbox>,
+) -> Result<(), ExportError> {
+    let Some(checkbox) = checkbox else {
+        w.write_event(Event::Empty(start("w14:checkbox")))
+            .map_err(pkg)?;
+        return Ok(());
+    };
+    w.write_event(Event::Start(start("w14:checkbox")))
+        .map_err(pkg)?;
+    let mut checked = start("w14:checked");
+    checked.push_attribute(("w14:val", if checkbox.checked { "1" } else { "0" }));
+    w.write_event(Event::Empty(checked)).map_err(pkg)?;
+    for (symbol, name) in [
+        (&checkbox.checked_state, "w14:checkedState"),
+        (&checkbox.unchecked_state, "w14:uncheckedState"),
+    ] {
+        if let Some(symbol) = symbol {
+            write_sdt_checkbox_symbol(w, name, symbol)?;
+        }
+    }
+    w.write_event(Event::End(BytesEnd::new("w14:checkbox")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits a checkbox state glyph (`w14:checkedState` / `w14:uncheckedState`).
+fn write_sdt_checkbox_symbol(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    name: &str,
+    symbol: &SdtCheckboxSymbol,
+) -> Result<(), ExportError> {
+    let mut el = start(name);
+    el.push_attribute(("w14:val", symbol.val.as_str()));
+    if let Some(font) = &symbol.font {
+        el.push_attribute(("w14:font", font.as_str()));
+    }
+    w.write_event(Event::Empty(el)).map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits an empty element carrying a single `w:val` attribute.
+fn write_val_element(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    name: &str,
+    value: &str,
+) -> Result<(), ExportError> {
+    let mut el = start(name);
+    el.push_attribute(("w:val", value));
+    w.write_event(Event::Empty(el)).map_err(pkg)?;
+    Ok(())
+}
+
+/// Maps an edit-lock behaviour to its `w:lock@w:val` token.
+fn sdt_lock_token(lock: SdtLock) -> &'static str {
+    match lock {
+        SdtLock::Unlocked => "unlocked",
+        SdtLock::SdtLocked => "sdtLocked",
+        SdtLock::ContentLocked => "contentLocked",
+        SdtLock::SdtContentLocked => "sdtContentLocked",
+    }
+}
+
 /// Maps a content-control kind to its `w:sdtPr` type-marker element. The
-/// importer matches by local name, so the `w:`-prefixed spelling round-trips
-/// (`Checkbox` re-imports even though real OOXML uses `w14:checkbox`).
+/// importer matches by local name, so the `w:`-prefixed spelling round-trips.
+/// Combo/dropdown, date, and checkbox controls carry detail and are emitted by
+/// their dedicated writers; this maps the marker element only.
 fn sdt_kind_element(kind: SdtControlKind) -> &'static str {
     match kind {
         SdtControlKind::RichText => "w:richText",
@@ -3163,7 +3368,7 @@ fn sdt_kind_element(kind: SdtControlKind) -> &'static str {
         SdtControlKind::DropDownList => "w:dropDownList",
         SdtControlKind::Date => "w:date",
         SdtControlKind::Picture => "w:picture",
-        SdtControlKind::Checkbox => "w:checkbox",
+        SdtControlKind::Checkbox => "w14:checkbox",
         SdtControlKind::Group => "w:group",
         SdtControlKind::BuildingBlockGallery => "w:docPartObj",
         SdtControlKind::RepeatingSection => "w:repeatingSection",

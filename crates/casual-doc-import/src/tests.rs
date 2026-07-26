@@ -3957,6 +3957,51 @@ fn block_content_control_is_modeled_with_properties() {
 }
 
 #[test]
+fn block_content_control_data_is_modeled() {
+    use casual_doc_model::v1::{SdtControlData, SdtLock};
+    let xml = br#"<w:document xmlns:w="urn:w" xmlns:w14="urn:w14"><w:body>
+        <w:sdt>
+            <w:sdtPr>
+                <w:tag w:val="pick"/>
+                <w:lock w:val="contentLocked"/>
+                <w:showingPlcHdr/>
+                <w:dataBinding w:prefixMappings="xmlns:ns0='urn:x'" w:xpath="/ns0:a[1]" w:storeItemID="{GUID}"/>
+                <w:dropDownList>
+                    <w:listItem w:displayText="One" w:value="1"/>
+                    <w:listItem w:value="2"/>
+                </w:dropDownList>
+            </w:sdtPr>
+            <w:sdtContent>
+                <w:p><w:r><w:t>One</w:t></w:r></w:p>
+            </w:sdtContent>
+        </w:sdt>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let sdt = find_block_sdt(import.document.body()).expect("block sdt modeled");
+    assert_eq!(
+        sdt.properties.control_kind,
+        Some(SdtControlKind::DropDownList)
+    );
+    assert_eq!(sdt.properties.lock, Some(SdtLock::ContentLocked));
+    assert!(sdt.properties.showing_placeholder);
+    let binding = sdt.properties.data_binding.as_ref().expect("data binding");
+    assert_eq!(binding.xpath, "/ns0:a[1]");
+    assert_eq!(binding.store_item_id.as_deref(), Some("{GUID}"));
+    assert_eq!(
+        binding.prefix_mappings.as_deref(),
+        Some("xmlns:ns0='urn:x'")
+    );
+    let Some(SdtControlData::List(items)) = &sdt.properties.data else {
+        panic!("expected list entries");
+    };
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0].display.as_deref(), Some("One"));
+    assert_eq!(items[0].value, "1");
+    assert_eq!(items[1].display, None);
+    assert_eq!(items[1].value, "2");
+}
+
+#[test]
 fn inline_content_control_is_modeled_and_does_not_corrupt_the_paragraph() {
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
         <w:p>
@@ -4088,6 +4133,7 @@ fn deep_tables_inside_a_block_content_control_import_without_hard_failure() {
 
 #[test]
 fn sdt_property_long_tail_is_reported_and_rpr_does_not_leak() {
+    use casual_doc_model::v1::SdtLock;
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
         <w:p><w:sdt>
             <w:sdtPr>
@@ -4109,8 +4155,13 @@ fn sdt_property_long_tail_is_reported_and_rpr_does_not_leak() {
     assert_eq!(run.text, "body");
     // The bold declared in the sdtPr's rPr must NOT leak onto the wrapped run.
     assert_eq!(run.properties.bold, None);
+    // Lock and placeholder are now modeled, not reported.
+    assert_eq!(sdt.properties.lock, Some(SdtLock::SdtLocked));
+    assert_eq!(sdt.properties.placeholder.as_deref(), Some("Default"));
+    // A dataBinding without the required `w:xpath` is meaningless: reported and
+    // dropped. The end-mark `w:rPr` remains the reported long tail.
+    assert!(sdt.properties.data_binding.is_none());
     let reported = features(&import);
-    assert!(reported.contains(&"lock"));
     assert!(reported.contains(&"dataBinding"));
     assert!(reported.contains(&"rPr"));
 }
