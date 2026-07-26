@@ -1142,6 +1142,7 @@ pub(crate) fn import_with_sources(
             header_ids: &header_ids,
             footer_ids: &footer_ids,
             comment_ids: &comment_ids,
+            color_scheme: theme.color_scheme.as_ref(),
         },
         &mut bookmarks,
         config,

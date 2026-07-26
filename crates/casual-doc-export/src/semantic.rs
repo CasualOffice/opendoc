@@ -24,21 +24,23 @@ use casual_doc_model::v1::{
     DefinitionMap, Definitions, DocGridType, Document, DocumentDefaults, DocumentProtectionEdit,
     DocumentSettings, EmbeddedKind, EmbeddedObject, EmbeddedPart, EmphasisMark, Extent,
     FontCollection, FontDescriptor, FontFamilyKind, FontPitch, FontRef, FontScheme,
-    FormCheckBoxSize, FormFieldData, FormFieldKind, FormTextType, GridColumn, HeaderFooterId,
-    HeaderFooterKind, HeightRule, HighlightColor, HorizontalAlign, HorizontalAnchor,
-    HorizontalPosition, HyperlinkTarget, InlineNode, LevelJustification, LevelSuffix,
-    LineNumberRestart, LineRule, MediaId, MediaReference, MoveKind, Note, NoteId, NoteKind,
-    NoteNumberRestart, NotePosition, NoteProperties, NumberFormat, NumberingInstance,
-    NumberingInstanceId, NumberingLevel, PageBorderDisplay, PageBorderOffset, PageOrientation,
-    PageVerticalAlignment, ParagraphProperties, Person, PositionalTabAlignment,
-    PositionalTabLeader, PositionalTabRelativeTo, ProofState, PropChange, RevisionKind, RgbColor,
-    RunFontHint, RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData,
-    SdtControlKind, SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionType,
-    Style, StyleId, StyleKind, TabAlignment, TabLeader, Table, TableAnchor, TableBorders,
-    TableCell, TableCellProperties, TableFloatPosition, TableLayout, TableOverlap, TableProperties,
-    TableRow, TableRowProperties, TableStyleOverride, TableStyleRegion, TableXAlign, TableYAlign,
-    TextDirection, ThemeFontRef, VerticalAlign, VerticalAlignment, VerticalAnchor, VerticalMerge,
-    VerticalPosition, VerticalTextAlignment, WrapMode, Zoom, ZoomMode,
+    FormCheckBoxSize, FormFieldData, FormFieldKind, FormTextType, GridColumn, GroupChild,
+    GroupShape, GroupTextBox, GroupTransform, HeaderFooterId, HeaderFooterKind, HeightRule,
+    HighlightColor, HorizontalAlign, HorizontalAnchor, HorizontalPosition, HyperlinkTarget,
+    InlineNode, LevelJustification, LevelSuffix, LineNumberRestart, LineRule, MediaId,
+    MediaReference, MoveKind, Note, NoteId, NoteKind, NoteNumberRestart, NotePosition,
+    NoteProperties, NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel,
+    PageBorderDisplay, PageBorderOffset, PageOrientation, PageVerticalAlignment,
+    ParagraphProperties, Person, PointEmu, PositionalTabAlignment, PositionalTabLeader,
+    PositionalTabRelativeTo, ProofState, PropChange, RevisionKind, RgbColor, Rgba, RunFontHint,
+    RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind,
+    SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionType, ShapeGeometry,
+    ShapeStroke, Style, StyleId, StyleKind, TabAlignment, TabLeader, Table, TableAnchor,
+    TableBorders, TableCell, TableCellProperties, TableFloatPosition, TableLayout, TableOverlap,
+    TableProperties, TableRow, TableRowProperties, TableStyleOverride, TableStyleRegion,
+    TableXAlign, TableYAlign, TextDirection, ThemeFontRef, VerticalAlign, VerticalAlignment,
+    VerticalAnchor, VerticalMerge, VerticalPosition, VerticalTextAlignment, WordprocessingGroup,
+    WrapMode, Zoom, ZoomMode,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -111,6 +113,7 @@ const A_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
 const WP_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
 const PIC_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/picture";
 const WPS_NS: &str = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape";
+const WPG_NS: &str = "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup";
 const M_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/math";
 /// VML shape namespace (prefix `v`), for a legacy `w:object` OLE preview shape.
 const V_NS: &str = "urn:schemas-microsoft-com:vml";
@@ -2129,6 +2132,7 @@ fn document_xml(
     doc.push_attribute(("xmlns:a", A_NS));
     doc.push_attribute(("xmlns:pic", PIC_NS));
     doc.push_attribute(("xmlns:wps", WPS_NS));
+    doc.push_attribute(("xmlns:wpg", WPG_NS));
     // `xmlns:w14` binds the Office 2010 prefix so a content-control checkbox's
     // `w14:checkbox` detail is well-formed.
     doc.push_attribute(("xmlns:w14", W14_NS));
@@ -3801,6 +3805,12 @@ fn write_inline(
         InlineNode::TextBox(text_box) => {
             write_text_box(w, &text_box.blocks, ctx)?;
         }
+        // A DrawingML group: a floating `w:drawing`/`wp:anchor` wrapping a
+        // `wpg:wgp` of positioned children (pictures, text boxes, shapes, nested
+        // groups). Round-trips through the importer's group path.
+        InlineNode::Group(group) => {
+            write_group(w, group, ctx)?;
+        }
         // An opaque math object: write the retained OMML subtree verbatim (a
         // direct inline child of `w:p`, like a hyperlink). The `m:` prefix is
         // declared on the `w:document` root; the plain-text fallback is not
@@ -4003,7 +4013,12 @@ fn write_anchored_drawing(
         el.push_attribute((name, "0"));
     }
     el.push_attribute(("simplePos", "0"));
-    el.push_attribute(("relativeHeight", "0"));
+    // `relativeHeight` is written only when the model carries one, so an anchor
+    // that omitted it round-trips as `None` (a write -> reopen fixed point); Word
+    // and the importer both treat an absent value as the default (bottom) z.
+    if let Some(relative_height) = drawing.relative_height {
+        el.push_attribute(("relativeHeight", relative_height.to_string().as_str()));
+    }
     el.push_attribute(("behindDoc", if anchor.behind_doc { "1" } else { "0" }));
     el.push_attribute(("locked", "0"));
     el.push_attribute(("layoutInCell", "1"));
@@ -4030,6 +4045,380 @@ fn write_anchored_drawing(
     }
     w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
     write_pic_graphic(w, embed, cx, cy)?;
+    w.write_event(Event::End(BytesEnd::new("wp:anchor")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("w:drawing")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("w:r")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits a floating `w:drawing`/`wp:anchor` wrapping a `wpg:wgp` for a
+/// [`WordprocessingGroup`]: the anchor (position/extent/z-order), then the group
+/// transform and each child in document order. Round-trips through the importer's
+/// group path.
+fn write_group(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    group: &WordprocessingGroup,
+    ctx: &mut Ctx,
+) -> Result<(), ExportError> {
+    let anchor = group.anchor.as_ref();
+    w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
+    w.write_event(Event::Start(start("w:drawing")))
+        .map_err(pkg)?;
+    let mut el = start("wp:anchor");
+    for name in ["distT", "distB", "distL", "distR"] {
+        el.push_attribute((name, "0"));
+    }
+    el.push_attribute(("simplePos", "0"));
+    if let Some(relative_height) = group.relative_height {
+        el.push_attribute(("relativeHeight", relative_height.to_string().as_str()));
+    }
+    el.push_attribute((
+        "behindDoc",
+        if anchor.is_some_and(|a| a.behind_doc) {
+            "1"
+        } else {
+            "0"
+        },
+    ));
+    el.push_attribute(("locked", "0"));
+    el.push_attribute(("layoutInCell", "1"));
+    el.push_attribute(("allowOverlap", "1"));
+    w.write_event(Event::Start(el)).map_err(pkg)?;
+    let mut simple_pos = start("wp:simplePos");
+    simple_pos.push_attribute(("x", "0"));
+    simple_pos.push_attribute(("y", "0"));
+    w.write_event(Event::Empty(simple_pos)).map_err(pkg)?;
+    if let Some(anchor) = anchor {
+        write_position_h(w, &anchor.horizontal)?;
+        write_position_v(w, &anchor.vertical)?;
+        write_wrap_after_extent(w, group, anchor.wrap)?;
+    } else {
+        write_extent_only(w, group)?;
+        write_wrap(w, WrapMode::None)?;
+        write_group_body(w, group, ctx)?;
+        close_group_drawing(w)?;
+        return Ok(());
+    }
+    write_group_body(w, group, ctx)?;
+    close_group_drawing(w)?;
+    Ok(())
+}
+
+/// Emits `wp:extent` for the group (its `wp:extent`).
+fn write_extent_only(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    group: &WordprocessingGroup,
+) -> Result<(), ExportError> {
+    let mut extent = start("wp:extent");
+    extent.push_attribute(("cx", group.extent.width_emu.to_string().as_str()));
+    extent.push_attribute(("cy", group.extent.height_emu.to_string().as_str()));
+    w.write_event(Event::Empty(extent)).map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits `wp:extent` + wrap + `wp:docPr` after the position pair.
+fn write_wrap_after_extent(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    group: &WordprocessingGroup,
+    wrap: WrapMode,
+) -> Result<(), ExportError> {
+    write_extent_only(w, group)?;
+    write_wrap(w, wrap)?;
+    let mut doc_pr = start("wp:docPr");
+    doc_pr.push_attribute(("id", "1"));
+    doc_pr.push_attribute(("name", "Group 1"));
+    w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits `a:graphic > a:graphicData(wpg) > wpg:wgp` with the group's transform and
+/// children.
+fn write_group_body(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    group: &WordprocessingGroup,
+    ctx: &mut Ctx,
+) -> Result<(), ExportError> {
+    w.write_event(Event::Start(start("a:graphic")))
+        .map_err(pkg)?;
+    let mut graphic_data = start("a:graphicData");
+    graphic_data.push_attribute(("uri", WPG_NS));
+    w.write_event(Event::Start(graphic_data)).map_err(pkg)?;
+    write_wgp(w, group, "wpg:wgp", ctx)?;
+    w.write_event(Event::End(BytesEnd::new("a:graphicData")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("a:graphic")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits a `wpg:wgp` (top-level) or `wpg:grpSp` (nested) with its `grpSpPr` xfrm
+/// and children.
+fn write_wgp(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    group: &WordprocessingGroup,
+    tag: &str,
+    ctx: &mut Ctx,
+) -> Result<(), ExportError> {
+    w.write_event(Event::Start(start(tag))).map_err(pkg)?;
+    let mut c_nv_pr = start("wpg:cNvPr");
+    c_nv_pr.push_attribute(("id", "0"));
+    c_nv_pr.push_attribute(("name", "Group"));
+    w.write_event(Event::Empty(c_nv_pr)).map_err(pkg)?;
+    w.write_event(Event::Empty(start("wpg:cNvGrpSpPr")))
+        .map_err(pkg)?;
+    w.write_event(Event::Start(start("wpg:grpSpPr")))
+        .map_err(pkg)?;
+    write_group_xfrm(w, &group.transform)?;
+    w.write_event(Event::End(BytesEnd::new("wpg:grpSpPr")))
+        .map_err(pkg)?;
+    for child in &group.children {
+        match child {
+            GroupChild::Picture(picture) => {
+                let embed = ctx
+                    .defs
+                    .media
+                    .get(&picture.media)
+                    .map(|reference| reference.relationship_id.clone());
+                if let Some(embed) = embed {
+                    write_group_picture(w, &embed, picture.offset, picture.extent)?;
+                }
+            }
+            GroupChild::TextBox(text_box) => write_group_text_box(w, text_box, ctx)?,
+            GroupChild::Shape(shape) => write_group_shape(w, shape)?,
+            GroupChild::Group(nested) => write_wgp(w, nested, "wpg:grpSp", ctx)?,
+        }
+    }
+    w.write_event(Event::End(BytesEnd::new(tag))).map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits an `a:xfrm` for a group transform (off/ext/chOff/chExt).
+fn write_group_xfrm(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    transform: &GroupTransform,
+) -> Result<(), ExportError> {
+    w.write_event(Event::Start(start("a:xfrm"))).map_err(pkg)?;
+    write_point(w, "a:off", transform.offset)?;
+    write_ext(w, "a:ext", transform.extent)?;
+    write_point(w, "a:chOff", transform.child_offset)?;
+    write_ext(w, "a:chExt", transform.child_extent)?;
+    w.write_event(Event::End(BytesEnd::new("a:xfrm")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+fn write_point(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    tag: &str,
+    point: PointEmu,
+) -> Result<(), ExportError> {
+    let mut el = start(tag);
+    el.push_attribute(("x", point.x_emu.to_string().as_str()));
+    el.push_attribute(("y", point.y_emu.to_string().as_str()));
+    w.write_event(Event::Empty(el)).map_err(pkg)?;
+    Ok(())
+}
+
+fn write_ext(w: &mut Writer<Cursor<Vec<u8>>>, tag: &str, ext: Extent) -> Result<(), ExportError> {
+    let mut el = start(tag);
+    el.push_attribute(("cx", ext.width_emu.to_string().as_str()));
+    el.push_attribute(("cy", ext.height_emu.to_string().as_str()));
+    w.write_event(Event::Empty(el)).map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits a group child `pic:pic` positioned at `offset`, sized `extent`.
+fn write_group_picture(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    embed: &str,
+    offset: PointEmu,
+    extent: Extent,
+) -> Result<(), ExportError> {
+    w.write_event(Event::Start(start("pic:pic"))).map_err(pkg)?;
+    w.write_event(Event::Start(start("pic:nvPicPr")))
+        .map_err(pkg)?;
+    let mut c_nv_pr = start("pic:cNvPr");
+    c_nv_pr.push_attribute(("id", "1"));
+    c_nv_pr.push_attribute(("name", "Picture 1"));
+    w.write_event(Event::Empty(c_nv_pr)).map_err(pkg)?;
+    w.write_event(Event::Empty(start("pic:cNvPicPr")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("pic:nvPicPr")))
+        .map_err(pkg)?;
+    w.write_event(Event::Start(start("pic:blipFill")))
+        .map_err(pkg)?;
+    let mut blip = start("a:blip");
+    blip.push_attribute(("r:embed", embed));
+    w.write_event(Event::Empty(blip)).map_err(pkg)?;
+    w.write_event(Event::Start(start("a:stretch")))
+        .map_err(pkg)?;
+    w.write_event(Event::Empty(start("a:fillRect")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("a:stretch")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("pic:blipFill")))
+        .map_err(pkg)?;
+    w.write_event(Event::Start(start("pic:spPr")))
+        .map_err(pkg)?;
+    write_shape_xfrm(w, offset, extent)?;
+    write_prst_geom(w, "rect")?;
+    w.write_event(Event::End(BytesEnd::new("pic:spPr")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("pic:pic")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits a group child shape (`wps:wsp`) with geometry, fill, and outline.
+fn write_group_shape(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    shape: &GroupShape,
+) -> Result<(), ExportError> {
+    w.write_event(Event::Start(start("wps:wsp"))).map_err(pkg)?;
+    let mut c_nv_pr = start("wps:cNvPr");
+    c_nv_pr.push_attribute(("id", "0"));
+    c_nv_pr.push_attribute(("name", "Shape"));
+    w.write_event(Event::Empty(c_nv_pr)).map_err(pkg)?;
+    w.write_event(Event::Empty(start("wps:cNvSpPr")))
+        .map_err(pkg)?;
+    w.write_event(Event::Start(start("wps:spPr")))
+        .map_err(pkg)?;
+    write_shape_xfrm(w, shape.offset, shape.extent)?;
+    write_prst_geom(w, geometry_prst(shape.geometry))?;
+    if let Some(fill) = shape.fill {
+        write_solid_fill(w, fill)?;
+    }
+    write_outline(w, shape.stroke)?;
+    w.write_event(Event::End(BytesEnd::new("wps:spPr")))
+        .map_err(pkg)?;
+    w.write_event(Event::Empty(start("wps:bodyPr")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("wps:wsp")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits a group child text box (`wps:wsp` with a `wps:txbx`).
+fn write_group_text_box(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    text_box: &GroupTextBox,
+    ctx: &mut Ctx,
+) -> Result<(), ExportError> {
+    w.write_event(Event::Start(start("wps:wsp"))).map_err(pkg)?;
+    let mut c_nv_pr = start("wps:cNvPr");
+    c_nv_pr.push_attribute(("id", "0"));
+    c_nv_pr.push_attribute(("name", "Text Box"));
+    w.write_event(Event::Empty(c_nv_pr)).map_err(pkg)?;
+    w.write_event(Event::Empty(start("wps:cNvSpPr")))
+        .map_err(pkg)?;
+    w.write_event(Event::Start(start("wps:spPr")))
+        .map_err(pkg)?;
+    write_shape_xfrm(w, text_box.offset, text_box.extent)?;
+    write_prst_geom(w, "rect")?;
+    if let Some(fill) = text_box.fill {
+        write_solid_fill(w, fill)?;
+    }
+    write_outline(w, text_box.border)?;
+    w.write_event(Event::End(BytesEnd::new("wps:spPr")))
+        .map_err(pkg)?;
+    w.write_event(Event::Start(start("wps:txbx")))
+        .map_err(pkg)?;
+    w.write_event(Event::Start(start("w:txbxContent")))
+        .map_err(pkg)?;
+    for block in &text_box.blocks {
+        write_block(w, block, ctx)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("w:txbxContent")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("wps:txbx")))
+        .map_err(pkg)?;
+    w.write_event(Event::Empty(start("wps:bodyPr")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("wps:wsp")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits an `a:xfrm` for a shape/picture (off + ext only).
+fn write_shape_xfrm(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    offset: PointEmu,
+    extent: Extent,
+) -> Result<(), ExportError> {
+    w.write_event(Event::Start(start("a:xfrm"))).map_err(pkg)?;
+    write_point(w, "a:off", offset)?;
+    write_ext(w, "a:ext", extent)?;
+    w.write_event(Event::End(BytesEnd::new("a:xfrm")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+fn write_prst_geom(w: &mut Writer<Cursor<Vec<u8>>>, prst: &str) -> Result<(), ExportError> {
+    let mut geom = start("a:prstGeom");
+    geom.push_attribute(("prst", prst));
+    w.write_event(Event::Start(geom)).map_err(pkg)?;
+    w.write_event(Event::Empty(start("a:avLst"))).map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("a:prstGeom")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+fn geometry_prst(geometry: ShapeGeometry) -> &'static str {
+    match geometry {
+        ShapeGeometry::Rectangle => "rect",
+        ShapeGeometry::RoundRectangle => "roundRect",
+        ShapeGeometry::Ellipse => "ellipse",
+        ShapeGeometry::Line => "line",
+        ShapeGeometry::Other => "rect",
+    }
+}
+
+/// Emits an `a:solidFill > a:srgbClr` for a resolved color.
+fn write_solid_fill(w: &mut Writer<Cursor<Vec<u8>>>, color: Rgba) -> Result<(), ExportError> {
+    w.write_event(Event::Start(start("a:solidFill")))
+        .map_err(pkg)?;
+    let mut srgb = start("a:srgbClr");
+    srgb.push_attribute(("val", hex_rgb(color).as_str()));
+    w.write_event(Event::Empty(srgb)).map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("a:solidFill")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits an `a:ln` outline (width + solid fill), or `a:ln > a:noFill` when absent.
+fn write_outline(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    stroke: Option<ShapeStroke>,
+) -> Result<(), ExportError> {
+    match stroke {
+        Some(stroke) => {
+            let mut ln = start("a:ln");
+            ln.push_attribute(("w", stroke.width_emu.to_string().as_str()));
+            w.write_event(Event::Start(ln)).map_err(pkg)?;
+            write_solid_fill(w, stroke.color)?;
+            w.write_event(Event::End(BytesEnd::new("a:ln")))
+                .map_err(pkg)?;
+        }
+        None => {
+            w.write_event(Event::Start(start("a:ln"))).map_err(pkg)?;
+            w.write_event(Event::Empty(start("a:noFill")))
+                .map_err(pkg)?;
+            w.write_event(Event::End(BytesEnd::new("a:ln")))
+                .map_err(pkg)?;
+        }
+    }
+    Ok(())
+}
+
+fn hex_rgb(color: Rgba) -> String {
+    format!("{:02X}{:02X}{:02X}", color.r, color.g, color.b)
+}
+
+/// Closes the `wp:anchor`/`w:drawing`/`w:r` wrapping a group.
+fn close_group_drawing(w: &mut Writer<Cursor<Vec<u8>>>) -> Result<(), ExportError> {
     w.write_event(Event::End(BytesEnd::new("wp:anchor")))
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("w:drawing")))

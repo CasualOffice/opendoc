@@ -168,6 +168,32 @@ pub fn render(
             PaintItem::Image { media: id, rect } => {
                 render_image(id, *rect, surface, dpi, media, clip_stack.last());
             }
+            PaintItem::Line { from, to, stroke } => {
+                let clip = clip_stack.last();
+                let mut paint = Paint::default();
+                paint.set_color_rgba8(
+                    stroke.color.r,
+                    stroke.color.g,
+                    stroke.color.b,
+                    stroke.color.a,
+                );
+                paint.anti_alias = true;
+                let mut builder = PathBuilder::new();
+                builder.move_to(from.x.to_device_px(dpi), from.y.to_device_px(dpi));
+                builder.line_to(to.x.to_device_px(dpi), to.y.to_device_px(dpi));
+                if let Some(path) = builder.finish() {
+                    surface.pixmap.stroke_path(
+                        &path,
+                        &paint,
+                        &Stroke {
+                            width: stroke.width,
+                            ..Stroke::default()
+                        },
+                        Transform::identity(),
+                        clip,
+                    );
+                }
+            }
         }
     }
 }

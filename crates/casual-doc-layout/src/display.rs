@@ -10,7 +10,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::text::GlyphRun;
-use crate::units::Rect;
+use crate::units::{Point, Rect};
 
 /// An 8-bit-per-channel straight-alpha sRGB color.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
@@ -84,6 +84,16 @@ pub enum PaintItem {
         media: String,
         /// Destination rectangle, in device pixels.
         rect: Rect,
+    },
+    /// A straight line / connector between two points (a floating DrawingML line
+    /// shape or `wps:cxnSp` straight connector).
+    Line {
+        /// The line's start point, in device pixels.
+        from: Point,
+        /// The line's end point, in device pixels.
+        to: Point,
+        /// The line's stroke.
+        stroke: Stroke,
     },
     /// Push a clip rectangle; subsequent items are clipped until [`PaintItem::PopClip`].
     PushClip(Rect),

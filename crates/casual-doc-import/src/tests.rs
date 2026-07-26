@@ -1997,6 +1997,67 @@ fn anchored_drawing_with_align_and_default_z_order() {
 }
 
 #[test]
+fn wpg_group_maps_to_a_group_with_children_sized_by_their_own_extent() {
+    use casual_doc_model::v1::{GroupChild, ShapeGeometry};
+
+    // A `wpg:wgp` with a rectangle (red fill, green outline), a picture, and a
+    // text box, in document order, inside a 2000000x1000000 EMU group.
+    let group = r#"<w:drawing><wp:anchor behindDoc="0" relativeHeight="251659264" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="2000000" cy="1000000"/><wp:wrapNone/><wp:docPr id="1" name="Group 1"/><a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2000000" cy="1000000"/><a:chOff x="0" y="0"/><a:chExt cx="2000000" cy="1000000"/></a:xfrm></wpg:grpSpPr><wps:wsp><wps:cNvPr id="2" name="Rectangle"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2000000" cy="1000000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill><a:ln w="9525"><a:solidFill><a:srgbClr val="00FF00"/></a:solidFill></a:ln></wps:spPr><wps:bodyPr/></wps:wsp><pic:pic><pic:nvPicPr><pic:cNvPr id="3" name="Pic"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill><pic:spPr><a:xfrm><a:off x="100000" y="50000"/><a:ext cx="500000" cy="500000"/></a:xfrm><a:prstGeom prst="rect"/></pic:spPr></pic:pic><wps:wsp><wps:cNvPr id="4" name="Text Box"/><wps:spPr><a:xfrm><a:off x="200000" y="100000"/><a:ext cx="800000" cy="300000"/></a:xfrm><a:prstGeom prst="rect"/></wps:spPr><wps:txbx><w:txbxContent><w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing>"#;
+    let document = format!(
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic" xmlns:wps="urn:wps" xmlns:wpg="urn:wpg"><w:body><w:p><w:r>{group}</w:r></w:p></w:body></w:document>"#
+    );
+    let media = [("word/media/image1.png", b"PNGDATA".as_slice())];
+    let import = import_bytes(&build_package(document.as_bytes(), IMAGE_REL, &media));
+
+    let InlineNode::Group(group) = &paragraph(&import, 0).inlines[0] else {
+        panic!(
+            "expected a group, got {:?}",
+            paragraph(&import, 0).inlines[0]
+        );
+    };
+    assert!(
+        group.anchor.is_some(),
+        "the top-level group carries the anchor"
+    );
+    assert_eq!(group.relative_height, Some(251_659_264));
+    assert_eq!(group.extent.width_emu, 2_000_000);
+    assert_eq!(group.children.len(), 3, "three children, in document order");
+
+    // [0] the rectangle: red fill, green 9525-EMU outline.
+    let GroupChild::Shape(rect) = &group.children[0] else {
+        panic!("expected a shape first, got {:?}", group.children[0]);
+    };
+    assert_eq!(rect.geometry, ShapeGeometry::Rectangle);
+    assert_eq!(rect.fill.map(|c| [c.r, c.g, c.b]), Some([255, 0, 0]));
+    let stroke = rect.stroke.expect("the outline");
+    assert_eq!(
+        [stroke.color.r, stroke.color.g, stroke.color.b],
+        [0, 255, 0]
+    );
+    assert_eq!(stroke.width_emu, 9525);
+
+    // [1] the picture, sized by its OWN 500000-EMU extent (NOT the group's).
+    let GroupChild::Picture(pic) = &group.children[1] else {
+        panic!("expected a picture second");
+    };
+    assert_eq!(
+        pic.extent.width_emu, 500_000,
+        "picture keeps its own extent"
+    );
+    assert_eq!(pic.extent.height_emu, 500_000);
+    assert_eq!(pic.offset.x_emu, 100_000);
+
+    // [2] the text box with its flowed block content.
+    let GroupChild::TextBox(text_box) = &group.children[2] else {
+        panic!("expected a text box third");
+    };
+    assert_eq!(text_box.extent.width_emu, 800_000);
+    assert_eq!(text_box.blocks.len(), 1, "the text box flows its paragraph");
+    // The whole group is fully modeled, not reported-dropped.
+    assert!(!features(&import).contains(&"drawing"));
+}
+
+#[test]
 fn drawing_with_a_dangling_embed_is_reported_and_dropped() {
     // The blip references rId9, which has no relationship: no media, no node.
     let document = r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:a="urn:a"><w:body><w:p><w:r><w:drawing><a:blip r:embed="rId9"/></w:drawing></w:r></w:p></w:body></w:document>"#;

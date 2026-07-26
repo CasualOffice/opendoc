@@ -1100,7 +1100,12 @@ fn collect_items<'a>(
                 }
             }
             InlineNode::Field(field) => out.push(field_item(field, ctx)),
-            InlineNode::TextBox(text_box) => out.push(textbox_item(text_box, shaper, width, ctx)),
+            // A floating text box (`anchor` set) is removed from the inline flow —
+            // it is placed absolutely by the float layer ([`crate::anchor`]). Only
+            // an inline text box flows here.
+            InlineNode::TextBox(text_box) if text_box.anchor.is_none() => {
+                out.push(textbox_item(text_box, shaper, width, ctx))
+            }
             InlineNode::Hyperlink(hyperlink) => {
                 collect_items(&hyperlink.inlines, out, shaper, width, ctx)
             }
@@ -3835,6 +3840,11 @@ mod tests {
         // A paragraph whose only inline is a text box holding one paragraph.
         let text_box = InlineNode::TextBox(TextBox {
             id: NodeId::from_parts(20, 1).unwrap(),
+            anchor: None,
+            relative_height: None,
+            extent: None,
+            fill: None,
+            border: None,
             blocks: vec![paragraph(
                 21,
                 vec![run_node(22, "boxed", RunProperties::default())],
@@ -3924,6 +3934,11 @@ mod tests {
         });
         let text_box = InlineNode::TextBox(TextBox {
             id: NodeId::from_parts(20, 1).unwrap(),
+            anchor: None,
+            relative_height: None,
+            extent: None,
+            fill: None,
+            border: None,
             blocks: vec![table],
         });
         let shaper = ParleyShaper::new();
@@ -3994,6 +4009,11 @@ mod tests {
             properties: ParagraphProperties::default(),
             inlines: vec![InlineNode::TextBox(TextBox {
                 id: NodeId::from_parts(20, 1).unwrap(),
+                anchor: None,
+                relative_height: None,
+                extent: None,
+                fill: None,
+                border: None,
                 blocks: vec![inner_para],
             })],
         });

@@ -1117,6 +1117,25 @@ impl Document {
                     if text_box.blocks.is_empty() {
                         return Err(ModelError::EmptyTextBox(text_box.id));
                     }
+                    // A floating text box carries an anchor + extent; validate them
+                    // exactly like an anchored drawing's. An inline text box leaves
+                    // them `None` and is unaffected.
+                    if let Some(anchor) = &text_box.anchor {
+                        check_anchor_offset(
+                            &anchor.horizontal.position,
+                            &anchor.vertical.position,
+                        )?;
+                    }
+                    if let Some(extent) = &text_box.extent {
+                        check_domain(
+                            (0..=MAX_EMU).contains(&extent.width_emu),
+                            "textBox.extent.width",
+                        )?;
+                        check_domain(
+                            (0..=MAX_EMU).contains(&extent.height_emu),
+                            "textBox.extent.height",
+                        )?;
+                    }
                     // A text box is a fresh block container: its table budget
                     // restarts at 0, matching the importer (which gives each box a
                     // fresh table stack). Threading the enclosing `table_depth`
@@ -1125,6 +1144,10 @@ impl Document {
                     for block in &text_box.blocks {
                         self.validate_block(block, 0, textbox_depth + 1, sdt_depth)?;
                     }
+                    previous_run_properties = None;
+                }
+                InlineNode::Group(group) => {
+                    self.validate_group(group, 0, textbox_depth, sdt_depth)?;
                     previous_run_properties = None;
                 }
                 InlineNode::NoteReference(note) => {
@@ -1292,6 +1315,76 @@ impl Document {
                 | InlineNode::SoftHyphen(_)
                 | InlineNode::PositionalTab(_) => {
                     previous_run_properties = None;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Validates a DrawingML group and its children recursively: extent/offset
+    /// domains, media references, outline widths, and each text box's block
+    /// content (a fresh block container, like an inline text box). `group_depth`
+    /// bounds nesting; `textbox_depth`/`sdt_depth` thread the enclosing recursion
+    /// budgets into a child text box's blocks.
+    fn validate_group(
+        &self,
+        group: &WordprocessingGroup,
+        group_depth: u32,
+        textbox_depth: u32,
+        sdt_depth: u32,
+    ) -> Result<(), ModelError> {
+        if group_depth > MAX_GROUP_DEPTH {
+            return Err(ModelError::GroupNestingTooDeep(group.id));
+        }
+        if let Some(anchor) = &group.anchor {
+            check_anchor_offset(&anchor.horizontal.position, &anchor.vertical.position)?;
+        }
+        check_extent(&group.extent, "group.extent")?;
+        check_extent(&group.transform.extent, "group.transform.extent")?;
+        check_extent(&group.transform.child_extent, "group.transform.childExtent")?;
+        for child in &group.children {
+            match child {
+                GroupChild::Picture(picture) => {
+                    if !self.definitions.media.contains_key(&picture.media) {
+                        return Err(ModelError::DanglingMediaRef(picture.media.node_id()));
+                    }
+                    check_extent(&picture.extent, "group.picture.extent")?;
+                    if let Some(descr) = &picture.descr {
+                        check_domain(
+                            !descr.is_empty() && descr.len() <= MAX_DESCR_BYTES,
+                            "group.picture.descr",
+                        )?;
+                    }
+                }
+                GroupChild::TextBox(text_box) => {
+                    if textbox_depth + 1 > MAX_TEXTBOX_DEPTH {
+                        return Err(ModelError::TextBoxNestingTooDeep(text_box.id));
+                    }
+                    if text_box.blocks.is_empty() {
+                        return Err(ModelError::EmptyTextBox(text_box.id));
+                    }
+                    check_extent(&text_box.extent, "group.textBox.extent")?;
+                    if let Some(border) = &text_box.border {
+                        check_domain(
+                            (0..=MAX_EMU).contains(&border.width_emu),
+                            "group.textBox.border.width",
+                        )?;
+                    }
+                    for block in &text_box.blocks {
+                        self.validate_block(block, 0, textbox_depth + 1, sdt_depth)?;
+                    }
+                }
+                GroupChild::Shape(shape) => {
+                    check_extent(&shape.extent, "group.shape.extent")?;
+                    if let Some(stroke) = &shape.stroke {
+                        check_domain(
+                            (0..=MAX_EMU).contains(&stroke.width_emu),
+                            "group.shape.stroke.width",
+                        )?;
+                    }
+                }
+                GroupChild::Group(nested) => {
+                    self.validate_group(nested, group_depth + 1, textbox_depth, sdt_depth)?;
                 }
             }
         }
@@ -1521,6 +1614,9 @@ fn accumulate_inline_limits(
                 accumulate_block_limits(block, limits, blocks, scalar_values)?;
             }
         }
+        InlineNode::Group(group) => {
+            accumulate_group_limits(group, limits, blocks, scalar_values)?;
+        }
         InlineNode::Revision(revision) => {
             for child in &revision.inlines {
                 accumulate_inline_limits(child, limits, blocks, scalar_values)?;
@@ -1618,6 +1714,9 @@ fn record_inline_ids(inline: &InlineNode, ids: &mut BTreeSet<NodeId>) -> Result<
                 record_block_ids(block, ids)?;
             }
         }
+        InlineNode::Group(group) => {
+            record_group_ids(group, ids)?;
+        }
         InlineNode::Revision(revision) => {
             for child in &revision.inlines {
                 record_inline_ids(child, ids)?;
@@ -1629,6 +1728,57 @@ fn record_inline_ids(inline: &InlineNode, ids: &mut BTreeSet<NodeId>) -> Result<
             }
         }
         _ => {}
+    }
+    Ok(())
+}
+
+/// Records a group's children's ids recursively (a picture/text box/shape id, a
+/// text box's block ids, and a nested group's own id + children). The group's OWN
+/// id is recorded by the caller ([`record_inline_ids`] via `inline.id()`, or the
+/// parent group for a nested one), so it is not re-inserted here.
+fn record_group_ids(
+    group: &WordprocessingGroup,
+    ids: &mut BTreeSet<NodeId>,
+) -> Result<(), ModelError> {
+    for child in &group.children {
+        match child {
+            GroupChild::Picture(picture) => insert_id(ids, picture.id)?,
+            GroupChild::TextBox(text_box) => {
+                insert_id(ids, text_box.id)?;
+                for block in &text_box.blocks {
+                    record_block_ids(block, ids)?;
+                }
+            }
+            GroupChild::Shape(shape) => insert_id(ids, shape.id)?,
+            GroupChild::Group(nested) => {
+                insert_id(ids, nested.id)?;
+                record_group_ids(nested, ids)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Accounts a group's block/scalar content (its text boxes' blocks, recursively
+/// through nested groups) against the snapshot limits.
+fn accumulate_group_limits(
+    group: &WordprocessingGroup,
+    limits: SnapshotLimits,
+    blocks: &mut usize,
+    scalar_values: &mut usize,
+) -> Result<(), SnapshotError> {
+    for child in &group.children {
+        match child {
+            GroupChild::TextBox(text_box) => {
+                for block in &text_box.blocks {
+                    accumulate_block_limits(block, limits, blocks, scalar_values)?;
+                }
+            }
+            GroupChild::Group(nested) => {
+                accumulate_group_limits(nested, limits, blocks, scalar_values)?;
+            }
+            GroupChild::Picture(_) | GroupChild::Shape(_) => {}
+        }
     }
     Ok(())
 }
@@ -1824,6 +1974,15 @@ fn check_domain(condition: bool, property: &'static str) -> Result<(), ModelErro
     } else {
         Err(ModelError::PropertyValueOutOfDomain { property })
     }
+}
+
+/// Bounds an [`Extent`]'s width and height to the positive-coordinate domain
+/// (`0..=MAX_EMU`). `property` names the site for the error.
+fn check_extent(extent: &Extent, property: &'static str) -> Result<(), ModelError> {
+    check_domain(
+        (0..=MAX_EMU).contains(&extent.width_emu) && (0..=MAX_EMU).contains(&extent.height_emu),
+        property,
+    )
 }
 
 /// Bounds a format-change revision's opaque metadata: `author` is non-empty and

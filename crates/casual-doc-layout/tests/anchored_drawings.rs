@@ -9,7 +9,7 @@
 //! - an anchored drawing does not consume an inline line box (it is removed from
 //!   the flow), while an inline drawing still flows inline.
 
-use casual_doc_layout::anchor::{collect_anchored, place_anchored_drawings};
+use casual_doc_layout::anchor::place_floats;
 use casual_doc_layout::block::BlockFragment;
 use casual_doc_layout::compose::compose_page;
 use casual_doc_layout::display::PaintItem;
@@ -94,6 +94,7 @@ fn anchored(id: u64, media: MediaId, h_offset: i64, v_offset: i64, behind_doc: b
             behind_doc,
         },
         descr: Some("A floating logo".to_owned()),
+        relative_height: None,
     })
 }
 
@@ -127,9 +128,7 @@ fn an_anchored_drawing_composes_at_its_resolved_page_rect() {
     );
 
     let mut layout = paginate(&galley, &cfg);
-    let anchors = collect_anchored(&doc);
-    assert_eq!(anchors.len(), 1, "one anchored drawing collected");
-    place_anchored_drawings(&mut layout, &anchors, &cfg);
+    place_floats(&mut layout, &doc, &shaper, &cfg);
 
     // The page now carries the resolved anchored image.
     let page = &layout.pages[0];
@@ -177,8 +176,7 @@ fn behind_doc_controls_the_paint_order_relative_to_text() {
     let cfg = config();
     let galley = build_galley(&doc, &shaper, cfg.content_area().size.width);
     let mut layout = paginate(&galley, &cfg);
-    let anchors = collect_anchored(&doc);
-    place_anchored_drawings(&mut layout, &anchors, &cfg);
+    place_floats(&mut layout, &doc, &shaper, &cfg);
 
     let list = compose_page(&layout.pages[0]);
     let first_image = list
@@ -204,5 +202,226 @@ fn behind_doc_controls_the_paint_order_relative_to_text() {
     assert!(
         glyphs < last_image,
         "the in-front image paints after (above) the text"
+    );
+}
+
+use casual_doc_model::v1::{
+    GroupChild, GroupPicture, GroupShape, GroupTransform, PointEmu, Rgba, ShapeGeometry, TextBox,
+    WordprocessingGroup,
+};
+
+fn page_anchor(h: i64, v: i64) -> DrawingAnchor {
+    DrawingAnchor {
+        horizontal: AnchorHorizontal {
+            relative_from: HorizontalAnchor::Page,
+            position: HorizontalPosition::Offset(h),
+        },
+        vertical: AnchorVertical {
+            relative_from: VerticalAnchor::Page,
+            position: VerticalPosition::Offset(v),
+        },
+        wrap: WrapMode::None,
+        behind_doc: false,
+    }
+}
+
+#[test]
+fn a_floating_text_box_places_at_its_anchor_not_inline() {
+    let (_media, definitions) = media_defs();
+    // A paragraph carrying body text plus a FLOATING text box (anchor set) at page
+    // offset (1440, 2880) twips, 2x1 inch, white fill.
+    let float = InlineNode::TextBox(TextBox {
+        id: node(20),
+        anchor: Some(page_anchor(914_400, 1_828_800)),
+        relative_height: Some(100),
+        extent: Some(Extent {
+            width_emu: 1_828_800,
+            height_emu: 914_400,
+        }),
+        fill: Some(Rgba {
+            r: 255,
+            g: 255,
+            b: 255,
+            a: 255,
+        }),
+        border: None,
+        blocks: vec![BlockNode::Paragraph(Paragraph {
+            id: node(21),
+            properties: ParagraphProperties::default(),
+            inlines: vec![run(22, "Powered by")],
+        })],
+    });
+    let para = BlockNode::Paragraph(Paragraph {
+        id: node(10),
+        properties: ParagraphProperties::default(),
+        inlines: vec![run(11, "Body text"), float],
+    });
+    let doc = Document::new(node(1), vec![para], definitions).unwrap();
+
+    let shaper = ParleyShaper::new();
+    let cfg = config();
+    let galley = build_galley(&doc, &shaper, cfg.content_area().size.width);
+
+    // The floating text box is NOT flowed inline: the body line carries no text box.
+    let BlockFragment::Paragraph { lines, .. } = &galley[0] else {
+        panic!("expected a paragraph fragment");
+    };
+    assert!(
+        lines.lines.iter().all(|line| line.text_boxes.is_empty()),
+        "a floating text box must not flow inline"
+    );
+
+    let mut layout = paginate(&galley, &cfg);
+    place_floats(&mut layout, &doc, &shaper, &cfg);
+
+    // It is placed on the page at its resolved anchor rectangle.
+    let page = &layout.pages[0];
+    assert_eq!(page.anchored.len(), 1, "the floating text box is placed");
+    assert_eq!(
+        page.anchored[0].rect.origin,
+        Point::new(Twip(1_440), Twip(2_880))
+    );
+
+    // Composition paints the box fill at its anchor origin and its glyphs, not at
+    // the paragraph flow cursor.
+    let list = compose_page(page);
+    let fill = list.items.iter().find_map(|item| match item {
+        PaintItem::Rect {
+            rect,
+            fill: Some(_),
+            ..
+        } => Some(*rect),
+        _ => None,
+    });
+    assert_eq!(
+        fill.expect("the box fill paints").origin,
+        Point::new(Twip(1_440), Twip(2_880)),
+        "the box fill is at the anchor, not inline"
+    );
+}
+
+#[test]
+fn a_group_paints_children_in_document_order_with_the_picture_at_its_own_extent() {
+    let (media_id, definitions) = media_defs();
+    // A group: a behind rectangle, then the picture (sized by its OWN 1-inch
+    // extent, not the group's 2-inch extent), then a front rectangle. Identity
+    // transform, group at page offset (1440, 1440) twips.
+    let ident = GroupTransform {
+        offset: PointEmu { x_emu: 0, y_emu: 0 },
+        extent: Extent {
+            width_emu: 1_828_800,
+            height_emu: 1_828_800,
+        },
+        child_offset: PointEmu { x_emu: 0, y_emu: 0 },
+        child_extent: Extent {
+            width_emu: 1_828_800,
+            height_emu: 1_828_800,
+        },
+    };
+    let rect = |id: u64, off: i64| {
+        GroupChild::Shape(GroupShape {
+            id: node(id),
+            offset: PointEmu {
+                x_emu: off,
+                y_emu: off,
+            },
+            extent: Extent {
+                width_emu: 1_828_800,
+                height_emu: 1_828_800,
+            },
+            geometry: ShapeGeometry::Rectangle,
+            fill: Some(Rgba {
+                r: 200,
+                g: 200,
+                b: 200,
+                a: 255,
+            }),
+            stroke: None,
+        })
+    };
+    let group = InlineNode::Group(WordprocessingGroup {
+        id: node(30),
+        anchor: Some(page_anchor(914_400, 914_400)),
+        relative_height: Some(5),
+        extent: Extent {
+            width_emu: 1_828_800,
+            height_emu: 1_828_800,
+        },
+        transform: ident,
+        children: vec![
+            rect(31, 0),
+            GroupChild::Picture(GroupPicture {
+                id: node(32),
+                media: media_id,
+                offset: PointEmu {
+                    x_emu: 100_000,
+                    y_emu: 100_000,
+                },
+                extent: Extent {
+                    width_emu: 914_400, // 1 inch — NOT the 2-inch group extent
+                    height_emu: 914_400,
+                },
+                descr: None,
+            }),
+            rect(33, 200_000),
+        ],
+    });
+    let para = BlockNode::Paragraph(Paragraph {
+        id: node(10),
+        properties: ParagraphProperties::default(),
+        inlines: vec![run(11, "Body"), group],
+    });
+    let doc = Document::new(node(1), vec![para], definitions).unwrap();
+
+    let shaper = ParleyShaper::new();
+    let cfg = config();
+    let galley = build_galley(&doc, &shaper, cfg.content_area().size.width);
+    let mut layout = paginate(&galley, &cfg);
+    place_floats(&mut layout, &doc, &shaper, &cfg);
+
+    let page = &layout.pages[0];
+    assert_eq!(page.anchored.len(), 3, "three group children placed");
+    // The picture is sized by its own extent (1 inch = 1440 twips), not the group.
+    let image = page
+        .anchored
+        .iter()
+        .find(|a| {
+            matches!(
+                a.content,
+                casual_doc_layout::page::AnchorContent::Image { .. }
+            )
+        })
+        .expect("the picture");
+    assert_eq!(
+        image.rect.size,
+        Size::new(Twip(1_440), Twip(1_440)),
+        "the grouped picture keeps its own extent, not the group's"
+    );
+
+    // Composition paints them in document order: rect, image, rect.
+    let list = compose_page(page);
+    let kinds: Vec<&str> = list
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            PaintItem::Image { .. } => Some("image"),
+            PaintItem::Rect { fill: Some(c), .. }
+                if *c
+                    == (casual_doc_layout::display::Color {
+                        r: 200,
+                        g: 200,
+                        b: 200,
+                        a: 255,
+                    }) =>
+            {
+                Some("rect")
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        vec!["rect", "image", "rect"],
+        "children paint in document order: a rectangle behind the picture, one in front"
     );
 }

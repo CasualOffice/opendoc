@@ -1840,6 +1840,11 @@ fn textbox_paragraph(para_id: NodeId, text_box: TextBox) -> BlockNode {
 fn text_box_with_block_content_validates_and_round_trips_json() {
     let text_box = TextBox {
         id: tid(10),
+        anchor: None,
+        relative_height: None,
+        extent: None,
+        fill: None,
+        border: None,
         blocks: vec![paragraph_block(tid(11))],
     };
     let document = table_document(vec![textbox_paragraph(tid(1), text_box)]).unwrap();
@@ -1857,9 +1862,106 @@ fn text_box_with_block_content_validates_and_round_trips_json() {
 }
 
 #[test]
+fn group_with_shape_and_text_box_children_validates_and_round_trips_json() {
+    use crate::v1::{
+        AnchorHorizontal, AnchorVertical, DrawingAnchor, Extent, GroupChild, GroupShape,
+        GroupTextBox, GroupTransform, HorizontalAnchor, HorizontalPosition, PointEmu, Rgba,
+        ShapeGeometry, ShapeStroke, VerticalAnchor, VerticalPosition, WordprocessingGroup,
+        WrapMode,
+    };
+    let ident = GroupTransform {
+        offset: PointEmu { x_emu: 0, y_emu: 0 },
+        extent: Extent {
+            width_emu: 1_000_000,
+            height_emu: 500_000,
+        },
+        child_offset: PointEmu { x_emu: 0, y_emu: 0 },
+        child_extent: Extent {
+            width_emu: 1_000_000,
+            height_emu: 500_000,
+        },
+    };
+    let group = WordprocessingGroup {
+        id: tid(30),
+        anchor: Some(DrawingAnchor {
+            horizontal: AnchorHorizontal {
+                relative_from: HorizontalAnchor::Column,
+                position: HorizontalPosition::Offset(0),
+            },
+            vertical: AnchorVertical {
+                relative_from: VerticalAnchor::Paragraph,
+                position: VerticalPosition::Offset(0),
+            },
+            wrap: WrapMode::None,
+            behind_doc: false,
+        }),
+        relative_height: Some(251_659_264),
+        extent: Extent {
+            width_emu: 1_000_000,
+            height_emu: 500_000,
+        },
+        transform: ident,
+        children: vec![
+            GroupChild::Shape(GroupShape {
+                id: tid(31),
+                offset: PointEmu { x_emu: 0, y_emu: 0 },
+                extent: Extent {
+                    width_emu: 1_000_000,
+                    height_emu: 500_000,
+                },
+                geometry: ShapeGeometry::Rectangle,
+                fill: Some(Rgba {
+                    r: 255,
+                    g: 255,
+                    b: 255,
+                    a: 255,
+                }),
+                stroke: Some(ShapeStroke {
+                    color: Rgba {
+                        r: 217,
+                        g: 217,
+                        b: 217,
+                        a: 255,
+                    },
+                    width_emu: 9525,
+                }),
+            }),
+            GroupChild::TextBox(GroupTextBox {
+                id: tid(32),
+                offset: PointEmu {
+                    x_emu: 50_000,
+                    y_emu: 20_000,
+                },
+                extent: Extent {
+                    width_emu: 800_000,
+                    height_emu: 200_000,
+                },
+                blocks: vec![paragraph_block(tid(33))],
+                fill: None,
+                border: None,
+            }),
+        ],
+    };
+    let paragraph = BlockNode::Paragraph(Paragraph {
+        id: tid(1),
+        properties: ParagraphProperties::default(),
+        inlines: vec![InlineNode::Group(group)],
+    });
+    let document = table_document(vec![paragraph]).unwrap();
+    let json = document.to_json().unwrap();
+    let reloaded = Document::from_json(&json, SnapshotLimits::default()).unwrap();
+    assert_eq!(document, reloaded, "the group survives a JSON round trip");
+}
+
+#[test]
 fn empty_text_box_is_rejected() {
     let text_box = TextBox {
         id: tid(10),
+        anchor: None,
+        relative_height: None,
+        extent: None,
+        fill: None,
+        border: None,
         blocks: Vec::new(),
     };
     assert!(matches!(
@@ -1872,6 +1974,11 @@ fn empty_text_box_is_rejected() {
 fn duplicate_id_inside_a_text_box_is_rejected() {
     let text_box = TextBox {
         id: tid(10),
+        anchor: None,
+        relative_height: None,
+        extent: None,
+        fill: None,
+        border: None,
         blocks: vec![paragraph_block(tid(10))], // inner paragraph id collides
     };
     assert!(matches!(
@@ -1895,6 +2002,11 @@ fn wrap_in_textboxes(depth: u32, counter: &mut u64) -> BlockNode {
         properties: ParagraphProperties::default(),
         inlines: vec![InlineNode::TextBox(TextBox {
             id: box_id,
+            anchor: None,
+            relative_height: None,
+            extent: None,
+            fill: None,
+            border: None,
             blocks: vec![inner],
         })],
     })

@@ -5,26 +5,28 @@ use std::collections::{BTreeMap, BTreeSet};
 use casual_doc_model::v1::{
     Alignment, AltChunk, AltChunkProperties, AnchorHorizontal, AnchorVertical, AnchoredDrawing,
     BlockNode, BlockSdt, Bookmark, BookmarkEnd, BookmarkId, BookmarkStart, BorderEdge, Break,
-    BreakKind, CellVerticalAlignment, CnfStyle, Comment, CommentId, CommentRangeEnd,
+    BreakKind, CellVerticalAlignment, CnfStyle, ColorScheme, Comment, CommentId, CommentRangeEnd,
     CommentRangeStart, CommentReference, DefinitionMap, DocGrid, DocGridType, Drawing,
     DrawingAnchor, EmbeddedKind, EmbeddedObject, EmbeddedPart, Extent, ExternalTarget, Field,
     FormCheckBox, FormCheckBoxSize, FormDropDown, FormFieldData, FormFieldKind, FormTextInput,
-    FormTextType, GridColumn, HeaderFooterId, HeaderFooterKind, HeaderFooterRef, HeightRule,
-    HorizontalAlign, HorizontalAnchor, HorizontalPosition, Hyperlink, HyperlinkTarget, InlineNode,
-    InlineSdt, InternalTarget, LineNumberRestart, LineNumbering, MAX_DESCR_BYTES, MAX_EMU,
+    FormTextType, GridColumn, GroupChild, GroupPicture, GroupShape, GroupTextBox, GroupTransform,
+    HeaderFooterId, HeaderFooterKind, HeaderFooterRef, HeightRule, HorizontalAlign,
+    HorizontalAnchor, HorizontalPosition, Hyperlink, HyperlinkTarget, InlineNode, InlineSdt,
+    InternalTarget, LineNumberRestart, LineNumbering, MAX_DESCR_BYTES, MAX_EMU,
     MAX_FIELD_INSTRUCTION_BYTES, MAX_FORM_FIELD_ENTRIES, MAX_FORM_FIELD_STRING_BYTES,
     MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH, MAX_TEXTBOX_DEPTH, Math, MediaId, MoveKind,
     MoveRangeEnd, MoveRangeStart, NoBreakHyphen, NoteId, NoteKind, NoteNumberRestart, NotePosition,
     NoteProperties, NoteReference, PageBorderDisplay, PageBorderOffset, PageBorders, PageMargins,
     PageNumbering, PageOrientation, PageSize, PageVerticalAlignment, PaperSource, Paragraph,
-    ParagraphProperties, PositionalTab, PositionalTabAlignment, PositionalTabLeader,
-    PositionalTabRelativeTo, PropChange, Revision, RevisionKind, RgbColor, Run, RunProperties,
-    SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind, SdtDataBinding, SdtDate,
-    SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionColumns, SectionId, SectionType,
-    SoftHyphen, StyleKind, Symbol, Tab, TabAlignment, TabLeader, TabStop, TableAnchor,
-    TableCellProperties, TableFloatPosition, TableLayout, TableOverlap, TableProperties,
-    TableRowProperties, TableXAlign, TableYAlign, TextBox, TextDirection, VerticalAlign,
-    VerticalAnchor, VerticalMerge, VerticalPosition, WrapMode,
+    ParagraphProperties, PointEmu, PositionalTab, PositionalTabAlignment, PositionalTabLeader,
+    PositionalTabRelativeTo, PropChange, Revision, RevisionKind, RgbColor, Rgba, Run,
+    RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind,
+    SdtDataBinding, SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionColumns,
+    SectionId, SectionType, ShapeGeometry, ShapeStroke, SoftHyphen, StyleKind, Symbol, Tab,
+    TabAlignment, TabLeader, TabStop, TableAnchor, TableCellProperties, TableFloatPosition,
+    TableLayout, TableOverlap, TableProperties, TableRowProperties, TableXAlign, TableYAlign,
+    TextBox, TextDirection, VerticalAlign, VerticalAnchor, VerticalMerge, VerticalPosition,
+    WordprocessingGroup, WrapMode,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::events::{BytesStart, Event};
@@ -80,6 +82,8 @@ enum Segment {
     },
     /// A fully-built text box (its inner ids are already allocated).
     TextBox(TextBox),
+    /// A fully-built DrawingML group (its inner ids are already allocated).
+    Group(WordprocessingGroup),
     /// A reference to a footnote or endnote definition.
     NoteReference {
         kind: NoteKind,
@@ -157,6 +161,7 @@ enum Segment {
         extent: Extent,
         anchor: DrawingAnchor,
         descr: Option<String>,
+        relative_height: Option<u32>,
     },
 }
 
@@ -183,6 +188,8 @@ enum AnchorAxis {
 struct PendingAnchor {
     /// `@behindDoc` (z-order behind the text).
     behind_doc: bool,
+    /// `@relativeHeight` (the monotonic z-order key within the behind/front band).
+    relative_height: Option<u32>,
     /// `wp:positionH@relativeFrom`.
     h_relative: Option<HorizontalAnchor>,
     /// The resolved horizontal offset or alignment (`wp:posOffset`/`wp:align`).
@@ -223,6 +230,71 @@ impl PendingAnchor {
             behind_doc: self.behind_doc,
         }
     }
+}
+
+/// A DrawingML group (`wpg:wgp` / `wpg:grpSp`) being accumulated while its subtree
+/// is parsed. The transform is filled from the group's `grpSpPr>a:xfrm`; children
+/// are pushed in document order as each `pic:pic`/`wps:wsp`/nested `wpg:grpSp`
+/// closes. The top-of-stack group is the innermost open one.
+struct GroupBuilder {
+    id: NodeId,
+    /// `Some` for the top-level `wpg:wgp` (the anchored object); `None` for a
+    /// nested `wpg:grpSp`. Carries the `wp:anchor` + `wp:extent` + `relativeHeight`.
+    anchor: Option<(DrawingAnchor, Extent, Option<u32>)>,
+    transform: GroupTransform,
+    children: Vec<GroupChild>,
+}
+
+/// A `pic:pic` or `wps:wsp`/`wps:cxnSp` shape being accumulated inside a group (or
+/// a lone/inline DrawingML text box). Its geometry/fill/stroke come from `spPr`;
+/// `textbox_blocks` is `Some` once a `w:txbxContent` closed inside it.
+struct ShapeBuilder {
+    id: NodeId,
+    /// `true` for a `pic:pic` (a picture child), `false` for a `wps:wsp`/`wps:cxnSp`.
+    is_picture: bool,
+    offset: PointEmu,
+    extent: Extent,
+    geometry: ShapeGeometry,
+    fill: Option<Rgba>,
+    stroke: Option<ShapeStroke>,
+    /// The picture's `a:blip@r:embed`, for a picture child.
+    embed: Option<String>,
+    /// The alt text (`pic:cNvPr@descr` / `wps:cNvPr@descr`), if declared.
+    descr: Option<String>,
+    /// The flowed block content of a `w:txbxContent` inside this shape, if any.
+    textbox_blocks: Option<Vec<BlockNode>>,
+}
+
+/// Which `a:xfrm` an `a:off`/`a:ext`/`a:chOff`/`a:chExt` currently routes to.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum XfrmTarget {
+    /// Not inside a shape/group transform (values ignored).
+    None,
+    /// The top group builder's transform (`grpSpPr>a:xfrm`).
+    Group,
+    /// The open shape builder's transform (`spPr>a:xfrm`).
+    Shape,
+}
+
+/// Whether an open DrawingML color element paints a shape's fill or its outline.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ColorDest {
+    Fill,
+    Stroke,
+}
+
+/// A DrawingML color (`a:srgbClr`/`a:schemeClr`/`a:sysClr`) being accumulated,
+/// with its luminance/tint/shade/alpha child modifiers, until the element closes.
+struct PendingColor {
+    dest: ColorDest,
+    base: [u8; 4],
+    lum_mod: Option<f32>,
+    lum_off: Option<f32>,
+    tint: Option<f32>,
+    shade: Option<f32>,
+    alpha: Option<f32>,
+    /// The `a:ln@w` outline width (EMU) in scope when `dest == Stroke`.
+    stroke_width_emu: i64,
 }
 
 /// A main-document relationship an embedded object can reference, resolved from
@@ -457,6 +529,9 @@ struct ContentFrame {
     pending_anchor: Option<PendingAnchor>,
     object_depth: u32,
     pending_object: PendingObject,
+    group_stack: Vec<GroupBuilder>,
+    pending_shape: Option<ShapeBuilder>,
+    pending_group: Option<WordprocessingGroup>,
     /// The open `w:altChunk`, if any: its resolved chunk part plus the properties
     /// (`w:altChunkPr`) accumulated until `</w:altChunk>` commits the block.
     pending_alt_chunk: Option<PendingAltChunk>,
@@ -634,6 +709,35 @@ struct BodyParser<'a> {
     object_depth: u32,
     /// `w:object` pointers collected until the object closes.
     pending_object: PendingObject,
+    /// Open DrawingML groups (`wpg:wgp`/`wpg:grpSp`), innermost last. Non-empty
+    /// while a group subtree is being parsed; the finished top-level group lands in
+    /// `pending_group`. Saved/restored across a text-box frame so a drawing nested
+    /// inside a text box builds a fresh group context.
+    group_stack: Vec<GroupBuilder>,
+    /// The open `pic:pic`/`wps:wsp` shape being accumulated (its `spPr` geometry/
+    /// fill/stroke and, for a text box, its flowed blocks). Saved/restored across a
+    /// text-box frame.
+    pending_shape: Option<ShapeBuilder>,
+    /// The finished top-level group (`wpg:wgp`), pending until the enclosing
+    /// `w:drawing` closes and `commit_drawing` emits it. Saved/restored across a
+    /// text-box frame.
+    pending_group: Option<WordprocessingGroup>,
+    /// Which `a:xfrm` the next `a:off`/`a:ext`/`a:chOff`/`a:chExt` routes to.
+    xfrm_target: XfrmTarget,
+    /// Depth of an open `a:ln` (outline), so a `solidFill` inside it colors the
+    /// stroke rather than the fill.
+    ln_depth: u32,
+    /// Depth of an open shape-style reference (`a:lnRef`/`a:fillRef`/`a:effectRef`/
+    /// `a:fontRef` in `wps:style`). A `schemeClr` inside one selects a theme style
+    /// index, NOT the shape's actual fill/stroke, so color capture is suppressed.
+    style_ref_depth: u32,
+    /// The `a:ln@w` outline width (EMU) of the open outline.
+    ln_width_emu: i64,
+    /// The open DrawingML color element being accumulated (base + modifiers).
+    pending_color: Option<PendingColor>,
+    /// The resolved 12-slot theme color palette (DrawingML `schemeClr` targets),
+    /// in `ColorScheme` field order (dk1, lt1, dk2, lt2, accent1..6, hlink, folHlink).
+    palette: [[u8; 4]; 12],
     /// The open `w:altChunk`, if any: its resolved chunk part plus the properties
     /// (`w:altChunkPr`) accumulated until `</w:altChunk>` commits the block.
     pending_alt_chunk: Option<PendingAltChunk>,
@@ -796,6 +900,10 @@ pub(crate) struct ParseInputs<'a> {
     pub header_ids: &'a BTreeMap<String, HeaderFooterId>,
     pub footer_ids: &'a BTreeMap<String, HeaderFooterId>,
     pub comment_ids: &'a BTreeMap<String, CommentId>,
+    /// The document's theme color scheme, against which a floating shape's
+    /// `a:schemeClr` fill/outline resolves to a concrete color. `None` when no
+    /// theme is available (scheme-colored shape fills then degrade to unresolved).
+    pub color_scheme: Option<&'a ColorScheme>,
 }
 
 impl<'a> BodyParser<'a> {
@@ -807,6 +915,7 @@ impl<'a> BodyParser<'a> {
         note_container: Option<&'static [u8]>,
         config: ImportConfig,
     ) -> Self {
+        let palette = inputs.color_scheme.map(resolve_palette).unwrap_or_default();
         BodyParser {
             ids,
             styles: inputs.styles,
@@ -844,6 +953,15 @@ impl<'a> BodyParser<'a> {
             pending_anchor: None,
             object_depth: 0,
             pending_object: PendingObject::default(),
+            group_stack: Vec::new(),
+            pending_shape: None,
+            pending_group: None,
+            xfrm_target: XfrmTarget::None,
+            ln_depth: 0,
+            ln_width_emu: 0,
+            style_ref_depth: 0,
+            pending_color: None,
+            palette,
             pending_alt_chunk: None,
             hyperlink: None,
             hyperlink_depth: 0,
@@ -976,6 +1094,7 @@ pub(crate) fn parse_notes(
         header_ids: &empty_hf,
         footer_ids: &empty_hf,
         comment_ids: &empty_comment,
+        color_scheme: None,
     };
     let mut parser = BodyParser::build(ids, reporter, &inputs, bookmarks, Some(container), config);
     parser.run(xml)?;
@@ -1021,6 +1140,7 @@ pub(crate) fn parse_header_footer(
         header_ids: &empty_hf,
         footer_ids: &empty_hf,
         comment_ids: &empty_comment,
+        color_scheme: None,
     };
     let mut parser = BodyParser::build(ids, reporter, &inputs, bookmarks, None, config);
     parser.hf_root = Some(root);
@@ -1067,6 +1187,7 @@ pub(crate) fn parse_comments(
         header_ids: &empty_hf,
         footer_ids: &empty_hf,
         comment_ids: &empty_comment,
+        color_scheme: None,
     };
     let mut parser = BodyParser::build(ids, reporter, &inputs, bookmarks, Some(b"comment"), config);
     parser.run(xml)?;
@@ -1767,6 +1888,13 @@ impl BodyParser<'_> {
                     self.blipfill_depth = 0;
                     self.pending_graphic = PendingGraphic::default();
                     self.pending_anchor = None;
+                    self.group_stack.clear();
+                    self.pending_shape = None;
+                    self.pending_group = None;
+                    self.xfrm_target = XfrmTarget::None;
+                    self.ln_depth = 0;
+                    self.style_ref_depth = 0;
+                    self.pending_color = None;
                 }
             }
             // The `a:graphicData@uri` distinguishes a chart / diagram / picture /
@@ -1814,8 +1942,13 @@ impl BodyParser<'_> {
                     attribute_value(element, b"behindDoc").as_deref(),
                     Some("1") | Some("true")
                 );
+                // `@relativeHeight` is the monotonic z-order key (higher paints on
+                // top) within the behind/front band.
+                let relative_height = attribute_value(element, b"relativeHeight")
+                    .and_then(|value| value.parse::<u32>().ok());
                 self.pending_anchor = Some(PendingAnchor {
                     behind_doc,
+                    relative_height,
                     ..PendingAnchor::default()
                 });
             }
@@ -1873,6 +2006,216 @@ impl BodyParser<'_> {
                 None => {}
             },
             b"hlinkClick" | b"svgBlip" if self.drawing_depth > 0 => self.drawing_extra = true,
+            // A DrawingML group (`wpg:wgp` = the anchored object, `wpg:grpSp` =
+            // nested): open a group builder. The top-level group inherits the open
+            // anchor + `wp:extent` + `relativeHeight`; a nested group is positioned
+            // purely by its own transform.
+            b"wgp" | b"grpSp" if self.drawing_depth > 0 => {
+                let id = self.next_id()?;
+                let anchor = if self.group_stack.is_empty() {
+                    self.pending_anchor.as_ref().map(|pending| {
+                        (
+                            pending.resolve(),
+                            self.pending_extent.unwrap_or(ZERO_EXTENT),
+                            pending.relative_height,
+                        )
+                    })
+                } else {
+                    None
+                };
+                self.group_stack.push(GroupBuilder {
+                    id,
+                    anchor,
+                    transform: GroupTransform {
+                        offset: PointEmu { x_emu: 0, y_emu: 0 },
+                        extent: ZERO_EXTENT,
+                        child_offset: PointEmu { x_emu: 0, y_emu: 0 },
+                        child_extent: ZERO_EXTENT,
+                    },
+                    children: Vec::new(),
+                });
+            }
+            // The group transform container: its `a:xfrm` off/ext/chOff/chExt route
+            // to the top group builder.
+            b"grpSpPr" if !self.group_stack.is_empty() => {
+                self.xfrm_target = XfrmTarget::Group;
+            }
+            // A shape (`wps:wsp` / `wps:cxnSp`): open a shape builder. Its geometry/
+            // fill/stroke come from `spPr`; a `w:txbxContent` makes it a text box.
+            b"wsp" | b"cxnSp" if self.drawing_depth > 0 => {
+                let id = self.next_id()?;
+                self.pending_shape = Some(ShapeBuilder {
+                    id,
+                    is_picture: false,
+                    offset: PointEmu { x_emu: 0, y_emu: 0 },
+                    extent: ZERO_EXTENT,
+                    geometry: ShapeGeometry::Rectangle,
+                    fill: None,
+                    stroke: None,
+                    embed: None,
+                    descr: None,
+                    textbox_blocks: None,
+                });
+            }
+            // A picture INSIDE a group (`pic:pic`): open a picture shape builder so
+            // it is sized by its own `a:ext`. A lone/inline picture (no group) keeps
+            // the existing `pending_embed`/`pending_extent` path.
+            b"pic" if self.drawing_depth > 0 && !self.group_stack.is_empty() => {
+                let id = self.next_id()?;
+                self.pending_shape = Some(ShapeBuilder {
+                    id,
+                    is_picture: true,
+                    offset: PointEmu { x_emu: 0, y_emu: 0 },
+                    extent: ZERO_EXTENT,
+                    geometry: ShapeGeometry::Rectangle,
+                    fill: None,
+                    stroke: None,
+                    embed: None,
+                    descr: None,
+                    textbox_blocks: None,
+                });
+            }
+            // A shape/picture transform container (`wps:spPr` / `pic:spPr`): its
+            // `a:xfrm` off/ext route to the open shape builder.
+            b"spPr" if self.drawing_depth > 0 => {
+                self.xfrm_target = XfrmTarget::Shape;
+            }
+            // `a:off`/`a:ext`/`a:chOff`/`a:chExt` inside an `a:xfrm`: route to the
+            // group transform or the shape geometry per `xfrm_target`. (The
+            // extension-list `<a:ext uri=…>` carries no cx/cy and is skipped.)
+            b"off" if self.drawing_depth > 0 => {
+                if let (Some(x), Some(y)) = (attr_i64(element, b"x"), attr_i64(element, b"y")) {
+                    self.set_xfrm_offset(PointEmu { x_emu: x, y_emu: y });
+                }
+            }
+            b"ext" if self.drawing_depth > 0 && self.xfrm_target != XfrmTarget::None => {
+                if let (Some(cx), Some(cy)) = (attr_i64(element, b"cx"), attr_i64(element, b"cy"))
+                    && (0..=MAX_EMU).contains(&cx)
+                    && (0..=MAX_EMU).contains(&cy)
+                {
+                    self.set_xfrm_extent(Extent {
+                        width_emu: cx,
+                        height_emu: cy,
+                    });
+                }
+            }
+            b"chOff" if self.drawing_depth > 0 && !self.group_stack.is_empty() => {
+                if let (Some(x), Some(y)) = (attr_i64(element, b"x"), attr_i64(element, b"y"))
+                    && let Some(group) = self.group_stack.last_mut()
+                {
+                    group.transform.child_offset = PointEmu { x_emu: x, y_emu: y };
+                }
+            }
+            b"chExt" if self.drawing_depth > 0 && !self.group_stack.is_empty() => {
+                if let (Some(cx), Some(cy)) = (attr_i64(element, b"cx"), attr_i64(element, b"cy"))
+                    && (0..=MAX_EMU).contains(&cx)
+                    && (0..=MAX_EMU).contains(&cy)
+                    && let Some(group) = self.group_stack.last_mut()
+                {
+                    group.transform.child_extent = Extent {
+                        width_emu: cx,
+                        height_emu: cy,
+                    };
+                }
+            }
+            // The preset geometry (`a:prstGeom@prst`) of the open shape.
+            b"prstGeom" if self.pending_shape.is_some() => {
+                if let Some(shape) = self.pending_shape.as_mut() {
+                    shape.geometry = match attribute_value(element, b"prst").as_deref() {
+                        Some("rect") => ShapeGeometry::Rectangle,
+                        Some("roundRect") => ShapeGeometry::RoundRectangle,
+                        Some("ellipse") => ShapeGeometry::Ellipse,
+                        Some("line" | "straightConnector1") => ShapeGeometry::Line,
+                        _ => ShapeGeometry::Other,
+                    };
+                }
+            }
+            // An outline (`a:ln`): its `@w` is the stroke width; a `solidFill` inside
+            // it colors the stroke rather than the fill.
+            b"ln" if self.pending_shape.is_some() => {
+                self.ln_depth += 1;
+                self.ln_width_emu = attr_i64(element, b"w").filter(|w| *w >= 0).unwrap_or(0);
+            }
+            // An explicit `a:noFill`: clears the shape fill or (inside `a:ln`) the
+            // stroke, so a later default is not assumed.
+            b"noFill" if self.pending_shape.is_some() => {
+                if let Some(shape) = self.pending_shape.as_mut() {
+                    if self.ln_depth > 0 {
+                        shape.stroke = None;
+                    } else {
+                        shape.fill = None;
+                    }
+                }
+            }
+            // A DrawingML color (`a:srgbClr`/`a:schemeClr`/`a:sysClr`): open a color
+            // accumulator (base + modifiers). Only captured for a shape builder.
+            // A shape-style reference container: a `schemeClr` inside it names a
+            // theme style index, not the shape's own fill/stroke — suppress capture.
+            b"lnRef" | b"fillRef" | b"effectRef" | b"fontRef" if self.pending_shape.is_some() => {
+                self.style_ref_depth += 1;
+            }
+            b"srgbClr" | b"schemeClr" | b"sysClr"
+                if self.pending_shape.is_some()
+                    && self.pending_color.is_none()
+                    && self.style_ref_depth == 0 =>
+            {
+                let base = match local {
+                    b"srgbClr" => attribute_value(element, b"val")
+                        .and_then(|hex| parse_rgb(&hex))
+                        .map(|rgb| [rgb.r, rgb.g, rgb.b, 255]),
+                    b"schemeClr" => attribute_value(element, b"val")
+                        .as_deref()
+                        .and_then(scheme_slot_index)
+                        .map(|index| self.palette[index]),
+                    _ => Some([0, 0, 0, 255]),
+                };
+                if let Some(base) = base {
+                    let dest = if self.ln_depth > 0 {
+                        ColorDest::Stroke
+                    } else {
+                        ColorDest::Fill
+                    };
+                    self.pending_color = Some(PendingColor {
+                        dest,
+                        base,
+                        lum_mod: None,
+                        lum_off: None,
+                        tint: None,
+                        shade: None,
+                        alpha: None,
+                        stroke_width_emu: self.ln_width_emu,
+                    });
+                }
+            }
+            // Color transform modifiers, applied when the color element closes.
+            b"lumMod" | b"lumOff" | b"tint" | b"shade" | b"alpha"
+                if self.pending_color.is_some() =>
+            {
+                if let Some(color) = self.pending_color.as_mut()
+                    && let Some(factor) = attribute_value(element, b"val")
+                        .as_deref()
+                        .and_then(parse_percent)
+                {
+                    match local {
+                        b"lumMod" => color.lum_mod = Some(factor),
+                        b"lumOff" => color.lum_off = Some(factor),
+                        b"tint" => color.tint = Some(factor),
+                        b"shade" => color.shade = Some(factor),
+                        _ => color.alpha = Some(factor),
+                    }
+                }
+            }
+            // A shape's non-visual props (`pic:cNvPr`/`wps:cNvPr`): capture its
+            // alt text (`@descr`) for the open shape.
+            b"cNvPr" if self.pending_shape.is_some() => {
+                if let Some(shape) = self.pending_shape.as_mut()
+                    && let Some(descr) = attribute_value(element, b"descr")
+                    && !descr.is_empty()
+                    && descr.len() <= MAX_DESCR_BYTES
+                {
+                    shape.descr = Some(descr);
+                }
+            }
             // A legacy VML picture (`w:pict`) carries its image as
             // `v:imagedata@r:id`; resolve it through the same media table.
             b"pict" if self.run_open => {
@@ -2961,6 +3304,41 @@ impl BodyParser<'_> {
                     anchor.capture_axis = None;
                 }
             }
+            // A DrawingML color element closes: fold its modifiers and assign the
+            // resulting color to the open shape's fill or stroke.
+            b"srgbClr" | b"schemeClr" | b"sysClr" if self.pending_color.is_some() => {
+                self.commit_color();
+            }
+            // An outline closes: leave the shape's captured stroke, drop the depth.
+            b"ln" if self.ln_depth > 0 => {
+                self.ln_depth = self.ln_depth.saturating_sub(1);
+            }
+            b"lnRef" | b"fillRef" | b"effectRef" | b"fontRef" if self.style_ref_depth > 0 => {
+                self.style_ref_depth = self.style_ref_depth.saturating_sub(1);
+            }
+            // A transform container closes: stop routing off/ext.
+            b"spPr" | b"grpSpPr" if self.drawing_depth > 0 => {
+                self.xfrm_target = XfrmTarget::None;
+            }
+            // A picture child closes: finalize it into the open group.
+            b"pic"
+                if self
+                    .pending_shape
+                    .as_ref()
+                    .is_some_and(|shape| shape.is_picture) =>
+            {
+                self.commit_shape();
+            }
+            // A shape/text box closes: finalize it into a group child, or (outside a
+            // group) into a floating/inline text box segment.
+            b"wsp" | b"cxnSp" if self.pending_shape.is_some() => {
+                self.commit_shape();
+            }
+            // A group closes: stash the top-level group (`wpg:wgp`) for the enclosing
+            // drawing, or fold a nested group (`wpg:grpSp`) into its parent.
+            b"wgp" | b"grpSp" if !self.group_stack.is_empty() => {
+                self.commit_group();
+            }
             b"drawing" if self.drawing_depth > 0 => {
                 self.drawing_depth -= 1;
                 if self.drawing_depth == 0 {
@@ -3087,7 +3465,209 @@ impl BodyParser<'_> {
     /// `AnchoredDrawing` (floating `wp:anchor`); an unresolved/dangling reference
     /// is reported and dropped. A resolved drawing carrying unmodeled detail is
     /// also reported.
+    /// Routes an `a:off`/`a:ext` (within an `a:xfrm`) to the group transform or the
+    /// open shape, per [`Self::xfrm_target`].
+    fn set_xfrm_offset(&mut self, point: PointEmu) {
+        match self.xfrm_target {
+            XfrmTarget::Group => {
+                if let Some(group) = self.group_stack.last_mut() {
+                    group.transform.offset = point;
+                }
+            }
+            XfrmTarget::Shape => {
+                if let Some(shape) = self.pending_shape.as_mut() {
+                    shape.offset = point;
+                }
+            }
+            XfrmTarget::None => {}
+        }
+    }
+
+    fn set_xfrm_extent(&mut self, extent: Extent) {
+        match self.xfrm_target {
+            XfrmTarget::Group => {
+                if let Some(group) = self.group_stack.last_mut() {
+                    group.transform.extent = extent;
+                }
+            }
+            XfrmTarget::Shape => {
+                if let Some(shape) = self.pending_shape.as_mut() {
+                    shape.extent = extent;
+                }
+            }
+            XfrmTarget::None => {}
+        }
+    }
+
+    /// Folds the open [`PendingColor`] and assigns it to the open shape's fill or
+    /// stroke.
+    fn commit_color(&mut self) {
+        let Some(color) = self.pending_color.take() else {
+            return;
+        };
+        let Some(shape) = self.pending_shape.as_mut() else {
+            return;
+        };
+        let rgba = fold_color(&color);
+        match color.dest {
+            ColorDest::Fill => shape.fill = Some(rgba),
+            ColorDest::Stroke => {
+                shape.stroke = Some(ShapeStroke {
+                    color: rgba,
+                    width_emu: color.stroke_width_emu,
+                });
+            }
+        }
+    }
+
+    /// Finalizes the open shape (`pic:pic`/`wps:wsp`) at its close. Inside a group
+    /// it becomes a [`GroupChild`]; outside one, a text box (floating when an
+    /// anchor is open, else inline). A bare anchored shape with no text is not
+    /// first-class on its own, so it is reported and dropped.
+    fn commit_shape(&mut self) {
+        let Some(mut shape) = self.pending_shape.take() else {
+            return;
+        };
+        if shape.is_picture {
+            // The picture's `a:blip@r:embed` flowed through the shared
+            // `pending_embed`; take it so the next sibling picture captures its own.
+            shape.embed = self.pending_embed.take();
+        }
+        if !self.group_stack.is_empty() {
+            if let Some(child) = self.shape_to_group_child(shape)
+                && let Some(group) = self.group_stack.last_mut()
+            {
+                group.children.push(child);
+            }
+            return;
+        }
+        // Not in a group: a lone/inline DrawingML text box, or a bare shape.
+        let Some(blocks) = shape.textbox_blocks.take() else {
+            // A standalone anchored/inline shape (rectangle/line) with no text is
+            // not modeled on its own; report so nothing is silently lost.
+            self.reporter.report(b"wsp");
+            return;
+        };
+        if blocks.is_empty() {
+            self.reporter.report(b"txbxContent");
+            return;
+        }
+        match self.pending_anchor.take() {
+            Some(pending) => {
+                // A floating text box: carry its anchor + extent + fill/border.
+                let extent = self.pending_extent.take().unwrap_or(ZERO_EXTENT);
+                self.push_segment(Segment::TextBox(TextBox {
+                    id: shape.id,
+                    anchor: Some(pending.resolve()),
+                    relative_height: pending.relative_height,
+                    extent: Some(extent),
+                    fill: shape.fill,
+                    border: shape.stroke,
+                    blocks,
+                }));
+            }
+            None => {
+                // An inline text box (unchanged behavior).
+                self.push_segment(Segment::TextBox(TextBox {
+                    id: shape.id,
+                    anchor: None,
+                    relative_height: None,
+                    extent: None,
+                    fill: None,
+                    border: None,
+                    blocks,
+                }));
+            }
+        }
+    }
+
+    /// Converts a finished shape into a [`GroupChild`]. A picture with an
+    /// unresolved media reference, or a text box with no blocks, is reported and
+    /// dropped (`None`).
+    fn shape_to_group_child(&mut self, mut shape: ShapeBuilder) -> Option<GroupChild> {
+        if shape.is_picture {
+            let embed = shape.embed.as_deref()?;
+            let media = *self.media_index.get(embed)?;
+            return Some(GroupChild::Picture(GroupPicture {
+                id: shape.id,
+                media,
+                offset: shape.offset,
+                extent: shape.extent,
+                descr: shape.descr,
+            }));
+        }
+        if let Some(blocks) = shape.textbox_blocks.take() {
+            if blocks.is_empty() {
+                self.reporter.report(b"txbxContent");
+                return None;
+            }
+            return Some(GroupChild::TextBox(GroupTextBox {
+                id: shape.id,
+                offset: shape.offset,
+                extent: shape.extent,
+                blocks,
+                fill: shape.fill,
+                border: shape.stroke,
+            }));
+        }
+        Some(GroupChild::Shape(GroupShape {
+            id: shape.id,
+            offset: shape.offset,
+            extent: shape.extent,
+            geometry: shape.geometry,
+            fill: shape.fill,
+            stroke: shape.stroke,
+        }))
+    }
+
+    /// Finalizes the top open group at its close: a top-level `wpg:wgp` (with an
+    /// anchor) is stashed in `pending_group` for the enclosing `w:drawing`; a
+    /// nested `wpg:grpSp` is folded into its parent as a [`GroupChild::Group`]. An
+    /// empty group (no children) is reported and dropped.
+    fn commit_group(&mut self) {
+        let Some(builder) = self.group_stack.pop() else {
+            return;
+        };
+        if builder.children.is_empty() {
+            self.reporter.report(b"wgp");
+            return;
+        }
+        match builder.anchor {
+            Some((anchor, extent, relative_height)) => {
+                self.pending_group = Some(WordprocessingGroup {
+                    id: builder.id,
+                    anchor: Some(anchor),
+                    relative_height,
+                    extent,
+                    transform: builder.transform,
+                    children: builder.children,
+                });
+            }
+            None => {
+                let nested = WordprocessingGroup {
+                    id: builder.id,
+                    anchor: None,
+                    relative_height: None,
+                    extent: builder.transform.extent,
+                    transform: builder.transform,
+                    children: builder.children,
+                };
+                if let Some(parent) = self.group_stack.last_mut() {
+                    parent.children.push(GroupChild::Group(nested));
+                } else {
+                    self.reporter.report(b"grpSp");
+                }
+            }
+        }
+    }
+
     fn commit_drawing(&mut self) {
+        // A DrawingML group takes precedence: emit the whole positioned group
+        // rather than collapsing to a single (stretched) picture.
+        if let Some(group) = self.pending_group.take() {
+            self.push_segment(Segment::Group(group));
+            return;
+        }
         let extent = self.pending_extent.take();
         let extra = self.drawing_extra;
         let graphic = std::mem::take(&mut self.pending_graphic);
@@ -3145,6 +3725,7 @@ impl BodyParser<'_> {
                             extent: extent.unwrap_or(ZERO_EXTENT),
                             anchor: anchor.resolve(),
                             descr: anchor.descr,
+                            relative_height: anchor.relative_height,
                         });
                         // Any remaining unmodeled detail (e.g. a click-link) is
                         // still surfaced so the anchored drawing is never silently
@@ -3584,6 +4165,9 @@ impl BodyParser<'_> {
             pending_anchor: self.pending_anchor.take(),
             object_depth: std::mem::take(&mut self.object_depth),
             pending_object: std::mem::take(&mut self.pending_object),
+            group_stack: std::mem::take(&mut self.group_stack),
+            pending_shape: self.pending_shape.take(),
+            pending_group: self.pending_group.take(),
             pending_alt_chunk: self.pending_alt_chunk.take(),
             hyperlink: self.hyperlink.take(),
             hyperlink_depth: std::mem::take(&mut self.hyperlink_depth),
@@ -3650,6 +4234,9 @@ impl BodyParser<'_> {
         self.pending_anchor = frame.pending_anchor;
         self.object_depth = frame.object_depth;
         self.pending_object = frame.pending_object;
+        self.group_stack = frame.group_stack;
+        self.pending_shape = frame.pending_shape;
+        self.pending_group = frame.pending_group;
         self.pending_alt_chunk = frame.pending_alt_chunk;
         self.hyperlink = frame.hyperlink;
         self.hyperlink_depth = frame.hyperlink_depth;
@@ -3683,9 +4270,22 @@ impl BodyParser<'_> {
                 self.open_textboxes = self.open_textboxes.saturating_sub(1);
                 if blocks.is_empty() || frame.depth > MAX_TEXTBOX_DEPTH {
                     self.reporter.report(b"txbxContent");
+                } else if let Some(shape) = self.pending_shape.as_mut() {
+                    // A DrawingML `wps:wsp` text box: hand the flowed blocks to the
+                    // open shape builder. The enclosing `wps:wsp` close routes it to
+                    // a group child or a floating/inline text box; `frame.node_id`
+                    // is unused (the shape's own id identifies the box).
+                    shape.textbox_blocks = Some(blocks);
                 } else {
+                    // A legacy VML `v:textbox` (no DrawingML shape wrapper): inline,
+                    // as before.
                     self.push_segment(Segment::TextBox(TextBox {
                         id: frame.node_id,
+                        anchor: None,
+                        relative_height: None,
+                        extent: None,
+                        fill: None,
+                        border: None,
                         blocks,
                     }));
                 }
@@ -4441,6 +5041,7 @@ impl BodyParser<'_> {
                 extent,
                 anchor,
                 descr,
+                relative_height,
             } => {
                 let id = self.next_id()?;
                 Ok(InlineNode::AnchoredDrawing(AnchoredDrawing {
@@ -4449,6 +5050,7 @@ impl BodyParser<'_> {
                     extent,
                     anchor,
                     descr,
+                    relative_height,
                 }))
             }
             Segment::EmbeddedObject {
@@ -4536,6 +5138,7 @@ impl BodyParser<'_> {
             // A text box is already fully built (id and inner ids allocated while
             // parsing its content), so it converts directly.
             Segment::TextBox(text_box) => Ok(InlineNode::TextBox(text_box)),
+            Segment::Group(group) => Ok(InlineNode::Group(group)),
             Segment::NoteReference { kind, note } => {
                 let id = self.next_id()?;
                 Ok(InlineNode::NoteReference(NoteReference { id, kind, note }))
@@ -4889,6 +5492,121 @@ fn wrap_mode(local: &[u8]) -> WrapMode {
         b"wrapThrough" => WrapMode::Through,
         b"wrapTopAndBottom" => WrapMode::TopAndBottom,
         _ => WrapMode::None,
+    }
+}
+
+/// Resolves a document [`ColorScheme`] into the 12-slot RGBA palette DrawingML
+/// `a:schemeClr` targets resolve against (mirrors the layout resolver so a shape
+/// fill and a run color agree). Slot order matches [`ColorScheme`]'s fields.
+fn resolve_palette(scheme: &ColorScheme) -> [[u8; 4]; 12] {
+    [
+        resolve_scheme_color(&scheme.dark1),
+        resolve_scheme_color(&scheme.light1),
+        resolve_scheme_color(&scheme.dark2),
+        resolve_scheme_color(&scheme.light2),
+        resolve_scheme_color(&scheme.accent1),
+        resolve_scheme_color(&scheme.accent2),
+        resolve_scheme_color(&scheme.accent3),
+        resolve_scheme_color(&scheme.accent4),
+        resolve_scheme_color(&scheme.accent5),
+        resolve_scheme_color(&scheme.accent6),
+        resolve_scheme_color(&scheme.hyperlink),
+        resolve_scheme_color(&scheme.followed_hyperlink),
+    ]
+}
+
+/// Resolves one scheme slot to opaque RGBA: an `a:srgbClr` is its RGB; an
+/// `a:sysClr` uses its recorded `lastClr`, else the conventional value for the
+/// named system color.
+fn resolve_scheme_color(color: &SchemeColor) -> [u8; 4] {
+    match color {
+        SchemeColor::Srgb(rgb) => [rgb.r, rgb.g, rgb.b, 255],
+        SchemeColor::System(sys) => match sys.last_color {
+            Some(rgb) => [rgb.r, rgb.g, rgb.b, 255],
+            None => match sys.value.as_str() {
+                "window" | "background" | "btnFace" | "menu" | "3dLight" => [255, 255, 255, 255],
+                _ => [0, 0, 0, 255],
+            },
+        },
+    }
+}
+
+/// The [`resolve_palette`] index for a DrawingML `a:schemeClr@val` slot name. The
+/// `bg1`/`tx1`/`bg2`/`tx2` aliases map to the light/dark slots (Word swaps
+/// background↔dark per the color-map, but the default map — used here — is the
+/// identity `bg1=lt1`, `tx1=dk1`). `phClr` (a style placeholder) has no fixed
+/// slot and yields `None`.
+fn scheme_slot_index(name: &str) -> Option<usize> {
+    Some(match name {
+        "dk1" | "tx1" => 0,
+        "lt1" | "bg1" => 1,
+        "dk2" | "tx2" => 2,
+        "lt2" | "bg2" => 3,
+        "accent1" => 4,
+        "accent2" => 5,
+        "accent3" => 6,
+        "accent4" => 7,
+        "accent5" => 8,
+        "accent6" => 9,
+        "hlink" => 10,
+        "folHlink" => 11,
+        _ => return None,
+    })
+}
+
+/// Parses a DrawingML modifier `@val` (`ST_Percentage`, a per-100000 integer such
+/// as `85000` = 85%, or a `"85%"` string) into a `0.0..` factor.
+fn parse_percent(value: &str) -> Option<f32> {
+    let value = value.trim();
+    if let Some(pct) = value.strip_suffix('%') {
+        pct.trim().parse::<f32>().ok().map(|v| v / 100.0)
+    } else {
+        value.parse::<f32>().ok().map(|v| v / 100_000.0)
+    }
+}
+
+/// Folds a [`PendingColor`]'s luminance/tint/shade/alpha modifiers over its base
+/// into a concrete [`Rgba`]. `lumMod` scales and `lumOff` offsets luminance
+/// (applied channel-wise, exact for the grayscale bases these decorations use);
+/// `tint` lightens toward white and `shade` darkens toward black; `alpha` sets
+/// opacity.
+fn fold_color(color: &PendingColor) -> Rgba {
+    let mut rgb = [
+        f32::from(color.base[0]),
+        f32::from(color.base[1]),
+        f32::from(color.base[2]),
+    ];
+    if let Some(m) = color.lum_mod {
+        for c in &mut rgb {
+            *c *= m;
+        }
+    }
+    if let Some(o) = color.lum_off {
+        for c in &mut rgb {
+            *c += o * 255.0;
+        }
+    }
+    if let Some(t) = color.tint {
+        let t = t.clamp(0.0, 1.0);
+        for c in &mut rgb {
+            *c = *c * t + 255.0 * (1.0 - t);
+        }
+    }
+    if let Some(s) = color.shade {
+        let s = s.clamp(0.0, 1.0);
+        for c in &mut rgb {
+            *c *= s;
+        }
+    }
+    let clamp = |v: f32| v.round().clamp(0.0, 255.0) as u8;
+    let a = color
+        .alpha
+        .map_or(color.base[3], |a| clamp(a.clamp(0.0, 1.0) * 255.0));
+    Rgba {
+        r: clamp(rgb[0]),
+        g: clamp(rgb[1]),
+        b: clamp(rgb[2]),
+        a,
     }
 }
 

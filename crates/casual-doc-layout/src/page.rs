@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::block::BlockFragment;
 use crate::model::ModelPos;
-use crate::units::Rect;
+use crate::units::{Point, Rect, Twip};
 
 /// A position in the galley's flow: a fragment (by index) and a line offset
 /// within it (`0` for a whole fragment or a split paragraph's first chunk).
@@ -58,23 +58,90 @@ pub struct PlacedFragment {
     pub rect: Rect,
 }
 
-/// An anchored (floating) drawing resolved to its absolute rectangle on a page.
+/// The stacking key of a floating object — how the float layer orders paints.
 ///
-/// Unlike a [`PlacedFragment`], an anchored image does not participate in the
-/// flow: it is placed at the position computed from its `wp:positionH`/
-/// `wp:positionV` against the page/margin/paragraph box (the first-cut `P1F-28`
-/// positioning; text does not yet re-flow around it), then painted behind or
-/// above the text per [`behind_doc`](PlacedAnchor::behind_doc).
+/// Word paints floating objects by `wp:anchor@relativeHeight` (higher paints
+/// later, i.e. on top), with document order as the tiebreaker. A single stable
+/// sort by `(relative_height, order)` reproduces Word's layering; `behind_doc`
+/// (on [`PlacedAnchor`]) first partitions floats into the band below the text and
+/// the band above it. Group children share their group's key and are ordered
+/// among themselves by `order` (their document/paint order within the group).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Deserialize, Serialize)]
+pub struct AnchorZ {
+    /// `wp:anchor@relativeHeight` (0 when the producer omitted it).
+    pub relative_height: u32,
+    /// A monotonic document-order counter assigned during collection (the primary
+    /// tiebreaker, and the intra-group paint order).
+    pub order: u32,
+}
+
+/// A stroke (outline) painted for a floating shape or connector: a resolved color
+/// and a width in twips.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct AnchorStroke {
+    /// The stroke color (RGBA).
+    pub color: [u8; 4],
+    /// The stroke width in twips (a hairline when `0`).
+    pub width: Twip,
+}
+
+/// What a [`PlacedAnchor`] paints: an image, a filled/stroked rectangle, a line/
+/// connector, or a text box (flowed block content with an optional fill/border).
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub enum AnchorContent {
+    /// An embedded picture, resolved by the backend against `Definitions::media`.
+    Image {
+        /// The media key (package part name).
+        media: String,
+    },
+    /// A rectangle (a group's background/foreground shape).
+    Rectangle {
+        /// The fill color (RGBA), if filled.
+        fill: Option<[u8; 4]>,
+        /// The outline, if stroked.
+        stroke: Option<AnchorStroke>,
+    },
+    /// A straight line / connector, from `from` to `to` (page-local twips).
+    Line {
+        /// The line's start point.
+        from: Point,
+        /// The line's end point.
+        to: Point,
+        /// The line's stroke.
+        stroke: AnchorStroke,
+    },
+    /// A text box: block content flowed through the shared pipeline, with an
+    /// optional fill and border.
+    TextBox {
+        /// The flowed block fragments, positioned relative to the box's content
+        /// origin (the box top-left inset by the internal margin).
+        blocks: Vec<BlockFragment>,
+        /// The box background fill (RGBA), if any.
+        fill: Option<[u8; 4]>,
+        /// The box border color (RGBA), if any.
+        border: Option<[u8; 4]>,
+    },
+}
+
+/// A floating object resolved to its absolute rectangle and stacking key on a
+/// page: an anchored picture, a floating text box, or a group child (picture,
+/// text box, rectangle, or connector). Unlike a [`PlacedFragment`], a float does
+/// not participate in the flow — it is placed at the position computed from its
+/// anchor (and, for a group child, the group transform), then painted in z-order
+/// by [`compose_page`](crate::compose::compose_page).
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct PlacedAnchor {
-    /// The media key (package part name) the render backend resolves to pixels.
-    pub media: String,
-    /// The absolute rectangle in page-local twip coordinates.
+    /// What this float paints.
+    pub content: AnchorContent,
+    /// The absolute rectangle in page-local twip coordinates (the paint box; the
+    /// bounding box for a [`AnchorContent::Line`]).
     pub rect: Rect,
-    /// Whether the image paints behind the document text (its z-order).
+    /// Whether the float paints behind the document text (its band).
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
     pub behind_doc: bool,
-    /// The image's alt text (`wp:docPr@descr`), preserved for accessibility.
+    /// The stacking key (`relativeHeight` + document order).
+    pub z: AnchorZ,
+    /// The float's alt text (`wp:docPr@descr`), preserved for accessibility.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub descr: Option<String>,
 }
@@ -101,7 +168,7 @@ pub struct Page {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub footer: Vec<PlacedFragment>,
     /// Anchored (floating) drawings resolved onto this page. Empty until the
-    /// anchored-placement pass ([`crate::anchor::place_anchored_drawings`]) fills
+    /// anchored-placement pass ([`crate::anchor::place_floats`]) fills
     /// it; kept off the pagination hot path so page reuse (the stabilization halt)
     /// stays position-free, exactly like the running header/footer.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
