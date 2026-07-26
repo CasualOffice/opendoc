@@ -36,6 +36,7 @@ mod font_table;
 mod media;
 mod metadata;
 mod numbering;
+mod opaque;
 mod properties;
 mod report;
 mod retain;
@@ -46,6 +47,9 @@ mod theme;
 
 pub use config::{ImportConfig, ImportMode};
 pub use error::ImportError;
+pub use opaque::{
+    RelationshipOwner, RetainedPart, RetainedParts, RetainedRelationship, RetainedRels,
+};
 pub use report::{
     CompatibilityEntry, CompatibilityReport, ModelOutcome, PartDisposition, RetentionOutcome,
 };
@@ -73,6 +77,11 @@ pub struct Import {
     pub report: CompatibilityReport,
     /// Source retained for round-trip; `Some` only in `Retention` mode.
     pub retained_source: Option<RetainedSource>,
+    /// Opaque part side-table (P1F-2): admitted parts the semantic model does
+    /// not consume, carried verbatim so the semantic writer preserves them.
+    /// Populated by [`import_package`] (both modes); empty for the XML-only
+    /// [`import_main_document_xml`] entry point (no package available).
+    pub retained_parts: RetainedParts,
 }
 
 /// Imports the main document of an admitted DOCX package into a v1 document,
@@ -319,33 +328,211 @@ pub fn import_package(
         import.report.merge(reporter.into_report(retention));
     }
 
-    // Package-manifest disposition pass (F2, `44-COVERAGE-GAP-AUDIT`): every
-    // admitted part the semantic model did not consume is regenerated away on a
-    // semantic edit→save. Report each one so the whole-part-loss class is
-    // auditable rather than silent — `not-retained` in Semantic mode, and
-    // `preserved` in Retention mode (kept verbatim by the byte floor above),
-    // independent of when each part is later modeled. Pure OPC plumbing (the
-    // content-type manifest and `_rels` parts) is regenerated deterministically
-    // from the model, so it is not a data-loss disposition.
-    let part_retention = match config.mode {
-        ImportMode::Retention => RetentionOutcome::Preserved,
-        ImportMode::Semantic => RetentionOutcome::NotRetained,
-    };
-    let unconsumed: Vec<PartDisposition> = package
-        .entries()
-        .iter()
-        .map(|entry| entry.part_name.as_str())
-        .filter(|name| !is_package_plumbing(name) && !consumed.contains(*name))
-        .map(|name| PartDisposition {
-            part_name: name.to_owned(),
-            content_type: package.content_type(name).map(str::to_owned),
-        })
-        .collect();
-    import
-        .report
-        .add_part_dispositions(unconsumed, part_retention);
+    // Package-manifest disposition pass (F2, `44-COVERAGE-GAP-AUDIT`) + opaque
+    // part side-table (P1F-2). Every admitted part the semantic model did not
+    // consume is enumerated. Pure OPC plumbing (the content-type manifest and
+    // `_rels` parts) is regenerated deterministically from the model, so it is
+    // not a data-loss disposition and is skipped here (an owned `_rels` is
+    // instead carried with its part, below).
+    //
+    // Each non-plumbing unconsumed part is either:
+    //   * preserved verbatim via the side-table (glossary, embeddings, charts,
+    //     customXml, webSettings, thumbnail, stylesWithEffects, comment
+    //     companions, ...) — reported `preserved` on both paths (the semantic
+    //     writer re-emits it; Retention's byte floor already keeps it); or
+    //   * a digital signature (`_xmlsignatures/*` or a signature content type) —
+    //     deliberately NOT preserved on the semantic path, because editing
+    //     invalidates a signature. It is dropped and reported `not-retained` in
+    //     Semantic mode (Retention's byte floor still keeps the bytes verbatim,
+    //     so it is `preserved` there).
+    let (retained_parts, dispositions) = build_retained_parts(package, &consumed, config)?;
+    import.retained_parts = retained_parts;
+    import.report.add_part_dispositions(dispositions);
 
     Ok(import)
+}
+
+/// Enumerates every admitted, non-plumbing part the semantic model did not
+/// consume, building the opaque side-table (preserved parts + the root/document
+/// relationships that keep them reachable) and the matching whole-part
+/// dispositions. Digital signatures are excluded from the side-table and
+/// reported dropped on the semantic path.
+///
+/// The side-table's aggregate byte size is bounded by `max_text_bytes` (the same
+/// ceiling the Retention byte floor uses), so a hostile package cannot inflate
+/// retained memory without limit.
+fn build_retained_parts(
+    package: &mut DocxPackage<'_>,
+    consumed: &std::collections::BTreeSet<String>,
+    config: ImportConfig,
+) -> Result<(RetainedParts, Vec<(PartDisposition, RetentionOutcome)>), ImportError> {
+    // The admitted part names (sorted), and the subset the model does not
+    // consume and that is not pure OPC plumbing — the candidate opaque parts.
+    let admitted: std::collections::BTreeSet<String> = package
+        .entries()
+        .iter()
+        .map(|entry| entry.part_name.clone())
+        .collect();
+    let unconsumed: Vec<String> = package
+        .entries()
+        .iter()
+        .map(|entry| entry.part_name.clone())
+        .filter(|name| !is_package_plumbing(name) && !consumed.contains(name))
+        .collect();
+
+    // The set of parts actually preserved via the side-table (non-signature),
+    // so a relationship targeting a preserved part can be re-added below.
+    let preserved_names: std::collections::BTreeSet<String> = unconsumed
+        .iter()
+        .filter(|name| !opaque::is_signature_part(name, package.content_type(name)))
+        .cloned()
+        .collect();
+
+    let mut parts = Vec::new();
+    let mut dispositions = Vec::new();
+    let mut total = 0_usize;
+    for name in &unconsumed {
+        let content_type = package.content_type(name).map(str::to_owned);
+        let is_signature = opaque::is_signature_part(name, content_type.as_deref());
+        // Retention: the byte floor keeps every part, so both preserved and
+        // signature parts are `preserved`. Semantic: only side-table parts are
+        // preserved; a signature is dropped (`not-retained`).
+        let retention = match config.mode {
+            ImportMode::Retention => RetentionOutcome::Preserved,
+            ImportMode::Semantic if is_signature => RetentionOutcome::NotRetained,
+            ImportMode::Semantic => RetentionOutcome::Preserved,
+        };
+        dispositions.push((
+            PartDisposition {
+                part_name: name.clone(),
+                content_type: content_type.clone(),
+            },
+            retention,
+        ));
+        if is_signature {
+            continue;
+        }
+        let bytes = package.read_part(name).map_err(ImportError::Package)?;
+        // The part's own `_rels` companion (a chart's rels to its embeddings, a
+        // customXml item's rels to its itemProps, ...): carried verbatim so the
+        // parts it references stay reachable.
+        let rels_name = relationship_part_name(name);
+        let rels = if admitted.contains(&rels_name) {
+            let rels_bytes = package
+                .read_part(&rels_name)
+                .map_err(ImportError::Package)?;
+            Some(RetainedRels {
+                part_name: rels_name,
+                bytes: rels_bytes,
+            })
+        } else {
+            None
+        };
+        total = total
+            .saturating_add(bytes.len())
+            .saturating_add(rels.as_ref().map_or(0, |rels| rels.bytes.len()));
+        if total > config.max_text_bytes {
+            return Err(ImportError::LimitExceeded {
+                limit: "retained_bytes",
+            });
+        }
+        parts.push(RetainedPart {
+            part_name: name.clone(),
+            content_type,
+            bytes,
+            rels,
+        });
+    }
+
+    // Root/document relationships that target a preserved part, re-added on write
+    // (with a fresh id) so the part stays reachable. Signature relationships are
+    // excluded (their targets are not preserved anyway). Body-referenced parts
+    // (charts/embeddings) keep their relationship too, but the regenerated body
+    // no longer names the id, so they survive as orphaned bytes (Tier-3
+    // re-linking is out of scope).
+    let mut relationships = Vec::new();
+    let root_rels = package
+        .part_relationships("")
+        .map_err(ImportError::Package)?;
+    collect_referencing_rels(
+        &root_rels,
+        opaque::RelationshipOwner::Root,
+        &preserved_names,
+        &mut relationships,
+    );
+    let document_rels: Vec<casual_doc_ooxml::DocumentRelationship> =
+        package.main_document_relationships().to_vec();
+    collect_referencing_rels(
+        &document_rels,
+        opaque::RelationshipOwner::Document,
+        &preserved_names,
+        &mut relationships,
+    );
+    // Deterministic order independent of source id/enumeration order.
+    relationships.sort_by(|left, right| {
+        (
+            owner_rank(left.owner),
+            &left.relationship_type,
+            &left.target,
+        )
+            .cmp(&(
+                owner_rank(right.owner),
+                &right.relationship_type,
+                &right.target,
+            ))
+    });
+
+    Ok((
+        RetainedParts {
+            parts,
+            relationships,
+        },
+        dispositions,
+    ))
+}
+
+/// Appends every relationship in `relationships` that targets a preserved part
+/// (and is not signature machinery) as a [`RetainedRelationship`] owned by
+/// `owner`.
+fn collect_referencing_rels(
+    relationships: &[casual_doc_ooxml::DocumentRelationship],
+    owner: opaque::RelationshipOwner,
+    preserved_names: &std::collections::BTreeSet<String>,
+    out: &mut Vec<RetainedRelationship>,
+) {
+    for relationship in relationships {
+        if opaque::is_signature_relationship(&relationship.relationship_type) {
+            continue;
+        }
+        let Some(resolved) = &relationship.resolved_part else {
+            continue;
+        };
+        if preserved_names.contains(resolved) {
+            out.push(RetainedRelationship {
+                owner,
+                relationship_type: relationship.relationship_type.clone(),
+                target: relationship.target.clone(),
+                external: relationship.target_mode == casual_doc_ooxml::TargetMode::External,
+            });
+        }
+    }
+}
+
+/// Stable sort key for a relationship owner (root before document).
+const fn owner_rank(owner: opaque::RelationshipOwner) -> u8 {
+    match owner {
+        opaque::RelationshipOwner::Root => 0,
+        opaque::RelationshipOwner::Document => 1,
+    }
+}
+
+/// The `_rels` part name carrying a part's relationships, e.g.
+/// `word/charts/chart1.xml` -> `word/charts/_rels/chart1.xml.rels`.
+fn relationship_part_name(part_name: &str) -> String {
+    match part_name.rsplit_once('/') {
+        Some((directory, file)) => format!("{directory}/_rels/{file}.rels"),
+        None => format!("_rels/{part_name}.rels"),
+    }
 }
 
 /// Whether a part is pure OPC package plumbing — the content-type manifest or a
@@ -809,6 +996,9 @@ pub(crate) fn import_with_sources(
         document,
         report: reporter.into_report(retention),
         retained_source,
+        // The XML-only path has no package, so no opaque parts to preserve;
+        // `import_package` populates the side-table when a package is available.
+        retained_parts: RetainedParts::default(),
     })
 }
 

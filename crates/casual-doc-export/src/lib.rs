@@ -19,7 +19,7 @@ use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, DateTime, ZipWriter};
 
 mod semantic;
-pub use semantic::write_document;
+pub use semantic::{write_document, write_document_with_retained_parts};
 
 /// A package-writing failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -77,7 +77,7 @@ mod semantic_tests {
     use zip::write::SimpleFileOptions;
     use zip::{CompressionMethod, ZipWriter};
 
-    use crate::write_document;
+    use crate::{write_document, write_document_with_retained_parts};
 
     /// Zips a minimal DOCX around a `word/document.xml` body and its
     /// `document.xml.rels`, so a source document that references external
@@ -1761,6 +1761,302 @@ mod semantic_tests {
         .unwrap()
         .document;
         assert_eq!(m1, m2, "an external URL with `&` survives write -> reopen");
+    }
+
+    // --- Opaque part side-table (P1F-2) --------------------------------------
+
+    /// Imports a whole package in Semantic mode, returning the full import result
+    /// (model + opaque part side-table).
+    fn import_semantic(bytes: &[u8]) -> casual_doc_import::Import {
+        let mut package = DocxPackage::open(bytes, PackageLimits::default()).unwrap();
+        import_package(
+            &mut package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+    }
+
+    /// A package with an unmodeled customXml data store: `customXml/item1.xml`
+    /// (referenced from `document.xml.rels`), its owned rels to
+    /// `customXml/itemProps1.xml`, and the props part. None of it is consumed by
+    /// the semantic model.
+    fn customxml_package() -> Vec<u8> {
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/customXml/itemProps1.xml" ContentType="application/vnd.openxmlformats-officedocument.customXmlProperties+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml" Target="../customXml/item1.xml"/></Relationships>"#;
+        let item = br#"<root xmlns="urn:enterprise-template"><field>value</field></root>"#;
+        let item_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXmlProps" Target="itemProps1.xml"/></Relationships>"#;
+        let item_props = br#"<ds:datastoreItem ds:itemID="{GUID}" xmlns:ds="http://schemas.openxmlformats.org/officeDocument/2006/customXml"/>"#;
+        zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("customXml/item1.xml", item),
+            ("customXml/_rels/item1.xml.rels", item_rels),
+            ("customXml/itemProps1.xml", item_props),
+        ])
+    }
+
+    #[test]
+    fn opaque_customxml_store_survives_the_semantic_round_trip() {
+        // The key deliverable: an unmodeled customXml store (data part + its owned
+        // rels + props part) is imported, written by the semantic writer via the
+        // side-table, and reopened; every part is byte-identical and its
+        // content-type resolves. Before P1F-2 the whole store was dropped on the
+        // first semantic edit→save.
+        let source = customxml_package();
+        let original = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let item_bytes = {
+            let mut package = original;
+            package.read_part("customXml/item1.xml").unwrap()
+        };
+
+        let import = import_semantic(&source);
+        // The side-table carries the data part (with its owned rels) and the props
+        // part; the customXml relationship keeps the store reachable.
+        assert_eq!(import.retained_parts.parts.len(), 2);
+        let names: Vec<&str> = import
+            .retained_parts
+            .parts
+            .iter()
+            .map(|part| part.part_name.as_str())
+            .collect();
+        assert_eq!(names, ["customXml/item1.xml", "customXml/itemProps1.xml"]);
+        let item = &import.retained_parts.parts[0];
+        assert_eq!(
+            item.rels.as_ref().unwrap().part_name,
+            "customXml/_rels/item1.xml.rels"
+        );
+        assert_eq!(import.retained_parts.relationships.len(), 1);
+        assert_eq!(
+            import.retained_parts.relationships[0].relationship_type,
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml"
+        );
+
+        let written = write_document_with_retained_parts(
+            &import.document,
+            &BTreeMap::new(),
+            &import.retained_parts,
+        )
+        .unwrap();
+
+        // The written package opens and every preserved part is byte-identical
+        // with its content-type present.
+        let mut reopened = DocxPackage::open(&written, PackageLimits::default()).unwrap();
+        assert_eq!(
+            reopened.read_part("customXml/item1.xml").unwrap(),
+            item_bytes
+        );
+        assert_eq!(
+            reopened.content_type("customXml/item1.xml"),
+            Some("application/xml")
+        );
+        assert_eq!(
+            reopened.content_type("customXml/itemProps1.xml"),
+            Some("application/vnd.openxmlformats-officedocument.customXmlProperties+xml")
+        );
+        // The owned rels (item1 -> itemProps1) is preserved verbatim, so the props
+        // part stays reachable.
+        assert_eq!(
+            reopened
+                .read_part("customXml/_rels/item1.xml.rels")
+                .unwrap(),
+            br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXmlProps" Target="itemProps1.xml"/></Relationships>"#
+        );
+        // The customXml relationship is re-added to document.xml.rels, so the
+        // store is reachable from the document part.
+        let doc_rels = reopened.read_part("word/_rels/document.xml.rels").unwrap();
+        assert!(String::from_utf8_lossy(&doc_rels).contains("../customXml/item1.xml"));
+    }
+
+    #[test]
+    fn preserved_part_is_reported_preserved_and_survives_a_reimport() {
+        // After a semantic write, reopening and re-importing still preserves the
+        // part and reports it `preserved` (not `not-retained`) — the disposition
+        // flip is stable across a full round trip.
+        let source = customxml_package();
+        let import = import_semantic(&source);
+        let written = write_document_with_retained_parts(
+            &import.document,
+            &BTreeMap::new(),
+            &import.retained_parts,
+        )
+        .unwrap();
+
+        let reimport = import_semantic(&written);
+        let entry = reimport
+            .report
+            .entries
+            .iter()
+            .find(|entry| {
+                entry
+                    .part
+                    .as_ref()
+                    .is_some_and(|part| part.part_name == "customXml/item1.xml")
+            })
+            .expect("the customXml part is dispositioned");
+        assert_eq!(
+            entry.retention_outcome,
+            casual_doc_import::RetentionOutcome::Preserved
+        );
+        assert_eq!(reimport.retained_parts.parts.len(), 2);
+    }
+
+    #[test]
+    fn opaque_embedding_and_glossary_parts_survive_the_semantic_round_trip() {
+        // An OLE embedding (`word/embeddings/oleObject1.bin`, a `.bin` whose only
+        // content-type source is an `Override`) and a glossary document
+        // (`word/glossary/document.xml`), neither modeled. Both survive verbatim
+        // with their content-types merged into the manifest.
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/embeddings/oleObject1.bin" ContentType="application/vnd.openxmlformats-officedocument.oleObject"/><Override PartName="/word/glossary/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.glossary+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject" Target="embeddings/oleObject1.bin"/><Relationship Id="rId6" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/glossaryDocument" Target="glossary/document.xml"/></Relationships>"#;
+        let ole = b"\x00\x01OLE-BINARY-BLOB\x02\x03";
+        let glossary = br#"<w:glossaryDocument xmlns:w="urn:w"><w:docParts/></w:glossaryDocument>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/embeddings/oleObject1.bin", ole),
+            ("word/glossary/document.xml", glossary),
+        ]);
+
+        let import = import_semantic(&source);
+        let names: Vec<&str> = import
+            .retained_parts
+            .parts
+            .iter()
+            .map(|part| part.part_name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "word/embeddings/oleObject1.bin",
+                "word/glossary/document.xml"
+            ]
+        );
+
+        let written = write_document_with_retained_parts(
+            &import.document,
+            &BTreeMap::new(),
+            &import.retained_parts,
+        )
+        .unwrap();
+        let mut reopened = DocxPackage::open(&written, PackageLimits::default()).unwrap();
+        assert_eq!(
+            reopened
+                .read_part("word/embeddings/oleObject1.bin")
+                .unwrap(),
+            ole
+        );
+        assert_eq!(
+            reopened.content_type("word/embeddings/oleObject1.bin"),
+            Some("application/vnd.openxmlformats-officedocument.oleObject")
+        );
+        assert_eq!(
+            reopened.read_part("word/glossary/document.xml").unwrap(),
+            glossary
+        );
+        assert_eq!(
+            reopened.content_type("word/glossary/document.xml"),
+            Some(
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document.glossary+xml"
+            )
+        );
+    }
+
+    #[test]
+    fn digital_signature_is_not_preserved_and_is_reported_dropped() {
+        // A signed package: editing regenerates the body, which invalidates any
+        // signature, so signatures are deliberately NOT preserved on the semantic
+        // path. They are dropped and reported `not-retained`.
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/_xmlsignatures/origin.sigs" ContentType="application/vnd.openxmlformats-package.digital-signature-origin"/><Override PartName="/_xmlsignatures/sig1.xml" ContentType="application/vnd.openxmlformats-package.digital-signature-xmlsignature+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/digital-signature/origin" Target="_xmlsignatures/origin.sigs"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>"#;
+        let origin = b"signature-origin";
+        let origin_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/package/2006/relationships/digital-signature/signature" Target="sig1.xml"/></Relationships>"#;
+        let sig = br#"<Signature xmlns="http://www.w3.org/2000/09/xmldsig#"/>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("_xmlsignatures/origin.sigs", origin),
+            ("_xmlsignatures/_rels/origin.sigs.rels", origin_rels),
+            ("_xmlsignatures/sig1.xml", sig),
+        ]);
+
+        let import = import_semantic(&source);
+        // No signature part is preserved via the side-table.
+        assert!(import.retained_parts.is_empty());
+        assert!(import.retained_parts.relationships.is_empty());
+        // Both signature content parts are dispositioned `not-retained` (dropped).
+        for part_name in ["_xmlsignatures/origin.sigs", "_xmlsignatures/sig1.xml"] {
+            let entry = import
+                .report
+                .entries
+                .iter()
+                .find(|entry| {
+                    entry
+                        .part
+                        .as_ref()
+                        .is_some_and(|part| part.part_name == part_name)
+                })
+                .unwrap_or_else(|| panic!("{part_name} is dispositioned"));
+            assert_eq!(
+                entry.retention_outcome,
+                casual_doc_import::RetentionOutcome::NotRetained,
+                "{part_name} is reported dropped"
+            );
+        }
+
+        // The written package opens and carries no signature parts.
+        let written = write_document_with_retained_parts(
+            &import.document,
+            &BTreeMap::new(),
+            &import.retained_parts,
+        )
+        .unwrap();
+        let reopened = DocxPackage::open(&written, PackageLimits::default()).unwrap();
+        assert!(
+            !reopened
+                .entries()
+                .iter()
+                .any(|entry| entry.part_name.starts_with("_xmlsignatures/")),
+            "no signature part is emitted"
+        );
+    }
+
+    #[test]
+    fn write_document_without_side_table_is_unchanged() {
+        // The no-side-table wrapper is byte-identical to writing with an empty
+        // side-table (the additive path does not perturb the base writer).
+        let source = customxml_package();
+        let import = import_semantic(&source);
+        let plain = write_document(&import.document, &BTreeMap::new()).unwrap();
+        let empty = write_document_with_retained_parts(
+            &import.document,
+            &BTreeMap::new(),
+            &casual_doc_import::RetainedParts::default(),
+        )
+        .unwrap();
+        assert_eq!(plain, empty);
+        // Without the side-table the customXml store is absent from the output.
+        let reopened = DocxPackage::open(&plain, PackageLimits::default()).unwrap();
+        assert!(
+            !reopened
+                .entries()
+                .iter()
+                .any(|entry| entry.part_name.starts_with("customXml/"))
+        );
     }
 }
 
