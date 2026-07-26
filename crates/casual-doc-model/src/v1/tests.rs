@@ -1399,6 +1399,7 @@ fn field_with_cached_result_validates_and_round_trips_json() {
         id: tid(10),
         instruction: " PAGE ".to_owned(),
         inlines: vec![run_inline(tid(11), "7")],
+        form: None,
     };
     let document = table_document(vec![field_paragraph(field)]).unwrap();
     let json = document.to_json().unwrap();
@@ -1421,6 +1422,7 @@ fn field_with_empty_cached_result_is_valid() {
         id: tid(10),
         instruction: " TIME ".to_owned(),
         inlines: Vec::new(),
+        form: None,
     };
     assert!(table_document(vec![field_paragraph(field)]).is_ok());
 }
@@ -1431,6 +1433,7 @@ fn empty_field_instruction_is_rejected() {
         id: tid(10),
         instruction: String::new(),
         inlines: Vec::new(),
+        form: None,
     };
     assert!(matches!(
         table_document(vec![field_paragraph(field)]),
@@ -1446,6 +1449,7 @@ fn field_inside_a_hyperlink_is_rejected() {
         id: tid(12),
         instruction: " PAGE ".to_owned(),
         inlines: Vec::new(),
+        form: None,
     });
     let link = InlineNode::Hyperlink(Hyperlink {
         id: tid(10),
@@ -1480,6 +1484,7 @@ fn hyperlink_inside_a_field_is_rejected() {
         id: tid(10),
         instruction: " REF a ".to_owned(),
         inlines: vec![inner_link],
+        form: None,
     };
     assert!(matches!(
         table_document(vec![field_paragraph(field)]),
@@ -1493,11 +1498,13 @@ fn nested_field_inside_a_field_is_rejected() {
         id: tid(12),
         instruction: " PAGE ".to_owned(),
         inlines: Vec::new(),
+        form: None,
     });
     let field = Field {
         id: tid(10),
         instruction: " = ".to_owned(),
         inlines: vec![inner],
+        form: None,
     };
     assert!(matches!(
         table_document(vec![field_paragraph(field)]),
@@ -1511,10 +1518,88 @@ fn duplicate_id_inside_a_field_result_is_rejected() {
         id: tid(10),
         instruction: " PAGE ".to_owned(),
         inlines: vec![run_inline(tid(10), "7")], // run id collides with field id
+        form: None,
     };
     assert!(matches!(
         table_document(vec![field_paragraph(field)]),
         Err(ModelError::DuplicateNodeId(_))
+    ));
+}
+
+#[test]
+fn legacy_form_field_validates_and_round_trips_json() {
+    let field = Field {
+        id: tid(10),
+        instruction: " FORMDROPDOWN ".to_owned(),
+        inlines: Vec::new(),
+        form: Some(FormFieldData {
+            name: Some("Color".to_owned()),
+            enabled: Some(true),
+            calc_on_exit: Some(false),
+            help_text: Some("Pick one".to_owned()),
+            status_text: None,
+            entry_macro: None,
+            exit_macro: None,
+            kind: FormFieldKind::DropDown(FormDropDown {
+                result: Some(1),
+                entries: vec!["Red".to_owned(), "Green".to_owned()],
+            }),
+        }),
+    };
+    let document = table_document(vec![field_paragraph(field)]).unwrap();
+    let reloaded =
+        Document::from_json(&document.to_json().unwrap(), SnapshotLimits::default()).unwrap();
+    assert_eq!(document, reloaded);
+}
+
+#[test]
+fn form_field_payload_disagreeing_with_instruction_is_rejected() {
+    // A checkbox payload on a FORMTEXT field is a kind mismatch.
+    let field = Field {
+        id: tid(10),
+        instruction: " FORMTEXT ".to_owned(),
+        inlines: Vec::new(),
+        form: Some(FormFieldData {
+            name: None,
+            enabled: None,
+            calc_on_exit: None,
+            help_text: None,
+            status_text: None,
+            entry_macro: None,
+            exit_macro: None,
+            kind: FormFieldKind::CheckBox(FormCheckBox::default()),
+        }),
+    };
+    assert!(matches!(
+        table_document(vec![field_paragraph(field)]),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "field.form.kind"
+        })
+    ));
+}
+
+#[test]
+fn form_field_overlong_name_is_rejected() {
+    let field = Field {
+        id: tid(10),
+        instruction: " FORMTEXT ".to_owned(),
+        inlines: Vec::new(),
+        form: Some(FormFieldData {
+            name: Some("n".repeat(MAX_FORM_FIELD_STRING_BYTES + 1)),
+            enabled: None,
+            calc_on_exit: None,
+            help_text: None,
+            status_text: None,
+            entry_macro: None,
+            exit_macro: None,
+            kind: FormFieldKind::TextInput(FormTextInput::default()),
+        }),
+    };
+    assert!(matches!(
+        table_document(vec![field_paragraph(field)]),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "field.form.string"
+        })
     ));
 }
 

@@ -53,6 +53,7 @@ fn field(id: u64, instruction: &str, cached: &str) -> InlineNode {
         id: node(id),
         instruction: instruction.to_owned(),
         inlines: vec![run(id + 1, cached)],
+        form: None,
     })
 }
 

@@ -602,6 +602,192 @@ mod semantic_tests {
         );
     }
 
+    /// Imports a raw main-document body, writes it, reopens the package, and
+    /// returns both models plus the legacy form field found on the first
+    /// paragraph's first inline. Asserts the write -> reopen fixed point and that
+    /// the reopened model validates.
+    fn form_field_round_trip(
+        xml: &[u8],
+    ) -> (
+        casual_doc_model::v1::FormFieldData,
+        casual_doc_model::v1::FormFieldData,
+    ) {
+        use casual_doc_model::v1::{BlockNode, InlineNode};
+
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        m1.validate().expect("imported form field validates");
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(m1, m2, "the form-field model survives write -> reopen");
+
+        let extract = |doc: &casual_doc_model::v1::Document| {
+            let BlockNode::Paragraph(paragraph) = &doc.body()[0] else {
+                panic!("expected a paragraph");
+            };
+            let InlineNode::Field(field) = &paragraph.inlines[0] else {
+                panic!("expected a field as the first inline");
+            };
+            field.form.clone().expect("the field carries form data")
+        };
+        (extract(&m1), extract(&m2))
+    }
+
+    #[test]
+    fn form_text_input_field_survives_the_semantic_round_trip() {
+        // FORMTEXT with a name, value type, default, max length, and format.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p>
+                <w:r><w:fldChar w:fldCharType="begin"><w:ffData>
+                    <w:name w:val="FirstName"/>
+                    <w:enabled/>
+                    <w:calcOnExit w:val="0"/>
+                    <w:textInput>
+                        <w:type w:val="regular"/>
+                        <w:default w:val="John"/>
+                        <w:maxLength w:val="32"/>
+                        <w:format w:val="UPPERCASE"/>
+                    </w:textInput>
+                </w:ffData></w:fldChar></w:r>
+                <w:r><w:instrText xml:space="preserve"> FORMTEXT </w:instrText></w:r>
+                <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+                <w:r><w:t>John</w:t></w:r>
+                <w:r><w:fldChar w:fldCharType="end"/></w:r>
+            </w:p>
+        </w:body></w:document>"#;
+        let (form, _) = form_field_round_trip(xml);
+        assert_eq!(form.name.as_deref(), Some("FirstName"));
+        assert_eq!(form.enabled, Some(true));
+        assert_eq!(form.calc_on_exit, Some(false));
+        let casual_doc_model::v1::FormFieldKind::TextInput(text) = &form.kind else {
+            panic!("expected a text-input payload");
+        };
+        assert_eq!(
+            text.text_type,
+            Some(casual_doc_model::v1::FormTextType::Regular)
+        );
+        assert_eq!(text.default.as_deref(), Some("John"));
+        assert_eq!(text.max_length, Some(32));
+        assert_eq!(text.format.as_deref(), Some("UPPERCASE"));
+    }
+
+    #[test]
+    fn form_checkbox_field_survives_the_semantic_round_trip() {
+        // FORMCHECKBOX with an explicit size, a default state, and a checked state.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p>
+                <w:r><w:fldChar w:fldCharType="begin"><w:ffData>
+                    <w:name w:val="Agree"/>
+                    <w:checkBox>
+                        <w:size w:val="24"/>
+                        <w:default w:val="1"/>
+                        <w:checked/>
+                    </w:checkBox>
+                </w:ffData></w:fldChar></w:r>
+                <w:r><w:instrText xml:space="preserve"> FORMCHECKBOX </w:instrText></w:r>
+                <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+                <w:r><w:fldChar w:fldCharType="end"/></w:r>
+            </w:p>
+        </w:body></w:document>"#;
+        let (form, _) = form_field_round_trip(xml);
+        assert_eq!(form.name.as_deref(), Some("Agree"));
+        let casual_doc_model::v1::FormFieldKind::CheckBox(check) = &form.kind else {
+            panic!("expected a checkbox payload");
+        };
+        assert_eq!(
+            check.size,
+            Some(casual_doc_model::v1::FormCheckBoxSize::Explicit(24))
+        );
+        assert_eq!(check.default, Some(true));
+        assert_eq!(check.checked, Some(true));
+    }
+
+    #[test]
+    fn form_checkbox_auto_size_survives_the_semantic_round_trip() {
+        // A `w:sizeAuto` checkbox round-trips as `FormCheckBoxSize::Auto`.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p>
+                <w:r><w:fldChar w:fldCharType="begin"><w:ffData>
+                    <w:checkBox>
+                        <w:sizeAuto/>
+                        <w:checked w:val="0"/>
+                    </w:checkBox>
+                </w:ffData></w:fldChar></w:r>
+                <w:r><w:instrText xml:space="preserve"> FORMCHECKBOX </w:instrText></w:r>
+                <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+                <w:r><w:fldChar w:fldCharType="end"/></w:r>
+            </w:p>
+        </w:body></w:document>"#;
+        let (form, _) = form_field_round_trip(xml);
+        let casual_doc_model::v1::FormFieldKind::CheckBox(check) = &form.kind else {
+            panic!("expected a checkbox payload");
+        };
+        assert_eq!(
+            check.size,
+            Some(casual_doc_model::v1::FormCheckBoxSize::Auto)
+        );
+        assert_eq!(check.checked, Some(false));
+    }
+
+    #[test]
+    fn form_dropdown_field_survives_the_semantic_round_trip() {
+        // FORMDROPDOWN with list entries and a selected result index.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p>
+                <w:r><w:fldChar w:fldCharType="begin"><w:ffData>
+                    <w:name w:val="Color"/>
+                    <w:ddList>
+                        <w:result w:val="2"/>
+                        <w:listEntry w:val="Red"/>
+                        <w:listEntry w:val="Green"/>
+                        <w:listEntry w:val="Blue"/>
+                    </w:ddList>
+                </w:ffData></w:fldChar></w:r>
+                <w:r><w:instrText xml:space="preserve"> FORMDROPDOWN </w:instrText></w:r>
+                <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+                <w:r><w:t>Blue</w:t></w:r>
+                <w:r><w:fldChar w:fldCharType="end"/></w:r>
+            </w:p>
+        </w:body></w:document>"#;
+        let (form, _) = form_field_round_trip(xml);
+        assert_eq!(form.name.as_deref(), Some("Color"));
+        let casual_doc_model::v1::FormFieldKind::DropDown(list) = &form.kind else {
+            panic!("expected a drop-down payload");
+        };
+        assert_eq!(list.result, Some(2));
+        assert_eq!(list.entries, vec!["Red", "Green", "Blue"]);
+    }
+
+    #[test]
+    fn form_field_help_status_and_flags_survive_the_semantic_round_trip() {
+        // Help/status text plus the enabled/calcOnExit flags on a FORMTEXT field.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p>
+                <w:r><w:fldChar w:fldCharType="begin"><w:ffData>
+                    <w:name w:val="Notes"/>
+                    <w:enabled w:val="0"/>
+                    <w:calcOnExit/>
+                    <w:helpText w:val="Type your notes"/>
+                    <w:statusText w:val="Notes field"/>
+                    <w:textInput/>
+                </w:ffData></w:fldChar></w:r>
+                <w:r><w:instrText xml:space="preserve"> FORMTEXT </w:instrText></w:r>
+                <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+                <w:r><w:fldChar w:fldCharType="end"/></w:r>
+            </w:p>
+        </w:body></w:document>"#;
+        let (form, _) = form_field_round_trip(xml);
+        assert_eq!(form.enabled, Some(false));
+        assert_eq!(form.calc_on_exit, Some(true));
+        assert_eq!(form.help_text.as_deref(), Some("Type your notes"));
+        assert_eq!(form.status_text.as_deref(), Some("Notes field"));
+        assert!(matches!(
+            form.kind,
+            casual_doc_model::v1::FormFieldKind::TextInput(_)
+        ));
+    }
+
     #[test]
     fn sdt_dropdown_list_entries_survive_the_semantic_round_trip() {
         use casual_doc_model::v1::{SdtControlData, SdtControlKind};
