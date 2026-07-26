@@ -1845,7 +1845,7 @@ mod tests {
 
     // --- Table pagination (P1D-003) -------------------------------------------
 
-    use crate::block::{CellBorders, CellFragment};
+    use crate::block::{CellBorders, CellContentMargins, CellFragment, CellVAlign};
 
     fn tnode(id: u64) -> NodeId {
         NodeId::from_parts(id, 1).unwrap()
@@ -1859,6 +1859,8 @@ mod tests {
             x: Twip::ZERO,
             width: Twip(3000),
             blocks,
+            margins: CellContentMargins::default(),
+            vertical_alignment: CellVAlign::default(),
             borders: CellBorders::default(),
             shading: None,
         }

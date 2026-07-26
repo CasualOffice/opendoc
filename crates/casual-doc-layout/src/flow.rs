@@ -28,8 +28,8 @@ use casual_doc_model::v1::{
 };
 
 use crate::block::{
-    BlockBorders, BlockFragment, BoxMetrics, BreakControl, CellBorders, CellFragment,
-    ParagraphDecor, ResolvedEdge,
+    BlockBorders, BlockFragment, BoxMetrics, BreakControl, CellBorders, CellContentMargins,
+    CellFragment, CellVAlign, ParagraphDecor, ResolvedEdge,
 };
 use crate::cascade::StyleCascade;
 use crate::incremental::{DirtySet, GalleyCache};
@@ -551,12 +551,22 @@ fn flow_table(
             let cell_width = Twip((cell_end.raw() - cell_x.raw()).max(1));
             let borders = resolve_cell_borders(&table.properties.borders, &row.cells, index);
             let shading = cell.properties.shading.fill.map(|c| [c.r, c.g, c.b, 255]);
+            // Word insets a cell's content by `w:tcMar` (per-cell), falling back to
+            // the table's `w:tblCellMar`, then to Word's built-in default. Content
+            // therefore flows at the reduced inner width; composition offsets it by
+            // the start/top margins (and the vertical-alignment slack).
+            let margins =
+                resolve_cell_margins(&cell.properties.margins, &table.properties.cell_margins);
+            let inner_width =
+                Twip((cell_width.raw() - margins.start.raw() - margins.end.raw()).max(1));
             cells.push(CellFragment {
                 id: cell.id,
                 grid_span: span as u32,
                 x: cell_x,
                 width: cell_width,
-                blocks: flow_blocks(&cell.blocks, shaper, cell_width, ctx),
+                blocks: flow_blocks(&cell.blocks, shaper, inner_width, ctx),
+                margins,
+                vertical_alignment: cell_vertical_alignment(&cell.properties),
                 borders,
                 shading,
             });
@@ -573,6 +583,39 @@ fn flow_table(
             header: row.properties.header,
             clip,
         });
+    }
+}
+
+/// Word's built-in default cell content margin for the leading/trailing edges
+/// (`w:tblCellMar` when the document declares none): 108 twips (0.075"). The
+/// top/bottom default is zero.
+const DEFAULT_CELL_MARGIN_LR: i32 = 108;
+
+/// Resolves a cell's effective content margins in twips: for each edge, the
+/// cell's own `w:tcMar` wins, else the table's `w:tblCellMar`, else Word's default
+/// (108 twips left/right, 0 top/bottom). This is the inset from each cell edge to
+/// its content box (`docs/38-…#tables`).
+fn resolve_cell_margins(
+    cell: &casual_doc_model::v1::CellMargins,
+    table: &casual_doc_model::v1::CellMargins,
+) -> CellContentMargins {
+    let pick =
+        |c: Option<i32>, t: Option<i32>, default: i32| Twip(c.or(t).unwrap_or(default).max(0));
+    CellContentMargins {
+        top: pick(cell.top_twips, table.top_twips, 0),
+        start: pick(cell.start_twips, table.start_twips, DEFAULT_CELL_MARGIN_LR),
+        bottom: pick(cell.bottom_twips, table.bottom_twips, 0),
+        end: pick(cell.end_twips, table.end_twips, DEFAULT_CELL_MARGIN_LR),
+    }
+}
+
+/// Maps a cell's `w:vAlign` to the layout enum (`Top` when unset — Word's
+/// default).
+fn cell_vertical_alignment(props: &casual_doc_model::v1::TableCellProperties) -> CellVAlign {
+    match props.vertical_alignment {
+        Some(casual_doc_model::v1::CellVerticalAlignment::Center) => CellVAlign::Center,
+        Some(casual_doc_model::v1::CellVerticalAlignment::Bottom) => CellVAlign::Bottom,
+        Some(casual_doc_model::v1::CellVerticalAlignment::Top) | None => CellVAlign::Top,
     }
 }
 
@@ -3911,5 +3954,110 @@ mod tests {
             )),
             "the box's image paints inside it"
         );
+    }
+
+    #[test]
+    fn cell_margins_resolve_by_precedence() {
+        use casual_doc_model::v1::CellMargins;
+
+        // Word's built-in default when neither cell nor table declares margins:
+        // 108 twips left/right, 0 top/bottom.
+        let none = resolve_cell_margins(&CellMargins::default(), &CellMargins::default());
+        assert_eq!(none.start, Twip(108));
+        assert_eq!(none.end, Twip(108));
+        assert_eq!(none.top, Twip::ZERO);
+        assert_eq!(none.bottom, Twip::ZERO);
+
+        // The table default (`w:tblCellMar`) is used when the cell is silent.
+        let table = CellMargins {
+            top_twips: Some(20),
+            start_twips: Some(200),
+            bottom_twips: Some(30),
+            end_twips: Some(200),
+        };
+        let from_table = resolve_cell_margins(&CellMargins::default(), &table);
+        assert_eq!(from_table.start, Twip(200));
+        assert_eq!(from_table.top, Twip(20));
+
+        // The cell's own `w:tcMar` wins per edge, falling back to the table for the
+        // edges it does not set.
+        let cell = CellMargins {
+            start_twips: Some(50),
+            top_twips: Some(15),
+            ..CellMargins::default()
+        };
+        let effective = resolve_cell_margins(&cell, &table);
+        assert_eq!(effective.start, Twip(50), "cell start wins");
+        assert_eq!(effective.top, Twip(15), "cell top wins");
+        assert_eq!(effective.end, Twip(200), "end falls back to the table");
+        assert_eq!(effective.bottom, Twip(30), "bottom falls back to the table");
+    }
+
+    #[test]
+    fn cell_vertical_alignment_slack_placement() {
+        use crate::block::{CellContentMargins, CellFragment};
+
+        // A cell 100 twips tall of content, inset 10 top / 10 bottom, inside a row
+        // 200 twips tall: 80 twips of slack above/below the content box.
+        let margins = CellContentMargins {
+            top: Twip(10),
+            bottom: Twip(10),
+            start: Twip(108),
+            end: Twip(108),
+        };
+        let make = |valign: CellVAlign| CellFragment {
+            id: NodeId::from_parts(9, 1).unwrap(),
+            grid_span: 1,
+            x: Twip::ZERO,
+            width: Twip(3000),
+            // A single 100-twip-tall empty paragraph line stands in for content.
+            blocks: vec![BlockFragment::Paragraph {
+                id: NodeId::from_parts(10, 1).unwrap(),
+                lines: crate::text::LineLayout {
+                    lines: vec![crate::text::Line {
+                        runs: Vec::new(),
+                        ascent: Twip(100),
+                        descent: Twip::ZERO,
+                        height: Twip(100),
+                        range: ModelRange::new(
+                            ModelPos::new(NodeId::from_parts(10, 1).unwrap(), 0),
+                            ModelPos::new(NodeId::from_parts(10, 1).unwrap(), 0),
+                        ),
+                        line_break: LineBreak::Wrap,
+                        page_break_after: false,
+                        bars: Vec::new(),
+                        images: Vec::new(),
+                        fields: Vec::new(),
+                        text_boxes: Vec::new(),
+                    }],
+                },
+                box_metrics: BoxMetrics::default(),
+                break_control: BreakControl::default(),
+                decor: ParagraphDecor::default(),
+            }],
+            margins,
+            vertical_alignment: valign,
+            borders: CellBorders::default(),
+            shading: None,
+        };
+        let row = Twip(200);
+        assert_eq!(
+            make(CellVAlign::Top).content_y_offset(row),
+            Twip(10),
+            "top: just the top margin"
+        );
+        // slack = 200 - (10 + 100 + 10) = 80.
+        assert_eq!(
+            make(CellVAlign::Center).content_y_offset(row),
+            Twip(10 + 40),
+            "center: top margin + half the slack"
+        );
+        assert_eq!(
+            make(CellVAlign::Bottom).content_y_offset(row),
+            Twip(10 + 80),
+            "bottom: top margin + all the slack"
+        );
+        // Occupied height counts the top+bottom margins, so it drives row height.
+        assert_eq!(make(CellVAlign::Top).occupied_height(), Twip(120));
     }
 }
