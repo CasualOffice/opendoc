@@ -2392,6 +2392,35 @@ mod semantic_tests {
     }
 
     #[test]
+    fn unequal_column_widths_survive_the_semantic_round_trip() {
+        // Per-column `w:col` widths + `w:equalWidth="0"` + a separator: the writer
+        // must re-emit `w:cols` as a non-empty element wrapping one `w:col` each.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:r><w:t>x</w:t></w:r></w:p>
+            <w:sectPr>
+                <w:pgSz w:w="12240" w:h="15840"/>
+                <w:pgMar w:top="1440" w:bottom="1440" w:start="1440" w:end="1440"/>
+                <w:cols w:num="2" w:equalWidth="0" w:sep="1">
+                    <w:col w:w="3163" w:space="40"/>
+                    <w:col w:w="6447"/>
+                </w:cols>
+            </w:sectPr>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        let cols = &m1.definitions().sections[0].columns;
+        assert_eq!(cols.equal_width, Some(false));
+        assert_eq!(cols.columns.len(), 2);
+        assert_eq!(cols.columns[0].width_twips, 3163);
+        assert_eq!(cols.columns[0].space_twips, Some(40));
+        assert_eq!(cols.columns[1].width_twips, 6447);
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(m1, m2, "unequal column widths survive write -> reopen");
+    }
+
+    #[test]
     fn section_long_tail_survives_the_semantic_round_trip() {
         // The section long tail (P1F-36): page borders, line numbering, a
         // per-section footnotePr, text direction, bidi, paper source, and a

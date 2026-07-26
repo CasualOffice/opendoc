@@ -91,6 +91,8 @@ fn section(
             count: 1,
             space_twips: None,
             separator: None,
+            equal_width: None,
+            columns: Vec::new(),
         },
         headers,
         footers,

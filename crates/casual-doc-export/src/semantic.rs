@@ -2319,13 +2319,31 @@ fn write_section_properties(
     }
     let mut cols = start("w:cols");
     cols.push_attribute(("w:num", section.columns.count.to_string().as_str()));
+    if let Some(equal_width) = section.columns.equal_width {
+        cols.push_attribute(("w:equalWidth", if equal_width { "1" } else { "0" }));
+    }
     if let Some(space) = section.columns.space_twips {
         cols.push_attribute(("w:space", space.to_string().as_str()));
     }
     if let Some(separator) = section.columns.separator {
         cols.push_attribute(("w:sep", if separator { "1" } else { "0" }));
     }
-    w.write_event(Event::Empty(cols)).map_err(pkg)?;
+    if section.columns.columns.is_empty() {
+        w.write_event(Event::Empty(cols)).map_err(pkg)?;
+    } else {
+        // Explicit per-column geometry: `w:cols` wraps one `w:col` per column.
+        w.write_event(Event::Start(cols)).map_err(pkg)?;
+        for def in &section.columns.columns {
+            let mut col = start("w:col");
+            col.push_attribute(("w:w", def.width_twips.to_string().as_str()));
+            if let Some(space) = def.space_twips {
+                col.push_attribute(("w:space", space.to_string().as_str()));
+            }
+            w.write_event(Event::Empty(col)).map_err(pkg)?;
+        }
+        w.write_event(Event::End(BytesEnd::new("w:cols")))
+            .map_err(pkg)?;
+    }
     if let Some(alignment) = section.vertical_alignment {
         let mut el = start("w:vAlign");
         el.push_attribute((

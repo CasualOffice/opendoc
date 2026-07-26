@@ -1896,6 +1896,33 @@ fn body_level_section_geometry_is_mapped() {
 }
 
 #[test]
+fn unequal_column_widths_and_separator_are_mapped() {
+    // The SDS's "narrow label + wide content" section: unequal per-column widths
+    // with a separator rule.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:t>x</w:t></w:r></w:p>
+        <w:sectPr>
+            <w:pgSz w:w="12240" w:h="15840"/>
+            <w:cols w:num="2" w:equalWidth="0" w:sep="1">
+                <w:col w:w="3163" w:space="40"/>
+                <w:col w:w="6447"/>
+            </w:cols>
+        </w:sectPr>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let section = &import.document.definitions().sections[0];
+    let cols = &section.columns;
+    assert_eq!(cols.count, 2);
+    assert_eq!(cols.equal_width, Some(false));
+    assert_eq!(cols.separator, Some(true));
+    assert_eq!(cols.columns.len(), 2);
+    assert_eq!(cols.columns[0].width_twips, 3163);
+    assert_eq!(cols.columns[0].space_twips, Some(40));
+    assert_eq!(cols.columns[1].width_twips, 6447);
+    assert_eq!(cols.columns[1].space_twips, None);
+}
+
+#[test]
 fn image_relationships_map_to_media_references() {
     use std::io::{Cursor, Write};
     use zip::write::SimpleFileOptions;

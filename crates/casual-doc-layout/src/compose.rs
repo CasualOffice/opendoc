@@ -15,6 +15,10 @@ use crate::units::{Point, Rect, Size, Twip};
 /// Width (twips) of a `bar` tab stop's vertical rule (~0.5pt, Word's hairline).
 const BAR_TAB_WIDTH: Twip = Twip(10);
 
+/// Width (twips) of a column separator rule (`w:cols/@w:sep`) — Word's ~0.5pt
+/// hairline, the same weight as a bar-tab rule.
+const COLUMN_SEPARATOR_WIDTH: Twip = Twip(10);
+
 /// The internal margin (twips) between an inline text box's border and its flowed
 /// content — Word's default `wps:bodyPr` inset (~0.05in). The flow layer sizes the
 /// box to include it on all four sides ([`crate::flow`]); composition offsets the
@@ -147,6 +151,19 @@ pub fn compose_page(page: &Page) -> DisplayList {
     floats.sort_by_key(|anchor| anchor.z);
     for anchor in floats.iter().filter(|anchor| anchor.behind_doc) {
         compose_anchor(&mut list, anchor);
+    }
+    // Column separator rules (`w:cols/@w:sep`): a thin vertical hairline centered in
+    // each inter-column gap, painted under the text layer (the gap carries no
+    // glyphs, so z-order is immaterial).
+    for sep in &page.separators {
+        list.push(PaintItem::Line {
+            from: Point::new(sep.x, sep.top),
+            to: Point::new(sep.x, sep.bottom),
+            stroke: Stroke {
+                color: Color::BLACK,
+                width: stroke_px(COLUMN_SEPARATOR_WIDTH),
+            },
+        });
     }
     for placed in &page.header {
         compose_fragment(&mut list, &placed.fragment, placed.rect.origin);

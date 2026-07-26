@@ -5,12 +5,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use casual_doc_model::v1::{
     Alignment, AltChunk, AltChunkProperties, AnchorHorizontal, AnchorVertical, AnchoredDrawing,
     BlockNode, BlockSdt, Bookmark, BookmarkEnd, BookmarkId, BookmarkStart, BorderEdge, Break,
-    BreakKind, CellVerticalAlignment, CnfStyle, ColorScheme, Comment, CommentId, CommentRangeEnd,
-    CommentRangeStart, CommentReference, DefinitionMap, DocGrid, DocGridType, Drawing,
-    DrawingAnchor, EmbeddedKind, EmbeddedObject, EmbeddedPart, Extent, ExternalTarget, Field,
-    FormCheckBox, FormCheckBoxSize, FormDropDown, FormFieldData, FormFieldKind, FormTextInput,
-    FormTextType, GridColumn, GroupChild, GroupPicture, GroupShape, GroupTextBox, GroupTransform,
-    HeaderFooterId, HeaderFooterKind, HeaderFooterRef, HeightRule, HorizontalAlign,
+    BreakKind, CellVerticalAlignment, CnfStyle, ColorScheme, ColumnDef, Comment, CommentId,
+    CommentRangeEnd, CommentRangeStart, CommentReference, DefinitionMap, DocGrid, DocGridType,
+    Drawing, DrawingAnchor, EmbeddedKind, EmbeddedObject, EmbeddedPart, Extent, ExternalTarget,
+    Field, FormCheckBox, FormCheckBoxSize, FormDropDown, FormFieldData, FormFieldKind,
+    FormTextInput, FormTextType, GridColumn, GroupChild, GroupPicture, GroupShape, GroupTextBox,
+    GroupTransform, HeaderFooterId, HeaderFooterKind, HeaderFooterRef, HeightRule, HorizontalAlign,
     HorizontalAnchor, HorizontalPosition, Hyperlink, HyperlinkTarget, InlineNode, InlineSdt,
     InternalTarget, LineNumberRestart, LineNumbering, MAX_DESCR_BYTES, MAX_EMU,
     MAX_FIELD_INSTRUCTION_BYTES, MAX_FORM_FIELD_ENTRIES, MAX_FORM_FIELD_STRING_BYTES,
@@ -623,6 +623,8 @@ struct SectionAccumulator {
     columns: Option<u16>,
     column_space: Option<i32>,
     column_separator: Option<bool>,
+    column_equal_width: Option<bool>,
+    column_defs: Vec<ColumnDef>,
     section_type: Option<SectionType>,
     title_page: Option<bool>,
     vertical_alignment: Option<PageVerticalAlignment>,
@@ -2404,11 +2406,32 @@ impl BodyParser<'_> {
                 let separator = attribute_value(element, b"sep")
                     .as_deref()
                     .map(|value| is_true(Some(value)));
+                let equal_width = attribute_value(element, b"equalWidth")
+                    .as_deref()
+                    .map(|value| is_true(Some(value)));
                 if let Some(section) = self.section.as_mut() {
                     section.columns =
                         attribute_value(element, b"num").and_then(|value| value.parse().ok());
                     section.column_space = space;
                     section.column_separator = separator;
+                    section.column_equal_width = equal_width;
+                    // A fresh `w:cols` resets any previously accumulated per-column
+                    // geometry (defensive against a malformed doubled element).
+                    section.column_defs.clear();
+                }
+            }
+            b"col" if self.section.is_some() => {
+                let width = attr_i32(element, b"w");
+                let space = attr_i32(element, b"space");
+                if let (Some(width), Some(section)) = (width, self.section.as_mut()) {
+                    // Bound the count so a hostile `w:cols` cannot accumulate an
+                    // unbounded per-column vector (Word caps columns at 45).
+                    if section.column_defs.len() < 64 {
+                        section.column_defs.push(ColumnDef {
+                            width_twips: width.clamp(0, 31_680),
+                            space_twips: space.map(|v| v.clamp(0, 31_680)),
+                        });
+                    }
                 }
             }
             b"type" if self.section.is_some() => {
@@ -4310,6 +4333,8 @@ impl BodyParser<'_> {
             count: accumulator.columns.unwrap_or(1).clamp(1, 64),
             space_twips: accumulator.column_space.map(|v| v.clamp(0, 31_680)),
             separator: accumulator.column_separator,
+            equal_width: accumulator.column_equal_width,
+            columns: accumulator.column_defs,
         };
         let page_numbering = PageNumbering {
             format: accumulator.page_number_format,
