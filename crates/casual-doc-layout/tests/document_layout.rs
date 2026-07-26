@@ -715,3 +715,100 @@ fn continuous_sections_on_one_page_keep_distinct_anchor_margins() {
     assert_eq!(first_x, Twip(1_000));
     assert_eq!(second_x, Twip(3_000));
 }
+
+/// A positioned float in the header part (the SDS positions its title/version/date
+/// text boxes there with page-relative offsets that reach past the top margin) must
+/// push the body content down so it clears the header content, rather than starting
+/// at `margin_top` and colliding with it — Word's `body_top = max(margin_top,
+/// header_distance + header_extent)`. Regression for the SDS header/body overlap.
+#[test]
+fn a_positioned_header_float_reserves_band_so_the_body_clears_it() {
+    let shaper = ParleyShaper::new();
+    // Page-relative float at y = 1440 twips (914_400 EMU), 1440 twips tall, so its
+    // bottom is 2880 twips from the page top — well past the 720-twip top margin.
+    let header_float = || {
+        InlineNode::AnchoredDrawing(AnchoredDrawing {
+            id: node(320),
+            media: MediaId::new(node(321)),
+            extent: Extent {
+                width_emu: 914_400,
+                height_emu: 914_400,
+            },
+            anchor: DrawingAnchor {
+                horizontal: AnchorHorizontal {
+                    relative_from: HorizontalAnchor::Page,
+                    position: HorizontalPosition::Offset(914_400),
+                },
+                vertical: AnchorVertical {
+                    relative_from: VerticalAnchor::Page,
+                    position: VerticalPosition::Offset(914_400),
+                },
+                wrap: WrapMode::None,
+                wrap_distances: Default::default(),
+                behind_doc: true,
+            },
+            descr: None,
+            relative_height: None,
+        })
+    };
+    let build = |header_blocks: Vec<InlineNode>| {
+        let mut headers = DefinitionMap::default();
+        headers.insert(
+            HeaderFooterId::new(node(300)),
+            ModelHeaderFooter {
+                blocks: vec![paragraph(310, header_blocks)],
+            },
+        );
+        let mut media = DefinitionMap::default();
+        media.insert(
+            MediaId::new(node(321)),
+            MediaReference {
+                relationship_id: "rId9".to_owned(),
+                media_type: "image/png".to_owned(),
+                part_name: "word/media/hdr.png".to_owned(),
+            },
+        );
+        Document::new(
+            node(1),
+            vec![paragraph(100, vec![run(101, "Body")])],
+            Definitions {
+                sections: vec![section(
+                    9,
+                    (12_240, 15_840),
+                    720,
+                    vec![href(HeaderFooterKind::Default, 300)],
+                    vec![],
+                    false,
+                )],
+                headers,
+                media,
+                ..Definitions::default()
+            },
+        )
+        .unwrap()
+    };
+
+    // With the positioned float, the body starts at its extent (2880), not the
+    // 720-twip top margin.
+    let doc = build(vec![header_float()]);
+    let layout = paginate_document(&doc, &shaper);
+    assert_eq!(
+        layout.pages[0].content_area.origin.y,
+        Twip(2_880),
+        "the body clears the positioned header float (extent 2880 > margin 720)"
+    );
+
+    // A header with only ordinary inline text reserves nothing for the float path
+    // (it only gets the normal flowed-band reservation), so the body sits far above
+    // the float case — proof the extra space is the float reservation, not the band.
+    let plain = build(vec![run(311, "Just header text")]);
+    let plain_top = paginate_document(&plain, &shaper).pages[0]
+        .content_area
+        .origin
+        .y;
+    assert!(
+        plain_top < Twip(2_880),
+        "an ordinary header reserves only its flowed band ({plain_top:?}), far less \
+         than the positioned float's 2880-twip extent"
+    );
+}
