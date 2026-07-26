@@ -24,8 +24,9 @@ use casual_doc_model::v1::{
     Document, Drawing, Extent, FontRef, FontScheme, HeightRule, HighlightColor, Indentation,
     InlineNode, LevelSuffix, LineRule, MediaId, MediaReference, ParagraphProperties, Rgba,
     RunProperties, SchemeColor, SectionBoundary, SectionId, SectionType, ShapeStroke, StyleId,
-    TabAlignment, TabLeader, TabStop, Table, TableBorders, TableCell, TableLayout, TableRow,
-    TableRowProperties, TextBox, ThemeColorRef, ThemeFontRef, VerticalAlignment, VerticalMerge,
+    Symbol, TabAlignment, TabLeader, TabStop, Table, TableBorders, TableCell, TableLayout,
+    TableRow, TableRowProperties, TextBox, ThemeColorRef, ThemeFontRef, VerticalAlignment,
+    VerticalMerge,
 };
 
 use crate::block::{
@@ -1620,6 +1621,7 @@ fn collect_runs<'a>(inlines: &'a [InlineNode], out: &mut Vec<StyledRun<'a>>, ctx
         match inline {
             InlineNode::Run(run) => push_styled_runs(&run.text, &run.properties, ctx, out),
             InlineNode::Tab(_) => out.push(styled_run("\t", &RunProperties::default(), ctx)),
+            InlineNode::Symbol(symbol) => out.push(symbol_glyph_run(symbol, ctx)),
             InlineNode::Hyperlink(hyperlink) => collect_runs(&hyperlink.inlines, out, ctx),
             InlineNode::Revision(revision) => collect_runs(&revision.inlines, out, ctx),
             InlineNode::Sdt(sdt) => collect_runs(&sdt.inlines, out, ctx),
@@ -1648,6 +1650,7 @@ fn collect_items<'a>(
                 out.extend(styled.into_iter().map(FlowItem::Run));
             }
             InlineNode::Tab(_) => out.push(FlowItem::Tab),
+            InlineNode::Symbol(symbol) => out.push(FlowItem::Run(symbol_glyph_run(symbol, ctx))),
             InlineNode::Break(node) => out.push(FlowItem::Break(node.kind)),
             InlineNode::Drawing(drawing) => {
                 if let Some(item) = image_item(drawing, ctx) {
@@ -2433,6 +2436,92 @@ fn build_styled_run<'a>(
     }
 }
 
+/// Builds the styled run for an inline `w:sym` symbol glyph. The legacy
+/// symbol-font code point is mapped to a Unicode scalar an ordinary text face can
+/// draw (see [`crate::symbol_map`]); an unmapped glyph falls back to a visible
+/// placeholder so it is never silently dropped.
+///
+/// The model's [`Symbol`] node carries no run properties (the surrounding run's
+/// `w:rPr` is not attached to it in schema v1), so the glyph shapes at the
+/// document default size/color through the same font cascade as ordinary text.
+/// The declared symbol face (Wingdings/Symbol/…) is intentionally **not**
+/// requested — the mapped Unicode char must resolve against a covering text face,
+/// not the (unbundled, glyph-incompatible) symbol font.
+fn symbol_glyph_run(symbol: &Symbol, ctx: &mut FlowCtx) -> StyledRun<'static> {
+    let glyph = crate::symbol_map::resolve_symbol(&symbol.font, symbol.char);
+    let properties = RunProperties::default();
+    let effective = ctx.cascade.resolve_run(ctx.para_style, &properties);
+    let (size, baseline_shift) = run_metrics(&effective);
+    let bold = effective.bold.unwrap_or(false);
+    let italic = effective.italic.unwrap_or(false);
+    let text = glyph.to_string();
+    let font = resolve_font(&text, &effective, bold, italic, ctx);
+    StyledRun {
+        font,
+        requested_family: requested_family(&effective, ctx.scheme).map(Cow::Owned),
+        text: Cow::Owned(text),
+        size,
+        bold,
+        italic,
+        letter_spacing: effective.character_spacing_twips.map_or(Twip::ZERO, Twip),
+        color: run_color(effective.color, ctx.palette),
+        decoration: Decoration {
+            underline: effective.underline.unwrap_or(false),
+            strikethrough: effective.strike.unwrap_or(false),
+        },
+        highlight: effective.highlight.and_then(highlight_rgba),
+        baseline_shift,
+    }
+}
+
+/// Remaps a list marker's glyphs through the symbol map: each character declared
+/// in a legacy symbol face (`family`) that is a known symbol code point becomes
+/// its Unicode equivalent, so a Wingdings/Symbol bullet renders as `●`/`○`/`▪`/…
+/// in a covering text face rather than tofu. Returns the (possibly rewritten)
+/// text and whether any glyph was remapped; ordinary bullet text (a literal `•`,
+/// a number) passes through unchanged.
+fn map_marker_glyphs(text: &str, family: Option<&str>) -> (String, bool) {
+    let Some(family) = family else {
+        return (text.to_owned(), false);
+    };
+    let mut out = String::with_capacity(text.len());
+    let mut remapped = false;
+    for ch in text.chars() {
+        match crate::symbol_map::map_symbol(family, ch as u32) {
+            Some(glyph) => {
+                out.push(glyph);
+                remapped = true;
+            }
+            None => out.push(ch),
+        }
+    }
+    (out, remapped)
+}
+
+/// The down-scale factor for a list-marker glyph that is a full-em geometric
+/// bullet (`●`/`○`/`■`/…). Those code points shape near cap-height, but Word and
+/// LibreOffice draw list bullets much smaller — about the size of a `•` dot — so
+/// the marker is scaled to match. Returns `None` for a normal marker (a number, a
+/// `•`, or a multi-glyph marker) which shapes at its authored size.
+fn bullet_scale(marker_text: &str) -> Option<f32> {
+    let mut chars = marker_text.trim().chars();
+    let first = chars.next()?;
+    if chars.next().is_some() {
+        // More than one glyph: a numbered or multi-character marker, not a bullet.
+        return None;
+    }
+    matches!(
+        first,
+        '\u{25CF}' // ● black circle
+            | '\u{25CB}' // ○ white circle
+            | '\u{25A0}' // ■ black square
+            | '\u{25A1}' // □ white square
+            | '\u{25C6}' // ◆ black diamond
+            | '\u{25CA}' // ◊ lozenge
+    )
+    .then_some(0.62)
+}
+
 /// The size (twips) a run shapes at and its baseline shift (twips, positive =
 /// raised toward the top of the line), from `w:vertAlign` and `w:position`.
 /// Super/subscript raise (~1/3 of the size) / lower (~1/6) the baseline and shrink
@@ -2848,10 +2937,19 @@ fn prepare_list_marker(
     // size/color, with the level's own `w:rPr` (face/size/color of the number or
     // bullet) layered on top. A space suffix is folded into the run's text.
     let level_rpr = resolved.run_properties.unwrap_or_default();
-    let effective = ctx.cascade.resolve_run(ctx.para_style, &level_rpr);
+    let mut effective = ctx.cascade.resolve_run(ctx.para_style, &level_rpr);
+    // Route the bullet glyph through the symbol map: a Wingdings/Symbol bullet code
+    // point becomes its Unicode equivalent (●/○/▪/…). When a glyph is remapped, drop
+    // the (unbundled, glyph-incompatible) symbol face so the mapped Unicode char
+    // resolves against a covering text face instead of rendering as tofu.
+    let family = requested_family(&effective, ctx.scheme);
+    let (glyph_text, remapped) = map_marker_glyphs(&resolved.text, family.as_deref());
+    if remapped {
+        effective.font_ref = None;
+    }
     let marker_text = match resolved.suffix {
-        LevelSuffix::Space => format!("{} ", resolved.text),
-        LevelSuffix::Tab | LevelSuffix::Nothing => resolved.text,
+        LevelSuffix::Space => format!("{glyph_text} "),
+        LevelSuffix::Tab | LevelSuffix::Nothing => glyph_text,
     };
     if marker_text.is_empty() {
         // A `none`-format level renders no glyph, but the counter has advanced and
@@ -2860,7 +2958,14 @@ fn prepare_list_marker(
             numbering::body_indent(resolved.suffix, marker_x, Twip::ZERO, ctx.default_tab);
         return (constraints, None);
     }
-    let marker_run = build_styled_run(&marker_text, &effective, ctx);
+    let mut marker_run = build_styled_run(&marker_text, &effective, ctx);
+    // A full-em geometric bullet (●/○/■/…) shapes near cap-height; Word/LibreOffice
+    // draw list bullets much smaller. Scale the marker to match so a sub-list ○ is a
+    // small ring, not a full-height circle.
+    if let Some(scale) = bullet_scale(&marker_text) {
+        let scaled = (marker_run.size.raw() as f32 * scale).round() as i32;
+        marker_run.size = Twip(scaled.max(1));
+    }
     let range = ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, 0));
     // Shape the marker unwrapped: it is a short prefix, never a wrapped block.
     let unwrapped = LineConstraints {
@@ -3934,6 +4039,56 @@ mod tests {
         collect_runs(&inlines, &mut runs, &mut ctx);
         assert_eq!(runs.len(), 1, "only the visible run is collected");
         assert_eq!(&*runs[0].text, "shown");
+    }
+
+    #[test]
+    fn a_symbol_node_emits_a_mapped_glyph_run() {
+        // A `w:sym` (the Medical form's Wingdings-2 checkbox, `F0A3`) must produce
+        // a styled run bearing a visible box glyph — not be silently dropped as it
+        // was before symbol layout existed.
+        let checkbox = InlineNode::Symbol(Symbol {
+            id: NodeId::from_parts(9, 1).unwrap(),
+            font: "Wingdings 2".to_owned(),
+            char: 0xF0A3,
+        });
+        // An unmapped glyph in a non-bundled face still yields a visible placeholder
+        // run rather than nothing.
+        let unknown = InlineNode::Symbol(Symbol {
+            id: NodeId::from_parts(10, 1).unwrap(),
+            // A byte with no table entry (Wingdings 3 stops at 0xF0) → placeholder.
+            font: "Wingdings 3".to_owned(),
+            char: 0xF0FE,
+        });
+        let inlines = vec![checkbox, unknown];
+        let resolver = FontResolver::new();
+        let mut report = FontResolutionReport::new();
+        let media = DefinitionMap::default();
+        let definitions = Definitions::default();
+        let mut ctx = FlowCtx {
+            resolver: &resolver,
+            scheme: None,
+            report: &mut report,
+            default_tab: crate::tabs::DEFAULT_TAB_STOP,
+            media: &media,
+            palette: None,
+            cascade: StyleCascade::new(&definitions),
+            para_style: None,
+            sections: &[],
+            definitions: &definitions,
+            numbering: NumberingState::new(),
+        };
+        let mut runs = Vec::new();
+        collect_runs(&inlines, &mut runs, &mut ctx);
+        assert_eq!(runs.len(), 2, "both symbols emit a glyph run");
+        let first = runs[0].text.chars().next().unwrap();
+        assert!(
+            matches!(first, '\u{25A1}' | '\u{2610}'),
+            "checkbox maps to a box glyph, got {first:?}"
+        );
+        assert_eq!(
+            &*runs[1].text, "\u{25A1}",
+            "an unmapped symbol falls back to a visible placeholder, not nothing"
+        );
     }
 
     #[test]
