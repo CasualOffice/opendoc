@@ -23,6 +23,12 @@ pub struct Document {
     /// existing snapshots serialize byte-identically.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     properties: Option<DocumentProperties>,
+    /// The page background color (`w:background@w:color`), an sRGB fill painted
+    /// behind the whole page. Additive: omitted when absent (the default white
+    /// page) so existing snapshots serialize byte-identically. A theme/image
+    /// background is not modeled here and is reported at import instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    background: Option<RgbColor>,
 }
 
 impl Document {
@@ -39,6 +45,7 @@ impl Document {
             body,
             definitions,
             properties: None,
+            background: None,
         };
         document.validate()?;
         Ok(document)
@@ -57,6 +64,20 @@ impl Document {
     #[must_use]
     pub const fn properties(&self) -> Option<&DocumentProperties> {
         self.properties.as_ref()
+    }
+
+    /// Attaches the page background color (`w:background`), re-validating the
+    /// document. The color paints behind the whole page.
+    pub fn with_background(mut self, color: RgbColor) -> Result<Self, ModelError> {
+        self.background = Some(color);
+        self.validate()?;
+        Ok(self)
+    }
+
+    /// Returns the page background color, if the document sets one.
+    #[must_use]
+    pub const fn background(&self) -> Option<RgbColor> {
+        self.background
     }
 
     /// Returns the schema version (always 1 for a valid v1 document).

@@ -162,7 +162,11 @@ fn main() {
     let dpi = 96.0;
     let w = config.page_size.width.to_device_px(dpi).ceil() as u32;
     let h = config.page_size.height.to_device_px(dpi).ceil() as u32;
-    let mut surface = Surface::new(w, h).unwrap();
+    // The page background (`w:background`) fills the page behind everything.
+    let mut surface = match document.background() {
+        Some(c) => Surface::with_background(w, h, [c.r, c.g, c.b]).unwrap(),
+        None => Surface::new(w, h).unwrap(),
+    };
     // Serve bundled + fallback (OS/system, with --features system-fonts) faces
     // from the shaper's registry, taken after pagination shaped every paragraph.
     let registry = shaper.registry();

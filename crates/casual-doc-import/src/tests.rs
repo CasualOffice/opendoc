@@ -1343,12 +1343,34 @@ fn style_metadata_is_modeled_and_truly_unmapped_constructs_are_reported() {
 
 #[test]
 fn constructs_outside_the_body_are_reported() {
+    // A theme page background is not modeled as sRGB, so it is reported (degraded)
+    // rather than silently dropped.
     let xml = br#"<w:document xmlns:w="urn:w">
-        <w:background w:color="FFFFFF"/>
+        <w:background w:themeColor="accent1"/>
         <w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body>
     </w:document>"#;
     let import = import(xml);
     assert!(features(&import).contains(&"background"));
+}
+
+#[test]
+fn page_background_color_is_captured() {
+    // A concrete `w:background@w:color` is captured on the document as an sRGB
+    // page fill (and is NOT reported as an unhandled feature).
+    let xml = br#"<w:document xmlns:w="urn:w">
+        <w:background w:color="FFF9ED"/>
+        <w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body>
+    </w:document>"#;
+    let import = import(xml);
+    assert_eq!(
+        import.document.background(),
+        Some(RgbColor {
+            r: 0xFF,
+            g: 0xF9,
+            b: 0xED
+        })
+    );
+    assert!(!features(&import).contains(&"background"));
 }
 
 #[test]
