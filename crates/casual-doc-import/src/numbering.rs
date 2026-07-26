@@ -5,15 +5,16 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
-    AbstractNumbering, AbstractNumberingId, DefinitionMap, NumberingInstance, NumberingInstanceId,
-    NumberingLevel, NumberingRef,
+    AbstractNumbering, AbstractNumberingId, DefinitionMap, LevelJustification, LevelSuffix,
+    NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel, NumberingRef,
+    ParagraphProperties, RunProperties,
 };
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 
 use crate::config::ImportConfig;
 use crate::error::ImportError;
-use crate::properties::attribute_value;
+use crate::properties::{apply_paragraph_property, apply_run_property, attribute_value};
 use crate::report::Reporter;
 
 /// Resolved numbering definitions plus the numId -> instance index.
@@ -51,6 +52,15 @@ impl Numbering {
 struct RawLevel {
     level: u8,
     start: u16,
+    num_fmt: Option<NumberFormat>,
+    lvl_text: Option<String>,
+    lvl_jc: Option<LevelJustification>,
+    suff: Option<LevelSuffix>,
+    is_lgl: bool,
+    paragraph: ParagraphProperties,
+    has_paragraph: bool,
+    run: RunProperties,
+    has_run: bool,
 }
 
 #[derive(Default)]
@@ -91,6 +101,13 @@ pub(crate) fn parse(
                 levels.push(NumberingLevel {
                     level: level.level,
                     start: level.start.min(32_767),
+                    num_fmt: level.num_fmt,
+                    lvl_text: level.lvl_text,
+                    lvl_jc: level.lvl_jc,
+                    suff: level.suff,
+                    is_lgl: level.is_lgl,
+                    paragraph_properties: level.has_paragraph.then_some(level.paragraph),
+                    run_properties: level.has_run.then_some(level.run),
                     style_ref: None,
                 });
             }
@@ -146,6 +163,10 @@ struct NumberingState {
     current_abstract: Option<RawAbstract>,
     current_level: Option<RawLevel>,
     current_num: Option<RawNum>,
+    /// Depth inside the current level's `w:pPr` / `w:rPr` (so their children route
+    /// to the shared paragraph/run property parsers, mirroring the styles parser).
+    ppr_depth: u32,
+    rpr_depth: u32,
 }
 
 fn parse_raw(
@@ -219,6 +240,24 @@ fn on_start(
     local: &[u8],
     element: &BytesStart<'_>,
 ) {
+    // Inside the current level's rPr/pPr, delegate to the shared property parsers;
+    // an unmapped property child is reported (no silent loss).
+    if state.rpr_depth > 0 {
+        if let Some(level) = state.current_level.as_mut()
+            && !apply_run_property(&mut level.run, local, element)
+        {
+            reporter.report(local);
+        }
+        return;
+    }
+    if state.ppr_depth > 0 {
+        if let Some(level) = state.current_level.as_mut()
+            && !apply_paragraph_property(&mut level.paragraph, local, element)
+        {
+            reporter.report(local);
+        }
+        return;
+    }
     match local {
         b"numbering" => {}
         b"abstractNum" => {
@@ -233,6 +272,7 @@ fn on_start(
                     .and_then(|value| value.parse().ok())
                     .unwrap_or(0),
                 start: 1,
+                ..RawLevel::default()
             });
         }
         b"start" if state.current_level.is_some() => {
@@ -241,6 +281,37 @@ fn on_start(
                     .and_then(|value| value.parse().ok())
                     .unwrap_or(1);
             }
+        }
+        // Level detail: number format/text/justify/suffix and the legal flag.
+        b"numFmt" if state.current_level.is_some() => match number_format(element) {
+            Some(format) => set_level(state, |level| level.num_fmt = Some(format)),
+            None => reporter.report(local),
+        },
+        b"lvlText" if state.current_level.is_some() => {
+            match attribute_value(element, b"val").filter(|value| value.len() <= 255) {
+                Some(text) => set_level(state, |level| level.lvl_text = Some(text)),
+                None => reporter.report(local),
+            }
+        }
+        b"lvlJc" if state.current_level.is_some() => match level_justification(element) {
+            Some(justification) => set_level(state, |level| level.lvl_jc = Some(justification)),
+            None => reporter.report(local),
+        },
+        b"suff" if state.current_level.is_some() => match level_suffix(element) {
+            Some(suffix) => set_level(state, |level| level.suff = Some(suffix)),
+            None => reporter.report(local),
+        },
+        b"isLgl" if state.current_level.is_some() => {
+            let on = on_off(element);
+            set_level(state, |level| level.is_lgl = on);
+        }
+        b"pPr" if state.current_level.is_some() => {
+            state.ppr_depth += 1;
+            set_level(state, |level| level.has_paragraph = true);
+        }
+        b"rPr" if state.current_level.is_some() => {
+            state.rpr_depth += 1;
+            set_level(state, |level| level.has_run = true);
         }
         b"num" => {
             state.current_num = Some(RawNum {
@@ -253,11 +324,19 @@ fn on_start(
                 num.abstract_id = attribute_value(element, b"val");
             }
         }
-        // Unmapped numbering detail (numFmt, lvlText, pPr, rPr, ...) is reported.
+        // Unmapped numbering detail (lvlRestart, pStyle, lvlOverride, ...) is
+        // reported.
         _ if state.current_abstract.is_some() || state.current_num.is_some() => {
             reporter.report(local);
         }
         _ => {}
+    }
+}
+
+/// Applies `apply` to the current level if one is open (a no-op otherwise).
+fn set_level(state: &mut NumberingState, apply: impl FnOnce(&mut RawLevel)) {
+    if let Some(level) = state.current_level.as_mut() {
+        apply(level);
     }
 }
 
@@ -268,6 +347,8 @@ fn on_end(
     nums: &mut Vec<RawNum>,
 ) {
     match local {
+        b"pPr" => state.ppr_depth = state.ppr_depth.saturating_sub(1),
+        b"rPr" => state.rpr_depth = state.rpr_depth.saturating_sub(1),
         b"lvl" => {
             if let (Some(abstract_num), Some(level)) =
                 (state.current_abstract.as_mut(), state.current_level.take())
@@ -286,5 +367,55 @@ fn on_end(
             }
         }
         _ => {}
+    }
+}
+
+/// Reads an OOXML `CT_OnOff`: present means `true` unless `w:val` is falsey.
+fn on_off(element: &BytesStart<'_>) -> bool {
+    match attribute_value(element, b"val") {
+        Some(value) => !matches!(value.as_str(), "false" | "0" | "off"),
+        None => true,
+    }
+}
+
+/// Maps `w:numFmt/@w:val` (`ST_NumberFormat`); an unknown-but-present token is
+/// retained via `Other`, so nothing is lost. Absent/empty is unmapped.
+fn number_format(element: &BytesStart<'_>) -> Option<NumberFormat> {
+    let value = attribute_value(element, b"val").filter(|value| !value.is_empty())?;
+    Some(match value.as_str() {
+        "decimal" => NumberFormat::Decimal,
+        "bullet" => NumberFormat::Bullet,
+        "lowerRoman" => NumberFormat::LowerRoman,
+        "upperRoman" => NumberFormat::UpperRoman,
+        "lowerLetter" => NumberFormat::LowerLetter,
+        "upperLetter" => NumberFormat::UpperLetter,
+        "ordinal" => NumberFormat::Ordinal,
+        "cardinalText" => NumberFormat::CardinalText,
+        "ordinalText" => NumberFormat::OrdinalText,
+        "decimalZero" => NumberFormat::DecimalZero,
+        "none" => NumberFormat::None,
+        _ if value.len() <= 64 => NumberFormat::Other(value),
+        // An oversized unknown token is out of the retention bound; report it.
+        _ => return None,
+    })
+}
+
+/// Maps `w:lvlJc/@w:val`; `left`/`start` and `right`/`end` are synonyms.
+fn level_justification(element: &BytesStart<'_>) -> Option<LevelJustification> {
+    match attribute_value(element, b"val").as_deref() {
+        Some("left" | "start") => Some(LevelJustification::Start),
+        Some("center") => Some(LevelJustification::Center),
+        Some("right" | "end") => Some(LevelJustification::End),
+        _ => None,
+    }
+}
+
+/// Maps `w:suff/@w:val`.
+fn level_suffix(element: &BytesStart<'_>) -> Option<LevelSuffix> {
+    match attribute_value(element, b"val").as_deref() {
+        Some("tab") => Some(LevelSuffix::Tab),
+        Some("space") => Some(LevelSuffix::Space),
+        Some("nothing") => Some(LevelSuffix::Nothing),
+        _ => None,
     }
 }
