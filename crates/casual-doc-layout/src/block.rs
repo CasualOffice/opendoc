@@ -27,7 +27,7 @@ pub struct BoxMetrics {
 }
 
 /// One cell's laid-out content within a table-row fragment.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct CellFragment {
     /// The cell node.
     pub id: NodeId,
@@ -71,7 +71,7 @@ impl BreakControl {
 /// A block fragment in flow order. A paragraph carries its shaped lines; a table
 /// row carries its cells and its split-control flags (the paginator honors
 /// `can_split`/`header` when a row crosses a page boundary).
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub enum BlockFragment {
     /// A paragraph: its shaped lines plus box metrics.
     Paragraph {
