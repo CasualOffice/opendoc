@@ -26,6 +26,40 @@ pub struct BoxMetrics {
     pub indent_end: Twip,
 }
 
+/// A resolved, drawable border edge — the winner of OOXML border-conflict
+/// resolution (`docs/38-…#tables`, ECMA-376 §17.4.66). Color is straight-alpha
+/// sRGB (packed to avoid a `display` dependency here); width is in twips.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+pub struct ResolvedEdge {
+    /// Edge color (RGBA).
+    pub color: [u8; 4],
+    /// Line width in twips.
+    pub width: Twip,
+}
+
+/// The four resolved visible borders of a cell (`None` = fall back to the
+/// default grid line). Produced by border-conflict resolution in the flow engine
+/// and drawn by composition.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+pub struct CellBorders {
+    /// Top edge.
+    pub top: Option<ResolvedEdge>,
+    /// Leading (start) edge.
+    pub start: Option<ResolvedEdge>,
+    /// Bottom edge.
+    pub bottom: Option<ResolvedEdge>,
+    /// Trailing (end) edge.
+    pub end: Option<ResolvedEdge>,
+}
+
+impl CellBorders {
+    /// Whether no edge is resolved (serializes to nothing).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// One cell's laid-out content within a table-row fragment.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct CellFragment {
@@ -39,6 +73,9 @@ pub struct CellFragment {
     pub width: Twip,
     /// The cell's flowed block fragments.
     pub blocks: Vec<BlockFragment>,
+    /// The cell's resolved visible borders (border-conflict winners).
+    #[serde(default, skip_serializing_if = "CellBorders::is_empty")]
+    pub borders: CellBorders,
 }
 
 /// A paragraph's page-break behavior, resolved from `ParagraphProperties`
@@ -91,12 +128,21 @@ pub enum BlockFragment {
     TableRow {
         /// The row node.
         id: NodeId,
+        /// The table this row belongs to (so the paginator can group a table's
+        /// rows and repeat its header rows on continuation pages).
+        table: NodeId,
         /// The row's cells.
         cells: Vec<CellFragment>,
+        /// The resolved row height (twips), honoring `w:trHeight` (`atLeast`
+        /// grows with content; `exact` is fixed and the content is clipped).
+        height: Twip,
         /// May the row split across a page boundary? (`false` = `w:cantSplit`.)
         can_split: bool,
         /// Is this a header row repeated at the top of each page?
         header: bool,
+        /// Clip the content to the row height (`w:trHeight` rule `exact`).
+        #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+        clip: bool,
     },
 }
 
@@ -109,17 +155,26 @@ impl BlockFragment {
             BlockFragment::Paragraph {
                 lines, box_metrics, ..
             } => box_metrics.space_before + lines.height() + box_metrics.space_after,
-            BlockFragment::TableRow { cells, .. } => cells
-                .iter()
-                .map(|cell| {
-                    cell.blocks
-                        .iter()
-                        .map(BlockFragment::height)
-                        .fold(Twip::ZERO, |a, h| a + h)
-                })
-                .max()
-                .unwrap_or(Twip::ZERO),
+            // The resolved row height (from the `w:trHeight` rule); the flow
+            // engine has already reconciled it with the cells' content height.
+            BlockFragment::TableRow { height, .. } => *height,
         }
+    }
+
+    /// The tallest cell's stacked content height (twips), independent of the row
+    /// height rule — used to reconcile `w:trHeight` against content.
+    #[must_use]
+    pub fn cells_content_height(cells: &[CellFragment]) -> Twip {
+        cells
+            .iter()
+            .map(|cell| {
+                cell.blocks
+                    .iter()
+                    .map(BlockFragment::height)
+                    .fold(Twip::ZERO, |a, h| a + h)
+            })
+            .max()
+            .unwrap_or(Twip::ZERO)
     }
 
     /// The document node this fragment came from (its anchor for pagination

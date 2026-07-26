@@ -6,7 +6,7 @@
 //! rendering backend applies the device scale (DPI × zoom) when it paints, which
 //! is the "scale only at paint" rule from `43-…`.
 
-use crate::block::BlockFragment;
+use crate::block::{BlockFragment, CellBorders};
 use crate::display::{Color, DisplayList, PaintItem, Stroke};
 use crate::page::Page;
 use crate::text::LineLayout;
@@ -54,22 +54,79 @@ fn compose_fragment(list: &mut DisplayList, fragment: &BlockFragment, origin: Po
             list.items
                 .extend(compose_paragraph(lines, content_origin).items);
         }
-        BlockFragment::TableRow { cells, .. } => {
+        BlockFragment::TableRow { cells, clip, .. } => {
             let row_height = fragment.height();
             for cell in cells {
                 let cell_origin = Point::new(origin.x + cell.x, origin.y);
-                // The cell's grid border (drawn behind the content).
+                let cell_rect = Rect::new(cell_origin, Size::new(cell.width, row_height));
+                // The default grid line (drawn behind the content); resolved
+                // conflict-winning borders are painted over it per edge.
                 list.push(PaintItem::Rect {
-                    rect: Rect::new(cell_origin, Size::new(cell.width, row_height)),
+                    rect: cell_rect,
                     fill: None,
                     stroke: Some(Stroke {
                         color: CELL_BORDER,
                         width: CELL_BORDER_WIDTH,
                     }),
                 });
-                compose_blocks(list, &cell.blocks, cell_origin);
+                compose_cell_borders(list, cell_rect, &cell.borders);
+                // An `exact` row height clips content that overflows the cell.
+                if *clip {
+                    list.push(PaintItem::PushClip(cell_rect));
+                    compose_blocks(list, &cell.blocks, cell_origin);
+                    list.push(PaintItem::PopClip);
+                } else {
+                    compose_blocks(list, &cell.blocks, cell_origin);
+                }
             }
         }
+    }
+}
+
+/// Paints a cell's resolved (border-conflict-winning) edges as filled rects, one
+/// per present side, on top of the default grid line.
+fn compose_cell_borders(list: &mut DisplayList, rect: Rect, borders: &CellBorders) {
+    let mut edge = |r: Rect, color: [u8; 4]| {
+        list.push(PaintItem::Rect {
+            rect: r,
+            fill: Some(Color {
+                r: color[0],
+                g: color[1],
+                b: color[2],
+                a: color[3],
+            }),
+            stroke: None,
+        });
+    };
+    if let Some(e) = borders.top {
+        edge(
+            Rect::new(rect.origin, Size::new(rect.size.width, e.width)),
+            e.color,
+        );
+    }
+    if let Some(e) = borders.bottom {
+        edge(
+            Rect::new(
+                Point::new(rect.origin.x, rect.bottom() - e.width),
+                Size::new(rect.size.width, e.width),
+            ),
+            e.color,
+        );
+    }
+    if let Some(e) = borders.start {
+        edge(
+            Rect::new(rect.origin, Size::new(e.width, rect.size.height)),
+            e.color,
+        );
+    }
+    if let Some(e) = borders.end {
+        edge(
+            Rect::new(
+                Point::new(rect.right() - e.width, rect.origin.y),
+                Size::new(e.width, rect.size.height),
+            ),
+            e.color,
+        );
     }
 }
 
@@ -125,5 +182,62 @@ mod tests {
         // The run is translated by the paragraph origin (x at least the left margin).
         assert!(run.origin.x.raw() >= origin.x.raw());
         assert!(run.origin.y.raw() >= origin.y.raw());
+    }
+
+    #[test]
+    fn an_exact_row_clips_and_draws_its_resolved_borders() {
+        use crate::block::{BlockFragment, CellBorders, CellFragment, ResolvedEdge};
+        use crate::units::Size;
+        let cell = CellFragment {
+            id: NodeId::from_parts(1, 1).unwrap(),
+            grid_span: 1,
+            x: Twip::ZERO,
+            width: Twip(3000),
+            blocks: Vec::new(),
+            borders: CellBorders {
+                bottom: Some(ResolvedEdge {
+                    color: [10, 20, 30, 255],
+                    width: Twip(40),
+                }),
+                ..CellBorders::default()
+            },
+        };
+        let row = BlockFragment::TableRow {
+            id: NodeId::from_parts(2, 1).unwrap(),
+            table: NodeId::from_parts(3, 1).unwrap(),
+            cells: vec![cell],
+            height: Twip(300),
+            can_split: false,
+            header: false,
+            clip: true,
+        };
+        let mut list = DisplayList::new();
+        compose_fragment(&mut list, &row, Point::new(Twip(100), Twip(200)));
+
+        // The exact-height row wraps its content in a clip.
+        assert!(
+            list.items
+                .iter()
+                .any(|i| matches!(i, PaintItem::PushClip(_))),
+            "an exact row pushes a clip"
+        );
+        assert!(
+            list.items.iter().any(|i| matches!(i, PaintItem::PopClip)),
+            "and pops it"
+        );
+        // The resolved bottom border is painted as a filled edge rect at the row
+        // foot, 40 twips tall, in the resolved color.
+        let border = list.items.iter().find_map(|i| match i {
+            PaintItem::Rect {
+                rect,
+                fill: Some(color),
+                stroke: None,
+            } if rect.size == Size::new(Twip(3000), Twip(40)) => Some(*color),
+            _ => None,
+        });
+        let color = border.expect("the resolved bottom border is drawn");
+        assert_eq!(color.r, 10);
+        assert_eq!(color.g, 20);
+        assert_eq!(color.b, 30);
     }
 }

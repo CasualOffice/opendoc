@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::SectionId;
 
-use crate::block::{BlockFragment, BoxMetrics, BreakControl};
+use crate::block::{BlockFragment, BoxMetrics, BreakControl, CellFragment};
 use crate::model::ModelPos;
 use crate::page::{FlowPos, FlowSpan, Page, PaginatedLayout, PlacedFragment};
 use crate::text::LineLayout;
@@ -351,6 +351,12 @@ struct Paginator<'a> {
     halt: Option<HaltLookup>,
     /// Once the walk halts, the previous page index whose tail is to be spliced.
     halted: Option<usize>,
+    /// The table whose rows are currently being placed (so a table's header rows
+    /// can be repeated when it continues onto a new page).
+    current_table: Option<NodeId>,
+    /// The current table's header rows (`w:tblHeader`), repeated at the top of
+    /// each continuation page.
+    table_headers: Vec<BlockFragment>,
 }
 
 impl<'a> Paginator<'a> {
@@ -376,6 +382,8 @@ impl<'a> Paginator<'a> {
             page_start: at,
             halt,
             halted: None,
+            current_table: None,
+            table_headers: Vec::new(),
         }
     }
 
@@ -474,6 +482,10 @@ impl<'a> Paginator<'a> {
     /// `allow_split` and it does not fit whole.
     fn place(&mut self, idx: usize, fragment: &BlockFragment, allow_split: bool) {
         self.at = FlowPos::at(idx as u32);
+        // Leaving a run of table rows ends the current table's header context.
+        if !matches!(fragment, BlockFragment::TableRow { .. }) {
+            self.leave_table();
+        }
         match fragment {
             BlockFragment::Paragraph {
                 id,
@@ -482,6 +494,14 @@ impl<'a> Paginator<'a> {
                 break_control,
             } if allow_split && !break_control.keep_lines && lines.lines.len() > 1 => {
                 self.place_paragraph(idx, *id, lines, *box_metrics, *break_control);
+            }
+            BlockFragment::TableRow {
+                table,
+                can_split,
+                header,
+                ..
+            } => {
+                self.place_table_row(idx, fragment, *table, *can_split, *header);
             }
             _ => {
                 let height = fragment.height();
@@ -496,6 +516,148 @@ impl<'a> Paginator<'a> {
                 self.push(fragment.clone(), height);
                 self.at = FlowPos::at(idx as u32 + 1);
             }
+        }
+    }
+
+    /// Places a table row (`P1D-003`): it stays whole when it fits; a `cantSplit`
+    /// row (and any header row) that does not fit moves whole to the next page;
+    /// otherwise the row is split across the page boundary. Whenever a table's
+    /// body continues onto a fresh page, its header rows are repeated on top.
+    fn place_table_row(
+        &mut self,
+        idx: usize,
+        fragment: &BlockFragment,
+        table: NodeId,
+        can_split: bool,
+        header: bool,
+    ) {
+        self.enter_table(table);
+        self.at = FlowPos::at(idx as u32);
+        // Header rows are never split — they move whole and repeat.
+        let can_split = can_split && !header;
+        let height = fragment.height();
+        let fits = height.raw() <= self.remaining();
+
+        // A splittable row that does not fit is broken across the boundary —
+        // whether it is the page's first content (taller than a whole page) or
+        // follows other content.
+        if !fits && can_split {
+            self.split_table_row(idx, fragment);
+            self.capture_header(fragment, header);
+            return;
+        }
+        // A `cantSplit`/header row that does not fit moves whole to the next page
+        // (unless the page is already empty, when it overflows in place).
+        if !fits && !self.placed.is_empty() {
+            self.flush();
+            if self.halted.is_some() {
+                return;
+            }
+        }
+        self.repeat_headers_if_needed(idx, header);
+        self.push(fragment.clone(), height);
+        self.at = FlowPos::at(idx as u32 + 1);
+        self.capture_header(fragment, header);
+    }
+
+    /// Splits a table row across a page boundary at block/line boundaries within
+    /// its cells, mirroring the paragraph line-splitting path. Each chunk is a
+    /// row fragment carrying the cells' content that fits; the remainder carries
+    /// to the next page (with header rows repeated).
+    fn split_table_row(&mut self, idx: usize, fragment: &BlockFragment) {
+        let BlockFragment::TableRow {
+            id,
+            table,
+            cells,
+            can_split,
+            header,
+            ..
+        } = fragment
+        else {
+            return;
+        };
+        let is_header = *header;
+        let mut remaining: Vec<CellFragment> = cells.clone();
+        let mut chunk = 0u32;
+        loop {
+            self.at = FlowPos {
+                fragment: idx as u32,
+                line: chunk,
+            };
+            let (head, tail, used) = split_cells(&remaining, self.remaining());
+            if used == 0 {
+                // Nothing fits here. On an empty page place the remainder whole
+                // as overflow (so we never loop); otherwise start a fresh page.
+                if self.placed.is_empty() {
+                    let h = BlockFragment::cells_content_height(&remaining);
+                    let row = make_row_chunk(*id, *table, remaining, h, *can_split, is_header);
+                    self.push(row, h);
+                    self.at = FlowPos::at(idx as u32 + 1);
+                    return;
+                }
+                self.flush();
+                if self.halted.is_some() {
+                    return;
+                }
+                self.repeat_headers_if_needed(idx, is_header);
+                continue;
+            }
+            let row = make_row_chunk(*id, *table, head, Twip(used), *can_split, is_header);
+            self.push(row, Twip(used));
+            if tail.is_empty() {
+                self.at = FlowPos::at(idx as u32 + 1);
+                return;
+            }
+            remaining = tail;
+            chunk += 1;
+            self.flush();
+            if self.halted.is_some() {
+                return;
+            }
+            self.repeat_headers_if_needed(idx, is_header);
+        }
+    }
+
+    /// Begins (or continues) placing a table's rows; clears the header context
+    /// when a new table starts.
+    fn enter_table(&mut self, table: NodeId) {
+        if self.current_table != Some(table) {
+            self.current_table = Some(table);
+            self.table_headers.clear();
+        }
+    }
+
+    /// Ends the current table's header context (called when a non-row fragment
+    /// interrupts the run of rows).
+    fn leave_table(&mut self) {
+        self.current_table = None;
+        self.table_headers.clear();
+    }
+
+    /// Records a header row so it can be repeated on continuation pages.
+    fn capture_header(&mut self, fragment: &BlockFragment, header: bool) {
+        if header {
+            self.table_headers.push(fragment.clone());
+        }
+    }
+
+    /// When a table's body row lands at the top of a fresh page, repeats the
+    /// table's header rows above it (Word's `w:tblHeader` behavior). The repeated
+    /// headers are extra placed fragments and do not advance the flow position —
+    /// the page's flow provenance stays anchored to the real body row `idx`.
+    fn repeat_headers_if_needed(&mut self, idx: usize, header: bool) {
+        if header || self.table_headers.is_empty() || !self.placed.is_empty() {
+            return;
+        }
+        self.page_start = FlowPos::at(idx as u32);
+        for h in self.table_headers.clone() {
+            let height = h.height();
+            let rect = Rect::new(
+                Point::new(self.content.origin.x, self.cursor_y),
+                Size::new(self.content.size.width, height),
+            );
+            self.placed.push(PlacedFragment { fragment: h, rect });
+            self.cursor_y = self.cursor_y + height;
         }
     }
 
@@ -649,6 +811,138 @@ fn slice_paragraph(
         },
         break_control,
     }
+}
+
+/// Builds a table-row chunk fragment (a continuation piece of a split row). The
+/// piece carries the resolved height it occupies; splitting never clips (only a
+/// whole `exact`-height row does).
+fn make_row_chunk(
+    id: NodeId,
+    table: NodeId,
+    cells: Vec<CellFragment>,
+    height: Twip,
+    can_split: bool,
+    header: bool,
+) -> BlockFragment {
+    BlockFragment::TableRow {
+        id,
+        table,
+        cells,
+        height,
+        can_split,
+        header,
+        clip: false,
+    }
+}
+
+/// Splits a row's cells at a vertical cut `avail` twips below the row top,
+/// returning the head cells (content that fits), the tail cells (the remainder,
+/// preserving every column so the continuation row keeps its geometry), and the
+/// head height actually used (the tallest cell's fitted content). A `used` of 0
+/// means nothing fit.
+fn split_cells(cells: &[CellFragment], avail: i32) -> (Vec<CellFragment>, Vec<CellFragment>, i32) {
+    let mut head = Vec::with_capacity(cells.len());
+    let mut tail = Vec::with_capacity(cells.len());
+    let mut used = 0;
+    let mut has_tail = false;
+    for cell in cells {
+        let (head_blocks, tail_blocks, cell_used) = split_blocks(&cell.blocks, avail);
+        used = used.max(cell_used);
+        head.push(CellFragment {
+            blocks: head_blocks,
+            ..cell.clone()
+        });
+        if !tail_blocks.is_empty() {
+            has_tail = true;
+        }
+        tail.push(CellFragment {
+            blocks: tail_blocks,
+            ..cell.clone()
+        });
+    }
+    if !has_tail {
+        tail.clear();
+    }
+    (head, tail, used)
+}
+
+/// Splits a cell's stacked block fragments at `avail` twips: blocks fully above
+/// the cut go to the head, the straddling block is split (a multi-line paragraph
+/// at a line boundary; anything else moves whole to the tail), and the rest go to
+/// the tail. Returns `(head, tail, used_height)`.
+fn split_blocks(
+    blocks: &[BlockFragment],
+    avail: i32,
+) -> (Vec<BlockFragment>, Vec<BlockFragment>, i32) {
+    let mut head = Vec::new();
+    let mut tail = Vec::new();
+    let mut y = 0;
+    let mut splitting = true;
+    for block in blocks {
+        if !splitting {
+            tail.push(block.clone());
+            continue;
+        }
+        let height = block.height().raw();
+        if y + height <= avail {
+            head.push(block.clone());
+            y += height;
+            continue;
+        }
+        match block {
+            BlockFragment::Paragraph {
+                id,
+                lines,
+                box_metrics,
+                break_control,
+            } if lines.lines.len() > 1 && !break_control.keep_lines => {
+                let (head_frag, tail_frag, used) =
+                    split_paragraph_at(*id, lines, *box_metrics, *break_control, avail - y);
+                if let Some(head_frag) = head_frag {
+                    head.push(head_frag);
+                    y += used;
+                }
+                if let Some(tail_frag) = tail_frag {
+                    tail.push(tail_frag);
+                }
+            }
+            _ => tail.push(block.clone()),
+        }
+        splitting = false;
+    }
+    (head, tail, y)
+}
+
+/// Splits one paragraph at a `avail`-twip vertical cut, greedily keeping the
+/// leading lines that fit. Returns the head chunk (if any line fits), the tail
+/// chunk (the rest), and the head height used.
+fn split_paragraph_at(
+    id: NodeId,
+    lines: &LineLayout,
+    box_metrics: BoxMetrics,
+    break_control: BreakControl,
+    avail: i32,
+) -> (Option<BlockFragment>, Option<BlockFragment>, i32) {
+    let n = lines.lines.len();
+    let space_before = box_metrics.space_before.raw();
+    let budget = avail - space_before;
+    let mut take = 0;
+    let mut used = 0;
+    while take < n {
+        let line_h = lines.lines[take].height.raw();
+        if used + line_h > budget {
+            break;
+        }
+        used += line_h;
+        take += 1;
+    }
+    if take == 0 {
+        let whole = slice_paragraph(id, lines, box_metrics, break_control, 0..n, true, true);
+        return (None, Some(whole), 0);
+    }
+    let head = slice_paragraph(id, lines, box_metrics, break_control, 0..take, true, false);
+    let tail = slice_paragraph(id, lines, box_metrics, break_control, take..n, false, true);
+    (Some(head), Some(tail), space_before + used)
 }
 
 /// Assembles one page from the fragments placed on it.
@@ -1240,5 +1534,160 @@ mod tests {
         let mut new = prev.clone();
         new[5] = paragraph(6, Twip(760)); // grow a paragraph above the straddler
         golden(&prev, &new, &config);
+    }
+
+    // --- Table pagination (P1D-003) -------------------------------------------
+
+    use crate::block::{CellBorders, CellFragment};
+
+    fn tnode(id: u64) -> NodeId {
+        NodeId::from_parts(id, 1).unwrap()
+    }
+
+    /// A one-column cell holding the given block fragments.
+    fn cell_of(id: u64, blocks: Vec<BlockFragment>) -> CellFragment {
+        CellFragment {
+            id: tnode(id),
+            grid_span: 1,
+            x: Twip::ZERO,
+            width: Twip(3000),
+            blocks,
+            borders: CellBorders::default(),
+        }
+    }
+
+    /// A table row whose height is its cells' content height.
+    fn table_row(
+        id: u64,
+        table: u64,
+        cells: Vec<CellFragment>,
+        can_split: bool,
+        header: bool,
+    ) -> BlockFragment {
+        let height = BlockFragment::cells_content_height(&cells);
+        BlockFragment::TableRow {
+            id: tnode(id),
+            table: tnode(table),
+            cells,
+            height,
+            can_split,
+            header,
+            clip: false,
+        }
+    }
+
+    #[test]
+    fn a_cant_split_row_taller_than_the_remaining_space_moves_whole() {
+        let config = letter_config();
+        let content_h = config.content_area().size.height.raw();
+        // Fill the page to a 500-twip slack, then a `cantSplit` row 1000 twips
+        // tall: it cannot fit and must move whole to page 2.
+        let filler = paragraph(1, Twip(content_h - 500));
+        let row = table_row(
+            2,
+            500,
+            vec![cell_of(3, vec![paragraph(4, Twip(1000))])],
+            false,
+            false,
+        );
+        let layout = paginate(&[filler, row], &config);
+        assert_eq!(layout.page_count(), 2, "the row moved to a second page");
+        assert_eq!(
+            layout.pages[0].placed.len(),
+            1,
+            "only the filler is on page 1"
+        );
+        // The row is on page 2, whole (its full 1000-twip content height).
+        let page2 = &layout.pages[1];
+        assert_eq!(page2.placed.len(), 1);
+        assert_eq!(
+            page2.placed[0].fragment.height(),
+            Twip(1000),
+            "the row is intact"
+        );
+    }
+
+    #[test]
+    fn a_table_repeats_its_header_row_on_each_continuation_page() {
+        let config = letter_config();
+        // A header row then 20 body rows of 1000 twips: the table overflows page 1,
+        // and the header must reappear at the top of page 2.
+        let header = table_row(
+            10,
+            5,
+            vec![cell_of(11, vec![paragraph(12, Twip(300))])],
+            false,
+            true,
+        );
+        let mut frags = vec![header];
+        for i in 0..20u64 {
+            frags.push(table_row(
+                100 + i,
+                5,
+                vec![cell_of(200 + i, vec![paragraph(300 + i, Twip(1000))])],
+                true,
+                false,
+            ));
+        }
+        let layout = paginate(&frags, &config);
+        assert!(layout.page_count() >= 2, "the table spans multiple pages");
+        let header_id = tnode(10);
+        assert_eq!(
+            layout.pages[0].placed[0].fragment.node_id(),
+            header_id,
+            "the header leads page 1"
+        );
+        let page2 = &layout.pages[1];
+        let first = &page2.placed[0].fragment;
+        assert_eq!(first.node_id(), header_id, "the header repeats atop page 2");
+        assert!(
+            matches!(first, BlockFragment::TableRow { header: true, .. }),
+            "the repeated fragment is the header row"
+        );
+        // The repeated header does not corrupt flow provenance: page 2 begins at a
+        // real body row, not back at the header's galley index (0).
+        assert_ne!(
+            page2.flow.start.fragment, 0,
+            "flow provenance skips the repeated header"
+        );
+    }
+
+    #[test]
+    fn a_tall_table_row_splits_across_pages() {
+        let config = letter_config();
+        let content_h = config.content_area().size.height.raw();
+        // A single splittable row whose cell holds a 120-line paragraph
+        // (28_800 twips) — far taller than the page.
+        let row = table_row(
+            20,
+            5,
+            vec![cell_of(
+                21,
+                vec![multiline(22, 120, Twip(240), BreakControl::default())],
+            )],
+            true,
+            false,
+        );
+        let layout = paginate(&[row], &config);
+        assert!(layout.page_count() >= 3, "the tall row splits over pages");
+        // No page overfills, and every line survives across the chunks.
+        let mut total_lines = 0;
+        for page in &layout.pages {
+            let used: i32 = page.placed.iter().map(|p| p.rect.size.height.raw()).sum();
+            assert!(used <= content_h, "a page never overfills");
+            for placed in &page.placed {
+                let BlockFragment::TableRow { cells, .. } = &placed.fragment else {
+                    panic!("expected a table row");
+                };
+                for cell in cells {
+                    for block in &cell.blocks {
+                        if let BlockFragment::Paragraph { lines, .. } = block {
+                            total_lines += lines.lines.len();
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(total_lines, 120, "no lines are lost when the row splits");
     }
 }
