@@ -20,7 +20,7 @@ use parley::{
     LineHeight, PositionedLayoutItem, StyleProperty,
 };
 
-use crate::model::ModelRange;
+use crate::model::{ModelPos, ModelRange};
 use crate::text::{
     Decoration, FontId, Glyph, GlyphRun, Line, LineBreak, LineConstraints, LineLayout, LineShaper,
     StyledRun, TextAlignment,
@@ -145,6 +145,16 @@ impl LineShaper for ParleyShaper {
             spans.push((start, text.len(), run));
         }
 
+        // Byte offsets `parley` reports are indices into `text`, the paragraph's
+        // runs concatenated in document order. That is exactly the paragraph
+        // node's text (offset 0 = the node's start, `range.start.offset` in the
+        // general case), so a concatenated-text byte offset *is* the node-relative
+        // caret anchor `hittest` expects — no per-run remapping is needed. `base`
+        // is the node offset at which this shaped text begins.
+        let base = range.start.offset;
+        let node = range.start.node;
+        let to_offset = |byte: usize| base.saturating_add(byte as u32);
+
         // Feed sizes in twips with scale = 1 so all outputs are in twips.
         let mut builder = layout_cx.ranged_builder(&mut fonts, &text, 1.0, false);
         builder.push_default(FontFamily::from(self.default_family.as_str()));
@@ -214,21 +224,33 @@ impl LineShaper for ParleyShaper {
                     Twip(glyph_run.offset().round() as i32),
                     Twip(glyph_run.baseline().round() as i32),
                 );
+                // Walk the run's clusters in visual (left-to-right) order — the
+                // same order (and advances) `positioned_glyphs` yields — tagging
+                // every glyph with its cluster's node-relative byte offset so the
+                // caret can anchor to it. Each cluster's `text_range().start` is a
+                // byte index into the concatenated paragraph text (see `to_offset`).
                 let glyphs = glyph_run
-                    .positioned_glyphs()
-                    .map(|glyph| Glyph {
-                        id: glyph.id,
-                        advance: Twip(glyph.advance.round() as i32),
-                        // Byte-accurate cluster mapping lands with hit-testing (1E).
-                        cluster: 0,
+                    .run()
+                    .visual_clusters()
+                    .flat_map(|cluster| {
+                        let offset = to_offset(cluster.text_range().start);
+                        cluster.glyphs().map(move |glyph| Glyph {
+                            id: glyph.id,
+                            advance: Twip(glyph.advance.round() as i32),
+                            cluster: offset,
+                        })
                     })
                     .collect();
+                // `parley` resolves the Unicode bidi level per run; its parity is
+                // the run's direction (even = LTR, odd = RTL), which is all the
+                // public API exposes and all `hittest` reads.
+                let bidi_level = u8::from(glyph_run.run().is_rtl());
                 out_runs.push(GlyphRun {
                     font: FontId(style.brush.font),
                     size,
                     color: style.brush.color,
                     origin,
-                    bidi_level: 0,
+                    bidi_level,
                     decoration: Decoration {
                         underline: style.underline.is_some(),
                         strikethrough: style.strikethrough.is_some(),
@@ -241,14 +263,20 @@ impl LineShaper for ParleyShaper {
             } else {
                 LineBreak::Wrap
             };
+            // The line's model range is the node-relative span of the concatenated
+            // text it covers; `parley` partitions the text across lines, so these
+            // spans are contiguous and non-overlapping.
+            let text_range = line.text_range();
+            let line_range = ModelRange::new(
+                ModelPos::new(node, to_offset(text_range.start)),
+                ModelPos::new(node, to_offset(text_range.end)),
+            );
             lines.push(Line {
                 runs: out_runs,
                 ascent: Twip(metrics.ascent.round() as i32),
                 descent: Twip(metrics.descent.round() as i32),
                 height: Twip(metrics.line_height.round() as i32),
-                // Per-line model ranges are refined with hit-testing (1E); for now
-                // each line carries the paragraph range.
-                range,
+                range: line_range,
                 line_break,
             });
         }
@@ -396,5 +424,123 @@ mod tests {
             "run color round-trips through parley"
         );
         assert!(run.decoration.underline, "underline round-trips");
+    }
+
+    /// A styled run addressing a specific bundled face (for multi-font lines).
+    fn run_with_font(text: &str, font: FontId) -> StyledRun<'_> {
+        StyledRun { font, ..run(text) }
+    }
+
+    #[test]
+    fn two_runs_of_different_fonts_yield_increasing_node_relative_clusters() {
+        let shaper = ParleyShaper::new();
+        // "Hello " in Roboto, "World" in Caladea: one line, two distinct faces.
+        let roboto = run_with_font("Hello ", crate::fonts::ROBOTO.face_id(false, false));
+        let caladea = run_with_font("World", crate::fonts::CALADEA.face_id(false, false));
+        let layout = shaper.shape_paragraph(&[roboto, caladea], constraints(500), para_range());
+        assert_eq!(layout.lines.len(), 1, "the text fits on one line");
+        let clusters: Vec<u32> = layout.lines[0]
+            .runs
+            .iter()
+            .flat_map(|r| &r.glyphs)
+            .map(|g| g.cluster)
+            .collect();
+        assert!(clusters.len() >= 11, "one cluster per ASCII char");
+        assert!(
+            clusters.iter().any(|&c| c != 0),
+            "clusters are real byte offsets, not the placeholder 0"
+        );
+        // This LTR line is stored left-to-right, so byte offsets are
+        // non-decreasing and reach into the second run (past byte 6, "World").
+        assert!(
+            clusters.windows(2).all(|w| w[0] <= w[1]),
+            "clusters increase across the line: {clusters:?}"
+        );
+        assert_eq!(
+            *clusters.first().unwrap(),
+            0,
+            "the first glyph anchors at byte 0"
+        );
+        assert!(
+            clusters.iter().any(|&c| c >= 6),
+            "the second run's glyphs carry offsets into its node text: {clusters:?}"
+        );
+        // Two distinct faces really were shaped (a genuine multi-font line).
+        let fonts: std::collections::BTreeSet<u32> =
+            layout.lines[0].runs.iter().map(|r| r.font.0).collect();
+        assert_eq!(fonts.len(), 2, "the line carries two distinct faces");
+    }
+
+    #[test]
+    fn bidi_levels_reflect_run_direction() {
+        let shaper = ParleyShaper::new();
+        // Pure LTR: every run is even (level 0).
+        let ltr = shaper.shape_paragraph(&[run("abc")], constraints(500), para_range());
+        assert!(
+            ltr.lines[0].runs.iter().all(|r| r.bidi_level % 2 == 0),
+            "LTR runs have an even bidi level"
+        );
+        // Pure RTL (Hebrew): at least one run is odd.
+        let rtl = shaper.shape_paragraph(&[run("שלום")], constraints(500), para_range());
+        assert!(
+            rtl.lines
+                .iter()
+                .flat_map(|l| &l.runs)
+                .any(|r| r.bidi_level % 2 == 1),
+            "an RTL run has an odd bidi level"
+        );
+        // Mixed line: both parities present.
+        let mixed = shaper.shape_paragraph(&[run("abc שלום def")], constraints(500), para_range());
+        let levels: Vec<u8> = mixed
+            .lines
+            .iter()
+            .flat_map(|l| &l.runs)
+            .map(|r| r.bidi_level)
+            .collect();
+        assert!(
+            levels.iter().any(|&b| b % 2 == 0) && levels.iter().any(|&b| b % 2 == 1),
+            "a mixed line carries both LTR and RTL runs: {levels:?}"
+        );
+    }
+
+    #[test]
+    fn line_ranges_are_contiguous_subranges_of_the_paragraph() {
+        let shaper = ParleyShaper::new();
+        let text = "Hello world this is a longer paragraph that wraps onto lines";
+        let total = text.len() as u32;
+        // A narrow column forces several lines.
+        let layout = shaper.shape_paragraph(&[run(text)], constraints(60), para_range());
+        assert!(
+            layout.lines.len() >= 2,
+            "the text wraps to multiple lines (got {})",
+            layout.lines.len()
+        );
+        let node = para_range().start.node;
+        let mut prev_end = 0u32;
+        for (index, line) in layout.lines.iter().enumerate() {
+            assert_eq!(line.range.start.node, node, "the line anchors to the node");
+            assert_eq!(line.range.end.node, node);
+            assert!(
+                line.range.start.offset <= line.range.end.offset,
+                "the range is well-formed"
+            );
+            assert!(
+                line.range.end.offset <= total,
+                "the range stays within the paragraph text"
+            );
+            if index == 0 {
+                assert_eq!(
+                    line.range.start.offset, 0,
+                    "the first line starts at byte 0"
+                );
+            } else {
+                assert_eq!(
+                    line.range.start.offset, prev_end,
+                    "consecutive lines are contiguous — no gap, no overlap"
+                );
+            }
+            prev_end = line.range.end.offset;
+        }
+        assert_eq!(prev_end, total, "the last line ends at the paragraph's end");
     }
 }
