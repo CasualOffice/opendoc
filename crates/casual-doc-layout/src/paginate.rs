@@ -14,6 +14,8 @@
 //! that makes incremental re-pagination (the stabilization halt) and per-page
 //! incremental rendering possible (`43-…` §3.4).
 
+use std::collections::HashMap;
+
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::SectionId;
 
@@ -67,7 +69,7 @@ const MIN_WIDOW_ORPHAN: usize = 2;
 /// overflows rather than looping, so pagination always terminates.
 #[must_use]
 pub fn paginate(fragments: &[BlockFragment], config: &PageConfig) -> PaginatedLayout {
-    let mut p = Paginator::new(config, Vec::new(), FlowPos::at(0));
+    let mut p = Paginator::new(config, Vec::new(), FlowPos::at(0), None);
     p.run(fragments, 0);
     p.flush();
     PaginatedLayout { pages: p.pages }
@@ -82,8 +84,15 @@ pub fn paginate(fragments: &[BlockFragment], config: &PageConfig) -> PaginatedLa
 /// verbatim (their layout cannot depend on anything below them, since pagination
 /// is a forward fill and each page begins at a fresh content-top cursor). Only
 /// the changed page and everything after it are re-flowed. This makes editing
-/// near the end of a document nearly free; the *stabilization halt* that also
-/// reuses the unchanged tail (bounding edits near the top) is the next slice.
+/// near the end of a document nearly free.
+///
+/// **Above** the edit, pages are reused verbatim; **below** it, the *stabilization
+/// halt* reuses the unchanged tail: once a re-flowed page boundary re-lands on a
+/// previous boundary within the common galley suffix, the rest of the previous
+/// layout tiles identically, so it is spliced in (renumbered, indices shifted by
+/// any insert/delete delta) instead of being re-flowed to EOF. Work is therefore
+/// bounded to the pages the edit actually disturbs — even for an edit near the
+/// top of a long document.
 ///
 /// `prev` must be the layout `paginate(prev_galley, config)` produced under the
 /// same `config`; if it is not (or the geometry changed) this still returns a
@@ -95,6 +104,33 @@ pub fn repaginate(
     new_galley: &[BlockFragment],
     config: &PageConfig,
 ) -> PaginatedLayout {
+    repaginate_with_stats(prev, prev_galley, new_galley, config).0
+}
+
+/// Cost accounting for one incremental re-pagination: how many previous pages
+/// were reused above the edit (`reused_prefix`), how many were re-flowed
+/// (`reflowed` — the actual work done), and how many were spliced from the
+/// unchanged tail (`reused_tail`). The stabilization guarantee is that `reflowed`
+/// stays proportional to the pages the edit disturbs, not to document length.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RepaginateStats {
+    /// Pages reused verbatim from above the edit.
+    pub reused_prefix: usize,
+    /// Pages re-flowed (the work the edit actually cost).
+    pub reflowed: usize,
+    /// Pages spliced from the unchanged tail by the stabilization halt.
+    pub reused_tail: usize,
+}
+
+/// [`repaginate`] plus its [`RepaginateStats`] — the incremental cost, for
+/// telemetry and for asserting that work stays bounded to the edit neighborhood.
+#[must_use]
+pub fn repaginate_with_stats(
+    prev: &PaginatedLayout,
+    prev_galley: &[BlockFragment],
+    new_galley: &[BlockFragment],
+    config: &PageConfig,
+) -> (PaginatedLayout, RepaginateStats) {
     // The first galley index whose fragment changed. Everything before it is
     // byte-identical in both galleys, so its pagination is unaffected.
     let first_dirty = new_galley
@@ -108,15 +144,57 @@ pub fn repaginate(
     // Re-running the group walk from a group start with a fresh page-top cursor
     // reproduces exactly what a full paginate does from there.
     let Some(resume_page) = safe_resume_page(prev, prev_galley, first_dirty, config) else {
-        return paginate(new_galley, config);
+        let layout = paginate(new_galley, config);
+        let reflowed = layout.pages.len();
+        return (
+            layout,
+            RepaginateStats {
+                reused_prefix: 0,
+                reflowed,
+                reused_tail: 0,
+            },
+        );
     };
     let resume_index = prev.pages[resume_page].flow.start.fragment as usize;
 
+    // The unchanged tail the halt may splice, keyed by index-from-end.
+    let suffix = common_suffix_len(prev_galley, new_galley);
+    let halt = HaltLookup::build(
+        prev,
+        prev_galley.len() as u32,
+        new_galley.len() as u32,
+        suffix,
+        resume_page,
+    );
+
     let prefix: Vec<Page> = prev.pages[..resume_page].to_vec();
-    let mut p = Paginator::new(config, prefix, FlowPos::at(resume_index as u32));
+    let mut p = Paginator::new(config, prefix, FlowPos::at(resume_index as u32), halt);
     p.run(new_galley, resume_index);
     p.flush();
-    PaginatedLayout { pages: p.pages }
+
+    let reflowed = p.pages.len() - resume_page;
+
+    // If the walk stabilized, splice the previous layout's tail: its pages are
+    // identical block-for-block, needing only sequential renumbering and a shift
+    // of the galley-relative flow indices by the insert/delete delta.
+    let mut reused_tail = 0;
+    if let Some(from) = p.halted {
+        let delta = new_galley.len() as i64 - prev_galley.len() as i64;
+        for page in &prev.pages[from..] {
+            let mut page = page.clone();
+            page.number = p.pages.len() as u32 + 1;
+            page.flow.start.fragment = (i64::from(page.flow.start.fragment) + delta) as u32;
+            page.flow.end.fragment = (i64::from(page.flow.end.fragment) + delta) as u32;
+            p.pages.push(page);
+        }
+        reused_tail = prev.pages.len() - from;
+    }
+    let stats = RepaginateStats {
+        reused_prefix: resume_page,
+        reflowed,
+        reused_tail,
+    };
+    (PaginatedLayout { pages: p.pages }, stats)
 }
 
 /// The index of the previous page from which re-pagination resumes for an edit
@@ -180,6 +258,82 @@ fn is_clean_boundary(pos: FlowPos, galley: &[BlockFragment]) -> bool {
     pos.line == 0 && (f == 0 || f > galley.len() || !galley[f - 1].break_control().keep_next)
 }
 
+/// The number of trailing fragments that are identical in both galleys (the
+/// common suffix). Content from here to EOF is unchanged, so a page boundary
+/// that re-lands inside it tiles the rest of the document exactly as before.
+fn common_suffix_len(prev: &[BlockFragment], new: &[BlockFragment]) -> u32 {
+    let mut n = 0u32;
+    let (mut i, mut j) = (prev.len(), new.len());
+    while i > 0 && j > 0 && prev[i - 1] == new[j - 1] {
+        i -= 1;
+        j -= 1;
+        n += 1;
+    }
+    n
+}
+
+/// Precomputed lookup that lets the paginator **halt** as soon as a re-flowed
+/// page boundary re-lands on a previous page's boundary within the unchanged
+/// tail — the *stabilization halt* (`docs/43-…` §3.4).
+///
+/// The key is `(index_from_end, line)`. Two paginations that reach the same flow
+/// position — the same distance from the end of the galley and the same
+/// intra-paragraph line offset — over content that is identical from there to
+/// EOF lay out identically from that point on (the forward pass is a pure
+/// function of its start position, geometry, and downstream content). So a single
+/// match justifies splicing the entire previous tail rather than re-flowing it.
+/// Keying by index-from-end (not absolute index) makes this robust to fragments
+/// inserted or removed above — pressing Enter/Backspace shifts absolute indices
+/// but not distance-from-the-end.
+struct HaltLookup {
+    new_len: u32,
+    /// Length of the common galley suffix (the largest reusable index-from-end).
+    suffix: u32,
+    /// `(index_from_end, start_line)` → previous page index (only pages that both
+    /// begin inside the unchanged suffix and lie at or after the resume point).
+    starts: HashMap<(u32, u32), usize>,
+}
+
+impl HaltLookup {
+    /// Builds the lookup, or `None` if there is no reusable suffix. `resume` is
+    /// the first re-flowed page index, so pages already reused as the prefix are
+    /// never spliced (no overlap).
+    fn build(
+        prev: &PaginatedLayout,
+        prev_len: u32,
+        new_len: u32,
+        suffix: u32,
+        resume: usize,
+    ) -> Option<Self> {
+        if suffix == 0 {
+            return None;
+        }
+        let mut starts = HashMap::new();
+        for (idx, page) in prev.pages.iter().enumerate().skip(resume) {
+            let ife = prev_len - page.flow.start.fragment;
+            if (1..=suffix).contains(&ife) {
+                starts.insert((ife, page.flow.start.line), idx);
+            }
+        }
+        Some(Self {
+            new_len,
+            suffix,
+            starts,
+        })
+    }
+
+    /// The previous page index whose tail can be spliced when a re-flowed page
+    /// begins at flow position `at`, or `None` if `at` is not a stabilization
+    /// point.
+    fn match_at(&self, at: FlowPos) -> Option<usize> {
+        let ife = self.new_len.checked_sub(at.fragment)?;
+        if !(1..=self.suffix).contains(&ife) {
+            return None;
+        }
+        self.starts.get(&(ife, at.line)).copied()
+    }
+}
+
 /// Mutable pagination state, walked fragment by fragment.
 struct Paginator<'a> {
     config: &'a PageConfig,
@@ -193,13 +347,22 @@ struct Paginator<'a> {
     at: FlowPos,
     /// Flow position where the current (open) page began.
     page_start: FlowPos,
+    /// When set (incremental runs), lets the walk halt at a stabilization point.
+    halt: Option<HaltLookup>,
+    /// Once the walk halts, the previous page index whose tail is to be spliced.
+    halted: Option<usize>,
 }
 
 impl<'a> Paginator<'a> {
     /// Creates a paginator seeded with already-emitted `pages` and resuming at
-    /// flow position `at` (page-top cursor). For a full run pass an empty prefix
-    /// and `FlowPos::at(0)`.
-    fn new(config: &'a PageConfig, pages: Vec<Page>, at: FlowPos) -> Self {
+    /// flow position `at` (page-top cursor). For a full run pass an empty prefix,
+    /// `FlowPos::at(0)`, and no halt lookup.
+    fn new(
+        config: &'a PageConfig,
+        pages: Vec<Page>,
+        at: FlowPos,
+        halt: Option<HaltLookup>,
+    ) -> Self {
         let content = config.content_area();
         Self {
             config,
@@ -211,6 +374,8 @@ impl<'a> Paginator<'a> {
             cursor_y: content.origin.y,
             at,
             page_start: at,
+            halt,
+            halted: None,
         }
     }
 
@@ -220,7 +385,7 @@ impl<'a> Paginator<'a> {
     /// a normal paragraph splits to fill the current page.
     fn run(&mut self, fragments: &[BlockFragment], from: usize) {
         let mut i = from;
-        while i < fragments.len() {
+        while i < fragments.len() && self.halted.is_none() {
             self.at = FlowPos::at(i as u32);
             let mut j = i;
             while j < fragments.len() && fragments[j].break_control().keep_next {
@@ -239,6 +404,10 @@ impl<'a> Paginator<'a> {
             {
                 self.flush();
             }
+            // The group's start is a page top: it may be a stabilization point.
+            if self.halted.is_some() {
+                break;
+            }
 
             // A keep-together group that fits a page is placed atomically;
             // otherwise (a normal paragraph, or an oversized keep group) paragraphs
@@ -246,6 +415,9 @@ impl<'a> Paginator<'a> {
             let allow_split = !is_keep_group || !group_fits_page;
             for (offset, fragment) in group.iter().enumerate() {
                 self.place(i + offset, fragment, allow_split);
+                if self.halted.is_some() {
+                    return;
+                }
             }
             i = j;
         }
@@ -268,6 +440,14 @@ impl<'a> Paginator<'a> {
             self.pages.push(page);
             self.cursor_y = self.content.origin.y;
             self.page_start = self.at;
+            // The page just closed; `self.at` is the next page's start. If it
+            // re-lands on a previous boundary inside the unchanged tail, stop —
+            // the caller splices the rest of the previous layout verbatim.
+            if self.halted.is_none()
+                && let Some(halt) = &self.halt
+            {
+                self.halted = halt.match_at(self.at);
+            }
         }
     }
 
@@ -307,6 +487,11 @@ impl<'a> Paginator<'a> {
                 let height = fragment.height();
                 if !self.placed.is_empty() && height.raw() > self.remaining() {
                     self.flush();
+                    // The flush may have landed on a stabilization point; if so,
+                    // this fragment belongs to the spliced tail — do not place it.
+                    if self.halted.is_some() {
+                        return;
+                    }
                 }
                 self.push(fragment.clone(), height);
                 self.at = FlowPos::at(idx as u32 + 1);
@@ -328,7 +513,7 @@ impl<'a> Paginator<'a> {
         let widow = break_control.widow_control;
         let mut start = 0;
         let mut is_head = true;
-        while start < n {
+        while start < n && self.halted.is_none() {
             // The next content to place is this paragraph's line `start`; a flush
             // triggered below (nothing fits / orphan) must end the page here.
             self.at = FlowPos {
@@ -785,33 +970,66 @@ mod tests {
         (1..=n).map(|i| paragraph(i as u64, height)).collect()
     }
 
-    /// Asserts the incremental result equals a full re-paginate, and returns how
-    /// many leading pages were reused (0 = nothing reusable).
-    fn golden(prev: &[BlockFragment], new: &[BlockFragment], config: &PageConfig) -> usize {
+    /// A galley with a forced page break every `every` paragraphs — modeling
+    /// headings/section starts. These are hard re-anchor points, so an edit's
+    /// effect is contained between two breaks and pagination re-stabilizes: the
+    /// realistic case where the stabilization halt reuses the tail. (A perfectly
+    /// uniform stream never re-syncs after a non-page-multiple shift; that is the
+    /// `whole_tail_reflows` case, correct but pathological.)
+    fn galley_anchored(n: usize, height: Twip, every: usize) -> Vec<BlockFragment> {
+        (1..=n)
+            .map(|i| {
+                let bc = if i > 1 && i % every == 1 {
+                    with(true, false) // pageBreakBefore
+                } else {
+                    BreakControl::default()
+                };
+                paragraph_with(i as u64, height, bc)
+            })
+            .collect()
+    }
+
+    /// Asserts the incremental result equals a full re-paginate (the golden
+    /// invariant) and that its cost accounting is self-consistent, then returns
+    /// the [`RepaginateStats`] so callers can assert boundedness.
+    fn golden(
+        prev: &[BlockFragment],
+        new: &[BlockFragment],
+        config: &PageConfig,
+    ) -> RepaginateStats {
         let prev_layout = paginate(prev, config);
-        let inc = repaginate(&prev_layout, prev, new, config);
+        let (inc, stats) = repaginate_with_stats(&prev_layout, prev, new, config);
         let full = paginate(new, config);
         assert_eq!(
             inc, full,
             "incremental re-pagination must equal a full paginate"
         );
-        let first_dirty = new
-            .iter()
-            .zip(prev.iter())
-            .position(|(a, b)| a != b)
-            .unwrap_or(new.len().min(prev.len()));
-        safe_resume_page(&prev_layout, prev, first_dirty, config).unwrap_or(0)
+        assert_eq!(
+            stats.reused_prefix + stats.reflowed + stats.reused_tail,
+            full.page_count(),
+            "every page is accounted for as reused-prefix, reflowed, or reused-tail"
+        );
+        stats
     }
 
     #[test]
     fn incremental_equals_full_for_an_edit_in_the_middle() {
         let config = letter_config();
-        // ~10 pages of single-line paragraphs; grow one paragraph in the middle.
-        let prev = galley(300, Twip(400));
+        // Sectioned document (a forced break every 20 paragraphs); grow one
+        // paragraph in the middle. The edit is contained between two breaks, so
+        // the pages above AND below are reused — only the edited section reflows.
+        let prev = galley_anchored(300, Twip(400), 20);
         let mut new = prev.clone();
-        new[150] = paragraph(151, Twip(1_200)); // taller -> shifts everything below
-        let reused = golden(&prev, &new, &config);
-        assert!(reused > 0, "an edit mid-document reuses the pages above it");
+        new[150] = paragraph(151, Twip(1_200));
+        let stats = golden(&prev, &new, &config);
+        assert!(
+            stats.reused_prefix > 0,
+            "an edit mid-document reuses the pages above it: {stats:?}"
+        );
+        assert!(
+            stats.reused_tail > 0,
+            "the stabilization halt reuses the pages below it: {stats:?}"
+        );
     }
 
     #[test]
@@ -820,13 +1038,16 @@ mod tests {
         let prev = galley(300, Twip(400));
         let mut new = prev.clone();
         new[299] = paragraph(300, Twip(1_200));
-        let reused = golden(&prev, &new, &config);
-        let full = paginate(&new, &config);
-        // Only the last page (or two, if the edit pushed a page) is re-flowed.
+        let stats = golden(&prev, &new, &config);
+        // Only the last page (or two, if the edit pushed a page) is re-flowed;
+        // everything above is reused as the prefix.
         assert!(
-            reused >= full.page_count().saturating_sub(2),
-            "editing the last paragraph reuses all but the final page(s): reused {reused}, pages {}",
-            full.page_count()
+            stats.reflowed <= 2,
+            "editing the last paragraph re-flows at most the final page(s): {stats:?}"
+        );
+        assert!(
+            stats.reused_prefix > 0,
+            "the pages above are reused: {stats:?}"
         );
     }
 
@@ -864,8 +1085,11 @@ mod tests {
         let prev = galley(300, Twip(400));
         let mut new = prev.clone();
         new.push(paragraph(10_001, Twip(400)));
-        let reused = golden(&prev, &new, &config);
-        assert!(reused > 0, "appending reuses the whole document above");
+        let stats = golden(&prev, &new, &config);
+        assert!(
+            stats.reused_prefix > 0,
+            "appending reuses the whole document above"
+        );
     }
 
     #[test]
@@ -962,6 +1186,47 @@ mod tests {
         let mut new = prev.clone();
         new[3] = paragraph(4, Twip(431 + 137)); // odd delta, ripples forever
         golden(&prev, &new, &config);
+    }
+
+    #[test]
+    fn stabilization_halt_bounds_work_for_an_edit_near_the_top() {
+        let config = letter_config();
+        // Sectioned document. Edit the SECOND paragraph (first section): nothing
+        // above to reuse, but the stabilization halt reuses almost the entire
+        // tail — so the work (reflowed pages) is a small constant, independent of
+        // document length. This is the case editors classically get wrong.
+        let prev = galley_anchored(300, Twip(400), 20);
+        let mut new = prev.clone();
+        new[1] = paragraph(2, Twip(1_200));
+        let stats = golden(&prev, &new, &config);
+        assert_eq!(
+            stats.reused_prefix, 0,
+            "the edit is on the first page: {stats:?}"
+        );
+        assert!(
+            stats.reused_tail > 0,
+            "the tail is reused via the stabilization halt: {stats:?}"
+        );
+        assert!(
+            stats.reflowed <= 3,
+            "an edit near the top re-flows only a handful of pages, not the whole \
+             document: {stats:?}"
+        );
+    }
+
+    #[test]
+    fn stabilization_halt_survives_fragment_insertion_upstream() {
+        let config = letter_config();
+        // Pressing Enter near the top shifts every downstream absolute index by
+        // one, yet the halt (keyed by index-from-end) must still splice the tail.
+        let prev = galley_anchored(300, Twip(400), 20);
+        let mut new = prev.clone();
+        new.insert(2, paragraph(10_100, Twip(400)));
+        let stats = golden(&prev, &new, &config);
+        assert!(
+            stats.reused_tail > 0,
+            "index-from-end keying reuses the tail across an insertion: {stats:?}"
+        );
     }
 
     #[test]
