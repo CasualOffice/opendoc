@@ -6,8 +6,8 @@
 
 use casual_doc_model::v1::{
     Alignment, BreakKind, Color, EmphasisMark, FontName, FontRef, HighlightColor, Indentation,
-    Language, ParagraphProperties, RgbColor, RunFontHint, RunProperties, Spacing, StyleKind,
-    ThemeFont, ThemeFontRef, VerticalAlignment, VerticalTextAlignment,
+    Language, MAX_SYMBOL_FONT_LEN, ParagraphProperties, RgbColor, RunFontHint, RunProperties,
+    Spacing, StyleKind, ThemeFont, ThemeFontRef, VerticalAlignment, VerticalTextAlignment,
 };
 use quick_xml::events::BytesStart;
 
@@ -359,6 +359,24 @@ pub(crate) fn break_kind(element: &BytesStart<'_>) -> BreakKind {
         Some("column") => BreakKind::Column,
         _ => BreakKind::Line,
     }
+}
+
+/// Resolves a `w:sym` symbol glyph from its `w:font` and `w:char` attributes.
+///
+/// Returns the (font, code point) pair only when a non-empty, length-bounded
+/// font name and a parseable hexadecimal `w:char` are both present. A missing,
+/// empty, over-long, or unparseable value yields `None` so the caller can report
+/// the glyph rather than emit an invalid or misleading symbol node.
+pub(crate) fn symbol_glyph(element: &BytesStart<'_>) -> Option<(String, u32)> {
+    let font = attribute_value(element, b"font")?;
+    if font.is_empty() || font.len() > MAX_SYMBOL_FONT_LEN {
+        return None;
+    }
+    // `w:char` is a hexadecimal code point (`ST_ShortHexNumber`-style, e.g.
+    // `F0FC`); tolerate an optional `0x` prefix a producer might emit.
+    let raw = attribute_value(element, b"char")?;
+    let char = u32::from_str_radix(raw.trim_start_matches("0x"), 16).ok()?;
+    Some((font, char))
 }
 
 pub(crate) fn attribute_value(element: &BytesStart<'_>, name: &[u8]) -> Option<String> {
