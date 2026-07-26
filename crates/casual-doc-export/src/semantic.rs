@@ -27,7 +27,7 @@ use casual_doc_model::v1::{
     FormCheckBoxSize, FormFieldData, FormFieldKind, FormTextType, GridColumn, HeaderFooterId,
     HeaderFooterKind, HeightRule, HighlightColor, HorizontalAlign, HorizontalAnchor,
     HorizontalPosition, HyperlinkTarget, InlineNode, LevelJustification, LevelSuffix,
-    LineNumberRestart, MediaId, MediaReference, MoveKind, Note, NoteId, NoteKind,
+    LineNumberRestart, LineRule, MediaId, MediaReference, MoveKind, Note, NoteId, NoteKind,
     NoteNumberRestart, NotePosition, NoteProperties, NumberFormat, NumberingInstance,
     NumberingInstanceId, NumberingLevel, PageBorderDisplay, PageBorderOffset, PageOrientation,
     PageVerticalAlignment, ParagraphProperties, Person, PositionalTabAlignment,
@@ -3298,15 +3298,38 @@ fn write_paragraph_properties(
         if let Some(before) = spacing.before_twips {
             el.push_attribute(("w:before", before.to_string().as_str()));
         }
+        if let Some(before_auto) = spacing.before_auto {
+            el.push_attribute(("w:beforeAutospacing", if before_auto { "1" } else { "0" }));
+        }
         if let Some(after) = spacing.after_twips {
             el.push_attribute(("w:after", after.to_string().as_str()));
         }
-        if let Some(percent) = spacing.line_percent {
-            // The importer reads `line * 100 / 240` (auto rule); round the twips
-            // up so that integer division recovers the exact percent.
-            let line = (u64::from(percent) * 240).div_ceil(100);
-            el.push_attribute(("w:line", line.to_string().as_str()));
-            el.push_attribute(("w:lineRule", "auto"));
+        if let Some(after_auto) = spacing.after_auto {
+            el.push_attribute(("w:afterAutospacing", if after_auto { "1" } else { "0" }));
+        }
+        match spacing.line_rule {
+            // `atLeast`/`exact`: `w:line` is a twip value carried verbatim.
+            Some(rule) => {
+                if let Some(twips) = spacing.line_twips {
+                    let name = match rule {
+                        LineRule::Auto => "auto",
+                        LineRule::AtLeast => "atLeast",
+                        LineRule::Exact => "exact",
+                    };
+                    el.push_attribute(("w:line", twips.to_string().as_str()));
+                    el.push_attribute(("w:lineRule", name));
+                }
+            }
+            // `auto` (the default rule): `w:line` is a multiple in 240ths. The
+            // importer reads `line * 100 / 240`; round the twips up so integer
+            // division recovers the exact percent.
+            None => {
+                if let Some(percent) = spacing.line_percent {
+                    let line = (u64::from(percent) * 240).div_ceil(100);
+                    el.push_attribute(("w:line", line.to_string().as_str()));
+                    el.push_attribute(("w:lineRule", "auto"));
+                }
+            }
         }
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }

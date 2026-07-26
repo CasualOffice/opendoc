@@ -47,6 +47,95 @@ fn main() {
     };
     let document = imported.document;
 
+    if std::env::var("PROBE").is_ok() {
+        use casual_doc_model::v1::{BlockNode, LineRule};
+        let (mut total, mut exact, mut auto, mut atleast, mut none, mut styled) =
+            (0, 0, 0, 0, 0, 0);
+        for b in document.body() {
+            if let BlockNode::Paragraph(p) = b {
+                total += 1;
+                if p.properties.style_ref.is_some() {
+                    styled += 1;
+                }
+                match p.properties.spacing.as_ref().and_then(|s| s.line_rule) {
+                    Some(LineRule::Exact) => exact += 1,
+                    Some(LineRule::AtLeast) => atleast += 1,
+                    Some(LineRule::Auto) => auto += 1,
+                    None => {
+                        if p.properties
+                            .spacing
+                            .as_ref()
+                            .and_then(|s| s.line_percent)
+                            .is_some()
+                        {
+                            auto += 1;
+                        } else {
+                            none += 1;
+                        }
+                    }
+                }
+            }
+        }
+        eprintln!(
+            "PROBE total={total} exact={exact} atleast={atleast} auto={auto} none={none} styled={styled}"
+        );
+        // Sample the shaped line heights of the first several paragraphs.
+        use casual_doc_layout::block::BlockFragment;
+        let shaper2 = ParleyShaper::new();
+        let cw = casual_doc_layout::units::Twip::from_points(468);
+        let galley = casual_doc_layout::flow::build_galley(&document, &shaper2, cw);
+        // Correlate each body paragraph's imported line rule with its shaped
+        // first-line height.
+        let mut exact_heights: Vec<i32> = Vec::new();
+        let mut other_heights: Vec<i32> = Vec::new();
+        let mut gi = 0;
+        for b in document.body() {
+            if let BlockNode::Paragraph(p) = b {
+                let is_exact = matches!(
+                    p.properties.spacing.as_ref().and_then(|s| s.line_rule),
+                    Some(LineRule::Exact)
+                );
+                // Find the matching fragment by id.
+                while gi < galley.len() {
+                    if let BlockFragment::Paragraph { id, lines, .. } = &galley[gi]
+                        && *id == p.id
+                    {
+                        if let Some(l) = lines.lines.first() {
+                            if is_exact {
+                                exact_heights.push(l.height.raw());
+                            } else {
+                                other_heights.push(l.height.raw());
+                            }
+                        }
+                        gi += 1;
+                        break;
+                    }
+                    gi += 1;
+                }
+            }
+        }
+        let avg = |v: &[i32]| {
+            if v.is_empty() {
+                0
+            } else {
+                v.iter().sum::<i32>() / v.len() as i32
+            }
+        };
+        eprintln!(
+            "PROBE exact_lines n={} avg_h={} sample={:?}",
+            exact_heights.len(),
+            avg(&exact_heights),
+            &exact_heights.iter().take(6).collect::<Vec<_>>()
+        );
+        eprintln!(
+            "PROBE other_lines n={} avg_h={}",
+            other_heights.len(),
+            avg(&other_heights)
+        );
+        let total_h: i32 = galley.iter().map(|f| f.height().raw()).sum();
+        eprintln!("PROBE galley_total_height_twips={total_h}");
+    }
+
     let mut media = MapMediaSource::new();
     for (_id, reference) in document.definitions().media.iter() {
         if let Ok(part_bytes) = package.read_part(&reference.part_name) {

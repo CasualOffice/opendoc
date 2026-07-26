@@ -23,6 +23,7 @@
 
 pub mod anchor;
 pub mod block;
+pub mod cascade;
 pub mod compose;
 pub mod display;
 pub mod document_layout;

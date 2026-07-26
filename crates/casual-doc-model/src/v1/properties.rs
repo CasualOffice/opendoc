@@ -608,7 +608,31 @@ pub struct Indentation {
     pub hanging_twips: Option<i32>,
 }
 
+/// The line-spacing rule (`w:spacing@w:lineRule`, `ST_LineSpacingRule`): how the
+/// `w:line` value is interpreted (ECMA-376 §17.3.1.33).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LineRule {
+    /// `auto` — `w:line` is a multiple of single spacing measured in 240ths
+    /// (240 = single). Modeled as [`Spacing::line_percent`].
+    Auto,
+    /// `atLeast` — the line is at least `w:line` twips tall; taller content grows
+    /// it. `w:line` is stored in [`Spacing::line_twips`].
+    AtLeast,
+    /// `exact` — the line is exactly `w:line` twips tall; content is clipped.
+    /// `w:line` is stored in [`Spacing::line_twips`].
+    Exact,
+}
+
 /// Paragraph spacing.
+///
+/// Line spacing is modeled in two complementary shapes so the common
+/// `lineRule="auto"` case stays byte-stable while the exact/atLeast rules are
+/// represented faithfully:
+/// - `auto` (a multiple of single spacing) rides [`Spacing::line_percent`] with
+///   `line_rule` left `None` (the implicit default).
+/// - `atLeast`/`exact` set [`Spacing::line_rule`] and carry the twip value in
+///   [`Spacing::line_twips`].
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Spacing {
@@ -618,9 +642,24 @@ pub struct Spacing {
     /// Space after, in twips.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub after_twips: Option<i32>,
-    /// Line spacing as a percentage (100 = single).
+    /// Line spacing as a percentage (100 = single) for the `auto` rule.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub line_percent: Option<u16>,
+    /// The line-spacing rule (`w:lineRule`). Only `Some` for `atLeast`/`exact`;
+    /// the `auto` rule leaves this `None` and uses `line_percent`. Additive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_rule: Option<LineRule>,
+    /// The `w:line` value in twips for the `atLeast`/`exact` rules. Additive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_twips: Option<i32>,
+    /// Automatically determine space before (`w:beforeAutospacing`): when `true`,
+    /// `before_twips` is ignored and a font-size-derived default is used. Additive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before_auto: Option<bool>,
+    /// Automatically determine space after (`w:afterAutospacing`): when `true`,
+    /// `after_twips` is ignored and a font-size-derived default is used. Additive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_auto: Option<bool>,
 }
 
 /// A paragraph's numbering reference.

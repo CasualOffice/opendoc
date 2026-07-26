@@ -191,6 +191,41 @@ impl Default for ParleyShaper {
     }
 }
 
+/// Applies the `w:spacing@lineRule` box model to a shaped line's natural metrics,
+/// returning the `(ascent, descent, height)` to store. Word (ECMA-376 §17.3.1.33):
+///
+/// - **auto** (the default, and any `MetricsRelative` multiple parley already
+///   applied): the natural box is kept as-is.
+/// - **atLeast(v)**: the box is at least `v` tall — a shorter natural box is grown
+///   to `v`, the extra height added below the baseline (as leading/descent); a
+///   taller natural box is left alone.
+/// - **exact(v)**: the box is exactly `v` tall regardless of content. The ascent is
+///   clamped into the box so the baseline stays inside it and the remainder is the
+///   descent; when `v` is smaller than the natural content the glyphs may extend
+///   past the box (Word clips — we keep the correct box height for pagination).
+///
+/// `exact` takes precedence over `atLeast` if both are somehow set (they are
+/// mutually exclusive in a well-formed document).
+pub(crate) fn apply_line_rule(
+    ascent: Twip,
+    descent: Twip,
+    natural: Twip,
+    constraints: &LineConstraints,
+) -> (Twip, Twip, Twip) {
+    if let Some(exact) = constraints.line_exact {
+        let height = exact.raw().max(0);
+        let ascent = ascent.raw().clamp(0, height);
+        return (Twip(ascent), Twip((height - ascent).max(0)), Twip(height));
+    }
+    if let Some(at_least) = constraints.line_at_least
+        && at_least.raw() > natural.raw()
+    {
+        let extra = at_least.raw() - natural.raw();
+        return (ascent, Twip(descent.raw() + extra), at_least);
+    }
+    (ascent, descent, natural)
+}
+
 /// Maps the crate's [`TextAlignment`] to `parley`'s.
 fn alignment(alignment: TextAlignment) -> Alignment {
     match alignment {
@@ -431,11 +466,20 @@ impl LineShaper for ParleyShaper {
                 ModelPos::new(node, to_offset(text_range.start)),
                 ModelPos::new(node, to_offset(text_range.end)),
             );
+            // The natural line box from the font metrics: parley already folded
+            // any `lineRule="auto"` multiple into `line_height` (a
+            // `MetricsRelative` factor pushed above). The `atLeast`/`exact` rules
+            // reshape this box: `atLeast` grows a too-short box (extra space below
+            // the baseline), `exact` pins the height exactly (content may clip).
+            let ascent = Twip(metrics.ascent.round() as i32);
+            let descent = Twip(metrics.descent.round() as i32);
+            let natural = Twip(metrics.line_height.round() as i32);
+            let (ascent, descent, height) = apply_line_rule(ascent, descent, natural, &constraints);
             lines.push(Line {
                 runs: out_runs,
-                ascent: Twip(metrics.ascent.round() as i32),
-                descent: Twip(metrics.descent.round() as i32),
-                height: Twip(metrics.line_height.round() as i32),
+                ascent,
+                descent,
+                height,
                 range: line_range,
                 line_break,
                 page_break_after: false,

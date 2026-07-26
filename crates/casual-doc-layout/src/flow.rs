@@ -21,16 +21,17 @@ use std::hash::{Hash, Hasher};
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     Alignment, BlockNode, BorderEdge, BreakKind, Color, ColorScheme, DefinitionMap, Document,
-    Drawing, Extent, FontRef, FontScheme, HeightRule, HighlightColor, InlineNode, MediaId,
-    MediaReference, ParagraphProperties, RunProperties, SchemeColor, TabAlignment, TabLeader,
-    TabStop, Table, TableBorders, TableCell, TableLayout, TableRowProperties, TextBox,
-    ThemeColorRef, ThemeFontRef, VerticalAlignment,
+    Drawing, Extent, FontRef, FontScheme, HeightRule, HighlightColor, InlineNode, LineRule,
+    MediaId, MediaReference, ParagraphProperties, RunProperties, SchemeColor, StyleId,
+    TabAlignment, TabLeader, TabStop, Table, TableBorders, TableCell, TableLayout,
+    TableRowProperties, TextBox, ThemeColorRef, ThemeFontRef, VerticalAlignment,
 };
 
 use crate::block::{
     BlockBorders, BlockFragment, BoxMetrics, BreakControl, CellBorders, CellFragment,
     ParagraphDecor, ResolvedEdge,
 };
+use crate::cascade::StyleCascade;
 use crate::incremental::{DirtySet, GalleyCache};
 use crate::model::{ModelPos, ModelRange};
 use crate::resolve::{FaceRequest, FontResolutionReport, FontResolver};
@@ -60,6 +61,14 @@ struct FlowCtx<'a> {
     /// silently falling back to black. `None` when the document declares no theme
     /// color scheme.
     palette: Option<&'a ResolvedPalette>,
+    /// The style-hierarchy view used to resolve *effective* paragraph and run
+    /// properties (docDefaults → style chain → direct), so style-driven formatting
+    /// — font size, spacing, alignment, color — is honored, not just direct props.
+    cascade: StyleCascade<'a>,
+    /// The effective paragraph style of the paragraph currently being flowed, set
+    /// before its inlines are collected. Threaded so each run's effective
+    /// properties include the paragraph style's `rPr` in the cascade.
+    para_style: Option<StyleId>,
 }
 
 /// Builds a galley of block fragments from a document's body, shaped to fit
@@ -101,6 +110,8 @@ pub fn build_galley_with_report(
         default_tab: tabs::default_tab_stop(document.definitions().settings.default_tab_stop),
         media: &document.definitions().media,
         palette: palette.as_ref(),
+        cascade: StyleCascade::new(document.definitions()),
+        para_style: None,
     };
     let galley = flow_blocks(document.body(), shaper, content_width, &mut ctx);
     (galley, report)
@@ -138,6 +149,8 @@ pub fn flow_header_footer(
         default_tab: tabs::default_tab_stop(document.definitions().settings.default_tab_stop),
         media: &document.definitions().media,
         palette: palette.as_ref(),
+        cascade: StyleCascade::new(document.definitions()),
+        para_style: None,
     };
     flow_blocks(blocks, shaper, content_width, &mut ctx)
 }
@@ -187,12 +200,18 @@ pub fn build_galley_cached(
         default_tab: tabs::default_tab_stop(document.definitions().settings.default_tab_stop),
         media: &document.definitions().media,
         palette: palette.as_ref(),
+        cascade: StyleCascade::new(document.definitions()),
+        para_style: None,
     };
     cache.begin_build(content_width);
     let mut galley = Vec::new();
     for block in document.body() {
         match block {
             BlockNode::Paragraph(paragraph) => {
+                // Resolve effective properties through the style cascade and record
+                // the effective style so runs inherit the paragraph style's `rPr`.
+                ctx.para_style = ctx.cascade.paragraph_style(&paragraph.properties);
+                let props = ctx.cascade.resolve_paragraph(&paragraph.properties);
                 let mut items = Vec::new();
                 // Resolving here sets each run's resolved `font`, which
                 // `paragraph_hash` hashes — so the cache key tracks the face.
@@ -205,19 +224,31 @@ pub fn build_galley_cached(
                 );
                 let shape = ShapeInputs {
                     items: &items,
-                    tab_stops: &paragraph.properties.tabs,
+                    tab_stops: &props.tabs,
                     default_tab: ctx.default_tab,
-                    constraints: line_constraints(&paragraph.properties, content_width),
+                    constraints: line_constraints(&props, content_width),
                 };
-                let box_metrics = box_metrics(&paragraph.properties);
-                let break_control = break_control(&paragraph.properties);
-                let decor = paragraph_decor(&paragraph.properties, content_width);
+                let box_metrics = box_metrics(&props);
+                let break_control = break_control(&props);
+                let decor = paragraph_decor(&props, content_width);
                 // A paragraph carrying an inline text box is never cached: the box's
                 // flowed fragments are not folded into the paragraph hash, so a
                 // reuse could serve stale nested content. Text boxes are rare, so
                 // always reshaping them is the correct, simple choice.
                 let has_text_box = items.iter().any(|i| matches!(i, FlowItem::TextBox { .. }));
-                let hash = paragraph_hash(paragraph.id, &shape, box_metrics, break_control, decor);
+                // The paragraph-mark size + effective style feed the empty-paragraph
+                // line height (synthesized below); folding them into the key keeps a
+                // reused fragment correct when only the mark/style changes.
+                let mark_size = props.mark_run.as_deref().and_then(|r| r.size_half_points);
+                let hash = paragraph_hash(
+                    paragraph.id,
+                    &shape,
+                    box_metrics,
+                    break_control,
+                    decor,
+                    ctx.para_style,
+                    mark_size,
+                );
 
                 if !has_text_box && let Some(fragment) = cache.reusable(paragraph.id, hash, dirty) {
                     galley.push(fragment.clone());
@@ -227,12 +258,20 @@ pub fn build_galley_cached(
                     ModelPos::new(paragraph.id, 0),
                     ModelPos::new(paragraph.id, 0),
                 );
-                let lines = shape_paragraph_items(
+                let mut lines = shape_paragraph_items(
                     shaper,
                     shape.items,
                     shape.tab_stops,
                     shape.default_tab,
                     shape.constraints,
+                    range,
+                );
+                ensure_nonempty_paragraph(
+                    &mut lines,
+                    &props,
+                    &mut ctx,
+                    shaper,
+                    content_width,
                     range,
                 );
                 let fragment = BlockFragment::Paragraph {
@@ -313,9 +352,15 @@ fn paragraph_hash(
     box_metrics: BoxMetrics,
     break_control: BreakControl,
     decor: ParagraphDecor,
+    style: Option<StyleId>,
+    mark_size: Option<u32>,
 ) -> u64 {
     let mut hasher = DefaultHasher::new();
     id.as_u128().hash(&mut hasher);
+    // The effective style id + paragraph-mark size determine an empty paragraph's
+    // synthesized line height, which is otherwise invisible to the item stream.
+    style.map(|s| s.node_id().as_u128()).hash(&mut hasher);
+    mark_size.hash(&mut hasher);
     for item in shape.items {
         match item {
             FlowItem::Run(run) => {
@@ -381,6 +426,8 @@ fn paragraph_hash(
     constraints.rtl.hash(&mut hasher);
     (constraints.alignment as u8).hash(&mut hasher);
     constraints.line_height_percent.hash(&mut hasher);
+    constraints.line_at_least.map(|t| t.0).hash(&mut hasher);
+    constraints.line_exact.map(|t| t.0).hash(&mut hasher);
     constraints.first_line_indent.0.hash(&mut hasher);
     box_metrics.space_before.0.hash(&mut hasher);
     box_metrics.space_after.0.hash(&mut hasher);
@@ -420,26 +467,32 @@ fn flow_blocks(
     for block in blocks {
         match block {
             BlockNode::Paragraph(paragraph) => {
+                // Resolve the paragraph's *effective* properties through the style
+                // cascade, and record its effective style so each run inherits the
+                // paragraph style's `rPr`.
+                ctx.para_style = ctx.cascade.paragraph_style(&paragraph.properties);
+                let props = ctx.cascade.resolve_paragraph(&paragraph.properties);
                 let mut items = Vec::new();
                 collect_items(&paragraph.inlines, &mut items, shaper, width, ctx);
                 let range = ModelRange::new(
                     ModelPos::new(paragraph.id, 0),
                     ModelPos::new(paragraph.id, 0),
                 );
-                let lines = shape_paragraph_items(
+                let mut lines = shape_paragraph_items(
                     shaper,
                     &items,
-                    &paragraph.properties.tabs,
+                    &props.tabs,
                     ctx.default_tab,
-                    line_constraints(&paragraph.properties, width),
+                    line_constraints(&props, width),
                     range,
                 );
+                ensure_nonempty_paragraph(&mut lines, &props, ctx, shaper, width, range);
                 galley.push(BlockFragment::Paragraph {
                     id: paragraph.id,
                     lines,
-                    box_metrics: box_metrics(&paragraph.properties),
-                    break_control: break_control(&paragraph.properties),
-                    decor: paragraph_decor(&paragraph.properties, width),
+                    box_metrics: box_metrics(&props),
+                    break_control: break_control(&props),
+                    decor: paragraph_decor(&props, width),
                 });
             }
             BlockNode::Table(table) => flow_table(table, shaper, width, &mut galley, ctx),
@@ -774,12 +827,15 @@ fn block_intrinsic(blocks: &[BlockNode], shaper: &dyn LineShaper, ctx: &FlowCtx)
         default_tab: ctx.default_tab,
         media: ctx.media,
         palette: ctx.palette,
+        cascade: ctx.cascade,
+        para_style: ctx.para_style,
     };
     let mut min = 0;
     let mut preferred = 0;
     for block in blocks {
         match block {
             BlockNode::Paragraph(paragraph) => {
+                mctx.para_style = mctx.cascade.paragraph_style(&paragraph.properties);
                 let mut runs = Vec::new();
                 collect_runs(&paragraph.inlines, &mut runs, &mut mctx);
                 if runs.is_empty() {
@@ -1697,6 +1753,19 @@ fn measure_fielded_segment(
 /// palette. Small-caps per-letter size-splitting is done by [`push_styled_runs`],
 /// so this single-run path uppercases without the per-letter size step.
 fn styled_run<'a>(text: &'a str, properties: &RunProperties, ctx: &mut FlowCtx) -> StyledRun<'a> {
+    let effective = ctx.cascade.resolve_run(ctx.para_style, properties);
+    build_styled_run(text, &effective, ctx)
+}
+
+/// Builds a [`StyledRun`] from already-resolved (effective) run properties. The
+/// property cascade (style + docDefaults) is applied by [`styled_run`] /
+/// [`push_styled_runs`] before this runs, so `properties` here is the value
+/// actually in effect.
+fn build_styled_run<'a>(
+    text: &'a str,
+    properties: &RunProperties,
+    ctx: &mut FlowCtx,
+) -> StyledRun<'a> {
     let (size, baseline_shift) = run_metrics(properties);
     let text = case_transform(text, properties);
     let bold = properties.bold.unwrap_or(false);
@@ -1764,10 +1833,14 @@ fn push_styled_runs<'a>(
     ctx: &mut FlowCtx,
     out: &mut Vec<StyledRun<'a>>,
 ) {
-    if properties.small_caps == Some(true) {
-        push_small_caps_runs(text, properties, ctx, out);
+    // Resolve the effective run properties once (cascade: docDefaults → paragraph
+    // style → character style → direct), then build from the resolved value so
+    // style-driven size/bold/caps/color are honored, not just direct props.
+    let effective = ctx.cascade.resolve_run(ctx.para_style, properties);
+    if effective.small_caps == Some(true) {
+        push_small_caps_runs(text, &effective, ctx, out);
     } else {
-        out.push(styled_run(text, properties, ctx));
+        out.push(build_styled_run(text, &effective, ctx));
     }
 }
 
@@ -2043,18 +2116,43 @@ fn break_control(properties: &ParagraphProperties) -> BreakControl {
     }
 }
 
-/// Maps paragraph spacing/indent to the fragment's box metrics.
+/// Maps paragraph spacing/indent to the fragment's box metrics. `before`/`after`
+/// honor `w:beforeAutospacing`/`w:afterAutospacing`: when the auto flag is set,
+/// Word ignores the explicit twip value and uses a font-size-derived default
+/// ([`auto_paragraph_space`]) instead.
 fn box_metrics(properties: &ParagraphProperties) -> BoxMetrics {
     let spacing = properties.spacing.as_ref();
     let indent = properties.indentation.as_ref();
+    let auto = auto_paragraph_space(properties);
+    let before = match spacing {
+        Some(s) if s.before_auto == Some(true) => auto,
+        Some(s) => s.before_twips.map_or(Twip::ZERO, Twip),
+        None => Twip::ZERO,
+    };
+    let after = match spacing {
+        Some(s) if s.after_auto == Some(true) => auto,
+        Some(s) => s.after_twips.map_or(Twip::ZERO, Twip),
+        None => Twip::ZERO,
+    };
     BoxMetrics {
-        space_before: spacing
-            .and_then(|s| s.before_twips)
-            .map_or(Twip::ZERO, Twip),
-        space_after: spacing.and_then(|s| s.after_twips).map_or(Twip::ZERO, Twip),
+        space_before: before,
+        space_after: after,
         indent_start: indent.and_then(|i| i.start_twips).map_or(Twip::ZERO, Twip),
         indent_end: indent.and_then(|i| i.end_twips).map_or(Twip::ZERO, Twip),
     }
+}
+
+/// The font-size-derived "auto" paragraph space (`w:beforeAutospacing` /
+/// `w:afterAutospacing`): Word derives a blank-line-sized gap from the paragraph
+/// font. The paragraph-mark run size drives it (falling back to Word's 11pt body
+/// default); one font-size worth of twips is a close, deterministic approximation.
+fn auto_paragraph_space(properties: &ParagraphProperties) -> Twip {
+    let half_points = properties
+        .mark_run
+        .as_deref()
+        .and_then(|r| r.size_half_points)
+        .unwrap_or(22);
+    Twip((half_points as i32 * 10).max(0))
 }
 
 /// Builds the shaper constraints for a paragraph flowed into `width`: the wrap
@@ -2073,12 +2171,59 @@ fn line_constraints(properties: &ParagraphProperties, width: Twip) -> LineConstr
     };
     let max_width =
         Twip((width.raw() - metrics.indent_start.raw() - metrics.indent_end.raw()).max(1));
+    // Resolve the line-spacing rule into the shaper's line-box controls. The
+    // `auto` multiple rides `line_height_percent` (parley's `MetricsRelative`); the
+    // `atLeast`/`exact` rules carry an explicit twip box the shaper post-applies.
+    let (line_height_percent, line_at_least, line_exact) = match spacing {
+        Some(s) => match s.line_rule {
+            Some(LineRule::Exact) => (None, None, s.line_twips.map(Twip)),
+            Some(LineRule::AtLeast) => (None, s.line_twips.map(Twip), None),
+            // An explicit `auto` rule (or none) uses the percent multiple.
+            Some(LineRule::Auto) | None => (s.line_percent, None, None),
+        },
+        None => (None, None, None),
+    };
     LineConstraints {
         max_width,
         rtl: false,
         alignment: alignment(properties),
-        line_height_percent: spacing.and_then(|s| s.line_percent),
+        line_height_percent,
+        line_at_least,
+        line_exact,
         first_line_indent,
+    }
+}
+
+/// Ensures a paragraph occupies at least one line box. `parley` yields no line for
+/// a paragraph with no text, so an empty paragraph would otherwise collapse to ~0
+/// height (just its box spacing). Word instead gives it a full line, sized by the
+/// **paragraph-mark** run's (cascade-resolved) font metrics and the paragraph's
+/// line rule — a major vertical-rhythm and page-count factor, since documents use
+/// blank paragraphs for spacing. The synthesized line carries no glyphs (nothing
+/// is painted) but the correct height.
+fn ensure_nonempty_paragraph(
+    layout: &mut LineLayout,
+    props: &ParagraphProperties,
+    ctx: &mut FlowCtx,
+    shaper: &dyn LineShaper,
+    width: Twip,
+    range: ModelRange,
+) {
+    if !layout.lines.is_empty() {
+        return;
+    }
+    let mark = props.mark_run.as_deref().cloned().unwrap_or_default();
+    let styled = styled_run(" ", &mark, ctx);
+    let probe = shaper.shape_paragraph(&[styled], line_constraints(props, width), range);
+    if let Some(mut line) = probe.lines.into_iter().next() {
+        line.runs.clear();
+        line.images.clear();
+        line.fields.clear();
+        line.text_boxes.clear();
+        line.bars.clear();
+        line.range = range;
+        line.line_break = LineBreak::ParagraphEnd;
+        layout.lines.push(line);
     }
 }
 
@@ -2909,6 +3054,7 @@ mod tests {
         let resolver = FontResolver::new();
         let mut report = FontResolutionReport::new();
         let media = DefinitionMap::default();
+        let definitions = Definitions::default();
         let mut ctx = FlowCtx {
             resolver: &resolver,
             scheme: None,
@@ -2916,6 +3062,8 @@ mod tests {
             default_tab: crate::tabs::DEFAULT_TAB_STOP,
             media: &media,
             palette: None,
+            cascade: StyleCascade::new(&definitions),
+            para_style: None,
         };
         let mut runs = Vec::new();
         collect_runs(&inlines, &mut runs, &mut ctx);
