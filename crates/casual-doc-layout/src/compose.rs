@@ -19,6 +19,16 @@ const CELL_BORDER_WIDTH: f32 = 1.0;
 /// Width (twips) of a `bar` tab stop's vertical rule (~0.5pt, Word's hairline).
 const BAR_TAB_WIDTH: Twip = Twip(10);
 
+/// The internal margin (twips) between an inline text box's border and its flowed
+/// content — Word's default `wps:bodyPr` inset (~0.05in). The flow layer sizes the
+/// box to include it on all four sides ([`crate::flow`]); composition offsets the
+/// content by it.
+pub(crate) const TEXTBOX_INSET: Twip = Twip(72);
+
+/// Stroke width (device px) of an inline text box's border, matching the table
+/// grid-line hairline ([`CELL_BORDER_WIDTH`]).
+const TEXTBOX_BORDER_WIDTH: f32 = 1.0;
+
 /// Builds a display list for one paragraph's shaped lines, placed with the
 /// paragraph's top-left at `origin` (in twips). The shaper positions each glyph
 /// run relative to the paragraph's own origin (run `origin` = the run's left edge
@@ -75,6 +85,34 @@ pub fn compose_paragraph(layout: &LineLayout, origin: Point) -> DisplayList {
                     image.size,
                 ),
             });
+        }
+        // Inline text boxes: the fill and border paint first, then the box's flowed
+        // fragments compose offset into it by the internal margin — the *same*
+        // fragment composition the body and table cells use (the uniform-flow
+        // invariant), so a text box renders paragraphs, nested tables, and images.
+        for text_box in &line.text_boxes {
+            let box_origin = Point::new(origin.x + text_box.origin.x, origin.y + text_box.origin.y);
+            let box_rect = Rect::new(box_origin, text_box.size);
+            if let Some(fill) = text_box.fill {
+                list.push(PaintItem::Rect {
+                    rect: box_rect,
+                    fill: Some(rgba(fill)),
+                    stroke: None,
+                });
+            }
+            if let Some(border) = text_box.border {
+                list.push(PaintItem::Rect {
+                    rect: box_rect,
+                    fill: None,
+                    stroke: Some(Stroke {
+                        color: rgba(border),
+                        width: TEXTBOX_BORDER_WIDTH,
+                    }),
+                });
+            }
+            let content_origin =
+                Point::new(box_origin.x + TEXTBOX_INSET, box_origin.y + TEXTBOX_INSET);
+            compose_blocks(&mut list, &text_box.blocks, content_origin);
         }
     }
     list
@@ -445,6 +483,7 @@ mod tests {
                 bars: Vec::new(),
                 images: Vec::new(),
                 fields: Vec::new(),
+                text_boxes: Vec::new(),
             }],
         }
     }
@@ -657,5 +696,79 @@ mod tests {
         );
         assert_eq!(rect.origin, Point::new(Twip(100), Twip(200)));
         assert_eq!(rect.size, Size::new(Twip(3000), Twip(500)));
+    }
+
+    #[test]
+    fn an_inline_text_box_paints_its_fill_border_and_content() {
+        use crate::text::InlineTextBox;
+
+        // A text box carrying one inner paragraph fragment (a single glyph run),
+        // with an explicit fill and border.
+        let inner = BlockFragment::Paragraph {
+            id: node(2),
+            lines: one_run_line(Twip(400), None),
+            box_metrics: BoxMetrics::default(),
+            break_control: crate::block::BreakControl::default(),
+            decor: ParagraphDecor::default(),
+        };
+        let text_box = InlineTextBox {
+            origin: Point::new(Twip(500), Twip(600)),
+            size: Size::new(Twip(3000), Twip(1000)),
+            blocks: vec![inner],
+            border: Some([10, 20, 30, 255]),
+            fill: Some([200, 210, 220, 255]),
+        };
+        let mut layout = one_run_line(Twip(0), None);
+        layout.lines[0].runs.clear();
+        layout.lines[0].text_boxes = vec![text_box];
+
+        let origin = Point::new(Twip(100), Twip(200));
+        let list = compose_paragraph(&layout, origin);
+
+        // The fill covers the box at its page-absolute origin.
+        let fill = list.items.iter().find_map(|i| match i {
+            PaintItem::Rect {
+                rect,
+                fill: Some(c),
+                stroke: None,
+            } if *c
+                == (Color {
+                    r: 200,
+                    g: 210,
+                    b: 220,
+                    a: 255,
+                }) =>
+            {
+                Some(*rect)
+            }
+            _ => None,
+        });
+        let fill_rect = fill.expect("the box fill paints");
+        assert_eq!(fill_rect.origin, Point::new(Twip(600), Twip(800)));
+        assert_eq!(fill_rect.size, Size::new(Twip(3000), Twip(1000)));
+
+        // The border paints as a stroked rect over the same box.
+        assert!(
+            list.items.iter().any(|i| matches!(
+                i,
+                PaintItem::Rect {
+                    stroke: Some(s),
+                    fill: None,
+                    ..
+                } if s.color == (Color { r: 10, g: 20, b: 30, a: 255 })
+            )),
+            "the box border paints as a stroked rect"
+        );
+
+        // The inner glyph run composes offset into the box by the internal margin.
+        let glyph_x = list.items.iter().find_map(|i| match i {
+            PaintItem::Glyphs { run } => Some(run.origin.x.raw()),
+            _ => None,
+        });
+        assert_eq!(
+            glyph_x,
+            Some(600 + TEXTBOX_INSET.raw()),
+            "the box content is inset from the box's left edge by the margin"
+        );
     }
 }

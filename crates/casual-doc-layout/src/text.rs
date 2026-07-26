@@ -11,6 +11,7 @@ use std::borrow::Cow;
 
 use serde::{Deserialize, Serialize};
 
+use crate::block::BlockFragment;
 use crate::model::ModelRange;
 use crate::units::{Point, Size, Twip};
 
@@ -94,6 +95,35 @@ pub struct InlineImage {
     pub origin: Point,
     /// The image box size (twips), derived from the drawing's EMU extent.
     pub size: Size,
+}
+
+/// An inline text box (`wps:txbx` / `v:textbox`) placed within a paragraph: a
+/// bordered/filled box whose recursive block content was flowed through the *same*
+/// pipeline as the document body (paragraphs, tables incl. nested, inline images —
+/// the uniform-flow-pipeline invariant). `origin` is the box's top-left relative to
+/// the paragraph content box (twips); `blocks` are the flowed fragments, positioned
+/// relative to the box's content origin (the box's top-left inset by the internal
+/// margin). Composition paints the fill and border, then composes the fragments
+/// offset into the box. Only the inline case is modeled here; anchored / floating
+/// text-box placement reuses the anchored-drawing path (`P1F-28`) in a later slice.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct InlineTextBox {
+    /// Top-left of the box, relative to the paragraph content box (twips).
+    pub origin: Point,
+    /// The box's outer size (twips): its width is the available column width, its
+    /// height the flowed content height plus the internal top/bottom margins.
+    pub size: Size,
+    /// The flowed block fragments — the box's content, laid out through the shared
+    /// flow pipeline, positioned relative to the box's content origin.
+    pub blocks: Vec<BlockFragment>,
+    /// The box border color (RGBA), painted as a stroked outline; `None` = no
+    /// border. Serialized only when present so a plain galley stays byte-identical.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub border: Option<[u8; 4]>,
+    /// The box background fill (RGBA), painted behind the content; `None` =
+    /// transparent. Serialized only when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill: Option<[u8; 4]>,
 }
 
 /// The kind of an inline field, resolved from its `w:instr` instruction. Only the
@@ -193,6 +223,11 @@ pub struct Line {
     /// non-empty so a plain galley stays byte-identical.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fields: Vec<FieldMarker>,
+    /// Inline text boxes placed on this line (`wps:txbx` / `v:textbox`), each a
+    /// bordered box of flowed block content. Empty for the common line; serialized
+    /// only when non-empty so a plain galley stays byte-identical.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub text_boxes: Vec<InlineTextBox>,
 }
 
 /// The result of shaping one paragraph: its ordered lines.
@@ -329,6 +364,7 @@ mod tests {
             bars: Vec::new(),
             images: Vec::new(),
             fields: Vec::new(),
+            text_boxes: Vec::new(),
         };
         let layout = LineLayout {
             lines: vec![line(240), line(240), line(200)],
