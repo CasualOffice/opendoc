@@ -60,7 +60,8 @@ pub use report::{
 };
 pub use retain::RetainedSource;
 pub use vml::{
-    VmlColor, VmlDrawing, VmlFill, VmlPosition, VmlRelFrame, VmlShapeKind, VmlStroke, VmlTextbox,
+    VmlColor, VmlDrawing, VmlFill, VmlHorizontalAlign, VmlHr, VmlHrAlign, VmlPosition, VmlRelFrame,
+    VmlShapeKind, VmlStroke, VmlTextAnchor, VmlTextbox, VmlVerticalAlign, VmlWrap, VmlWrapMode,
     parse_vml_pict,
 };
 
