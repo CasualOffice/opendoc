@@ -115,6 +115,43 @@ impl CellBorders {
     }
 }
 
+/// A cell's resolved content margins (`w:tcMar` ⊕ `w:tblCellMar` ⊕ Word's
+/// defaults), in twips — the inset from each cell edge to its content box. Content
+/// is flowed at `width − start − end` and offset by `start`/`top`; the top+bottom
+/// margins also count toward the row's content height (`docs/38-…#tables`).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+pub struct CellContentMargins {
+    /// Top inset.
+    pub top: Twip,
+    /// Leading (start) inset.
+    pub start: Twip,
+    /// Bottom inset.
+    pub bottom: Twip,
+    /// Trailing (end) inset.
+    pub end: Twip,
+}
+
+impl CellContentMargins {
+    /// Whether every inset is zero (serializes to nothing).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// A cell's vertical content alignment (`w:vAlign`) — how the cell's stacked
+/// content sits within the (possibly taller) row box. `Top` is Word's default.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+pub enum CellVAlign {
+    /// Content sits at the top of the cell (Word's default).
+    #[default]
+    Top,
+    /// Content is centered vertically within the cell.
+    Center,
+    /// Content sits at the bottom of the cell.
+    Bottom,
+}
+
 /// One cell's laid-out content within a table-row fragment.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct CellFragment {
@@ -128,6 +165,13 @@ pub struct CellFragment {
     pub width: Twip,
     /// The cell's flowed block fragments.
     pub blocks: Vec<BlockFragment>,
+    /// The cell's resolved content margins (`w:tcMar`/`w:tblCellMar`). Content is
+    /// inset by these; composition offsets the flowed blocks accordingly.
+    #[serde(default, skip_serializing_if = "CellContentMargins::is_empty")]
+    pub margins: CellContentMargins,
+    /// The cell's vertical content alignment (`w:vAlign`); `Top` = Word's default.
+    #[serde(default, skip_serializing_if = "CellVAlign::is_top")]
+    pub vertical_alignment: CellVAlign,
     /// The cell's resolved visible borders (border-conflict winners).
     #[serde(default, skip_serializing_if = "CellBorders::is_empty")]
     pub borders: CellBorders,
@@ -135,6 +179,47 @@ pub struct CellFragment {
     /// `None` = no shading.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shading: Option<[u8; 4]>,
+}
+
+impl CellVAlign {
+    /// Whether this is the default `Top` alignment (serializes to nothing).
+    #[must_use]
+    pub fn is_top(&self) -> bool {
+        matches!(self, CellVAlign::Top)
+    }
+}
+
+impl CellFragment {
+    /// The stacked height of the cell's flowed content (twips), excluding margins.
+    #[must_use]
+    pub fn content_height(&self) -> Twip {
+        self.blocks
+            .iter()
+            .map(BlockFragment::height)
+            .fold(Twip::ZERO, |a, h| a + h)
+    }
+
+    /// The cell's content height plus its top and bottom margins (twips) — the
+    /// vertical space the cell demands of its row.
+    #[must_use]
+    pub fn occupied_height(&self) -> Twip {
+        self.margins.top + self.content_height() + self.margins.bottom
+    }
+
+    /// The vertical offset (twips) from the cell's top edge to the top of its
+    /// content, once the row height is known: the top margin plus the `w:vAlign`
+    /// share of the leftover slack (`Top` → 0, `Center` → half, `Bottom` → all).
+    /// `row_height` is the resolved row box height the content is aligned within.
+    #[must_use]
+    pub fn content_y_offset(&self, row_height: Twip) -> Twip {
+        let slack = (row_height.raw() - self.occupied_height().raw()).max(0);
+        let valign = match self.vertical_alignment {
+            CellVAlign::Top => 0,
+            CellVAlign::Center => slack / 2,
+            CellVAlign::Bottom => slack,
+        };
+        Twip(self.margins.top.raw() + valign)
+    }
 }
 
 /// A paragraph's page-break behavior, resolved from `ParagraphProperties`
@@ -224,18 +309,16 @@ impl BlockFragment {
         }
     }
 
-    /// The tallest cell's stacked content height (twips), independent of the row
-    /// height rule — used to reconcile `w:trHeight` against content.
+    /// The tallest cell's stacked content height *including its top and bottom
+    /// margins* (twips), independent of the row-height rule — used to reconcile
+    /// `w:trHeight` against content. The margins are part of the row's minimum
+    /// height: Word insets content by `w:tcMar` before the answer line, so a row
+    /// with only top-margin content is still taller than its bare text.
     #[must_use]
     pub fn cells_content_height(cells: &[CellFragment]) -> Twip {
         cells
             .iter()
-            .map(|cell| {
-                cell.blocks
-                    .iter()
-                    .map(BlockFragment::height)
-                    .fold(Twip::ZERO, |a, h| a + h)
-            })
+            .map(CellFragment::occupied_height)
             .max()
             .unwrap_or(Twip::ZERO)
     }

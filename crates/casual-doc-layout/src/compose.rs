@@ -212,13 +212,22 @@ fn compose_fragment(list: &mut DisplayList, fragment: &BlockFragment, origin: Po
                 // layout tables); a gray default grid would show boundaries Word
                 // hides. Bordered tables get their borders via the resolved edges.
                 compose_cell_borders(list, cell_rect, &cell.borders);
+                // Content is inset by the cell margins (`w:tcMar`/`w:tblCellMar`)
+                // and shifted down by the vertical-alignment slack (`w:vAlign`), so
+                // it no longer hugs the top-left grid line; bottom-aligned labels
+                // sit on the answer line. The shading/border/clip rects still span
+                // the whole cell — only the flowed content moves.
+                let content_origin = Point::new(
+                    cell_origin.x + cell.margins.start,
+                    cell_origin.y + cell.content_y_offset(row_height),
+                );
                 // An `exact` row height clips content that overflows the cell.
                 if *clip {
                     list.push(PaintItem::PushClip(cell_rect));
-                    compose_blocks(list, &cell.blocks, cell_origin);
+                    compose_blocks(list, &cell.blocks, content_origin);
                     list.push(PaintItem::PopClip);
                 } else {
-                    compose_blocks(list, &cell.blocks, cell_origin);
+                    compose_blocks(list, &cell.blocks, content_origin);
                 }
             }
         }
@@ -380,7 +389,9 @@ mod tests {
 
     #[test]
     fn an_exact_row_clips_and_draws_its_resolved_borders() {
-        use crate::block::{BlockFragment, CellBorders, CellFragment, ResolvedEdge};
+        use crate::block::{
+            BlockFragment, CellBorders, CellContentMargins, CellFragment, CellVAlign, ResolvedEdge,
+        };
         use crate::units::Size;
         let cell = CellFragment {
             id: NodeId::from_parts(1, 1).unwrap(),
@@ -388,6 +399,8 @@ mod tests {
             x: Twip::ZERO,
             width: Twip(3000),
             blocks: Vec::new(),
+            margins: CellContentMargins::default(),
+            vertical_alignment: CellVAlign::default(),
             borders: CellBorders {
                 bottom: Some(ResolvedEdge {
                     color: [10, 20, 30, 255],
@@ -642,13 +655,15 @@ mod tests {
 
     #[test]
     fn a_shaded_cell_emits_a_fill_behind_its_content() {
-        use crate::block::{CellBorders, CellFragment};
+        use crate::block::{CellBorders, CellContentMargins, CellFragment, CellVAlign};
         let cell = CellFragment {
             id: node(1),
             grid_span: 1,
             x: Twip::ZERO,
             width: Twip(3000),
             blocks: Vec::new(),
+            margins: CellContentMargins::default(),
+            vertical_alignment: CellVAlign::default(),
             borders: CellBorders::default(),
             shading: Some([200, 100, 50, 255]),
         };
