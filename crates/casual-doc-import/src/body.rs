@@ -4109,7 +4109,7 @@ impl BodyParser<'_> {
                 extent: None,
                 fill: None,
                 border: None,
-                body_properties: vml_text_box_body_properties(),
+                body_properties: vml_text_box_body_properties([None; 4]),
                 blocks,
             }));
             emitted = true;
@@ -4200,6 +4200,12 @@ impl BodyParser<'_> {
             return None;
         }
         let (id, blocks) = self.pending_vml_textboxes.remove(0);
+        // The box's authored `v:textbox@inset` (an explicit `inset="0,0,0,0"` must
+        // survive so the content box is not shrunk by a default inset).
+        let inset = drawing
+            .textbox
+            .as_ref()
+            .map_or([None; 4], |textbox| textbox.inset_twips);
         if vml_textbox_is_positioned(&drawing.position) {
             let (anchor, relative_height) = vml_anchor(&drawing.position);
             Some(Segment::TextBox(TextBox {
@@ -4209,7 +4215,7 @@ impl BodyParser<'_> {
                 extent: Some(vml_extent(&drawing.position)),
                 fill: vml_fill(&drawing.fill),
                 border: vml_stroke(&drawing.stroke),
-                body_properties: vml_text_box_body_properties(),
+                body_properties: vml_text_box_body_properties(inset),
                 blocks,
             }))
         } else {
@@ -4220,7 +4226,7 @@ impl BodyParser<'_> {
                 extent: None,
                 fill: None,
                 border: None,
-                body_properties: vml_text_box_body_properties(),
+                body_properties: vml_text_box_body_properties(inset),
                 blocks,
             }))
         }
@@ -4823,7 +4829,7 @@ impl BodyParser<'_> {
                         extent: None,
                         fill: None,
                         border: None,
-                        body_properties: vml_text_box_body_properties(),
+                        body_properties: vml_text_box_body_properties([None; 4]),
                         blocks,
                     }));
                 }
@@ -6281,16 +6287,25 @@ fn normalize_segments(segments: Vec<Segment>) -> Vec<Segment> {
 /// EMU per twip (`914400 EMU/in ÷ 1440 twips/in`).
 const EMU_PER_TWIP: i64 = 635;
 
-/// Keeps the established legacy-VML 0.05-inch margin on every side. DrawingML's
-/// asymmetric defaults apply only to `wps:bodyPr`; VML's own `inset` syntax is a
-/// separate compatibility slice.
-fn vml_text_box_body_properties() -> TextBoxBodyProperties {
+/// Resolves a VML text box's internal margins from its `v:textbox@inset` (twips,
+/// `[left, top, right, bottom]`). An authored side — including an explicit `0`, as
+/// the SDS header date boxes use — is honored so the content box is not shrunk by a
+/// default inset (which would wrap the box's text a line early). An unauthored side
+/// keeps the established legacy-VML 0.05-inch margin, so boxes without an explicit
+/// `inset` are byte-identical. DrawingML's asymmetric defaults apply only to
+/// `wps:bodyPr`; VML's own `inset` syntax is a separate compatibility slice.
+fn vml_text_box_body_properties(inset_twips: [Option<i64>; 4]) -> TextBoxBodyProperties {
+    let side = |twips: Option<i64>| {
+        twips.map_or(TextBoxInsets::DEFAULT_VERTICAL_EMU, |twips| {
+            (twips * EMU_PER_TWIP) as i32
+        })
+    };
     TextBoxBodyProperties {
         insets: TextBoxInsets {
-            left_emu: TextBoxInsets::DEFAULT_VERTICAL_EMU,
-            top_emu: TextBoxInsets::DEFAULT_VERTICAL_EMU,
-            right_emu: TextBoxInsets::DEFAULT_VERTICAL_EMU,
-            bottom_emu: TextBoxInsets::DEFAULT_VERTICAL_EMU,
+            left_emu: side(inset_twips[0]),
+            top_emu: side(inset_twips[1]),
+            right_emu: side(inset_twips[2]),
+            bottom_emu: side(inset_twips[3]),
         },
         ..TextBoxBodyProperties::default()
     }
