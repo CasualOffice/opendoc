@@ -13,16 +13,20 @@ use casual_doc_layout::anchor::place_floats;
 use casual_doc_layout::block::BlockFragment;
 use casual_doc_layout::compose::compose_page;
 use casual_doc_layout::display::PaintItem;
-use casual_doc_layout::flow::build_galley;
+use casual_doc_layout::flow::{build_galley, flow_header_footer};
 use casual_doc_layout::paginate::{PageConfig, paginate};
+use casual_doc_layout::running::{
+    HeaderFooter as RunningBand, RunningContent, place_running_content,
+};
 use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_layout::units::{Point, Size, Twip};
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     AnchorHorizontal, AnchorVertical, AnchoredDrawing, BlockNode, DefinitionMap, Definitions,
-    Document, DrawingAnchor, Extent, HorizontalAnchor, HorizontalPosition, InlineNode, MediaId,
-    MediaReference, Paragraph, ParagraphProperties, Run, RunProperties, SectionId, VerticalAnchor,
-    VerticalPosition, WrapMode,
+    Document, DrawingAnchor, Extent, GridColumn, HeaderFooter as ModelHeaderFooter, HeaderFooterId,
+    HorizontalAnchor, HorizontalPosition, InlineNode, MediaId, MediaReference, Paragraph,
+    ParagraphProperties, Run, RunProperties, SectionId, Table, TableCell, TableCellProperties,
+    TableProperties, TableRow, TableRowProperties, VerticalAnchor, VerticalPosition, WrapMode,
 };
 
 fn node(id: u64) -> NodeId {
@@ -222,6 +226,193 @@ fn page_anchor(h: i64, v: i64) -> DrawingAnchor {
         },
         wrap: WrapMode::None,
         behind_doc: false,
+    }
+}
+
+fn paragraph_anchor() -> DrawingAnchor {
+    DrawingAnchor {
+        horizontal: AnchorHorizontal {
+            relative_from: HorizontalAnchor::Page,
+            position: HorizontalPosition::Offset(0),
+        },
+        vertical: AnchorVertical {
+            relative_from: VerticalAnchor::Paragraph,
+            position: VerticalPosition::Offset(0),
+        },
+        wrap: WrapMode::None,
+        behind_doc: false,
+    }
+}
+
+fn anchored_at_paragraph(id: u64, media: MediaId) -> InlineNode {
+    InlineNode::AnchoredDrawing(AnchoredDrawing {
+        id: node(id),
+        media,
+        extent: Extent {
+            width_emu: 63_500,
+            height_emu: 63_500,
+        },
+        anchor: paragraph_anchor(),
+        descr: None,
+        relative_height: None,
+    })
+}
+
+fn one_cell_table(
+    table_id: u64,
+    row_id: u64,
+    cell_id: u64,
+    paragraph_id: u64,
+    inlines: Vec<InlineNode>,
+) -> BlockNode {
+    BlockNode::Table(Table {
+        id: node(table_id),
+        grid: vec![GridColumn {
+            width_twips: Some(4_000),
+        }],
+        grid_change: None,
+        properties: TableProperties::default(),
+        rows: vec![TableRow {
+            id: node(row_id),
+            properties: TableRowProperties::default(),
+            cells: vec![TableCell {
+                id: node(cell_id),
+                properties: TableCellProperties::default(),
+                blocks: vec![BlockNode::Paragraph(Paragraph {
+                    id: node(paragraph_id),
+                    properties: ParagraphProperties::default(),
+                    inlines,
+                })],
+            }],
+        }],
+    })
+}
+
+#[test]
+fn a_float_in_a_body_table_cell_uses_the_nested_paragraph_on_its_actual_page() {
+    let (media_id, definitions) = media_defs();
+    let first = BlockNode::Paragraph(Paragraph {
+        id: node(10),
+        properties: ParagraphProperties::default(),
+        inlines: vec![run(11, "page one")],
+    });
+    let page_two = BlockNode::Paragraph(Paragraph {
+        id: node(20),
+        properties: ParagraphProperties {
+            page_break_before: true,
+            ..ParagraphProperties::default()
+        },
+        inlines: vec![run(21, "page two")],
+    });
+    let table = one_cell_table(
+        30,
+        31,
+        32,
+        40,
+        vec![run(41, "cell"), anchored_at_paragraph(42, media_id)],
+    );
+    let doc = Document::new(node(1), vec![first, page_two, table], definitions).unwrap();
+
+    let shaper = ParleyShaper::new();
+    let cfg = config();
+    let galley = build_galley(&doc, &shaper, cfg.content_area().size.width);
+    let mut layout = paginate(&galley, &cfg);
+    place_floats(&mut layout, &doc, &shaper, &cfg);
+
+    assert_eq!(layout.pages.len(), 2);
+    assert!(
+        layout.pages[0].anchored.is_empty(),
+        "the nested float must not fall back to page zero"
+    );
+    assert_eq!(layout.pages[1].anchored.len(), 1);
+
+    let placed_row = layout.pages[1]
+        .placed
+        .iter()
+        .find(|placed| matches!(placed.fragment, BlockFragment::TableRow { id, .. } if id == node(31)))
+        .expect("the table row is placed on page two");
+    let BlockFragment::TableRow { cells, .. } = &placed_row.fragment else {
+        unreachable!()
+    };
+    let expected_y =
+        placed_row.rect.origin.y + cells[0].content_y_offset(placed_row.fragment.height());
+    assert_eq!(
+        layout.pages[1].anchored[0].rect.origin.y, expected_y,
+        "paragraph-relative placement includes the table cell content offset"
+    );
+}
+
+#[test]
+fn a_float_in_a_header_table_cell_is_discovered_and_repeated_per_page() {
+    let (media_id, mut definitions) = media_defs();
+    let header_table = one_cell_table(
+        300,
+        301,
+        302,
+        310,
+        vec![
+            run(311, "header cell"),
+            anchored_at_paragraph(312, media_id),
+        ],
+    );
+    definitions.headers.insert(
+        HeaderFooterId::new(node(320)),
+        ModelHeaderFooter {
+            blocks: vec![header_table.clone()],
+        },
+    );
+    let body = vec![
+        BlockNode::Paragraph(Paragraph {
+            id: node(10),
+            properties: ParagraphProperties::default(),
+            inlines: vec![run(11, "page one")],
+        }),
+        BlockNode::Paragraph(Paragraph {
+            id: node(20),
+            properties: ParagraphProperties {
+                page_break_before: true,
+                ..ParagraphProperties::default()
+            },
+            inlines: vec![run(21, "page two")],
+        }),
+    ];
+    let doc = Document::new(node(1), body, definitions).unwrap();
+
+    let shaper = ParleyShaper::new();
+    let mut cfg = config();
+    let header = flow_header_footer(
+        &doc,
+        &[header_table],
+        &shaper,
+        cfg.content_area().size.width,
+    );
+    let running = RunningContent {
+        header: RunningBand {
+            default: header,
+            ..RunningBand::default()
+        },
+        ..RunningContent::default()
+    };
+    cfg.header_height = running.header.band_height();
+    let galley = build_galley(&doc, &shaper, cfg.content_area().size.width);
+    let mut layout = paginate(&galley, &cfg);
+    place_running_content(&mut layout, &running, &cfg);
+    place_floats(&mut layout, &doc, &shaper, &cfg);
+
+    assert_eq!(layout.pages.len(), 2);
+    for page in &layout.pages {
+        assert_eq!(
+            page.anchored.len(),
+            1,
+            "the selected header table float repeats on every page"
+        );
+        let placed_row = page.header.first().expect("the header table row");
+        let BlockFragment::TableRow { cells, .. } = &placed_row.fragment else {
+            panic!("expected a header table row");
+        };
+        let expected_y =
+            placed_row.rect.origin.y + cells[0].content_y_offset(placed_row.fragment.height());
+        assert_eq!(page.anchored[0].rect.origin.y, expected_y);
     }
 }
 
