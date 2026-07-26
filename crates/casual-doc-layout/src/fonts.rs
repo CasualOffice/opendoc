@@ -10,16 +10,21 @@
 //!
 //! Faces are grouped into contiguous [`FontId`] blocks, one per bundled family
 //! (see [`FAMILIES`]); within a block the four faces are selected by the run's
-//! bold/italic flags. Every bundled family is Apache-2.0 (license-clean, matching
-//! the repository and the cargo-deny allowlist):
+//! bold/italic flags. Every bundled family is license-clean for redistribution
+//! with the source:
 //!
-//! - `FontId(0)..=3` — **Roboto**, the default family and the ultimate fallback.
-//! - `FontId(4)..=7` — **Caladea**, a metric-compatible substitute for Cambria.
+//! - `FontId(0)..=3` — **Roboto** (Apache-2.0), the default family and the
+//!   ultimate fallback.
+//! - `FontId(4)..=7` — **Caladea** (Apache-2.0), a metric-compatible substitute
+//!   for Cambria.
+//! - `FontId(8)..=11` — **Carlito** (SIL OFL-1.1), a metric-compatible substitute
+//!   for Calibri.
 //!
-//! Calibri's metric-compatible partner (Carlito) is distributed only under the
-//! SIL Open Font License, which is outside the license allowlist, so it is
-//! deliberately **not** bundled; Calibri resolves to a documented visual fallback
-//! instead (see `resolve.rs`).
+//! Carlito ships under the SIL Open Font License 1.1: a permissive license that
+//! governs only the font file (not this Apache-2.0 code) and carries no copyleft
+//! effect. Because the faces are embedded as `include_bytes!` asset bytes rather
+//! than as a crate dependency, `cargo-deny` does not scan them; the OFL text is
+//! shipped alongside the font in `fonts/LICENSES/` (see `fonts/README.md`).
 
 use crate::text::FontId;
 
@@ -40,6 +45,15 @@ pub const CALADEA_BOLD: &[u8] = include_bytes!("../fonts/Caladea-Bold.ttf");
 pub const CALADEA_ITALIC: &[u8] = include_bytes!("../fonts/Caladea-Italic.ttf");
 /// Caladea Bold Italic.
 pub const CALADEA_BOLD_ITALIC: &[u8] = include_bytes!("../fonts/Caladea-BoldItalic.ttf");
+
+/// Carlito Regular (SIL OFL-1.1) — metric-compatible with Calibri.
+pub const CARLITO_REGULAR: &[u8] = include_bytes!("../fonts/Carlito-Regular.ttf");
+/// Carlito Bold.
+pub const CARLITO_BOLD: &[u8] = include_bytes!("../fonts/Carlito-Bold.ttf");
+/// Carlito Italic.
+pub const CARLITO_ITALIC: &[u8] = include_bytes!("../fonts/Carlito-Italic.ttf");
+/// Carlito Bold Italic.
+pub const CARLITO_BOLD_ITALIC: &[u8] = include_bytes!("../fonts/Carlito-BoldItalic.ttf");
 
 /// A bundled fallback family: four faces (regular, bold, italic, bold-italic)
 /// addressed by a contiguous [`FontId`] block starting at `base`. The face for a
@@ -99,13 +113,25 @@ pub const CALADEA: BundledFamily = BundledFamily {
     ],
 };
 
+/// Carlito — a metric-compatible substitute for Calibri.
+pub const CARLITO: BundledFamily = BundledFamily {
+    name: "Carlito",
+    base: 8,
+    faces: [
+        CARLITO_REGULAR,
+        CARLITO_BOLD,
+        CARLITO_ITALIC,
+        CARLITO_BOLD_ITALIC,
+    ],
+};
+
 /// Every bundled family, in `base`-id order — the resolver's fallback chain and
 /// the shaper's registration order.
-pub const FAMILIES: [&BundledFamily; 2] = [&ROBOTO, &CALADEA];
+pub const FAMILIES: [&BundledFamily; 3] = [&ROBOTO, &CALADEA, &CARLITO];
 
 /// Every bundled face, `(FontId, bytes)`, in id order — the shaper registration
 /// and renderer lookup table.
-pub const BUNDLED_FACES: [(FontId, &[u8]); 8] = [
+pub const BUNDLED_FACES: [(FontId, &[u8]); 12] = [
     (FontId(0), ROBOTO_REGULAR),
     (FontId(1), ROBOTO_BOLD),
     (FontId(2), ROBOTO_ITALIC),
@@ -114,6 +140,10 @@ pub const BUNDLED_FACES: [(FontId, &[u8]); 8] = [
     (FontId(5), CALADEA_BOLD),
     (FontId(6), CALADEA_ITALIC),
     (FontId(7), CALADEA_BOLD_ITALIC),
+    (FontId(8), CARLITO_REGULAR),
+    (FontId(9), CARLITO_BOLD),
+    (FontId(10), CARLITO_ITALIC),
+    (FontId(11), CARLITO_BOLD_ITALIC),
 ];
 
 /// The [`FontId`] of the bundled *default* (Roboto) face for the given bold/italic
@@ -166,11 +196,21 @@ mod tests {
     }
 
     #[test]
+    fn carlito_block_follows_caladea() {
+        assert_eq!(CARLITO.face_id(false, false), FontId(8));
+        assert_eq!(CARLITO.face_id(true, true), FontId(11));
+        assert!(!CALADEA.contains(FontId(8)));
+        assert!(CARLITO.contains(FontId(8)) && CARLITO.contains(FontId(11)));
+    }
+
+    #[test]
     fn family_name_maps_each_block() {
         assert_eq!(family_name(FontId(0)), "Roboto");
         assert_eq!(family_name(FontId(3)), "Roboto");
         assert_eq!(family_name(FontId(4)), "Caladea");
         assert_eq!(family_name(FontId(7)), "Caladea");
+        assert_eq!(family_name(FontId(8)), "Carlito");
+        assert_eq!(family_name(FontId(11)), "Carlito");
         // Unknown ids fall back to the default family name.
         assert_eq!(family_name(FontId(99)), "Roboto");
     }

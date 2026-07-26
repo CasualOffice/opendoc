@@ -15,26 +15,35 @@ discovery — so layout metrics are reproducible on every host; see
 | `Caladea-Bold.ttf` | Caladea Bold | Apache-2.0 | same |
 | `Caladea-Italic.ttf` | Caladea Italic | Apache-2.0 | same |
 | `Caladea-BoldItalic.ttf` | Caladea Bold Italic | Apache-2.0 | same |
+| `Carlito-Regular.ttf` | Carlito | SIL OFL-1.1 | [github.com/googlefonts/carlito](https://github.com/googlefonts/carlito) (The Carlito Project Authors; croscore) |
+| `Carlito-Bold.ttf` | Carlito Bold | SIL OFL-1.1 | same |
+| `Carlito-Italic.ttf` | Carlito Italic | SIL OFL-1.1 | same |
+| `Carlito-BoldItalic.ttf` | Carlito Bold Italic | SIL OFL-1.1 | same |
 
-Every bundled family is licensed under the Apache License 2.0 — the same license
-as this repository and within the `deny.toml` allowlist — so it may be
-redistributed with the source. Each font's `name` table carries the Apache-2.0
-license string (verified on import).
+Roboto and Caladea are licensed under the Apache License 2.0 — the same license
+as this repository. Each carries the Apache-2.0 license string in its `name`
+table (verified on import).
+
+Carlito is licensed under the **SIL Open Font License 1.1** (its `name` table
+license record and URL, ID 13/14, name `scripts.sil.org/OFL` — verified on
+import). The OFL is a permissive license that governs only the font file, not
+this Apache-2.0 code, and carries **no** copyleft or relicensing effect. The
+fonts are embedded as `include_bytes!` asset bytes, not pulled in as a crate
+dependency, so `cargo-deny` does not scan them (no `deny.toml` allowlist change
+is required). The OFL obligations are met by shipping the license text unmodified
+alongside the font in [`LICENSES/OFL-1.1-Carlito.txt`](LICENSES/OFL-1.1-Carlito.txt);
+we redistribute the fonts unmodified and do not sell them standalone or reuse the
+reserved "Carlito" name for a modified font.
+
+Provenance: the four TTFs and `OFL.txt` were downloaded from `googlefonts/carlito`
+(`main`, commit `3a810cab78ebd6e2e4eed42af9e8453c4f9b850a`) under `fonts/ttf/`.
 
 ## Roles (font resolver, `P1C-002b`)
 
 - **Roboto** is the default family and the ultimate fallback (`FontId(0)..=3`).
 - **Caladea** (`FontId(4)..=7`) is metric-compatible with **Cambria** (matching
   advances, so line breaks are preserved); the resolver maps Cambria → Caladea.
-
-### Why Carlito is *not* bundled
-
-Calibri's metric-compatible partner is **Carlito**, but every published Carlito
-build (Google Fonts, the croscore/`fonts-crosextra-carlito` package, LibreOffice)
-is distributed under the **SIL Open Font License 1.1**, which is **not** in the
-`deny.toml` license allowlist. To keep the bundle license-clean, Carlito is
-deliberately omitted and **Calibri resolves to a documented visual fallback**
-(Roboto) — reported as a substitution, never silently swapped. Dropping an
-Apache-2.0 (or otherwise allowlisted) Carlito into this directory and adding it to
-`FAMILIES` in `fonts.rs` is all that is needed to upgrade Calibri to a
-metric-compatible match.
+- **Carlito** (`FontId(8)..=11`) is metric-compatible with **Calibri** (matching
+  advances); the resolver maps Calibri → Carlito. Calibri is the most common Word
+  font, so this preserves layout for the majority of real documents. The
+  substitution is reported, never silently swapped.
