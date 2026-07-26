@@ -375,6 +375,58 @@ mod semantic_tests {
     }
 
     #[test]
+    fn omml_math_survives_the_semantic_round_trip() {
+        // A paragraph with a run, an opaque equation (`m:oMathPara`), and a
+        // trailing run. The retained OMML must be written back verbatim and the
+        // whole model must survive write -> reopen unchanged (ids included).
+        let xml = br#"<w:document xmlns:w="urn:w" xmlns:m="urn:m"><w:body>
+            <w:p><w:r><w:t>before</w:t></w:r>
+                <m:oMathPara><m:oMath><m:r><m:t>a=b</m:t></m:r></m:oMath></m:oMathPara>
+                <w:r><w:t>after</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+        let m2 = import_package(
+            &mut package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+
+        assert_eq!(m1, m2, "the equation survives write -> reopen unchanged");
+
+        // The reopened equation retains the OMML subtree verbatim, and its text
+        // never leaked into the surrounding runs.
+        use casual_doc_model::v1::{BlockNode, InlineNode};
+        let BlockNode::Paragraph(para) = &m2.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Math(math) = &para.inlines[1] else {
+            panic!("expected the opaque math node between the two runs");
+        };
+        assert_eq!(
+            math.omml,
+            "<m:oMathPara><m:oMath><m:r><m:t>a=b</m:t></m:r></m:oMath></m:oMathPara>"
+        );
+        let run_text: String = para
+            .inlines
+            .iter()
+            .filter_map(|inline| match inline {
+                InlineNode::Run(run) => Some(run.text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(run_text, "beforeafter");
+    }
+
+    #[test]
     fn tables_survive_the_semantic_round_trip() {
         // A table exercising the grid, table/row/cell properties (borders,
         // shading, margins, merges, vAlign, layout, look), and a nested table

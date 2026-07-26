@@ -720,9 +720,16 @@ fn border_rank(edge: &BorderEdge) -> (u32, u32, u32) {
 /// the wrappers that carry inline content (hyperlinks, revisions, content
 /// controls). Text-bearing runs and explicit tabs contribute text; other inline
 /// nodes are not yet laid out.
+///
+/// A run marked hidden (`w:vanish`) is skipped entirely: it is neither shaped nor
+/// painted, matching Word's screen view. The flow layer reads direct run
+/// properties (it does not resolve style inheritance here), so an inherited
+/// `w:vanish` from a character/paragraph style is honored once style resolution
+/// lands upstream.
 fn collect_runs<'a>(inlines: &'a [InlineNode], out: &mut Vec<StyledRun<'a>>, ctx: &mut FlowCtx) {
     for inline in inlines {
         match inline {
+            InlineNode::Run(run) if run.properties.hidden == Some(true) => {}
             InlineNode::Run(run) => out.push(styled_run(&run.text, &run.properties, ctx)),
             InlineNode::Tab(_) => out.push(styled_run("\t", &RunProperties::default(), ctx)),
             InlineNode::Hyperlink(hyperlink) => collect_runs(&hyperlink.inlines, out, ctx),
@@ -1039,6 +1046,93 @@ mod tests {
         assert!(
             glyphs >= 12,
             "hyperlink + revision text both shaped (got {glyphs})"
+        );
+    }
+
+    #[test]
+    fn a_vanished_run_is_not_collected_into_styled_runs() {
+        // `collect_runs` is the single funnel that turns inline runs into shaped
+        // text; a `w:vanish` (hidden) run must be dropped here so it is never
+        // shaped or painted.
+        let hidden = RunProperties {
+            hidden: Some(true),
+            ..RunProperties::default()
+        };
+        let inlines = vec![
+            run_node(1, "shown", RunProperties::default()),
+            run_node(2, "secret", hidden),
+        ];
+        let resolver = FontResolver::new();
+        let mut report = FontResolutionReport::new();
+        let mut ctx = FlowCtx {
+            resolver: &resolver,
+            scheme: None,
+            report: &mut report,
+        };
+        let mut runs = Vec::new();
+        collect_runs(&inlines, &mut runs, &mut ctx);
+        assert_eq!(runs.len(), 1, "only the visible run is collected");
+        assert_eq!(runs[0].text, "shown");
+    }
+
+    #[test]
+    fn a_vanished_run_produces_no_glyphs() {
+        // End to end: a paragraph of one visible + one vanished run shapes to the
+        // same glyphs as the visible run alone — the hidden text paints nothing.
+        let shaper = ParleyShaper::new();
+
+        let visible_only = document(vec![paragraph(
+            10,
+            vec![run_node(11, "shown", RunProperties::default())],
+        )]);
+        let g_visible = build_galley(&visible_only, &shaper, Twip::from_points(400));
+        let BlockFragment::Paragraph {
+            lines: visible_lines,
+            ..
+        } = &g_visible[0]
+        else {
+            panic!("expected a paragraph fragment");
+        };
+        let visible_glyphs: usize = visible_lines
+            .lines
+            .iter()
+            .flat_map(|l| &l.runs)
+            .map(|r| r.glyphs.len())
+            .sum();
+
+        let with_hidden = document(vec![paragraph(
+            20,
+            vec![
+                run_node(21, "shown", RunProperties::default()),
+                run_node(
+                    22,
+                    "invisible",
+                    RunProperties {
+                        hidden: Some(true),
+                        ..RunProperties::default()
+                    },
+                ),
+            ],
+        )]);
+        let g_hidden = build_galley(&with_hidden, &shaper, Twip::from_points(400));
+        let BlockFragment::Paragraph {
+            lines: hidden_lines,
+            ..
+        } = &g_hidden[0]
+        else {
+            panic!("expected a paragraph fragment");
+        };
+        let hidden_glyphs: usize = hidden_lines
+            .lines
+            .iter()
+            .flat_map(|l| &l.runs)
+            .map(|r| r.glyphs.len())
+            .sum();
+
+        assert!(visible_glyphs > 0, "the visible run shaped to glyphs");
+        assert_eq!(
+            hidden_glyphs, visible_glyphs,
+            "the w:vanish run added no glyphs"
         );
     }
 

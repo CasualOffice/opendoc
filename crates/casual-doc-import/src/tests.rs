@@ -4171,3 +4171,58 @@ fn real_producer_corpus_unconsumed_part_count_matches_manifest() {
         "docProps are consumed, not dropped: {dropped:?}"
     );
 }
+
+#[test]
+fn omml_math_is_retained_opaquely_and_never_leaks_into_run_text() {
+    // A paragraph with a visible run, an equation (`m:oMathPara` wrapping
+    // `m:oMath`, whose `m:r`/`m:t` share the local names of `w:r`/`w:t`), and a
+    // trailing run. Before the C1 namespace guard the math's `m:r`/`m:t` were
+    // mistaken for `w:r`/`w:t` and flattened into the paragraph text; now the
+    // equation is a single opaque `Math` node whose OMML round-trips verbatim.
+    let xml = br#"<w:document xmlns:w="urn:w" xmlns:m="urn:m"><w:body>
+        <w:p>
+            <w:r><w:t>before</w:t></w:r>
+            <m:oMathPara><m:oMath><m:r><m:t>x+1</m:t></m:r></m:oMath></m:oMathPara>
+            <w:r><w:t>after</w:t></w:r>
+        </w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let para = paragraph(&import, 0);
+
+    // The visible run text is exactly the two `w:t` runs — the math's `x+1` text
+    // did NOT leak into the paragraph runs.
+    let run_text: String = para
+        .inlines
+        .iter()
+        .filter_map(|inline| match inline {
+            InlineNode::Run(run) => Some(run.text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(run_text, "beforeafter");
+
+    // Document order is preserved: run, equation, run.
+    assert!(matches!(para.inlines[0], InlineNode::Run(_)));
+    assert!(matches!(para.inlines[2], InlineNode::Run(_)));
+    let InlineNode::Math(math) = &para.inlines[1] else {
+        panic!("expected an opaque math node between the two runs");
+    };
+
+    // Exactly one opaque math node.
+    assert_eq!(
+        para.inlines
+            .iter()
+            .filter(|inline| matches!(inline, InlineNode::Math(_)))
+            .count(),
+        1
+    );
+
+    // The OMML subtree is retained verbatim (open through matching close),
+    // including the inner `m:t` markup that would otherwise have been mangled.
+    assert_eq!(
+        math.omml,
+        "<m:oMathPara><m:oMath><m:r><m:t>x+1</m:t></m:r></m:oMath></m:oMathPara>"
+    );
+    // The plain-text fallback is the concatenated `m:t` text.
+    assert_eq!(math.text, "x+1");
+}

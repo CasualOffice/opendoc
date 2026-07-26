@@ -324,6 +324,30 @@ pub struct InlineSdt {
     pub inlines: Vec<InlineNode>,
 }
 
+/// Maximum retained OMML markup length, in UTF-8 bytes.
+pub const MAX_MATH_BYTES: usize = 65_536;
+
+/// An opaque inline math object (an OMML `m:oMath` or `m:oMathPara` subtree).
+///
+/// Equation structure is not semantically modeled; the OMML subtree is retained
+/// verbatim in `omml` so it round-trips losslessly, and `text` is a best-effort
+/// plain-text fallback (the concatenated `m:t` runs) for search/accessibility.
+/// This mirrors the opaque-retention treatment of other unmodeled constructs:
+/// the equation survives a round trip and its text never leaks into the
+/// surrounding paragraph runs.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Math {
+    /// Stable identity.
+    pub id: NodeId,
+    /// The retained OMML markup (non-empty, at most `MAX_MATH_BYTES` bytes).
+    pub omml: String,
+    /// Best-effort plain-text fallback (the concatenated `m:t` text); may be
+    /// empty when the equation carries no literal text.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub text: String,
+}
+
 /// Inline content supported by schema v1.
 //
 // `Run` is by far the largest and the most common variant (it carries the full
@@ -362,6 +386,8 @@ pub enum InlineNode {
     BookmarkEnd(BookmarkEnd),
     /// An inline-level content control wrapping inline content.
     Sdt(InlineSdt),
+    /// An opaque inline math object retaining its OMML subtree verbatim.
+    Math(Math),
 }
 
 impl InlineNode {
@@ -382,6 +408,7 @@ impl InlineNode {
             Self::BookmarkStart(node) => node.id,
             Self::BookmarkEnd(node) => node.id,
             Self::Sdt(sdt) => sdt.id,
+            Self::Math(math) => math.id,
         }
     }
 }

@@ -934,6 +934,17 @@ impl Document {
                     }
                     previous_run_properties = None;
                 }
+                // An opaque math object is an inert leaf (like a drawing): its
+                // retained OMML is bounded and non-empty; the text fallback,
+                // when present, is bounded by the same budget.
+                InlineNode::Math(math) => {
+                    check_domain(
+                        !math.omml.is_empty() && math.omml.len() <= MAX_MATH_BYTES,
+                        "math.omml",
+                    )?;
+                    check_domain(math.text.len() <= MAX_MATH_BYTES, "math.text")?;
+                    previous_run_properties = None;
+                }
                 InlineNode::Tab(_) | InlineNode::Break(_) => {
                     previous_run_properties = None;
                 }
@@ -1140,6 +1151,10 @@ fn accumulate_inline_limits(
             for child in &sdt.inlines {
                 accumulate_inline_limits(child, limits, blocks, scalar_values)?;
             }
+        }
+        InlineNode::Math(math) => {
+            enforce_limit("math_omml_bytes", math.omml.len(), MAX_MATH_BYTES)?;
+            enforce_limit("math_text_bytes", math.text.len(), MAX_MATH_BYTES)?;
         }
         InlineNode::Tab(_)
         | InlineNode::Break(_)
