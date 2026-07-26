@@ -26,6 +26,32 @@ pub struct BoxMetrics {
     pub indent_end: Twip,
 }
 
+/// A backend-independent visible border pattern.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize)]
+pub enum BorderPattern {
+    /// One continuous band.
+    #[default]
+    Solid,
+    /// Two parallel bands inside the authored total width.
+    Double,
+    /// Repeating square dots.
+    Dotted,
+    /// Repeating long dashes.
+    Dashed,
+    /// Alternating dot and dash.
+    DotDash,
+    /// Alternating two dots and one dash.
+    DotDotDash,
+}
+
+impl BorderPattern {
+    /// Whether this is the compact default representation.
+    #[must_use]
+    pub fn is_solid(&self) -> bool {
+        matches!(self, Self::Solid)
+    }
+}
+
 /// A resolved, drawable border edge — the winner of OOXML border-conflict
 /// resolution (`docs/38-…#tables`, ECMA-376 §17.4.66). Color is straight-alpha
 /// sRGB (packed to avoid a `display` dependency here); width is in twips.
@@ -35,6 +61,20 @@ pub struct ResolvedEdge {
     pub color: [u8; 4],
     /// Line width in twips.
     pub width: Twip,
+    /// Visible line pattern.
+    #[serde(default, skip_serializing_if = "BorderPattern::is_solid")]
+    pub pattern: BorderPattern,
+}
+
+/// One independently resolved interval along a horizontal cell side.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct ResolvedBorderSegment {
+    /// Offset from the cell side's leading edge.
+    pub offset: Twip,
+    /// Length along the side.
+    pub length: Twip,
+    /// Border-conflict winner for this interval.
+    pub edge: ResolvedEdge,
 }
 
 /// The four drawable edges of a block box (paragraph borders, `w:pBdr`). Mirrors
@@ -94,7 +134,7 @@ impl ParagraphDecor {
 
 /// The four resolved visible borders of a cell (`None` = draw no edge). Produced
 /// by border-conflict resolution in the flow engine and drawn by composition.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct CellBorders {
     /// Top edge.
     pub top: Option<ResolvedEdge>,
@@ -104,6 +144,14 @@ pub struct CellBorders {
     pub bottom: Option<ResolvedEdge>,
     /// Trailing (end) edge.
     pub end: Option<ResolvedEdge>,
+    /// Independently resolved intervals along the top side. When present, these
+    /// override the whole-side `top` fallback during composition.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub top_segments: Vec<ResolvedBorderSegment>,
+    /// Independently resolved intervals along the bottom side. When present,
+    /// these override the whole-side `bottom` fallback during composition.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bottom_segments: Vec<ResolvedBorderSegment>,
 }
 
 impl CellBorders {

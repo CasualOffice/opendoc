@@ -145,21 +145,22 @@ landed, but several modeled properties are still not consumed.
 | Width, grid span, fixed/autofit, indent | Consumed by the width solver. | Implemented for horizontal spans. |
 | Cell margins and vertical alignment | Resolved in flow and applied in composition. | Implemented. |
 | Table/cell shading | Cell fill is painted; table-level `w:shd` now supplies the fallback when a cell has no overriding fill. | Implemented by `P1F-TBL-TOPO`. |
-| Horizontal border topology | Perimeter vs `insideH` is selected by row position; conflicts inspect abutting cells above/below, including differing grid-span partitions. | Implemented by `P1F-TBL-TOPO`; segmented span edges remain below. |
+| Horizontal border topology | Perimeter vs `insideH` is selected by row position; conflicts inspect abutting cells above/below, including differing grid-span partitions. A spanning side now retains independently resolved, coalesced twip segments at those partitions. | Implemented by `P1F-TBL-TOPO` + `P1F-TBL-STYLED`. |
 | Border conflict details | `nil` suppression and first-in-reading-order ties are handled by the topology slice, but the rank covers only a few styles and uses an approximate luminance tie-break. Non-zero cell spacing needs a different conflict mode. | Follow-up after topology; keep the limitation explicit. |
-| Border appearance | Border color and width reach paint, but the style token does not: double/dashed/dotted/art borders are all painted as a single solid edge. | **High:** extend the resolved-edge/display-list representation before adding style-specific paint. |
-| Vertical merges | The vertical-merge slice resolves conforming restart/continuation runs by exact grid range, gives the restart merged-height/content ownership, and keeps the group page-local. Malformed continuations remain visible ordinary cells. | Implemented by `P1F-TBL-VMERGE`; differently styled side segments remain part of the segmented-border follow-up. |
+| Border appearance | Color, total width, and common line families reach paint: solid, double, dotted, dashed, dot-dash, and dot-dot-dash use deterministic portable geometry with a bounded solid fallback. | Implemented by `P1F-TBL-STYLED`; exact compound lines and art-border glyphs remain pending and explicitly fall back to solid. |
+| Vertical merges | The vertical-merge slice resolves conforming restart/continuation runs by exact grid range, gives the restart merged-height/content ownership, and keeps the group page-local. Malformed continuations remain visible ordinary cells. | Implemented by `P1F-TBL-VMERGE`; common side-segment styles are implemented by `P1F-TBL-STYLED`. |
 | Table style and conditional formatting | `style_ref`, `tblLook`, and row/cell `cnfStyle` reach the model but the layout cascade has no table-style layer. | **High:** resolve style defaults and conditional regions before sizing/paint. |
 | Alignment, bidi, and row alignment | `w:jc`, `w:bidiVisual`, and row `w:jc` are modeled but ignored by flow. | **High:** define physical start/end mapping before implementation. |
 | Cell spacing | Table/row spacing is modeled but neither cell geometry nor border conflict mode consumes it. | **High:** needs gap geometry plus separately visible table/cell borders. |
 | Floating tables | `tblpPr`, overlap, and from-text distances are modeled but tables remain inline. | **High/design required:** integrate table boxes with float placement and wrapping. |
 | Cell text behavior | `noWrap`, vertical `textDirection`, `fitText`, and `hideMark` are modeled but ignored. | Medium/high, split into bounded layout slices. |
 
-`CellFragment` currently stores one border per whole edge. When a grid-spanning
-cell abuts several cells whose borders differ, Word can paint independently
-styled edge segments. Correct support therefore needs a segmented-edge
-representation; choosing one winner for the full span is only an interim
-topology fallback and must not be presented as complete fidelity.
+`CellFragment` now carries independently resolved top/bottom segments when a
+grid-spanning cell abuts differently bordered cells. Leading/trailing edges keep
+the compact whole-side representation because a rectangular cell has only one
+neighbor along each of those sides. Exact compound and art styles remain a
+separate fidelity gap; their model tokens are preserved even when paint uses the
+documented solid fallback.
 
 ### Text boxes, drawings, and embedded objects
 

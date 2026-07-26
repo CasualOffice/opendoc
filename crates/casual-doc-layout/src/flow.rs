@@ -29,8 +29,9 @@ use casual_doc_model::v1::{
 };
 
 use crate::block::{
-    BlockBorders, BlockFragment, BoxMetrics, BreakControl, CellBorders, CellContentMargins,
-    CellFragment, CellVAlign, CellVerticalMerge, ParagraphDecor, ResolvedEdge,
+    BlockBorders, BlockFragment, BorderPattern, BoxMetrics, BreakControl, CellBorders,
+    CellContentMargins, CellFragment, CellVAlign, CellVerticalMerge, ParagraphDecor,
+    ResolvedBorderSegment, ResolvedEdge,
 };
 use crate::cascade::StyleCascade;
 use crate::incremental::{DirtySet, GalleyCache};
@@ -551,6 +552,7 @@ fn paragraph_hash(
     {
         e.color.hash(&mut hasher);
         e.width.0.hash(&mut hasher);
+        e.pattern.hash(&mut hasher);
     }
     hasher.finish()
 }
@@ -630,8 +632,8 @@ fn flow_blocks(
 ///   the width available to the columns.
 /// - **Row height** honors the `w:trHeight` rule (`atLeast` grows with content,
 ///   `exact` fixes the height and clips overflow).
-/// - **Borders** are resolved by OOXML conflict precedence so composition draws
-///   the winning edge.
+/// - **Borders** are resolved by OOXML conflict precedence, preserving common
+///   line patterns and independently styled horizontal span segments.
 ///
 /// Cross-page row splitting and header repetition are the paginator's job
 /// ([`crate::paginate`]); this produces the row fragments it slices.
@@ -667,8 +669,13 @@ fn flow_table(
             let cell_x = edge(col);
             let cell_end = edge(col + span);
             let cell_width = Twip((cell_end.raw() - cell_x.raw()).max(1));
-            let borders =
-                resolve_cell_borders(&table.properties.borders, &table.rows, row_index, index);
+            let borders = resolve_cell_borders(
+                &table.properties.borders,
+                &table.rows,
+                row_index,
+                index,
+                &edges,
+            );
             // A cell fill overrides table shading. When the cell omits `w:shd`,
             // table-level shading applies through the cell extent.
             let shading = cell
@@ -875,12 +882,16 @@ fn resolve_vertical_merge_geometry(roles: &[Vec<VerticalMergeRole>], rows: &mut 
                     .map(|row| row.height.raw())
                     .sum(),
             );
-            let closing_bottom = rows[end_row].cells[end_cell].borders.bottom;
+            let (closing_bottom, closing_bottom_segments) = {
+                let closing = &rows[end_row].cells[end_cell].borders;
+                (closing.bottom, closing.bottom_segments.clone())
+            };
             let origin = &mut rows[row_index].cells[cell_index];
             origin.vertical_merge = CellVerticalMerge::Restart {
                 height: merged_height,
             };
             origin.borders.bottom = closing_bottom;
+            origin.borders.bottom_segments = closing_bottom_segments;
         }
     }
 }
@@ -1269,13 +1280,15 @@ fn max_line_width(layout: &crate::text::LineLayout) -> i32 {
 /// use the table perimeter. `None` means no visible border.
 ///
 /// A horizontally spanning cell can abut several cells in the preceding or
-/// following row. [`CellBorders`] cannot yet represent independently styled
-/// segments, so the strongest overlapping edge is selected for the full span.
+/// following row. The compact whole-side winner is retained for compatibility,
+/// while top/bottom segment lists resolve each abutting grid interval
+/// independently for composition.
 fn resolve_cell_borders(
     table: &TableBorders,
     rows: &[TableRow],
     row_index: usize,
     index: usize,
+    column_edges: &[i32],
 ) -> CellBorders {
     let row = &rows[row_index].cells;
     let own = &row[index].properties.borders;
@@ -1342,12 +1355,135 @@ fn resolve_cell_borders(
     let right_start =
         right.map(|borders| effective_border(borders.start.as_ref(), table.inside_v.as_ref()));
 
+    let top_segments = row_index
+        .checked_sub(1)
+        .and_then(|i| rows.get(i))
+        .map_or_else(Vec::new, |above| {
+            resolve_horizontal_segments(
+                own.top.as_ref(),
+                top_default,
+                &above.cells,
+                |borders| borders.bottom.as_ref(),
+                table.inside_h.as_ref(),
+                start_col,
+                end_col,
+                column_edges,
+                false,
+            )
+        });
+    let bottom_segments = rows.get(row_index + 1).map_or_else(Vec::new, |below| {
+        resolve_horizontal_segments(
+            own.bottom.as_ref(),
+            bottom_default,
+            &below.cells,
+            |borders| borders.top.as_ref(),
+            table.inside_h.as_ref(),
+            start_col,
+            end_col,
+            column_edges,
+            true,
+        )
+    });
+
     CellBorders {
         top: resolve_edge(&top_candidates),
         bottom: resolve_edge(&bottom_candidates),
         start: resolve_edge(&[left_end.flatten(), own_start]),
         end: resolve_edge(&[own_end, right_start.flatten()]),
+        top_segments,
+        bottom_segments,
     }
+}
+
+/// Resolves every independently abutting interval along one horizontal cell
+/// side. Segment geometry is final twip geometry relative to the current cell.
+#[allow(clippy::too_many_arguments)]
+fn resolve_horizontal_segments<'a>(
+    own: Option<&'a BorderEdge>,
+    own_default: Option<&'a BorderEdge>,
+    adjacent: &'a [TableCell],
+    adjacent_side: impl Fn(&'a TableBorders) -> Option<&'a BorderEdge>,
+    adjacent_default: Option<&'a BorderEdge>,
+    start_col: usize,
+    end_col: usize,
+    column_edges: &[i32],
+    own_first: bool,
+) -> Vec<ResolvedBorderSegment> {
+    let own = effective_border(own, own_default);
+    let mut breaks = vec![start_col, end_col];
+    let mut adjacent_ranges = Vec::new();
+    let mut cell_start = 0usize;
+    for cell in adjacent {
+        let span = cell.properties.grid_span.unwrap_or(1).max(1) as usize;
+        let cell_end = cell_start.saturating_add(span);
+        if cell_start < end_col && start_col < cell_end {
+            let overlap_start = cell_start.max(start_col);
+            let overlap_end = cell_end.min(end_col);
+            breaks.push(overlap_start);
+            breaks.push(overlap_end);
+            adjacent_ranges.push((
+                overlap_start,
+                overlap_end,
+                effective_border(adjacent_side(&cell.properties.borders), adjacent_default),
+            ));
+        }
+        cell_start = cell_end;
+        if cell_start >= end_col {
+            break;
+        }
+    }
+    breaks.sort_unstable();
+    breaks.dedup();
+
+    let coordinate = |column: usize| {
+        column_edges
+            .get(column)
+            .copied()
+            .or_else(|| column_edges.last().copied())
+            .unwrap_or(0)
+    };
+    let cell_start_x = coordinate(start_col);
+    let mut segments: Vec<ResolvedBorderSegment> = Vec::new();
+    for window in breaks.windows(2) {
+        let (segment_start, segment_end) = (window[0], window[1]);
+        if segment_start >= segment_end {
+            continue;
+        }
+        let mut candidates = Vec::new();
+        if own_first {
+            candidates.push(own);
+        }
+        candidates.extend(
+            adjacent_ranges
+                .iter()
+                .filter(|(start, end, _)| *start < segment_end && segment_start < *end)
+                .map(|(_, _, edge)| *edge),
+        );
+        if !own_first {
+            candidates.push(own);
+        }
+        let Some(edge) = resolve_edge(&candidates) else {
+            continue;
+        };
+        let offset = Twip(coordinate(segment_start) - cell_start_x);
+        let length = Twip((coordinate(segment_end) - coordinate(segment_start)).max(0));
+        if length.is_zero() {
+            continue;
+        }
+        if let Some(previous) = segments.last_mut()
+            && previous.edge == edge
+            && previous.offset + previous.length == offset
+        {
+            previous.length = previous.length + length;
+        } else {
+            segments.push(ResolvedBorderSegment {
+                offset,
+                length,
+                edge,
+            });
+        }
+    }
+    segments
 }
 
 /// Returns the half-open grid-column range occupied by `row[index]`.
@@ -1428,7 +1564,24 @@ fn resolve_edge(candidates: &[Option<&BorderEdge>]) -> Option<ResolvedEdge> {
     let width = winner
         .size_eighth_points
         .map_or(Twip(10), |sz| Twip(((sz * 20) / 8).max(1) as i32));
-    Some(ResolvedEdge { color, width })
+    Some(ResolvedEdge {
+        color,
+        width,
+        pattern: border_pattern(&winner.style),
+    })
+}
+
+/// Maps the common OOXML line-style families to backend-independent patterns.
+/// Producer-specific and art-border tokens intentionally use the solid fallback.
+fn border_pattern(style: &str) -> BorderPattern {
+    match style {
+        "double" => BorderPattern::Double,
+        "dotted" => BorderPattern::Dotted,
+        "dashed" | "dashSmallGap" => BorderPattern::Dashed,
+        "dotDash" | "dashDotStroked" => BorderPattern::DotDash,
+        "dotDotDash" => BorderPattern::DotDotDash,
+        _ => BorderPattern::Solid,
+    }
 }
 
 /// Whether a border edge is a visible line (not `nil`/`none`/empty).
@@ -2916,7 +3069,11 @@ fn single_edge(edge: Option<&BorderEdge>) -> Option<ResolvedEdge> {
     let width = edge
         .size_eighth_points
         .map_or(Twip(10), |sz| Twip(((sz * 20) / 8).max(1) as i32));
-    Some(ResolvedEdge { color, width })
+    Some(ResolvedEdge {
+        color,
+        width,
+        pattern: border_pattern(&edge.style),
+    })
 }
 
 /// Resolves a named `w:highlight` color to an opaque RGBA fill. `None`
@@ -4392,6 +4549,7 @@ mod tests {
     #[test]
     fn vertical_merge_owns_content_height_and_closing_border_by_grid_range() {
         let blue = RgbColor { r: 0, g: 0, b: 255 };
+        let red = RgbColor { r: 255, g: 0, b: 0 };
         let table = Table {
             id: node(500),
             grid: vec![
@@ -4438,12 +4596,41 @@ mod tests {
                                 grid_span: Some(2),
                                 vertical_merge: Some(VerticalMerge::Continue),
                                 borders: TableBorders {
-                                    bottom: Some(colored_edge("single", 8, blue)),
+                                    bottom: Some(edge("single", 4)),
                                     ..TableBorders::default()
                                 },
                                 ..TableCellProperties::default()
                             },
                             "continuation content must not render",
+                        ),
+                    ],
+                },
+                ModelRow {
+                    id: node(503),
+                    properties: TableRowProperties::default(),
+                    cells: vec![
+                        text_cell(530, TableCellProperties::default(), "left after"),
+                        text_cell(
+                            531,
+                            TableCellProperties {
+                                borders: TableBorders {
+                                    top: Some(colored_edge("double", 24, blue)),
+                                    ..TableBorders::default()
+                                },
+                                ..TableCellProperties::default()
+                            },
+                            "after one",
+                        ),
+                        text_cell(
+                            532,
+                            TableCellProperties {
+                                borders: TableBorders {
+                                    top: Some(colored_edge("dotted", 12, red)),
+                                    ..TableBorders::default()
+                                },
+                                ..TableCellProperties::default()
+                            },
+                            "after two",
                         ),
                     ],
                 },
@@ -4465,9 +4652,10 @@ mod tests {
                 header: bottom_header,
                 ..
             },
+            BlockFragment::TableRow { .. },
         ] = rows.as_slice()
         else {
-            panic!("expected two table rows");
+            panic!("expected three table rows");
         };
 
         let merged_height = match top[1].vertical_merge {
@@ -4494,9 +4682,25 @@ mod tests {
             top[1].borders.bottom,
             Some(ResolvedEdge {
                 color: [0, 0, 255, 255],
-                width: Twip(20),
+                width: Twip(60),
+                pattern: BorderPattern::Double,
             }),
             "the merged box closes with the final continuation's bottom edge"
+        );
+        let [first, second] = top[1].borders.bottom_segments.as_slice() else {
+            panic!("the closing side keeps two independently styled segments")
+        };
+        assert_eq!(first.offset, Twip::ZERO);
+        assert_eq!(first.length, second.offset);
+        assert_eq!(first.length + second.length, top[1].width);
+        assert_eq!(
+            (first.edge.color, first.edge.width, first.edge.pattern),
+            ([0, 0, 255, 255], Twip(60), BorderPattern::Double)
+        );
+        assert_eq!(
+            (second.edge.color, second.edge.width, second.edge.pattern),
+            ([255, 0, 0, 255], Twip(30), BorderPattern::Dotted),
+            "the restart copies the closing continuation's styled subsegments"
         );
     }
 
@@ -4771,6 +4975,7 @@ mod tests {
         let winner = ResolvedEdge {
             color: [0, 0, 0, 255],
             width: Twip(60),
+            pattern: BorderPattern::Double,
         };
         assert_eq!(
             cells[0].borders.end,
@@ -4781,6 +4986,66 @@ mod tests {
             cells[1].borders.start,
             Some(winner),
             "and the same winner on cell 1"
+        );
+    }
+
+    #[test]
+    fn common_border_tokens_map_to_typed_paint_patterns() {
+        assert_eq!(border_pattern("single"), BorderPattern::Solid);
+        assert_eq!(border_pattern("double"), BorderPattern::Double);
+        assert_eq!(border_pattern("dotted"), BorderPattern::Dotted);
+        assert_eq!(border_pattern("dashSmallGap"), BorderPattern::Dashed);
+        assert_eq!(border_pattern("dotDash"), BorderPattern::DotDash);
+        assert_eq!(border_pattern("dashDotStroked"), BorderPattern::DotDash);
+        assert_eq!(border_pattern("dotDotDash"), BorderPattern::DotDotDash);
+        assert_eq!(
+            border_pattern("apples"),
+            BorderPattern::Solid,
+            "art-border tokens keep the documented deterministic fallback"
+        );
+    }
+
+    #[test]
+    fn paragraph_cache_hash_includes_the_resolved_border_pattern() {
+        let shape = ShapeInputs {
+            items: &[],
+            tab_stops: &[],
+            default_tab: Twip(720),
+            constraints: LineConstraints::default(),
+        };
+        let decor = |pattern| ParagraphDecor {
+            borders: BlockBorders {
+                bottom: Some(ResolvedEdge {
+                    color: [0, 0, 0, 255],
+                    width: Twip(20),
+                    pattern,
+                }),
+                ..BlockBorders::default()
+            },
+            width: Twip(5000),
+            ..ParagraphDecor::default()
+        };
+        let solid = paragraph_hash(
+            node(1),
+            &shape,
+            BoxMetrics::default(),
+            BreakControl::default(),
+            decor(BorderPattern::Solid),
+            None,
+            None,
+        );
+        let dashed = paragraph_hash(
+            node(1),
+            &shape,
+            BoxMetrics::default(),
+            BreakControl::default(),
+            decor(BorderPattern::Dashed),
+            None,
+            None,
+        );
+        assert_ne!(
+            solid, dashed,
+            "a style-only border edit cannot reuse stale paragraph paint"
         );
     }
 
@@ -4907,12 +5172,14 @@ mod tests {
             Some(ResolvedEdge {
                 color: [255, 0, 0, 255],
                 width: Twip(20),
+                pattern: BorderPattern::Solid,
             }),
             "only the first row receives the table top border"
         );
         let inside = Some(ResolvedEdge {
             color: [0, 0, 255, 255],
             width: Twip(10),
+            pattern: BorderPattern::Solid,
         });
         assert_eq!(top_cells[0].borders.bottom, inside);
         assert_eq!(
@@ -4924,6 +5191,7 @@ mod tests {
             Some(ResolvedEdge {
                 color: [0, 128, 0, 255],
                 width: Twip(30),
+                pattern: BorderPattern::Solid,
             }),
             "only the final row receives the table bottom border"
         );
@@ -4991,6 +5259,7 @@ mod tests {
         let winner = Some(ResolvedEdge {
             color: [0, 0, 255, 255],
             width: Twip(60),
+            pattern: BorderPattern::Double,
         });
         assert_eq!(upper_cells[0].borders.bottom, winner);
         assert_eq!(lower_cells[0].borders.top, winner);
@@ -5076,12 +5345,103 @@ mod tests {
             "the spanning edge inspects both abutting lower cells"
         );
         assert_eq!(
+            upper_cells[0].borders.bottom_segments,
+            vec![
+                ResolvedBorderSegment {
+                    offset: Twip(0),
+                    length: Twip(3000),
+                    edge: ResolvedEdge {
+                        color: [0, 0, 0, 255],
+                        width: Twip(60),
+                        pattern: BorderPattern::Double,
+                    },
+                },
+                ResolvedBorderSegment {
+                    offset: Twip(3000),
+                    length: Twip(3000),
+                    edge: ResolvedEdge {
+                        color: [0, 0, 0, 255],
+                        width: Twip(20),
+                        pattern: BorderPattern::Solid,
+                    },
+                },
+            ],
+            "each differently styled abutting half keeps its own conflict winner"
+        );
+        assert_eq!(
             lower_cells[0].borders.top.map(|border| border.width),
             Some(Twip(60))
         );
         assert_eq!(
             lower_cells[1].borders.top.map(|border| border.width),
             Some(Twip(20))
+        );
+    }
+
+    #[test]
+    fn equal_horizontal_segment_winners_are_coalesced() {
+        let spanning = text_cell(
+            60,
+            TableCellProperties {
+                grid_span: Some(2),
+                borders: TableBorders {
+                    bottom: Some(edge("single", 4)),
+                    ..TableBorders::default()
+                },
+                ..TableCellProperties::default()
+            },
+            "span",
+        );
+        let same_top = || TableCellProperties {
+            borders: TableBorders {
+                top: Some(edge("dashed", 8)),
+                ..TableBorders::default()
+            },
+            ..TableCellProperties::default()
+        };
+        let table = Table {
+            id: node(50),
+            grid: vec![
+                GridColumn {
+                    width_twips: Some(3000),
+                },
+                GridColumn {
+                    width_twips: Some(3000),
+                },
+            ],
+            grid_change: None,
+            properties: TableProperties::default(),
+            rows: vec![
+                ModelRow {
+                    id: node(51),
+                    properties: TableRowProperties::default(),
+                    cells: vec![spanning],
+                },
+                ModelRow {
+                    id: node(52),
+                    properties: TableRowProperties::default(),
+                    cells: vec![
+                        text_cell(61, same_top(), "left"),
+                        text_cell(62, same_top(), "right"),
+                    ],
+                },
+            ],
+        };
+        let rows = flow_table_rows(table, Twip(9000));
+        let BlockFragment::TableRow { cells, .. } = &rows[0] else {
+            panic!("expected a row")
+        };
+        assert_eq!(
+            cells[0].borders.bottom_segments,
+            vec![ResolvedBorderSegment {
+                offset: Twip(0),
+                length: Twip(6000),
+                edge: ResolvedEdge {
+                    color: [0, 0, 0, 255],
+                    width: Twip(20),
+                    pattern: BorderPattern::Dashed,
+                },
+            }]
         );
     }
 
