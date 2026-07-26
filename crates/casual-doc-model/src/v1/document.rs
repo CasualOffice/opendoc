@@ -425,6 +425,24 @@ impl Document {
             if let Some(properties) = &style.run {
                 self.check_run_property_refs(properties)?;
             }
+            // A `w:next` / `w:link` reference must resolve; unlike `basedOn` its
+            // target need not share this style's kind (`link` deliberately points
+            // at the companion style of the opposite kind).
+            for reference in [style.next, style.link].into_iter().flatten() {
+                if !self.style_exists(reference) {
+                    return Err(ModelError::DanglingStyleRef(reference.node_id()));
+                }
+            }
+            // Conditional-format overrides (`w:tblStylePr`) may carry paragraph /
+            // run property style references, which must resolve too.
+            for over in &style.conditional {
+                if let Some(properties) = &over.paragraph {
+                    self.check_paragraph_property_refs(properties)?;
+                }
+                if let Some(properties) = &over.run {
+                    self.check_run_property_refs(properties)?;
+                }
+            }
             if let Some(based_on) = style.based_on {
                 if !self.style_exists(based_on) {
                     return Err(ModelError::DanglingStyleRef(based_on.node_id()));
