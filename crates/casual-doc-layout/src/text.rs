@@ -97,6 +97,21 @@ pub struct InlineImage {
     pub size: Size,
 }
 
+/// An inline horizontal rule (`w:pict` / `v:rect@o:hr`) placed on a line: a filled
+/// rectangle spanning (a fraction of) the content width at the line's leading
+/// edge. `origin` is the rule's top-left relative to the paragraph content box
+/// (twips); `size` is its resolved width and thickness. Composition paints it as a
+/// filled rect. Laid out on its own line, like an [`InlineImage`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct InlineRule {
+    /// Top-left of the rule box, relative to the paragraph content box (twips).
+    pub origin: Point,
+    /// The rule box size (twips): resolved width and thickness.
+    pub size: Size,
+    /// The rule fill color (RGBA).
+    pub color: [u8; 4],
+}
+
 /// A resolved text-box outline ready for layout and paint.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Deserialize, Serialize)]
 pub struct TextBoxStroke {
@@ -237,6 +252,11 @@ pub struct Line {
     /// only when non-empty so a plain galley stays byte-identical.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub text_boxes: Vec<InlineTextBox>,
+    /// Inline horizontal rules placed on this line (`w:pict` / `v:rect@o:hr`), each
+    /// a filled full-content-width line. Empty for the common line; serialized only
+    /// when non-empty so a plain galley stays byte-identical.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rules: Vec<InlineRule>,
 }
 
 /// The result of shaping one paragraph: its ordered lines.
@@ -391,6 +411,7 @@ mod tests {
             images: Vec::new(),
             fields: Vec::new(),
             text_boxes: Vec::new(),
+            rules: Vec::new(),
         };
         let layout = LineLayout {
             lines: vec![line(240), line(240), line(200)],

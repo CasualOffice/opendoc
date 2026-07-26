@@ -388,6 +388,7 @@ impl PreparedMarker {
                 images: Vec::new(),
                 fields: Vec::new(),
                 text_boxes: Vec::new(),
+                rules: Vec::new(),
             });
         }
         let first = layout.lines.first_mut().expect("a line exists");

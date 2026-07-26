@@ -10,23 +10,23 @@ use casual_doc_model::v1::{
     Drawing, DrawingAnchor, EmbeddedKind, EmbeddedObject, EmbeddedPart, Extent, ExternalTarget,
     Field, FormCheckBox, FormCheckBoxSize, FormDropDown, FormFieldData, FormFieldKind,
     FormTextInput, FormTextType, GridColumn, GroupChild, GroupPicture, GroupShape, GroupTextBox,
-    GroupTransform, HeaderFooterId, HeaderFooterKind, HeaderFooterRef, HeightRule, HorizontalAlign,
-    HorizontalAnchor, HorizontalPosition, Hyperlink, HyperlinkTarget, InlineNode, InlineSdt,
-    InternalTarget, LineNumberRestart, LineNumbering, MAX_DESCR_BYTES, MAX_EMU,
-    MAX_FIELD_INSTRUCTION_BYTES, MAX_FORM_FIELD_ENTRIES, MAX_FORM_FIELD_STRING_BYTES,
-    MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH, MAX_TEXTBOX_DEPTH, Math, MediaId, MoveKind,
-    MoveRangeEnd, MoveRangeStart, NoBreakHyphen, NoteId, NoteKind, NoteNumberRestart, NotePosition,
-    NoteProperties, NoteReference, PageBorderDisplay, PageBorderOffset, PageBorders, PageMargins,
-    PageNumbering, PageOrientation, PageSize, PageVerticalAlignment, PaperSource, Paragraph,
-    ParagraphProperties, PointEmu, PositionalTab, PositionalTabAlignment, PositionalTabLeader,
-    PositionalTabRelativeTo, PropChange, Revision, RevisionKind, RgbColor, Rgba, Run,
-    RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind,
-    SdtDataBinding, SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionColumns,
-    SectionId, SectionType, ShapeGeometry, ShapeStroke, SoftHyphen, StyleKind, Symbol, Tab,
-    TabAlignment, TabLeader, TabStop, TableAnchor, TableCellProperties, TableFloatPosition,
-    TableLayout, TableOverlap, TableProperties, TableRowProperties, TableXAlign, TableYAlign,
-    TextBox, TextDirection, VerticalAlign, VerticalAnchor, VerticalMerge, VerticalPosition,
-    WordprocessingGroup, WrapMode,
+    GroupTransform, HR_FULL_WIDTH_PERMILLE, HeaderFooterId, HeaderFooterKind, HeaderFooterRef,
+    HeightRule, HorizontalAlign, HorizontalAnchor, HorizontalPosition, HorizontalRule,
+    HorizontalRuleAlign, Hyperlink, HyperlinkTarget, InlineNode, InlineSdt, InternalTarget,
+    LineNumberRestart, LineNumbering, MAX_DESCR_BYTES, MAX_EMU, MAX_FIELD_INSTRUCTION_BYTES,
+    MAX_FORM_FIELD_ENTRIES, MAX_FORM_FIELD_STRING_BYTES, MAX_MATH_BYTES, MAX_REVISION_DEPTH,
+    MAX_SDT_DEPTH, MAX_TEXTBOX_DEPTH, Math, MediaId, MoveKind, MoveRangeEnd, MoveRangeStart,
+    NoBreakHyphen, NoteId, NoteKind, NoteNumberRestart, NotePosition, NoteProperties,
+    NoteReference, PageBorderDisplay, PageBorderOffset, PageBorders, PageMargins, PageNumbering,
+    PageOrientation, PageSize, PageVerticalAlignment, PaperSource, Paragraph, ParagraphProperties,
+    PointEmu, PositionalTab, PositionalTabAlignment, PositionalTabLeader, PositionalTabRelativeTo,
+    PropChange, Revision, RevisionKind, RgbColor, Rgba, Run, RunProperties, SchemeColor,
+    SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind, SdtDataBinding, SdtDate,
+    SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionColumns, SectionId, SectionType,
+    ShapeGeometry, ShapeStroke, SoftHyphen, StyleKind, Symbol, Tab, TabAlignment, TabLeader,
+    TabStop, TableAnchor, TableCellProperties, TableFloatPosition, TableLayout, TableOverlap,
+    TableProperties, TableRowProperties, TableXAlign, TableYAlign, TextBox, TextDirection,
+    VerticalAlign, VerticalAnchor, VerticalMerge, VerticalPosition, WordprocessingGroup, WrapMode,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::events::{BytesStart, Event};
@@ -43,8 +43,8 @@ use crate::report::Reporter;
 use crate::styles::Styles;
 use crate::tables::TableStack;
 use crate::vml::{
-    VmlColor, VmlDrawing, VmlFill, VmlPosition, VmlRelFrame, VmlShapeKind, VmlStroke,
-    parse_vml_pict,
+    VmlColor, VmlDrawing, VmlFill, VmlHr, VmlHrAlign, VmlPosition, VmlRelFrame, VmlShapeKind,
+    VmlStroke, parse_vml_pict,
 };
 
 /// A run/tab/break/drawing/hyperlink/field segment before ids and normalization.
@@ -148,6 +148,14 @@ enum Segment {
     Symbol {
         font: String,
         char: u32,
+    },
+    /// An inline horizontal rule (`w:pict` / `v:rect@o:hr`): a full-content-width
+    /// filled line occupying its paragraph's own line.
+    HorizontalRule {
+        align: HorizontalRuleAlign,
+        width_permille: u16,
+        thickness_emu: i64,
+        color: Rgba,
     },
     /// A non-breaking hyphen glyph (`w:noBreakHyphen`).
     NoBreakHyphen,
@@ -720,6 +728,14 @@ struct BodyParser<'a> {
     /// The raw XML of the most-recently-closed `w:pict`, handed to
     /// [`Self::commit_pict`] to map its VML drawings onto the float layer.
     pending_pict_xml: Option<String>,
+    /// FIFO queue of a header/footer VML text box's flowed content awaiting
+    /// placement by [`Self::commit_pict`], which knows the shape's absolute
+    /// position. A page-furniture (`hf_root`) `v:textbox` is deferred here — a
+    /// genuinely positioned one becomes a side-by-side float, a degenerate one
+    /// inline — while a *body* `v:textbox` is emitted inline immediately (its box
+    /// positions overlap the body text, so it must stay in the flow). Paired in
+    /// document order with the pict's text-box drawings.
+    pending_vml_textboxes: Vec<(NodeId, Vec<BlockNode>)>,
     /// `a:graphicData` payload pointers for the open drawing (chart/diagram).
     pending_graphic: PendingGraphic,
     /// `wp:anchor` placement pointers for the open drawing; `Some` while inside a
@@ -974,6 +990,7 @@ impl<'a> BodyParser<'a> {
             vml_capture: None,
             vml_capture_depth: 0,
             pending_pict_xml: None,
+            pending_vml_textboxes: Vec::new(),
             pending_graphic: PendingGraphic::default(),
             pending_anchor: None,
             object_depth: 0,
@@ -3935,6 +3952,21 @@ impl BodyParser<'_> {
                 emitted = true;
             }
         }
+        // Any deferred header/footer text box not matched to a parsed drawing (a
+        // malformed pict, or a box whose `v:shape` the parser did not surface) is
+        // emitted inline so its content is never lost.
+        for (id, blocks) in std::mem::take(&mut self.pending_vml_textboxes) {
+            self.push_segment(Segment::TextBox(TextBox {
+                id,
+                anchor: None,
+                relative_height: None,
+                extent: None,
+                fill: None,
+                border: None,
+                blocks,
+            }));
+            emitted = true;
+        }
         if emitted {
             // The VML path consumed the picture; drop any stale inline embed so it is
             // not re-emitted as a duplicate inline image.
@@ -3966,6 +3998,13 @@ impl BodyParser<'_> {
     /// emitted as an inline `TextBox` segment when its `w:txbxContent` closed (see
     /// [`Self::exit_frame`]), so it must not also be painted as a float.
     fn vml_segment(&mut self, drawing: &VmlDrawing) -> Result<Option<Segment>, ImportError> {
+        // A horizontal rule (`v:rect@o:hr="t"`, Word's "Insert → Horizontal Line"):
+        // a full-content-width filled line on its paragraph's own line, regardless
+        // of the shape's degenerate CSS box (`width:0`). Handled before the generic
+        // shape path so it is not mistaken for a zero-width floating rectangle.
+        if let Some(hr) = drawing.hr {
+            return Ok(Some(vml_hr_segment(drawing, hr)));
+        }
         // A positioned image (`v:imagedata@r:id`): a float, unless it is a genuinely
         // inline image (no absolute VML box), which keeps the legacy inline mapping.
         if let Some(rid) = &drawing.image_rid {
@@ -3989,17 +4028,53 @@ impl BodyParser<'_> {
                 extent: None,
             }));
         }
-        // A VML text box (`v:textbox`): its flowed blocks were already emitted as an
-        // inline `TextBox` segment, in document order, when `w:txbxContent` closed (see
-        // `exit_frame`). Skip it here so the box is not also painted as a float — VML
-        // text boxes render inline, because their absolute VML box positions overlap
-        // each other and the body text on real documents. The box fill/border are
-        // intentionally not carried onto a float.
+        // A VML text box (`v:textbox`): placement depends on its container. A *body*
+        // box's flowed blocks were already emitted as an inline `TextBox` segment, in
+        // document order, when `w:txbxContent` closed (see `exit_frame`), so it is
+        // skipped here (its absolute VML box positions overlap the body text). A
+        // *header/footer* box's blocks were deferred to the queue instead, so they can
+        // be placed now that this drawing carries the parsed absolute position.
         if drawing.textbox.is_some() {
-            return Ok(None);
+            return Ok(self.vml_textbox_segment(drawing));
         }
         // A geometric shape (rule / callout box / line).
         self.vml_shape_segment(drawing)
+    }
+
+    /// Places a header/footer VML text box whose flowed blocks were deferred to
+    /// [`Self::pending_vml_textboxes`]. A genuinely positioned box (a distinct
+    /// absolute `left`/`top`) becomes a float carrying its anchor, extent, fill, and
+    /// border — so the header's side-by-side boxes sit horizontally rather than
+    /// stacking; a degenerate one (no absolute placement) falls back to inline. When
+    /// the queue is empty this is a *body* text box, already emitted inline by
+    /// [`Self::exit_frame`], so it is skipped (`None`) — the pre-existing behavior.
+    fn vml_textbox_segment(&mut self, drawing: &VmlDrawing) -> Option<Segment> {
+        if self.pending_vml_textboxes.is_empty() {
+            return None;
+        }
+        let (id, blocks) = self.pending_vml_textboxes.remove(0);
+        if vml_textbox_is_positioned(&drawing.position) {
+            let (anchor, relative_height) = vml_anchor(&drawing.position);
+            Some(Segment::TextBox(TextBox {
+                id,
+                anchor: Some(anchor),
+                relative_height,
+                extent: Some(vml_extent(&drawing.position)),
+                fill: vml_fill(&drawing.fill),
+                border: vml_stroke(&drawing.stroke),
+                blocks,
+            }))
+        } else {
+            Some(Segment::TextBox(TextBox {
+                id,
+                anchor: None,
+                relative_height: None,
+                extent: None,
+                fill: None,
+                border: None,
+                blocks,
+            }))
+        }
     }
 
     /// Maps a geometric VML shape (`v:rect`/`v:roundrect`/`v:oval`/`v:line`/generic
@@ -4571,17 +4646,27 @@ impl BodyParser<'_> {
                     // a group child or a floating/inline text box; `frame.node_id`
                     // is unused (the shape's own id identifies the box).
                     shape.textbox_blocks = Some(blocks);
+                } else if self.hf_root.is_some() {
+                    // A VML `v:textbox` in a header/footer part (page furniture):
+                    // defer to `commit_pict`, which knows the shape's absolute
+                    // position. A genuinely positioned header box (a distinct
+                    // `margin-left`/`top`) is placed as a float so the header's
+                    // side-by-side boxes sit horizontally (their pre-#135 behavior);
+                    // a degenerate one falls back to inline. The blocks are paired,
+                    // in document order, with the pict's text-box drawings.
+                    self.pending_vml_textboxes.push((frame.node_id, blocks));
                 } else {
-                    // A legacy VML `v:textbox` (`w:pict`): emit its flowed blocks as
-                    // an inline `TextBox` segment in document order — whether or not it
-                    // sits inside an open `w:pict` capture. VML text boxes render inline
-                    // (their pre-VML-paint behavior), NOT as floats at their absolute
-                    // `v:shape` box: those box positions overlap each other and the body
-                    // text on real documents (the SDS content pages). The box's
-                    // fill/border/position are intentionally dropped here — inline is the
-                    // known-good, readable result. The enclosing `commit_pict` skips the
-                    // matching `v:textbox` drawing so the box is not also painted as a
-                    // float; positioned VML shapes and images still float.
+                    // A legacy VML `v:textbox` in the *body* (`w:pict`): emit its
+                    // flowed blocks as an inline `TextBox` segment in document order —
+                    // whether or not it sits inside an open `w:pict` capture. Body VML
+                    // text boxes render inline (their pre-VML-paint behavior), NOT as
+                    // floats at their absolute `v:shape` box: those box positions
+                    // overlap each other and the body text on real documents (the SDS
+                    // content pages). The box's fill/border/position are intentionally
+                    // dropped here — inline is the known-good, readable result. The
+                    // enclosing `commit_pict` skips the matching `v:textbox` drawing so
+                    // the box is not also painted as a float; positioned VML shapes and
+                    // images still float.
                     self.push_segment(Segment::TextBox(TextBox {
                         id: frame.node_id,
                         anchor: None,
@@ -5417,6 +5502,21 @@ impl BodyParser<'_> {
                 let id = self.next_id()?;
                 Ok(InlineNode::Symbol(Symbol { id, font, char }))
             }
+            Segment::HorizontalRule {
+                align,
+                width_permille,
+                thickness_emu,
+                color,
+            } => {
+                let id = self.next_id()?;
+                Ok(InlineNode::HorizontalRule(HorizontalRule {
+                    id,
+                    align,
+                    width_permille,
+                    thickness_emu,
+                    color,
+                }))
+            }
             Segment::NoBreakHyphen => {
                 let id = self.next_id()?;
                 Ok(InlineNode::NoBreakHyphen(NoBreakHyphen { id }))
@@ -6042,6 +6142,15 @@ fn vml_is_floating(position: &VmlPosition) -> bool {
     position.left.is_some() || position.top.is_some() || position.z_index.is_some()
 }
 
+/// Whether a (header/footer) VML text box carries a genuine absolute placement — a
+/// distinct `margin-left`/`top` that positions it out of the normal top-left flow —
+/// so it should be a float. A bare z-order alone is not enough: two header boxes sit
+/// side by side only when each names its own `left`/`top`, so an absent left/top
+/// keeps the box inline (the safe default) rather than stacking floats at the origin.
+fn vml_textbox_is_positioned(position: &VmlPosition) -> bool {
+    position.left.is_some() || position.top.is_some()
+}
+
 /// Resolves a VML box into a float-layer [`DrawingAnchor`] plus its z key, using
 /// the shape's own left/top offsets.
 fn vml_anchor(position: &VmlPosition) -> (DrawingAnchor, Option<u32>) {
@@ -6107,6 +6216,48 @@ fn vml_v_anchor(frame: Option<VmlRelFrame>) -> VerticalAnchor {
         // `paragraph` and everything else (char/other/unset) resolve against the
         // anchoring paragraph, the float layer's vertical default.
         _ => VerticalAnchor::Paragraph,
+    }
+}
+
+/// The default horizontal-rule thickness in twips (~1.5pt) when the `v:rect`
+/// declares no `height`.
+const HR_DEFAULT_THICKNESS_TWIPS: i64 = 30;
+
+/// The default horizontal-rule color (grey `#A0A0A0`) when the `v:rect` declares
+/// no `fillcolor` — Word's default rule color.
+const HR_DEFAULT_COLOR: Rgba = Rgba {
+    r: 0xA0,
+    g: 0xA0,
+    b: 0xA0,
+    a: 255,
+};
+
+/// Builds an inline [`Segment::HorizontalRule`] from an `o:hr` VML rectangle: its
+/// thickness is the box `height` (a `~1.5pt` default when absent), its color the
+/// `fillcolor` (a grey default when absent), and its width/alignment the `o:hrpct`/
+/// `o:hralign`. The box `width` is deliberately ignored (an `o:hr` spans the full
+/// content width).
+fn vml_hr_segment(drawing: &VmlDrawing, hr: VmlHr) -> Segment {
+    let thickness_twips = drawing
+        .position
+        .height
+        .filter(|h| *h > 0)
+        .unwrap_or(HR_DEFAULT_THICKNESS_TWIPS);
+    let color = vml_fill(&drawing.fill).unwrap_or(HR_DEFAULT_COLOR);
+    let align = match hr.align {
+        VmlHrAlign::Left => HorizontalRuleAlign::Left,
+        VmlHrAlign::Center => HorizontalRuleAlign::Center,
+        VmlHrAlign::Right => HorizontalRuleAlign::Right,
+    };
+    let width_permille = hr
+        .pct_permille
+        .unwrap_or(HR_FULL_WIDTH_PERMILLE)
+        .clamp(1, HR_FULL_WIDTH_PERMILLE);
+    Segment::HorizontalRule {
+        align,
+        width_permille,
+        thickness_emu: twip_emu_len(thickness_twips),
+        color,
     }
 }
 

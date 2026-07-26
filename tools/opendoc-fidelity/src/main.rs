@@ -192,6 +192,8 @@ fn push_inline_text(inline: &InlineNode, out: &mut String) {
         // A symbol is a font-bound glyph (typically a Private Use Area code
         // point); it has no extractable plain-text form, so it contributes none.
         InlineNode::Symbol(_) => {}
+        // A horizontal rule is a graphic line with no extractable text.
+        InlineNode::HorizontalRule(_) => {}
         // A non-breaking hyphen renders as a visible hyphen; a soft (optional)
         // hyphen is invisible unless the line breaks there, so it contributes no
         // in-flow text; an absolute-position tab renders as a tab.

@@ -114,6 +114,18 @@ pub fn compose_paragraph(layout: &LineLayout, origin: Point) -> DisplayList {
                 Point::new(box_origin.x + TEXTBOX_INSET, box_origin.y + TEXTBOX_INSET);
             compose_blocks(&mut list, &text_box.blocks, content_origin);
         }
+        // Inline horizontal rules (`w:pict` / `v:rect@o:hr`): a filled rectangle
+        // spanning (a fraction of) the content width, translated into page space.
+        for rule in &line.rules {
+            list.push(PaintItem::Rect {
+                rect: Rect::new(
+                    Point::new(origin.x + rule.origin.x, origin.y + rule.origin.y),
+                    rule.size,
+                ),
+                fill: Some(rgba(rule.color)),
+                stroke: None,
+            });
+        }
     }
     list
 }
@@ -950,6 +962,7 @@ mod tests {
                 images: Vec::new(),
                 fields: Vec::new(),
                 text_boxes: Vec::new(),
+                rules: Vec::new(),
             }],
         }
     }

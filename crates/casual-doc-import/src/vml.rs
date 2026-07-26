@@ -302,6 +302,31 @@ pub enum VmlShapeKind {
     },
 }
 
+/// The alignment of an `o:hr` horizontal rule (`o:hralign`), default left.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum VmlHrAlign {
+    /// Flush with the content's leading edge (default).
+    #[default]
+    Left,
+    /// Centered in the content width.
+    Center,
+    /// Flush with the content's trailing edge.
+    Right,
+}
+
+/// The horizontal-rule marker carried by a `v:rect` with `o:hr="t"` (Word's
+/// "Insert → Horizontal Line"). Such a rule spans the full content width (its
+/// CSS `width` is ignored), is `height` twips thick, and is filled with its
+/// `fillcolor`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct VmlHr {
+    /// Alignment within the content width (`o:hralign`).
+    pub align: VmlHrAlign,
+    /// Width as a fraction of the content width in per-mille (`o:hrpct`,
+    /// `1000` = full width); `None` when absent (full width).
+    pub pct_permille: Option<u16>,
+}
+
 /// One parsed VML shape: an absolute box, its geometry, fill/stroke, an optional
 /// image relationship, and an optional text-box marker.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -320,6 +345,8 @@ pub struct VmlDrawing {
     pub image_rid: Option<String>,
     /// The text-box marker, if the shape carried a `v:textbox`.
     pub textbox: Option<VmlTextbox>,
+    /// The horizontal-rule marker, if the shape carried `o:hr="t"`.
+    pub hr: Option<VmlHr>,
 }
 
 // --- style parsing ---------------------------------------------------------
@@ -608,6 +635,7 @@ struct ShapeBuilder {
     from: Option<String>,
     to: Option<String>,
     textbox: Option<VmlTextbox>,
+    hr: Option<VmlHr>,
 }
 
 impl ShapeBuilder {
@@ -636,6 +664,7 @@ impl ShapeBuilder {
             from: attr(element, b"from"),
             to: attr(element, b"to"),
             textbox: None,
+            hr: parse_hr(element),
             style,
         }
     }
@@ -689,6 +718,7 @@ impl ShapeBuilder {
             stroke,
             image_rid: self.image_rid,
             textbox: self.textbox,
+            hr: self.hr,
         }
     }
 
@@ -798,6 +828,35 @@ impl ShapeBuilder {
             }
         }
     }
+}
+
+/// Parses the horizontal-rule marker from a shape's attributes: present only when
+/// `o:hr="t"`. `o:hralign` selects the alignment (default left); `o:hrpct` is the
+/// width as a fraction of the content width in per-mille (`1000` = full width),
+/// carried through when present.
+fn parse_hr(element: &BytesStart<'_>) -> Option<VmlHr> {
+    if !attr(element, b"hr")
+        .as_deref()
+        .map(parse_bool)
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    let align = match attr(element, b"hralign").as_deref().map(str::trim) {
+        Some("center") => VmlHrAlign::Center,
+        Some("right") => VmlHrAlign::Right,
+        // `left` and any unrecognized value fall back to VML's default (left).
+        _ => VmlHrAlign::Left,
+    };
+    let pct_permille = attr(element, b"hrpct")
+        .as_deref()
+        .and_then(|value| value.trim().parse::<f64>().ok())
+        .filter(|pct| *pct > 0.0)
+        .map(|pct| pct.round().clamp(1.0, u16::MAX as f64) as u16);
+    Some(VmlHr {
+        align,
+        pct_permille,
+    })
 }
 
 /// `arcsize` is a fraction of the smaller box dimension, either a decimal
@@ -1065,6 +1124,27 @@ mod tests {
             })
         );
         assert!(!d.stroke.on);
+        // A manually-drawn rule rect (no `o:hr`) is not an `o:hr` horizontal rule.
+        assert!(d.hr.is_none());
+    }
+
+    #[test]
+    fn rect_with_o_hr_parses_the_horizontal_rule_marker() {
+        // Word's "Insert → Horizontal Line": an `o:hr` rect, centered, grey.
+        let xml = r##"<v:rect style="width:0.0pt;height:1.5pt" o:hr="t" o:hrstd="t" o:hralign="center" fillcolor="#A0A0A0" stroked="f"/>"##;
+        let d = &parse_vml_pict(xml)[0];
+        let hr = d.hr.expect("o:hr=\"t\" is a horizontal-rule marker");
+        assert_eq!(hr.align, VmlHrAlign::Center);
+        assert!(hr.pct_permille.is_none(), "no o:hrpct → full width");
+        assert_eq!(d.position.height, Some(30), "1.5pt == 30 twips thick");
+    }
+
+    #[test]
+    fn rect_with_o_hr_percent_and_right_align() {
+        let xml = r##"<v:rect style="height:2pt" o:hr="t" o:hralign="right" o:hrpct="750" fillcolor="#808080"/>"##;
+        let hr = parse_vml_pict(xml)[0].hr.expect("o:hr marker");
+        assert_eq!(hr.align, VmlHrAlign::Right);
+        assert_eq!(hr.pct_permille, Some(750));
     }
 
     #[test]
