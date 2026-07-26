@@ -796,4 +796,64 @@ mod tests {
             "resolves a real galley"
         );
     }
+
+    #[test]
+    fn real_shaper_caret_round_trips_to_the_correct_byte() {
+        // The end-to-end contract the shaper now satisfies: with byte-accurate
+        // clusters and per-line ranges from `ParleyShaper`, a caret placed at a
+        // model byte offset paints at a position that hit-tests back to the *same*
+        // byte. "Hello world" is ASCII, so each character is its own cluster and
+        // byte offsets 0..=11 are all addressable caret slots.
+        use crate::shape::ParleyShaper;
+        use crate::text::{LineConstraints, LineShaper, StyledRun};
+
+        let n = node(1);
+        let text = "Hello world";
+        let range = ModelRange::new(ModelPos::new(n, 0), ModelPos::new(n, text.len() as u32));
+        let shaper = ParleyShaper::new();
+        let run = StyledRun {
+            text,
+            font: FontId(0),
+            size: Twip::from_points(11),
+            bold: false,
+            italic: false,
+            letter_spacing: Twip::ZERO,
+            color: [0, 0, 0, 255],
+            decoration: Decoration::default(),
+        };
+        // A wide column keeps it on one line so every offset is present.
+        let shaped = shaper.shape_paragraph(
+            &[run],
+            LineConstraints {
+                max_width: Twip::from_points(500),
+                ..LineConstraints::default()
+            },
+            range,
+        );
+        assert_eq!(shaped.lines.len(), 1, "the text fits on one line");
+        // The line's range spans the whole ASCII string.
+        assert_eq!(shaped.lines[0].range.start.offset, 0);
+        assert_eq!(shaped.lines[0].range.end.offset, text.len() as u32);
+
+        let frag = BlockFragment::Paragraph {
+            id: n,
+            lines: shaped,
+            box_metrics: BoxMetrics::default(),
+            break_control: BreakControl::default(),
+        };
+        let paginated = layout(&[frag]);
+        let snap = LayoutSnapshot::new(&paginated);
+
+        for off in [0u32, 1, 5, 6, 10, 11] {
+            let pos = ModelPos::new(n, off);
+            let (page, rect) = snap
+                .caret_rect(pos)
+                .unwrap_or_else(|| panic!("a caret for byte {off}"));
+            let center = Point::new(rect.origin.x, Twip(rect.origin.y.raw() + LINE_H / 2));
+            let hit = snap
+                .hit_test(page, center)
+                .unwrap_or_else(|| panic!("a hit for byte {off}"));
+            assert_eq!(hit.pos, pos, "caret→hit round-trips at byte {off}");
+        }
+    }
 }
