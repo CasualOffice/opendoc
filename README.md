@@ -14,13 +14,20 @@ the future document engine for Casual Docs and as an embeddable SDK for other
 applications.
 
 > [!IMPORTANT]
-> OpenDoc is in pre-release development. **Phase 0 and Phase 1A (semantic
-> modeling — every WordprocessingML construct family is now a first-class,
-> editable model value) are complete;** the semantic writer (model → editable
-> `.docx`) is now being built (Phase 1B). A `.docx` reads end-to-end into the
-> normalized model, validated against LibreOffice at 100% text-content fidelity.
-> The crates are not published and the public API is not stable. Layout,
-> rendering, DOCX save, and an end-user editor are not available yet.
+> OpenDoc is in pre-release development. **Phase 0, Phase 1A (semantic modeling —
+> every WordprocessingML construct family is a first-class, editable model
+> value), and Phase 1B (the semantic writer, model → editable `.docx`) are
+> complete.** A `.docx` reads end-to-end into the normalized model and writes
+> back to a LibreOffice-valid `.docx` that reopens to an identical model
+> (semantic fixed point over the real-producer corpus). The layout, pagination,
+> and rendering path is now under active construction: typography and block
+> layout (Phase 1C) and pagination (Phase 1D — including line-level splitting and
+> incremental re-pagination) are in progress, and CPU rendering (Phase 1E) has an
+> initial end-to-end implementation — real DOCX pages and tables shape through
+> parley and rasterize to PNG via tiny-skia. This is a functional rendering
+> **spine**, not yet a Word/LibreOffice-grade high-fidelity renderer. The crates
+> are not published and the public API is not stable; an end-user editor is not
+> available yet.
 
 ## Design Goals
 
@@ -39,9 +46,10 @@ applications.
 
 ## Current Capabilities
 
-Phase 0 (runtime + package safety) and Phase 1A (semantic import — every
-construct family modeled) are complete; the semantic writer (Phase 1B) now
-round-trips essentially all content and is nearly feature-complete:
+Phase 0 (runtime + package safety), Phase 1A (semantic import — every construct
+family modeled), and Phase 1B (the semantic writer) are complete; the writer
+round-trips the full modeled surface (import → write → reopen = identical model)
+and its output opens cleanly in LibreOffice:
 
 | Area | Available today |
 | --- | --- |
@@ -66,22 +74,46 @@ headers/footers, comments, tracked changes, bookmarks, and content controls;
 anything a producer wrote that is not yet modeled is reported and round-trips
 via Retention (no silent loss).
 
-The following are **not implemented yet** (nothing is excluded — this is the
+**Phase 1B (the semantic writer) is complete:** `write_document` re-emits an
+*edited* model as a valid `.docx` — body, tables, all inline constructs,
+run/paragraph/section properties, styles, numbering, fontTable (incl. embedded
+fonts), theme fontScheme, notes, comments, sections (including multi-section /
+per-paragraph `sectPr`), headers/footers, and settings all survive the
+model-fixed-point round-trip (import → write → reopen = identical model), and the
+output opens cleanly in LibreOffice.
+
+The **layout, pagination, and rendering path is now in active construction** —
+this is a functional end-to-end rendering *spine*, not yet a Word-grade
+high-fidelity renderer:
+
+- **typography & block layout (Phase 1C, in progress)**: a `casual-doc-layout`
+  crate shapes styled paragraphs into positioned lines via `parley` (UAX#14 line
+  breaking, bidi, bold/italic face selection) and builds a block/flow galley from
+  the model, including tables (columns taken from grid widths, or distributed
+  evenly when absent); full run/paragraph property mapping, tab stops, and DOCX
+  font-name resolution/fallback are still ahead;
+- **pagination (Phase 1D, in progress)**: a single-section paginator slices the
+  galley into pages with break control (page-break-before, keep-next/keep-lines,
+  widow/orphan) and line-level paragraph splitting; incremental re-pagination
+  reuses the unchanged page prefix and re-flows only from the edit onward
+  (field-for-field identical to a full paginate); cross-page table row splitting,
+  header repeat, footnotes, and multi-section pagination are still ahead;
+- **CPU rendering (Phase 1E, initial end-to-end implementation)**: a
+  `casual-doc-render` backend executes the backend-neutral display list on a
+  `tiny-skia` pixmap, rasterizing glyph runs from real `skrifa` outlines of the
+  same face the shaper used — real DOCX pages and tables render to PNG.
+
+The following are **not started yet** (nothing is excluded — this is the
 progression):
 
-- the **semantic writer** (`write_document`) that re-emits an *edited* model as a
-  valid `.docx` (Phase 1B, nearly feature-complete) — body, tables, all inline
-  constructs, run/paragraph properties, styles, numbering, fontTable (incl.
-  embedded fonts), theme fontScheme, notes, comments, sections, and
-  headers/footers all survive the model-fixed-point round-trip (import → write →
-  reopen = identical model), and the output opens cleanly in LibreOffice;
-  remaining: settings.xml embedding flags and multi-section documents;
-- **font management**: all OOXML font data (rFonts + hint, fontTable, theme
-  fontScheme, and embedded fonts) is now modeled and round-tripped; font
-  resolution/substitution/metrics is designed and accepted (full scope), not yet
-  implemented;
-- text shaping, pagination, layout, display lists, and rendering;
-- browser, Tauri, C ABI, and npm distribution surfaces;
+- **font management** beyond the modeled data: all OOXML font data (rFonts +
+  hint, fontTable, theme fontScheme, and embedded fonts) is modeled and
+  round-tripped, but runtime font resolution/substitution/metrics and fallback is
+  designed and accepted (full scope), not yet implemented;
+- **hit-testing, caret, and selection over rendered pages**, and WASM/Canvas and
+  GPU render backends;
+- the **Tauri desktop viewer/editor**;
+- **stable public SDK and WASM/C-ABI/npm distribution surfaces**;
 - collaboration adapters and production application integration.
 
 See the [Phase 0 exit report](docs/31-PHASE-0-EXIT-REPORT.md) for accepted
@@ -148,6 +180,8 @@ compilation.
 | `casual-doc-ooxml` | Security-bounded OOXML package inspection |
 | `casual-doc-import` | WordprocessingML semantic import into the normalized model |
 | `casual-doc-export` | DOCX writers: Retention (byte-identical reconstruction) and the semantic model → WordprocessingML writer (`write_document`) |
+| `casual-doc-layout` | Device-independent geometry, text shaping (`parley`), block/flow galley, pagination, and the backend-neutral display list |
+| `casual-doc-render` | CPU render backend: executes the display list on a `tiny-skia` pixmap, rasterizing glyphs from `skrifa` outlines |
 | `opendoc-benchmark` | Reproducible workload and baseline reporting |
 | `opendoc-fidelity` | LibreOffice differential text-fidelity harness |
 | `opendoc-fuzz` | Independently locked package-reader fuzz targets |
@@ -164,10 +198,10 @@ on design:
 | --- | --- | --- |
 | 0 | Runtime, model, package-safety, CI, corpus, and benchmark foundation | Complete |
 | 1A | Semantic DOCX import + modeling (every construct family a first-class, editable model value), normalized snapshots, compatibility reports, and font-data modeling | **Complete** |
-| 1B | Semantic writer (model → valid editable `.docx`) | Nearly feature-complete; settings flags and multi-section remain |
-| 1C | Typography and paragraph layout | Not started |
-| 1D | Pagination and backend-neutral display list | Not started |
-| 1E | Native/WASM rendering and hit testing | Not started |
+| 1B | Semantic writer (model → valid editable `.docx`) | **Complete** |
+| 1C | Typography and paragraph/block layout | In progress |
+| 1D | Pagination and backend-neutral display list (incl. line splitting + incremental re-pagination) | In progress |
+| 1E | CPU rendering (native), then WASM/GPU backends and hit testing | Initial end-to-end (CPU) implementation; hit-testing and other backends not started |
 | 2 | Core editing SDK and DOCX save/reopen workflow | Planned |
 | 3 | Advanced office-document features | Planned |
 | 4 | Stable SDK surfaces and third-party embedding | Planned |
@@ -176,10 +210,11 @@ on design:
 
 > [!NOTE]
 > Product sequencing: the **Tauri desktop application** is positioned **before the
-> public editing SDK and the WASM/third-party embedding surfaces**. Once the
-> rendering engine (Phase 1E) exists, the desktop app is built next; the SDK and
-> WASM/embedding surfaces follow it. Tauri is the product goal, not a current
-> deliverable — it is not started until visual/rendering fidelity is reached.
+> public editing SDK and the WASM/third-party embedding surfaces**. The rendering
+> engine now exists as an initial CPU spine (Phase 1E); once it reaches visual
+> fidelity the desktop app is built next, and the SDK and WASM/embedding surfaces
+> follow it. Tauri is the product goal, not a current deliverable — it is not
+> started.
 
 Detailed deliverables and exit gates are maintained in the
 [roadmap](docs/06-ROADMAP-AND-DELIVERY.md). Work does not begin until its design
@@ -187,24 +222,26 @@ is accepted and its tracker entry defines the verification gates.
 
 ### Immediate Milestone
 
-The next milestone is deliberately limited to this end-to-end path:
+Import → model → semantic write-back is complete. The current milestone is the
+end-to-end **rendering spine** — turning the model into pixels:
 
 ```text
 .docx
-  -> secure package reader
-  -> relationships and main document part
-  -> paragraphs, runs, styles, themes, numbering, sections, and media references
-  -> normalized OpenDoc model
-  -> deterministic semantic JSON snapshot
-  -> complete compatibility report
+  -> secure package reader -> semantic import -> normalized OpenDoc model
+  -> text shaping + block/flow galley (casual-doc-layout, parley)
+  -> pagination (single-section, break control, line splitting, incremental)
+  -> backend-neutral display list
+  -> CPU raster to PNG (casual-doc-render, tiny-skia + skrifa)
 ```
 
-This milestone does not include typography, pagination, rendering, hit testing,
-UI, or Tauri integration. See the
-[schema v1 design reference](docs/38-SCHEMA-V1-DESIGN-REFERENCE.md) (import
-architecture + per-construct model), the
-[DOCX engine research](docs/33-DOCX-ENGINE-COMPETITOR-RESEARCH.md), and the
-[proposed OOXML fidelity architecture](docs/34-OOXML-FIDELITY-ARCHITECTURE.md).
+This is a functional spine, **not yet a Word/LibreOffice-grade high-fidelity
+renderer**: full table fidelity (auto-fit, min widths, row splitting, header
+repeat, border-conflict resolution), font resolution/fallback, tabs/justification
+/hanging indents, multi-section pagination, footnotes, and hit-testing are still
+ahead. UI and Tauri integration remain out of scope for this milestone. See the
+[Phase 1C–1E layout/rendering design](docs/43-PHASE-1C-LAYOUT-RENDERING-DESIGN.md),
+the [rendering architecture research](docs/42-RENDERING-ARCHITECTURE-RESEARCH.md), and
+the [schema v1 design reference](docs/38-SCHEMA-V1-DESIGN-REFERENCE.md).
 
 ## Documentation
 
@@ -226,6 +263,9 @@ architecture + per-construct model), the
 - [ADR-027 acceptance record](docs/36-ADR-027-ACCEPTANCE-RECORD.md)
 - [Phase 1A decision research (Word/ONLYOFFICE/LibreOffice)](docs/37-PHASE-1A-DECISION-RESEARCH.md)
 - [Schema v1 design reference (consolidated: import architecture, base schema, and every modeled construct)](docs/38-SCHEMA-V1-DESIGN-REFERENCE.md)
+- [Phase 1B exit report (semantic writer)](docs/41-PHASE-1B-EXIT-REPORT.md)
+- [Rendering architecture research](docs/42-RENDERING-ARCHITECTURE-RESEARCH.md)
+- [Phase 1C–1E layout/pagination/rendering design](docs/43-PHASE-1C-LAYOUT-RENDERING-DESIGN.md)
 
 The numbered documents in `docs/` are the source of truth for accepted
 architecture, behavior, delivery status, and compatibility claims.
