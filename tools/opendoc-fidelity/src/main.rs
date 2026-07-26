@@ -156,6 +156,9 @@ fn push_inline_text(inline: &InlineNode, out: &mut String) {
         // A comment reference is an anchor with no in-flow text; the comment
         // body lives in the definitions and is not part of the document text.
         InlineNode::CommentReference(_) => {}
+        // A comment range marker is a zero-width span anchor with no in-flow text;
+        // the commented text is the runs it brackets.
+        InlineNode::CommentRangeStart(_) | InlineNode::CommentRangeEnd(_) => {}
         // A bookmark marker is a zero-width range anchor with no in-flow text.
         InlineNode::BookmarkStart(_) | InlineNode::BookmarkEnd(_) => {}
         // A tracked-move range marker is a zero-width anchor with no in-flow text;

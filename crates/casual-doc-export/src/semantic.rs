@@ -3518,6 +3518,20 @@ fn write_inline(
             w.write_event(Event::End(BytesEnd::new("w:r")))
                 .map_err(pkg)?;
         }
+        // A comment range marker (zero-width). It brackets the commented span in
+        // paragraph flow — a sibling of runs, not wrapped in `w:r` — and its
+        // `w:id` derives from the shared `CommentId` (the same token the
+        // `w:commentReference` and the comment part carry).
+        InlineNode::CommentRangeStart(marker) => {
+            let mut el = start("w:commentRangeStart");
+            el.push_attribute(("w:id", comment_id_token(marker.comment).as_str()));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+        InlineNode::CommentRangeEnd(marker) => {
+            let mut el = start("w:commentRangeEnd");
+            el.push_attribute(("w:id", comment_id_token(marker.comment).as_str()));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
         // An inline drawing: the minimal `w:drawing`/`wp:inline`/`pic:pic`
         // scaffold whose one load-bearing attribute is `a:blip@r:embed`, the
         // media's (verbatim) relationship id. The importer discards the rest.

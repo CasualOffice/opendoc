@@ -5,22 +5,23 @@ use std::collections::{BTreeMap, BTreeSet};
 use casual_doc_model::v1::{
     Alignment, AnchorHorizontal, AnchorVertical, AnchoredDrawing, BlockNode, BlockSdt, Bookmark,
     BookmarkEnd, BookmarkId, BookmarkStart, BorderEdge, Break, BreakKind, CellVerticalAlignment,
-    CnfStyle, Comment, CommentId, CommentReference, DefinitionMap, DocGrid, DocGridType, Drawing,
-    DrawingAnchor, EmbeddedKind, EmbeddedObject, EmbeddedPart, Extent, ExternalTarget, Field,
-    FormCheckBox, FormCheckBoxSize, FormDropDown, FormFieldData, FormFieldKind, FormTextInput,
-    FormTextType, HeaderFooterId, HeaderFooterKind, HeaderFooterRef, HeightRule, HorizontalAlign,
-    HorizontalAnchor, HorizontalPosition, Hyperlink, HyperlinkTarget, InlineNode, InlineSdt,
-    InternalTarget, LineNumberRestart, LineNumbering, MAX_DESCR_BYTES, MAX_EMU,
-    MAX_FIELD_INSTRUCTION_BYTES, MAX_FORM_FIELD_ENTRIES, MAX_FORM_FIELD_STRING_BYTES,
-    MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH, MAX_TEXTBOX_DEPTH, Math, MediaId, MoveKind,
-    MoveRangeEnd, MoveRangeStart, NoteId, NoteKind, NoteNumberRestart, NotePosition,
-    NoteProperties, NoteReference, PageBorderDisplay, PageBorderOffset, PageBorders, PageMargins,
-    PageNumbering, PageOrientation, PageSize, PageVerticalAlignment, PaperSource, Paragraph,
-    ParagraphProperties, Revision, RevisionKind, RgbColor, Run, RunProperties, SdtCheckbox,
-    SdtCheckboxSymbol, SdtControlData, SdtControlKind, SdtDataBinding, SdtDate, SdtListItem,
-    SdtLock, SdtProperties, SectionBoundary, SectionColumns, SectionId, SectionType, StyleKind,
-    Symbol, Tab, TabAlignment, TabLeader, TabStop, TableLayout, TableOverlap, TextBox,
-    TextDirection, VerticalAlign, VerticalAnchor, VerticalMerge, VerticalPosition, WrapMode,
+    CnfStyle, Comment, CommentId, CommentRangeEnd, CommentRangeStart, CommentReference,
+    DefinitionMap, DocGrid, DocGridType, Drawing, DrawingAnchor, EmbeddedKind, EmbeddedObject,
+    EmbeddedPart, Extent, ExternalTarget, Field, FormCheckBox, FormCheckBoxSize, FormDropDown,
+    FormFieldData, FormFieldKind, FormTextInput, FormTextType, HeaderFooterId, HeaderFooterKind,
+    HeaderFooterRef, HeightRule, HorizontalAlign, HorizontalAnchor, HorizontalPosition, Hyperlink,
+    HyperlinkTarget, InlineNode, InlineSdt, InternalTarget, LineNumberRestart, LineNumbering,
+    MAX_DESCR_BYTES, MAX_EMU, MAX_FIELD_INSTRUCTION_BYTES, MAX_FORM_FIELD_ENTRIES,
+    MAX_FORM_FIELD_STRING_BYTES, MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH,
+    MAX_TEXTBOX_DEPTH, Math, MediaId, MoveKind, MoveRangeEnd, MoveRangeStart, NoteId, NoteKind,
+    NoteNumberRestart, NotePosition, NoteProperties, NoteReference, PageBorderDisplay,
+    PageBorderOffset, PageBorders, PageMargins, PageNumbering, PageOrientation, PageSize,
+    PageVerticalAlignment, PaperSource, Paragraph, ParagraphProperties, Revision, RevisionKind,
+    RgbColor, Run, RunProperties, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind,
+    SdtDataBinding, SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionColumns,
+    SectionId, SectionType, StyleKind, Symbol, Tab, TabAlignment, TabLeader, TabStop, TableLayout,
+    TableOverlap, TextBox, TextDirection, VerticalAlign, VerticalAnchor, VerticalMerge,
+    VerticalPosition, WrapMode,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::events::{BytesStart, Event};
@@ -83,6 +84,14 @@ enum Segment {
     },
     /// A reference to a comment definition.
     CommentReference {
+        comment: CommentId,
+    },
+    /// The start marker of a comment's anchored range.
+    CommentRangeStart {
+        comment: CommentId,
+    },
+    /// The end marker of a comment's anchored range.
+    CommentRangeEnd {
         comment: CommentId,
     },
     /// A tracked-change (insertion/deletion) range wrapping inline content.
@@ -1341,15 +1350,36 @@ impl BodyParser<'_> {
                     None => self.reporter.report(b"endnoteReference"),
                 }
             }
-            // A comment reference (inside a run) resolves to a comment id; the
-            // comment-range markers (`commentRangeStart`/`End`) are not modeled
-            // and fall through to the report arm.
+            // A comment reference (inside a run) resolves to a comment id.
             b"commentReference" if self.run_open => {
                 match attribute_value(element, b"id")
                     .and_then(|id| self.comment_ids.get(&id).copied())
                 {
                     Some(comment) => self.push_segment(Segment::CommentReference { comment }),
                     None => self.reporter.report(b"commentReference"),
+                }
+            }
+            // A comment range marker (`w:commentRangeStart`/`End`, self-closing →
+            // an Empty event, handled here; its `on_end` falls to `_ => {}`).
+            // These bracket the commented span; they sit in paragraph flow (like
+            // bookmark markers), not inside a run. Each resolves its `w:id` to a
+            // modeled comment via the same index the reference uses — an
+            // unresolved id (a dropped/oversized comment) is reported+dropped, so
+            // the start/end/reference triad drops together and stays balanced.
+            b"commentRangeStart" if self.paragraph_open && !self.run_open => {
+                match attribute_value(element, b"id")
+                    .and_then(|id| self.comment_ids.get(&id).copied())
+                {
+                    Some(comment) => self.push_segment(Segment::CommentRangeStart { comment }),
+                    None => self.reporter.report(b"commentRangeStart"),
+                }
+            }
+            b"commentRangeEnd" if self.paragraph_open && !self.run_open => {
+                match attribute_value(element, b"id")
+                    .and_then(|id| self.comment_ids.get(&id).copied())
+                {
+                    Some(comment) => self.push_segment(Segment::CommentRangeEnd { comment }),
+                    None => self.reporter.report(b"commentRangeEnd"),
                 }
             }
             // A bookmark start marker (`w:bookmarkStart`, self-closing → an Empty
@@ -4148,6 +4178,17 @@ impl BodyParser<'_> {
                     id,
                     comment,
                 }))
+            }
+            Segment::CommentRangeStart { comment } => {
+                let id = self.next_id()?;
+                Ok(InlineNode::CommentRangeStart(CommentRangeStart {
+                    id,
+                    comment,
+                }))
+            }
+            Segment::CommentRangeEnd { comment } => {
+                let id = self.next_id()?;
+                Ok(InlineNode::CommentRangeEnd(CommentRangeEnd { id, comment }))
             }
             Segment::Revision {
                 kind,
