@@ -20,12 +20,12 @@ use std::hash::{Hash, Hasher};
 
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
-    Alignment, BlockNode, BorderEdge, BreakKind, Color, ColorScheme, DefinitionMap, Document,
-    Drawing, Extent, FontRef, FontScheme, HeightRule, HighlightColor, InlineNode, LineRule,
-    MediaId, MediaReference, ParagraphProperties, RunProperties, SchemeColor, SectionBoundary,
-    SectionId, SectionType, StyleId, TabAlignment, TabLeader, TabStop, Table, TableBorders,
-    TableCell, TableLayout, TableRowProperties, TextBox, ThemeColorRef, ThemeFontRef,
-    VerticalAlignment,
+    Alignment, BlockNode, BorderEdge, BreakKind, Color, ColorScheme, DefinitionMap, Definitions,
+    Document, Drawing, Extent, FontRef, FontScheme, HeightRule, HighlightColor, Indentation,
+    InlineNode, LevelSuffix, LineRule, MediaId, MediaReference, ParagraphProperties, RunProperties,
+    SchemeColor, SectionBoundary, SectionId, SectionType, StyleId, TabAlignment, TabLeader,
+    TabStop, Table, TableBorders, TableCell, TableLayout, TableRowProperties, TextBox,
+    ThemeColorRef, ThemeFontRef, VerticalAlignment,
 };
 
 use crate::block::{
@@ -35,6 +35,7 @@ use crate::block::{
 use crate::cascade::StyleCascade;
 use crate::incremental::{DirtySet, GalleyCache};
 use crate::model::{ModelPos, ModelRange};
+use crate::numbering::{self, NumberingState, PreparedMarker};
 use crate::resolve::{FaceRequest, FontResolutionReport, FontResolver};
 use crate::tabs::{self, FlowItem};
 use crate::text::{
@@ -75,6 +76,14 @@ struct FlowCtx<'a> {
     /// section's start type (`w:type`) decides whether a page break follows it.
     /// Empty for running content (header/footer), where section breaks are absent.
     sections: &'a [SectionBoundary],
+    /// The document's definitions, so a paragraph's numbering reference resolves to
+    /// its abstract/instance/level (the list marker engine, [`crate::numbering`]).
+    definitions: &'a Definitions,
+    /// The list-numbering counter state, advanced once per numbered paragraph in
+    /// document order (including through tables/SDTs, which recurse this flow). A
+    /// measurement (intrinsic-width) context threads a throwaway state so it never
+    /// perturbs the real counters.
+    numbering: NumberingState,
 }
 
 /// Builds a galley of block fragments from a document's body, shaped to fit
@@ -119,6 +128,8 @@ pub fn build_galley_with_report(
         cascade: StyleCascade::new(document.definitions()),
         para_style: None,
         sections: &document.definitions().sections,
+        definitions: document.definitions(),
+        numbering: NumberingState::new(),
     };
     let galley = flow_blocks(document.body(), shaper, content_width, &mut ctx);
     (galley, report)
@@ -157,6 +168,8 @@ pub fn build_galley_for_blocks(
         cascade: StyleCascade::new(document.definitions()),
         para_style: None,
         sections: &document.definitions().sections,
+        definitions: document.definitions(),
+        numbering: NumberingState::new(),
     };
     flow_blocks(blocks, shaper, content_width, &mut ctx)
 }
@@ -197,6 +210,8 @@ pub fn flow_header_footer(
         para_style: None,
         // Running content has no section breaks of its own.
         sections: &[],
+        definitions: document.definitions(),
+        numbering: NumberingState::new(),
     };
     flow_blocks(blocks, shaper, content_width, &mut ctx)
 }
@@ -249,6 +264,8 @@ pub fn build_galley_cached(
         cascade: StyleCascade::new(document.definitions()),
         para_style: None,
         sections: &document.definitions().sections,
+        definitions: document.definitions(),
+        numbering: NumberingState::new(),
     };
     cache.begin_build(content_width);
     let mut galley = Vec::new();
@@ -258,7 +275,7 @@ pub fn build_galley_cached(
                 // Resolve effective properties through the style cascade and record
                 // the effective style so runs inherit the paragraph style's `rPr`.
                 ctx.para_style = ctx.cascade.paragraph_style(&paragraph.properties);
-                let props = ctx.cascade.resolve_paragraph(&paragraph.properties);
+                let mut props = ctx.cascade.resolve_paragraph(&paragraph.properties);
                 let mut items = Vec::new();
                 // Resolving here sets each run's resolved `font`, which
                 // `paragraph_hash` hashes — so the cache key tracks the face.
@@ -269,11 +286,19 @@ pub fn build_galley_cached(
                     content_width,
                     &mut ctx,
                 );
+                // A numbered paragraph advances the document-order counter and gets a
+                // marker; it bypasses the galley cache (the marker number is not in
+                // the item hash, so a reused fragment could show a stale number after
+                // an edit shifts the sequence). Numbered paragraphs are a minority, so
+                // always reshaping them is the correct, simple choice.
+                let numbered = props.numbering.is_some();
+                let (constraints, marker) =
+                    prepare_list_marker(paragraph.id, &mut props, content_width, &mut ctx, shaper);
                 let shape = ShapeInputs {
                     items: &items,
                     tab_stops: &props.tabs,
                     default_tab: ctx.default_tab,
-                    constraints: line_constraints(&props, content_width),
+                    constraints,
                 };
                 let box_metrics = box_metrics(&props);
                 let break_control = break_control(&props);
@@ -283,6 +308,7 @@ pub fn build_galley_cached(
                 // reuse could serve stale nested content. Text boxes are rare, so
                 // always reshaping them is the correct, simple choice.
                 let has_text_box = items.iter().any(|i| matches!(i, FlowItem::TextBox { .. }));
+                let uncacheable = has_text_box || numbered;
                 // The paragraph-mark size + effective style feed the empty-paragraph
                 // line height (synthesized below); folding them into the key keeps a
                 // reused fragment correct when only the mark/style changes.
@@ -297,7 +323,7 @@ pub fn build_galley_cached(
                     mark_size,
                 );
 
-                if !has_text_box && let Some(fragment) = cache.reusable(paragraph.id, hash, dirty) {
+                if !uncacheable && let Some(fragment) = cache.reusable(paragraph.id, hash, dirty) {
                     // The cached fragment is section-break-pure (the break is not
                     // folded into the hash — a *neighboring* paragraph's section-type
                     // edit can flip this paragraph's break without dirtying it), so
@@ -319,6 +345,9 @@ pub fn build_galley_cached(
                     shape.constraints,
                     range,
                 );
+                if let Some(marker) = marker {
+                    marker.inject(&mut lines, range);
+                }
                 ensure_nonempty_paragraph(
                     &mut lines,
                     &props,
@@ -336,7 +365,7 @@ pub fn build_galley_cached(
                 };
                 // Cache the section-break-pure fragment, then stamp the break onto
                 // the copy that enters the galley (see the cache-hit path above).
-                if !has_text_box {
+                if !uncacheable {
                     cache.store(paragraph.id, hash, fragment.clone());
                 }
                 let mut fragment = fragment;
@@ -543,21 +572,29 @@ fn flow_blocks(
                 // cascade, and record its effective style so each run inherits the
                 // paragraph style's `rPr`.
                 ctx.para_style = ctx.cascade.paragraph_style(&paragraph.properties);
-                let props = ctx.cascade.resolve_paragraph(&paragraph.properties);
+                let mut props = ctx.cascade.resolve_paragraph(&paragraph.properties);
                 let mut items = Vec::new();
                 collect_items(&paragraph.inlines, &mut items, shaper, width, ctx);
                 let range = ModelRange::new(
                     ModelPos::new(paragraph.id, 0),
                     ModelPos::new(paragraph.id, 0),
                 );
+                // Resolve the list marker (if any) before shaping: it advances the
+                // numbering counter, may merge the level's indent into `props`, and
+                // adjusts the body's first-line indent.
+                let (constraints, marker) =
+                    prepare_list_marker(paragraph.id, &mut props, width, ctx, shaper);
                 let mut lines = shape_paragraph_items(
                     shaper,
                     &items,
                     &props.tabs,
                     ctx.default_tab,
-                    line_constraints(&props, width),
+                    constraints,
                     range,
                 );
+                if let Some(marker) = marker {
+                    marker.inject(&mut lines, range);
+                }
                 ensure_nonempty_paragraph(&mut lines, &props, ctx, shaper, width, range);
                 apply_section_break(&mut lines, &paragraph.properties, ctx);
                 galley.push(BlockFragment::Paragraph {
@@ -953,6 +990,10 @@ fn block_intrinsic(blocks: &[BlockNode], shaper: &dyn LineShaper, ctx: &FlowCtx)
         para_style: ctx.para_style,
         // Intrinsic width measurement never paginates, so section breaks are moot.
         sections: &[],
+        definitions: ctx.definitions,
+        // A throwaway counter state: measuring intrinsic widths must not advance the
+        // document's real list counters.
+        numbering: NumberingState::default(),
     };
     let mut min = 0;
     let mut preferred = 0;
@@ -2298,6 +2339,105 @@ fn auto_paragraph_space(properties: &ParagraphProperties) -> Twip {
     Twip((half_points as i32 * 10).max(0))
 }
 
+/// Resolves a paragraph's list marker (when it carries `w:numPr`), returning the
+/// body line constraints and the positioned marker to inject into the first shaped
+/// line. Advances the numbering counter exactly once (so this must be called once
+/// per paragraph, in document order) and merges the numbering level's indentation
+/// *below* the paragraph's direct/style indentation.
+///
+/// All counter and number/glyph-format logic lives in [`crate::numbering`]; this
+/// hook only builds the marker's styled run through the flow engine's font cascade
+/// and resolver — bullets frequently declare a Symbol/Wingdings face, which the
+/// level's `w:rPr` carries — and shapes it to glyphs, then hands the geometry back.
+///
+/// The body's first-line indent is overridden to where the marker's suffix places
+/// the text: the left indent for a hanging list (the marker protruding into the
+/// hanging space), or past the marker for a space/no suffix.
+fn prepare_list_marker(
+    node: casual_doc_model::NodeId,
+    props: &mut ParagraphProperties,
+    width: Twip,
+    ctx: &mut FlowCtx,
+    shaper: &dyn LineShaper,
+) -> (LineConstraints, Option<PreparedMarker>) {
+    let Some(reference) = props.numbering else {
+        return (line_constraints(props, width), None);
+    };
+    let Some(resolved) = ctx.numbering.resolve(ctx.definitions, &reference) else {
+        // A dangling numbering reference: flow the paragraph with no marker.
+        return (line_constraints(props, width), None);
+    };
+    // The numbering level's indentation is lower precedence than the paragraph's own
+    // (direct + style, already folded into `props`), so the paragraph wins per field
+    // and the level fills in what the paragraph leaves unset (the common case — the
+    // list's indent/hanging live on the level).
+    if let Some(level_indent) = resolved.level_indent {
+        props.indentation = Some(merge_indent_over(level_indent, props.indentation));
+    }
+    let mut constraints = line_constraints(props, width);
+    // The marker's left edge is the first-line indent: negative for a hanging indent
+    // (the marker protrudes left of the body, into the hanging space).
+    let marker_x = constraints.first_line_indent;
+
+    // Build the marker run through the cascade so it inherits the paragraph's
+    // size/color, with the level's own `w:rPr` (face/size/color of the number or
+    // bullet) layered on top. A space suffix is folded into the run's text.
+    let level_rpr = resolved.run_properties.unwrap_or_default();
+    let effective = ctx.cascade.resolve_run(ctx.para_style, &level_rpr);
+    let marker_text = match resolved.suffix {
+        LevelSuffix::Space => format!("{} ", resolved.text),
+        LevelSuffix::Tab | LevelSuffix::Nothing => resolved.text,
+    };
+    if marker_text.is_empty() {
+        // A `none`-format level renders no glyph, but the counter has advanced and
+        // the body sits at the left indent (no hanging protrusion).
+        constraints.first_line_indent =
+            numbering::body_indent(resolved.suffix, marker_x, Twip::ZERO, ctx.default_tab);
+        return (constraints, None);
+    }
+    let marker_run = build_styled_run(&marker_text, &effective, ctx);
+    let range = ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, 0));
+    // Shape the marker unwrapped: it is a short prefix, never a wrapped block.
+    let unwrapped = LineConstraints {
+        max_width: Twip(1 << 28),
+        ..LineConstraints::default()
+    };
+    let layout = shaper.shape_paragraph(std::slice::from_ref(&marker_run), unwrapped, range);
+    let (runs, marker_width, ascent, descent) = match layout.lines.into_iter().next() {
+        Some(line) => {
+            let marker_width = line
+                .runs
+                .iter()
+                .map(|r| r.origin.x + r.glyphs.iter().fold(Twip::ZERO, |a, g| a + g.advance))
+                .max()
+                .unwrap_or(Twip::ZERO);
+            (line.runs, marker_width, line.ascent, line.descent)
+        }
+        None => (Vec::new(), Twip::ZERO, Twip::ZERO, Twip::ZERO),
+    };
+    constraints.first_line_indent =
+        numbering::body_indent(resolved.suffix, marker_x, marker_width, ctx.default_tab);
+    (
+        constraints,
+        Some(PreparedMarker::new(runs, marker_x, ascent, descent)),
+    )
+}
+
+/// Merges a numbering level's indentation (`base`, lower precedence) under a
+/// paragraph's own (`over`): each field the paragraph sets wins; the level fills the
+/// rest. Mirrors the cascade's per-field indentation merge.
+fn merge_indent_over(base: Indentation, over: Option<Indentation>) -> Indentation {
+    let Some(over) = over else {
+        return base;
+    };
+    Indentation {
+        start_twips: over.start_twips.or(base.start_twips),
+        end_twips: over.end_twips.or(base.end_twips),
+        first_line_twips: over.first_line_twips.or(base.first_line_twips),
+        hanging_twips: over.hanging_twips.or(base.hanging_twips),
+    }
+}
+
 /// Builds the shaper constraints for a paragraph flowed into `width`: the wrap
 /// width is the column width less the start/end indents (so lines wrap at the
 /// indented column), and the first-line indent carries `w:ind@firstLine`
@@ -3318,6 +3458,8 @@ mod tests {
             cascade: StyleCascade::new(&definitions),
             para_style: None,
             sections: &[],
+            definitions: &definitions,
+            numbering: NumberingState::new(),
         };
         let mut runs = Vec::new();
         collect_runs(&inlines, &mut runs, &mut ctx);
@@ -4293,5 +4435,140 @@ mod tests {
         );
         // Occupied height counts the top+bottom margins, so it drives row height.
         assert_eq!(make(CellVAlign::Top).occupied_height(), Twip(120));
+    }
+
+    /// Builds a one-abstract, one-instance numbering definition set: level 0 with
+    /// the given format/text/rPr, plus a paragraph referencing it. Returns the
+    /// document and the numbering instance id.
+    fn numbered_document(
+        num_fmt: casual_doc_model::v1::NumberFormat,
+        lvl_text: &str,
+        level_rpr: Option<RunProperties>,
+    ) -> Document {
+        use casual_doc_model::v1::{
+            AbstractNumbering, AbstractNumberingId, NumberingInstance, NumberingInstanceId,
+            NumberingLevel, NumberingRef,
+        };
+        let abs_id = AbstractNumberingId::new(NodeId::from_parts(900, 1).unwrap());
+        let inst_id = NumberingInstanceId::new(NodeId::from_parts(901, 1).unwrap());
+        let mut definitions = Definitions::default();
+        definitions.abstract_numbering.insert(
+            abs_id,
+            AbstractNumbering {
+                levels: vec![NumberingLevel {
+                    level: 0,
+                    start: 1,
+                    num_fmt: Some(num_fmt),
+                    lvl_text: Some(lvl_text.to_owned()),
+                    lvl_jc: None,
+                    suff: Some(casual_doc_model::v1::LevelSuffix::Space),
+                    is_lgl: false,
+                    paragraph_properties: None,
+                    run_properties: level_rpr,
+                    style_ref: None,
+                }],
+            },
+        );
+        definitions.numbering.insert(
+            inst_id,
+            NumberingInstance {
+                abstract_ref: abs_id,
+                overrides: Vec::new(),
+            },
+        );
+        let para = BlockNode::Paragraph(Paragraph {
+            id: NodeId::from_parts(10, 1).unwrap(),
+            properties: ParagraphProperties {
+                numbering: Some(NumberingRef {
+                    instance: inst_id,
+                    level: 0,
+                }),
+                ..ParagraphProperties::default()
+            },
+            inlines: vec![run_node(11, "Body", RunProperties::default())],
+        });
+        Document::new(NodeId::from_parts(1, 1).unwrap(), vec![para], definitions).unwrap()
+    }
+
+    #[test]
+    fn a_numbered_paragraph_prepends_a_marker_glyph_run_using_the_level_rpr_size() {
+        // The level renders its number at a distinctive 20pt (400 twips), while the
+        // 11pt body run is 220 twips — so the marker run is identifiable by its size.
+        let level_rpr = RunProperties {
+            size_half_points: Some(40),
+            ..RunProperties::default()
+        };
+        let doc = numbered_document(
+            casual_doc_model::v1::NumberFormat::Decimal,
+            "%1.",
+            Some(level_rpr),
+        );
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&doc, &shaper, Twip::from_points(400));
+        let BlockFragment::Paragraph { lines, .. } = &galley[0] else {
+            panic!("expected a paragraph fragment");
+        };
+        let first = &lines.lines[0];
+        // The first run is the marker, shaped at the level's rPr size (400 twips),
+        // distinct from the 220-twip body run — proving the marker used the level's
+        // run properties, not the body's.
+        assert!(
+            first.runs.iter().any(|r| r.size == Twip(400)),
+            "a marker glyph run at the level's 20pt size is present"
+        );
+        assert!(
+            first.runs.iter().any(|r| r.size == Twip(220)),
+            "the 11pt body run is also present"
+        );
+        // The marker run leads the line (its glyphs sit at or before the body run).
+        let marker_x = first
+            .runs
+            .iter()
+            .find(|r| r.size == Twip(400))
+            .map(|r| r.origin.x)
+            .unwrap();
+        let body_x = first
+            .runs
+            .iter()
+            .find(|r| r.size == Twip(220))
+            .map(|r| r.origin.x)
+            .unwrap();
+        assert!(marker_x <= body_x, "the marker precedes the body text");
+    }
+
+    #[test]
+    fn a_bullet_paragraph_renders_a_marker_and_a_plain_paragraph_does_not() {
+        let shaper = ParleyShaper::new();
+        // A bullet list item: its glyph is the marker, prepended to the line.
+        let bullet_doc =
+            numbered_document(casual_doc_model::v1::NumberFormat::Bullet, "\u{2022}", None);
+        let galley = build_galley(&bullet_doc, &shaper, Twip::from_points(400));
+        let BlockFragment::Paragraph { lines, .. } = &galley[0] else {
+            panic!("expected a paragraph fragment");
+        };
+        let bullet_runs = lines.lines[0].runs.len();
+
+        // The same paragraph text with no numbering: no marker, so strictly fewer
+        // glyph runs on the first line (a stray marker on a non-list paragraph would
+        // be a regression).
+        let plain_para = BlockNode::Paragraph(Paragraph {
+            id: NodeId::from_parts(10, 1).unwrap(),
+            properties: ParagraphProperties::default(),
+            inlines: vec![run_node(11, "Body", RunProperties::default())],
+        });
+        let plain_doc = Document::new(
+            NodeId::from_parts(1, 1).unwrap(),
+            vec![plain_para],
+            Definitions::default(),
+        )
+        .unwrap();
+        let plain_galley = build_galley(&plain_doc, &shaper, Twip::from_points(400));
+        let BlockFragment::Paragraph { lines: plain, .. } = &plain_galley[0] else {
+            panic!("expected a paragraph fragment");
+        };
+        assert!(
+            bullet_runs > plain.lines[0].runs.len(),
+            "the bullet item has a marker run the plain paragraph lacks"
+        );
     }
 }
