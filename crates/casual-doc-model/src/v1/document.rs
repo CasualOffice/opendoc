@@ -1387,7 +1387,9 @@ fn accumulate_inline_limits(
         | InlineNode::CommentReference(_)
         | InlineNode::BookmarkStart(_)
         | InlineNode::BookmarkEnd(_)
-    InlineNode::MoveRangeEnd(_), InlineNode::MoveRangeStart(_), InlineNode::Symbol(_),
+        | InlineNode::MoveRangeStart(_)
+        | InlineNode::MoveRangeEnd(_)
+        | InlineNode::Symbol(_) => {}
     }
     Ok(())
 }
