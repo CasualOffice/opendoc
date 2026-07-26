@@ -14,6 +14,7 @@
 //! - [`page`] — immutable paginated output.
 //! - [`display`] — the backend-neutral paint list.
 //! - [`model`] — layout-side anchors back into the document model.
+//! - [`hittest`] — the read-only editing bridge (pixel↔model position).
 //!
 //! The engine owns layout/pagination/hit-testing; hosts own windows and paint a
 //! [`display::DisplayList`] with a `casual-doc-render` backend (`00-README.md`).
@@ -25,6 +26,7 @@ pub mod compose;
 pub mod display;
 pub mod flow;
 pub mod fonts;
+pub mod hittest;
 pub mod model;
 pub mod page;
 pub mod paginate;

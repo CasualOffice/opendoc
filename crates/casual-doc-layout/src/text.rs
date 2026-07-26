@@ -25,8 +25,9 @@ pub struct Glyph {
     pub id: u32,
     /// Pen advance to the next glyph.
     pub advance: Twip,
-    /// The byte offset (within the source run's text) of the cluster this glyph
-    /// belongs to — the anchor for caret placement and hit-testing.
+    /// The UTF-8 byte offset, within the paragraph node's text, of the cluster
+    /// this glyph belongs to — the anchor for caret placement and hit-testing
+    /// (`crate::hittest`).
     pub cluster: u32,
 }
 
