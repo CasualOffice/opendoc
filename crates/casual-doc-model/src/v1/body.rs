@@ -40,6 +40,85 @@ pub struct Break {
     pub kind: BreakKind,
 }
 
+/// A non-breaking hyphen glyph (`w:noBreakHyphen`): a visible hyphen that is
+/// never a line-break opportunity (the words it joins stay on one line). An inert
+/// leaf, like [`Tab`] — it carries only its identity.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NoBreakHyphen {
+    /// Stable identity.
+    pub id: NodeId,
+}
+
+/// A soft (optional) hyphen glyph (`w:softHyphen`): a hyphenation point that is
+/// drawn only when the line breaks there, and invisible otherwise. An inert leaf,
+/// like [`Tab`] — it carries only its identity.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SoftHyphen {
+    /// Stable identity.
+    pub id: NodeId,
+}
+
+/// The alignment of an absolute-position tab (`w:ptab@w:alignment`,
+/// `ST_PTabAlignment`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PositionalTabAlignment {
+    /// Text following the tab is left-aligned at the tab position.
+    Left,
+    /// Text following the tab is centered on the tab position.
+    Center,
+    /// Text following the tab is right-aligned at the tab position.
+    Right,
+}
+
+/// The base an absolute-position tab measures from (`w:ptab@w:relativeTo`,
+/// `ST_PTabRelativeTo`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PositionalTabRelativeTo {
+    /// Relative to the text margins.
+    Margin,
+    /// Relative to the paragraph indent.
+    Indent,
+}
+
+/// The leader drawn in an absolute-position tab's whitespace (`w:ptab@w:leader`,
+/// `ST_PTabLeader`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PositionalTabLeader {
+    /// No leader.
+    None,
+    /// A dotted leader.
+    Dot,
+    /// A hyphenated leader.
+    Hyphen,
+    /// An underscore leader.
+    Underscore,
+    /// A middle-dot leader.
+    MiddleDot,
+}
+
+/// An absolute-position tab (`w:ptab`): a tab whose stop is positioned relative to
+/// the page margin or the paragraph indent, with an alignment and an optional
+/// leader. Unlike an ordinary [`Tab`] (which advances to the next defined tab
+/// stop), a positional tab names its own stop. All three attributes are required
+/// by the schema, so each is modeled non-optionally.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PositionalTab {
+    /// Stable identity.
+    pub id: NodeId,
+    /// How text following the tab aligns at the stop (`w:alignment`).
+    pub alignment: PositionalTabAlignment,
+    /// The base the stop is measured from (`w:relativeTo`).
+    pub relative_to: PositionalTabRelativeTo,
+    /// The leader drawn in the tab's whitespace (`w:leader`).
+    pub leader: PositionalTabLeader,
+}
+
 /// The upper bound on a [`Symbol`] font name, in bytes.
 pub const MAX_SYMBOL_FONT_LEN: usize = 255;
 
@@ -345,6 +424,41 @@ pub struct EmbeddedObject {
     /// bytes). `None` for charts and diagrams.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prog_id: Option<String>,
+}
+
+/// Properties of an aggregated external content chunk (`w:altChunkPr`).
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AltChunkProperties {
+    /// `w:matchSrc` — whether the imported content is rendered using the source
+    /// chunk's own formatting (`Some(true)`/`Some(false)`) rather than the host
+    /// document's. `None` when the producer left it unspecified.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub match_source: Option<bool>,
+}
+
+/// An aggregated external content chunk (`w:altChunk`): a reference to an imported
+/// sub-document part — an HTML, RTF, plain-text, or nested WordprocessingML chunk
+/// — that a consuming application merges into the main document when it opens the
+/// package.
+///
+/// Like an [`EmbeddedObject`], the chunk part's bytes are not modeled; they are
+/// byte-preserved by the opaque side-table (P1F-2) and this node re-links the
+/// regenerated body to the part by its verbatim relationship id (so the part
+/// round-trips as an *editable reference* rather than surviving as orphaned
+/// bytes). The chunk is treated as an opaque block: its inner structure is not
+/// parsed here.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AltChunk {
+    /// Stable identity.
+    pub id: NodeId,
+    /// The referenced chunk part (`w:altChunk@r:id`). Its bytes live in the
+    /// preservation side-table; this carries the pointer the writer needs to
+    /// re-emit the referencing relationship.
+    pub part: EmbeddedPart,
+    /// Chunk properties (`w:altChunkPr`; always present, empty is `{}`).
+    pub properties: AltChunkProperties,
 }
 
 /// An external hyperlink target (a resolved relationship URL).
@@ -1046,6 +1160,12 @@ pub enum InlineNode {
     Math(Math),
     /// An inline symbol glyph (a font plus a code point).
     Symbol(Symbol),
+    /// A non-breaking hyphen glyph (`w:noBreakHyphen`).
+    NoBreakHyphen(NoBreakHyphen),
+    /// A soft (optional) hyphen glyph (`w:softHyphen`).
+    SoftHyphen(SoftHyphen),
+    /// An absolute-position tab (`w:ptab`).
+    PositionalTab(PositionalTab),
 }
 
 impl InlineNode {
@@ -1074,6 +1194,9 @@ impl InlineNode {
             Self::Sdt(sdt) => sdt.id,
             Self::Math(math) => math.id,
             Self::Symbol(symbol) => symbol.id,
+            Self::NoBreakHyphen(hyphen) => hyphen.id,
+            Self::SoftHyphen(hyphen) => hyphen.id,
+            Self::PositionalTab(tab) => tab.id,
         }
     }
 }
@@ -1106,4 +1229,7 @@ pub enum BlockNode {
     Table(Table),
     /// A block-level content control wrapping block content.
     Sdt(BlockSdt),
+    /// An aggregated external content chunk (`w:altChunk`) referencing a preserved
+    /// package part.
+    AltChunk(AltChunk),
 }

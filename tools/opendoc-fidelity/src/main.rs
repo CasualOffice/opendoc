@@ -119,6 +119,9 @@ fn push_blocks_text(blocks: &[BlockNode], out: &mut String) {
                 }
             }
             BlockNode::Sdt(sdt) => push_blocks_text(&sdt.blocks, out),
+            // An alt chunk's aggregated content lives in an external part that is
+            // not parsed here, so it contributes no extractable in-flow text.
+            BlockNode::AltChunk(_) => {}
         }
     }
 }
@@ -177,6 +180,12 @@ fn push_inline_text(inline: &InlineNode, out: &mut String) {
         // A symbol is a font-bound glyph (typically a Private Use Area code
         // point); it has no extractable plain-text form, so it contributes none.
         InlineNode::Symbol(_) => {}
+        // A non-breaking hyphen renders as a visible hyphen; a soft (optional)
+        // hyphen is invisible unless the line breaks there, so it contributes no
+        // in-flow text; an absolute-position tab renders as a tab.
+        InlineNode::NoBreakHyphen(_) => out.push('-'),
+        InlineNode::SoftHyphen(_) => {}
+        InlineNode::PositionalTab(_) => out.push('\t'),
     }
 }
 

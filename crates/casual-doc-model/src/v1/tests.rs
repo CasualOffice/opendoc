@@ -3351,3 +3351,64 @@ fn negative_word_count_is_rejected() {
         })
     ));
 }
+
+// ---- P1F-39: altChunk, hyphens, positional tab ----------------------------
+
+fn alt_chunk_part() -> EmbeddedPart {
+    EmbeddedPart {
+        relationship_id: "rId5".to_owned(),
+        relationship_type:
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk".to_owned(),
+        part_name: "word/afchunk.htm".to_owned(),
+    }
+}
+
+#[test]
+fn hyphens_and_positional_tab_and_alt_chunk_validate_and_round_trip_json() {
+    // A paragraph carrying the two hyphen glyphs and a positional tab, plus a
+    // block-level alt chunk — all the P1F-39 additive nodes at once.
+    let paragraph = BlockNode::Paragraph(Paragraph {
+        id: tid(1),
+        properties: ParagraphProperties::default(),
+        inlines: vec![
+            run_inline(tid(2), "re"),
+            InlineNode::NoBreakHyphen(NoBreakHyphen { id: tid(3) }),
+            InlineNode::SoftHyphen(SoftHyphen { id: tid(4) }),
+            InlineNode::PositionalTab(PositionalTab {
+                id: tid(5),
+                alignment: PositionalTabAlignment::Center,
+                relative_to: PositionalTabRelativeTo::Indent,
+                leader: PositionalTabLeader::MiddleDot,
+            }),
+            run_inline(tid(6), "do"),
+        ],
+    });
+    let chunk = BlockNode::AltChunk(AltChunk {
+        id: tid(7),
+        part: alt_chunk_part(),
+        properties: AltChunkProperties {
+            match_source: Some(true),
+        },
+    });
+    let document = table_document(vec![paragraph, chunk]).unwrap();
+    let reloaded =
+        Document::from_json(&document.to_json().unwrap(), SnapshotLimits::default()).unwrap();
+    assert_eq!(document, reloaded);
+}
+
+#[test]
+fn alt_chunk_with_empty_relationship_id_is_rejected() {
+    let mut part = alt_chunk_part();
+    part.relationship_id = String::new();
+    let chunk = BlockNode::AltChunk(AltChunk {
+        id: tid(7),
+        part,
+        properties: AltChunkProperties::default(),
+    });
+    assert!(matches!(
+        table_document(vec![chunk]),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "embeddedObject.part.relationshipId"
+        })
+    ));
+}

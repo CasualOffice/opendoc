@@ -1,7 +1,8 @@
 use casual_doc_model::v1::{
     Alignment, BlockNode, Break, BreakKind, Color, DocumentProtectionEdit, HyperlinkTarget,
-    InlineNode, LevelJustification, LevelSuffix, MoveKind, NumberFormat, Paragraph, ProofState,
-    RevisionKind, RgbColor, SdtControlKind, StyleKind, Symbol,
+    InlineNode, LevelJustification, LevelSuffix, MoveKind, NumberFormat, Paragraph,
+    PositionalTabAlignment, PositionalTabLeader, PositionalTabRelativeTo, ProofState, RevisionKind,
+    RgbColor, SdtControlKind, StyleKind, Symbol,
 };
 use casual_doc_ooxml::DocxPackage;
 
@@ -146,7 +147,7 @@ fn features(import: &Import) -> Vec<&str> {
 fn paragraph(import: &Import, index: usize) -> &Paragraph {
     match &import.document.body()[index] {
         BlockNode::Paragraph(paragraph) => paragraph,
-        BlockNode::Table(_) | BlockNode::Sdt(_) => {
+        BlockNode::Table(_) | BlockNode::Sdt(_) | BlockNode::AltChunk(_) => {
             panic!("expected a paragraph at index {index}")
         }
     }
@@ -175,6 +176,7 @@ fn collect_block_texts(blocks: &[BlockNode], out: &mut Vec<String>) {
                 }
             }
             BlockNode::Sdt(sdt) => collect_block_texts(&sdt.blocks, out),
+            BlockNode::AltChunk(_) => {}
         }
     }
 }
@@ -190,7 +192,7 @@ fn nonempty_block_texts(import: &Import) -> Vec<String> {
 fn first_table(import: &Import) -> Option<&casual_doc_model::v1::Table> {
     import.document.body().iter().find_map(|block| match block {
         BlockNode::Table(table) => Some(table),
-        BlockNode::Paragraph(_) | BlockNode::Sdt(_) => None,
+        BlockNode::Paragraph(_) | BlockNode::Sdt(_) | BlockNode::AltChunk(_) => None,
     })
 }
 
@@ -2451,6 +2453,7 @@ fn tb_block_text(blocks: &[BlockNode]) -> String {
                     .iter()
                     .for_each(|r| r.cells.iter().for_each(|c| walk_blocks(&c.blocks, out))),
                 BlockNode::Sdt(sdt) => walk_blocks(&sdt.blocks, out),
+                BlockNode::AltChunk(_) => {}
             }
         }
     }
@@ -4898,4 +4901,27 @@ fn symbol_without_a_font_is_reported_not_mapped() {
         features(&import).contains(&"sym"),
         "the unmodeled symbol is reported"
     );
+}
+
+#[test]
+fn hyphen_glyphs_and_positional_tab_are_mapped_not_reported() {
+    // The two hyphen glyphs and a positional tab inside a run map to first-class
+    // inline nodes; none is reported dropped.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:noBreakHyphen/><w:softHyphen/><w:ptab w:alignment="right" w:relativeTo="margin" w:leader="underscore"/></w:r></w:p></w:body></w:document>"#;
+    let import = import(xml);
+    let inlines = &paragraph(&import, 0).inlines;
+    assert!(matches!(inlines[0], InlineNode::NoBreakHyphen(_)));
+    assert!(matches!(inlines[1], InlineNode::SoftHyphen(_)));
+    let InlineNode::PositionalTab(tab) = &inlines[2] else {
+        panic!("expected a positional tab");
+    };
+    assert_eq!(tab.alignment, PositionalTabAlignment::Right);
+    assert_eq!(tab.relative_to, PositionalTabRelativeTo::Margin);
+    assert_eq!(tab.leader, PositionalTabLeader::Underscore);
+    for name in ["noBreakHyphen", "softHyphen", "ptab"] {
+        assert!(
+            !features(&import).contains(&name),
+            "{name} must not be reported as dropped"
+        );
+    }
 }

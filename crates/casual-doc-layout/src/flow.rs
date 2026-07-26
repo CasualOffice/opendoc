@@ -23,8 +23,8 @@ use casual_doc_model::v1::{
     Alignment, BlockNode, BorderEdge, BreakKind, Color, ColorScheme, DefinitionMap, Document,
     Drawing, Extent, FontRef, FontScheme, HeightRule, HighlightColor, InlineNode, MediaId,
     MediaReference, ParagraphProperties, RunProperties, SchemeColor, TabAlignment, TabLeader,
-    TabStop, Table, TableBorders, TableCell, TableLayout, TableRowProperties, ThemeColorRef,
-    ThemeFontRef, VerticalAlignment,
+    TabStop, Table, TableBorders, TableCell, TableLayout, TableRowProperties, TextBox,
+    ThemeColorRef, ThemeFontRef, VerticalAlignment,
 };
 
 use crate::block::{
@@ -36,8 +36,9 @@ use crate::model::{ModelPos, ModelRange};
 use crate::resolve::{FaceRequest, FontResolutionReport, FontResolver};
 use crate::tabs::{self, FlowItem};
 use crate::text::{
-    Decoration, FieldKind, FieldMarker, FieldStyle, FontId, Glyph, GlyphRun, InlineImage, Line,
-    LineBreak, LineConstraints, LineLayout, LineShaper, StyledRun, TextAlignment,
+    Decoration, FieldKind, FieldMarker, FieldStyle, FontId, Glyph, GlyphRun, InlineImage,
+    InlineTextBox, Line, LineBreak, LineConstraints, LineLayout, LineShaper, StyledRun,
+    TextAlignment,
 };
 use crate::units::{Point, Size, Twip};
 
@@ -195,7 +196,13 @@ pub fn build_galley_cached(
                 let mut items = Vec::new();
                 // Resolving here sets each run's resolved `font`, which
                 // `paragraph_hash` hashes — so the cache key tracks the face.
-                collect_items(&paragraph.inlines, &mut items, &mut ctx);
+                collect_items(
+                    &paragraph.inlines,
+                    &mut items,
+                    shaper,
+                    content_width,
+                    &mut ctx,
+                );
                 let shape = ShapeInputs {
                     items: &items,
                     tab_stops: &paragraph.properties.tabs,
@@ -205,9 +212,14 @@ pub fn build_galley_cached(
                 let box_metrics = box_metrics(&paragraph.properties);
                 let break_control = break_control(&paragraph.properties);
                 let decor = paragraph_decor(&paragraph.properties, content_width);
+                // A paragraph carrying an inline text box is never cached: the box's
+                // flowed fragments are not folded into the paragraph hash, so a
+                // reuse could serve stale nested content. Text boxes are rare, so
+                // always reshaping them is the correct, simple choice.
+                let has_text_box = items.iter().any(|i| matches!(i, FlowItem::TextBox { .. }));
                 let hash = paragraph_hash(paragraph.id, &shape, box_metrics, break_control, decor);
 
-                if let Some(fragment) = cache.reusable(paragraph.id, hash, dirty) {
+                if !has_text_box && let Some(fragment) = cache.reusable(paragraph.id, hash, dirty) {
                     galley.push(fragment.clone());
                     continue;
                 }
@@ -230,13 +242,17 @@ pub fn build_galley_cached(
                     break_control,
                     decor,
                 };
-                cache.store(paragraph.id, hash, fragment.clone());
+                if !has_text_box {
+                    cache.store(paragraph.id, hash, fragment.clone());
+                }
                 galley.push(fragment);
             }
             BlockNode::Table(table) => {
                 flow_table(table, shaper, content_width, &mut galley, &mut ctx)
             }
             BlockNode::Sdt(_) => {}
+            // An alt chunk's aggregated external content is not laid out here.
+            BlockNode::AltChunk(_) => {}
         }
     }
     galley
@@ -340,6 +356,18 @@ fn paragraph_hash(
                 style.decoration.underline.hash(&mut hasher);
                 style.decoration.strikethrough.hash(&mut hasher);
             }
+            // A text box's flowed fragments are not hashed here; a paragraph
+            // carrying one bypasses the galley cache entirely (see
+            // `build_galley_cached`), so this arm only keeps the match exhaustive.
+            FlowItem::TextBox {
+                size, border, fill, ..
+            } => {
+                5u8.hash(&mut hasher);
+                size.width.0.hash(&mut hasher);
+                size.height.0.hash(&mut hasher);
+                border.hash(&mut hasher);
+                fill.hash(&mut hasher);
+            }
         }
     }
     for stop in shape.tab_stops {
@@ -393,7 +421,7 @@ fn flow_blocks(
         match block {
             BlockNode::Paragraph(paragraph) => {
                 let mut items = Vec::new();
-                collect_items(&paragraph.inlines, &mut items, ctx);
+                collect_items(&paragraph.inlines, &mut items, shaper, width, ctx);
                 let range = ModelRange::new(
                     ModelPos::new(paragraph.id, 0),
                     ModelPos::new(paragraph.id, 0),
@@ -416,6 +444,8 @@ fn flow_blocks(
             }
             BlockNode::Table(table) => flow_table(table, shaper, width, &mut galley, ctx),
             BlockNode::Sdt(_) => {}
+            // An alt chunk's aggregated external content is not laid out here.
+            BlockNode::AltChunk(_) => {}
         }
     }
     galley
@@ -784,6 +814,8 @@ fn block_intrinsic(blocks: &[BlockNode], shaper: &dyn LineShaper, ctx: &FlowCtx)
                 preferred = preferred.max(grid);
             }
             BlockNode::Sdt(_) => {}
+            // An alt chunk contributes no laid-out width.
+            BlockNode::AltChunk(_) => {}
         }
     }
     (min, preferred)
@@ -923,7 +955,13 @@ fn collect_runs<'a>(inlines: &'a [InlineNode], out: &mut Vec<StyledRun<'a>>, ctx
 /// that control horizontal advance and forced lines. Unlike [`collect_runs`],
 /// tabs and breaks are preserved as first-class items so the tab/break layer can
 /// resolve them; recursion through wrappers matches [`collect_runs`].
-fn collect_items<'a>(inlines: &'a [InlineNode], out: &mut Vec<FlowItem<'a>>, ctx: &mut FlowCtx) {
+fn collect_items<'a>(
+    inlines: &'a [InlineNode],
+    out: &mut Vec<FlowItem<'a>>,
+    shaper: &dyn LineShaper,
+    width: Twip,
+    ctx: &mut FlowCtx,
+) {
     for inline in inlines {
         match inline {
             InlineNode::Run(run) if run.properties.hidden == Some(true) => {}
@@ -940,11 +978,59 @@ fn collect_items<'a>(inlines: &'a [InlineNode], out: &mut Vec<FlowItem<'a>>, ctx
                 }
             }
             InlineNode::Field(field) => out.push(field_item(field, ctx)),
-            InlineNode::Hyperlink(hyperlink) => collect_items(&hyperlink.inlines, out, ctx),
-            InlineNode::Revision(revision) => collect_items(&revision.inlines, out, ctx),
-            InlineNode::Sdt(sdt) => collect_items(&sdt.inlines, out, ctx),
+            InlineNode::TextBox(text_box) => out.push(textbox_item(text_box, shaper, width, ctx)),
+            InlineNode::Hyperlink(hyperlink) => {
+                collect_items(&hyperlink.inlines, out, shaper, width, ctx)
+            }
+            InlineNode::Revision(revision) => {
+                collect_items(&revision.inlines, out, shaper, width, ctx)
+            }
+            InlineNode::Sdt(sdt) => collect_items(&sdt.inlines, out, shaper, width, ctx),
             _ => {}
         }
+    }
+}
+
+/// The default border color (opaque black RGBA) drawn around an inline text box —
+/// Word's default text-box outline. Applied until the model carries the shape's
+/// own line/fill properties.
+const TEXTBOX_DEFAULT_BORDER: [u8; 4] = [0, 0, 0, 255];
+
+/// Flows an inline text box (`wps:txbx` / `v:textbox`) into an [`FlowItem::TextBox`]:
+/// its recursive block content is laid out through the **same** [`flow_blocks`]
+/// pipeline the document body uses (so it supports paragraphs, tables incl. nested,
+/// inline images, borders/shading — the uniform-flow-pipeline invariant), and it
+/// works identically in headers/footers/cells because they share this flow.
+///
+/// The v1 model does not carry the DrawingML extent, so the box is sized to the
+/// available column `width`: its content flows at that width minus the internal
+/// margins on both sides, and the box height is the flowed content height plus the
+/// top/bottom margins. A default hairline border is applied so the box is visible
+/// (Word's default text-box outline); an explicit extent and border/fill from the
+/// shape's properties are a follow-up once the model carries them. Anchored /
+/// floating placement reuses the anchored-drawing path (`P1F-28`) in a later slice.
+fn textbox_item(
+    text_box: &TextBox,
+    shaper: &dyn LineShaper,
+    width: Twip,
+    ctx: &mut FlowCtx,
+) -> FlowItem<'static> {
+    let inset = crate::compose::TEXTBOX_INSET;
+    let inner_width = Twip((width.raw() - 2 * inset.raw()).max(1));
+    let blocks = flow_blocks(&text_box.blocks, shaper, inner_width, ctx);
+    let content_height = blocks
+        .iter()
+        .map(BlockFragment::height)
+        .fold(Twip::ZERO, |a, h| a + h);
+    let size = Size::new(
+        width.max(Twip(1)),
+        Twip(content_height.raw() + 2 * inset.raw()),
+    );
+    FlowItem::TextBox {
+        blocks,
+        size,
+        border: Some(TEXTBOX_DEFAULT_BORDER),
+        fill: None,
     }
 }
 
@@ -1051,10 +1137,10 @@ fn emu_to_twip(emu: i64) -> Twip {
 }
 
 /// Shapes a paragraph's [`FlowItem`] stream into lines. A stream with no inline
-/// image takes the text path directly ([`shape_text_items`]); a stream carrying an
-/// image splits at each image, shaping the intervening text with the same path and
-/// placing each image as its own inline-box line, so reading order and vertical
-/// stacking are preserved. Anchored/floating placement is a later slice
+/// box (image or text box) takes the text path directly ([`shape_text_items`]); a
+/// stream carrying one splits at each box, shaping the intervening text with the
+/// same path and placing each box as its own inline-box line, so reading order and
+/// vertical stacking are preserved. Anchored/floating placement is a later slice
 /// (`P1F-28`); this is the inline case.
 fn shape_paragraph_items(
     shaper: &dyn LineShaper,
@@ -1070,7 +1156,9 @@ fn shape_paragraph_items(
     if items.iter().any(|i| matches!(i, FlowItem::Field { .. })) {
         return shape_fielded_paragraph(shaper, items, tab_stops, default_tab, constraints, range);
     }
-    if !items.iter().any(|i| matches!(i, FlowItem::Image { .. })) {
+    let is_box =
+        |item: &FlowItem<'_>| matches!(item, FlowItem::Image { .. } | FlowItem::TextBox { .. });
+    if !items.iter().any(is_box) {
         return shape_text_items(shaper, items, tab_stops, default_tab, constraints, range);
     }
 
@@ -1078,24 +1166,37 @@ fn shape_paragraph_items(
     let mut cursor_y = Twip::ZERO;
     let mut i = 0usize;
     while i < items.len() {
-        if let FlowItem::Image { media, size } = &items[i] {
-            let line = image_line(media.clone(), *size, range);
-            stack_lines(&mut out, vec![line], &mut cursor_y);
-            i += 1;
-        } else {
-            let start = i;
-            while i < items.len() && !matches!(items[i], FlowItem::Image { .. }) {
+        match &items[i] {
+            FlowItem::Image { media, size } => {
+                let line = image_line(media.clone(), *size, range);
+                stack_lines(&mut out, vec![line], &mut cursor_y);
                 i += 1;
             }
-            let chunk = shape_text_items(
-                shaper,
-                &items[start..i],
-                tab_stops,
-                default_tab,
-                constraints,
-                range,
-            );
-            stack_lines(&mut out, chunk.lines, &mut cursor_y);
+            FlowItem::TextBox {
+                blocks,
+                size,
+                border,
+                fill,
+            } => {
+                let line = textbox_line(blocks.clone(), *size, *border, *fill, range);
+                stack_lines(&mut out, vec![line], &mut cursor_y);
+                i += 1;
+            }
+            _ => {
+                let start = i;
+                while i < items.len() && !is_box(&items[i]) {
+                    i += 1;
+                }
+                let chunk = shape_text_items(
+                    shaper,
+                    &items[start..i],
+                    tab_stops,
+                    default_tab,
+                    constraints,
+                    range,
+                );
+                stack_lines(&mut out, chunk.lines, &mut cursor_y);
+            }
         }
     }
     LineLayout { lines: out }
@@ -1144,12 +1245,45 @@ fn image_line(media: String, size: Size, range: ModelRange) -> Line {
             size,
         }],
         fields: Vec::new(),
+        text_boxes: Vec::new(),
     }
 }
 
-/// Appends `lines` below the ones already in `out`, shifting each line's runs and
-/// images down by `cursor_y` (into paragraph-absolute y) and advancing `cursor_y`
-/// past them.
+/// A line holding a single inline text box at the paragraph's leading edge, its
+/// height equal to the box's outer height so following content stacks below it. The
+/// box carries its already-flowed block fragments; composition paints the fill and
+/// border and composes those fragments offset into the box.
+fn textbox_line(
+    blocks: Vec<BlockFragment>,
+    size: Size,
+    border: Option<[u8; 4]>,
+    fill: Option<[u8; 4]>,
+    range: ModelRange,
+) -> Line {
+    Line {
+        runs: Vec::new(),
+        ascent: size.height,
+        descent: Twip::ZERO,
+        height: size.height,
+        range,
+        line_break: LineBreak::Wrap,
+        page_break_after: false,
+        bars: Vec::new(),
+        images: Vec::new(),
+        fields: Vec::new(),
+        text_boxes: vec![InlineTextBox {
+            origin: Point::new(Twip::ZERO, Twip::ZERO),
+            size,
+            blocks,
+            border,
+            fill,
+        }],
+    }
+}
+
+/// Appends `lines` below the ones already in `out`, shifting each line's runs,
+/// images, and text boxes down by `cursor_y` (into paragraph-absolute y) and
+/// advancing `cursor_y` past them.
 fn stack_lines(out: &mut Vec<Line>, mut lines: Vec<Line>, cursor_y: &mut Twip) {
     for line in &mut lines {
         for run in &mut line.runs {
@@ -1157,6 +1291,9 @@ fn stack_lines(out: &mut Vec<Line>, mut lines: Vec<Line>, cursor_y: &mut Twip) {
         }
         for image in &mut line.images {
             image.origin.y = image.origin.y + *cursor_y;
+        }
+        for text_box in &mut line.text_boxes {
+            text_box.origin.y = text_box.origin.y + *cursor_y;
         }
         *cursor_y = *cursor_y + line.height;
     }
@@ -1441,6 +1578,7 @@ fn layout_fielded_line(
         bars: Vec::new(),
         images: Vec::new(),
         fields,
+        text_boxes: Vec::new(),
     }
 }
 
@@ -3408,6 +3546,221 @@ mod tests {
             rect.size,
             Size::new(Twip(300), Twip(200)),
             "the paint rect carries the extent-derived size"
+        );
+    }
+
+    /// The first inline text box placed anywhere in a paragraph fragment's lines.
+    fn text_box_of(fragment: &BlockFragment) -> &InlineTextBox {
+        let BlockFragment::Paragraph { lines, .. } = fragment else {
+            panic!("expected a paragraph fragment");
+        };
+        lines
+            .lines
+            .iter()
+            .flat_map(|l| &l.text_boxes)
+            .next()
+            .expect("a text box was placed inline")
+    }
+
+    #[test]
+    fn a_text_box_flows_its_paragraph_and_composes_text_inside_a_bordered_box() {
+        use crate::compose::compose_paragraph;
+        use crate::display::PaintItem;
+        use casual_doc_model::v1::TextBox;
+
+        // A paragraph whose only inline is a text box holding one paragraph.
+        let text_box = InlineNode::TextBox(TextBox {
+            id: NodeId::from_parts(20, 1).unwrap(),
+            blocks: vec![paragraph(
+                21,
+                vec![run_node(22, "boxed", RunProperties::default())],
+            )],
+        });
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(
+            &document(vec![paragraph(10, vec![text_box])]),
+            &shaper,
+            Twip::from_points(400),
+        );
+
+        // The box was placed as an inline box on its own line, carrying the flowed
+        // block content of the box (the uniform-flow pipeline).
+        let tb = text_box_of(&galley[0]);
+        assert_eq!(tb.blocks.len(), 1, "the box flowed its one inner paragraph");
+        let BlockFragment::Paragraph { lines: inner, .. } = &tb.blocks[0] else {
+            panic!("the box's content is a paragraph fragment");
+        };
+        assert!(
+            inner.lines.iter().any(|l| !l.runs.is_empty()),
+            "the inner paragraph shaped glyphs"
+        );
+        assert!(tb.border.is_some(), "the box carries a default border");
+        assert!(
+            tb.size.height.raw() > inner.height().raw(),
+            "the box is taller than its content by the top/bottom margins"
+        );
+
+        // Composition paints the border (a stroked rect) and the inner glyphs.
+        let BlockFragment::Paragraph { lines, .. } = &galley[0] else {
+            unreachable!()
+        };
+        let list = compose_paragraph(lines, Point::new(Twip::ZERO, Twip::ZERO));
+        assert!(
+            list.items.iter().any(|i| matches!(
+                i,
+                PaintItem::Rect {
+                    stroke: Some(_),
+                    ..
+                }
+            )),
+            "the box border paints as a stroked rect"
+        );
+        assert!(
+            list.items
+                .iter()
+                .any(|i| matches!(i, PaintItem::Glyphs { .. })),
+            "the box's text paints inside it"
+        );
+    }
+
+    #[test]
+    fn a_text_box_renders_a_nested_table_through_the_shared_pipeline() {
+        use crate::compose::compose_paragraph;
+        use crate::display::PaintItem;
+        use casual_doc_model::v1::{
+            GridColumn, Table, TableCell, TableCellProperties, TableProperties, TableRow,
+            TableRowProperties, TextBox,
+        };
+
+        let cell = |id: u64, text: &str| TableCell {
+            id: NodeId::from_parts(id, 1).unwrap(),
+            properties: TableCellProperties::default(),
+            blocks: vec![paragraph(
+                id + 100,
+                vec![run_node(id + 200, text, RunProperties::default())],
+            )],
+        };
+        let table = BlockNode::Table(Table {
+            id: NodeId::from_parts(50, 1).unwrap(),
+            grid: vec![
+                GridColumn {
+                    width_twips: Some(2000),
+                },
+                GridColumn {
+                    width_twips: Some(2000),
+                },
+            ],
+            properties: TableProperties::default(),
+            rows: vec![TableRow {
+                id: NodeId::from_parts(51, 1).unwrap(),
+                properties: TableRowProperties::default(),
+                cells: vec![cell(60, "a"), cell(61, "b")],
+            }],
+        });
+        let text_box = InlineNode::TextBox(TextBox {
+            id: NodeId::from_parts(20, 1).unwrap(),
+            blocks: vec![table],
+        });
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(
+            &document(vec![paragraph(10, vec![text_box])]),
+            &shaper,
+            Twip::from_points(400),
+        );
+
+        // The nested table expanded to a row fragment inside the box — exactly what
+        // the body pipeline produces for a table.
+        let tb = text_box_of(&galley[0]);
+        assert!(
+            matches!(tb.blocks[0], BlockFragment::TableRow { .. }),
+            "the nested table flowed to a table-row fragment"
+        );
+
+        // Composition emits both cells' text inside the box.
+        let BlockFragment::Paragraph { lines, .. } = &galley[0] else {
+            unreachable!()
+        };
+        let list = compose_paragraph(lines, Point::new(Twip::ZERO, Twip::ZERO));
+        let glyph_runs = list
+            .items
+            .iter()
+            .filter(|i| matches!(i, PaintItem::Glyphs { .. }))
+            .count();
+        assert!(
+            glyph_runs >= 2,
+            "both nested cells' text paints inside the box"
+        );
+    }
+
+    #[test]
+    fn a_text_box_renders_an_inline_image_through_the_shared_pipeline() {
+        use crate::compose::compose_paragraph;
+        use crate::display::PaintItem;
+        use casual_doc_model::v1::{Drawing, Extent, MediaId, MediaReference, TextBox};
+
+        let media_id = MediaId::new(NodeId::from_parts(70, 1).unwrap());
+        let mut media = DefinitionMap::default();
+        media.insert(
+            media_id,
+            MediaReference {
+                relationship_id: "rId7".to_owned(),
+                media_type: "image/png".to_owned(),
+                part_name: "word/media/image1.png".to_owned(),
+            },
+        );
+        let definitions = Definitions {
+            media,
+            ..Definitions::default()
+        };
+        let inner_para = BlockNode::Paragraph(Paragraph {
+            id: NodeId::from_parts(21, 1).unwrap(),
+            properties: ParagraphProperties::default(),
+            inlines: vec![InlineNode::Drawing(Drawing {
+                id: NodeId::from_parts(22, 1).unwrap(),
+                media: media_id,
+                extent: Some(Extent {
+                    width_emu: 190_500,
+                    height_emu: 127_000,
+                }),
+            })],
+        });
+        let para = BlockNode::Paragraph(Paragraph {
+            id: NodeId::from_parts(10, 1).unwrap(),
+            properties: ParagraphProperties::default(),
+            inlines: vec![InlineNode::TextBox(TextBox {
+                id: NodeId::from_parts(20, 1).unwrap(),
+                blocks: vec![inner_para],
+            })],
+        });
+        let doc =
+            Document::new(NodeId::from_parts(1, 1).unwrap(), vec![para], definitions).unwrap();
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&doc, &shaper, Twip::from_points(400));
+
+        // The image inside the box resolved to its package part name.
+        let tb = text_box_of(&galley[0]);
+        let BlockFragment::Paragraph { lines: inner, .. } = &tb.blocks[0] else {
+            panic!("the box's content is a paragraph fragment");
+        };
+        let image = inner
+            .lines
+            .iter()
+            .flat_map(|l| &l.images)
+            .next()
+            .expect("an inline image was placed inside the box");
+        assert_eq!(image.media, "word/media/image1.png");
+
+        // And it composes to an image paint item inside the box.
+        let BlockFragment::Paragraph { lines, .. } = &galley[0] else {
+            unreachable!()
+        };
+        let list = compose_paragraph(lines, Point::new(Twip::ZERO, Twip::ZERO));
+        assert!(
+            list.items.iter().any(|i| matches!(
+                i,
+                PaintItem::Image { media, .. } if media == "word/media/image1.png"
+            )),
+            "the box's image paints inside it"
         );
     }
 }

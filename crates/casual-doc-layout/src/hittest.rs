@@ -555,6 +555,7 @@ mod tests {
                 bars: Vec::new(),
                 images: Vec::new(),
                 fields: Vec::new(),
+                text_boxes: Vec::new(),
             });
             baseline += LINE_H;
         }
@@ -600,6 +601,7 @@ mod tests {
             bars: Vec::new(),
             images: Vec::new(),
             fields: Vec::new(),
+            text_boxes: Vec::new(),
         };
         BlockFragment::Paragraph {
             id: node,

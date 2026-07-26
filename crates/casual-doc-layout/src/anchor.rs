@@ -77,6 +77,8 @@ fn collect_block(document: &Document, block: &BlockNode, out: &mut Vec<DocAnchor
                 collect_block(document, nested, out);
             }
         }
+        // An alt chunk holds no inline content and hence no anchored drawings.
+        BlockNode::AltChunk(_) => {}
     }
 }
 

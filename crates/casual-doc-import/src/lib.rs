@@ -319,16 +319,20 @@ pub fn import_package(
         .map(|relationship| (relationship.id.clone(), relationship.target.clone()))
         .collect();
 
-    // Embedded-object relationships (chart / SmartArt diagram / OLE), resolved
-    // through the main-document relationship graph (r:id -> part), so a
-    // `c:chart`/`dgm:relIds`/`o:OLEObject` reference resolves to a first-class
-    // embedded-object node instead of being reported-dropped. The referenced
-    // parts stay preserved by the side-table but are un-orphaned below (their
-    // rel is emitted by the writer from the node, not re-added as an orphan).
+    // Embedded-object relationships (chart / SmartArt diagram / OLE) and alt-chunk
+    // relationships (`aFChunk`), resolved through the main-document relationship
+    // graph (r:id -> part), so a `c:chart`/`dgm:relIds`/`o:OLEObject`/`w:altChunk`
+    // reference resolves to a first-class node instead of being reported-dropped.
+    // The referenced parts stay preserved by the side-table but are un-orphaned
+    // below (their rel is emitted by the writer from the node, not re-added as an
+    // orphan).
     let embedded_index: std::collections::BTreeMap<String, EmbeddedRel> = package
         .main_document_relationships()
         .iter()
-        .filter(|relationship| is_embedded_object_rel(&relationship.relationship_type))
+        .filter(|relationship| {
+            is_embedded_object_rel(&relationship.relationship_type)
+                || is_alt_chunk_rel(&relationship.relationship_type)
+        })
         .filter(|relationship| !relationship.id.is_empty())
         .filter_map(|relationship| {
             let part = relationship.resolved_part.clone()?;
@@ -646,6 +650,12 @@ fn is_embedded_object_rel(relationship_type: &str) -> bool {
                 | "package"
         )
     )
+}
+
+/// Whether a main-document relationship type points at an `w:altChunk` aggregated
+/// external content part (`.../aFChunk`).
+fn is_alt_chunk_rel(relationship_type: &str) -> bool {
+    matches!(relationship_type.rsplit('/').next(), Some("aFChunk"))
 }
 
 /// Discovers the `docProps` property parts through the package root

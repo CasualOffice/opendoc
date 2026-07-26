@@ -812,6 +812,12 @@ impl Document {
                     self.validate_block(nested, 0, textbox_depth, sdt_depth + 1)?;
                 }
             }
+            // An alt chunk is an opaque leaf block: it only references a preserved
+            // part (bounded like an embedded object's part). `matchSrc` is a typed
+            // bool with no domain to check.
+            BlockNode::AltChunk(chunk) => {
+                self.check_embedded_part(&chunk.part)?;
+            }
         }
         Ok(())
     }
@@ -1273,10 +1279,18 @@ impl Document {
                 // (position-preserving). The commented span's comment resolves
                 // through the paired `CommentReference`, so no lookup is repeated
                 // here.
+                // The hyphen glyphs and a positional tab are likewise inert leaves:
+                // a non-breaking/soft hyphen carries only its identity, and a
+                // positional tab's alignment/relativeTo/leader are typed enums that
+                // cannot hold an out-of-domain value. Each forms a hard merge
+                // boundary (like a tab), so `previous_run_properties` resets.
                 InlineNode::Tab(_)
                 | InlineNode::Break(_)
                 | InlineNode::CommentRangeStart(_)
-                | InlineNode::CommentRangeEnd(_) => {
+                | InlineNode::CommentRangeEnd(_)
+                | InlineNode::NoBreakHyphen(_)
+                | InlineNode::SoftHyphen(_)
+                | InlineNode::PositionalTab(_) => {
                     previous_run_properties = None;
                 }
             }
@@ -1460,6 +1474,9 @@ fn accumulate_block_limits(
                 accumulate_block_limits(nested, limits, blocks, scalar_values)?;
             }
         }
+        // An alt chunk is a leaf block (already counted above); it holds no inline
+        // content or scalar values.
+        BlockNode::AltChunk(_) => {}
     }
     Ok(())
 }
@@ -1531,7 +1548,10 @@ fn accumulate_inline_limits(
         | InlineNode::BookmarkEnd(_)
         | InlineNode::MoveRangeStart(_)
         | InlineNode::MoveRangeEnd(_)
-        | InlineNode::Symbol(_) => {}
+        | InlineNode::Symbol(_)
+        | InlineNode::NoBreakHyphen(_)
+        | InlineNode::SoftHyphen(_)
+        | InlineNode::PositionalTab(_) => {}
     }
     Ok(())
 }
@@ -1570,6 +1590,9 @@ fn record_block_ids(block: &BlockNode, ids: &mut BTreeSet<NodeId>) -> Result<(),
             for nested in &sdt.blocks {
                 record_block_ids(nested, ids)?;
             }
+        }
+        BlockNode::AltChunk(chunk) => {
+            insert_id(ids, chunk.id)?;
         }
     }
     Ok(())
