@@ -2167,12 +2167,14 @@ fn vml_imagedata_shape_maps_to_a_positioned_picture() {
 }
 
 #[test]
-fn vml_textbox_maps_to_a_floating_text_box_with_flowed_content() {
-    use casual_doc_model::v1::HorizontalAnchor;
-
+fn vml_textbox_maps_to_an_inline_text_box_with_flowed_content() {
     // A positioned `v:shape`/`t202` text box (an SDS header box): its
-    // `w:txbxContent` flows through the shared block pipeline and the box is placed
-    // at its absolute VML position as a floating text box.
+    // `w:txbxContent` flows through the shared block pipeline and is emitted as an
+    // INLINE text box in document order. VML text boxes render inline rather than as
+    // floats at their absolute VML position, because those box positions overlap each
+    // other and the body text on real documents (the SDS content pages read as
+    // overprinted mush when floated). The absolute position, box fill and border are
+    // intentionally dropped — inline is the known-good, readable result.
     let pict = r##"<w:pict><v:shape style="position:absolute;margin-left:70pt;margin-top:36pt;width:157pt;height:28pt;mso-position-horizontal-relative:page;mso-position-vertical-relative:page;z-index:-16121856" type="#_x0000_t202" id="tb" filled="false" stroked="false"><v:textbox inset="0,0,0,0"><w:txbxContent><w:p><w:r><w:t>Header box</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict>"##;
     let document = format!(
         r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:v="urn:v"><w:body><w:p><w:r>{pict}</w:r></w:p></w:body></w:document>"#
@@ -2181,18 +2183,17 @@ fn vml_textbox_maps_to_a_floating_text_box_with_flowed_content() {
 
     let InlineNode::TextBox(text_box) = &paragraph(&import, 0).inlines[0] else {
         panic!(
-            "expected a floating text box, got {:?}",
+            "expected an inline text box, got {:?}",
             paragraph(&import, 0).inlines[0]
         );
     };
-    let anchor = text_box
-        .anchor
-        .expect("the text box is floating, not inline");
-    assert_eq!(anchor.horizontal.relative_from, HorizontalAnchor::Page);
-    assert!(anchor.behind_doc);
     assert!(
-        text_box.extent.is_some(),
-        "a floating box carries its extent"
+        text_box.anchor.is_none(),
+        "a VML text box renders inline, not floated at its absolute VML box"
+    );
+    assert!(
+        text_box.extent.is_none(),
+        "an inline box carries no absolute extent"
     );
     assert_eq!(
         text_box.blocks.len(),

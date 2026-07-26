@@ -718,10 +718,6 @@ struct BodyParser<'a> {
     /// The raw XML of the most-recently-closed `w:pict`, handed to
     /// [`Self::commit_pict`] to map its VML drawings onto the float layer.
     pending_pict_xml: Option<String>,
-    /// Flowed block content of VML text boxes (`v:textbox` inside the open `w:pict`),
-    /// in document order, redirected here instead of emitted inline so
-    /// [`Self::commit_pict`] can place each at its `v:shape`'s absolute VML box.
-    vml_textbox_blocks: Vec<Vec<BlockNode>>,
     /// `a:graphicData` payload pointers for the open drawing (chart/diagram).
     pending_graphic: PendingGraphic,
     /// `wp:anchor` placement pointers for the open drawing; `Some` while inside a
@@ -976,7 +972,6 @@ impl<'a> BodyParser<'a> {
             vml_capture: None,
             vml_capture_depth: 0,
             pending_pict_xml: None,
-            vml_textbox_blocks: Vec::new(),
             pending_graphic: PendingGraphic::default(),
             pending_anchor: None,
             object_depth: 0,
@@ -3900,11 +3895,10 @@ impl BodyParser<'_> {
     /// bounding box is not filled — see [`Self::vml_shape_segment`]).
     fn commit_pict(&mut self) -> Result<(), ImportError> {
         let raw = self.pending_pict_xml.take();
-        let mut textbox_blocks = std::mem::take(&mut self.vml_textbox_blocks).into_iter();
         let drawings = raw.as_deref().map(parse_vml_pict).unwrap_or_default();
         let mut emitted = false;
         for drawing in &drawings {
-            if let Some(segment) = self.vml_segment(drawing, &mut textbox_blocks)? {
+            if let Some(segment) = self.vml_segment(drawing)? {
                 self.push_segment(segment);
                 emitted = true;
             }
@@ -3931,35 +3925,15 @@ impl BodyParser<'_> {
                 None => {}
             }
         }
-        // Any flowed text-box blocks not matched to a drawing (defensive: malformed
-        // markup) are emitted inline so their text is never dropped.
-        for blocks in textbox_blocks {
-            if blocks.is_empty() {
-                continue;
-            }
-            let id = self.next_id()?;
-            self.push_segment(Segment::TextBox(TextBox {
-                id,
-                anchor: None,
-                relative_height: None,
-                extent: None,
-                fill: None,
-                border: None,
-                blocks,
-            }));
-        }
         Ok(())
     }
 
-    /// Maps one parsed [`VmlDrawing`] onto a float-layer [`Segment`], pulling the
-    /// next redirected text-box block set for a `v:textbox`. Returns `None` when the
-    /// drawing is not mappable (an unresolved image rid, an empty text box, or a
-    /// deferred generic path shape), each already reported.
-    fn vml_segment(
-        &mut self,
-        drawing: &VmlDrawing,
-        textbox_blocks: &mut impl Iterator<Item = Vec<BlockNode>>,
-    ) -> Result<Option<Segment>, ImportError> {
+    /// Maps one parsed [`VmlDrawing`] onto a float-layer [`Segment`]. Returns `None`
+    /// when the drawing is not mappable (an unresolved image rid, a deferred generic
+    /// path shape) or is a `v:textbox` — a text box's flowed content was already
+    /// emitted as an inline `TextBox` segment when its `w:txbxContent` closed (see
+    /// [`Self::exit_frame`]), so it must not also be painted as a float.
+    fn vml_segment(&mut self, drawing: &VmlDrawing) -> Result<Option<Segment>, ImportError> {
         // A positioned image (`v:imagedata@r:id`): a float, unless it is a genuinely
         // inline image (no absolute VML box), which keeps the legacy inline mapping.
         if let Some(rid) = &drawing.image_rid {
@@ -3983,23 +3957,14 @@ impl BodyParser<'_> {
                 extent: None,
             }));
         }
-        // A VML text box: place its flowed blocks at the shape's absolute box.
+        // A VML text box (`v:textbox`): its flowed blocks were already emitted as an
+        // inline `TextBox` segment, in document order, when `w:txbxContent` closed (see
+        // `exit_frame`). Skip it here so the box is not also painted as a float — VML
+        // text boxes render inline, because their absolute VML box positions overlap
+        // each other and the body text on real documents. The box fill/border are
+        // intentionally not carried onto a float.
         if drawing.textbox.is_some() {
-            let Some(blocks) = textbox_blocks.next().filter(|blocks| !blocks.is_empty()) else {
-                self.reporter.report(b"txbxContent");
-                return Ok(None);
-            };
-            let id = self.next_id()?;
-            let (anchor, relative_height) = vml_anchor(&drawing.position);
-            return Ok(Some(Segment::TextBox(TextBox {
-                id,
-                anchor: Some(anchor),
-                relative_height,
-                extent: Some(vml_extent(&drawing.position)),
-                fill: vml_fill(&drawing.fill),
-                border: vml_stroke(&drawing.stroke),
-                blocks,
-            })));
+            return Ok(None);
         }
         // A geometric shape (rule / callout box / line).
         self.vml_shape_segment(drawing)
@@ -4572,16 +4537,17 @@ impl BodyParser<'_> {
                     // a group child or a floating/inline text box; `frame.node_id`
                     // is unused (the shape's own id identifies the box).
                     shape.textbox_blocks = Some(blocks);
-                } else if self.vml_capture.is_some() {
-                    // A legacy VML `v:textbox` inside an open `w:pict`: redirect its
-                    // flowed blocks so `commit_pict` can place the box at its
-                    // `v:shape`'s absolute VML position (a floating text box) rather
-                    // than dropping it into the inline flow. Blocks are queued in
-                    // document order, matching the `parse_vml_pict` drawing order.
-                    self.vml_textbox_blocks.push(blocks);
                 } else {
-                    // A legacy VML `v:textbox` with no positioning context: inline,
-                    // as before.
+                    // A legacy VML `v:textbox` (`w:pict`): emit its flowed blocks as
+                    // an inline `TextBox` segment in document order — whether or not it
+                    // sits inside an open `w:pict` capture. VML text boxes render inline
+                    // (their pre-VML-paint behavior), NOT as floats at their absolute
+                    // `v:shape` box: those box positions overlap each other and the body
+                    // text on real documents (the SDS content pages). The box's
+                    // fill/border/position are intentionally dropped here — inline is the
+                    // known-good, readable result. The enclosing `commit_pict` skips the
+                    // matching `v:textbox` drawing so the box is not also painted as a
+                    // float; positioned VML shapes and images still float.
                     self.push_segment(Segment::TextBox(TextBox {
                         id: frame.node_id,
                         anchor: None,
