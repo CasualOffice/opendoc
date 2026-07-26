@@ -961,6 +961,7 @@ impl Document {
                             && field.instruction.len() <= MAX_FIELD_INSTRUCTION_BYTES,
                         "field.instruction",
                     )?;
+                    check_form_field(field)?;
                     // A field's cached result may be empty; when present it is
                     // validated as leaf inlines (in_wrapper rejects any wrapper).
                     self.validate_inlines(
@@ -1472,7 +1473,9 @@ fn check_hyperlink_target(target: &HyperlinkTarget) -> Result<(), ModelError> {
 
 /// Validates a content control's typed properties: `alias`/`tag` are non-empty
 /// and at most 255 bytes; the retained producer `control_id` is non-empty and at
-/// most 64 bytes (its opaque grouping-key bound, matching the importer filter).
+/// most 64 bytes (its opaque grouping-key bound, matching the importer filter);
+/// the placeholder ref, data binding, and control-specific data are bounded and
+/// (for `data`) consistent with `control_kind`.
 fn check_sdt_properties(properties: &SdtProperties) -> Result<(), ModelError> {
     if let Some(alias) = &properties.alias {
         check_domain(!alias.is_empty() && alias.len() <= 255, "sdt.alias")?;
@@ -1482,6 +1485,160 @@ fn check_sdt_properties(properties: &SdtProperties) -> Result<(), ModelError> {
     }
     if let Some(control_id) = &properties.control_id {
         check_domain(!control_id.is_empty() && control_id.len() <= 64, "sdt.id")?;
+    }
+    if let Some(placeholder) = &properties.placeholder {
+        check_domain(
+            !placeholder.is_empty() && placeholder.len() <= 255,
+            "sdt.placeholder",
+        )?;
+    }
+    if let Some(binding) = &properties.data_binding {
+        check_domain(
+            !binding.xpath.is_empty() && binding.xpath.len() <= 1024,
+            "sdt.dataBinding.xpath",
+        )?;
+        check_opt_bound(
+            binding.store_item_id.as_deref(),
+            128,
+            "sdt.dataBinding.storeItemID",
+        )?;
+        check_opt_bound(
+            binding.prefix_mappings.as_deref(),
+            1024,
+            "sdt.dataBinding.prefixMappings",
+        )?;
+    }
+    if let Some(data) = &properties.data {
+        check_sdt_data(properties.control_kind, data)?;
+    }
+    Ok(())
+}
+
+/// Validates the control-specific `data`: it must agree with `control_kind`, and
+/// every carried string is bounded.
+fn check_sdt_data(kind: Option<SdtControlKind>, data: &SdtControlData) -> Result<(), ModelError> {
+    match data {
+        SdtControlData::List(items) => {
+            check_domain(
+                matches!(
+                    kind,
+                    Some(SdtControlKind::ComboBox | SdtControlKind::DropDownList)
+                ),
+                "sdt.data.list",
+            )?;
+            check_domain(items.len() <= 1024, "sdt.data.list")?;
+            for item in items {
+                check_opt_bound(item.display.as_deref(), 255, "sdt.data.list.display")?;
+                check_domain(item.value.len() <= 255, "sdt.data.list.value")?;
+            }
+        }
+        SdtControlData::Date(date) => {
+            check_domain(kind == Some(SdtControlKind::Date), "sdt.data.date")?;
+            check_opt_bound(date.full_date.as_deref(), 64, "sdt.data.date.fullDate")?;
+            check_opt_bound(date.date_format.as_deref(), 255, "sdt.data.date.dateFormat")?;
+            check_opt_bound(date.calendar.as_deref(), 64, "sdt.data.date.calendar")?;
+            check_opt_bound(date.lid.as_deref(), 64, "sdt.data.date.lid")?;
+            check_opt_bound(
+                date.store_mapped_as.as_deref(),
+                64,
+                "sdt.data.date.storeMappedAs",
+            )?;
+        }
+        SdtControlData::Checkbox(checkbox) => {
+            check_domain(kind == Some(SdtControlKind::Checkbox), "sdt.data.checkbox")?;
+            for symbol in [&checkbox.checked_state, &checkbox.unchecked_state]
+                .into_iter()
+                .flatten()
+            {
+                check_domain(
+                    !symbol.val.is_empty() && symbol.val.len() <= 8,
+                    "sdt.data.checkbox.val",
+                )?;
+                check_opt_bound(symbol.font.as_deref(), 64, "sdt.data.checkbox.font")?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Bounds an optional string to non-empty and at most `max` bytes when present.
+fn check_opt_bound(
+    value: Option<&str>,
+    max: usize,
+    property: &'static str,
+) -> Result<(), ModelError> {
+    if let Some(value) = value {
+        check_domain(!value.is_empty() && value.len() <= max, property)?;
+    }
+    Ok(())
+}
+
+/// Validates a legacy form field's configuration (`w:ffData`): every present
+/// string is at most `MAX_FORM_FIELD_STRING_BYTES`, a drop-down carries at most
+/// `MAX_FORM_FIELD_ENTRIES` entries, and the kind-specific payload agrees with
+/// the field instruction's `FORM…` token (a `TextInput` payload only on a
+/// FORMTEXT field, and so on). Absent (`None`) for an ordinary field.
+fn check_form_field(field: &Field) -> Result<(), ModelError> {
+    let Some(form) = &field.form else {
+        return Ok(());
+    };
+    // Common strings are length-bounded; empty is permitted (an explicit empty
+    // value round-trips, and a blank drop-down entry is legitimate).
+    for value in [
+        &form.name,
+        &form.help_text,
+        &form.status_text,
+        &form.entry_macro,
+        &form.exit_macro,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        check_domain(
+            value.len() <= MAX_FORM_FIELD_STRING_BYTES,
+            "field.form.string",
+        )?;
+    }
+    // The payload variant must match the instruction's field token.
+    let token = field
+        .instruction
+        .split_whitespace()
+        .next()
+        .unwrap_or_default();
+    let expected = match form.kind {
+        FormFieldKind::TextInput(_) => "FORMTEXT",
+        FormFieldKind::CheckBox(_) => "FORMCHECKBOX",
+        FormFieldKind::DropDown(_) => "FORMDROPDOWN",
+    };
+    check_domain(token.eq_ignore_ascii_case(expected), "field.form.kind")?;
+    match &form.kind {
+        FormFieldKind::TextInput(text) => {
+            if let Some(default) = &text.default {
+                check_domain(
+                    default.len() <= MAX_FORM_FIELD_STRING_BYTES,
+                    "field.form.textInput.default",
+                )?;
+            }
+            if let Some(format) = &text.format {
+                check_domain(
+                    format.len() <= MAX_FORM_FIELD_STRING_BYTES,
+                    "field.form.textInput.format",
+                )?;
+            }
+        }
+        FormFieldKind::CheckBox(_) => {}
+        FormFieldKind::DropDown(list) => {
+            check_domain(
+                list.entries.len() <= MAX_FORM_FIELD_ENTRIES,
+                "field.form.ddList.entries",
+            )?;
+            for entry in &list.entries {
+                check_domain(
+                    entry.len() <= MAX_FORM_FIELD_STRING_BYTES,
+                    "field.form.ddList.entry",
+                )?;
+            }
+        }
     }
     Ok(())
 }

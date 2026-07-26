@@ -125,6 +125,37 @@ mod semantic_tests {
         .document
     }
 
+    /// Imports a `word/document.xml` body, writes it, and reopens it: returns the
+    /// pre-write and post-reopen models for a fixed-point (`m1 == m2`) assertion.
+    fn round_trip_main_document(
+        xml: &[u8],
+    ) -> (
+        casual_doc_model::v1::Document,
+        casual_doc_model::v1::Document,
+    ) {
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        (m1, m2)
+    }
+
+    /// The `SdtProperties` of the first inline content control in the first body
+    /// paragraph (the shape the content-control-data tests build).
+    fn first_inline_sdt_properties(
+        document: &casual_doc_model::v1::Document,
+    ) -> &casual_doc_model::v1::SdtProperties {
+        use casual_doc_model::v1::{BlockNode, InlineNode};
+        let BlockNode::Paragraph(paragraph) = &document.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Sdt(sdt) = &paragraph.inlines[0] else {
+            panic!("expected an inline content control");
+        };
+        &sdt.properties
+    }
+
     /// The semantic fixed point over a whole package: `import(Semantic)` ->
     /// `write_document` -> reopen == identical model. Media bytes are not needed
     /// (the model holds only reference metadata).
@@ -569,6 +600,363 @@ mod semantic_tests {
             m1, m2,
             "the inline-construct model survives write -> reopen unchanged"
         );
+    }
+
+    /// Imports a raw main-document body, writes it, reopens the package, and
+    /// returns both models plus the legacy form field found on the first
+    /// paragraph's first inline. Asserts the write -> reopen fixed point and that
+    /// the reopened model validates.
+    fn form_field_round_trip(
+        xml: &[u8],
+    ) -> (
+        casual_doc_model::v1::FormFieldData,
+        casual_doc_model::v1::FormFieldData,
+    ) {
+        use casual_doc_model::v1::{BlockNode, InlineNode};
+
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        m1.validate().expect("imported form field validates");
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(m1, m2, "the form-field model survives write -> reopen");
+
+        let extract = |doc: &casual_doc_model::v1::Document| {
+            let BlockNode::Paragraph(paragraph) = &doc.body()[0] else {
+                panic!("expected a paragraph");
+            };
+            let InlineNode::Field(field) = &paragraph.inlines[0] else {
+                panic!("expected a field as the first inline");
+            };
+            field.form.clone().expect("the field carries form data")
+        };
+        (extract(&m1), extract(&m2))
+    }
+
+    #[test]
+    fn form_text_input_field_survives_the_semantic_round_trip() {
+        // FORMTEXT with a name, value type, default, max length, and format.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p>
+                <w:r><w:fldChar w:fldCharType="begin"><w:ffData>
+                    <w:name w:val="FirstName"/>
+                    <w:enabled/>
+                    <w:calcOnExit w:val="0"/>
+                    <w:textInput>
+                        <w:type w:val="regular"/>
+                        <w:default w:val="John"/>
+                        <w:maxLength w:val="32"/>
+                        <w:format w:val="UPPERCASE"/>
+                    </w:textInput>
+                </w:ffData></w:fldChar></w:r>
+                <w:r><w:instrText xml:space="preserve"> FORMTEXT </w:instrText></w:r>
+                <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+                <w:r><w:t>John</w:t></w:r>
+                <w:r><w:fldChar w:fldCharType="end"/></w:r>
+            </w:p>
+        </w:body></w:document>"#;
+        let (form, _) = form_field_round_trip(xml);
+        assert_eq!(form.name.as_deref(), Some("FirstName"));
+        assert_eq!(form.enabled, Some(true));
+        assert_eq!(form.calc_on_exit, Some(false));
+        let casual_doc_model::v1::FormFieldKind::TextInput(text) = &form.kind else {
+            panic!("expected a text-input payload");
+        };
+        assert_eq!(
+            text.text_type,
+            Some(casual_doc_model::v1::FormTextType::Regular)
+        );
+        assert_eq!(text.default.as_deref(), Some("John"));
+        assert_eq!(text.max_length, Some(32));
+        assert_eq!(text.format.as_deref(), Some("UPPERCASE"));
+    }
+
+    #[test]
+    fn form_checkbox_field_survives_the_semantic_round_trip() {
+        // FORMCHECKBOX with an explicit size, a default state, and a checked state.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p>
+                <w:r><w:fldChar w:fldCharType="begin"><w:ffData>
+                    <w:name w:val="Agree"/>
+                    <w:checkBox>
+                        <w:size w:val="24"/>
+                        <w:default w:val="1"/>
+                        <w:checked/>
+                    </w:checkBox>
+                </w:ffData></w:fldChar></w:r>
+                <w:r><w:instrText xml:space="preserve"> FORMCHECKBOX </w:instrText></w:r>
+                <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+                <w:r><w:fldChar w:fldCharType="end"/></w:r>
+            </w:p>
+        </w:body></w:document>"#;
+        let (form, _) = form_field_round_trip(xml);
+        assert_eq!(form.name.as_deref(), Some("Agree"));
+        let casual_doc_model::v1::FormFieldKind::CheckBox(check) = &form.kind else {
+            panic!("expected a checkbox payload");
+        };
+        assert_eq!(
+            check.size,
+            Some(casual_doc_model::v1::FormCheckBoxSize::Explicit(24))
+        );
+        assert_eq!(check.default, Some(true));
+        assert_eq!(check.checked, Some(true));
+    }
+
+    #[test]
+    fn form_checkbox_auto_size_survives_the_semantic_round_trip() {
+        // A `w:sizeAuto` checkbox round-trips as `FormCheckBoxSize::Auto`.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p>
+                <w:r><w:fldChar w:fldCharType="begin"><w:ffData>
+                    <w:checkBox>
+                        <w:sizeAuto/>
+                        <w:checked w:val="0"/>
+                    </w:checkBox>
+                </w:ffData></w:fldChar></w:r>
+                <w:r><w:instrText xml:space="preserve"> FORMCHECKBOX </w:instrText></w:r>
+                <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+                <w:r><w:fldChar w:fldCharType="end"/></w:r>
+            </w:p>
+        </w:body></w:document>"#;
+        let (form, _) = form_field_round_trip(xml);
+        let casual_doc_model::v1::FormFieldKind::CheckBox(check) = &form.kind else {
+            panic!("expected a checkbox payload");
+        };
+        assert_eq!(
+            check.size,
+            Some(casual_doc_model::v1::FormCheckBoxSize::Auto)
+        );
+        assert_eq!(check.checked, Some(false));
+    }
+
+    #[test]
+    fn form_dropdown_field_survives_the_semantic_round_trip() {
+        // FORMDROPDOWN with list entries and a selected result index.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p>
+                <w:r><w:fldChar w:fldCharType="begin"><w:ffData>
+                    <w:name w:val="Color"/>
+                    <w:ddList>
+                        <w:result w:val="2"/>
+                        <w:listEntry w:val="Red"/>
+                        <w:listEntry w:val="Green"/>
+                        <w:listEntry w:val="Blue"/>
+                    </w:ddList>
+                </w:ffData></w:fldChar></w:r>
+                <w:r><w:instrText xml:space="preserve"> FORMDROPDOWN </w:instrText></w:r>
+                <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+                <w:r><w:t>Blue</w:t></w:r>
+                <w:r><w:fldChar w:fldCharType="end"/></w:r>
+            </w:p>
+        </w:body></w:document>"#;
+        let (form, _) = form_field_round_trip(xml);
+        assert_eq!(form.name.as_deref(), Some("Color"));
+        let casual_doc_model::v1::FormFieldKind::DropDown(list) = &form.kind else {
+            panic!("expected a drop-down payload");
+        };
+        assert_eq!(list.result, Some(2));
+        assert_eq!(list.entries, vec!["Red", "Green", "Blue"]);
+    }
+
+    #[test]
+    fn form_field_help_status_and_flags_survive_the_semantic_round_trip() {
+        // Help/status text plus the enabled/calcOnExit flags on a FORMTEXT field.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p>
+                <w:r><w:fldChar w:fldCharType="begin"><w:ffData>
+                    <w:name w:val="Notes"/>
+                    <w:enabled w:val="0"/>
+                    <w:calcOnExit/>
+                    <w:helpText w:val="Type your notes"/>
+                    <w:statusText w:val="Notes field"/>
+                    <w:textInput/>
+                </w:ffData></w:fldChar></w:r>
+                <w:r><w:instrText xml:space="preserve"> FORMTEXT </w:instrText></w:r>
+                <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+                <w:r><w:fldChar w:fldCharType="end"/></w:r>
+            </w:p>
+        </w:body></w:document>"#;
+        let (form, _) = form_field_round_trip(xml);
+        assert_eq!(form.enabled, Some(false));
+        assert_eq!(form.calc_on_exit, Some(true));
+        assert_eq!(form.help_text.as_deref(), Some("Type your notes"));
+        assert_eq!(form.status_text.as_deref(), Some("Notes field"));
+        assert!(matches!(
+            form.kind,
+            casual_doc_model::v1::FormFieldKind::TextInput(_)
+        ));
+    }
+
+    #[test]
+    fn sdt_dropdown_list_entries_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{SdtControlData, SdtControlKind};
+        // A drop-down-list content control with three choice entries (the last
+        // has no display text) must keep its choices across write -> reopen.
+        let xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r"><w:body>
+            <w:p><w:sdt>
+                <w:sdtPr>
+                    <w:alias w:val="Color"/><w:tag w:val="color"/><w:id w:val="11"/>
+                    <w:dropDownList>
+                        <w:listItem w:displayText="Red" w:value="r"/>
+                        <w:listItem w:displayText="Green" w:value="g"/>
+                        <w:listItem w:value="b"/>
+                    </w:dropDownList>
+                </w:sdtPr>
+                <w:sdtContent><w:r><w:t>Red</w:t></w:r></w:sdtContent>
+            </w:sdt></w:p>
+        </w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(m1, m2, "the drop-down model survives write -> reopen");
+
+        let properties = first_inline_sdt_properties(&m1);
+        assert_eq!(properties.control_kind, Some(SdtControlKind::DropDownList));
+        let Some(SdtControlData::List(items)) = &properties.data else {
+            panic!("expected list entries");
+        };
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].display.as_deref(), Some("Red"));
+        assert_eq!(items[0].value, "r");
+        assert_eq!(items[2].display, None);
+        assert_eq!(items[2].value, "b");
+    }
+
+    #[test]
+    fn sdt_data_binding_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::SdtControlKind;
+        // A data-bound plain-text control must keep its customXML binding
+        // (xpath + storeItemID + prefix mappings) across write -> reopen.
+        let xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r"><w:body>
+            <w:p><w:sdt>
+                <w:sdtPr>
+                    <w:alias w:val="Customer"/><w:id w:val="22"/>
+                    <w:dataBinding w:prefixMappings="xmlns:ns0='urn:contoso'" w:xpath="/ns0:root[1]/ns0:customer[1]" w:storeItemID="{1234ABCD-0000-0000-0000-000000000000}"/>
+                    <w:text/>
+                </w:sdtPr>
+                <w:sdtContent><w:r><w:t>Acme</w:t></w:r></w:sdtContent>
+            </w:sdt></w:p>
+        </w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(m1, m2, "the data-bound model survives write -> reopen");
+
+        let properties = first_inline_sdt_properties(&m1);
+        assert_eq!(properties.control_kind, Some(SdtControlKind::PlainText));
+        let binding = properties
+            .data_binding
+            .as_ref()
+            .expect("expected a data binding");
+        assert_eq!(binding.xpath, "/ns0:root[1]/ns0:customer[1]");
+        assert_eq!(
+            binding.store_item_id.as_deref(),
+            Some("{1234ABCD-0000-0000-0000-000000000000}")
+        );
+        assert_eq!(
+            binding.prefix_mappings.as_deref(),
+            Some("xmlns:ns0='urn:contoso'")
+        );
+    }
+
+    #[test]
+    fn sdt_date_detail_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::{SdtControlData, SdtControlKind};
+        // A date-picker control must keep its full date, format, calendar, lid,
+        // and store-mapping across write -> reopen.
+        let xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r"><w:body>
+            <w:p><w:sdt>
+                <w:sdtPr>
+                    <w:id w:val="33"/>
+                    <w:date w:fullDate="2026-07-26T00:00:00Z">
+                        <w:dateFormat w:val="M/d/yyyy"/>
+                        <w:lid w:val="en-US"/>
+                        <w:storeMappedDataAs w:val="dateTime"/>
+                        <w:calendar w:val="gregorian"/>
+                    </w:date>
+                </w:sdtPr>
+                <w:sdtContent><w:r><w:t>7/26/2026</w:t></w:r></w:sdtContent>
+            </w:sdt></w:p>
+        </w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(m1, m2, "the date model survives write -> reopen");
+
+        let properties = first_inline_sdt_properties(&m1);
+        assert_eq!(properties.control_kind, Some(SdtControlKind::Date));
+        let Some(SdtControlData::Date(date)) = &properties.data else {
+            panic!("expected date detail");
+        };
+        assert_eq!(date.full_date.as_deref(), Some("2026-07-26T00:00:00Z"));
+        assert_eq!(date.date_format.as_deref(), Some("M/d/yyyy"));
+        assert_eq!(date.lid.as_deref(), Some("en-US"));
+        assert_eq!(date.store_mapped_as.as_deref(), Some("dateTime"));
+        assert_eq!(date.calendar.as_deref(), Some("gregorian"));
+    }
+
+    #[test]
+    fn sdt_checkbox_state_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::{SdtControlData, SdtControlKind};
+        // A checked checkbox (the `w14` namespace) must keep its checked flag and
+        // its state glyphs across write -> reopen.
+        let xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:w14="urn:w14"><w:body>
+            <w:p><w:sdt>
+                <w:sdtPr>
+                    <w:id w:val="44"/>
+                    <w14:checkbox>
+                        <w14:checked w14:val="1"/>
+                        <w14:checkedState w14:font="MS Gothic" w14:val="2612"/>
+                        <w14:uncheckedState w14:font="MS Gothic" w14:val="2610"/>
+                    </w14:checkbox>
+                </w:sdtPr>
+                <w:sdtContent><w:r><w:t>X</w:t></w:r></w:sdtContent>
+            </w:sdt></w:p>
+        </w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(m1, m2, "the checkbox model survives write -> reopen");
+
+        let properties = first_inline_sdt_properties(&m1);
+        assert_eq!(properties.control_kind, Some(SdtControlKind::Checkbox));
+        let Some(SdtControlData::Checkbox(checkbox)) = &properties.data else {
+            panic!("expected checkbox detail");
+        };
+        assert!(checkbox.checked);
+        let checked = checkbox.checked_state.as_ref().expect("checked glyph");
+        assert_eq!(checked.val, "2612");
+        assert_eq!(checked.font.as_deref(), Some("MS Gothic"));
+        let unchecked = checkbox.unchecked_state.as_ref().expect("unchecked glyph");
+        assert_eq!(unchecked.val, "2610");
+    }
+
+    #[test]
+    fn sdt_lock_and_placeholder_flags_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::SdtLock;
+        // A locked control showing its placeholder must keep the lock, the
+        // placeholder building-block ref, the showing-placeholder flag, and the
+        // temporary flag across write -> reopen.
+        let xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r"><w:body>
+            <w:p><w:sdt>
+                <w:sdtPr>
+                    <w:id w:val="55"/>
+                    <w:lock w:val="sdtContentLocked"/>
+                    <w:placeholder><w:docPart w:val="DefaultPlaceholder_1081868574"/></w:placeholder>
+                    <w:temporary/>
+                    <w:showingPlcHdr/>
+                    <w:text/>
+                </w:sdtPr>
+                <w:sdtContent><w:r><w:t>Click here</w:t></w:r></w:sdtContent>
+            </w:sdt></w:p>
+        </w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(
+            m1, m2,
+            "the lock/placeholder model survives write -> reopen"
+        );
+
+        let properties = first_inline_sdt_properties(&m1);
+        assert_eq!(properties.lock, Some(SdtLock::SdtContentLocked));
+        assert_eq!(
+            properties.placeholder.as_deref(),
+            Some("DefaultPlaceholder_1081868574")
+        );
+        assert!(properties.showing_placeholder);
+        assert!(properties.temporary);
     }
 
     #[test]

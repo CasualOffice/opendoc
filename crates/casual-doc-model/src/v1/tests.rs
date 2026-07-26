@@ -1399,6 +1399,7 @@ fn field_with_cached_result_validates_and_round_trips_json() {
         id: tid(10),
         instruction: " PAGE ".to_owned(),
         inlines: vec![run_inline(tid(11), "7")],
+        form: None,
     };
     let document = table_document(vec![field_paragraph(field)]).unwrap();
     let json = document.to_json().unwrap();
@@ -1421,6 +1422,7 @@ fn field_with_empty_cached_result_is_valid() {
         id: tid(10),
         instruction: " TIME ".to_owned(),
         inlines: Vec::new(),
+        form: None,
     };
     assert!(table_document(vec![field_paragraph(field)]).is_ok());
 }
@@ -1431,6 +1433,7 @@ fn empty_field_instruction_is_rejected() {
         id: tid(10),
         instruction: String::new(),
         inlines: Vec::new(),
+        form: None,
     };
     assert!(matches!(
         table_document(vec![field_paragraph(field)]),
@@ -1446,6 +1449,7 @@ fn field_inside_a_hyperlink_is_rejected() {
         id: tid(12),
         instruction: " PAGE ".to_owned(),
         inlines: Vec::new(),
+        form: None,
     });
     let link = InlineNode::Hyperlink(Hyperlink {
         id: tid(10),
@@ -1480,6 +1484,7 @@ fn hyperlink_inside_a_field_is_rejected() {
         id: tid(10),
         instruction: " REF a ".to_owned(),
         inlines: vec![inner_link],
+        form: None,
     };
     assert!(matches!(
         table_document(vec![field_paragraph(field)]),
@@ -1493,11 +1498,13 @@ fn nested_field_inside_a_field_is_rejected() {
         id: tid(12),
         instruction: " PAGE ".to_owned(),
         inlines: Vec::new(),
+        form: None,
     });
     let field = Field {
         id: tid(10),
         instruction: " = ".to_owned(),
         inlines: vec![inner],
+        form: None,
     };
     assert!(matches!(
         table_document(vec![field_paragraph(field)]),
@@ -1511,10 +1518,88 @@ fn duplicate_id_inside_a_field_result_is_rejected() {
         id: tid(10),
         instruction: " PAGE ".to_owned(),
         inlines: vec![run_inline(tid(10), "7")], // run id collides with field id
+        form: None,
     };
     assert!(matches!(
         table_document(vec![field_paragraph(field)]),
         Err(ModelError::DuplicateNodeId(_))
+    ));
+}
+
+#[test]
+fn legacy_form_field_validates_and_round_trips_json() {
+    let field = Field {
+        id: tid(10),
+        instruction: " FORMDROPDOWN ".to_owned(),
+        inlines: Vec::new(),
+        form: Some(FormFieldData {
+            name: Some("Color".to_owned()),
+            enabled: Some(true),
+            calc_on_exit: Some(false),
+            help_text: Some("Pick one".to_owned()),
+            status_text: None,
+            entry_macro: None,
+            exit_macro: None,
+            kind: FormFieldKind::DropDown(FormDropDown {
+                result: Some(1),
+                entries: vec!["Red".to_owned(), "Green".to_owned()],
+            }),
+        }),
+    };
+    let document = table_document(vec![field_paragraph(field)]).unwrap();
+    let reloaded =
+        Document::from_json(&document.to_json().unwrap(), SnapshotLimits::default()).unwrap();
+    assert_eq!(document, reloaded);
+}
+
+#[test]
+fn form_field_payload_disagreeing_with_instruction_is_rejected() {
+    // A checkbox payload on a FORMTEXT field is a kind mismatch.
+    let field = Field {
+        id: tid(10),
+        instruction: " FORMTEXT ".to_owned(),
+        inlines: Vec::new(),
+        form: Some(FormFieldData {
+            name: None,
+            enabled: None,
+            calc_on_exit: None,
+            help_text: None,
+            status_text: None,
+            entry_macro: None,
+            exit_macro: None,
+            kind: FormFieldKind::CheckBox(FormCheckBox::default()),
+        }),
+    };
+    assert!(matches!(
+        table_document(vec![field_paragraph(field)]),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "field.form.kind"
+        })
+    ));
+}
+
+#[test]
+fn form_field_overlong_name_is_rejected() {
+    let field = Field {
+        id: tid(10),
+        instruction: " FORMTEXT ".to_owned(),
+        inlines: Vec::new(),
+        form: Some(FormFieldData {
+            name: Some("n".repeat(MAX_FORM_FIELD_STRING_BYTES + 1)),
+            enabled: None,
+            calc_on_exit: None,
+            help_text: None,
+            status_text: None,
+            entry_macro: None,
+            exit_macro: None,
+            kind: FormFieldKind::TextInput(FormTextInput::default()),
+        }),
+    };
+    assert!(matches!(
+        table_document(vec![field_paragraph(field)]),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "field.form.string"
+        })
     ));
 }
 
@@ -2435,6 +2520,16 @@ fn full_sdt_props() -> SdtProperties {
         alias: Some("Full name".to_owned()),
         tag: Some("fullName".to_owned()),
         control_id: Some("1553275".to_owned()),
+        lock: Some(SdtLock::SdtContentLocked),
+        placeholder: Some("DefaultPlaceholder_1081868574".to_owned()),
+        showing_placeholder: true,
+        temporary: false,
+        data_binding: Some(SdtDataBinding {
+            xpath: "/ns0:root[1]/ns0:name[1]".to_owned(),
+            store_item_id: Some("{ABCD0000-0000-0000-0000-000000000000}".to_owned()),
+            prefix_mappings: Some("xmlns:ns0='urn:contoso'".to_owned()),
+        }),
+        data: None,
     }
 }
 
@@ -2468,6 +2563,19 @@ fn block_content_control_validates_and_round_trips_json() {
     assert_eq!(sdt.properties.alias.as_deref(), Some("Full name"));
     assert_eq!(sdt.properties.tag.as_deref(), Some("fullName"));
     assert_eq!(sdt.properties.control_id.as_deref(), Some("1553275"));
+    assert_eq!(sdt.properties.lock, Some(SdtLock::SdtContentLocked));
+    assert_eq!(
+        sdt.properties.placeholder.as_deref(),
+        Some("DefaultPlaceholder_1081868574")
+    );
+    assert!(sdt.properties.showing_placeholder);
+    assert_eq!(
+        sdt.properties
+            .data_binding
+            .as_ref()
+            .map(|binding| binding.xpath.as_str()),
+        Some("/ns0:root[1]/ns0:name[1]")
+    );
     assert_eq!(sdt.blocks.len(), 1);
 }
 
@@ -2654,6 +2762,97 @@ fn oversized_sdt_control_id_is_rejected() {
     assert!(matches!(
         table_document(vec![sdt]),
         Err(ModelError::PropertyValueOutOfDomain { property: "sdt.id" })
+    ));
+}
+
+#[test]
+fn sdt_control_data_variants_validate_and_round_trip_json() {
+    for (kind, data) in [
+        (
+            SdtControlKind::DropDownList,
+            SdtControlData::List(vec![
+                SdtListItem {
+                    display: Some("Red".to_owned()),
+                    value: "r".to_owned(),
+                },
+                SdtListItem {
+                    display: None,
+                    value: "b".to_owned(),
+                },
+            ]),
+        ),
+        (
+            SdtControlKind::Date,
+            SdtControlData::Date(SdtDate {
+                full_date: Some("2026-07-26T00:00:00Z".to_owned()),
+                date_format: Some("M/d/yyyy".to_owned()),
+                calendar: Some("gregorian".to_owned()),
+                lid: Some("en-US".to_owned()),
+                store_mapped_as: Some("dateTime".to_owned()),
+            }),
+        ),
+        (
+            SdtControlKind::Checkbox,
+            SdtControlData::Checkbox(SdtCheckbox {
+                checked: true,
+                checked_state: Some(SdtCheckboxSymbol {
+                    val: "2612".to_owned(),
+                    font: Some("MS Gothic".to_owned()),
+                }),
+                unchecked_state: Some(SdtCheckboxSymbol {
+                    val: "2610".to_owned(),
+                    font: Some("MS Gothic".to_owned()),
+                }),
+            }),
+        ),
+    ] {
+        let properties = SdtProperties {
+            control_kind: Some(kind),
+            data: Some(data),
+            ..SdtProperties::default()
+        };
+        let sdt = block_sdt(tid(10), properties, vec![paragraph_block(tid(11))]);
+        let document = table_document(vec![sdt]).unwrap();
+        let reloaded =
+            Document::from_json(&document.to_json().unwrap(), SnapshotLimits::default()).unwrap();
+        assert_eq!(document, reloaded);
+    }
+}
+
+#[test]
+fn sdt_control_data_mismatched_with_kind_is_rejected() {
+    // List entries on a rich-text control are inconsistent and rejected.
+    let properties = SdtProperties {
+        control_kind: Some(SdtControlKind::RichText),
+        data: Some(SdtControlData::List(Vec::new())),
+        ..SdtProperties::default()
+    };
+    let sdt = block_sdt(tid(10), properties, vec![paragraph_block(tid(11))]);
+    assert!(matches!(
+        table_document(vec![sdt]),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "sdt.data.list"
+        })
+    ));
+}
+
+#[test]
+fn oversized_sdt_data_binding_xpath_is_rejected() {
+    let properties = SdtProperties {
+        control_kind: Some(SdtControlKind::PlainText),
+        data_binding: Some(SdtDataBinding {
+            xpath: "x".repeat(1025),
+            store_item_id: None,
+            prefix_mappings: None,
+        }),
+        ..SdtProperties::default()
+    };
+    let sdt = block_sdt(tid(10), properties, vec![paragraph_block(tid(11))]);
+    assert!(matches!(
+        table_document(vec![sdt]),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "sdt.dataBinding.xpath"
+        })
     ));
 }
 

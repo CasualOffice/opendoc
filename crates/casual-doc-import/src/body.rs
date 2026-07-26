@@ -6,15 +6,17 @@ use casual_doc_model::v1::{
     Alignment, BlockNode, BlockSdt, Bookmark, BookmarkEnd, BookmarkId, BookmarkStart, BorderEdge,
     Break, BreakKind, CellVerticalAlignment, Comment, CommentId, CommentReference, DefinitionMap,
     DocGrid, DocGridType, Drawing, EmbeddedKind, EmbeddedObject, EmbeddedPart, Extent,
-    ExternalTarget, Field, HeaderFooterId, HeaderFooterKind, HeaderFooterRef, HeightRule,
-    Hyperlink, HyperlinkTarget, InlineNode, InlineSdt, InternalTarget, MAX_EMU,
-    MAX_FIELD_INSTRUCTION_BYTES, MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH,
-    MAX_TEXTBOX_DEPTH, Math, MediaId, MoveKind, MoveRangeEnd, MoveRangeStart, NoteId, NoteKind,
-    NoteReference, PageMargins, PageNumbering, PageSize, PageVerticalAlignment, Paragraph,
-    ParagraphProperties, Revision, RevisionKind, RgbColor, Run, RunProperties, SdtControlKind,
-    SdtProperties, SectionBoundary, SectionColumns, SectionId, SectionType, StyleKind, Tab,
-    TabAlignment, TabLeader, TabStop, TableLayout, TableOverlap, TextBox, TextDirection,
-    VerticalMerge,
+    ExternalTarget, Field, FormCheckBox, FormCheckBoxSize, FormDropDown, FormFieldData,
+    FormFieldKind, FormTextInput, FormTextType, HeaderFooterId, HeaderFooterKind, HeaderFooterRef,
+    HeightRule, Hyperlink, HyperlinkTarget, InlineNode, InlineSdt, InternalTarget, MAX_EMU,
+    MAX_FIELD_INSTRUCTION_BYTES, MAX_FORM_FIELD_ENTRIES, MAX_FORM_FIELD_STRING_BYTES,
+    MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH, MAX_TEXTBOX_DEPTH, Math, MediaId, MoveKind,
+    MoveRangeEnd, MoveRangeStart, NoteId, NoteKind, NoteReference, PageMargins, PageNumbering,
+    PageSize, PageVerticalAlignment, Paragraph, ParagraphProperties, Revision, RevisionKind,
+    RgbColor, Run, RunProperties, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind,
+    SdtDataBinding, SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionColumns,
+    SectionId, SectionType, StyleKind, Tab, TabAlignment, TabLeader, TabStop, TableLayout,
+    TableOverlap, TextBox, TextDirection, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::events::{BytesStart, Event};
@@ -64,6 +66,8 @@ enum Segment {
     Field {
         instruction: String,
         children: Vec<Segment>,
+        /// Legacy form-field configuration (`w:ffData`), if this field carried one.
+        form: Option<FormFieldData>,
     },
     /// A fully-built text box (its inner ids are already allocated).
     TextBox(TextBox),
@@ -321,6 +325,26 @@ struct FieldAccumulator {
     in_result: bool,
     /// Cached-result segments.
     segments: Vec<Segment>,
+    /// Legacy form-field configuration accumulated from a `w:ffData` block (only
+    /// a complex `fldChar begin` field can carry one). `None` until `w:ffData`
+    /// opens; finalized into `FormFieldData` when the field commits.
+    form: Option<FormFieldBuilder>,
+}
+
+/// A legacy form field's configuration (`w:ffData`) while it is being parsed.
+/// The kind-specific payload is unknown until its `w:textInput` / `w:checkBox` /
+/// `w:ddList` container opens, so `kind` is optional here and required only in
+/// the finalized [`FormFieldData`].
+#[derive(Default)]
+struct FormFieldBuilder {
+    name: Option<String>,
+    enabled: Option<bool>,
+    calc_on_exit: Option<bool>,
+    help_text: Option<String>,
+    status_text: Option<String>,
+    entry_macro: Option<String>,
+    exit_macro: Option<String>,
+    kind: Option<FormFieldKind>,
 }
 
 /// Raw section geometry accumulated while inside a `w:sectPr`.
@@ -403,6 +427,9 @@ struct BodyParser<'a> {
     /// Nesting depth of `<w:fldSimple>` / complex `fldChar` fields, so a
     /// missing/extra delimiter cannot desynchronize field commits.
     field_depth: u32,
+    /// Whether we are inside a legacy form field's `w:ffData` block, so its
+    /// children route onto the open field's `FormFieldBuilder`.
+    in_ffdata: bool,
     /// Whether we are inside a `w:instrText` (its text builds the instruction).
     in_instr: bool,
     /// Buffer for the current `w:instrText` text.
@@ -591,6 +618,7 @@ impl<'a> BodyParser<'a> {
             hyperlink_depth: 0,
             field: None,
             field_depth: 0,
+            in_ffdata: false,
             in_instr: false,
             instr_buffer: String::new(),
             ruby_annotation_depth: 0,
@@ -1311,6 +1339,17 @@ impl BodyParser<'_> {
             b"fldSimple" if self.paragraph_open && !self.run_open => {
                 self.open_simple_field(element);
             }
+            // A legacy form field's `w:ffData` block sits inside a complex field's
+            // `fldChar begin`; it opens a `FormFieldBuilder` on the open field.
+            b"ffData" if self.field.is_some() && !self.in_ffdata => {
+                self.in_ffdata = true;
+                if let Some(field) = self.field.as_mut() {
+                    field.form = Some(FormFieldBuilder::default());
+                }
+            }
+            // Every child of `w:ffData` routes onto the builder (its own children —
+            // `w:textInput`/`w:checkBox`/`w:ddList` payloads — are handled there).
+            _ if self.in_ffdata => self.ffdata_child(local, element),
             b"tab" if self.run_open => self.push_segment(Segment::Tab),
             b"br" if self.run_open => {
                 let kind = break_kind(element);
@@ -1902,14 +1941,154 @@ impl BodyParser<'_> {
                     self.enter_sdt_block()?;
                 }
             }
-            // Recognized `w:sdtPr` type markers set the control kind.
-            b"richText" | b"text" | b"comboBox" | b"dropDownList" | b"date" | b"picture"
-            | b"checkbox" | b"group" | b"repeatingSection" | b"citation" | b"bibliography"
+            // Recognized `w:sdtPr` type markers set the control kind. The
+            // combo/dropdown, date, and checkbox markers additionally open their
+            // control-specific `data`, populated from the child markers below.
+            b"richText" | b"text" | b"picture" | b"group" | b"repeatingSection" | b"citation"
+            | b"bibliography"
                 if self.sdt_prop_depth > 0 =>
             {
                 let kind = sdt_control_kind(local);
                 if let Some(properties) = self.current_sdt_properties() {
                     properties.control_kind = kind;
+                }
+            }
+            b"comboBox" | b"dropDownList" if self.sdt_prop_depth > 0 => {
+                let kind = sdt_control_kind(local);
+                if let Some(properties) = self.current_sdt_properties() {
+                    properties.control_kind = kind;
+                    properties.data = Some(SdtControlData::List(Vec::new()));
+                }
+            }
+            b"date" if self.sdt_prop_depth > 0 => {
+                let full_date = attribute_value(element, b"fullDate")
+                    .filter(|v| !v.is_empty() && v.len() <= 64);
+                if let Some(properties) = self.current_sdt_properties() {
+                    properties.control_kind = Some(SdtControlKind::Date);
+                    properties.data = Some(SdtControlData::Date(SdtDate {
+                        full_date,
+                        ..SdtDate::default()
+                    }));
+                }
+            }
+            b"checkbox" if self.sdt_prop_depth > 0 => {
+                if let Some(properties) = self.current_sdt_properties() {
+                    properties.control_kind = Some(SdtControlKind::Checkbox);
+                    properties.data = Some(SdtControlData::Checkbox(SdtCheckbox::default()));
+                }
+            }
+            // A combo/dropdown choice entry (`w:listItem`): display + value.
+            b"listItem" if self.sdt_prop_depth > 0 => {
+                let display = attribute_value(element, b"displayText")
+                    .filter(|v| !v.is_empty() && v.len() <= 255);
+                let value = attribute_value(element, b"value")
+                    .filter(|v| v.len() <= 255)
+                    .unwrap_or_default();
+                if let Some(SdtControlData::List(items)) = self.current_sdt_data()
+                    && items.len() < 1024
+                {
+                    items.push(SdtListItem { display, value });
+                }
+            }
+            // Date-picker detail children (`w:date`'s format/lid/calendar/mapping).
+            b"dateFormat" if self.sdt_prop_depth > 0 => {
+                let value =
+                    attribute_value(element, b"val").filter(|v| !v.is_empty() && v.len() <= 255);
+                if let Some(SdtControlData::Date(date)) = self.current_sdt_data() {
+                    date.date_format = value;
+                }
+            }
+            b"lid" if self.sdt_prop_depth > 0 => {
+                let value =
+                    attribute_value(element, b"val").filter(|v| !v.is_empty() && v.len() <= 64);
+                if let Some(SdtControlData::Date(date)) = self.current_sdt_data() {
+                    date.lid = value;
+                }
+            }
+            b"calendar" if self.sdt_prop_depth > 0 => {
+                let value =
+                    attribute_value(element, b"val").filter(|v| !v.is_empty() && v.len() <= 64);
+                if let Some(SdtControlData::Date(date)) = self.current_sdt_data() {
+                    date.calendar = value;
+                }
+            }
+            b"storeMappedDataAs" if self.sdt_prop_depth > 0 => {
+                let value =
+                    attribute_value(element, b"val").filter(|v| !v.is_empty() && v.len() <= 64);
+                if let Some(SdtControlData::Date(date)) = self.current_sdt_data() {
+                    date.store_mapped_as = value;
+                }
+            }
+            // Checkbox detail children (`w14:checked`/`w14:checkedState`/`w14:uncheckedState`).
+            b"checked" if self.sdt_prop_depth > 0 => {
+                let on = is_true(attribute_value(element, b"val").as_deref());
+                if let Some(SdtControlData::Checkbox(checkbox)) = self.current_sdt_data() {
+                    checkbox.checked = on;
+                }
+            }
+            b"checkedState" if self.sdt_prop_depth > 0 => {
+                let symbol = sdt_checkbox_symbol(element);
+                if let Some(SdtControlData::Checkbox(checkbox)) = self.current_sdt_data() {
+                    checkbox.checked_state = symbol;
+                }
+            }
+            b"uncheckedState" if self.sdt_prop_depth > 0 => {
+                let symbol = sdt_checkbox_symbol(element);
+                if let Some(SdtControlData::Checkbox(checkbox)) = self.current_sdt_data() {
+                    checkbox.unchecked_state = symbol;
+                }
+            }
+            // The customXML data binding (`w:dataBinding`): `w:xpath` is required;
+            // without it the binding is meaningless, so it is reported and dropped.
+            b"dataBinding" if self.sdt_prop_depth > 0 => {
+                let xpath =
+                    attribute_value(element, b"xpath").filter(|v| !v.is_empty() && v.len() <= 1024);
+                if let Some(xpath) = xpath {
+                    let store_item_id = attribute_value(element, b"storeItemID")
+                        .filter(|v| !v.is_empty() && v.len() <= 128);
+                    let prefix_mappings = attribute_value(element, b"prefixMappings")
+                        .filter(|v| !v.is_empty() && v.len() <= 1024);
+                    if let Some(properties) = self.current_sdt_properties() {
+                        properties.data_binding = Some(SdtDataBinding {
+                            xpath,
+                            store_item_id,
+                            prefix_mappings,
+                        });
+                    }
+                } else {
+                    self.reporter.report(b"dataBinding");
+                }
+            }
+            // The edit-lock behaviour (`w:lock@w:val`); an unknown token is reported.
+            b"lock" if self.sdt_prop_depth > 0 => {
+                match attribute_value(element, b"val").as_deref().map(sdt_lock) {
+                    Some(Some(lock)) => {
+                        if let Some(properties) = self.current_sdt_properties() {
+                            properties.lock = Some(lock);
+                        }
+                    }
+                    _ => self.reporter.report(b"lock"),
+                }
+            }
+            // The placeholder wrapper is a transparent container; its `w:docPart`
+            // child carries the building-block name.
+            b"placeholder" if self.sdt_prop_depth > 0 => {}
+            b"docPart" if self.sdt_prop_depth > 0 => {
+                let value = self.sdt_bounded_value(element, b"placeholder", 255);
+                if let Some(properties) = self.current_sdt_properties() {
+                    properties.placeholder = value;
+                }
+            }
+            b"showingPlcHdr" if self.sdt_prop_depth > 0 => {
+                let on = is_true(attribute_value(element, b"val").as_deref());
+                if let Some(properties) = self.current_sdt_properties() {
+                    properties.showing_placeholder = on;
+                }
+            }
+            b"temporary" if self.sdt_prop_depth > 0 => {
+                let on = is_true(attribute_value(element, b"val").as_deref());
+                if let Some(properties) = self.current_sdt_properties() {
+                    properties.temporary = on;
                 }
             }
             // Both building-block gallery forms collapse to one control kind, so the
@@ -2134,6 +2313,9 @@ impl BodyParser<'_> {
                 }
             }
             b"fldSimple" if self.field_depth > 0 => self.close_field(),
+            // The form field's `w:ffData` block closes; its builder stays on the
+            // open field and is finalized when the field commits.
+            b"ffData" if self.in_ffdata => self.in_ffdata = false,
             b"blipFill" => self.blipfill_depth = self.blipfill_depth.saturating_sub(1),
             b"drawing" if self.drawing_depth > 0 => {
                 self.drawing_depth -= 1;
@@ -2865,6 +3047,119 @@ impl BodyParser<'_> {
         self.segments.push(segment);
     }
 
+    /// Routes one `w:ffData` child element onto the open field's form builder.
+    /// The payload containers (`w:textInput`/`w:checkBox`/`w:ddList`) set the
+    /// builder's kind; their own children (default/type/size/entries/…) mutate
+    /// that payload. Unmodeled children (`w:label`, `w:tabIndex`, a drop-down
+    /// `w:default` index, a child in the wrong payload) are reported so nothing
+    /// is dropped silently.
+    fn ffdata_child(&mut self, local: &[u8], element: &BytesStart<'_>) {
+        let mut unhandled = false;
+        if let Some(field) = self.field.as_mut()
+            && let Some(form) = field.form.as_mut()
+        {
+            match local {
+                b"name" => form.name = ffdata_string(element),
+                b"enabled" => {
+                    form.enabled = Some(is_true(attribute_value(element, b"val").as_deref()));
+                }
+                b"calcOnExit" => {
+                    form.calc_on_exit = Some(is_true(attribute_value(element, b"val").as_deref()));
+                }
+                b"helpText" => form.help_text = ffdata_string(element),
+                b"statusText" => form.status_text = ffdata_string(element),
+                b"entryMacro" => form.entry_macro = ffdata_string(element),
+                b"exitMacro" => form.exit_macro = ffdata_string(element),
+                b"textInput" => {
+                    form.kind = Some(FormFieldKind::TextInput(FormTextInput::default()));
+                }
+                b"checkBox" => {
+                    form.kind = Some(FormFieldKind::CheckBox(FormCheckBox::default()));
+                }
+                b"ddList" => {
+                    form.kind = Some(FormFieldKind::DropDown(FormDropDown::default()));
+                }
+                b"type" => {
+                    if let Some(FormFieldKind::TextInput(text)) = form.kind.as_mut() {
+                        text.text_type = ffdata_text_type(element);
+                    } else {
+                        unhandled = true;
+                    }
+                }
+                b"maxLength" => {
+                    if let Some(FormFieldKind::TextInput(text)) = form.kind.as_mut() {
+                        text.max_length = ffdata_u32(element);
+                    } else {
+                        unhandled = true;
+                    }
+                }
+                b"format" => {
+                    if let Some(FormFieldKind::TextInput(text)) = form.kind.as_mut() {
+                        text.format = ffdata_string(element);
+                    } else {
+                        unhandled = true;
+                    }
+                }
+                b"size" => {
+                    if let Some(FormFieldKind::CheckBox(check)) = form.kind.as_mut() {
+                        check.size = ffdata_u32(element).map(FormCheckBoxSize::Explicit);
+                    } else {
+                        unhandled = true;
+                    }
+                }
+                b"sizeAuto" => {
+                    if let Some(FormFieldKind::CheckBox(check)) = form.kind.as_mut() {
+                        if is_true(attribute_value(element, b"val").as_deref()) {
+                            check.size = Some(FormCheckBoxSize::Auto);
+                        }
+                    } else {
+                        unhandled = true;
+                    }
+                }
+                b"checked" => {
+                    if let Some(FormFieldKind::CheckBox(check)) = form.kind.as_mut() {
+                        check.checked = Some(is_true(attribute_value(element, b"val").as_deref()));
+                    } else {
+                        unhandled = true;
+                    }
+                }
+                b"result" => {
+                    if let Some(FormFieldKind::DropDown(list)) = form.kind.as_mut() {
+                        list.result = ffdata_u32(element);
+                    } else {
+                        unhandled = true;
+                    }
+                }
+                b"listEntry" => {
+                    if let Some(FormFieldKind::DropDown(list)) = form.kind.as_mut() {
+                        if let Some(value) = ffdata_string(element)
+                            && list.entries.len() < MAX_FORM_FIELD_ENTRIES
+                        {
+                            list.entries.push(value);
+                        } else {
+                            unhandled = true;
+                        }
+                    } else {
+                        unhandled = true;
+                    }
+                }
+                // `w:default` is a text-input default string or a checkbox default
+                // state; a drop-down default *index* is not modeled (reported).
+                b"default" => match form.kind.as_mut() {
+                    Some(FormFieldKind::TextInput(text)) => text.default = ffdata_string(element),
+                    Some(FormFieldKind::CheckBox(check)) => {
+                        check.default = Some(is_true(attribute_value(element, b"val").as_deref()));
+                    }
+                    _ => unhandled = true,
+                },
+                _ => unhandled = true,
+            }
+        }
+        if unhandled {
+            self.reporter.report(local);
+        }
+    }
+
     /// Opens a complex field on a `fldChar begin`. A field nested in another
     /// wrapper (field or hyperlink) is not modeled as structure; it is reported
     /// and its result content flattens into the enclosing wrapper.
@@ -2875,6 +3170,7 @@ impl BodyParser<'_> {
                 instruction: String::new(),
                 in_result: false,
                 segments: Vec::new(),
+                form: None,
             });
             self.wrapper_order.push(WrapperKind::Field);
         } else {
@@ -2891,6 +3187,7 @@ impl BodyParser<'_> {
                 instruction,
                 in_result: true,
                 segments: Vec::new(),
+                form: None,
             });
             self.wrapper_order.push(WrapperKind::Field);
         } else {
@@ -2934,9 +3231,33 @@ impl BodyParser<'_> {
                 }
             } else {
                 let children = normalize_segments(field.segments);
+                // Finalize an accumulated `w:ffData` block: it becomes form data
+                // only once its payload kind (`w:textInput`/`w:checkBox`/`w:ddList`)
+                // was seen; a payload-less `w:ffData` is reported so nothing is
+                // lost silently and the field stays a plain field.
+                let form = match field.form {
+                    Some(builder) => match builder.kind {
+                        Some(kind) => Some(FormFieldData {
+                            name: builder.name,
+                            enabled: builder.enabled,
+                            calc_on_exit: builder.calc_on_exit,
+                            help_text: builder.help_text,
+                            status_text: builder.status_text,
+                            entry_macro: builder.entry_macro,
+                            exit_macro: builder.exit_macro,
+                            kind,
+                        }),
+                        None => {
+                            self.reporter.report(b"ffData");
+                            None
+                        }
+                    },
+                    None => None,
+                };
                 self.push_segment(Segment::Field {
                     instruction: field.instruction,
                     children,
+                    form,
                 });
             }
         }
@@ -3100,6 +3421,12 @@ impl BodyParser<'_> {
             SdtScope::Block => self.pending_block_sdt_props.last_mut(),
             SdtScope::Passthrough => None,
         }
+    }
+
+    /// The control-specific `data` of the current open content control, if it was
+    /// opened by a combo/dropdown, date, or checkbox type marker.
+    fn current_sdt_data(&mut self) -> Option<&mut SdtControlData> {
+        self.current_sdt_properties()?.data.as_mut()
     }
 
     /// Reads a `w:sdtPr` marker's bounded `@w:val`. A value that is present but out
@@ -3290,6 +3617,7 @@ impl BodyParser<'_> {
             Segment::Field {
                 instruction,
                 children,
+                form,
             } => {
                 let id = self.next_id()?;
                 let mut inlines = Vec::with_capacity(children.len());
@@ -3300,6 +3628,7 @@ impl BodyParser<'_> {
                     id,
                     instruction,
                     inlines,
+                    form,
                 }))
             }
             Segment::Math { omml, text } => {
@@ -3394,6 +3723,26 @@ impl BodyParser<'_> {
 /// Maps a recognized `w:sdtPr` type-marker element name to a control kind. The
 /// caller guarantees `local` is one of the mapped markers (the building-block
 /// gallery forms `w:docPartObj`/`w:docPartList` are handled separately).
+/// Maps a `w:lock@w:val` token to its `SdtLock`; an unknown token yields `None`.
+fn sdt_lock(value: &str) -> Option<SdtLock> {
+    Some(match value {
+        "unlocked" => SdtLock::Unlocked,
+        "sdtLocked" => SdtLock::SdtLocked,
+        "contentLocked" => SdtLock::ContentLocked,
+        "sdtContentLocked" => SdtLock::SdtContentLocked,
+        _ => return None,
+    })
+}
+
+/// Reads a checkbox state glyph (`w14:checkedState` / `w14:uncheckedState`): a
+/// bounded `w14:val` code point in an optional `w14:font`. A missing/out-of-bound
+/// `val` drops the glyph.
+fn sdt_checkbox_symbol(element: &BytesStart<'_>) -> Option<SdtCheckboxSymbol> {
+    let val = attribute_value(element, b"val").filter(|v| !v.is_empty() && v.len() <= 8)?;
+    let font = attribute_value(element, b"font").filter(|v| !v.is_empty() && v.len() <= 64);
+    Some(SdtCheckboxSymbol { val, font })
+}
+
 fn sdt_control_kind(local: &[u8]) -> Option<SdtControlKind> {
     Some(match local {
         b"richText" => SdtControlKind::RichText,
@@ -3452,6 +3801,31 @@ fn attr_i64(element: &BytesStart<'_>, name: &[u8]) -> Option<i64> {
 /// outermost root first retains the whole equation as one node.
 fn is_math_root(local: &[u8]) -> bool {
     matches!(local, b"oMath" | b"oMathPara")
+}
+
+/// Reads a bounded `w:val` string from a `w:ffData` child (empty is permitted; an
+/// over-long value is dropped so the string bound always holds).
+fn ffdata_string(element: &BytesStart<'_>) -> Option<String> {
+    attribute_value(element, b"val").filter(|value| value.len() <= MAX_FORM_FIELD_STRING_BYTES)
+}
+
+/// Reads a `w:val` unsigned integer from a `w:ffData` child.
+fn ffdata_u32(element: &BytesStart<'_>) -> Option<u32> {
+    attribute_value(element, b"val").and_then(|value| value.parse().ok())
+}
+
+/// Maps a `w:textInput/w:type@w:val` token (`ST_FFTextType`) to a `FormTextType`.
+/// An unknown token yields `None` (the type is left unset).
+fn ffdata_text_type(element: &BytesStart<'_>) -> Option<FormTextType> {
+    match attribute_value(element, b"val").as_deref() {
+        Some("regular") => Some(FormTextType::Regular),
+        Some("number") => Some(FormTextType::Number),
+        Some("date") => Some(FormTextType::Date),
+        Some("currentTime") => Some(FormTextType::CurrentTime),
+        Some("currentDate") => Some(FormTextType::CurrentDate),
+        Some("calculated") => Some(FormTextType::Calculation),
+        _ => None,
+    }
 }
 
 fn is_drawing_scaffolding(local: &[u8]) -> bool {

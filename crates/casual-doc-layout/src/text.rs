@@ -7,6 +7,8 @@
 //! shaper) lands in a following slice, and a `cosmic-text` implementation can be
 //! substituted without touching the paginator (`43-…` §5).
 
+use std::borrow::Cow;
+
 use serde::{Deserialize, Serialize};
 
 use crate::model::ModelRange;
@@ -213,8 +215,10 @@ impl LineLayout {
 /// A styled span of text handed to the shaper (one run of uniform properties).
 #[derive(Clone, Debug)]
 pub struct StyledRun<'a> {
-    /// The run text (UTF-8).
-    pub text: &'a str,
+    /// The run text (UTF-8). Borrowed from the model in the common case; owned
+    /// when a case transform (`w:caps`/`w:smallCaps`) rewrote it, so the transform
+    /// costs an allocation only when it actually applies.
+    pub text: Cow<'a, str>,
     /// The resolved font.
     pub font: FontId,
     /// Font size.
@@ -232,6 +236,11 @@ pub struct StyledRun<'a> {
     /// Text-highlight fill (`w:highlight`) resolved to RGBA, painted behind the
     /// run's glyph box; `None` when unset.
     pub highlight: Option<[u8; 4]>,
+    /// Baseline shift in twips, positive = raised toward the top of the line
+    /// (screen-y grows downward, so the shaper subtracts this from the glyph-run
+    /// origin). Carries `w:vertAlign` super/subscript and the `w:position` offset;
+    /// `Twip::ZERO` for an unshifted run.
+    pub baseline_shift: Twip,
 }
 
 /// Horizontal alignment of a paragraph's lines.
