@@ -10,8 +10,8 @@ use casual_doc_model::v1::{Alignment, RgbColor};
 use casual_doc_model::v1::{
     BlockNode, BorderEdge, CellMargins, CellVerticalAlignment, GridColumn, HeightRule,
     MAX_TABLE_DEPTH, Paragraph, ParagraphProperties, Table, TableBorders, TableCell,
-    TableCellProperties, TableLayout, TableOverlap, TableProperties, TableRow, TableRowProperties,
-    TextDirection, VerticalMerge,
+    TableCellProperties, TableFloatPosition, TableLayout, TableOverlap, TableProperties, TableRow,
+    TableRowProperties, TextDirection, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 
@@ -264,6 +264,13 @@ impl TableStack {
     pub(crate) fn set_table_overlap(&mut self, overlap: TableOverlap) {
         if let Some(properties) = self.table_properties() {
             properties.overlap = Some(overlap);
+        }
+    }
+
+    /// Sets the floating-table position (`w:tblpPr`).
+    pub(crate) fn set_table_float_position(&mut self, position: TableFloatPosition) {
+        if let Some(properties) = self.table_properties() {
+            properties.float_position = Some(position);
         }
     }
 
