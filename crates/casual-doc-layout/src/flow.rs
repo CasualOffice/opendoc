@@ -289,8 +289,19 @@ pub fn build_galley_cached(
             BlockNode::Table(table) => {
                 flow_table(table, shaper, content_width, &mut galley, &mut ctx)
             }
-            BlockNode::Sdt(_) => {}
-            // An alt chunk's aggregated external content is not laid out here.
+            BlockNode::Sdt(sdt) => {
+                // A block-level content control (`w:sdt`) is a transparent
+                // wrapper: its child blocks flow exactly as if the wrapper
+                // weren't there. Recurse through the shared block-flow path so
+                // the children's fragments — carrying their own NodeIds, so
+                // hit-testing and the editing bridge still resolve — reach the
+                // galley. The wrapper itself contributes no box. (These recursed
+                // children are not paragraph-cached, but block SDTs are rare.)
+                galley.extend(flow_blocks(&sdt.blocks, shaper, content_width, &mut ctx));
+            }
+            // TODO(altchunk): embedded part not yet flowed. The model carries no
+            // already-imported fallback blocks (only an opaque part reference),
+            // so there is nothing to recurse and we reserve no space.
             BlockNode::AltChunk(_) => {}
         }
     }
@@ -496,8 +507,14 @@ fn flow_blocks(
                 });
             }
             BlockNode::Table(table) => flow_table(table, shaper, width, &mut galley, ctx),
-            BlockNode::Sdt(_) => {}
-            // An alt chunk's aggregated external content is not laid out here.
+            BlockNode::Sdt(sdt) => {
+                // Transparent wrapper (see the body loop): flow its children
+                // through this same path so SDTs inside table cells / nested
+                // contexts also flow. Nested SDTs recurse naturally.
+                galley.extend(flow_blocks(&sdt.blocks, shaper, width, ctx));
+            }
+            // TODO(altchunk): embedded part not yet flowed (no fallback blocks
+            // in the model to recurse; reserves nothing).
             BlockNode::AltChunk(_) => {}
         }
     }
@@ -912,8 +929,14 @@ fn block_intrinsic(blocks: &[BlockNode], shaper: &dyn LineShaper, ctx: &FlowCtx)
                 min = min.max(grid);
                 preferred = preferred.max(grid);
             }
-            BlockNode::Sdt(_) => {}
-            // An alt chunk contributes no laid-out width.
+            BlockNode::Sdt(sdt) => {
+                // Transparent wrapper: its children contribute their own
+                // intrinsic widths, mirroring how they flow.
+                let (m, p) = block_intrinsic(&sdt.blocks, shaper, ctx);
+                min = min.max(m);
+                preferred = preferred.max(p);
+            }
+            // TODO(altchunk): embedded part not yet flowed; contributes no width.
             BlockNode::AltChunk(_) => {}
         }
     }
@@ -2373,6 +2396,56 @@ mod tests {
             BlockFragment::Paragraph { lines, .. } => lines,
             BlockFragment::TableRow { .. } => panic!("expected a paragraph fragment"),
         }
+    }
+
+    #[test]
+    fn a_block_sdt_flows_its_children_at_nonzero_height() {
+        use casual_doc_model::v1::{BlockSdt, SdtProperties};
+        // A block-level content control wrapping two paragraphs. It is a
+        // transparent wrapper: layout must recurse into its children rather than
+        // dropping the whole subtree at zero height (the TOC/form-control bug).
+        let sdt = BlockNode::Sdt(BlockSdt {
+            id: NodeId::from_parts(20, 1).unwrap(),
+            properties: SdtProperties::default(),
+            blocks: vec![
+                paragraph(
+                    21,
+                    vec![run_node(22, "inside one", RunProperties::default())],
+                ),
+                paragraph(
+                    23,
+                    vec![run_node(24, "inside two", RunProperties::default())],
+                ),
+            ],
+        });
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&document(vec![sdt]), &shaper, Twip::from_points(400));
+        // Both child paragraphs produce fragments...
+        assert_eq!(
+            galley.len(),
+            2,
+            "the block SDT's two child paragraphs each flow to a fragment"
+        );
+        // ...each carrying its own NodeId (the wrapper contributes no box, so
+        // hit-testing/editing still resolve to the child ids)...
+        let ids: Vec<NodeId> = galley
+            .iter()
+            .map(|f| match f {
+                BlockFragment::Paragraph { id, .. } => *id,
+                BlockFragment::TableRow { .. } => panic!("expected paragraph fragments"),
+            })
+            .collect();
+        assert_eq!(
+            ids,
+            vec![
+                NodeId::from_parts(21, 1).unwrap(),
+                NodeId::from_parts(23, 1).unwrap()
+            ],
+            "child NodeIds are preserved, not rewritten"
+        );
+        // ...at non-zero height (the fix: previously the whole SDT was dropped).
+        let total: i32 = galley.iter().map(|f| f.height().raw()).sum();
+        assert!(total > 0, "the SDT's children occupy real vertical space");
     }
 
     #[test]
