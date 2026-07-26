@@ -405,6 +405,75 @@ mod semantic_tests {
         assert_eq!(m1, m2, "the model survives write -> reopen unchanged");
     }
 
+    /// The complex-script run properties (P1F-37): `w:bCs`/`w:iCs`/`w:szCs`. A run
+    /// carrying all three must import them to the dedicated CS fields (independent
+    /// of the Latin `w:b`/`w:i`/`w:sz`) and survive write -> reopen unchanged; the
+    /// `w:iCs w:val="0"` explicit-off must be preserved (tri-state).
+    #[test]
+    fn complex_script_run_properties_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, InlineNode};
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:r><w:rPr>
+                <w:b/><w:bCs/><w:i w:val="0"/><w:iCs w:val="0"/>
+                <w:sz w:val="24"/><w:szCs w:val="32"/>
+            </w:rPr><w:t>bidi text</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(
+            m1, m2,
+            "the complex-script run properties survive write -> reopen unchanged"
+        );
+
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Run(run) = &paragraph.inlines[0] else {
+            panic!("expected a run");
+        };
+        // The three CS toggles/size are populated and independent of their Latin
+        // counterparts (the Latin `w:i` is off; the CS `w:iCs` is an explicit off).
+        assert_eq!(run.properties.bold, Some(true));
+        assert_eq!(run.properties.bold_complex, Some(true));
+        assert_eq!(run.properties.italic, Some(false));
+        assert_eq!(run.properties.italic_complex, Some(false));
+        assert_eq!(run.properties.size_half_points, Some(24));
+        assert_eq!(run.properties.size_complex_half_points, Some(32));
+    }
+
+    /// Additive omission: a run with only the Latin `w:b`/`w:i`/`w:sz` (no CS
+    /// properties) leaves the CS fields `None` and emits no `w:bCs`/`w:iCs`/`w:szCs`
+    /// — a document that never used them is written exactly as before.
+    #[test]
+    fn absent_complex_script_run_properties_are_not_emitted() {
+        use casual_doc_model::v1::{BlockNode, InlineNode};
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:r><w:rPr><w:b/><w:i/><w:sz w:val="24"/></w:rPr><w:t>plain</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Run(run) = &paragraph.inlines[0] else {
+            panic!("expected a run");
+        };
+        assert_eq!(run.properties.bold_complex, None);
+        assert_eq!(run.properties.italic_complex, None);
+        assert_eq!(run.properties.size_complex_half_points, None);
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+        let document_xml = package.read_part("word/document.xml").unwrap();
+        let document_xml = std::str::from_utf8(&document_xml).unwrap();
+        assert!(!document_xml.contains("w:bCs"), "no w:bCs emitted");
+        assert!(!document_xml.contains("w:iCs"), "no w:iCs emitted");
+        assert!(!document_xml.contains("w:szCs"), "no w:szCs emitted");
+
+        let m2 = reopen(&bytes);
+        assert_eq!(m1, m2, "the CS-free run survives write -> reopen unchanged");
+    }
+
     #[test]
     fn omml_math_survives_the_semantic_round_trip() {
         // A paragraph with a run, an opaque equation (`m:oMathPara`), and a

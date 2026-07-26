@@ -786,9 +786,18 @@ pub struct RunProperties {
     /// Bold.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bold: Option<bool>,
+    /// Complex-script bold (`w:bCs`): the bold toggle applied to complex-script
+    /// (bidirectional) runs — Arabic/Hebrew/Thai text — independent of the Latin
+    /// `bold` above.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bold_complex: Option<bool>,
     /// Italic.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub italic: Option<bool>,
+    /// Complex-script italic (`w:iCs`): the italic toggle applied to
+    /// complex-script (bidirectional) runs, independent of the Latin `italic`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub italic_complex: Option<bool>,
     /// Underline.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub underline: Option<bool>,
@@ -801,6 +810,10 @@ pub struct RunProperties {
     /// Font size in half-points.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size_half_points: Option<u32>,
+    /// Complex-script font size in half-points (`w:szCs`): the size applied to
+    /// complex-script (bidirectional) runs, independent of `size_half_points`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_complex_half_points: Option<u32>,
     /// Font reference (the `w:rFonts@ascii`/`@asciiTheme` slot).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub font_ref: Option<FontRef>,
