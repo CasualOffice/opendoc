@@ -199,7 +199,7 @@ jobs:
         with:
           toolchain: 1.96.0
       - name: Install cargo-deny
-        uses: taiki-e/install-action@7572810d7dd469b651bb7793945692cf78da5dd7
+        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
         with:
           tool: cargo-deny@0.20.2
           fallback: none
@@ -210,7 +210,7 @@ jobs:
           cargo deny --manifest-path fuzz/Cargo.toml --locked
           check bans licenses sources
       - name: Install cargo-audit
-        uses: taiki-e/install-action@7572810d7dd469b651bb7793945692cf78da5dd7
+        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
         with:
           tool: cargo-audit@0.22.2
           fallback: none
