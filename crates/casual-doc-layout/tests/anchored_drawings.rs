@@ -15,16 +15,18 @@ use casual_doc_layout::compose::compose_page;
 use casual_doc_layout::display::PaintItem;
 use casual_doc_layout::flow::{build_galley, build_galley_cached, flow_header_footer};
 use casual_doc_layout::incremental::{DirtySet, GalleyCache};
-use casual_doc_layout::paginate::{PageConfig, paginate};
+use casual_doc_layout::page::{AnchorContent, Page};
+use casual_doc_layout::paginate::{PageConfig, paginate, resolve_anchored_fields, resolve_fields};
 use casual_doc_layout::running::{
     HeaderFooter as RunningBand, RunningContent, place_running_content,
 };
 use casual_doc_layout::shape::ParleyShaper;
+use casual_doc_layout::text::FieldKind;
 use casual_doc_layout::units::{Point, Size, Twip};
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     AnchorHorizontal, AnchorVertical, AnchoredDrawing, BlockNode, CellVerticalAlignment,
-    DefinitionMap, Definitions, Document, DrawingAnchor, Extent, GridColumn,
+    DefinitionMap, Definitions, Document, DrawingAnchor, Extent, Field, GridColumn,
     HeaderFooter as ModelHeaderFooter, HeaderFooterId, HeightRule, HorizontalAnchor,
     HorizontalPosition, InlineNode, MediaId, MediaReference, Paragraph, ParagraphProperties,
     RowHeight, Run, RunProperties, SectionId, Table, TableCell, TableCellProperties,
@@ -1009,5 +1011,227 @@ fn a_group_paints_children_in_document_order_with_the_picture_at_its_own_extent(
         kinds,
         vec!["rect", "image", "rect"],
         "children paint in document order: a rectangle behind the picture, one in front"
+    );
+}
+
+// --- Footer page-number fields inside text boxes (SDS regression) ----------
+
+/// A field inline node carrying a *stale* cached result — the baked value Word
+/// wrote into the file that the field pass must overwrite with the live value.
+fn field(id: u64, instruction: &str, cached: &str) -> InlineNode {
+    InlineNode::Field(Field {
+        id: node(id),
+        instruction: instruction.to_owned(),
+        inlines: vec![run(id + 1, cached)],
+        form: None,
+    })
+}
+
+/// Collects the resolved `PAGE`/`NUMPAGES` marker values from a slice of flowed
+/// block fragments, recursing into table cells and inline text boxes.
+fn collect_field_values(
+    blocks: &[BlockFragment],
+    page: &mut Option<String>,
+    numpages: &mut Option<String>,
+) {
+    for block in blocks {
+        match block {
+            BlockFragment::Paragraph { lines, .. } => {
+                for line in &lines.lines {
+                    for marker in &line.fields {
+                        match marker.kind {
+                            FieldKind::Page => *page = Some(marker.value.clone()),
+                            FieldKind::NumPages => *numpages = Some(marker.value.clone()),
+                            FieldKind::Passthrough => {}
+                        }
+                    }
+                    for text_box in &line.text_boxes {
+                        collect_field_values(&text_box.blocks, page, numpages);
+                    }
+                }
+            }
+            BlockFragment::TableRow { cells, .. } => {
+                for cell in cells {
+                    collect_field_values(&cell.blocks, page, numpages);
+                }
+            }
+        }
+    }
+}
+
+/// The `(PAGE, NUMPAGES)` values resolved inside `page`'s anchored (floating) text
+/// boxes.
+fn anchored_field_values(page: &Page) -> (Option<String>, Option<String>) {
+    let mut page_value = None;
+    let mut numpages = None;
+    for anchor in &page.anchored {
+        if let AnchorContent::TextBox { blocks, .. } = &anchor.content {
+            collect_field_values(blocks, &mut page_value, &mut numpages);
+        }
+    }
+    (page_value, numpages)
+}
+
+/// Builds a two-page document whose footer holds a *floating* text box carrying
+/// `page_instr` (a `PAGE` field, possibly with a format switch) and a `NUMPAGES`
+/// field — exactly the SDS corpus shape (a positioned `v:textbox` with complex
+/// fields) — then runs the full post-pagination pipeline, including
+/// [`resolve_anchored_fields`]. Returns the paginated layout.
+fn footer_text_box_layout(page_instr: &str) -> casual_doc_layout::page::PaginatedLayout {
+    let definitions = media_defs().1;
+    let mut definitions = definitions;
+
+    // The page number lives INSIDE a floating text box, with stale cached results
+    // ("99") baked in — the bug is that these were shown verbatim on every page.
+    let footer_box = InlineNode::TextBox(TextBox {
+        id: node(400),
+        anchor: Some(page_anchor(2_743_200, 9_144_000)),
+        relative_height: Some(1),
+        extent: Some(Extent {
+            width_emu: 914_400,
+            height_emu: 228_600,
+        }),
+        fill: None,
+        border: None,
+        blocks: vec![BlockNode::Paragraph(Paragraph {
+            id: node(410),
+            properties: ParagraphProperties::default(),
+            inlines: vec![
+                field(420, page_instr, "99"),
+                run(430, " / "),
+                field(440, " NUMPAGES ", "99"),
+            ],
+        })],
+    });
+    let footer_para = BlockNode::Paragraph(Paragraph {
+        id: node(390),
+        properties: ParagraphProperties::default(),
+        inlines: vec![footer_box],
+    });
+    definitions.footers.insert(
+        HeaderFooterId::new(node(380)),
+        ModelHeaderFooter {
+            blocks: vec![footer_para.clone()],
+        },
+    );
+
+    // A two-page body (a forced page break) so the page number differs per page.
+    let body = vec![
+        BlockNode::Paragraph(Paragraph {
+            id: node(10),
+            properties: ParagraphProperties::default(),
+            inlines: vec![run(11, "page one")],
+        }),
+        BlockNode::Paragraph(Paragraph {
+            id: node(20),
+            properties: ParagraphProperties {
+                page_break_before: true,
+                ..ParagraphProperties::default()
+            },
+            inlines: vec![run(21, "page two")],
+        }),
+    ];
+    let doc = Document::new(node(1), body, definitions).unwrap();
+
+    let shaper = ParleyShaper::new();
+    let mut cfg = config();
+    let footer = flow_header_footer(&doc, &[footer_para], &shaper, cfg.content_area().size.width);
+    let running = RunningContent {
+        footer: RunningBand {
+            default: footer,
+            ..RunningBand::default()
+        },
+        ..RunningContent::default()
+    };
+    cfg.footer_height = running.footer.band_height();
+    let galley = build_galley(&doc, &shaper, cfg.content_area().size.width);
+    let mut layout = paginate(&galley, &cfg);
+    place_running_content(&mut layout, &running, &cfg);
+    resolve_fields(&mut layout, &shaper);
+    place_floats(&mut layout, &doc, &shaper, &cfg);
+    resolve_anchored_fields(&mut layout, &shaper);
+    layout
+}
+
+#[test]
+fn a_page_field_in_a_footer_text_box_resolves_per_page() {
+    let layout = footer_text_box_layout(" PAGE ");
+    assert_eq!(layout.pages.len(), 2);
+    // The floating footer box repeats on every page, and its PAGE field shows the
+    // current page (never the stale cached "99"); NUMPAGES shows the true total.
+    assert_eq!(
+        anchored_field_values(&layout.pages[0]),
+        (Some("1".to_owned()), Some("2".to_owned())),
+        "page 1 footer box shows 1 / 2"
+    );
+    assert_eq!(
+        anchored_field_values(&layout.pages[1]),
+        (Some("2".to_owned()), Some("2".to_owned())),
+        "page 2 footer box shows 2 / 2"
+    );
+}
+
+#[test]
+fn a_mergeformat_switched_page_field_in_a_footer_text_box_resolves() {
+    // Word commonly writes `PAGE \* MERGEFORMAT`; the switch must not defeat field
+    // classification — the leading keyword still resolves to the live page number.
+    let layout = footer_text_box_layout("PAGE  \\* MERGEFORMAT");
+    assert_eq!(layout.pages.len(), 2);
+    assert_eq!(
+        anchored_field_values(&layout.pages[0]).0,
+        Some("1".to_owned()),
+        "a MERGEFORMAT-switched PAGE resolves on page 1"
+    );
+    assert_eq!(
+        anchored_field_values(&layout.pages[1]).0,
+        Some("2".to_owned()),
+        "a MERGEFORMAT-switched PAGE resolves on page 2"
+    );
+}
+
+#[test]
+fn a_page_field_in_an_inline_text_box_resolves() {
+    // An INLINE text box (no anchor) flows onto a line; its PAGE field must resolve
+    // through the ordinary field pass, which now recurses into inline text boxes.
+    let inline_box = InlineNode::TextBox(TextBox {
+        id: node(50),
+        anchor: None,
+        relative_height: None,
+        extent: None,
+        fill: None,
+        border: None,
+        blocks: vec![BlockNode::Paragraph(Paragraph {
+            id: node(51),
+            properties: ParagraphProperties::default(),
+            inlines: vec![field(52, " PAGE ", "99")],
+        })],
+    });
+    let para = BlockNode::Paragraph(Paragraph {
+        id: node(10),
+        properties: ParagraphProperties::default(),
+        inlines: vec![run(11, "Body "), inline_box],
+    });
+    let doc = Document::new(node(1), vec![para], media_defs().1).unwrap();
+
+    let shaper = ParleyShaper::new();
+    let cfg = config();
+    let galley = build_galley(&doc, &shaper, cfg.content_area().size.width);
+    let mut layout = paginate(&galley, &cfg);
+    resolve_fields(&mut layout, &shaper);
+
+    // Read the PAGE marker off the inline text box on the body fragment's line.
+    let mut page_value = None;
+    let mut numpages = None;
+    for placed in &layout.pages[0].placed {
+        collect_field_values(
+            std::slice::from_ref(&placed.fragment),
+            &mut page_value,
+            &mut numpages,
+        );
+    }
+    assert_eq!(
+        page_value,
+        Some("1".to_owned()),
+        "an inline text box's PAGE field resolves to the current page, not the cached 99"
     );
 }

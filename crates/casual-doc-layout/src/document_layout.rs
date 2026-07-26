@@ -41,7 +41,7 @@ use crate::columns::{
     ColumnLayout, SectionRun, column_layout, paginate_columns, section_starts_new_page,
 };
 use crate::flow::{build_galley_for_blocks, flow_header_footer};
-use crate::paginate::{PageConfig, resolve_fields};
+use crate::paginate::{PageConfig, resolve_anchored_fields, resolve_fields};
 use crate::running::{HeaderFooter, RunningContent, place_running_content};
 use crate::units::{Size, Twip};
 use casual_doc_model::v1::SectionId;
@@ -329,6 +329,10 @@ pub fn paginate_document(
     // groups, over body AND header/footer bands, each resolved to a rect + z-key
     // for the float layer to paint in order.
     place_floats(&mut layout, document, shaper, &config);
+    // A floating text box (e.g. the SDS footer's positioned `v:textbox` page-number
+    // box) can itself hold `PAGE`/`NUMPAGES` fields; resolve them now that the
+    // floats — and their flowed block content — exist on each page.
+    resolve_anchored_fields(&mut layout, shaper);
 
     layout
 }
