@@ -36,7 +36,7 @@
 
 use casual_doc_model::v1::{BlockNode, Document, HeaderFooterKind, SectionBoundary};
 
-use crate::anchor::place_floats;
+use crate::anchor::{header_float_reserve, place_floats};
 use crate::columns::{
     ColumnLayout, SectionRun, column_layout, paginate_columns, section_starts_new_page,
 };
@@ -310,7 +310,13 @@ pub fn paginate_document(
 
     let running = build_running_content(document, shaper, content_width);
     let (header_height, footer_height) = running.band_heights();
-    config.header_height = header_height;
+    // Positioned header floats (e.g. the SDS's VML title/version/date text boxes)
+    // are placed after pagination and so add nothing to the flowed band height;
+    // reserve the header band up to their painted extent so the body starts below
+    // them (`body_top = max(margin_top, header_distance + header_height)`) instead
+    // of colliding with them.
+    let header_float = header_float_reserve(document, shaper, &config);
+    config.header_height = header_height.max(header_float);
     config.footer_height = footer_height;
 
     // Build one paginated run per section, each flowed at its own column width,

@@ -83,6 +83,169 @@ pub fn place_floats(
     }
 }
 
+/// The header band height needed so the body content clears the section's
+/// **positioned header floats** — the VML/DrawingML text boxes and images anchored
+/// in the header part (the Chinese SDS positions its title/version/date boxes there
+/// with page-relative offsets that reach *past* the top margin). Those floats are
+/// placed by [`place_floats`] **after** pagination and so contribute nothing to the
+/// flowed [`RunningContent::band_heights`](crate::running::RunningContent::band_heights);
+/// without this the body starts at `margin_top` and collides with them.
+///
+/// Returns the extra header-band height to reserve, i.e. `max(0, extent -
+/// header_distance)` where `extent` is the lowest painted bottom edge of any header
+/// float (a text box uses the taller of its box and its *flowed* content, so an
+/// overflowing box still reserves its true extent). Feeding this into
+/// `PageConfig::header_height` makes `body_top = max(margin_top, header_distance +
+/// header_height)` cover the header content extent (Word's geometry). Zero for a
+/// document whose header has no positioned float (the common case), so it never
+/// perturbs an ordinary header/footer document.
+#[must_use]
+pub fn header_float_reserve(
+    document: &Document,
+    shaper: &dyn LineShaper,
+    config: &PageConfig,
+) -> Twip {
+    let Some(section) = document.definitions().sections.first() else {
+        return Twip::ZERO;
+    };
+    let defs = document.definitions();
+    let ctx = FloatCtx {
+        document,
+        shaper,
+        config,
+        order: 0,
+    };
+    // Header floats resolve their `paragraph`/`line` anchors against the header
+    // band; `page`/`margin` anchors ignore it. Using the band rect (anchored at
+    // `header_distance`, before its own height is known) is exact for the common
+    // page-relative header boxes and a safe reference for the rest. The band is a
+    // document-first-section reservation, so it resolves against the document
+    // geometry (the first section owns the header definition).
+    let geometry = AnchorGeometry::from_config(config);
+    let refs = AnchorRefs::new(geometry, config.header_band(), geometry.margin_box());
+    let mut bottom = Twip::ZERO;
+    for reference in &section.headers {
+        if let Some(hf) = defs.headers.get(&reference.reference) {
+            for block in &hf.blocks {
+                float_extent_block(&ctx, block, &refs, &mut bottom);
+            }
+        }
+    }
+    Twip((bottom.raw() - config.header_distance.raw()).max(0))
+}
+
+/// Accumulates the lowest painted bottom of the positioned floats in one header
+/// block (recursing tables/SDT) into `bottom`.
+fn float_extent_block(ctx: &FloatCtx<'_>, block: &BlockNode, refs: &AnchorRefs, bottom: &mut Twip) {
+    match block {
+        BlockNode::Paragraph(para) => float_extent_inlines(ctx, &para.inlines, refs, bottom),
+        BlockNode::Table(table) => {
+            for row in &table.rows {
+                for cell in &row.cells {
+                    for nested in &cell.blocks {
+                        float_extent_block(ctx, nested, refs, bottom);
+                    }
+                }
+            }
+        }
+        BlockNode::Sdt(sdt) => {
+            for nested in &sdt.blocks {
+                float_extent_block(ctx, nested, refs, bottom);
+            }
+        }
+        BlockNode::AltChunk(_) => {}
+    }
+}
+
+/// Accumulates the lowest painted bottom of the positioned floats among `inlines`.
+fn float_extent_inlines(
+    ctx: &FloatCtx<'_>,
+    inlines: &[InlineNode],
+    refs: &AnchorRefs,
+    bottom: &mut Twip,
+) {
+    for inline in inlines {
+        match inline {
+            InlineNode::AnchoredDrawing(drawing) => {
+                let rect = resolve_anchor_rect(&drawing.anchor, drawing.extent, refs);
+                *bottom = (*bottom).max(rect.bottom());
+            }
+            InlineNode::TextBox(text_box) if text_box.anchor.is_some() => {
+                let anchor = text_box.anchor.expect("guarded");
+                let extent = text_box.extent.unwrap_or(Extent {
+                    width_emu: 0,
+                    height_emu: 0,
+                });
+                let rect = resolve_anchor_rect(&anchor, extent, refs);
+                // Flow the box exactly as `place_floats` does, so the reserved
+                // extent matches what will paint.
+                let flowed = flow_anchored_text_box(
+                    ctx.document,
+                    &text_box.blocks,
+                    ctx.shaper,
+                    rect.size,
+                    &text_box.body_properties,
+                );
+                // The painted bottom is the box bottom, or — when the box does not
+                // clip vertically and its content overflows (the SDS version box is
+                // one line taller than its authored height) — the content bottom,
+                // which paints past the box (`compose` places it at
+                // `rect.origin + content_layout.origin`, unclipped).
+                let mut painted = rect.origin.y + flowed.size.height;
+                if !flowed.content_layout.clip_vertical {
+                    let content_h = flowed
+                        .blocks
+                        .iter()
+                        .map(BlockFragment::height)
+                        .fold(Twip::ZERO, |a, h| a + h);
+                    painted =
+                        painted.max(rect.origin.y + flowed.content_layout.origin.y + content_h);
+                }
+                *bottom = (*bottom).max(painted);
+            }
+            InlineNode::Group(group) => {
+                if let Some(anchor) = group.anchor {
+                    let origin = resolve_anchor_rect(&anchor, group.extent, refs).origin;
+                    let mapper = GroupMapper::root(group);
+                    group_extent_children(group, origin, &mapper, bottom);
+                }
+            }
+            InlineNode::Hyperlink(link) => float_extent_inlines(ctx, &link.inlines, refs, bottom),
+            InlineNode::Field(field) => float_extent_inlines(ctx, &field.inlines, refs, bottom),
+            InlineNode::Revision(rev) => float_extent_inlines(ctx, &rev.inlines, refs, bottom),
+            InlineNode::Sdt(sdt) => float_extent_inlines(ctx, &sdt.inlines, refs, bottom),
+            _ => {}
+        }
+    }
+}
+
+/// Accumulates the lowest bottom of a group's children (sized by their own extent,
+/// composing nested-group transforms) into `bottom`.
+fn group_extent_children(
+    group: &WordprocessingGroup,
+    origin: Point,
+    mapper: &GroupMapper,
+    bottom: &mut Twip,
+) {
+    for child in &group.children {
+        match child {
+            GroupChild::Picture(p) => {
+                *bottom = (*bottom).max(mapper.child_rect(origin, p.offset, p.extent).bottom());
+            }
+            GroupChild::TextBox(t) => {
+                *bottom = (*bottom).max(mapper.child_rect(origin, t.offset, t.extent).bottom());
+            }
+            GroupChild::Shape(s) => {
+                *bottom = (*bottom).max(mapper.child_rect(origin, s.offset, s.extent).bottom());
+            }
+            GroupChild::Group(nested) => {
+                let nested_mapper = mapper.compose(nested);
+                group_extent_children(nested, origin, &nested_mapper, bottom);
+            }
+        }
+    }
+}
+
 /// The shared context threaded through the float walk.
 struct FloatCtx<'a> {
     document: &'a Document,
