@@ -20,15 +20,16 @@ use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, AppProperties, BlockNode, BorderEdge,
     BreakKind, CellVerticalAlignment, Color, ColorScheme, Comment, CommentId, CoreProperties,
     CustomProperty, CustomValue, DefinitionMap, Definitions, DocGridType, Document,
-    DocumentDefaults, DocumentSettings, EmphasisMark, Extent, FontCollection, FontDescriptor,
-    FontFamilyKind, FontPitch, FontRef, FontScheme, HeaderFooterId, HeaderFooterKind, HeightRule,
-    HighlightColor, HyperlinkTarget, InlineNode, MediaId, MediaReference, Note, NoteId, NoteKind,
-    NumberingInstance, NumberingInstanceId, PageVerticalAlignment, ParagraphProperties,
+    DocumentDefaults, DocumentProtectionEdit, DocumentSettings, EmphasisMark, Extent,
+    FontCollection, FontDescriptor, FontFamilyKind, FontPitch, FontRef, FontScheme, HeaderFooterId,
+    HeaderFooterKind, HeightRule, HighlightColor, HyperlinkTarget, InlineNode, LevelJustification,
+    LevelSuffix, MediaId, MediaReference, Note, NoteId, NoteKind, NumberFormat, NumberingInstance,
+    NumberingInstanceId, NumberingLevel, PageVerticalAlignment, ParagraphProperties, ProofState,
     RevisionKind, RgbColor, RunFontHint, RunProperties, SchemeColor, SdtControlKind, SdtProperties,
     SectionBoundary, SectionType, Style, StyleId, StyleKind, TabAlignment, TabLeader, Table,
     TableBorders, TableCell, TableCellProperties, TableLayout, TableOverlap, TableProperties,
     TableRow, TableRowProperties, TextDirection, ThemeFontRef, VerticalAlignment, VerticalMerge,
-    VerticalTextAlignment,
+    VerticalTextAlignment, Zoom, ZoomMode,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -1384,28 +1385,135 @@ fn styles_xml(
     Ok(finish(w))
 }
 
-/// Emits `word/settings.xml` with the modeled `CT_OnOff` flags. Only the
-/// non-default flags are written (each present element means `true`), so the
-/// part appears exactly when the model carries a setting to preserve. Emitted
-/// only when `settings.is_default()` is false, matching the importer, which
-/// reads the same flags back — so the round trip is exact.
+/// Emits `word/settings.xml` with the modeled settings, in `CT_Settings` schema
+/// order so the part is valid WordprocessingML. Each field is emitted only when
+/// it departs from the default, and the importer reads the same shapes back — so
+/// the round trip is a fixed point. Emitted only when `settings.is_default()` is
+/// false, matching the importer.
 fn settings_xml(settings: &DocumentSettings) -> Result<Vec<u8>, ExportError> {
     let mut w = new_writer();
     let mut root = start("w:settings");
     root.push_attribute(("xmlns:w", W_NS));
     w.write_event(Event::Start(root)).map_err(pkg)?;
+    if let Some(protection) = &settings.write_protection {
+        let mut el = start("w:writeProtection");
+        if protection.recommended {
+            el.push_attribute(("w:recommended", "1"));
+        }
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    write_zoom(&mut w, &settings.zoom)?;
     for (name, on) in [
-        ("w:embedSystemFonts", settings.embed_system_fonts),
         ("w:embedTrueTypeFonts", settings.embed_true_type_fonts),
+        ("w:embedSystemFonts", settings.embed_system_fonts),
         ("w:saveSubsetFonts", settings.save_subset_fonts),
     ] {
         if on {
             w.write_event(Event::Empty(start(name))).map_err(pkg)?;
         }
     }
+    if settings.mirror_margins {
+        w.write_event(Event::Empty(start("w:mirrorMargins")))
+            .map_err(pkg)?;
+    }
+    if !settings.proof_state.is_empty() {
+        let mut el = start("w:proofState");
+        if let Some(state) = settings.proof_state.spelling {
+            el.push_attribute(("w:spelling", proof_state_token(state)));
+        }
+        if let Some(state) = settings.proof_state.grammar {
+            el.push_attribute(("w:grammar", proof_state_token(state)));
+        }
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if settings.track_changes {
+        w.write_event(Event::Empty(start("w:trackChanges")))
+            .map_err(pkg)?;
+    }
+    if let Some(protection) = &settings.document_protection {
+        let mut el = start("w:documentProtection");
+        el.push_attribute(("w:edit", protection_edit_token(protection.edit)));
+        if protection.enforcement {
+            el.push_attribute(("w:enforcement", "1"));
+        }
+        if protection.formatting {
+            el.push_attribute(("w:formatting", "1"));
+        }
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(value) = settings.default_tab_stop {
+        let mut el = start("w:defaultTabStop");
+        el.push_attribute(("w:val", value.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if settings.even_and_odd_headers {
+        w.write_event(Event::Empty(start("w:evenAndOddHeaders")))
+            .map_err(pkg)?;
+    }
+    if let Some(style) = &settings.default_table_style {
+        let mut el = start("w:defaultTableStyle");
+        el.push_attribute(("w:val", style.as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if !settings.compat.is_empty() {
+        w.write_event(Event::Start(start("w:compat")))
+            .map_err(pkg)?;
+        for setting in &settings.compat {
+            let mut el = start("w:compatSetting");
+            el.push_attribute(("w:name", setting.name.as_str()));
+            el.push_attribute(("w:uri", setting.uri.as_str()));
+            el.push_attribute(("w:val", setting.val.as_str()));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+        w.write_event(Event::End(BytesEnd::new("w:compat")))
+            .map_err(pkg)?;
+    }
     w.write_event(Event::End(BytesEnd::new("w:settings")))
         .map_err(pkg)?;
     Ok(finish(w))
+}
+
+/// Emits `w:zoom` when the model carries a mode and/or an explicit percent.
+fn write_zoom(w: &mut Writer<Cursor<Vec<u8>>>, zoom: &Zoom) -> Result<(), ExportError> {
+    if zoom.is_empty() {
+        return Ok(());
+    }
+    let mut el = start("w:zoom");
+    if let Some(mode) = zoom.mode {
+        el.push_attribute(("w:val", zoom_mode_token(mode)));
+    }
+    let percent = zoom.percent.map(|value| value.to_string());
+    if let Some(percent) = &percent {
+        el.push_attribute(("w:percent", percent.as_str()));
+    }
+    w.write_event(Event::Empty(el)).map_err(pkg)?;
+    Ok(())
+}
+
+fn proof_state_token(state: ProofState) -> &'static str {
+    match state {
+        ProofState::Clean => "clean",
+        ProofState::Dirty => "dirty",
+    }
+}
+
+fn protection_edit_token(edit: DocumentProtectionEdit) -> &'static str {
+    match edit {
+        DocumentProtectionEdit::None => "none",
+        DocumentProtectionEdit::ReadOnly => "readOnly",
+        DocumentProtectionEdit::Comments => "comments",
+        DocumentProtectionEdit::TrackedChanges => "trackedChanges",
+        DocumentProtectionEdit::Forms => "forms",
+    }
+}
+
+fn zoom_mode_token(mode: ZoomMode) -> &'static str {
+    match mode {
+        ZoomMode::None => "none",
+        ZoomMode::FullPage => "fullPage",
+        ZoomMode::BestFit => "bestFit",
+        ZoomMode::TextFit => "textFit",
+    }
 }
 
 /// The `w:styleId`/`w:val` string for a style, derived from its internal id so
@@ -1415,11 +1523,12 @@ fn style_id_token(id: StyleId) -> String {
 }
 
 /// Emits `word/numbering.xml`: the abstract definitions (each with its levels'
-/// start values) then the numbering instances. The `w:abstractNumId`/`w:numId`
-/// strings derive from the internal ids so a `w:num`'s `w:abstractNumId` and a
-/// body `w:numPr`'s `w:numId` reference the same string and re-import to the
-/// same ids. Only the modeled level detail (index + start) is emitted; other
-/// `w:lvl` detail is not modeled (and the importer does not read it back).
+/// format/text/justify detail) then the numbering instances. The
+/// `w:abstractNumId`/`w:numId` strings derive from the internal ids so a
+/// `w:num`'s `w:abstractNumId` and a body `w:numPr`'s `w:numId` reference the same
+/// string and re-import to the same ids. Each level's modeled detail (start,
+/// numFmt, isLgl, suff, lvlText, lvlJc, pPr, rPr) is emitted in schema order; the
+/// importer reads the same shapes back, so the round trip is a fixed point.
 fn numbering_xml(
     abstracts: &DefinitionMap<AbstractNumberingId, AbstractNumbering>,
     instances: &DefinitionMap<NumberingInstanceId, NumberingInstance>,
@@ -1433,14 +1542,7 @@ fn numbering_xml(
         el.push_attribute(("w:abstractNumId", abstract_id_token(*id).as_str()));
         w.write_event(Event::Start(el)).map_err(pkg)?;
         for level in &abstract_num.levels {
-            let mut lvl = start("w:lvl");
-            lvl.push_attribute(("w:ilvl", level.level.to_string().as_str()));
-            w.write_event(Event::Start(lvl)).map_err(pkg)?;
-            let mut s = start("w:start");
-            s.push_attribute(("w:val", level.start.to_string().as_str()));
-            w.write_event(Event::Empty(s)).map_err(pkg)?;
-            w.write_event(Event::End(BytesEnd::new("w:lvl")))
-                .map_err(pkg)?;
+            write_level(&mut w, level)?;
         }
         w.write_event(Event::End(BytesEnd::new("w:abstractNum")))
             .map_err(pkg)?;
@@ -1458,6 +1560,94 @@ fn numbering_xml(
     w.write_event(Event::End(BytesEnd::new("w:numbering")))
         .map_err(pkg)?;
     Ok(finish(w))
+}
+
+/// Emits one `w:lvl` with its modeled detail in `CT_Lvl` schema order. A
+/// `Some(default)` pPr/rPr emits a bare element to preserve presence across the
+/// round trip (the property writers elide an all-default value), mirroring the
+/// styles writer.
+fn write_level(w: &mut Writer<Cursor<Vec<u8>>>, level: &NumberingLevel) -> Result<(), ExportError> {
+    let mut lvl = start("w:lvl");
+    lvl.push_attribute(("w:ilvl", level.level.to_string().as_str()));
+    w.write_event(Event::Start(lvl)).map_err(pkg)?;
+    let mut s = start("w:start");
+    s.push_attribute(("w:val", level.start.to_string().as_str()));
+    w.write_event(Event::Empty(s)).map_err(pkg)?;
+    if let Some(format) = &level.num_fmt {
+        let mut el = start("w:numFmt");
+        el.push_attribute(("w:val", number_format_token(format)));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if level.is_lgl {
+        w.write_event(Event::Empty(start("w:isLgl"))).map_err(pkg)?;
+    }
+    if let Some(suffix) = level.suff {
+        let mut el = start("w:suff");
+        el.push_attribute(("w:val", level_suffix_token(suffix)));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(text) = &level.lvl_text {
+        let mut el = start("w:lvlText");
+        el.push_attribute(("w:val", text.as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(justification) = level.lvl_jc {
+        let mut el = start("w:lvlJc");
+        el.push_attribute(("w:val", level_jc_token(justification)));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(paragraph) = &level.paragraph_properties {
+        if *paragraph == ParagraphProperties::default() {
+            w.write_event(Event::Empty(start("w:pPr"))).map_err(pkg)?;
+        } else {
+            // A level's pPr never carries a section break (a body concept).
+            write_paragraph_properties(w, paragraph, None)?;
+        }
+    }
+    if let Some(run) = &level.run_properties {
+        if *run == RunProperties::default() {
+            w.write_event(Event::Empty(start("w:rPr"))).map_err(pkg)?;
+        } else {
+            write_run_properties(w, run)?;
+        }
+    }
+    w.write_event(Event::End(BytesEnd::new("w:lvl")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+/// The `w:numFmt/@w:val` token; `Other` returns its retained verbatim value.
+fn number_format_token(format: &NumberFormat) -> &str {
+    match format {
+        NumberFormat::Decimal => "decimal",
+        NumberFormat::Bullet => "bullet",
+        NumberFormat::LowerRoman => "lowerRoman",
+        NumberFormat::UpperRoman => "upperRoman",
+        NumberFormat::LowerLetter => "lowerLetter",
+        NumberFormat::UpperLetter => "upperLetter",
+        NumberFormat::Ordinal => "ordinal",
+        NumberFormat::CardinalText => "cardinalText",
+        NumberFormat::OrdinalText => "ordinalText",
+        NumberFormat::DecimalZero => "decimalZero",
+        NumberFormat::None => "none",
+        NumberFormat::Other(value) => value.as_str(),
+    }
+}
+
+fn level_jc_token(justification: LevelJustification) -> &'static str {
+    match justification {
+        LevelJustification::Start => "left",
+        LevelJustification::Center => "center",
+        LevelJustification::End => "right",
+    }
+}
+
+fn level_suffix_token(suffix: LevelSuffix) -> &'static str {
+    match suffix {
+        LevelSuffix::Tab => "tab",
+        LevelSuffix::Space => "space",
+        LevelSuffix::Nothing => "nothing",
+    }
 }
 
 fn abstract_id_token(id: AbstractNumberingId) -> String {

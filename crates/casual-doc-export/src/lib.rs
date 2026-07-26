@@ -1096,6 +1096,121 @@ mod semantic_tests {
     }
 
     #[test]
+    fn expanded_settings_survive_the_semantic_round_trip() {
+        // settings.xml carrying the newly modeled settings (evenAndOddHeaders,
+        // defaultTabStop, trackChanges, documentProtection, a proofState, a zoom,
+        // and a compatSetting) plus an UNMODELED setting (`w:autoHyphenation`). The
+        // modeled settings survive write -> reopen as a fixed point; the unmodeled
+        // one produces a compat-report entry (omitted, not-retained in Semantic).
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/></Relationships>"#;
+        let settings = br#"<w:settings xmlns:w="urn:w">
+            <w:zoom w:percent="120"/>
+            <w:proofState w:spelling="clean" w:grammar="dirty"/>
+            <w:trackChanges/>
+            <w:documentProtection w:edit="comments" w:enforcement="1"/>
+            <w:defaultTabStop w:val="708"/>
+            <w:autoHyphenation/>
+            <w:evenAndOddHeaders/>
+            <w:compat><w:compatSetting w:name="compatibilityMode" w:uri="urn:x" w:val="15"/></w:compat>
+        </w:settings>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/settings.xml", settings),
+        ]);
+        let mut src_package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let import = import_package(
+            &mut src_package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap();
+        let m1 = import.document;
+        let s = m1.definitions().settings.clone();
+        assert!(s.even_and_odd_headers);
+        assert!(s.track_changes);
+        assert_eq!(s.default_tab_stop, Some(708));
+        assert_eq!(s.compat.len(), 1);
+        // The unmodeled setting is reported, not silently dropped.
+        assert!(
+            import
+                .report
+                .entries
+                .iter()
+                .any(|entry| entry.feature == "autoHyphenation"),
+            "the unmodeled setting produces a compat-report entry"
+        );
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(m1, m2, "expanded settings survive write -> reopen");
+    }
+
+    #[test]
+    fn multi_level_numbering_detail_survives_the_semantic_round_trip() {
+        // A multi-level list: level 0 decimal "%1." with an indent pPr, level 1 a
+        // bullet whose lvlText is a symbol glyph and whose rPr selects the symbol
+        // font. The writer regenerates numbering.xml with the full level detail; the
+        // format/text/justify/properties survive write -> reopen as a fixed point.
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="2"/></w:numPr></w:pPr>
+                <w:r><w:t>a</w:t></w:r></w:p>
+            <w:p><w:pPr><w:numPr><w:ilvl w:val="1"/><w:numId w:val="2"/></w:numPr></w:pPr>
+                <w:r><w:t>b</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/></Relationships>"#;
+        let numbering = br#"<w:numbering xmlns:w="urn:w">
+            <w:abstractNum w:abstractNumId="7">
+                <w:lvl w:ilvl="0">
+                    <w:start w:val="1"/>
+                    <w:numFmt w:val="decimal"/>
+                    <w:lvlText w:val="%1."/>
+                    <w:lvlJc w:val="left"/>
+                    <w:pPr><w:ind w:start="720" w:hanging="360"/></w:pPr>
+                </w:lvl>
+                <w:lvl w:ilvl="1">
+                    <w:start w:val="1"/>
+                    <w:numFmt w:val="bullet"/>
+                    <w:suff w:val="tab"/>
+                    <w:lvlText w:val="&#61623;"/>
+                    <w:rPr><w:rFonts w:ascii="Symbol" w:hAnsi="Symbol"/></w:rPr>
+                </w:lvl>
+            </w:abstractNum>
+            <w:num w:numId="2"><w:abstractNumId w:val="7"/></w:num>
+        </w:numbering>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/numbering.xml", numbering),
+        ]);
+        let m1 = reopen(&source);
+        let (_, abstract_num) = m1.definitions().abstract_numbering.iter().next().unwrap();
+        assert_eq!(abstract_num.levels.len(), 2);
+        assert_eq!(abstract_num.levels[0].lvl_text.as_deref(), Some("%1."));
+        assert_eq!(abstract_num.levels[1].lvl_text.as_deref(), Some("\u{f0b7}"));
+        assert!(abstract_num.levels[0].paragraph_properties.is_some());
+        assert!(abstract_num.levels[1].run_properties.is_some());
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(
+            m1, m2,
+            "multi-level numbering detail survives write -> reopen"
+        );
+    }
+
+    #[test]
     fn notes_survive_the_semantic_round_trip() {
         // A footnote and an endnote, each referenced from the body. The writer
         // regenerates footnotes.xml/endnotes.xml with ids derived from the NoteId

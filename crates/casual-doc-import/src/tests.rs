@@ -1,6 +1,7 @@
 use casual_doc_model::v1::{
-    Alignment, BlockNode, Break, BreakKind, Color, HyperlinkTarget, InlineNode, Paragraph,
-    RevisionKind, RgbColor, SdtControlKind, StyleKind,
+    Alignment, BlockNode, Break, BreakKind, Color, DocumentProtectionEdit, HyperlinkTarget,
+    InlineNode, LevelJustification, LevelSuffix, NumberFormat, Paragraph, ProofState, RevisionKind,
+    RgbColor, SdtControlKind, StyleKind,
 };
 use casual_doc_ooxml::DocxPackage;
 
@@ -43,6 +44,27 @@ fn import_with_numbering(document: &[u8], numbering: &[u8]) -> Import {
         &std::collections::BTreeMap::new(),
         None,
         None,
+        None,
+        None,
+        &[],
+        &[],
+        None,
+        &[],
+        &std::collections::BTreeMap::new(),
+        ImportConfig::default(),
+    )
+    .unwrap()
+}
+
+fn import_with_settings(document: &[u8], settings: &[u8]) -> Import {
+    import_with_sources(
+        document,
+        None,
+        None,
+        None,
+        &std::collections::BTreeMap::new(),
+        None,
+        Some(settings),
         None,
         None,
         &[],
@@ -1598,8 +1620,99 @@ fn numbering_reference_resolves_to_a_definition() {
     assert_eq!(definitions.abstract_numbering.len(), 1);
     assert_eq!(definitions.numbering.len(), 1);
     assert!(definitions.numbering.get(&reference.instance).is_some());
-    // numFmt is unmapped level detail -> reported.
-    assert!(features(&import).contains(&"numFmt"));
+    // numFmt is now modeled level detail (the bullet format), not reported.
+    let (_, abstract_num) = definitions.abstract_numbering.iter().next().unwrap();
+    assert_eq!(abstract_num.levels[0].num_fmt, Some(NumberFormat::Bullet));
+    assert!(!features(&import).contains(&"numFmt"));
+}
+
+#[test]
+fn numbering_level_detail_is_modeled_not_reported() {
+    // A level carrying numFmt/lvlText/lvlJc/suff/isLgl plus pPr (indent) and rPr
+    // (bold): every piece is mapped into the level, and none is reported.
+    let numbering = br#"<w:numbering xmlns:w="urn:w">
+        <w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0">
+            <w:start w:val="1"/>
+            <w:numFmt w:val="decimal"/>
+            <w:isLgl/>
+            <w:suff w:val="space"/>
+            <w:lvlText w:val="%1."/>
+            <w:lvlJc w:val="left"/>
+            <w:pPr><w:ind w:start="720" w:hanging="360"/></w:pPr>
+            <w:rPr><w:b/></w:rPr>
+        </w:lvl></w:abstractNum>
+        <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
+    </w:numbering>"#;
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>
+            <w:r><w:t>item</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import_with_numbering(document, numbering);
+    let definitions = import.document.definitions();
+    let (_, abstract_num) = definitions.abstract_numbering.iter().next().unwrap();
+    let level = &abstract_num.levels[0];
+    assert_eq!(level.num_fmt, Some(NumberFormat::Decimal));
+    assert_eq!(level.lvl_text.as_deref(), Some("%1."));
+    assert_eq!(level.lvl_jc, Some(LevelJustification::Start));
+    assert_eq!(level.suff, Some(LevelSuffix::Space));
+    assert!(level.is_lgl);
+    assert!(level.paragraph_properties.is_some());
+    assert_eq!(level.run_properties.as_ref().unwrap().bold, Some(true));
+    for feature in [
+        "numFmt", "lvlText", "lvlJc", "suff", "isLgl", "pPr", "rPr", "ind", "b",
+    ] {
+        assert!(
+            !features(&import).contains(&feature),
+            "{feature} must be modeled, not reported"
+        );
+    }
+}
+
+#[test]
+fn modeled_settings_are_captured_and_unmodeled_settings_are_reported() {
+    // A settings part mixing modeled settings (header parity, default tab stop,
+    // track changes, document protection, proof state, zoom, a compatSetting) with
+    // an unmodeled one (`w:autoHyphenation`) plus an unmodeled `w:compat` child
+    // (`w:doNotExpandShiftReturn`). The modeled ones land in the model; the two
+    // unmodeled ones are reported (no silent loss).
+    let settings = br#"<w:settings xmlns:w="urn:w">
+        <w:writeProtection w:recommended="1"/>
+        <w:zoom w:percent="150"/>
+        <w:evenAndOddHeaders/>
+        <w:proofState w:spelling="clean" w:grammar="dirty"/>
+        <w:trackChanges/>
+        <w:documentProtection w:edit="readOnly" w:enforcement="1"/>
+        <w:defaultTabStop w:val="720"/>
+        <w:autoHyphenation/>
+        <w:compat>
+            <w:compatSetting w:name="compatibilityMode" w:uri="urn:x" w:val="15"/>
+            <w:doNotExpandShiftReturn/>
+        </w:compat>
+    </w:settings>"#;
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+    let import = import_with_settings(document, settings);
+    let s = &import.document.definitions().settings;
+    assert!(s.even_and_odd_headers);
+    assert!(s.track_changes);
+    assert_eq!(s.default_tab_stop, Some(720));
+    assert_eq!(s.proof_state.spelling, Some(ProofState::Clean));
+    assert_eq!(s.proof_state.grammar, Some(ProofState::Dirty));
+    assert_eq!(s.zoom.percent, Some(150));
+    assert_eq!(
+        s.document_protection
+            .as_ref()
+            .map(|p| (p.edit, p.enforcement)),
+        Some((DocumentProtectionEdit::ReadOnly, true))
+    );
+    assert!(s.write_protection.as_ref().is_some_and(|p| p.recommended));
+    assert_eq!(s.compat.len(), 1);
+    assert_eq!(s.compat[0].name, "compatibilityMode");
+    // The unmodeled top-level setting and the unmodeled compat child are reported.
+    assert!(features(&import).contains(&"autoHyphenation"));
+    assert!(features(&import).contains(&"doNotExpandShiftReturn"));
+    // The modeled compatSetting is NOT reported (it is retained as a triple).
+    assert!(!features(&import).contains(&"compatSetting"));
 }
 
 #[test]

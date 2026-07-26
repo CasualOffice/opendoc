@@ -122,8 +122,37 @@ impl Document {
         self.validate_font_table()?;
         self.validate_font_scheme()?;
         self.validate_color_scheme()?;
+        self.validate_settings()?;
         self.validate_properties()?;
         self.validate_body()?;
+        Ok(())
+    }
+
+    fn validate_settings(&self) -> Result<(), ModelError> {
+        let settings = &self.definitions.settings;
+        if let Some(value) = settings.default_tab_stop {
+            check_domain((0..=31_680).contains(&value), "settings.defaultTabStop")?;
+        }
+        if let Some(percent) = settings.zoom.percent {
+            check_domain((1..=1_000).contains(&percent), "settings.zoom.percent")?;
+        }
+        if let Some(style) = &settings.default_table_style {
+            check_domain(
+                !style.is_empty() && style.len() <= 255,
+                "settings.defaultTableStyle",
+            )?;
+        }
+        for setting in &settings.compat {
+            check_domain(
+                !setting.name.is_empty() && setting.name.len() <= 255,
+                "settings.compatSetting.name",
+            )?;
+            check_domain(
+                !setting.uri.is_empty() && setting.uri.len() <= 255,
+                "settings.compatSetting.uri",
+            )?;
+            check_domain(setting.val.len() <= 255, "settings.compatSetting.val")?;
+        }
         Ok(())
     }
 
@@ -451,10 +480,26 @@ impl Document {
                 }
             }
         }
-        // Level domain: level start values.
+        // Level domain: level start values, format/text bounds, and per-level
+        // property references.
         for (_, abstract_num) in self.definitions.abstract_numbering.iter() {
             for level in &abstract_num.levels {
                 check_domain(level.start <= 32_767, "numbering.level.start")?;
+                if let Some(NumberFormat::Other(token)) = &level.num_fmt {
+                    check_domain(
+                        !token.is_empty() && token.len() <= 64,
+                        "numbering.level.numFmt",
+                    )?;
+                }
+                if let Some(text) = &level.lvl_text {
+                    check_domain(text.len() <= 255, "numbering.level.lvlText")?;
+                }
+                if let Some(properties) = &level.paragraph_properties {
+                    self.check_paragraph_property_refs(properties)?;
+                }
+                if let Some(properties) = &level.run_properties {
+                    self.check_run_property_refs(properties)?;
+                }
                 if let Some(style) = level.style_ref
                     && !self.style_exists(style)
                 {

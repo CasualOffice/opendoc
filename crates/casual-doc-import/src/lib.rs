@@ -677,7 +677,7 @@ pub(crate) fn import_with_sources(
         None => theme::ParsedTheme::default(),
     };
     let settings = match settings_xml {
-        Some(xml) => settings::parse(xml, config)?,
+        Some(xml) => settings::parse(xml, &mut reporter, config)?,
         None => DocumentSettings::default(),
     };
     // Media is built into one shared table BEFORE any body so drawings resolve
