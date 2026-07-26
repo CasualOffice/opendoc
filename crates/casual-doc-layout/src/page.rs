@@ -121,6 +121,8 @@ pub enum AnchorContent {
         fill: Option<[u8; 4]>,
         /// The box border color and width, if any.
         border: Option<TextBoxStroke>,
+        /// Resolved content offset and overflow clipping.
+        content_layout: crate::text::TextBoxContentLayout,
     },
 }
 

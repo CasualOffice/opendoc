@@ -26,8 +26,9 @@ use casual_doc_model::v1::{
     LevelSuffix, LineRule, MediaId, MediaReference, ParagraphProperties, Rgba, RunProperties,
     SchemeColor, SectionBoundary, SectionId, SectionType, ShapeStroke, StyleId, Symbol,
     TabAlignment, TabLeader, TabStop, Table, TableBorders, TableCell, TableLayout, TableRow,
-    TableRowProperties, TextBox, ThemeColorRef, ThemeFontRef, VerticalAlignment, VerticalAnchor,
-    VerticalMerge, VerticalPosition, WrapMode,
+    TableRowProperties, TextBox, TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow,
+    TextBoxVerticalAnchor, TextBoxVerticalOverflow, ThemeColorRef, ThemeFontRef, VerticalAlignment,
+    VerticalAnchor, VerticalMerge, VerticalPosition, WrapMode,
 };
 
 use crate::block::{
@@ -44,7 +45,7 @@ use crate::tabs::{self, FlowItem};
 use crate::text::{
     Decoration, FieldKind, FieldMarker, FieldStyle, FontId, Glyph, GlyphRun, InlineImage,
     InlineRule, InlineTextBox, Line, LineBreak, LineConstraints, LineLayout, LineShaper, StyledRun,
-    TextAlignment, TextBoxStroke,
+    TextAlignment, TextBoxContentLayout, TextBoxStroke,
 };
 use crate::units::{Point, Size, Twip};
 
@@ -87,6 +88,12 @@ struct FlowCtx<'a> {
     /// measurement (intrinsic-width) context threads a throwaway state so it never
     /// perturbs the real counters.
     numbering: NumberingState,
+    /// Cumulative `a:normAutofit@fontScale` applied to runs in the current text
+    /// body (`100000` = 100%).
+    text_scale: u32,
+    /// `a:normAutofit@lnSpcReduction`, in per-100000 units, scoped to the current
+    /// text body.
+    line_spacing_reduction: u32,
 }
 
 /// Builds a galley of block fragments from a document's body, shaped to fit
@@ -133,6 +140,8 @@ pub fn build_galley_with_report(
         sections: &document.definitions().sections,
         definitions: document.definitions(),
         numbering: NumberingState::new(),
+        text_scale: 100_000,
+        line_spacing_reduction: 0,
     };
     let galley = flow_blocks(document.body(), shaper, content_width, &mut ctx);
     (galley, report)
@@ -173,6 +182,8 @@ pub fn build_galley_for_blocks(
         sections: &document.definitions().sections,
         definitions: document.definitions(),
         numbering: NumberingState::new(),
+        text_scale: 100_000,
+        line_spacing_reduction: 0,
     };
     flow_blocks(blocks, shaper, content_width, &mut ctx)
 }
@@ -192,6 +203,21 @@ pub fn flow_header_footer(
     blocks: &[BlockNode],
     shaper: &dyn LineShaper,
     content_width: Twip,
+) -> Vec<BlockFragment> {
+    flow_running_blocks(document, blocks, shaper, content_width, 100_000, 0)
+}
+
+/// Shared running-content/text-box flow constructor. A floating text box cannot
+/// borrow the body's live [`FlowCtx`], so its authored normal-autofit adjustments
+/// enter here while still using the same cascade, fonts, media, tables, and
+/// recursive block flow as a header/footer.
+fn flow_running_blocks(
+    document: &Document,
+    blocks: &[BlockNode],
+    shaper: &dyn LineShaper,
+    content_width: Twip,
+    text_scale: u32,
+    line_spacing_reduction: u32,
 ) -> Vec<BlockFragment> {
     let resolver = FontResolver::new();
     let mut report = FontResolutionReport::new();
@@ -215,6 +241,8 @@ pub fn flow_header_footer(
         sections: &[],
         definitions: document.definitions(),
         numbering: NumberingState::new(),
+        text_scale,
+        line_spacing_reduction,
     };
     flow_blocks(blocks, shaper, content_width, &mut ctx)
 }
@@ -269,6 +297,8 @@ pub fn build_galley_cached(
         sections: &document.definitions().sections,
         definitions: document.definitions(),
         numbering: NumberingState::new(),
+        text_scale: 100_000,
+        line_spacing_reduction: 0,
     };
     cache.begin_build(content_width);
     let mut galley = Vec::new();
@@ -1215,6 +1245,8 @@ fn block_intrinsic(blocks: &[BlockNode], shaper: &dyn LineShaper, ctx: &FlowCtx)
         // A throwaway counter state: measuring intrinsic widths must not advance the
         // document's real list counters.
         numbering: NumberingState::default(),
+        text_scale: ctx.text_scale,
+        line_spacing_reduction: ctx.line_spacing_reduction,
     };
     let mut min = 0;
     let mut preferred = 0;
@@ -1768,32 +1800,185 @@ fn textbox_item(
     width: Twip,
     ctx: &mut FlowCtx,
 ) -> FlowItem<'static> {
-    let inset = crate::compose::TEXTBOX_INSET;
     let authored_size = text_box.extent.as_ref().map(extent_to_size);
     let outer_width = authored_size
         .map(|size| size.width)
         .filter(|width| width.raw() > 0)
         .unwrap_or(width)
         .max(Twip(1));
-    let inner_width = Twip((outer_width.raw() - 2 * inset.raw()).max(1));
-    let blocks = flow_blocks(&text_box.blocks, shaper, inner_width, ctx);
+    let authored_height = authored_size
+        .map(|size| size.height)
+        .filter(|height| height.raw() > 0);
+    let flowed = flow_text_box_with_ctx(
+        &text_box.blocks,
+        &text_box.body_properties,
+        shaper,
+        outer_width,
+        authored_height,
+        ctx,
+    );
+    FlowItem::TextBox {
+        blocks: flowed.blocks,
+        size: flowed.size,
+        border: text_box.border.map(text_box_stroke),
+        fill: text_box.fill.map(rgba),
+        content_layout: flowed.content_layout,
+    }
+}
+
+/// A text box after recursive block flow and box-model resolution. Used by both
+/// the inline paragraph path and the post-pagination float path.
+pub(crate) struct FlowedTextBox {
+    pub(crate) blocks: Vec<BlockFragment>,
+    pub(crate) size: Size,
+    pub(crate) content_layout: TextBoxContentLayout,
+}
+
+/// Flows a floating or grouped text box through a fresh running-content context.
+/// `outer_size` is the anchor/group rectangle before shape autofit; the returned
+/// height may grow for `a:spAutoFit`.
+pub(crate) fn flow_anchored_text_box(
+    document: &Document,
+    blocks: &[BlockNode],
+    shaper: &dyn LineShaper,
+    outer_size: Size,
+    properties: &TextBoxBodyProperties,
+) -> FlowedTextBox {
+    let outer_width = outer_size.width.max(Twip(1));
+    let authored_height = (outer_size.height.raw() > 0).then_some(outer_size.height);
+    let insets = text_box_insets(properties);
+    let inner_width = inner_text_box_width(outer_width, insets);
+    let (text_scale, line_spacing_reduction) = text_box_text_adjustments(properties);
+    let blocks = flow_running_blocks(
+        document,
+        blocks,
+        shaper,
+        inner_width,
+        text_scale,
+        line_spacing_reduction,
+    );
+    finish_text_box(blocks, outer_width, authored_height, insets, properties)
+}
+
+fn flow_text_box_with_ctx(
+    blocks: &[BlockNode],
+    properties: &TextBoxBodyProperties,
+    shaper: &dyn LineShaper,
+    outer_width: Twip,
+    authored_height: Option<Twip>,
+    ctx: &mut FlowCtx,
+) -> FlowedTextBox {
+    let insets = text_box_insets(properties);
+    let inner_width = inner_text_box_width(outer_width, insets);
+    let (local_scale, local_reduction) = text_box_text_adjustments(properties);
+    let previous_scale = ctx.text_scale;
+    let previous_reduction = ctx.line_spacing_reduction;
+    let previous_para_style = ctx.para_style;
+    ctx.text_scale = ((u64::from(previous_scale) * u64::from(local_scale)) / 100_000)
+        .min(u64::from(u32::MAX)) as u32;
+    ctx.line_spacing_reduction = combine_percentage_reductions(previous_reduction, local_reduction);
+    let flowed = flow_blocks(blocks, shaper, inner_width, ctx);
+    ctx.text_scale = previous_scale;
+    ctx.line_spacing_reduction = previous_reduction;
+    ctx.para_style = previous_para_style;
+    finish_text_box(flowed, outer_width, authored_height, insets, properties)
+}
+
+#[derive(Clone, Copy)]
+struct ResolvedTextBoxInsets {
+    left: Twip,
+    top: Twip,
+    right: Twip,
+    bottom: Twip,
+}
+
+fn text_box_insets(properties: &TextBoxBodyProperties) -> ResolvedTextBoxInsets {
+    let insets = properties.insets;
+    ResolvedTextBoxInsets {
+        left: emu_to_twip(i64::from(insets.left_emu)),
+        top: emu_to_twip(i64::from(insets.top_emu)),
+        right: emu_to_twip(i64::from(insets.right_emu)),
+        bottom: emu_to_twip(i64::from(insets.bottom_emu)),
+    }
+}
+
+fn inner_text_box_width(outer_width: Twip, insets: ResolvedTextBoxInsets) -> Twip {
+    Twip(
+        outer_width
+            .raw()
+            .saturating_sub(insets.left.raw())
+            .saturating_sub(insets.right.raw())
+            .max(1),
+    )
+}
+
+fn text_box_text_adjustments(properties: &TextBoxBodyProperties) -> (u32, u32) {
+    match properties.auto_fit {
+        TextBoxAutoFit::Normal {
+            font_scale,
+            line_spacing_reduction,
+        } => (font_scale, line_spacing_reduction),
+        TextBoxAutoFit::None | TextBoxAutoFit::Shape => (100_000, 0),
+    }
+}
+
+fn combine_percentage_reductions(outer: u32, inner: u32) -> u32 {
+    let retained_outer = 100_000u64.saturating_sub(u64::from(outer.min(100_000)));
+    let retained_inner = 100_000u64.saturating_sub(u64::from(inner.min(100_000)));
+    let retained = retained_outer.saturating_mul(retained_inner) / 100_000;
+    100_000u32.saturating_sub(retained as u32)
+}
+
+fn finish_text_box(
+    blocks: Vec<BlockFragment>,
+    outer_width: Twip,
+    authored_height: Option<Twip>,
+    insets: ResolvedTextBoxInsets,
+    properties: &TextBoxBodyProperties,
+) -> FlowedTextBox {
     let content_height = blocks
         .iter()
         .map(BlockFragment::height)
         .fold(Twip::ZERO, |a, h| a + h);
-    let fallback_height = Twip(content_height.raw() + 2 * inset.raw());
-    let outer_height = authored_size
-        .map(|size| size.height)
-        .filter(|height| height.raw() > 0)
-        .unwrap_or(fallback_height)
-        .max(Twip(1));
-    let size = Size::new(outer_width, outer_height);
-    FlowItem::TextBox {
+    let natural_height = clamp_twip(
+        i64::from(insets.top.raw())
+            .saturating_add(i64::from(content_height.raw()))
+            .saturating_add(i64::from(insets.bottom.raw())),
+    )
+    .max(Twip(1));
+    let outer_height = match (properties.auto_fit, authored_height) {
+        (TextBoxAutoFit::Shape, Some(authored)) => authored.max(natural_height),
+        (TextBoxAutoFit::Shape, None) | (_, None) => natural_height,
+        (_, Some(authored)) => authored.max(Twip(1)),
+    };
+    let inner_height = i64::from(outer_height.raw())
+        .saturating_sub(i64::from(insets.top.raw()))
+        .saturating_sub(i64::from(insets.bottom.raw()));
+    let free = inner_height
+        .saturating_sub(i64::from(content_height.raw()))
+        .max(0);
+    let vertical_offset = match properties.vertical_anchor {
+        TextBoxVerticalAnchor::Top => 0,
+        TextBoxVerticalAnchor::Center => free / 2,
+        TextBoxVerticalAnchor::Bottom => free,
+    };
+    let origin_y = i64::from(insets.top.raw()).saturating_add(vertical_offset);
+    FlowedTextBox {
         blocks,
-        size,
-        border: text_box.border.map(text_box_stroke),
-        fill: text_box.fill.map(rgba),
+        size: Size::new(outer_width, outer_height),
+        content_layout: TextBoxContentLayout {
+            origin: Point::new(insets.left, clamp_twip(origin_y)),
+            clip_horizontal: properties.horizontal_overflow == TextBoxHorizontalOverflow::Clip,
+            clip_vertical: !matches!(
+                properties.vertical_overflow,
+                TextBoxVerticalOverflow::Overflow
+            ),
+        },
     }
+}
+
+fn clamp_twip(value: i64) -> Twip {
+    Twip(value.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32)
 }
 
 fn rgba(color: Rgba) -> [u8; 4] {
@@ -1975,8 +2160,16 @@ fn shape_paragraph_items(
                 size,
                 border,
                 fill,
+                content_layout,
             } => {
-                let line = textbox_line(blocks.clone(), *size, *border, *fill, range);
+                let line = textbox_line(
+                    blocks.clone(),
+                    *size,
+                    *border,
+                    *fill,
+                    *content_layout,
+                    range,
+                );
                 stack_lines(&mut out, vec![line], &mut cursor_y);
                 i += 1;
             }
@@ -2107,6 +2300,7 @@ fn textbox_line(
     size: Size,
     border: Option<TextBoxStroke>,
     fill: Option<[u8; 4]>,
+    content_layout: TextBoxContentLayout,
     range: ModelRange,
 ) -> Line {
     Line {
@@ -2126,6 +2320,7 @@ fn textbox_line(
             blocks,
             border,
             fill,
+            content_layout,
         }],
         rules: Vec::new(),
     }
@@ -2589,7 +2784,7 @@ fn build_styled_run<'a>(
     properties: &RunProperties,
     ctx: &mut FlowCtx,
 ) -> StyledRun<'a> {
-    let (size, baseline_shift) = run_metrics(properties);
+    let (size, baseline_shift) = scaled_run_metrics(properties, ctx.text_scale);
     let text = case_transform(text, properties);
     let bold = properties.bold.unwrap_or(false);
     let italic = properties.italic.unwrap_or(false);
@@ -2604,7 +2799,10 @@ fn build_styled_run<'a>(
         size,
         bold,
         italic,
-        letter_spacing: properties.character_spacing_twips.map_or(Twip::ZERO, Twip),
+        letter_spacing: scale_twip(
+            properties.character_spacing_twips.map_or(Twip::ZERO, Twip),
+            ctx.text_scale,
+        ),
         color: run_color(properties.color, ctx.palette),
         decoration: Decoration {
             underline: properties.underline.unwrap_or(false),
@@ -2630,7 +2828,7 @@ fn symbol_glyph_run(symbol: &Symbol, ctx: &mut FlowCtx) -> StyledRun<'static> {
     let glyph = crate::symbol_map::resolve_symbol(&symbol.font, symbol.char);
     let properties = RunProperties::default();
     let effective = ctx.cascade.resolve_run(ctx.para_style, &properties);
-    let (size, baseline_shift) = run_metrics(&effective);
+    let (size, baseline_shift) = scaled_run_metrics(&effective, ctx.text_scale);
     let bold = effective.bold.unwrap_or(false);
     let italic = effective.italic.unwrap_or(false);
     let text = glyph.to_string();
@@ -2642,7 +2840,10 @@ fn symbol_glyph_run(symbol: &Symbol, ctx: &mut FlowCtx) -> StyledRun<'static> {
         size,
         bold,
         italic,
-        letter_spacing: effective.character_spacing_twips.map_or(Twip::ZERO, Twip),
+        letter_spacing: scale_twip(
+            effective.character_spacing_twips.map_or(Twip::ZERO, Twip),
+            ctx.text_scale,
+        ),
         color: run_color(effective.color, ctx.palette),
         decoration: Decoration {
             underline: effective.underline.unwrap_or(false),
@@ -2724,6 +2925,19 @@ fn run_metrics(properties: &RunProperties) -> (Twip, Twip) {
     (size, shift)
 }
 
+/// Applies a cumulative DrawingML normal-autofit font scale to the metrics that
+/// affect shaping and baseline placement.
+fn scaled_run_metrics(properties: &RunProperties, scale: u32) -> (Twip, Twip) {
+    let (size, shift) = run_metrics(properties);
+    let size = scale_twip(size, scale).max(Twip(1));
+    (size, scale_twip(shift, scale))
+}
+
+fn scale_twip(value: Twip, scale: u32) -> Twip {
+    let scaled = i64::from(value.raw()).saturating_mul(i64::from(scale)) / 100_000;
+    Twip(scaled.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32)
+}
+
 /// Applies `w:caps`/`w:smallCaps` casing: both uppercase the run text (small-caps
 /// per-letter sizing is layered on by [`push_styled_runs`]). Untransformed text is
 /// borrowed, so the common case stays allocation-free.
@@ -2768,10 +2982,13 @@ fn push_small_caps_runs<'a>(
     ctx: &mut FlowCtx,
     out: &mut Vec<StyledRun<'a>>,
 ) {
-    let (base, baseline_shift) = run_metrics(properties);
+    let (base, baseline_shift) = scaled_run_metrics(properties, ctx.text_scale);
     let bold = properties.bold.unwrap_or(false);
     let italic = properties.italic.unwrap_or(false);
-    let letter_spacing = properties.character_spacing_twips.map_or(Twip::ZERO, Twip);
+    let letter_spacing = scale_twip(
+        properties.character_spacing_twips.map_or(Twip::ZERO, Twip),
+        ctx.text_scale,
+    );
     let color = run_color(properties.color, ctx.palette);
     let decoration = Decoration {
         underline: properties.underline.unwrap_or(false),
@@ -3094,11 +3311,17 @@ fn prepare_list_marker(
     shaper: &dyn LineShaper,
 ) -> (LineConstraints, Option<PreparedMarker>) {
     let Some(reference) = props.numbering else {
-        return (line_constraints(props, width), None);
+        return (
+            line_constraints(props, width, ctx.line_spacing_reduction),
+            None,
+        );
     };
     let Some(resolved) = ctx.numbering.resolve(ctx.definitions, &reference) else {
         // A dangling numbering reference: flow the paragraph with no marker.
-        return (line_constraints(props, width), None);
+        return (
+            line_constraints(props, width, ctx.line_spacing_reduction),
+            None,
+        );
     };
     // The numbering level's indentation is lower precedence than the paragraph's own
     // (direct + style, already folded into `props`), so the paragraph wins per field
@@ -3107,7 +3330,7 @@ fn prepare_list_marker(
     if let Some(level_indent) = resolved.level_indent {
         props.indentation = Some(merge_indent_over(level_indent, props.indentation));
     }
-    let mut constraints = line_constraints(props, width);
+    let mut constraints = line_constraints(props, width, ctx.line_spacing_reduction);
     // The marker's left edge is the first-line indent: negative for a hanging indent
     // (the marker protrudes left of the body, into the hanging space).
     let marker_x = constraints.first_line_indent;
@@ -3192,7 +3415,11 @@ fn merge_indent_over(base: Indentation, over: Option<Indentation>) -> Indentatio
 /// indented column), and the first-line indent carries `w:ind@firstLine`
 /// (positive) or `w:ind@hanging` (negative, protruding). Hanging wins when both
 /// are present, matching Word.
-fn line_constraints(properties: &ParagraphProperties, width: Twip) -> LineConstraints {
+fn line_constraints(
+    properties: &ParagraphProperties,
+    width: Twip,
+    line_spacing_reduction: u32,
+) -> LineConstraints {
     let spacing = properties.spacing.as_ref();
     let metrics = box_metrics(properties);
     let indent = properties.indentation.as_ref();
@@ -3217,7 +3444,16 @@ fn line_constraints(properties: &ParagraphProperties, width: Twip) -> LineConstr
             // consecutive lines on top of each other. LibreOffice (the oracle) also
             // does not compress `auto` spacing below the single line, so flooring
             // here matches its page layout; a genuine multiple >= 1.0 is untouched.
-            Some(LineRule::Auto) | None => (s.line_percent.map(|p| p.max(100)), None, None),
+            Some(LineRule::Auto) | None => (
+                s.line_percent.map(|p| {
+                    let base = p.max(100);
+                    let reduction =
+                        ((line_spacing_reduction.saturating_add(500)) / 1_000).min(99) as u16;
+                    base.saturating_sub(reduction).max(1)
+                }),
+                None,
+                None,
+            ),
         },
         None => (None, None, None),
     };
@@ -3306,7 +3542,11 @@ fn ensure_nonempty_paragraph(
     }
     let mark = props.mark_run.as_deref().cloned().unwrap_or_default();
     let styled = styled_run(" ", &mark, ctx);
-    let probe = shaper.shape_paragraph(&[styled], line_constraints(props, width), range);
+    let probe = shaper.shape_paragraph(
+        &[styled],
+        line_constraints(props, width, ctx.line_spacing_reduction),
+        range,
+    );
     if let Some(mut line) = probe.lines.into_iter().next() {
         line.runs.clear();
         line.images.clear();
@@ -4213,6 +4453,8 @@ mod tests {
             sections: &[],
             definitions: &definitions,
             numbering: NumberingState::new(),
+            text_scale: 100_000,
+            line_spacing_reduction: 0,
         };
         let mut runs = Vec::new();
         collect_runs(&inlines, &mut runs, &mut ctx);
@@ -4255,6 +4497,8 @@ mod tests {
             sections: &[],
             definitions: &definitions,
             numbering: NumberingState::new(),
+            text_scale: 100_000,
+            line_spacing_reduction: 0,
         };
         let mut runs = Vec::new();
         collect_runs(&inlines, &mut runs, &mut ctx);
@@ -6000,6 +6244,7 @@ mod tests {
                 },
                 width_emu: 19_050,
             }),
+            body_properties: TextBoxBodyProperties::default(),
             blocks: vec![paragraph(
                 21,
                 vec![run_node(22, "boxed", RunProperties::default())],
@@ -6102,6 +6347,7 @@ mod tests {
             extent: None,
             fill: None,
             border: None,
+            body_properties: TextBoxBodyProperties::default(),
             blocks: vec![table],
         });
         let shaper = ParleyShaper::new();
@@ -6186,6 +6432,7 @@ mod tests {
                 extent: None,
                 fill: None,
                 border: None,
+                body_properties: TextBoxBodyProperties::default(),
                 blocks: vec![inner_para],
             })],
         });
@@ -6218,6 +6465,199 @@ mod tests {
                 PaintItem::Image { media, .. } if media == "word/media/image1.png"
             )),
             "the box's image paints inside it"
+        );
+    }
+
+    #[test]
+    fn text_box_body_properties_drive_insets_alignment_autofit_scaling_and_clip() {
+        use crate::compose::compose_paragraph;
+        use crate::display::PaintItem;
+        use casual_doc_model::v1::{
+            Extent, TextBox, TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow,
+            TextBoxInsets, TextBoxVerticalAnchor, TextBoxVerticalOverflow,
+        };
+
+        let inner = vec![paragraph(
+            21,
+            vec![run_node(22, "body properties", RunProperties::default())],
+        )];
+        let fixed = InlineNode::TextBox(TextBox {
+            id: NodeId::from_parts(20, 1).unwrap(),
+            anchor: None,
+            relative_height: None,
+            extent: Some(Extent {
+                width_emu: 2_000 * 635,
+                height_emu: 2_000 * 635,
+            }),
+            fill: None,
+            border: None,
+            body_properties: TextBoxBodyProperties {
+                insets: TextBoxInsets {
+                    left_emu: 200 * 635,
+                    top_emu: 100 * 635,
+                    right_emu: 300 * 635,
+                    bottom_emu: 200 * 635,
+                },
+                vertical_anchor: TextBoxVerticalAnchor::Center,
+                horizontal_overflow: TextBoxHorizontalOverflow::Clip,
+                vertical_overflow: TextBoxVerticalOverflow::Clip,
+                auto_fit: TextBoxAutoFit::None,
+            },
+            blocks: inner.clone(),
+        });
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(
+            &document(vec![paragraph(10, vec![fixed])]),
+            &shaper,
+            Twip(4_000),
+        );
+        let text_box = text_box_of(&galley[0]);
+        let content_height = text_box
+            .blocks
+            .iter()
+            .map(BlockFragment::height)
+            .fold(Twip::ZERO, |a, h| a + h);
+        assert_eq!(text_box.size, Size::new(Twip(2_000), Twip(2_000)));
+        assert_eq!(text_box.content_layout.origin.x, Twip(200));
+        assert_eq!(
+            text_box.content_layout.origin.y,
+            Twip(100 + (1_700 - content_height.raw()).max(0) / 2),
+            "center anchoring uses the height inside top/bottom insets"
+        );
+        assert!(text_box.content_layout.clip_horizontal);
+        assert!(text_box.content_layout.clip_vertical);
+        let BlockFragment::Paragraph { lines, .. } = &galley[0] else {
+            unreachable!()
+        };
+        let list = compose_paragraph(lines, Point::new(Twip::ZERO, Twip::ZERO));
+        assert!(list.items.iter().any(|item| matches!(
+            item,
+            PaintItem::PushClip(rect)
+                if rect.origin == Point::new(Twip::ZERO, Twip::ZERO)
+                    && rect.size == Size::new(Twip(2_000), Twip(2_000))
+        )));
+        assert!(
+            list.items
+                .iter()
+                .any(|item| matches!(item, PaintItem::PopClip))
+        );
+
+        let base_document = document(vec![paragraph(
+            900,
+            vec![run_node(901, "host", RunProperties::default())],
+        )]);
+        let shape_fit = flow_anchored_text_box(
+            &base_document,
+            &inner,
+            &shaper,
+            Size::new(Twip(2_000), Twip(1)),
+            &TextBoxBodyProperties {
+                insets: TextBoxInsets {
+                    left_emu: 0,
+                    top_emu: 50 * 635,
+                    right_emu: 0,
+                    bottom_emu: 70 * 635,
+                },
+                auto_fit: TextBoxAutoFit::Shape,
+                ..TextBoxBodyProperties::default()
+            },
+        );
+        let shape_content_height = shape_fit
+            .blocks
+            .iter()
+            .map(BlockFragment::height)
+            .fold(Twip::ZERO, |a, h| a + h);
+        assert_eq!(
+            shape_fit.size.height,
+            Twip(shape_content_height.raw() + 120),
+            "shape autofit grows the authored height to content plus insets"
+        );
+
+        let normal = flow_anchored_text_box(
+            &base_document,
+            &inner,
+            &shaper,
+            Size::new(Twip(2_000), Twip(2_000)),
+            &TextBoxBodyProperties {
+                auto_fit: TextBoxAutoFit::Normal {
+                    font_scale: 50_000,
+                    line_spacing_reduction: 20_000,
+                },
+                ..TextBoxBodyProperties::default()
+            },
+        );
+        let BlockFragment::Paragraph { lines, .. } = &normal.blocks[0] else {
+            unreachable!()
+        };
+        let run = lines
+            .lines
+            .iter()
+            .flat_map(|line| &line.runs)
+            .next()
+            .expect("normal autofit shapes the inner run");
+        assert_eq!(run.size, Twip(110));
+    }
+
+    #[test]
+    fn a_text_box_inside_a_table_cell_uses_the_same_body_properties_path() {
+        use casual_doc_model::v1::{
+            GridColumn, Table, TableCell, TableCellProperties, TableProperties, TableRow,
+            TableRowProperties, TextBox, TextBoxBodyProperties, TextBoxInsets,
+            TextBoxVerticalAnchor,
+        };
+
+        let text_box = InlineNode::TextBox(TextBox {
+            id: NodeId::from_parts(30, 1).unwrap(),
+            anchor: None,
+            relative_height: None,
+            extent: Some(Extent {
+                width_emu: 1_000 * 635,
+                height_emu: 900 * 635,
+            }),
+            fill: None,
+            border: None,
+            body_properties: TextBoxBodyProperties {
+                insets: TextBoxInsets {
+                    left_emu: 40 * 635,
+                    top_emu: 50 * 635,
+                    right_emu: 60 * 635,
+                    bottom_emu: 70 * 635,
+                },
+                vertical_anchor: TextBoxVerticalAnchor::Bottom,
+                ..TextBoxBodyProperties::default()
+            },
+            blocks: vec![paragraph(
+                31,
+                vec![run_node(32, "cell box", RunProperties::default())],
+            )],
+        });
+        let table = BlockNode::Table(Table {
+            id: NodeId::from_parts(40, 1).unwrap(),
+            grid: vec![GridColumn {
+                width_twips: Some(2_000),
+            }],
+            grid_change: None,
+            properties: TableProperties::default(),
+            rows: vec![TableRow {
+                id: NodeId::from_parts(41, 1).unwrap(),
+                properties: TableRowProperties::default(),
+                cells: vec![TableCell {
+                    id: NodeId::from_parts(42, 1).unwrap(),
+                    properties: TableCellProperties::default(),
+                    blocks: vec![paragraph(43, vec![text_box])],
+                }],
+            }],
+        });
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&document(vec![table]), &shaper, Twip(3_000));
+        let BlockFragment::TableRow { cells, .. } = &galley[0] else {
+            unreachable!()
+        };
+        let nested = text_box_of(&cells[0].blocks[0]);
+        assert_eq!(nested.content_layout.origin.x, Twip(40));
+        assert!(
+            nested.content_layout.origin.y.raw() >= 50,
+            "bottom anchoring is resolved inside a table cell, not body-only"
         );
     }
 

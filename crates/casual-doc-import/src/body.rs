@@ -25,9 +25,10 @@ use casual_doc_model::v1::{
     SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionColumns, SectionId, SectionType,
     ShapeGeometry, ShapeStroke, SoftHyphen, StyleKind, Symbol, Tab, TabAlignment, TabLeader,
     TabStop, TableAnchor, TableCellProperties, TableFloatPosition, TableLayout, TableOverlap,
-    TableProperties, TableRowProperties, TableXAlign, TableYAlign, TextBox, TextDirection,
-    VerticalAlign, VerticalAnchor, VerticalMerge, VerticalPosition, WordprocessingGroup,
-    WrapDistances, WrapMode,
+    TableProperties, TableRowProperties, TableXAlign, TableYAlign, TextBox, TextBoxAutoFit,
+    TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxInsets, TextBoxVerticalAnchor,
+    TextBoxVerticalOverflow, TextDirection, VerticalAlign, VerticalAnchor, VerticalMerge,
+    VerticalPosition, WordprocessingGroup, WrapDistances, WrapMode,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::events::{BytesStart, Event};
@@ -279,6 +280,8 @@ struct ShapeBuilder {
     descr: Option<String>,
     /// The flowed block content of a `w:txbxContent` inside this shape, if any.
     textbox_blocks: Option<Vec<BlockNode>>,
+    /// The shape's text-body box model and overflow/autofit policy.
+    body_properties: TextBoxBodyProperties,
 }
 
 /// Which `a:xfrm` an `a:off`/`a:ext`/`a:chOff`/`a:chExt` currently routes to.
@@ -2177,6 +2180,7 @@ impl BodyParser<'_> {
                     embed: None,
                     descr: None,
                     textbox_blocks: None,
+                    body_properties: TextBoxBodyProperties::default(),
                 });
             }
             // A picture INSIDE a group (`pic:pic`): open a picture shape builder so
@@ -2195,12 +2199,33 @@ impl BodyParser<'_> {
                     embed: None,
                     descr: None,
                     textbox_blocks: None,
+                    body_properties: TextBoxBodyProperties::default(),
                 });
             }
             // A shape/picture transform container (`wps:spPr` / `pic:spPr`): its
             // `a:xfrm` off/ext route to the open shape builder.
             b"spPr" if self.drawing_depth > 0 => {
                 self.xfrm_target = XfrmTarget::Shape;
+            }
+            // A WordprocessingShape text body's box model. `wps:bodyPr` follows
+            // `wps:txbx`, so the text-box frame has already restored the open
+            // shape builder when this event arrives.
+            b"bodyPr" if self.pending_shape.is_some() => {
+                self.capture_text_box_body_properties(element);
+            }
+            // The mutually-exclusive DrawingML autofit child of `wps:bodyPr`.
+            b"noAutofit" if self.pending_shape.is_some() => {
+                if let Some(shape) = self.pending_shape.as_mut() {
+                    shape.body_properties.auto_fit = TextBoxAutoFit::None;
+                }
+            }
+            b"spAutoFit" if self.pending_shape.is_some() => {
+                if let Some(shape) = self.pending_shape.as_mut() {
+                    shape.body_properties.auto_fit = TextBoxAutoFit::Shape;
+                }
+            }
+            b"normAutofit" if self.pending_shape.is_some() => {
+                self.capture_normal_text_box_autofit(element);
             }
             // `a:off`/`a:ext`/`a:chOff`/`a:chExt` inside an `a:xfrm`: route to the
             // group transform or the shape geometry per `xfrm_target`. (The
@@ -3642,6 +3667,98 @@ impl BodyParser<'_> {
         }
     }
 
+    /// Captures the supported `wps:bodyPr` attributes. Invalid authored tokens
+    /// leave the schema default in place and are reported, never allowed to
+    /// create an unbounded layout value.
+    fn capture_text_box_body_properties(&mut self, element: &BytesStart<'_>) {
+        let Some(shape) = self.pending_shape.as_ref() else {
+            return;
+        };
+        let mut properties = shape.body_properties;
+        let mut invalid = false;
+        for (name, target) in [
+            (b"lIns".as_slice(), &mut properties.insets.left_emu),
+            (b"tIns".as_slice(), &mut properties.insets.top_emu),
+            (b"rIns".as_slice(), &mut properties.insets.right_emu),
+            (b"bIns".as_slice(), &mut properties.insets.bottom_emu),
+        ] {
+            if let Some(value) = attribute_value(element, name) {
+                match value.parse::<i32>() {
+                    Ok(value) => *target = value,
+                    Err(_) => invalid = true,
+                }
+            }
+        }
+        if let Some(value) = attribute_value(element, b"anchor") {
+            properties.vertical_anchor = match value.as_str() {
+                "t" => TextBoxVerticalAnchor::Top,
+                "ctr" => TextBoxVerticalAnchor::Center,
+                "b" => TextBoxVerticalAnchor::Bottom,
+                _ => {
+                    invalid = true;
+                    TextBoxVerticalAnchor::Top
+                }
+            };
+        }
+        if let Some(value) = attribute_value(element, b"horzOverflow") {
+            properties.horizontal_overflow = match value.as_str() {
+                "overflow" => TextBoxHorizontalOverflow::Overflow,
+                "clip" => TextBoxHorizontalOverflow::Clip,
+                _ => {
+                    invalid = true;
+                    TextBoxHorizontalOverflow::Overflow
+                }
+            };
+        }
+        if let Some(value) = attribute_value(element, b"vertOverflow") {
+            properties.vertical_overflow = match value.as_str() {
+                "overflow" => TextBoxVerticalOverflow::Overflow,
+                "clip" => TextBoxVerticalOverflow::Clip,
+                "ellipsis" => TextBoxVerticalOverflow::Ellipsis,
+                _ => {
+                    invalid = true;
+                    TextBoxVerticalOverflow::Overflow
+                }
+            };
+        }
+        if let Some(shape) = self.pending_shape.as_mut() {
+            shape.body_properties = properties;
+        }
+        if invalid {
+            self.reporter.report(b"bodyPr");
+        }
+    }
+
+    /// Captures `a:normAutofit` percentages in per-100000 units.
+    fn capture_normal_text_box_autofit(&mut self, element: &BytesStart<'_>) {
+        let font_scale = attribute_value(element, b"fontScale")
+            .as_deref()
+            .map(parse_drawing_percentage)
+            .unwrap_or(Some(100_000));
+        let line_spacing_reduction = attribute_value(element, b"lnSpcReduction")
+            .as_deref()
+            .map(parse_drawing_percentage)
+            .unwrap_or(Some(0));
+        let valid = matches!(font_scale, Some(1_000..=100_000))
+            && matches!(line_spacing_reduction, Some(0..=100_000));
+        if let Some(shape) = self.pending_shape.as_mut() {
+            shape.body_properties.auto_fit = if valid {
+                TextBoxAutoFit::Normal {
+                    font_scale: font_scale.unwrap_or(100_000),
+                    line_spacing_reduction: line_spacing_reduction.unwrap_or(0),
+                }
+            } else {
+                TextBoxAutoFit::Normal {
+                    font_scale: 100_000,
+                    line_spacing_reduction: 0,
+                }
+            };
+        }
+        if !valid {
+            self.reporter.report(b"normAutofit");
+        }
+    }
+
     /// Folds the open [`PendingColor`] and assigns it to the open shape's fill or
     /// stroke.
     fn commit_color(&mut self) {
@@ -3710,6 +3827,7 @@ impl BodyParser<'_> {
                     extent: Some(extent),
                     fill: shape.fill,
                     border: shape.stroke,
+                    body_properties: shape.body_properties,
                     blocks,
                 }));
             }
@@ -3727,6 +3845,7 @@ impl BodyParser<'_> {
                     extent,
                     fill: shape.fill,
                     border: shape.stroke,
+                    body_properties: shape.body_properties,
                     blocks,
                 }));
             }
@@ -3760,6 +3879,7 @@ impl BodyParser<'_> {
                 blocks,
                 fill: shape.fill,
                 border: shape.stroke,
+                body_properties: shape.body_properties,
             }));
         }
         Some(GroupChild::Shape(GroupShape {
@@ -3989,6 +4109,7 @@ impl BodyParser<'_> {
                 extent: None,
                 fill: None,
                 border: None,
+                body_properties: vml_text_box_body_properties(),
                 blocks,
             }));
             emitted = true;
@@ -4088,6 +4209,7 @@ impl BodyParser<'_> {
                 extent: Some(vml_extent(&drawing.position)),
                 fill: vml_fill(&drawing.fill),
                 border: vml_stroke(&drawing.stroke),
+                body_properties: vml_text_box_body_properties(),
                 blocks,
             }))
         } else {
@@ -4098,6 +4220,7 @@ impl BodyParser<'_> {
                 extent: None,
                 fill: None,
                 border: None,
+                body_properties: vml_text_box_body_properties(),
                 blocks,
             }))
         }
@@ -4700,6 +4823,7 @@ impl BodyParser<'_> {
                         extent: None,
                         fill: None,
                         border: None,
+                        body_properties: vml_text_box_body_properties(),
                         blocks,
                     }));
                 }
@@ -5994,6 +6118,22 @@ fn parse_percent(value: &str) -> Option<f32> {
     }
 }
 
+/// Parses a DrawingML percentage into its exact per-100000 representation.
+/// OOXML accepts either an integer (`92000`) or a percentage string (`92.000%`).
+fn parse_drawing_percentage(value: &str) -> Option<u32> {
+    let value = value.trim();
+    if let Some(percent) = value.strip_suffix('%') {
+        let percent = percent.trim().parse::<f64>().ok()?;
+        if !percent.is_finite() || percent < 0.0 {
+            return None;
+        }
+        let scaled = (percent * 1_000.0).round();
+        (scaled <= f64::from(u32::MAX)).then_some(scaled as u32)
+    } else {
+        value.parse::<u32>().ok()
+    }
+}
+
 /// Folds a [`PendingColor`]'s luminance/tint/shade/alpha modifiers over its base
 /// into a concrete [`Rgba`]. `lumMod` scales and `lumOff` offsets luminance
 /// (applied channel-wise, exact for the grayscale bases these decorations use);
@@ -6140,6 +6280,21 @@ fn normalize_segments(segments: Vec<Segment>) -> Vec<Segment> {
 
 /// EMU per twip (`914400 EMU/in ÷ 1440 twips/in`).
 const EMU_PER_TWIP: i64 = 635;
+
+/// Keeps the established legacy-VML 0.05-inch margin on every side. DrawingML's
+/// asymmetric defaults apply only to `wps:bodyPr`; VML's own `inset` syntax is a
+/// separate compatibility slice.
+fn vml_text_box_body_properties() -> TextBoxBodyProperties {
+    TextBoxBodyProperties {
+        insets: TextBoxInsets {
+            left_emu: TextBoxInsets::DEFAULT_VERTICAL_EMU,
+            top_emu: TextBoxInsets::DEFAULT_VERTICAL_EMU,
+            right_emu: TextBoxInsets::DEFAULT_VERTICAL_EMU,
+            bottom_emu: TextBoxInsets::DEFAULT_VERTICAL_EMU,
+        },
+        ..TextBoxBodyProperties::default()
+    }
+}
 
 /// A twip length (non-negative extent) to EMU, clamped to the model's coordinate
 /// bound.

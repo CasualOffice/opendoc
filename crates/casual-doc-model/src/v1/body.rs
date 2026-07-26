@@ -523,6 +523,169 @@ pub struct GroupPicture {
     pub descr: Option<String>,
 }
 
+/// DrawingML text-box internal margins (`wps:bodyPr@lIns/tIns/rIns/bIns`), in
+/// signed EMU. The asymmetric defaults are defined by DrawingML: 0.1 inch on
+/// the physical left/right and 0.05 inch on the top/bottom.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TextBoxInsets {
+    /// Physical left inset (`lIns`), in EMU.
+    pub left_emu: i32,
+    /// Top inset (`tIns`), in EMU.
+    pub top_emu: i32,
+    /// Physical right inset (`rIns`), in EMU.
+    pub right_emu: i32,
+    /// Bottom inset (`bIns`), in EMU.
+    pub bottom_emu: i32,
+}
+
+impl TextBoxInsets {
+    /// DrawingML's implied left/right inset (0.1 inch).
+    pub const DEFAULT_HORIZONTAL_EMU: i32 = 91_440;
+    /// DrawingML's implied top/bottom inset (0.05 inch).
+    pub const DEFAULT_VERTICAL_EMU: i32 = 45_720;
+
+    /// Whether every side is at its DrawingML default.
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+impl Default for TextBoxInsets {
+    fn default() -> Self {
+        Self {
+            left_emu: Self::DEFAULT_HORIZONTAL_EMU,
+            top_emu: Self::DEFAULT_VERTICAL_EMU,
+            right_emu: Self::DEFAULT_HORIZONTAL_EMU,
+            bottom_emu: Self::DEFAULT_VERTICAL_EMU,
+        }
+    }
+}
+
+/// Vertical placement of a text body inside its shape
+/// (`wps:bodyPr@anchor`, `ST_TextAnchoringType`).
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextBoxVerticalAnchor {
+    /// Place content at the top inset (`anchor="t"`, the schema default).
+    #[default]
+    Top,
+    /// Center the content stack in the available inner height (`anchor="ctr"`).
+    Center,
+    /// Place content against the bottom inset (`anchor="b"`).
+    Bottom,
+}
+
+/// Horizontal overflow policy for a DrawingML text body.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextBoxHorizontalOverflow {
+    /// Allow content to paint outside the shape horizontally (schema default).
+    #[default]
+    Overflow,
+    /// Clip content at the shape's horizontal bounds.
+    Clip,
+}
+
+/// Vertical overflow policy for a DrawingML text body.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextBoxVerticalOverflow {
+    /// Allow content to paint outside the shape vertically (schema default).
+    #[default]
+    Overflow,
+    /// Clip content at the shape's vertical bounds.
+    Clip,
+    /// Clip overflowing content and request a terminal ellipsis.
+    Ellipsis,
+}
+
+/// DrawingML text autofit choice (`a:noAutofit` / `a:spAutoFit` /
+/// `a:normAutofit`). Omission is semantically equivalent to no autofit.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+pub enum TextBoxAutoFit {
+    /// Keep a positive authored shape extent fixed.
+    #[default]
+    None,
+    /// Grow the shape to contain the flowed text (`a:spAutoFit`).
+    Shape,
+    /// Scale text and percentage line spacing inside a fixed shape.
+    Normal {
+        /// Percentage in per-100000 units (`100000` = 100%, schema default).
+        #[serde(
+            default = "default_text_box_font_scale",
+            skip_serializing_if = "is_default_text_box_font_scale"
+        )]
+        font_scale: u32,
+        /// Percentage-point reduction in per-100000 units (`0` = none).
+        #[serde(default, skip_serializing_if = "is_zero_u32")]
+        line_spacing_reduction: u32,
+    },
+}
+
+const fn default_text_box_font_scale() -> u32 {
+    100_000
+}
+
+fn is_default_text_box_font_scale(value: &u32) -> bool {
+    *value == default_text_box_font_scale()
+}
+
+fn is_zero_u32(value: &u32) -> bool {
+    *value == 0
+}
+
+/// The supported `wps:bodyPr` box-model, overflow, alignment, and autofit
+/// properties shared by standalone and grouped DrawingML text boxes.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TextBoxBodyProperties {
+    /// Independent physical-side internal margins.
+    #[serde(default, skip_serializing_if = "TextBoxInsets::is_default")]
+    pub insets: TextBoxInsets,
+    /// Vertical placement of the flowed block stack.
+    #[serde(default, skip_serializing_if = "is_default_text_box_anchor")]
+    pub vertical_anchor: TextBoxVerticalAnchor,
+    /// Horizontal paint overflow.
+    #[serde(
+        default,
+        skip_serializing_if = "is_default_text_box_horizontal_overflow"
+    )]
+    pub horizontal_overflow: TextBoxHorizontalOverflow,
+    /// Vertical paint overflow.
+    #[serde(default, skip_serializing_if = "is_default_text_box_vertical_overflow")]
+    pub vertical_overflow: TextBoxVerticalOverflow,
+    /// Text/shape autofit behavior.
+    #[serde(default, skip_serializing_if = "is_default_text_box_auto_fit")]
+    pub auto_fit: TextBoxAutoFit,
+}
+
+impl TextBoxBodyProperties {
+    /// Whether every body property has its DrawingML implied value.
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+fn is_default_text_box_anchor(value: &TextBoxVerticalAnchor) -> bool {
+    *value == TextBoxVerticalAnchor::default()
+}
+
+fn is_default_text_box_horizontal_overflow(value: &TextBoxHorizontalOverflow) -> bool {
+    *value == TextBoxHorizontalOverflow::default()
+}
+
+fn is_default_text_box_vertical_overflow(value: &TextBoxVerticalOverflow) -> bool {
+    *value == TextBoxVerticalOverflow::default()
+}
+
+fn is_default_text_box_auto_fit(value: &TextBoxAutoFit) -> bool {
+    *value == TextBoxAutoFit::default()
+}
+
 /// A text-box child of a [`WordprocessingGroup`] (`wps:wsp` with a `wps:txbx`):
 /// self-positioning block content with an optional fill and outline.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -543,6 +706,9 @@ pub struct GroupTextBox {
     /// The box outline (`a:ln`), if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub border: Option<ShapeStroke>,
+    /// Internal margins, vertical anchoring, overflow, and autofit (`wps:bodyPr`).
+    #[serde(default, skip_serializing_if = "TextBoxBodyProperties::is_default")]
+    pub body_properties: TextBoxBodyProperties,
 }
 
 /// A shape child of a [`WordprocessingGroup`] (`wps:wsp`/`wps:cxnSp` with no
@@ -955,6 +1121,9 @@ pub struct TextBox {
     /// The box outline (`a:ln`), if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub border: Option<ShapeStroke>,
+    /// Internal margins, vertical anchoring, overflow, and autofit (`wps:bodyPr`).
+    #[serde(default, skip_serializing_if = "TextBoxBodyProperties::is_default")]
+    pub body_properties: TextBoxBodyProperties,
     /// The text box's block content (non-empty; paragraphs and nested tables).
     pub blocks: Vec<BlockNode>,
 }

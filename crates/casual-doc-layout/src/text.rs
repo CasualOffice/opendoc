@@ -121,6 +121,18 @@ pub struct TextBoxStroke {
     pub width: Twip,
 }
 
+/// Resolved placement and clipping of a text box's flowed block stack, relative
+/// to the box's top-left corner.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+pub struct TextBoxContentLayout {
+    /// Content origin after physical-side insets and vertical anchoring.
+    pub origin: Point,
+    /// Clip nested paint at the shape's horizontal bounds.
+    pub clip_horizontal: bool,
+    /// Clip nested paint at the shape's vertical bounds.
+    pub clip_vertical: bool,
+}
+
 /// An inline text box (`wps:txbx` / `v:textbox`) placed within a paragraph: a
 /// bordered/filled box whose recursive block content was flowed through the *same*
 /// pipeline as the document body (paragraphs, tables incl. nested, inline images —
@@ -148,6 +160,9 @@ pub struct InlineTextBox {
     /// transparent. Serialized only when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fill: Option<[u8; 4]>,
+    /// Resolved content offset and selected-axis overflow clipping.
+    #[serde(default)]
+    pub content_layout: TextBoxContentLayout,
 }
 
 /// The kind of an inline field, resolved from its `w:instr` instruction. Only the

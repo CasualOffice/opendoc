@@ -1159,6 +1159,10 @@ impl Document {
                             "textBox.extent.height",
                         )?;
                     }
+                    check_text_box_body_properties(
+                        &text_box.body_properties,
+                        "textBox.bodyProperties",
+                    )?;
                     // A text box is a fresh block container: its table budget
                     // restarts at 0, matching the importer (which gives each box a
                     // fresh table stack). Threading the enclosing `table_depth`
@@ -1400,6 +1404,10 @@ impl Document {
                         return Err(ModelError::EmptyTextBox(text_box.id));
                     }
                     check_extent(&text_box.extent, "group.textBox.extent")?;
+                    check_text_box_body_properties(
+                        &text_box.body_properties,
+                        "group.textBox.bodyProperties",
+                    )?;
                     if let Some(border) = &text_box.border {
                         check_domain(
                             (0..=MAX_EMU).contains(&border.width_emu),
@@ -2073,6 +2081,24 @@ fn check_wrap_distances(distances: &WrapDistances) -> Result<(), ModelError> {
             (0..=MAX_EMU).contains(&distance),
             "drawingAnchor.wrapDistances",
         )?;
+    }
+    Ok(())
+}
+
+/// Bounds the percentage values carried by `a:normAutofit`. Insets need no
+/// separate check: their `i32` representation is exactly the
+/// `ST_Coordinate32` domain.
+fn check_text_box_body_properties(
+    properties: &TextBoxBodyProperties,
+    property: &'static str,
+) -> Result<(), ModelError> {
+    if let TextBoxAutoFit::Normal {
+        font_scale,
+        line_spacing_reduction,
+    } = properties.auto_fit
+    {
+        check_domain((1_000..=100_000).contains(&font_scale), property)?;
+        check_domain(line_spacing_reduction <= 100_000, property)?;
     }
     Ok(())
 }

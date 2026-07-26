@@ -216,8 +216,10 @@ fn behind_doc_controls_the_paint_order_relative_to_text() {
 }
 
 use casual_doc_model::v1::{
-    GroupChild, GroupPicture, GroupShape, GroupTransform, PointEmu, Rgba, ShapeGeometry,
-    ShapeStroke, TextBox, WordprocessingGroup,
+    GroupChild, GroupPicture, GroupShape, GroupTextBox, GroupTransform, PointEmu, Rgba,
+    ShapeGeometry, ShapeStroke, TextBox, TextBoxAutoFit, TextBoxBodyProperties,
+    TextBoxHorizontalOverflow, TextBoxInsets, TextBoxVerticalAnchor, TextBoxVerticalOverflow,
+    WordprocessingGroup,
 };
 
 fn page_anchor(h: i64, v: i64) -> DrawingAnchor {
@@ -362,6 +364,7 @@ fn top_and_bottom_reflow_coalesces_pictures_text_boxes_and_groups() {
         }),
         fill: None,
         border: None,
+        body_properties: Default::default(),
         blocks: vec![BlockNode::Paragraph(Paragraph {
             id: node(21),
             properties: ParagraphProperties::default(),
@@ -788,6 +791,249 @@ fn a_float_in_a_header_table_cell_is_discovered_and_repeated_per_page() {
 }
 
 #[test]
+fn floating_text_box_body_properties_apply_in_both_headers_and_footers() {
+    let (_media_id, mut definitions) = media_defs();
+    let header_box = InlineNode::TextBox(TextBox {
+        id: node(410),
+        anchor: Some(paragraph_anchor()),
+        relative_height: Some(10),
+        extent: Some(Extent {
+            width_emu: 1_200 * 635,
+            height_emu: 800 * 635,
+        }),
+        fill: None,
+        border: None,
+        body_properties: TextBoxBodyProperties {
+            insets: TextBoxInsets {
+                left_emu: 40 * 635,
+                top_emu: 50 * 635,
+                right_emu: 60 * 635,
+                bottom_emu: 70 * 635,
+            },
+            vertical_anchor: TextBoxVerticalAnchor::Center,
+            horizontal_overflow: TextBoxHorizontalOverflow::Clip,
+            vertical_overflow: TextBoxVerticalOverflow::Clip,
+            auto_fit: TextBoxAutoFit::None,
+        },
+        blocks: vec![BlockNode::Paragraph(Paragraph {
+            id: node(411),
+            properties: ParagraphProperties::default(),
+            inlines: vec![run(412, "header box")],
+        })],
+    });
+    let footer_box = InlineNode::TextBox(TextBox {
+        id: node(420),
+        anchor: Some(paragraph_anchor()),
+        relative_height: Some(20),
+        extent: Some(Extent {
+            width_emu: 1_200 * 635,
+            height_emu: 635,
+        }),
+        fill: None,
+        border: None,
+        body_properties: TextBoxBodyProperties {
+            insets: TextBoxInsets {
+                left_emu: 80 * 635,
+                top_emu: 90 * 635,
+                right_emu: 100 * 635,
+                bottom_emu: 110 * 635,
+            },
+            auto_fit: TextBoxAutoFit::Shape,
+            ..TextBoxBodyProperties::default()
+        },
+        blocks: vec![BlockNode::Paragraph(Paragraph {
+            id: node(421),
+            properties: ParagraphProperties::default(),
+            inlines: vec![run(422, "footer box")],
+        })],
+    });
+    let header_block = BlockNode::Paragraph(Paragraph {
+        id: node(400),
+        properties: ParagraphProperties::default(),
+        inlines: vec![header_box],
+    });
+    let footer_block = BlockNode::Paragraph(Paragraph {
+        id: node(401),
+        properties: ParagraphProperties::default(),
+        inlines: vec![footer_box],
+    });
+    definitions.headers.insert(
+        HeaderFooterId::new(node(430)),
+        ModelHeaderFooter {
+            blocks: vec![header_block.clone()],
+        },
+    );
+    definitions.footers.insert(
+        HeaderFooterId::new(node(431)),
+        ModelHeaderFooter {
+            blocks: vec![footer_block.clone()],
+        },
+    );
+    let body = vec![
+        BlockNode::Paragraph(Paragraph {
+            id: node(440),
+            properties: ParagraphProperties::default(),
+            inlines: vec![run(441, "page one")],
+        }),
+        BlockNode::Paragraph(Paragraph {
+            id: node(442),
+            properties: ParagraphProperties {
+                page_break_before: true,
+                ..ParagraphProperties::default()
+            },
+            inlines: vec![run(443, "page two")],
+        }),
+    ];
+    let document = Document::new(node(1), body, definitions).unwrap();
+    let shaper = ParleyShaper::new();
+    let mut cfg = config();
+    let running = RunningContent {
+        header: RunningBand {
+            default: flow_header_footer(
+                &document,
+                &[header_block],
+                &shaper,
+                cfg.content_area().size.width,
+            ),
+            ..RunningBand::default()
+        },
+        footer: RunningBand {
+            default: flow_header_footer(
+                &document,
+                &[footer_block],
+                &shaper,
+                cfg.content_area().size.width,
+            ),
+            ..RunningBand::default()
+        },
+        ..RunningContent::default()
+    };
+    let (header_height, footer_height) = running.band_heights();
+    cfg.header_height = header_height;
+    cfg.footer_height = footer_height;
+    let galley = build_galley(&document, &shaper, cfg.content_area().size.width);
+    let mut layout = paginate(&galley, &cfg);
+    place_running_content(&mut layout, &running, &cfg);
+    place_floats(&mut layout, &document, &shaper, &cfg);
+
+    assert_eq!(layout.pages.len(), 2);
+    for page in &layout.pages {
+        let text_boxes: Vec<_> = page
+            .anchored
+            .iter()
+            .filter_map(|anchor| match &anchor.content {
+                casual_doc_layout::page::AnchorContent::TextBox { content_layout, .. } => {
+                    Some((anchor, content_layout))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            text_boxes.len(),
+            2,
+            "both the header and footer text boxes repeat on every page"
+        );
+        let header = text_boxes
+            .iter()
+            .find(|(_, content)| content.origin.x == Twip(40))
+            .expect("header box");
+        assert_eq!(header.0.rect.size.height, Twip(800));
+        assert!(header.1.origin.y.raw() > 50);
+        assert!(header.1.clip_horizontal && header.1.clip_vertical);
+        let footer = text_boxes
+            .iter()
+            .find(|(_, content)| content.origin.x == Twip(80))
+            .expect("footer box");
+        assert!(
+            footer.0.rect.size.height.raw() > 1,
+            "shape autofit grows the footer box around its content"
+        );
+
+        let list = compose_page(page);
+        assert!(
+            list.items
+                .iter()
+                .any(|item| matches!(item, PaintItem::PushClip(_))),
+            "the header text-box clip reaches the shared page display list"
+        );
+    }
+}
+
+#[test]
+fn grouped_text_box_uses_body_properties_and_shape_autofit() {
+    let (_media_id, definitions) = media_defs();
+    let group = InlineNode::Group(WordprocessingGroup {
+        id: node(500),
+        anchor: Some(page_anchor(0, 0)),
+        relative_height: Some(1),
+        extent: Extent {
+            width_emu: 2_000 * 635,
+            height_emu: 2_000 * 635,
+        },
+        transform: GroupTransform {
+            offset: PointEmu { x_emu: 0, y_emu: 0 },
+            extent: Extent {
+                width_emu: 2_000 * 635,
+                height_emu: 2_000 * 635,
+            },
+            child_offset: PointEmu { x_emu: 0, y_emu: 0 },
+            child_extent: Extent {
+                width_emu: 2_000 * 635,
+                height_emu: 2_000 * 635,
+            },
+        },
+        children: vec![GroupChild::TextBox(GroupTextBox {
+            id: node(501),
+            offset: PointEmu { x_emu: 0, y_emu: 0 },
+            extent: Extent {
+                width_emu: 1_000 * 635,
+                height_emu: 635,
+            },
+            blocks: vec![BlockNode::Paragraph(Paragraph {
+                id: node(502),
+                properties: ParagraphProperties::default(),
+                inlines: vec![run(503, "grouped box")],
+            })],
+            fill: None,
+            border: None,
+            body_properties: TextBoxBodyProperties {
+                insets: TextBoxInsets {
+                    left_emu: 30 * 635,
+                    top_emu: 40 * 635,
+                    right_emu: 50 * 635,
+                    bottom_emu: 60 * 635,
+                },
+                auto_fit: TextBoxAutoFit::Shape,
+                ..TextBoxBodyProperties::default()
+            },
+        })],
+    });
+    let body = vec![BlockNode::Paragraph(Paragraph {
+        id: node(510),
+        properties: ParagraphProperties::default(),
+        inlines: vec![group],
+    })];
+    let document = Document::new(node(1), body, definitions).unwrap();
+    let shaper = ParleyShaper::new();
+    let cfg = config();
+    let galley = build_galley(&document, &shaper, cfg.content_area().size.width);
+    let mut layout = paginate(&galley, &cfg);
+    place_floats(&mut layout, &document, &shaper, &cfg);
+
+    let grouped = layout.pages[0]
+        .anchored
+        .first()
+        .expect("the grouped text box is placed");
+    assert!(grouped.rect.size.height.raw() > 1);
+    let casual_doc_layout::page::AnchorContent::TextBox { content_layout, .. } = &grouped.content
+    else {
+        panic!("expected grouped text-box content");
+    };
+    assert_eq!(content_layout.origin.x, Twip(30));
+    assert_eq!(content_layout.origin.y, Twip(40));
+}
+
+#[test]
 fn a_floating_text_box_places_at_its_anchor_not_inline() {
     let (_media, definitions) = media_defs();
     // A paragraph carrying body text plus a FLOATING text box (anchor set) at page
@@ -815,6 +1061,7 @@ fn a_floating_text_box_places_at_its_anchor_not_inline() {
             },
             width_emu: 19_050,
         }),
+        body_properties: Default::default(),
         blocks: vec![BlockNode::Paragraph(Paragraph {
             id: node(21),
             properties: ParagraphProperties::default(),
@@ -1093,6 +1340,7 @@ fn footer_text_box_layout(page_instr: &str) -> casual_doc_layout::page::Paginate
         }),
         fill: None,
         border: None,
+        body_properties: TextBoxBodyProperties::default(),
         blocks: vec![BlockNode::Paragraph(Paragraph {
             id: node(410),
             properties: ParagraphProperties::default(),
@@ -1200,6 +1448,7 @@ fn a_page_field_in_an_inline_text_box_resolves() {
         extent: None,
         fill: None,
         border: None,
+        body_properties: TextBoxBodyProperties::default(),
         blocks: vec![BlockNode::Paragraph(Paragraph {
             id: node(51),
             properties: ParagraphProperties::default(),

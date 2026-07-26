@@ -12,7 +12,7 @@ use crate::block::{
 };
 use crate::display::{Color, DisplayList, PaintItem, Stroke};
 use crate::page::{AnchorContent, Page, PlacedAnchor};
-use crate::text::LineLayout;
+use crate::text::{LineLayout, TextBoxContentLayout};
 use crate::units::{Point, Rect, Size, Twip};
 
 /// Width (twips) of a `bar` tab stop's vertical rule (~0.5pt, Word's hairline).
@@ -21,12 +21,6 @@ const BAR_TAB_WIDTH: Twip = Twip(10);
 /// Width (twips) of a column separator rule (`w:cols/@w:sep`) — Word's ~0.5pt
 /// hairline, the same weight as a bar-tab rule.
 const COLUMN_SEPARATOR_WIDTH: Twip = Twip(10);
-
-/// The internal margin (twips) between an inline text box's border and its flowed
-/// content — Word's default `wps:bodyPr` inset (~0.05in). The flow layer sizes the
-/// box to include it on all four sides ([`crate::flow`]); composition offsets the
-/// content by it.
-pub(crate) const TEXTBOX_INSET: Twip = Twip(72);
 
 /// Stroke width (device px) of an inline text box's border (a hairline).
 /// Builds a display list for one paragraph's shaped lines, placed with the
@@ -110,9 +104,18 @@ pub fn compose_paragraph(layout: &LineLayout, origin: Point) -> DisplayList {
                     }),
                 });
             }
-            let content_origin =
-                Point::new(box_origin.x + TEXTBOX_INSET, box_origin.y + TEXTBOX_INSET);
+            let content_origin = Point::new(
+                box_origin.x + text_box.content_layout.origin.x,
+                box_origin.y + text_box.content_layout.origin.y,
+            );
+            let clip = text_box_clip(box_rect, text_box.content_layout);
+            if let Some(clip) = clip {
+                list.push(PaintItem::PushClip(clip));
+            }
             compose_blocks(&mut list, &text_box.blocks, content_origin);
+            if clip.is_some() {
+                list.push(PaintItem::PopClip);
+            }
         }
         // Inline horizontal rules (`w:pict` / `v:rect@o:hr`): a filled rectangle
         // spanning (a fraction of) the content width, translated into page space.
@@ -229,6 +232,7 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor) {
             blocks,
             fill,
             border,
+            content_layout,
         } => {
             if let Some(fill) = fill {
                 list.push(PaintItem::Rect {
@@ -248,12 +252,46 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor) {
                 });
             }
             let content_origin = Point::new(
-                anchor.rect.origin.x + TEXTBOX_INSET,
-                anchor.rect.origin.y + TEXTBOX_INSET,
+                anchor.rect.origin.x + content_layout.origin.x,
+                anchor.rect.origin.y + content_layout.origin.y,
             );
+            let clip = text_box_clip(anchor.rect, *content_layout);
+            if let Some(clip) = clip {
+                list.push(PaintItem::PushClip(clip));
+            }
             compose_blocks(list, blocks, content_origin);
+            if clip.is_some() {
+                list.push(PaintItem::PopClip);
+            }
         }
     }
+}
+
+/// Builds a clip rectangle for the selected overflow axes. The unselected axis
+/// receives a deliberately broad page-independent span; any enclosing table/page
+/// clip still intersects it in the renderer.
+fn text_box_clip(rect: Rect, layout: TextBoxContentLayout) -> Option<Rect> {
+    if !layout.clip_horizontal && !layout.clip_vertical {
+        return None;
+    }
+    const PAD: i32 = 1_000_000;
+    let (x, width) = if layout.clip_horizontal {
+        (rect.origin.x, rect.size.width)
+    } else {
+        (
+            Twip(rect.origin.x.raw().saturating_sub(PAD)),
+            Twip(rect.size.width.raw().saturating_add(PAD.saturating_mul(2))),
+        )
+    };
+    let (y, height) = if layout.clip_vertical {
+        (rect.origin.y, rect.size.height)
+    } else {
+        (
+            Twip(rect.origin.y.raw().saturating_sub(PAD)),
+            Twip(rect.size.height.raw().saturating_add(PAD.saturating_mul(2))),
+        )
+    };
+    Some(Rect::new(Point::new(x, y), Size::new(width, height)))
 }
 
 /// Composes one block fragment at `origin` (top-left, twips) into `list`.
@@ -1260,7 +1298,7 @@ mod tests {
 
     #[test]
     fn an_inline_text_box_paints_its_fill_border_and_content() {
-        use crate::text::{InlineTextBox, TextBoxStroke};
+        use crate::text::{InlineTextBox, TextBoxContentLayout, TextBoxStroke};
 
         // A text box carrying one inner paragraph fragment (a single glyph run),
         // with an explicit fill and border.
@@ -1280,6 +1318,11 @@ mod tests {
                 width: Twip(30),
             }),
             fill: Some([200, 210, 220, 255]),
+            content_layout: TextBoxContentLayout {
+                origin: Point::new(Twip(72), Twip(72)),
+                clip_horizontal: false,
+                clip_vertical: false,
+            },
         };
         let mut layout = one_run_line(Twip(0), None);
         layout.lines[0].runs.clear();
@@ -1331,7 +1374,7 @@ mod tests {
         });
         assert_eq!(
             glyph_x,
-            Some(600 + TEXTBOX_INSET.raw()),
+            Some(672),
             "the box content is inset from the box's left edge by the margin"
         );
     }
