@@ -21,8 +21,9 @@ use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     Alignment, BlockNode, BorderEdge, BreakKind, Color, DefinitionMap, Document, Drawing, Extent,
     FontRef, FontScheme, HeightRule, HighlightColor, InlineNode, MediaId, MediaReference,
-    ParagraphProperties, RunProperties, TabAlignment, TabLeader, TabStop, Table, TableBorders,
-    TableCell, TableLayout, TableRowProperties, ThemeFontRef,
+    ParagraphProperties, RunProperties, SectionBoundary, SectionId, SectionType, TabAlignment,
+    TabLeader, TabStop, Table, TableBorders, TableCell, TableLayout, TableRowProperties,
+    ThemeFontRef,
 };
 
 use crate::block::{
@@ -31,7 +32,9 @@ use crate::block::{
 };
 use crate::incremental::{DirtySet, GalleyCache};
 use crate::model::{ModelPos, ModelRange};
+use crate::paginate::PageConfig;
 use crate::resolve::{FaceRequest, FontResolutionReport, FontResolver};
+use crate::section::Section;
 use crate::tabs::{self, FlowItem};
 use crate::text::{
     Decoration, FieldKind, FieldMarker, FieldStyle, FontId, Glyph, GlyphRun, InlineImage, Line,
@@ -116,6 +119,141 @@ pub fn flow_header_footer(
         media: &document.definitions().media,
     };
     flow_blocks(blocks, shaper, content_width, &mut ctx)
+}
+
+/// Splits a document's body into [`Section`]s, each shaped at *its own* content
+/// width and carrying its own [`PageConfig`] geometry — the input to
+/// [`crate::section::paginate_sections`].
+///
+/// A section is a maximal run of body blocks terminated by a paragraph whose
+/// `w:pPr` carries a `w:sectPr` (`ParagraphProperties::section_break`); the trailing
+/// run is the final, body-level section (the last `Definitions::sections` entry).
+/// Section boundaries are consumed in document order, so the k-th run maps to the
+/// k-th [`SectionBoundary`]. **Each run is shaped at its section's own content
+/// width** (page width − start − end margins), which is why sections cannot share
+/// one pre-built galley: a margin change re-wraps the text.
+///
+/// The returned configs reserve **no** header/footer band (`header_height` /
+/// `footer_height` are zero); a caller that lays running content sets those from
+/// [`crate::running::RunningContent::band_heights`] per section before paginating.
+/// `break_type` and `page_number_start` are carried from each boundary's `w:type`
+/// and `w:pgNumType`.
+///
+/// A document with no modeled sections falls back to a single implicit US-Letter
+/// section over the whole body (so this never panics on legacy input).
+#[must_use]
+pub fn build_sections(document: &Document, shaper: &dyn LineShaper) -> Vec<Section> {
+    let resolver = FontResolver::new();
+    let mut report = FontResolutionReport::new();
+    let mut ctx = FlowCtx {
+        resolver: &resolver,
+        scheme: document.definitions().font_scheme.as_ref(),
+        report: &mut report,
+        default_tab: tabs::default_tab_stop(document.definitions().settings.default_tab_stop),
+        media: &document.definitions().media,
+    };
+    let boundaries = &document.definitions().sections;
+    let body = document.body();
+
+    if boundaries.is_empty() {
+        // Legacy / section-free input: one implicit section over the whole body.
+        let config = implicit_letter_config(SectionId::new(document.id()));
+        let fragments = flow_blocks(body, shaper, section_content_width(&config), &mut ctx);
+        return vec![Section::new(config, fragments)];
+    }
+
+    let last = boundaries.len() - 1;
+    let mut sections = Vec::new();
+    let mut sec_idx = 0usize;
+    let mut start = 0usize;
+    for (i, block) in body.iter().enumerate() {
+        let closes =
+            matches!(block, BlockNode::Paragraph(p) if p.properties.section_break.is_some());
+        if closes {
+            let boundary = &boundaries[sec_idx.min(last)];
+            sections.push(build_one_section(
+                boundary,
+                &body[start..=i],
+                shaper,
+                &mut ctx,
+            ));
+            start = i + 1;
+            sec_idx += 1;
+        }
+    }
+    // The trailing run is the body-level section. Emit it whenever a boundary is
+    // still unplaced (so an empty final section still contributes its geometry), or
+    // when malformed input left content after every boundary was consumed.
+    if sec_idx <= last || start < body.len() {
+        let boundary = &boundaries[sec_idx.min(last)];
+        sections.push(build_one_section(
+            boundary,
+            &body[start..],
+            shaper,
+            &mut ctx,
+        ));
+    }
+    sections
+}
+
+/// Builds one [`Section`] from a boundary and its run of body blocks, shaping the
+/// blocks at the section's own content width.
+fn build_one_section(
+    boundary: &SectionBoundary,
+    blocks: &[BlockNode],
+    shaper: &dyn LineShaper,
+    ctx: &mut FlowCtx,
+) -> Section {
+    let config = section_config(boundary);
+    let fragments = flow_blocks(blocks, shaper, section_content_width(&config), ctx);
+    Section {
+        config,
+        fragments,
+        break_type: boundary.section_type.unwrap_or(SectionType::NextPage),
+        page_number_start: boundary
+            .page_numbering
+            .start
+            .and_then(|s| u32::try_from(s).ok()),
+    }
+}
+
+/// The [`PageConfig`] geometry of a [`SectionBoundary`] (page box + margins), with
+/// zero header/footer bands (a running-content caller reserves those per section).
+fn section_config(boundary: &SectionBoundary) -> PageConfig {
+    PageConfig {
+        section: boundary.id,
+        page_size: Size::new(
+            Twip(boundary.page_size.width_twips),
+            Twip(boundary.page_size.height_twips),
+        ),
+        margin_top: Twip(boundary.page_margins.top_twips),
+        margin_bottom: Twip(boundary.page_margins.bottom_twips),
+        margin_start: Twip(boundary.page_margins.start_twips),
+        margin_end: Twip(boundary.page_margins.end_twips),
+        header_height: Twip::ZERO,
+        footer_height: Twip::ZERO,
+    }
+}
+
+/// The content width a section shapes its body at (page width minus side margins,
+/// at least one twip so shaping never sees a zero constraint).
+fn section_content_width(config: &PageConfig) -> Twip {
+    (config.page_size.width - config.margin_start - config.margin_end).max(Twip(1))
+}
+
+/// The implicit US-Letter geometry (12240×15840 twips, 1-inch margins) for a
+/// document that declares no sections.
+fn implicit_letter_config(section: SectionId) -> PageConfig {
+    PageConfig {
+        section,
+        page_size: Size::new(Twip(12_240), Twip(15_840)),
+        margin_top: Twip(1_440),
+        margin_bottom: Twip(1_440),
+        margin_start: Twip(1_440),
+        margin_end: Twip(1_440),
+        header_height: Twip::ZERO,
+        footer_height: Twip::ZERO,
+    }
 }
 
 /// Builds the galley like [`build_galley`], but reuses the shaped lines of
