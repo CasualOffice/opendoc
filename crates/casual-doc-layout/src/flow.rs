@@ -18,8 +18,9 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use casual_doc_model::v1::{
-    Alignment, BlockNode, BorderEdge, Color, Document, HeightRule, InlineNode, ParagraphProperties,
-    Table, TableBorders, TableCell, TableLayout, TableRowProperties,
+    Alignment, BlockNode, BorderEdge, Color, Document, FontRef, FontScheme, HeightRule, InlineNode,
+    ParagraphProperties, RunProperties, Table, TableBorders, TableCell, TableLayout,
+    TableRowProperties, ThemeFontRef,
 };
 
 use crate::block::{
@@ -27,18 +28,51 @@ use crate::block::{
 };
 use crate::incremental::{DirtySet, GalleyCache};
 use crate::model::{ModelPos, ModelRange};
-use crate::text::{Decoration, LineConstraints, LineShaper, StyledRun, TextAlignment};
+use crate::resolve::{FaceRequest, FontResolutionReport, FontResolver};
+use crate::text::{Decoration, FontId, LineConstraints, LineShaper, StyledRun, TextAlignment};
 use crate::units::Twip;
 
+/// Context threaded through the flow: the font resolver, the document's theme
+/// font scheme (needed to turn `w:rFonts@*Theme` slots into concrete families),
+/// and the running font-resolution report.
+struct FlowCtx<'a> {
+    resolver: &'a FontResolver,
+    scheme: Option<&'a FontScheme>,
+    report: &'a mut FontResolutionReport,
+}
+
 /// Builds a galley of block fragments from a document's body, shaped to fit
-/// `content_width` (the page content-area width, in twips).
+/// `content_width` (the page content-area width, in twips). The font-resolution
+/// report is discarded; call [`build_galley_with_report`] to inspect which
+/// families were substituted.
 #[must_use]
 pub fn build_galley(
     document: &Document,
     shaper: &dyn LineShaper,
     content_width: Twip,
 ) -> Vec<BlockFragment> {
-    flow_blocks(document.body(), shaper, content_width)
+    build_galley_with_report(document, shaper, content_width).0
+}
+
+/// Builds a galley and returns the [`FontResolutionReport`] alongside it: the
+/// whole-face substitutions and per-glyph coverage fallbacks performed while
+/// resolving each run's declared family (`P1C-002b`), mirroring the importer's
+/// compatibility-report pattern so substitution is surfaced, never silent.
+#[must_use]
+pub fn build_galley_with_report(
+    document: &Document,
+    shaper: &dyn LineShaper,
+    content_width: Twip,
+) -> (Vec<BlockFragment>, FontResolutionReport) {
+    let resolver = FontResolver::new();
+    let mut report = FontResolutionReport::new();
+    let mut ctx = FlowCtx {
+        resolver: &resolver,
+        scheme: document.definitions().font_scheme.as_ref(),
+        report: &mut report,
+    };
+    let galley = flow_blocks(document.body(), shaper, content_width, &mut ctx);
+    (galley, report)
 }
 
 /// Builds the galley like [`build_galley`], but reuses the shaped lines of
@@ -64,13 +98,28 @@ pub fn build_galley_cached(
     cache: &mut GalleyCache,
     dirty: &DirtySet,
 ) -> Vec<BlockFragment> {
+    // The cache path resolves fonts exactly like the fresh path so a reused
+    // fragment is byte-for-byte identical to a freshly built one; the resolved
+    // face is folded into `paragraph_hash` (via `run.font`), so a cached fragment
+    // can never carry a face resolved under different font inputs. The report is
+    // discarded here, matching [`build_galley`]; callers wanting it use
+    // [`build_galley_with_report`].
+    let resolver = FontResolver::new();
+    let mut report = FontResolutionReport::new();
+    let mut ctx = FlowCtx {
+        resolver: &resolver,
+        scheme: document.definitions().font_scheme.as_ref(),
+        report: &mut report,
+    };
     cache.begin_build(content_width);
     let mut galley = Vec::new();
     for block in document.body() {
         match block {
             BlockNode::Paragraph(paragraph) => {
                 let mut runs = Vec::new();
-                collect_runs(&paragraph.inlines, &mut runs);
+                // Resolving here sets each run's resolved `font`, which
+                // `paragraph_hash` hashes — so the cache key tracks the face.
+                collect_runs(&paragraph.inlines, &mut runs, &mut ctx);
                 let spacing = paragraph.properties.spacing.as_ref();
                 let constraints = LineConstraints {
                     max_width: content_width,
@@ -106,7 +155,9 @@ pub fn build_galley_cached(
                 cache.store(paragraph.id, hash, fragment.clone());
                 galley.push(fragment);
             }
-            BlockNode::Table(table) => flow_table(table, shaper, content_width, &mut galley),
+            BlockNode::Table(table) => {
+                flow_table(table, shaper, content_width, &mut galley, &mut ctx)
+            }
             BlockNode::Sdt(_) => {}
         }
     }
@@ -156,13 +207,18 @@ fn paragraph_hash(
 /// Flows a sequence of block nodes (a body or a table cell) into shaped
 /// fragments at `width`. Paragraphs shape to lines; tables expand to their rows;
 /// block content controls are laid out in a later slice.
-fn flow_blocks(blocks: &[BlockNode], shaper: &dyn LineShaper, width: Twip) -> Vec<BlockFragment> {
+fn flow_blocks(
+    blocks: &[BlockNode],
+    shaper: &dyn LineShaper,
+    width: Twip,
+    ctx: &mut FlowCtx,
+) -> Vec<BlockFragment> {
     let mut galley = Vec::new();
     for block in blocks {
         match block {
             BlockNode::Paragraph(paragraph) => {
                 let mut runs = Vec::new();
-                collect_runs(&paragraph.inlines, &mut runs);
+                collect_runs(&paragraph.inlines, &mut runs, ctx);
                 let range = ModelRange::new(
                     ModelPos::new(paragraph.id, 0),
                     ModelPos::new(paragraph.id, 0),
@@ -185,7 +241,7 @@ fn flow_blocks(blocks: &[BlockNode], shaper: &dyn LineShaper, width: Twip) -> Ve
                     break_control: break_control(&paragraph.properties),
                 });
             }
-            BlockNode::Table(table) => flow_table(table, shaper, width, &mut galley),
+            BlockNode::Table(table) => flow_table(table, shaper, width, &mut galley, ctx),
             BlockNode::Sdt(_) => {}
         }
     }
@@ -212,10 +268,11 @@ fn flow_table(
     shaper: &dyn LineShaper,
     width: Twip,
     galley: &mut Vec<BlockFragment>,
+    ctx: &mut FlowCtx,
 ) {
     let indent = table.properties.indent_twips.unwrap_or(0);
     let available = (width.raw() - indent).max(1);
-    let widths = solve_table_columns(table, shaper, available);
+    let widths = solve_table_columns(table, shaper, available, ctx);
 
     // Cumulative left edge of each column, shifted by the table indent.
     let ncols = widths.len();
@@ -242,7 +299,7 @@ fn flow_table(
                 grid_span: span as u32,
                 x: cell_x,
                 width: cell_width,
-                blocks: flow_blocks(&cell.blocks, shaper, cell_width),
+                blocks: flow_blocks(&cell.blocks, shaper, cell_width, ctx),
                 borders,
             });
             col += span;
@@ -308,7 +365,12 @@ enum WidthSpec {
 /// Solves the grid column widths for a table (twips), measuring each cell's
 /// content min/preferred widths with the shaper and distributing `w:gridSpan`
 /// cells across the columns they cover.
-fn solve_table_columns(table: &Table, shaper: &dyn LineShaper, available: i32) -> Vec<Twip> {
+fn solve_table_columns(
+    table: &Table,
+    shaper: &dyn LineShaper,
+    available: i32,
+    ctx: &FlowCtx,
+) -> Vec<Twip> {
     let ncols = if table.grid.is_empty() {
         table
             .rows
@@ -338,7 +400,7 @@ fn solve_table_columns(table: &Table, shaper: &dyn LineShaper, available: i32) -
         let mut col = 0usize;
         for cell in &row.cells {
             let span = cell.properties.grid_span.unwrap_or(1).max(1) as usize;
-            let (cmin, cmax) = block_intrinsic(&cell.blocks, shaper);
+            let (cmin, cmax) = block_intrinsic(&cell.blocks, shaper, ctx);
             let cpref = cmax.max(cell.properties.width_twips.unwrap_or(0));
             // A spanning cell's demand is shared over the columns it covers.
             let per_min = div_ceil(cmin, span as i32);
@@ -493,14 +555,25 @@ fn div_ceil(a: i32, b: i32) -> i32 {
 /// widest run that cannot be line-broken (measured by shaping at a 1-twip width);
 /// `preferred` is the natural, unwrapped width (shaping at an effectively
 /// unbounded width). Nested tables contribute their declared grid width.
-fn block_intrinsic(blocks: &[BlockNode], shaper: &dyn LineShaper) -> (i32, i32) {
+///
+/// Runs are resolved to their concrete face (so intrinsic widths are measured
+/// with the advances actually shaped) but into a throwaway report — measurement
+/// is internal and must not inflate the substitution counts surfaced for the
+/// rendered galley, which the flow pass records once per run.
+fn block_intrinsic(blocks: &[BlockNode], shaper: &dyn LineShaper, ctx: &FlowCtx) -> (i32, i32) {
+    let mut scratch = FontResolutionReport::new();
+    let mut mctx = FlowCtx {
+        resolver: ctx.resolver,
+        scheme: ctx.scheme,
+        report: &mut scratch,
+    };
     let mut min = 0;
     let mut preferred = 0;
     for block in blocks {
         match block {
             BlockNode::Paragraph(paragraph) => {
                 let mut runs = Vec::new();
-                collect_runs(&paragraph.inlines, &mut runs);
+                collect_runs(&paragraph.inlines, &mut runs, &mut mctx);
                 if runs.is_empty() {
                     continue;
                 }
@@ -647,25 +720,23 @@ fn border_rank(edge: &BorderEdge) -> (u32, u32, u32) {
 /// the wrappers that carry inline content (hyperlinks, revisions, content
 /// controls). Text-bearing runs and explicit tabs contribute text; other inline
 /// nodes are not yet laid out.
-fn collect_runs<'a>(inlines: &'a [InlineNode], out: &mut Vec<StyledRun<'a>>) {
+fn collect_runs<'a>(inlines: &'a [InlineNode], out: &mut Vec<StyledRun<'a>>, ctx: &mut FlowCtx) {
     for inline in inlines {
         match inline {
-            InlineNode::Run(run) => out.push(styled_run(&run.text, &run.properties)),
-            InlineNode::Tab(_) => out.push(styled_run("\t", &Default::default())),
-            InlineNode::Hyperlink(hyperlink) => collect_runs(&hyperlink.inlines, out),
-            InlineNode::Revision(revision) => collect_runs(&revision.inlines, out),
-            InlineNode::Sdt(sdt) => collect_runs(&sdt.inlines, out),
+            InlineNode::Run(run) => out.push(styled_run(&run.text, &run.properties, ctx)),
+            InlineNode::Tab(_) => out.push(styled_run("\t", &RunProperties::default(), ctx)),
+            InlineNode::Hyperlink(hyperlink) => collect_runs(&hyperlink.inlines, out, ctx),
+            InlineNode::Revision(revision) => collect_runs(&revision.inlines, out, ctx),
+            InlineNode::Sdt(sdt) => collect_runs(&sdt.inlines, out, ctx),
             _ => {}
         }
     }
 }
 
-/// Maps a run's text + properties to a styled run (default font for now; font
-/// resolution is `P1C-002`).
-fn styled_run<'a>(
-    text: &'a str,
-    properties: &casual_doc_model::v1::RunProperties,
-) -> StyledRun<'a> {
+/// Maps a run's text + properties to a styled run, resolving its declared font
+/// family (`w:rFonts`, direct or theme) to a concrete bundled face via the
+/// [`FontResolver`] and recording any substitution/coverage fallback (`P1C-002b`).
+fn styled_run<'a>(text: &'a str, properties: &RunProperties, ctx: &mut FlowCtx) -> StyledRun<'a> {
     // `w:sz` is in half-points; a half-point is 10 twips (a point is 20). Default
     // to 11pt (Word's default body size) when unset.
     let size = properties
@@ -679,9 +750,9 @@ fn styled_run<'a>(
     let italic = properties.italic.unwrap_or(false);
     StyledRun {
         text,
-        // Select the bundled face matching the run's weight/style so the renderer
-        // outlines the same face `parley` shapes with.
-        font: crate::fonts::face_id(bold, italic),
+        // Resolve the declared family to a concrete face so the renderer outlines
+        // the same face `parley` shapes with.
+        font: resolve_font(text, properties, bold, italic, ctx),
         size,
         bold,
         italic,
@@ -692,6 +763,75 @@ fn styled_run<'a>(
             strikethrough: properties.strike.unwrap_or(false),
         },
     }
+}
+
+/// Resolves a run's declared font family to a bundled face, records any
+/// substitution and per-glyph coverage fallback, and returns the chosen face. A
+/// run with no declared family uses the bundled default (matching weight/style).
+fn resolve_font(
+    text: &str,
+    properties: &RunProperties,
+    bold: bool,
+    italic: bool,
+    ctx: &mut FlowCtx,
+) -> FontId {
+    let face = match requested_family(properties, ctx.scheme) {
+        Some(family) => {
+            let outcome = ctx.resolver.resolve(&FaceRequest {
+                family: &family,
+                bold,
+                italic,
+            });
+            ctx.report.note_resolution(&family, &outcome);
+            outcome.face
+        }
+        None => crate::fonts::face_id(bold, italic),
+    };
+    ctx.resolver.record_coverage(face, text, ctx.report);
+    face
+}
+
+/// The concrete family name a run requests through its ascii `w:rFonts` slot,
+/// resolving a theme reference against the document's font scheme. `None` when the
+/// run declares no family (it inherits the default).
+fn requested_family(properties: &RunProperties, scheme: Option<&FontScheme>) -> Option<String> {
+    match properties.font_ref.as_ref()? {
+        FontRef::Named(name) => Some(name.name.clone()),
+        FontRef::Theme(theme) => theme_family(theme.slot, scheme),
+    }
+}
+
+/// Which per-script entry of a theme font collection a slot resolves against.
+enum ThemeAxis {
+    Latin,
+    EastAsia,
+    ComplexScript,
+}
+
+/// Resolves a `w:rFonts@*Theme` slot to a concrete typeface via the theme font
+/// scheme (design §3.4): `*Ascii`/`*HAnsi` → latin, `*EastAsia` → ea, `*Bidi` →
+/// cs, with an empty ea/cs typeface falling back to the latin entry.
+fn theme_family(slot: ThemeFontRef, scheme: Option<&FontScheme>) -> Option<String> {
+    let scheme = scheme?;
+    let (collection, axis) = match slot {
+        ThemeFontRef::MajorAscii | ThemeFontRef::MajorHAnsi => (&scheme.major, ThemeAxis::Latin),
+        ThemeFontRef::MajorEastAsia => (&scheme.major, ThemeAxis::EastAsia),
+        ThemeFontRef::MajorBidi => (&scheme.major, ThemeAxis::ComplexScript),
+        ThemeFontRef::MinorAscii | ThemeFontRef::MinorHAnsi => (&scheme.minor, ThemeAxis::Latin),
+        ThemeFontRef::MinorEastAsia => (&scheme.minor, ThemeAxis::EastAsia),
+        ThemeFontRef::MinorBidi => (&scheme.minor, ThemeAxis::ComplexScript),
+    };
+    let entry = match axis {
+        ThemeAxis::Latin => &collection.latin,
+        ThemeAxis::EastAsia => &collection.ea,
+        ThemeAxis::ComplexScript => &collection.cs,
+    };
+    let typeface = if entry.typeface.is_empty() {
+        &collection.latin.typeface
+    } else {
+        &entry.typeface
+    };
+    (!typeface.is_empty()).then(|| typeface.clone())
 }
 
 /// Maps model paragraph alignment to the layout alignment.
@@ -900,6 +1040,16 @@ mod tests {
             glyphs >= 12,
             "hyperlink + revision text both shaped (got {glyphs})"
         );
+    }
+
+    fn named_font(name: &str) -> RunProperties {
+        use casual_doc_model::v1::{FontName, FontRef};
+        RunProperties {
+            font_ref: Some(FontRef::Named(FontName {
+                name: name.to_owned(),
+            })),
+            ..RunProperties::default()
+        }
     }
 
     // --- Table layout fidelity (P1D-003) --------------------------------------
@@ -1183,6 +1333,59 @@ mod tests {
                 cells: vec![text_cell(60, TableCellProperties::default(), text)],
             }],
         }
+    }
+
+    #[test]
+    fn a_cambria_run_resolves_to_the_caladea_face_and_is_reported() {
+        use crate::fonts::CALADEA;
+        use crate::resolve::Disposition;
+        let doc = document(vec![paragraph(
+            10,
+            vec![run_node(11, "Body text", named_font("Cambria"))],
+        )]);
+        let shaper = ParleyShaper::new();
+        let (galley, report) = build_galley_with_report(&doc, &shaper, Twip::from_points(400));
+        let BlockFragment::Paragraph { lines, .. } = &galley[0] else {
+            panic!();
+        };
+        assert_eq!(
+            lines.lines[0].runs[0].font,
+            CALADEA.face_id(false, false),
+            "Cambria shapes and renders as the Caladea face"
+        );
+        let subs: Vec<_> = report.substitutions().collect();
+        assert_eq!(subs.len(), 1);
+        assert_eq!(subs[0].resolved_family, "Caladea");
+        assert_eq!(subs[0].disposition, Disposition::MetricCompatible);
+    }
+
+    #[test]
+    fn an_unknown_family_is_reported_as_a_fallback() {
+        use crate::resolve::Disposition;
+        let doc = document(vec![paragraph(
+            10,
+            vec![run_node(11, "text", named_font("No Such Font"))],
+        )]);
+        let shaper = ParleyShaper::new();
+        let (_galley, report) = build_galley_with_report(&doc, &shaper, Twip::from_points(400));
+        let subs: Vec<_> = report.substitutions().collect();
+        assert_eq!(subs.len(), 1);
+        assert_eq!(subs[0].requested, "No Such Font");
+        assert_eq!(subs[0].disposition, Disposition::Fallback);
+    }
+
+    #[test]
+    fn a_run_without_a_declared_family_reports_nothing() {
+        let doc = document(vec![paragraph(
+            10,
+            vec![run_node(11, "plain", RunProperties::default())],
+        )]);
+        let shaper = ParleyShaper::new();
+        let (_galley, report) = build_galley_with_report(&doc, &shaper, Twip::from_points(400));
+        assert!(
+            report.is_empty(),
+            "an undeclared family is not a substitution"
+        );
     }
 
     #[test]

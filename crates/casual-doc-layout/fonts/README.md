@@ -11,8 +11,30 @@ discovery — so layout metrics are reproducible on every host; see
 | `Roboto-Bold.ttf` | Roboto Bold | Apache-2.0 | same |
 | `Roboto-Italic.ttf` | Roboto Italic | Apache-2.0 | same |
 | `Roboto-BoldItalic.ttf` | Roboto Bold Italic | Apache-2.0 | same |
+| `Caladea-Regular.ttf` | Caladea | Apache-2.0 | [github.com/huertatipografica/Caladea](https://github.com/huertatipografica/Caladea) (Huerta Tipografía; croscore) |
+| `Caladea-Bold.ttf` | Caladea Bold | Apache-2.0 | same |
+| `Caladea-Italic.ttf` | Caladea Italic | Apache-2.0 | same |
+| `Caladea-BoldItalic.ttf` | Caladea Bold Italic | Apache-2.0 | same |
 
-Roboto is licensed under the Apache License 2.0, the same license as this
-repository, so it may be redistributed with the source. The fuller font set
-(additional weights/styles, DOCX font-name matching, and fallback) is added by
-the font-resolution slice (`P1C-002`, `docs/40-FONT-MANAGEMENT-DESIGN.md`).
+Every bundled family is licensed under the Apache License 2.0 — the same license
+as this repository and within the `deny.toml` allowlist — so it may be
+redistributed with the source. Each font's `name` table carries the Apache-2.0
+license string (verified on import).
+
+## Roles (font resolver, `P1C-002b`)
+
+- **Roboto** is the default family and the ultimate fallback (`FontId(0)..=3`).
+- **Caladea** (`FontId(4)..=7`) is metric-compatible with **Cambria** (matching
+  advances, so line breaks are preserved); the resolver maps Cambria → Caladea.
+
+### Why Carlito is *not* bundled
+
+Calibri's metric-compatible partner is **Carlito**, but every published Carlito
+build (Google Fonts, the croscore/`fonts-crosextra-carlito` package, LibreOffice)
+is distributed under the **SIL Open Font License 1.1**, which is **not** in the
+`deny.toml` license allowlist. To keep the bundle license-clean, Carlito is
+deliberately omitted and **Calibri resolves to a documented visual fallback**
+(Roboto) — reported as a substitution, never silently swapped. Dropping an
+Apache-2.0 (or otherwise allowlisted) Carlito into this directory and adding it to
+`FAMILIES` in `fonts.rs` is all that is needed to upgrade Calibri to a
+metric-compatible match.

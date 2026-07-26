@@ -46,35 +46,58 @@ pub struct ParleyShaper {
     fonts: RefCell<FontContext>,
     layout_cx: RefCell<LayoutContext<RunBrush>>,
     default_family: String,
+    /// The registered family name for each bundled family, paired with the family's
+    /// base [`FontId`], in ascending `base` order — used to push the resolved
+    /// family per run so `parley` shapes with the same face the resolver chose.
+    families: Vec<(u32, String)>,
 }
 
 impl ParleyShaper {
-    /// Creates a shaper with all bundled faces (Roboto regular/bold/italic/bold-
-    /// italic) registered into an empty collection (no system fonts —
-    /// deterministic). `parley` selects the face per run from the pushed weight/
-    /// style; the run's [`FontId`] rides the brush so the renderer draws the same.
+    /// Creates a shaper with every bundled family (Roboto and Caladea, each
+    /// regular/bold/italic/bold-italic) registered into an empty collection (no
+    /// system fonts — deterministic). Each run pushes its resolved family plus
+    /// weight/style, so `parley` selects the same face the resolver did; the run's
+    /// [`FontId`] rides the brush so the renderer draws the same.
     #[must_use]
     pub fn new() -> Self {
         let mut fonts = FontContext::new();
-        let mut family_id = None;
-        for (_, bytes) in crate::fonts::BUNDLED_FACES {
-            let registered = fonts
-                .collection
-                .register_fonts(Blob::new(Arc::new(bytes.to_vec())), None);
-            if family_id.is_none() {
-                family_id = registered.first().map(|(id, _)| *id);
+        let mut families: Vec<(u32, String)> = Vec::with_capacity(crate::fonts::FAMILIES.len());
+        for family in crate::fonts::FAMILIES {
+            let mut family_id = None;
+            for offset in 0..4u32 {
+                let bytes = family.face_bytes(offset);
+                let registered = fonts
+                    .collection
+                    .register_fonts(Blob::new(Arc::new(bytes.to_vec())), None);
+                if family_id.is_none() {
+                    family_id = registered.first().map(|(id, _)| *id);
+                }
             }
+            let name = family_id
+                .and_then(|id| fonts.collection.family_name(id).map(str::to_owned))
+                .unwrap_or_else(|| family.name.to_owned());
+            families.push((family.base, name));
         }
-        let default_family = fonts
-            .collection
-            .family_name(family_id.expect("the bundled faces register a family"))
-            .expect("the registered family has a name")
-            .to_owned();
+        let default_family = families
+            .first()
+            .map(|(_, name)| name.clone())
+            .expect("the bundled faces register at least one family");
         Self {
             fonts: RefCell::new(fonts),
             layout_cx: RefCell::new(LayoutContext::new()),
             default_family,
+            families,
         }
+    }
+
+    /// The registered family name for a run's resolved [`FontId`] (the family
+    /// whose id block contains it), falling back to the default family name.
+    fn family_for(&self, font: FontId) -> &str {
+        self.families
+            .iter()
+            .rev()
+            .find(|(base, _)| font.0 >= *base)
+            .map_or(self.default_family.as_str(), |(_, name)| name.as_str())
     }
 }
 
@@ -133,6 +156,12 @@ impl LineShaper for ParleyShaper {
         }
         for (start, end, run) in &spans {
             builder.push(StyleProperty::FontSize(run.size.raw() as f32), *start..*end);
+            // Push the run's resolved family so `parley` shapes with the exact
+            // face the resolver selected (the same one the renderer outlines).
+            builder.push(
+                StyleProperty::FontFamily(FontFamily::from(self.family_for(run.font))),
+                *start..*end,
+            );
             builder.push(
                 StyleProperty::Brush(RunBrush {
                     color: run.color,
