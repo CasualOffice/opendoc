@@ -31,10 +31,25 @@ pub enum RetentionOutcome {
     NotApplicable,
 }
 
+/// A whole-part disposition: an admitted package part the semantic model does
+/// not consume. On a semantic edit→save such a part is regenerated away (only
+/// the parts the model consumes are re-emitted), so it is `omitted` +
+/// `not-retained` in Semantic mode and `omitted` + `preserved` in Retention
+/// mode (kept verbatim by the source byte floor). Carries the part name and its
+/// declared content type so the loss is auditable per `35-DISPOSITION-TAXONOMY`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PartDisposition {
+    /// Normalized package part name (e.g. `customXml/item1.xml`).
+    pub part_name: String,
+    /// Declared content type, if the package declared one.
+    pub content_type: Option<String>,
+}
+
 /// One compatibility-report entry, aggregated by feature.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompatibilityEntry {
-    /// Feature (WordprocessingML local element name, or `(overflow)`).
+    /// Feature: a WordprocessingML local element name, an admitted part name
+    /// (for a whole-part disposition), or `(overflow)`.
     pub feature: String,
     /// Bounded occurrence count.
     pub occurrences: u32,
@@ -42,6 +57,9 @@ pub struct CompatibilityEntry {
     pub model_outcome: ModelOutcome,
     /// Retention outcome.
     pub retention_outcome: RetentionOutcome,
+    /// Set when this entry dispositions a whole admitted part the semantic model
+    /// does not consume; `None` for element/attribute feature entries.
+    pub part: Option<PartDisposition>,
 }
 
 /// A deterministic compatibility report ordered by feature name.
@@ -84,6 +102,7 @@ impl Reporter {
                 occurrences,
                 model_outcome: ModelOutcome::Omitted,
                 retention_outcome: retention,
+                part: None,
             })
             .collect();
         if self.overflow > 0 {
@@ -92,9 +111,36 @@ impl Reporter {
                 occurrences: self.overflow,
                 model_outcome: ModelOutcome::Omitted,
                 retention_outcome: retention,
+                part: None,
             });
         }
         entries.sort_by(|left, right| left.feature.cmp(&right.feature));
         CompatibilityReport { entries }
+    }
+}
+
+impl CompatibilityReport {
+    /// Appends a whole-part disposition for every admitted part the semantic
+    /// model does not consume, closing the silent-whole-part-loss class: on a
+    /// semantic edit→save these parts are regenerated away, so each is recorded
+    /// `omitted` + `retention` (`not-retained` in Semantic, `preserved` in
+    /// Retention) with its part name and content type. Re-sorts deterministically
+    /// by feature so the report order is stable regardless of insertion order.
+    pub(crate) fn add_part_dispositions(
+        &mut self,
+        parts: impl IntoIterator<Item = PartDisposition>,
+        retention: RetentionOutcome,
+    ) {
+        for part in parts {
+            self.entries.push(CompatibilityEntry {
+                feature: part.part_name.clone(),
+                occurrences: 1,
+                model_outcome: ModelOutcome::Omitted,
+                retention_outcome: retention,
+                part: Some(part),
+            });
+        }
+        self.entries
+            .sort_by(|left, right| left.feature.cmp(&right.feature));
     }
 }

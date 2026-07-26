@@ -45,7 +45,9 @@ mod theme;
 
 pub use config::{ImportConfig, ImportMode};
 pub use error::ImportError;
-pub use report::{CompatibilityEntry, CompatibilityReport, ModelOutcome, RetentionOutcome};
+pub use report::{
+    CompatibilityEntry, CompatibilityReport, ModelOutcome, PartDisposition, RetentionOutcome,
+};
 pub use retain::RetainedSource;
 
 use casual_doc_model::IdGenerator;
@@ -94,6 +96,31 @@ pub fn import_package(
     let footnotes_part = related_part("/footnotes");
     let endnotes_part = related_part("/endnotes");
     let comments_part = related_part("/comments");
+
+    // The set of admitted part names the semantic import consumes. Every OTHER
+    // admitted part (docProps, glossary, customXml, embeddings, charts, ...) is
+    // regenerated away on a semantic edit→save, so the package-manifest
+    // disposition pass below reports it as dropped (F2, `44-COVERAGE-GAP-AUDIT`).
+    // The main document plus each part reached through a resolved main-document
+    // relationship (and, transitively, the images inside extra parts) is consumed.
+    let mut consumed: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    consumed.insert(main_part.clone());
+    for part in [
+        styles_part.as_ref(),
+        numbering_part.as_ref(),
+        font_table_part.as_ref(),
+        theme_part.as_ref(),
+        settings_part.as_ref(),
+        footnotes_part.as_ref(),
+        endnotes_part.as_ref(),
+        comments_part.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        consumed.insert(part.clone());
+    }
+
     let media_sources: Vec<MediaSource> = package
         .main_document_relationships()
         .iter()
@@ -111,6 +138,9 @@ pub fn import_package(
             })
         })
         .collect();
+    for source in &media_sources {
+        consumed.insert(source.part_name.clone());
+    }
 
     let document_bytes = package
         .read_part(&main_part)
@@ -142,6 +172,9 @@ pub fn import_package(
         }
         None => (None, std::collections::BTreeMap::new()),
     };
+    for part in font_table_rels.values() {
+        consumed.insert(part.clone());
+    }
     let theme_bytes = match theme_part {
         Some(part) => Some(package.read_part(&part).map_err(ImportError::Package)?),
         None => None,
@@ -184,11 +217,28 @@ pub fn import_package(
         .collect();
     let mut header_parts = Vec::new();
     for (relationship_id, part) in header_refs {
+        consumed.insert(part.clone());
         header_parts.push((relationship_id, resolve_part_sources(package, &part)?));
     }
     let mut footer_parts = Vec::new();
     for (relationship_id, part) in footer_refs {
+        consumed.insert(part.clone());
         footer_parts.push((relationship_id, resolve_part_sources(package, &part)?));
+    }
+    // Images referenced from inside the extra parts (notes, headers, footers,
+    // comments) are consumed transitively while those parts are parsed.
+    for part in [footnotes.as_ref(), endnotes.as_ref(), comments.as_ref()]
+        .into_iter()
+        .flatten()
+    {
+        for image in &part.images {
+            consumed.insert(image.part_name.clone());
+        }
+    }
+    for (_, part) in header_parts.iter().chain(footer_parts.iter()) {
+        for image in &part.images {
+            consumed.insert(image.part_name.clone());
+        }
     }
     // External hyperlink targets, resolved through the main-document
     // relationship graph (r:id -> URL), for first-class hyperlink modeling.
@@ -241,7 +291,43 @@ pub fn import_package(
             retained.parts.insert(name, bytes);
         }
     }
+
+    // Package-manifest disposition pass (F2, `44-COVERAGE-GAP-AUDIT`): every
+    // admitted part the semantic model did not consume is regenerated away on a
+    // semantic edit→save. Report each one so the whole-part-loss class is
+    // auditable rather than silent — `not-retained` in Semantic mode, and
+    // `preserved` in Retention mode (kept verbatim by the byte floor above),
+    // independent of when each part is later modeled. Pure OPC plumbing (the
+    // content-type manifest and `_rels` parts) is regenerated deterministically
+    // from the model, so it is not a data-loss disposition.
+    let part_retention = match config.mode {
+        ImportMode::Retention => RetentionOutcome::Preserved,
+        ImportMode::Semantic => RetentionOutcome::NotRetained,
+    };
+    let unconsumed: Vec<PartDisposition> = package
+        .entries()
+        .iter()
+        .map(|entry| entry.part_name.as_str())
+        .filter(|name| !is_package_plumbing(name) && !consumed.contains(*name))
+        .map(|name| PartDisposition {
+            part_name: name.to_owned(),
+            content_type: package.content_type(name).map(str::to_owned),
+        })
+        .collect();
+    import
+        .report
+        .add_part_dispositions(unconsumed, part_retention);
+
     Ok(import)
+}
+
+/// Whether a part is pure OPC package plumbing — the content-type manifest or a
+/// relationships part. The semantic writer regenerates these deterministically
+/// from the model, so they are not whole-part data-loss dispositions.
+fn is_package_plumbing(part_name: &str) -> bool {
+    part_name == "[Content_Types].xml"
+        || part_name.starts_with("_rels/")
+        || part_name.contains("/_rels/")
 }
 
 /// Imports main-document WordprocessingML bytes (no styles) into a v1 document.
