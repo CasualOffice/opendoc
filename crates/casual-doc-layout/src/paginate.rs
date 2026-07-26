@@ -888,7 +888,7 @@ impl<'a> Paginator<'a> {
 /// `space_before`/`space_after` only on the head/tail chunk. Whether this slice is
 /// the paragraph's head (starts at line 0) and/or tail (ends at the last line) is
 /// derived from `range` — a slice covering the whole paragraph is both.
-fn slice_paragraph(
+pub(crate) fn slice_paragraph(
     id: NodeId,
     lines: &LineLayout,
     box_metrics: BoxMetrics,
@@ -936,7 +936,7 @@ fn slice_paragraph(
 /// Builds a table-row chunk fragment (a continuation piece of a split row). The
 /// piece carries the resolved height it occupies; splitting never clips (only a
 /// whole `exact`-height row does).
-fn make_row_chunk(
+pub(crate) fn make_row_chunk(
     id: NodeId,
     table: NodeId,
     cells: Vec<CellFragment>,
@@ -960,7 +960,10 @@ fn make_row_chunk(
 /// preserving every column so the continuation row keeps its geometry), and the
 /// head height actually used (the tallest cell's fitted content). A `used` of 0
 /// means nothing fit.
-fn split_cells(cells: &[CellFragment], avail: i32) -> (Vec<CellFragment>, Vec<CellFragment>, i32) {
+pub(crate) fn split_cells(
+    cells: &[CellFragment],
+    avail: i32,
+) -> (Vec<CellFragment>, Vec<CellFragment>, i32) {
     let mut head = Vec::with_capacity(cells.len());
     let mut tail = Vec::with_capacity(cells.len());
     let mut used = 0;
@@ -1068,7 +1071,7 @@ fn split_paragraph_at(
 }
 
 /// Assembles one page from the fragments placed on it.
-fn build_page(
+pub(crate) fn build_page(
     index: usize,
     config: &PageConfig,
     content: Rect,

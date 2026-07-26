@@ -16,27 +16,32 @@
 //! function the manual wiring calls (verified by the `equals_manual_wiring`
 //! regression test), so the driver can never drift from the pipeline it replaces.
 //!
-//! ## Geometry and the single-section first cut
+//! ## Sections and column-aware flow
 //!
-//! The geometry (page size, margins, header/footer band heights) is taken from the
-//! document's **first** section ([`Definitions::sections`](casual_doc_model::v1::Definitions::sections)). A multi-section
-//! document is paginated under that one geometry for now — a `paginate_sections`
-//! that switches geometry at each section boundary is a follow-up; there is no
-//! such entry point in the paginator yet, so composing one here would mean
-//! reaching into the halt core, which this driver deliberately does not do. A
-//! document with no sections at all (which a valid imported DOCX never is — Word
-//! always writes a trailing `sectPr`) falls back to US-Letter with 1-inch margins.
+//! The body is partitioned into one run per section
+//! ([`Definitions::sections`](casual_doc_model::v1::Definitions::sections)); each
+//! run is flowed at *its own* column width and paginated by
+//! [`crate::columns`], which fills a section's columns in order and carries the
+//! page cursor across section boundaries (a `continuous` section shares the
+//! previous section's page). This is what flows a `w:cols` document into newspaper
+//! columns instead of one full-width column. A document with no sections at all
+//! (which a valid imported DOCX never is — Word always writes a trailing `sectPr`)
+//! falls back to a single full-width run under US-Letter with 1-inch margins.
 //!
-//! The header/footer band heights are the natural height of the tallest flowed
-//! variant ([`RunningContent::band_heights`]), so the reserved band always fits
-//! the content Word would place there; the body content area shrinks by both bands
-//! exactly as [`crate::running`] documents.
+//! Header/footer bands are reserved once, from the document's **first** section
+//! ([`RunningContent::band_heights`] — the tallest flowed variant), and every
+//! section's body content area shrinks by those same bands. Per-section
+//! header/footer *variants* and per-section balancing of the last column page are
+//! documented deferrals (see [`crate::columns`]).
 
-use casual_doc_model::v1::{Document, HeaderFooterKind, SectionBoundary};
+use casual_doc_model::v1::{BlockNode, Document, HeaderFooterKind, SectionBoundary};
 
 use crate::anchor::place_floats;
-use crate::flow::{build_galley, flow_header_footer};
-use crate::paginate::{PageConfig, paginate, resolve_fields};
+use crate::columns::{
+    ColumnLayout, SectionRun, column_layout, paginate_columns, section_starts_new_page,
+};
+use crate::flow::{build_galley_for_blocks, flow_header_footer};
+use crate::paginate::{PageConfig, resolve_fields};
 use crate::running::{HeaderFooter, RunningContent, place_running_content};
 use crate::units::{Size, Twip};
 use casual_doc_model::v1::SectionId;
@@ -164,6 +169,112 @@ fn variant_mut(
     }
 }
 
+/// Builds one [`SectionRun`] per document section, in body order. The body is
+/// partitioned at each paragraph carrying a section break (the final section is
+/// body-level and covers the trailing blocks); each section's block slice is
+/// flowed at that section's column width, so line breaking happens at the column
+/// — not the full body — width.
+///
+/// Every section shares the header/footer band heights already resolved into
+/// `base` (the running-content pass reserves one band per document), so the body
+/// content area is consistent across a multi-section document whose sections share
+/// page geometry (the common case). A document with no declared section produces a
+/// single full-width run under `base`.
+fn build_section_runs(
+    document: &Document,
+    shaper: &dyn crate::text::LineShaper,
+    base: &PageConfig,
+) -> Vec<SectionRun> {
+    let sections = &document.definitions().sections;
+    let body = document.body();
+    if sections.is_empty() {
+        let content = base.content_area();
+        let layout = ColumnLayout::single(content);
+        let galley = build_galley_for_blocks(document, shaper, body, layout.flow_width());
+        return vec![SectionRun {
+            config: *base,
+            layout,
+            galley,
+            starts_new_page: true,
+        }];
+    }
+
+    let mut runs = Vec::new();
+    let mut start = 0usize;
+    // Non-final sections each end at a paragraph carrying that section's break.
+    for (end_excl, boundary) in section_break_points(body, sections) {
+        push_section_run(
+            document,
+            shaper,
+            base,
+            boundary,
+            &body[start..end_excl],
+            &mut runs,
+        );
+        start = end_excl;
+    }
+    // The trailing (body-level) final section covers everything left.
+    if let Some(last) = sections.last() {
+        push_section_run(document, shaper, base, last, &body[start..], &mut runs);
+    }
+    runs
+}
+
+/// The `(end_exclusive, boundary)` cut points of the non-final sections: for each
+/// body paragraph carrying a `w:sectPr`, the index one past it and the matching
+/// [`SectionBoundary`]. A break whose id does not resolve falls back to the first
+/// section's geometry so a malformed document still lays out.
+fn section_break_points<'a>(
+    body: &[BlockNode],
+    sections: &'a [SectionBoundary],
+) -> Vec<(usize, &'a SectionBoundary)> {
+    let mut points = Vec::new();
+    for (i, block) in body.iter().enumerate() {
+        if let BlockNode::Paragraph(paragraph) = block
+            && let Some(sid) = paragraph.properties.section_break
+        {
+            let boundary = sections
+                .iter()
+                .find(|s| s.id == sid)
+                .or_else(|| sections.first());
+            if let Some(boundary) = boundary {
+                points.push((i + 1, boundary));
+            }
+        }
+    }
+    points
+}
+
+/// Flows one section's block slice at its column width and appends its
+/// [`SectionRun`]. An empty slice (a section that carries no body block of its own)
+/// is skipped so it never emits a stray band.
+fn push_section_run(
+    document: &Document,
+    shaper: &dyn crate::text::LineShaper,
+    base: &PageConfig,
+    boundary: &SectionBoundary,
+    blocks: &[BlockNode],
+    runs: &mut Vec<SectionRun>,
+) {
+    if blocks.is_empty() {
+        return;
+    }
+    // The section's own page geometry, but the document-wide header/footer band
+    // reservation (so the content area matches the running-content pass).
+    let mut config = section_page_config(boundary);
+    config.header_height = base.header_height;
+    config.footer_height = base.footer_height;
+
+    let layout = column_layout(&boundary.columns, config.content_area());
+    let galley = build_galley_for_blocks(document, shaper, blocks, layout.flow_width());
+    runs.push(SectionRun {
+        config,
+        layout,
+        galley,
+        starts_new_page: section_starts_new_page(boundary),
+    });
+}
+
 /// Lays a whole [`Document`] out into a finished, ready-to-render
 /// [`PaginatedLayout`](crate::page::PaginatedLayout) in one call — the single entry point the viewer and the
 /// fidelity harness build on.
@@ -175,17 +286,18 @@ fn variant_mut(
 /// 2. Flow the section's header/footer variants into [`RunningContent`] and
 ///    reserve their band heights in the config, so the body content area is
 ///    correct before pagination.
-/// 3. Build the body galley at the content width ([`build_galley`]).
-/// 4. [`paginate`] the galley, then run the post-pagination passes **in order** —
-///    [`place_running_content`], [`resolve_fields`], [`place_floats`] —
+/// 3. Partition the body into per-section runs (`build_section_runs`), each flowed
+///    at its own column width.
+/// 4. [`paginate_columns`] the runs, then run the post-pagination passes **in
+///    order** — [`place_running_content`], [`resolve_fields`], [`place_floats`] —
 ///    the order the incremental-golden post-passes require (running content before
 ///    fields so a `Page X of Y` footer resolves; anchors last, off the pagination
 ///    hot path).
 ///
-/// Multi-section documents are laid out under the first section's geometry (see
-/// the module docs); everything else — headers/footers, page-number fields,
-/// inline and anchored drawings, tables — flows through the identical pipeline the
-/// manual wiring used.
+/// Header/footer variants, page-number fields, inline and anchored drawings, and
+/// tables flow through the identical pipeline the manual wiring used; only body
+/// pagination is now column- and section-aware (see the module docs and
+/// [`crate::columns`]).
 #[must_use]
 pub fn paginate_document(
     document: &Document,
@@ -201,8 +313,11 @@ pub fn paginate_document(
     config.header_height = header_height;
     config.footer_height = footer_height;
 
-    let galley = build_galley(document, shaper, content_width);
-    let mut layout = paginate(&galley, &config);
+    // Build one paginated run per section, each flowed at its own column width,
+    // then paginate them into shared pages (column-aware, section boundaries
+    // carried across pages).
+    let runs = build_section_runs(document, shaper, &config);
+    let mut layout = paginate_columns(&runs);
 
     // Post-pagination passes, in the required order: running content is placed
     // first so its fields exist to stamp, then the field pass resolves every
