@@ -550,6 +550,31 @@ fill; linked text boxes (`wps:linkedTxbx`); VML→`Drawing` conversion; extra-pa
 parsing; `w:ruby` ordering. Accepted minor: text-box id allocated eagerly
 (consistent with tables).
 
+### Current anchored-frame extension (2026-07-27)
+
+The later floating-object slice extended `TextBox` with optional
+`anchor`/`extent`/`relative_height`/`fill`/`border`, and introduced the shared
+`DrawingAnchor` used by floating pictures, text boxes, and groups. The float
+reflow increment adds:
+
+```text
+WrapDistances {
+  top_emu, bottom_emu, start_emu, end_emu: i64
+}
+DrawingAnchor {
+  horizontal, vertical, wrap,
+  wrap_distances: WrapDistances,  // default zero; omitted from JSON when all zero
+  behind_doc
+}
+```
+
+Each distance is non-negative and bounded by `MAX_EMU`. Semantic DOCX import and
+export preserve `wp:anchor@distT/distB/distL/distR` for DrawingML anchored
+pictures, text boxes, and groups. This is additive schema-v1 data with a default,
+so existing snapshots remain valid. Layout currently consumes `distB` only for
+the paragraph/line-relative `wrapTopAndBottom` flow barrier; `distT/distL/distR`
+are preserved for the bounded page-level wrapping pass rather than discarded.
+
 ---
 
 ## Footnotes and endnotes

@@ -4063,9 +4063,14 @@ fn write_anchored_drawing(
     w.write_event(Event::Start(start("w:drawing")))
         .map_err(pkg)?;
     let mut el = start("wp:anchor");
-    for name in ["distT", "distB", "distL", "distR"] {
-        el.push_attribute((name, "0"));
-    }
+    let dist_t = anchor.wrap_distances.top_emu.to_string();
+    let dist_b = anchor.wrap_distances.bottom_emu.to_string();
+    let dist_l = anchor.wrap_distances.start_emu.to_string();
+    let dist_r = anchor.wrap_distances.end_emu.to_string();
+    el.push_attribute(("distT", dist_t.as_str()));
+    el.push_attribute(("distB", dist_b.as_str()));
+    el.push_attribute(("distL", dist_l.as_str()));
+    el.push_attribute(("distR", dist_r.as_str()));
     el.push_attribute(("simplePos", "0"));
     // `relativeHeight` is written only when the model carries one, so an anchor
     // that omitted it round-trips as `None` (a write -> reopen fixed point); Word
@@ -4122,9 +4127,22 @@ fn write_group(
     w.write_event(Event::Start(start("w:drawing")))
         .map_err(pkg)?;
     let mut el = start("wp:anchor");
-    for name in ["distT", "distB", "distL", "distR"] {
-        el.push_attribute((name, "0"));
-    }
+    let dist_t = anchor
+        .map_or(0, |anchor| anchor.wrap_distances.top_emu)
+        .to_string();
+    let dist_b = anchor
+        .map_or(0, |anchor| anchor.wrap_distances.bottom_emu)
+        .to_string();
+    let dist_l = anchor
+        .map_or(0, |anchor| anchor.wrap_distances.start_emu)
+        .to_string();
+    let dist_r = anchor
+        .map_or(0, |anchor| anchor.wrap_distances.end_emu)
+        .to_string();
+    el.push_attribute(("distT", dist_t.as_str()));
+    el.push_attribute(("distB", dist_b.as_str()));
+    el.push_attribute(("distL", dist_l.as_str()));
+    el.push_attribute(("distR", dist_r.as_str()));
     el.push_attribute(("simplePos", "0"));
     if let Some(relative_height) = group.relative_height {
         el.push_attribute(("relativeHeight", relative_height.to_string().as_str()));
@@ -4779,9 +4797,14 @@ fn write_text_box(
 
     let frame_tag = if let Some(anchor) = &text_box.anchor {
         let mut frame = start("wp:anchor");
-        for name in ["distT", "distB", "distL", "distR"] {
-            frame.push_attribute((name, "0"));
-        }
+        let dist_t = anchor.wrap_distances.top_emu.to_string();
+        let dist_b = anchor.wrap_distances.bottom_emu.to_string();
+        let dist_l = anchor.wrap_distances.start_emu.to_string();
+        let dist_r = anchor.wrap_distances.end_emu.to_string();
+        frame.push_attribute(("distT", dist_t.as_str()));
+        frame.push_attribute(("distB", dist_b.as_str()));
+        frame.push_attribute(("distL", dist_l.as_str()));
+        frame.push_attribute(("distR", dist_r.as_str()));
         frame.push_attribute(("simplePos", "0"));
         if let Some(relative_height) = text_box.relative_height {
             frame.push_attribute(("relativeHeight", relative_height.to_string().as_str()));

@@ -483,7 +483,7 @@ mod semantic_tests {
 
         // A floating picture anchored at page/margin offsets, behind the text,
         // with alt text — imported through a package so its `r:embed` resolves.
-        let document_xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="1" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>914400</wp:posOffset></wp:positionH><wp:positionV relativeFrom="margin"><wp:posOffset>-228600</wp:posOffset></wp:positionV><wp:extent cx="1828800" cy="1219200"/><wp:wrapNone/><wp:docPr id="1" name="Pic 1" descr="Company logo"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let document_xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="1" simplePos="0" distT="12700" distB="25400" distL="38100" distR="50800"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>914400</wp:posOffset></wp:positionH><wp:positionV relativeFrom="margin"><wp:posOffset>-228600</wp:posOffset></wp:positionV><wp:extent cx="1828800" cy="1219200"/><wp:wrapNone/><wp:docPr id="1" name="Pic 1" descr="Company logo"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#;
         let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
 
         let m1 = reopen(&pack(document_xml, document_rels));
@@ -515,11 +515,32 @@ mod semantic_tests {
             VerticalPosition::Offset(-228_600)
         );
         assert_eq!(drawing.anchor.wrap, WrapMode::None);
+        assert_eq!(drawing.anchor.wrap_distances.top_emu, 12_700);
+        assert_eq!(drawing.anchor.wrap_distances.bottom_emu, 25_400);
+        assert_eq!(drawing.anchor.wrap_distances.start_emu, 38_100);
+        assert_eq!(drawing.anchor.wrap_distances.end_emu, 50_800);
         assert!(drawing.anchor.behind_doc);
         assert_eq!(drawing.descr.as_deref(), Some("Company logo"));
 
         // Write it back and reopen: the model is a fixed point (ids included).
         let written = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut written_package =
+            DocxPackage::open(&written, PackageLimits::default()).expect("written package");
+        let written_xml = written_package
+            .read_part("word/document.xml")
+            .expect("written main document");
+        let written_xml = std::str::from_utf8(&written_xml).expect("utf-8 document XML");
+        for attribute in [
+            r#"distT="12700""#,
+            r#"distB="25400""#,
+            r#"distL="38100""#,
+            r#"distR="50800""#,
+        ] {
+            assert!(
+                written_xml.contains(attribute),
+                "the writer preserves {attribute}"
+            );
+        }
         let m2 = reopen(&written);
         assert_eq!(m1, m2, "the anchored drawing survives write -> reopen");
     }
@@ -528,7 +549,7 @@ mod semantic_tests {
     fn wpg_group_survives_the_semantic_round_trip() {
         use casual_doc_model::v1::{BlockNode, GroupChild, InlineNode, ShapeGeometry};
         // A `wpg:wgp` with a rectangle (red fill, green outline) and a text box.
-        let xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic" xmlns:wps="urn:wps" xmlns:wpg="urn:wpg"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="0" relativeHeight="251659264" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="2000000" cy="1000000"/><wp:wrapNone/><wp:docPr id="1" name="Group 1"/><a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2000000" cy="1000000"/><a:chOff x="0" y="0"/><a:chExt cx="2000000" cy="1000000"/></a:xfrm></wpg:grpSpPr><wps:wsp><wps:cNvPr id="2" name="Rectangle"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2000000" cy="1000000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill><a:ln w="9525"><a:solidFill><a:srgbClr val="00FF00"/></a:solidFill></a:ln></wps:spPr><wps:bodyPr/></wps:wsp><wps:wsp><wps:cNvPr id="3" name="Text Box"/><wps:spPr><a:xfrm><a:off x="200000" y="100000"/><a:ext cx="800000" cy="300000"/></a:xfrm><a:prstGeom prst="rect"/></wps:spPr><wps:txbx><w:txbxContent><w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic" xmlns:wps="urn:wps" xmlns:wpg="urn:wpg"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="0" relativeHeight="251659264" simplePos="0" distT="12700" distB="25400" distL="38100" distR="50800"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="2000000" cy="1000000"/><wp:wrapNone/><wp:docPr id="1" name="Group 1"/><a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2000000" cy="1000000"/><a:chOff x="0" y="0"/><a:chExt cx="2000000" cy="1000000"/></a:xfrm></wpg:grpSpPr><wps:wsp><wps:cNvPr id="2" name="Rectangle"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2000000" cy="1000000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill><a:ln w="9525"><a:solidFill><a:srgbClr val="00FF00"/></a:solidFill></a:ln></wps:spPr><wps:bodyPr/></wps:wsp><wps:wsp><wps:cNvPr id="3" name="Text Box"/><wps:spPr><a:xfrm><a:off x="200000" y="100000"/><a:ext cx="800000" cy="300000"/></a:xfrm><a:prstGeom prst="rect"/></wps:spPr><wps:txbx><w:txbxContent><w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#;
         let (m1, m2) = round_trip_main_document(xml);
 
         // The group and its children are modeled with resolved colors + geometry.
@@ -539,6 +560,15 @@ mod semantic_tests {
             panic!("expected a group, got {:?}", paragraph.inlines[0]);
         };
         assert_eq!(group.relative_height, Some(251_659_264));
+        assert_eq!(
+            group.anchor.expect("the group anchor").wrap_distances,
+            casual_doc_model::v1::WrapDistances {
+                top_emu: 12_700,
+                bottom_emu: 25_400,
+                start_emu: 38_100,
+                end_emu: 50_800,
+            }
+        );
         assert_eq!(group.children.len(), 2);
         let GroupChild::Shape(shape) = &group.children[0] else {
             panic!("expected a shape");
@@ -2336,7 +2366,8 @@ mod semantic_tests {
     fn floating_text_box_anchor_and_appearance_survive_the_semantic_round_trip() {
         let xml = br#"<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps"><w:body>
             <w:p><w:r><w:drawing>
-                <wp:anchor behindDoc="1" relativeHeight="17" simplePos="0">
+                <wp:anchor behindDoc="1" relativeHeight="17" simplePos="0"
+                    distT="12700" distB="25400" distL="38100" distR="50800">
                     <wp:simplePos x="0" y="0"/>
                     <wp:positionH relativeFrom="page"><wp:posOffset>914400</wp:posOffset></wp:positionH>
                     <wp:positionV relativeFrom="margin"><wp:posOffset>-228600</wp:posOffset></wp:positionV>
@@ -2365,6 +2396,13 @@ mod semantic_tests {
                     p.inlines.first(),
                     Some(casual_doc_model::v1::InlineNode::TextBox(text_box))
                         if text_box.anchor.is_some()
+                            && text_box.anchor.expect("the text-box anchor").wrap_distances
+                                == casual_doc_model::v1::WrapDistances {
+                                    top_emu: 12_700,
+                                    bottom_emu: 25_400,
+                                    start_emu: 38_100,
+                                    end_emu: 50_800,
+                                }
                             && text_box.relative_height == Some(17)
                             && text_box.extent == Some(casual_doc_model::v1::Extent {
                                 width_emu: 1_828_800,

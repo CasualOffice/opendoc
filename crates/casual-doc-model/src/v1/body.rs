@@ -313,11 +313,7 @@ pub enum VerticalPosition {
     Align(VerticalAlign),
 }
 
-/// How text flows around an anchored drawing (the `wp:wrap*` element). The enum
-/// is modeled for round-trip fidelity; the first-cut layout places the image at
-/// its resolved rectangle without yet re-flowing text around it (`P1F-28`
-/// follow-up), so only [`WrapMode::None`] currently affects text (the image
-/// floats over or behind the flow).
+/// How text flows around an anchored drawing (the `wp:wrap*` element).
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum WrapMode {
@@ -354,6 +350,29 @@ pub struct AnchorVertical {
     pub position: VerticalPosition,
 }
 
+/// Text-exclusion distances around a floating anchor
+/// (`wp:anchor@distT/distB/distL/distR`), in non-negative EMU.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WrapDistances {
+    /// Distance above the object (`distT`).
+    pub top_emu: i64,
+    /// Distance below the object (`distB`).
+    pub bottom_emu: i64,
+    /// Distance on the leading/left side (`distL`).
+    pub start_emu: i64,
+    /// Distance on the trailing/right side (`distR`).
+    pub end_emu: i64,
+}
+
+impl WrapDistances {
+    /// Whether every exclusion distance is zero.
+    #[must_use]
+    pub fn is_zero(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// The position, wrap, and z-order of an anchored (floating) drawing — the
 /// `wp:anchor` frame around a `pic:pic`, as opposed to an inline `wp:inline`.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -365,6 +384,9 @@ pub struct DrawingAnchor {
     pub vertical: AnchorVertical,
     /// How text flows around the drawing (`wp:wrap*`).
     pub wrap: WrapMode,
+    /// Text-exclusion distances around the object.
+    #[serde(default, skip_serializing_if = "WrapDistances::is_zero")]
+    pub wrap_distances: WrapDistances,
     /// Whether the drawing paints behind the document text (`@behindDoc`),
     /// i.e. its z-order relative to the flow. Only meaningful for
     /// [`WrapMode::None`].
@@ -377,9 +399,7 @@ pub struct DrawingAnchor {
 /// image sits, how text wraps, and its z-order.
 ///
 /// The referenced picture's bytes flow through the media table exactly like an
-/// inline drawing; only the *placement* differs. Text-wrap around the image is a
-/// follow-up (`P1F-28`); the first cut positions the image at its resolved
-/// rectangle (behind or above the text per `behind_doc`).
+/// inline drawing; only the placement and text-exclusion behavior differ.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AnchoredDrawing {

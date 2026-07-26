@@ -21,12 +21,13 @@ use std::hash::{Hash, Hasher};
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     Alignment, BlockNode, BorderEdge, BreakKind, Color, ColorScheme, DefinitionMap, Definitions,
-    Document, Drawing, Extent, FontRef, FontScheme, HeightRule, HighlightColor,
+    Document, Drawing, DrawingAnchor, Extent, FontRef, FontScheme, HeightRule, HighlightColor,
     HorizontalRule as ModelHorizontalRule, HorizontalRuleAlign, Indentation, InlineNode,
     LevelSuffix, LineRule, MediaId, MediaReference, ParagraphProperties, Rgba, RunProperties,
     SchemeColor, SectionBoundary, SectionId, SectionType, ShapeStroke, StyleId, Symbol,
     TabAlignment, TabLeader, TabStop, Table, TableBorders, TableCell, TableLayout, TableRow,
-    TableRowProperties, TextBox, ThemeColorRef, ThemeFontRef, VerticalAlignment, VerticalMerge,
+    TableRowProperties, TextBox, ThemeColorRef, ThemeFontRef, VerticalAlignment, VerticalAnchor,
+    VerticalMerge, VerticalPosition, WrapMode,
 };
 
 use crate::block::{
@@ -288,6 +289,7 @@ pub fn build_galley_cached(
                     content_width,
                     &mut ctx,
                 );
+                normalize_float_barriers(&mut items);
                 // A numbered paragraph advances the document-order counter and gets a
                 // marker; it bypasses the galley cache (the marker number is not in
                 // the item hash, so a reused fragment could show a stale number after
@@ -523,6 +525,10 @@ fn paragraph_hash(
                 rule.size.height.0.hash(&mut hasher);
                 rule.color.hash(&mut hasher);
             }
+            FlowItem::FloatBarrier { height } => {
+                7u8.hash(&mut hasher);
+                height.0.hash(&mut hasher);
+            }
         }
     }
     for stop in shape.tab_stops {
@@ -585,6 +591,7 @@ fn flow_blocks(
                 let mut props = ctx.cascade.resolve_paragraph(&paragraph.properties);
                 let mut items = Vec::new();
                 collect_items(&paragraph.inlines, &mut items, shaper, width, ctx);
+                normalize_float_barriers(&mut items);
                 let range = ModelRange::new(
                     ModelPos::new(paragraph.id, 0),
                     ModelPos::new(paragraph.id, 0),
@@ -1664,6 +1671,11 @@ fn collect_items<'a>(
                     out.push(item);
                 }
             }
+            InlineNode::AnchoredDrawing(drawing) => {
+                if let Some(item) = float_barrier_item(&drawing.anchor, &drawing.extent) {
+                    out.push(item);
+                }
+            }
             InlineNode::Field(field) => out.push(field_item(field, ctx)),
             InlineNode::HorizontalRule(rule) => out.push(hr_item(rule, width)),
             // A floating text box (`anchor` set) is removed from the inline flow —
@@ -1671,6 +1683,20 @@ fn collect_items<'a>(
             // an inline text box flows here.
             InlineNode::TextBox(text_box) if text_box.anchor.is_none() => {
                 out.push(textbox_item(text_box, shaper, width, ctx))
+            }
+            InlineNode::TextBox(text_box) => {
+                if let (Some(anchor), Some(extent)) = (&text_box.anchor, &text_box.extent)
+                    && let Some(item) = float_barrier_item(anchor, extent)
+                {
+                    out.push(item);
+                }
+            }
+            InlineNode::Group(group) => {
+                if let Some(anchor) = &group.anchor
+                    && let Some(item) = float_barrier_item(anchor, &group.extent)
+                {
+                    out.push(item);
+                }
             }
             InlineNode::Hyperlink(hyperlink) => {
                 collect_items(&hyperlink.inlines, out, shaper, width, ctx)
@@ -1682,6 +1708,48 @@ fn collect_items<'a>(
             _ => {}
         }
     }
+}
+
+/// Converts the supported local `wrapTopAndBottom` anchor form into a vertical
+/// paragraph exclusion. Page/margin-relative and alignment-based anchors can
+/// affect paragraphs other than their anchor paragraph and therefore remain in
+/// the explicitly unsupported cross-paragraph reflow slice.
+fn float_barrier_item(anchor: &DrawingAnchor, extent: &Extent) -> Option<FlowItem<'static>> {
+    if anchor.wrap != WrapMode::TopAndBottom
+        || !matches!(
+            anchor.vertical.relative_from,
+            VerticalAnchor::Paragraph | VerticalAnchor::Line
+        )
+    {
+        return None;
+    }
+    let VerticalPosition::Offset(offset_emu) = anchor.vertical.position else {
+        return None;
+    };
+    let clearance_emu = offset_emu
+        .saturating_add(extent.height_emu)
+        .saturating_add(anchor.wrap_distances.bottom_emu)
+        .max(0);
+    let height = emu_to_twip(clearance_emu);
+    (height.raw() > 0).then_some(FlowItem::FloatBarrier { height })
+}
+
+/// Moves paragraph-local float exclusions to the paragraph start and coalesces
+/// multiple overlapping top-and-bottom floats by maximum clearance. Summing
+/// them would incorrectly stack objects that share the same anchor paragraph.
+fn normalize_float_barriers(items: &mut Vec<FlowItem<'_>>) {
+    let height = items
+        .iter()
+        .filter_map(|item| match item {
+            FlowItem::FloatBarrier { height } => Some(*height),
+            _ => None,
+        })
+        .max();
+    let Some(height) = height else {
+        return;
+    };
+    items.retain(|item| !matches!(item, FlowItem::FloatBarrier { .. }));
+    items.insert(0, FlowItem::FloatBarrier { height });
 }
 
 /// Flows an inline text box (`wps:txbx` / `v:textbox`) into an [`FlowItem::TextBox`]:
@@ -1867,11 +1935,10 @@ fn emu_to_twip(emu: i64) -> Twip {
 }
 
 /// Shapes a paragraph's [`FlowItem`] stream into lines. A stream with no inline
-/// box (image or text box) takes the text path directly ([`shape_text_items`]); a
-/// stream carrying one splits at each box, shaping the intervening text with the
-/// same path and placing each box as its own inline-box line, so reading order and
-/// vertical stacking are preserved. Anchored/floating placement is a later slice
-/// (`P1F-28`); this is the inline case.
+/// box or float barrier takes the text path directly ([`shape_text_items`]); a
+/// stream carrying one splits at each box/barrier, shaping the intervening text
+/// with the same path and placing each box or non-painting exclusion on its own
+/// line, so reading order and vertical stacking are preserved.
 fn shape_paragraph_items(
     shaper: &dyn LineShaper,
     items: &[FlowItem<'_>],
@@ -1880,20 +1947,17 @@ fn shape_paragraph_items(
     constraints: LineConstraints,
     range: ModelRange,
 ) -> LineLayout {
-    // A paragraph carrying an inline field takes the fielded path, which lays runs,
-    // tabs, and fields on one horizontal line per hard-break block and records a
-    // field marker per field for the post-pagination field pass.
-    if items.iter().any(|i| matches!(i, FlowItem::Field { .. })) {
-        return shape_fielded_paragraph(shaper, items, tab_stops, default_tab, constraints, range);
-    }
     let is_box = |item: &FlowItem<'_>| {
         matches!(
             item,
-            FlowItem::Image { .. } | FlowItem::TextBox { .. } | FlowItem::HorizontalRule(_)
+            FlowItem::Image { .. }
+                | FlowItem::TextBox { .. }
+                | FlowItem::HorizontalRule(_)
+                | FlowItem::FloatBarrier { .. }
         )
     };
     if !items.iter().any(is_box) {
-        return shape_text_items(shaper, items, tab_stops, default_tab, constraints, range);
+        return shape_inline_chunk(shaper, items, tab_stops, default_tab, constraints, range);
     }
 
     let mut out: Vec<Line> = Vec::new();
@@ -1921,12 +1985,17 @@ fn shape_paragraph_items(
                 stack_lines(&mut out, vec![line], &mut cursor_y);
                 i += 1;
             }
+            FlowItem::FloatBarrier { height } => {
+                let line = float_barrier_line(*height, range);
+                stack_lines(&mut out, vec![line], &mut cursor_y);
+                i += 1;
+            }
             _ => {
                 let start = i;
                 while i < items.len() && !is_box(&items[i]) {
                     i += 1;
                 }
-                let chunk = shape_text_items(
+                let chunk = shape_inline_chunk(
                     shaper,
                     &items[start..i],
                     tab_stops,
@@ -1939,6 +2008,26 @@ fn shape_paragraph_items(
         }
     }
     LineLayout { lines: out }
+}
+
+/// Shapes one box-free paragraph chunk, retaining the specialized field path
+/// when that chunk contains PAGE/NUMPAGES or passthrough fields.
+fn shape_inline_chunk(
+    shaper: &dyn LineShaper,
+    items: &[FlowItem<'_>],
+    tab_stops: &[TabStop],
+    default_tab: Twip,
+    constraints: LineConstraints,
+    range: ModelRange,
+) -> LineLayout {
+    if items
+        .iter()
+        .any(|item| matches!(item, FlowItem::Field { .. }))
+    {
+        shape_fielded_paragraph(shaper, items, tab_stops, default_tab, constraints, range)
+    } else {
+        shape_text_items(shaper, items, tab_stops, default_tab, constraints, range)
+    }
 }
 
 /// Shapes an image-free [`FlowItem`] slice. Ordinary text (no tab, no break, no
@@ -1983,6 +2072,26 @@ fn image_line(media: String, size: Size, range: ModelRange) -> Line {
             origin: Point::new(Twip::ZERO, Twip::ZERO),
             size,
         }],
+        fields: Vec::new(),
+        text_boxes: Vec::new(),
+        rules: Vec::new(),
+    }
+}
+
+/// A non-painting line whose height keeps visible paragraph content below a
+/// local `wrapTopAndBottom` float. It participates in pagination and fragment
+/// sizing but contributes no runs, images, fields, bars, or text boxes.
+fn float_barrier_line(height: Twip, range: ModelRange) -> Line {
+    Line {
+        runs: Vec::new(),
+        ascent: height,
+        descent: Twip::ZERO,
+        height,
+        range,
+        line_break: LineBreak::Wrap,
+        page_break_after: false,
+        bars: Vec::new(),
+        images: Vec::new(),
         fields: Vec::new(),
         text_boxes: Vec::new(),
         rules: Vec::new(),

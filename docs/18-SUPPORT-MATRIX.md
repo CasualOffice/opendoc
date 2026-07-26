@@ -76,10 +76,10 @@ report.
 | Paragraphs, marks, lists | Supported | Modeled and imported (Phase 1A); shaped, laid out, and rendered via the style cascade; edit surface pending. |
 | Tables and merged cells | Supported | Modeled and imported (Phase 1A); direct widths, horizontal grid spans, cell margins, vertical alignment, common styled/segmented borders, cross-page row splitting, and conforming vertical merges render. Exact art/compound borders, table-style cascade, cell spacing, bidi/alignment, floating tables, and the edit surface remain pending (see docs 46, 49, and 50). |
 | Sections, headers, footers | Supported | Modeled and imported (Phase 1A); headers/footers flow and render with Word band nesting; multi-column section layout and edit surface pending. |
-| Images and anchors | Supported | Modeled and imported (Phase 1A); rendered via the z-ordered float layer (groups, floating text boxes, header/footer floats); text-wrap around floats and edit surface pending. |
+| Images and anchors | Supported | Modeled and imported (Phase 1A); rendered via the z-ordered float layer (groups, floating text boxes, header/footer floats). Paragraph/line-relative `topAndBottom` wrapping now reserves shared flow in the body, nested table cells, headers, and footers; square/tight/through and page-coupled reflow remain pending. Edit surface pending. |
 | Comments and tracked changes | Supported | Modeled and imported (Phase 1A); layout/render display and edit surface pending. |
 | Fields and notes | Supported or render-only by subtype | Modeled and imported (Phase 1A); simple/page fields render; footnote/endnote body placement pending. |
-| Shapes, text boxes, VML | Preserve or flatten with warning | Modeled and imported (Phase 1A); VML shapes and text boxes parsed and painted via the float layer; exact path geometry and text-wrap pending. |
+| Shapes, text boxes, VML | Preserve or flatten with warning | Modeled and imported (Phase 1A); VML shapes and text boxes parsed and painted via the float layer. Local DrawingML `topAndBottom` exclusions share the body/header/footer flow path; VML wrap mapping, exact paths, side wrapping, and page-coupled reflow remain pending. |
 | Real-time collaboration | Adapter-based | Post local transaction stability. |
 | Accessibility semantics | Required | Designed, not implemented. |
 
