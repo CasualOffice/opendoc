@@ -2567,3 +2567,127 @@ fn deep_table_inside_a_block_content_control_validates() {
     });
     assert!(table_document(vec![outer]).is_ok());
 }
+
+// ---- schema v1 document properties (docProps) ----------------------------
+
+fn rich_properties() -> DocumentProperties {
+    DocumentProperties {
+        core: CoreProperties {
+            title: Some("Quarterly Report".to_owned()),
+            creator: Some("Ada Lovelace".to_owned()),
+            keywords: Some("finance, q3".to_owned()),
+            revision: Some("4".to_owned()),
+            created: Some("2026-01-02T03:04:05Z".to_owned()),
+            modified: Some("2026-07-25T10:11:12Z".to_owned()),
+            language: Some("en-US".to_owned()),
+            ..CoreProperties::default()
+        },
+        app: AppProperties {
+            application: Some("OpenDoc".to_owned()),
+            app_version: Some("16.0000".to_owned()),
+            company: Some("Analytical Engines".to_owned()),
+            total_time: Some(42),
+            pages: Some(3),
+            words: Some(1200),
+            scale_crop: Some(false),
+            links_up_to_date: Some(true),
+            titles_of_parts: vec!["Report".to_owned(), "Appendix".to_owned()],
+            heading_pairs: vec![HeadingPair {
+                name: "Title".to_owned(),
+                count: 2,
+            }],
+            ..AppProperties::default()
+        },
+        custom: vec![
+            CustomProperty {
+                name: "Editor".to_owned(),
+                value: CustomValue::Text {
+                    value: "Grace".to_owned(),
+                },
+            },
+            CustomProperty {
+                name: "Approved".to_owned(),
+                value: CustomValue::Bool { value: true },
+            },
+            CustomProperty {
+                name: "Rank".to_owned(),
+                value: CustomValue::I4 { value: 7 },
+            },
+            CustomProperty {
+                name: "Ratio".to_owned(),
+                value: CustomValue::R8 {
+                    value: "3.14".to_owned(),
+                },
+            },
+        ],
+    }
+}
+
+#[test]
+fn document_properties_round_trip_json() {
+    let document = table_document(vec![paragraph_block(tid(1))])
+        .unwrap()
+        .with_properties(rich_properties())
+        .unwrap();
+    let json = document.to_json().unwrap();
+    let reloaded = Document::from_json(&json, SnapshotLimits::default()).unwrap();
+    assert_eq!(document, reloaded);
+    assert_eq!(reloaded.properties(), Some(&rich_properties()));
+    // The reload is a byte-exact fixed point.
+    assert_eq!(reloaded.to_json().unwrap(), json);
+}
+
+#[test]
+fn empty_document_properties_are_dropped_and_omitted() {
+    // Attaching all-empty metadata is equivalent to attaching none: the
+    // accessor returns None and no `properties` key is serialized (backward
+    // compat with pre-metadata snapshots).
+    let document = table_document(vec![paragraph_block(tid(1))])
+        .unwrap()
+        .with_properties(DocumentProperties::default())
+        .unwrap();
+    assert_eq!(document.properties(), None);
+    let value: serde_json::Value = serde_json::from_slice(&document.to_json().unwrap()).unwrap();
+    assert!(
+        !value.as_object().unwrap().contains_key("properties"),
+        "empty metadata omitted from the document envelope"
+    );
+}
+
+#[test]
+fn over_long_custom_property_name_is_rejected() {
+    let properties = DocumentProperties {
+        custom: vec![CustomProperty {
+            name: "x".repeat(256),
+            value: CustomValue::I4 { value: 1 },
+        }],
+        ..DocumentProperties::default()
+    };
+    assert!(matches!(
+        table_document(vec![paragraph_block(tid(1))])
+            .unwrap()
+            .with_properties(properties),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "custom.name"
+        })
+    ));
+}
+
+#[test]
+fn negative_word_count_is_rejected() {
+    let properties = DocumentProperties {
+        app: AppProperties {
+            words: Some(-1),
+            ..AppProperties::default()
+        },
+        ..DocumentProperties::default()
+    };
+    assert!(matches!(
+        table_document(vec![paragraph_block(tid(1))])
+            .unwrap()
+            .with_properties(properties),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "app.words"
+        })
+    ));
+}

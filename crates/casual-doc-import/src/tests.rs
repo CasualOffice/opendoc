@@ -1377,6 +1377,131 @@ fn real_producer_libreoffice_document_imports_expected_text() {
 }
 
 #[test]
+fn document_properties_are_imported_from_the_package() {
+    use casual_doc_model::v1::{CustomValue, HeadingPair};
+
+    let bytes = include_bytes!("../../../fixtures/corpus/synthetic-rich-metadata.docx");
+    let mut package = DocxPackage::open(bytes, casual_doc_ooxml::PackageLimits::default()).unwrap();
+    let import = import_package(&mut package, ImportConfig::default()).unwrap();
+    let properties = import.document.properties().expect("metadata imported");
+
+    // Core (docProps/core.xml).
+    let core = &properties.core;
+    assert_eq!(core.title.as_deref(), Some("Annual Metadata Report"));
+    assert_eq!(core.creator.as_deref(), Some("Ada Lovelace"));
+    assert_eq!(
+        core.keywords.as_deref(),
+        Some("metadata, docprops, roundtrip")
+    );
+    assert_eq!(core.last_modified_by.as_deref(), Some("Grace Hopper"));
+    assert_eq!(core.revision.as_deref(), Some("3"));
+    assert_eq!(core.created.as_deref(), Some("2026-01-15T08:30:00Z"));
+    assert_eq!(core.last_printed.as_deref(), Some("2026-07-01T00:00:00Z"));
+    assert_eq!(core.content_status.as_deref(), Some("Final"));
+    assert_eq!(core.language.as_deref(), Some("en-US"));
+    assert_eq!(core.version.as_deref(), Some("1.2"));
+
+    // App (docProps/app.xml), including the vt:vector groups.
+    let app = &properties.app;
+    assert_eq!(app.application.as_deref(), Some("OpenDoc Test Harness"));
+    assert_eq!(app.app_version.as_deref(), Some("1.0000"));
+    assert_eq!(app.company.as_deref(), Some("Analytical Engines Ltd"));
+    assert_eq!(app.template.as_deref(), Some("Normal.dotm"));
+    assert_eq!(app.total_time, Some(128));
+    assert_eq!(app.pages, Some(4));
+    assert_eq!(app.words, Some(3200));
+    assert_eq!(app.characters_with_spaces, Some(21000));
+    assert_eq!(app.doc_security, Some(0));
+    assert_eq!(app.scale_crop, Some(false));
+    assert_eq!(app.links_up_to_date, Some(true));
+    assert_eq!(app.shared_doc, Some(false));
+    assert_eq!(app.hyperlink_base.as_deref(), Some("https://example.com"));
+    assert_eq!(
+        app.titles_of_parts,
+        vec!["Annual Metadata Report".to_owned(), "Appendix A".to_owned()]
+    );
+    assert_eq!(
+        app.heading_pairs,
+        vec![
+            HeadingPair {
+                name: "Title".to_owned(),
+                count: 1,
+            },
+            HeadingPair {
+                name: "Sections".to_owned(),
+                count: 3,
+            },
+        ]
+    );
+
+    // Custom (docProps/custom.xml): the typed value set.
+    let custom = &properties.custom;
+    assert_eq!(custom.len(), 5);
+    assert_eq!(custom[0].name, "Editor");
+    assert_eq!(
+        custom[0].value,
+        CustomValue::Text {
+            value: "Grace Hopper".to_owned()
+        }
+    );
+    assert_eq!(custom[1].value, CustomValue::I4 { value: 7 });
+    assert_eq!(
+        custom[2].value,
+        CustomValue::R8 {
+            value: "2.5".to_owned()
+        }
+    );
+    assert_eq!(custom[3].value, CustomValue::Bool { value: true });
+    assert_eq!(
+        custom[4].value,
+        CustomValue::FileTime {
+            value: "2026-03-01T09:00:00Z".to_owned()
+        }
+    );
+}
+
+#[test]
+fn document_properties_discovered_by_well_known_names_without_relationships() {
+    // A package whose root `_rels/.rels` declares only the main document (no
+    // core/app/custom relationships) still has its docProps imported through the
+    // well-known part-name fallback.
+    let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>"#;
+    let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+    let document = br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+    let core = br#"<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Fallback Title</dc:title></cp:coreProperties>"#;
+    use std::io::{Cursor, Write};
+
+    use zip::write::SimpleFileOptions;
+    use zip::{CompressionMethod, ZipWriter};
+    let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+    for (name, bytes) in [
+        ("[Content_Types].xml", content_types.as_slice()),
+        ("_rels/.rels", root_rels.as_slice()),
+        ("word/document.xml", document.as_slice()),
+        ("docProps/core.xml", core.as_slice()),
+    ] {
+        writer
+            .start_file(
+                name,
+                SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
+            )
+            .unwrap();
+        writer.write_all(bytes).unwrap();
+    }
+    let package = writer.finish().unwrap().into_inner();
+    let mut package =
+        DocxPackage::open(&package, casual_doc_ooxml::PackageLimits::default()).unwrap();
+    let import = import_package(&mut package, ImportConfig::default()).unwrap();
+    assert_eq!(
+        import
+            .document
+            .properties()
+            .and_then(|properties| properties.core.title.as_deref()),
+        Some("Fallback Title")
+    );
+}
+
+#[test]
 fn real_producer_table_and_lists_model_cells_and_item_text() {
     // Real LibreOffice .docx with a 2x2 table and bullet/numbered lists. The
     // table is now modeled as structure: its cell paragraphs live inside the
@@ -4005,7 +4130,9 @@ fn real_producer_corpus_unconsumed_part_count_matches_manifest() {
 
     // Compute the expectation straight from the manifest: every admitted part,
     // minus pure OPC plumbing, minus the parts the model consumes on this
-    // fixture (main document, styles, fontTable, settings).
+    // fixture (main document, styles, fontTable, settings, and — now that
+    // document metadata is modeled and regenerated on write — the docProps
+    // core/app parts).
     let manifest: Vec<String> = package
         .entries()
         .iter()
@@ -4024,6 +4151,8 @@ fn real_producer_corpus_unconsumed_part_count_matches_manifest() {
         "word/styles.xml",
         "word/fontTable.xml",
         "word/settings.xml",
+        "docProps/core.xml",
+        "docProps/app.xml",
     ];
     let consumed_present = manifest
         .iter()
@@ -4034,22 +4163,11 @@ fn real_producer_corpus_unconsumed_part_count_matches_manifest() {
     let dropped = part_dispositions(&import);
 
     assert_eq!(dropped.len(), manifest.len() - plumbing - consumed_present);
-    // Concretely, the two docProps parts the importer does not consume, each
-    // carrying its declared content type.
-    assert_eq!(
-        dropped,
-        vec![
-            (
-                "docProps/app.xml".to_owned(),
-                Some(
-                    "application/vnd.openxmlformats-officedocument.extended-properties+xml"
-                        .to_owned()
-                ),
-            ),
-            (
-                "docProps/core.xml".to_owned(),
-                Some("application/vnd.openxmlformats-package.core-properties+xml".to_owned()),
-            ),
-        ]
+    // The docProps parts are now modeled (imported into DocumentProperties and
+    // regenerated by the semantic writer), so they are no longer dropped; this
+    // fixture has no remaining unconsumed content part.
+    assert!(
+        dropped.is_empty(),
+        "docProps are consumed, not dropped: {dropped:?}"
     );
 }

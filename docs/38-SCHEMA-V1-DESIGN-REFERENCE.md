@@ -310,6 +310,41 @@ media before body → `MediaId` index; `w:drawing` → Drawing (embed-less/dangl
 degraded reported); `w:hyperlink` → Hyperlink via `push_segment` router +
 `hyperlink_depth` nesting. Strictly additive (existing v1 byte-identical).
 
+### Document properties (docProps core/app/custom)
+
+**Tracker:** P1A-DOCPROPS (done). Closes the semantic metadata-loss gap: the flat
+v1 `Document` had no properties field, so the import→edit→save path dropped
+title/author/dates/company/counts/custom properties. Additive
+`DocumentProperties { core: CoreProperties, app: AppProperties, custom:
+[CustomProperty] }` hung off `Document` (private `Option`, attached via
+`Document::with_properties`, read via `Document::properties()`); all-empty
+metadata collapses to `None`.
+
+- **Core** (`docProps/core.xml`, Dublin Core + `cp:`) — title, subject, creator,
+  keywords, description, last_modified_by, revision, created, modified,
+  last_printed, category, content_status, language, version. All `Option`.
+- **App** (`docProps/app.xml`) — application, app_version (verbatim token),
+  company, manager, template, total_time, pages, words, characters,
+  characters_with_spaces, lines, paragraphs, doc_security, hyperlink_base,
+  scale_crop, links_up_to_date, shared_doc, plus the `titles_of_parts` and
+  `heading_pairs` (`vt:vector`) groups. Counts are integers; all `Option`/empty.
+- **Custom** (`docProps/custom.xml`) — ordered `[CustomProperty { name, value }]`
+  with `CustomValue ∈ Text | I4 | R8 | Bool | FileTime | Other{kind}`. The
+  `fmtid`/`pid` bookkeeping is regenerated on write, not modeled.
+
+**Dates and `r8`/`filetime` are stored verbatim as strings** so bytes round-trip
+without a lossy parse and the model stays `Eq`. Validation bounds text/token
+lengths and rejects negative counts (`ModelError::PropertyValueOutOfDomain`).
+Import discovers the parts through the **package-root** relationships
+(`/metadata/core-properties`, `/extended-properties`, `/custom-properties`) with
+a well-known part-name fallback, bounded namespace-agnostic parse; unrecognized
+leaf fields are reported. The semantic writer emits each non-empty group as a
+`docProps/*` part with its `[Content_Types]` override and a root `_rels` entry,
+omitting empty groups (matching producer behavior). Round-trip: semantic fixed
+point (`import → model → write → reopen` = identical `DocumentProperties`) plus a
+Retention byte-survival check on a real corpus file; `synthetic-rich-metadata.docx`
+exercises every field. Strictly additive (existing v1 byte-identical).
+
 ---
 
 ## Tables

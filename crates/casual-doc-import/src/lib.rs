@@ -34,6 +34,7 @@ mod config;
 mod error;
 mod font_table;
 mod media;
+mod metadata;
 mod numbering;
 mod properties;
 mod report;
@@ -292,6 +293,32 @@ pub fn import_package(
         }
     }
 
+    // Document properties (`docProps/{core,app,custom}.xml`). Their relationships
+    // hang off the PACKAGE root (`_rels/.rels`), not the main document's, so they
+    // are discovered and parsed here rather than in `import_with_sources`; the
+    // well-known part names are a fallback for producers that omit the
+    // relationship. Unmapped property fields fold into the compatibility report.
+    // The discovered parts are recorded as consumed so the disposition pass below
+    // does not report them as dropped (they are modeled and regenerated on write).
+    let (sources, docprop_parts) = discover_docprops(package)?;
+    for part in docprop_parts {
+        consumed.insert(part);
+    }
+    if !sources.is_empty() {
+        let mut reporter = Reporter::default();
+        if let Some(properties) = metadata::parse(&sources, config, &mut reporter)? {
+            import.document = import
+                .document
+                .with_properties(properties)
+                .map_err(ImportError::Model)?;
+        }
+        let retention = match config.mode {
+            ImportMode::Retention => RetentionOutcome::Preserved,
+            ImportMode::Semantic => RetentionOutcome::NotRetained,
+        };
+        import.report.merge(reporter.into_report(retention));
+    }
+
     // Package-manifest disposition pass (F2, `44-COVERAGE-GAP-AUDIT`): every
     // admitted part the semantic model did not consume is regenerated away on a
     // semantic edit→save. Report each one so the whole-part-loss class is
@@ -328,6 +355,49 @@ fn is_package_plumbing(part_name: &str) -> bool {
     part_name == "[Content_Types].xml"
         || part_name.starts_with("_rels/")
         || part_name.contains("/_rels/")
+}
+
+/// Discovers the `docProps` property parts through the package root
+/// relationships (core / extended / custom), falling back to the well-known part
+/// names. Returns the read bytes plus the resolved part names (so the caller can
+/// mark them consumed).
+fn discover_docprops(
+    package: &mut DocxPackage<'_>,
+) -> Result<(metadata::DocPropsSources, Vec<String>), ImportError> {
+    let root_relationships = package
+        .part_relationships("")
+        .map_err(ImportError::Package)?;
+    let admitted: std::collections::BTreeSet<String> = package
+        .entries()
+        .iter()
+        .map(|entry| entry.part_name.clone())
+        .collect();
+    let resolve = |suffix: &str, fallback: &str| -> Option<String> {
+        root_relationships
+            .iter()
+            .find(|relationship| relationship.relationship_type.ends_with(suffix))
+            .and_then(|relationship| relationship.resolved_part.clone())
+            .or_else(|| admitted.contains(fallback).then(|| fallback.to_owned()))
+            .filter(|part| admitted.contains(part))
+    };
+    let core_part = resolve("/core-properties", "docProps/core.xml");
+    let app_part = resolve("/extended-properties", "docProps/app.xml");
+    let custom_part = resolve("/custom-properties", "docProps/custom.xml");
+    let mut consumed = Vec::new();
+    let mut sources = metadata::DocPropsSources::default();
+    if let Some(part) = core_part {
+        sources.core = Some(package.read_part(&part).map_err(ImportError::Package)?);
+        consumed.push(part);
+    }
+    if let Some(part) = app_part {
+        sources.app = Some(package.read_part(&part).map_err(ImportError::Package)?);
+        consumed.push(part);
+    }
+    if let Some(part) = custom_part {
+        sources.custom = Some(package.read_part(&part).map_err(ImportError::Package)?);
+        consumed.push(part);
+    }
+    Ok((sources, consumed))
 }
 
 /// Imports main-document WordprocessingML bytes (no styles) into a v1 document.

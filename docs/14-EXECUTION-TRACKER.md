@@ -174,6 +174,7 @@ to the rendering path (Phase 1C).
 | P1B-COV-PAR | Paragraph-property coverage (~62->90%) | Claude Code | Done | Added the bidi/wordWrap/kinsoku/snapToGrid/mirrorIndents/adjustRightInd/suppressAutoHyphens/overflowPunct/topLinePunct/autoSpace* toggles + textAlignment (tri-state to preserve explicit-off on default-ON toggles). PR #64. |
 | P1B-COV-SECT | Section-property coverage (~40->85%) | Claude Code | Done | Added section break type, column space/separator, pgNumType, vAlign, titlePg, docGrid. PR #65. |
 | P1B-COV-MARK | Paragraph-mark rPr (`w:pPr > w:rPr`) | Claude Code | Done | `ParagraphProperties.mark_run: Option<Box<RunProperties>>`; importer routes mark-rPr children into a separate accumulator; writer emits it before `w:sectPr` (bare `<w:rPr/>` for Some(default)). Closes the paragraph family. PR #66. |
+| P1A-DOCPROPS | Document metadata (docProps core/app/custom) | Claude Code | Done | Additive `DocumentProperties` (core/app/custom groups) hung off `v1::Document` via `with_properties`; importer discovers `docProps/{core,app,custom}.xml` through the package-root relationships (core/extended/custom) with well-known part-name fallback and bounded parse; semantic writer emits the three parts with correct `[Content_Types]` overrides + root `_rels`, omitting empty groups. Dates/`r8`/`filetime` retained verbatim (model stays `Eq`). Closes the import→edit→save metadata-loss gap. New `synthetic-rich-metadata.docx` fixture; semantic fixed-point + Retention byte-survival round-trip tests. |
 
 ## Phase 1C–1E — Layout, pagination & rendering engine
 
