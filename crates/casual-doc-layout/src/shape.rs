@@ -232,6 +232,21 @@ impl LineShaper for ParleyShaper {
         for (index, line) in layout.lines().enumerate() {
             let metrics = line.metrics();
             let mut out_runs = Vec::new();
+            // A single `parley` shaping run is split into one `GlyphRun` per
+            // contiguous style span — a brush (color/highlight) or decoration
+            // change splits the run *without* re-shaping, so the spans keep their
+            // kerning and share one parent run. Each `GlyphRun` therefore covers
+            // only a *slice* of the run's glyphs (`glyph_start`/`glyph_count`).
+            // `run().visual_clusters()` walks the *whole* run, so we consume its
+            // per-glyph byte offsets in lockstep with each slice via `cursor`;
+            // walking the whole run per slice (the previous behavior) re-emitted
+            // every glyph for each brush span, overprinting them. `GlyphRun`s of
+            // one run are emitted consecutively, so the cursor stays aligned; a
+            // change in the parent run's `text_range` marks a new run and resets
+            // the offset stream.
+            let mut run_offsets: Vec<u32> = Vec::new();
+            let mut run_range: Option<std::ops::Range<usize>> = None;
+            let mut cursor = 0usize;
             for item in line.items() {
                 let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
                     continue;
@@ -245,21 +260,36 @@ impl LineShaper for ParleyShaper {
                     Twip(glyph_run.offset().round() as i32),
                     Twip(glyph_run.baseline().round() as i32 - style.brush.baseline_shift),
                 );
-                // Walk the run's clusters in visual (left-to-right) order — the
-                // same order (and advances) `positioned_glyphs` yields — tagging
-                // every glyph with its cluster's node-relative byte offset so the
-                // caret can anchor to it. Each cluster's `text_range().start` is a
-                // byte index into the concatenated paragraph text (see `to_offset`).
+                let this_range = glyph_run.run().text_range();
+                if run_range.as_ref() != Some(&this_range) {
+                    // A new shaping run: rebuild its per-glyph node-relative byte
+                    // offsets (visual order, one entry per glyph, each tagged with
+                    // its cluster's start — see `to_offset`) and restart the slice
+                    // cursor at the run's first glyph.
+                    run_offsets = glyph_run
+                        .run()
+                        .visual_clusters()
+                        .flat_map(|cluster| {
+                            let offset = to_offset(cluster.text_range().start);
+                            cluster.glyphs().map(move |_| offset)
+                        })
+                        .collect();
+                    run_range = Some(this_range);
+                    cursor = 0;
+                }
+                // Emit only this slice's glyphs (`glyphs()` honors the slice's
+                // start/count), pairing each with its cluster byte offset from the
+                // run-wide stream at the running cursor so the caret can anchor.
                 let glyphs = glyph_run
-                    .run()
-                    .visual_clusters()
-                    .flat_map(|cluster| {
-                        let offset = to_offset(cluster.text_range().start);
-                        cluster.glyphs().map(move |glyph| Glyph {
+                    .glyphs()
+                    .map(|glyph| {
+                        let cluster = run_offsets.get(cursor).copied().unwrap_or(base);
+                        cursor += 1;
+                        Glyph {
                             id: glyph.id,
                             advance: Twip(glyph.advance.round() as i32),
-                            cluster: offset,
-                        })
+                            cluster,
+                        }
                     })
                     .collect();
                 // `parley` resolves the Unicode bidi level per run; its parity is
