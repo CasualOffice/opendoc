@@ -25,6 +25,7 @@ pub mod compose;
 pub mod display;
 pub mod flow;
 pub mod fonts;
+pub mod incremental;
 pub mod model;
 pub mod page;
 pub mod paginate;
