@@ -92,6 +92,8 @@ fn minimal_package_metadata_and_part_reads_are_deterministic() {
         package.total_expanded_bytes(),
         usize_to_u64(CONTENT_TYPES.len() + ROOT_RELATIONSHIPS.len() + DOCUMENT.len())
     );
+    // The package byte total is the length of the input `.docx` bytes.
+    assert_eq!(package.package_bytes(), usize_to_u64(bytes.len()));
 }
 
 #[test]

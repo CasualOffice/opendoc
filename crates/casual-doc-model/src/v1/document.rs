@@ -19,10 +19,15 @@ pub struct Document {
     document_id: NodeId,
     body: Vec<BlockNode>,
     definitions: Definitions,
+    /// Document metadata (`docProps/*`). Additive: omitted when absent so
+    /// existing snapshots serialize byte-identically.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    properties: Option<DocumentProperties>,
 }
 
 impl Document {
-    /// Builds and validates a v1 document from constructed parts.
+    /// Builds and validates a v1 document from constructed parts. The document
+    /// carries no metadata; attach it with [`Document::with_properties`].
     pub fn new(
         document_id: NodeId,
         body: Vec<BlockNode>,
@@ -33,9 +38,25 @@ impl Document {
             document_id,
             body,
             definitions,
+            properties: None,
         };
         document.validate()?;
         Ok(document)
+    }
+
+    /// Attaches document metadata (`docProps/*`), re-validating the whole
+    /// document. All-empty metadata is dropped so it is equivalent to a document
+    /// with none (`docProps/*` parts are omitted on write).
+    pub fn with_properties(mut self, properties: DocumentProperties) -> Result<Self, ModelError> {
+        self.properties = (!properties.is_empty()).then_some(properties);
+        self.validate()?;
+        Ok(self)
+    }
+
+    /// Returns the document metadata, if any.
+    #[must_use]
+    pub const fn properties(&self) -> Option<&DocumentProperties> {
+        self.properties.as_ref()
     }
 
     /// Returns the schema version (always 1 for a valid v1 document).
@@ -100,7 +121,15 @@ impl Document {
         self.validate_bookmarks()?;
         self.validate_font_table()?;
         self.validate_font_scheme()?;
+        self.validate_properties()?;
         self.validate_body()?;
+        Ok(())
+    }
+
+    fn validate_properties(&self) -> Result<(), ModelError> {
+        if let Some(properties) = &self.properties {
+            properties.validate()?;
+        }
         Ok(())
     }
 

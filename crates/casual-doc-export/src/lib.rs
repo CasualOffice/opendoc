@@ -177,6 +177,75 @@ mod semantic_tests {
         }
     }
 
+    #[test]
+    fn document_properties_survive_the_semantic_round_trip() {
+        // The key deliverable: a package with rich core/app/custom metadata is
+        // imported, written by the semantic writer, and reopened; the modeled
+        // `DocumentProperties` must be identical (a semantic fixed point). This
+        // proves the import -> model -> write -> reopen path no longer drops
+        // title/author/dates/company/counts/custom properties.
+        let source =
+            include_bytes!("../../../fixtures/corpus/synthetic-rich-metadata.docx").as_slice();
+        let m1 = reopen(source);
+        let properties = m1.properties().expect("rich metadata imported");
+        assert_eq!(
+            properties.core.title.as_deref(),
+            Some("Annual Metadata Report")
+        );
+        assert_eq!(properties.core.creator.as_deref(), Some("Ada Lovelace"));
+        assert_eq!(
+            properties.app.company.as_deref(),
+            Some("Analytical Engines Ltd")
+        );
+        assert_eq!(properties.app.words, Some(3200));
+        assert_eq!(properties.app.heading_pairs.len(), 2);
+        assert_eq!(properties.custom.len(), 5);
+
+        let written = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&written);
+        assert_eq!(
+            m1.properties(),
+            m2.properties(),
+            "document properties survive write -> reopen"
+        );
+        assert_eq!(m1, m2, "the whole model (incl. metadata) is a fixed point");
+    }
+
+    #[test]
+    fn corpus_docprops_bytes_survive_the_retention_round_trip() {
+        // A byte-oriented check: in Retention mode the raw `docProps/*` bytes of
+        // a real producer file are preserved verbatim and reproduced by the
+        // retention package writer.
+        let source =
+            include_bytes!("../../../fixtures/corpus/real-producer-footnotes.docx").as_slice();
+        let mut package = DocxPackage::open(source, PackageLimits::default()).unwrap();
+        let retained = import_package(
+            &mut package,
+            ImportConfig {
+                mode: ImportMode::Retention,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .retained_source
+        .expect("retention mode retains the source");
+
+        let rebuilt = crate::write_package(&retained).unwrap();
+        let mut reopened = DocxPackage::open(&rebuilt, PackageLimits::default()).unwrap();
+        for part in [
+            "docProps/core.xml",
+            "docProps/app.xml",
+            "docProps/custom.xml",
+        ] {
+            let original = retained.parts.get(part).expect("docProps part retained");
+            assert_eq!(
+                &reopened.read_part(part).unwrap(),
+                original,
+                "{part} survives the retention round trip byte-for-byte"
+            );
+        }
+    }
+
     /// Locates a LibreOffice `soffice` binary, or returns `None` so the caller
     /// can skip (LibreOffice is not a build/CI dependency).
     fn find_soffice() -> Option<std::path::PathBuf> {

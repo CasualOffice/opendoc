@@ -69,6 +69,30 @@ pub struct CompatibilityReport {
     pub entries: Vec<CompatibilityEntry>,
 }
 
+impl CompatibilityReport {
+    /// Folds a second report's entries (e.g. unmapped `docProps` fields
+    /// discovered after the main body pass, which is parsed separately because
+    /// the property parts hang off the package root, not the main document)
+    /// into this one, aggregating by feature and preserving the deterministic
+    /// feature ordering. An entry seen in both reports sums its occurrences.
+    pub(crate) fn merge(&mut self, other: Self) {
+        for entry in other.entries {
+            match self
+                .entries
+                .iter_mut()
+                .find(|existing| existing.feature == entry.feature)
+            {
+                Some(existing) => {
+                    existing.occurrences = existing.occurrences.saturating_add(entry.occurrences);
+                }
+                None => self.entries.push(entry),
+            }
+        }
+        self.entries
+            .sort_by(|left, right| left.feature.cmp(&right.feature));
+    }
+}
+
 /// Aggregating report sink shared by the body and styles parsers. This slice
 /// imports in Semantic mode, so every reported construct is dispositioned
 /// `omitted` + `not-retained`; Retention mode (round-trip) will preserve them.

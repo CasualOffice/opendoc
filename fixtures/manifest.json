@@ -348,6 +348,32 @@
       "performanceClass": "small",
       "reviewer": "project maintainers",
       "lastReviewed": "2026-07-24"
+    },
+    {
+      "id": "docx-synthetic-rich-metadata",
+      "path": "corpus/synthetic-rich-metadata.docx",
+      "source": "authored by this repository to exercise docProps core/app/custom metadata",
+      "license": "Apache-2.0",
+      "generator": "fixtures/tools/make_rich_metadata.py",
+      "generatorVersion": "0.0.1",
+      "sha256": "dfdad0c9fe0e7a232a05e089ff6c0a5100b4a992b6fbeefe089b3514524f4d1d",
+      "featureTags": [
+        "docx",
+        "docprops",
+        "core-properties",
+        "extended-properties",
+        "custom-properties",
+        "round-trip"
+      ],
+      "compatibilityProfile": "phase1a-semantic",
+      "expectedError": null,
+      "limitProfile": "default",
+      "semanticSnapshot": null,
+      "roundTripAssertion": null,
+      "visualBaseline": null,
+      "performanceClass": "small",
+      "reviewer": "project maintainers",
+      "lastReviewed": "2026-07-26"
     }
   ]
 }

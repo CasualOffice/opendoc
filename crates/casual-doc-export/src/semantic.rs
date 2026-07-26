@@ -17,17 +17,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Write};
 
 use casual_doc_model::v1::{
-    AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, BorderEdge, BreakKind,
-    CellVerticalAlignment, Color, Comment, CommentId, DefinitionMap, Definitions, DocGridType,
-    Document, DocumentSettings, EmphasisMark, Extent, FontCollection, FontDescriptor,
-    FontFamilyKind, FontPitch, FontRef, FontScheme, HeaderFooterId, HeaderFooterKind, HeightRule,
-    HighlightColor, HyperlinkTarget, InlineNode, MediaId, MediaReference, Note, NoteId, NoteKind,
-    NumberingInstance, NumberingInstanceId, PageVerticalAlignment, ParagraphProperties,
-    RevisionKind, RgbColor, RunFontHint, RunProperties, SdtControlKind, SdtProperties,
-    SectionBoundary, SectionType, Style, StyleId, StyleKind, TabAlignment, TabLeader, Table,
-    TableBorders, TableCell, TableCellProperties, TableLayout, TableOverlap, TableProperties,
-    TableRow, TableRowProperties, TextDirection, ThemeFontRef, VerticalAlignment, VerticalMerge,
-    VerticalTextAlignment,
+    AbstractNumbering, AbstractNumberingId, Alignment, AppProperties, BlockNode, BorderEdge,
+    BreakKind, CellVerticalAlignment, Color, Comment, CommentId, CoreProperties, CustomProperty,
+    CustomValue, DefinitionMap, Definitions, DocGridType, Document, DocumentSettings, EmphasisMark,
+    Extent, FontCollection, FontDescriptor, FontFamilyKind, FontPitch, FontRef, FontScheme,
+    HeaderFooterId, HeaderFooterKind, HeightRule, HighlightColor, HyperlinkTarget, InlineNode,
+    MediaId, MediaReference, Note, NoteId, NoteKind, NumberingInstance, NumberingInstanceId,
+    PageVerticalAlignment, ParagraphProperties, RevisionKind, RgbColor, RunFontHint, RunProperties,
+    SdtControlKind, SdtProperties, SectionBoundary, SectionType, Style, StyleId, StyleKind,
+    TabAlignment, TabLeader, Table, TableBorders, TableCell, TableCellProperties, TableLayout,
+    TableOverlap, TableProperties, TableRow, TableRowProperties, TextDirection, ThemeFontRef,
+    VerticalAlignment, VerticalMerge, VerticalTextAlignment,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -91,6 +91,40 @@ const IMAGE_REL_TYPE: &str =
 const FONT_REL_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/font";
 const OBFUSCATED_FONT_CT: &str = "application/vnd.openxmlformats-officedocument.obfuscatedFont";
+const CORE_PROPS_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties";
+const CORE_PROPS_CT: &str = "application/vnd.openxmlformats-package.core-properties+xml";
+const APP_PROPS_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties";
+const APP_PROPS_CT: &str = "application/vnd.openxmlformats-officedocument.extended-properties+xml";
+const CUSTOM_PROPS_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/custom-properties";
+const CUSTOM_PROPS_CT: &str = "application/vnd.openxmlformats-officedocument.custom-properties+xml";
+// Package namespaces for the docProps parts.
+const CP_NS: &str = "http://schemas.openxmlformats.org/package/2006/metadata/core-properties";
+const DC_NS: &str = "http://purl.org/dc/elements/1.1/";
+const DCTERMS_NS: &str = "http://purl.org/dc/terms/";
+const DCMITYPE_NS: &str = "http://purl.org/dc/dcmitype/";
+const XSI_NS: &str = "http://www.w3.org/2001/XMLSchema-instance";
+const EXT_PROPS_NS: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/extended-properties";
+const CUSTOM_PROPS_NS: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/custom-properties";
+const VT_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes";
+/// The standard OPC format id every custom property is stamped with.
+const CUSTOM_PROPS_FMTID: &str = "{D5CDD505-2E9C-101B-9397-08002B2CF9AE}";
+
+/// A `docProps/*` part: its (static) part name, content type, root relationship
+/// type + target, and serialized bytes. Distinct from [`ExtraPart`] because a
+/// docProps part is referenced from the package root `_rels/.rels`, not from
+/// `document.xml.rels`, and carries a package-level content type.
+struct DocPropPart {
+    part_name: &'static str,
+    content_type: &'static str,
+    rel_type: &'static str,
+    target: &'static str,
+    bytes: Vec<u8>,
+}
 
 /// The lowercased file extension of a media part name (for the content-type
 /// `Default`), e.g. `word/media/image1.PNG` -> `png`; `bin` when absent.
@@ -370,20 +404,29 @@ pub fn write_document(
         );
     }
 
+    // Document metadata parts (`docProps/*`), referenced from the package root
+    // relationships (not `document.xml.rels`). A group is emitted only when the
+    // model carries it, so an unedited package without metadata is byte-identical
+    // to the earlier slices.
+    let docprops = docprop_parts(document)?;
+
     // Parts are emitted in a deterministic order so the package bytes are
     // reproducible.
     let mut parts: Vec<(String, Vec<u8>)> = vec![
         (
             "[Content_Types].xml".to_owned(),
-            content_types_xml(&extras, &definitions.media, has_embedded_fonts)?,
+            content_types_xml(&extras, &docprops, &definitions.media, has_embedded_fonts)?,
         ),
-        ("_rels/.rels".to_owned(), root_rels_xml()?),
+        ("_rels/.rels".to_owned(), root_rels_xml(&docprops)?),
         ("word/document.xml".to_owned(), document_xml),
         (
             "word/_rels/document.xml.rels".to_owned(),
             document_rels_xml(&rels, &extras, &definitions.media)?,
         ),
     ];
+    for docprop in &docprops {
+        parts.push((docprop.part_name.to_owned(), docprop.bytes.clone()));
+    }
     for extra in extras {
         if !extra.own_rels.is_empty() {
             parts.push((
@@ -446,6 +489,7 @@ fn start<'a>(name: &'a str) -> BytesStart<'a> {
 /// override.
 fn content_types_xml(
     extras: &[ExtraPart],
+    docprops: &[DocPropPart],
     media: &DefinitionMap<MediaId, MediaReference>,
     has_embedded_fonts: bool,
 ) -> Result<Vec<u8>, ExportError> {
@@ -496,13 +540,22 @@ fn content_types_xml(
         over.push_attribute(("ContentType", extra.content_type));
         w.write_event(Event::Empty(over)).map_err(pkg)?;
     }
+    for docprop in docprops {
+        let part_name = format!("/{}", docprop.part_name);
+        let mut over = start("Override");
+        over.push_attribute(("PartName", part_name.as_str()));
+        over.push_attribute(("ContentType", docprop.content_type));
+        w.write_event(Event::Empty(over)).map_err(pkg)?;
+    }
     w.write_event(Event::End(BytesEnd::new("Types")))
         .map_err(pkg)?;
     Ok(finish(w))
 }
 
-/// Emits `_rels/.rels` pointing at the main document.
-fn root_rels_xml() -> Result<Vec<u8>, ExportError> {
+/// Emits `_rels/.rels`: the main-document relationship (`rId1`) plus one root
+/// relationship per emitted `docProps/*` part (`rId2`..), in core/app/custom
+/// order. With no metadata this is byte-identical to the earlier slices.
+fn root_rels_xml(docprops: &[DocPropPart]) -> Result<Vec<u8>, ExportError> {
     let mut w = new_writer();
     let mut rels = start("Relationships");
     rels.push_attribute(("xmlns", REL_NS));
@@ -512,9 +565,266 @@ fn root_rels_xml() -> Result<Vec<u8>, ExportError> {
     rel.push_attribute(("Type", DOC_REL_TYPE));
     rel.push_attribute(("Target", "word/document.xml"));
     w.write_event(Event::Empty(rel)).map_err(pkg)?;
+    for (index, docprop) in docprops.iter().enumerate() {
+        let id = format!("rId{}", index + 2);
+        let mut rel = start("Relationship");
+        rel.push_attribute(("Id", id.as_str()));
+        rel.push_attribute(("Type", docprop.rel_type));
+        rel.push_attribute(("Target", docprop.target));
+        w.write_event(Event::Empty(rel)).map_err(pkg)?;
+    }
     w.write_event(Event::End(BytesEnd::new("Relationships")))
         .map_err(pkg)?;
     Ok(finish(w))
+}
+
+/// Builds the `docProps/*` parts from the document's metadata, one per non-empty
+/// group, in core/app/custom order. Returns an empty vector when the document
+/// carries no metadata.
+fn docprop_parts(document: &Document) -> Result<Vec<DocPropPart>, ExportError> {
+    let mut parts = Vec::new();
+    let Some(properties) = document.properties() else {
+        return Ok(parts);
+    };
+    if !properties.core.is_empty() {
+        parts.push(DocPropPart {
+            part_name: "docProps/core.xml",
+            content_type: CORE_PROPS_CT,
+            rel_type: CORE_PROPS_REL_TYPE,
+            target: "docProps/core.xml",
+            bytes: core_properties_xml(&properties.core)?,
+        });
+    }
+    if !properties.app.is_empty() {
+        parts.push(DocPropPart {
+            part_name: "docProps/app.xml",
+            content_type: APP_PROPS_CT,
+            rel_type: APP_PROPS_REL_TYPE,
+            target: "docProps/app.xml",
+            bytes: app_properties_xml(&properties.app)?,
+        });
+    }
+    if !properties.custom.is_empty() {
+        parts.push(DocPropPart {
+            part_name: "docProps/custom.xml",
+            content_type: CUSTOM_PROPS_CT,
+            rel_type: CUSTOM_PROPS_REL_TYPE,
+            target: "docProps/custom.xml",
+            bytes: custom_properties_xml(&properties.custom)?,
+        });
+    }
+    Ok(parts)
+}
+
+/// Emits a `<tag>value</tag>` text element (empty text yields `<tag></tag>`),
+/// with the text XML-escaped.
+fn write_text_element(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    tag: &str,
+    value: &str,
+) -> Result<(), ExportError> {
+    w.write_event(Event::Start(start(tag))).map_err(pkg)?;
+    if !value.is_empty() {
+        w.write_event(Event::Text(BytesText::new(value)))
+            .map_err(pkg)?;
+    }
+    w.write_event(Event::End(BytesEnd::new(tag))).map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits `docProps/core.xml` (OPC core properties). Elements are omitted when
+/// their field is `None`; created/modified carry the W3CDTF `xsi:type`.
+fn core_properties_xml(core: &CoreProperties) -> Result<Vec<u8>, ExportError> {
+    let mut w = new_writer();
+    let mut root = start("cp:coreProperties");
+    root.push_attribute(("xmlns:cp", CP_NS));
+    root.push_attribute(("xmlns:dc", DC_NS));
+    root.push_attribute(("xmlns:dcterms", DCTERMS_NS));
+    root.push_attribute(("xmlns:dcmitype", DCMITYPE_NS));
+    root.push_attribute(("xmlns:xsi", XSI_NS));
+    w.write_event(Event::Start(root)).map_err(pkg)?;
+    for (value, tag) in [
+        (&core.title, "dc:title"),
+        (&core.subject, "dc:subject"),
+        (&core.creator, "dc:creator"),
+        (&core.keywords, "cp:keywords"),
+        (&core.description, "dc:description"),
+        (&core.last_modified_by, "cp:lastModifiedBy"),
+        (&core.revision, "cp:revision"),
+    ] {
+        if let Some(value) = value {
+            write_text_element(&mut w, tag, value)?;
+        }
+    }
+    // The two dcterms timestamps carry the W3CDTF xsi:type.
+    for (value, tag) in [
+        (&core.created, "dcterms:created"),
+        (&core.modified, "dcterms:modified"),
+    ] {
+        if let Some(value) = value {
+            let mut element = start(tag);
+            element.push_attribute(("xsi:type", "dcterms:W3CDTF"));
+            w.write_event(Event::Start(element)).map_err(pkg)?;
+            if !value.is_empty() {
+                w.write_event(Event::Text(BytesText::new(value)))
+                    .map_err(pkg)?;
+            }
+            w.write_event(Event::End(BytesEnd::new(tag))).map_err(pkg)?;
+        }
+    }
+    for (value, tag) in [
+        (&core.last_printed, "cp:lastPrinted"),
+        (&core.category, "cp:category"),
+        (&core.content_status, "cp:contentStatus"),
+        (&core.language, "dc:language"),
+        (&core.version, "cp:version"),
+    ] {
+        if let Some(value) = value {
+            write_text_element(&mut w, tag, value)?;
+        }
+    }
+    w.write_event(Event::End(BytesEnd::new("cp:coreProperties")))
+        .map_err(pkg)?;
+    Ok(finish(w))
+}
+
+/// Emits `docProps/app.xml` (extended properties) in the ECMA-376 CT_Properties
+/// element order. Each field is omitted when unset.
+fn app_properties_xml(app: &AppProperties) -> Result<Vec<u8>, ExportError> {
+    let mut w = new_writer();
+    let mut root = start("Properties");
+    root.push_attribute(("xmlns", EXT_PROPS_NS));
+    root.push_attribute(("xmlns:vt", VT_NS));
+    w.write_event(Event::Start(root)).map_err(pkg)?;
+    for (value, tag) in [
+        (&app.template, "Template"),
+        (&app.manager, "Manager"),
+        (&app.company, "Company"),
+    ] {
+        if let Some(value) = value {
+            write_text_element(&mut w, tag, value)?;
+        }
+    }
+    for (value, tag) in [
+        (app.pages, "Pages"),
+        (app.words, "Words"),
+        (app.characters, "Characters"),
+        (app.lines, "Lines"),
+        (app.paragraphs, "Paragraphs"),
+        (app.total_time, "TotalTime"),
+    ] {
+        if let Some(value) = value {
+            write_text_element(&mut w, tag, &value.to_string())?;
+        }
+    }
+    if let Some(value) = app.doc_security {
+        write_text_element(&mut w, "DocSecurity", &value.to_string())?;
+    }
+    if let Some(value) = app.scale_crop {
+        write_text_element(&mut w, "ScaleCrop", bool_token(value))?;
+    }
+    if !app.heading_pairs.is_empty() {
+        w.write_event(Event::Start(start("HeadingPairs")))
+            .map_err(pkg)?;
+        let mut vector = start("vt:vector");
+        vector.push_attribute(("size", (app.heading_pairs.len() * 2).to_string().as_str()));
+        vector.push_attribute(("baseType", "variant"));
+        w.write_event(Event::Start(vector)).map_err(pkg)?;
+        for pair in &app.heading_pairs {
+            w.write_event(Event::Start(start("vt:variant")))
+                .map_err(pkg)?;
+            write_text_element(&mut w, "vt:lpstr", &pair.name)?;
+            w.write_event(Event::End(BytesEnd::new("vt:variant")))
+                .map_err(pkg)?;
+            w.write_event(Event::Start(start("vt:variant")))
+                .map_err(pkg)?;
+            write_text_element(&mut w, "vt:i4", &pair.count.to_string())?;
+            w.write_event(Event::End(BytesEnd::new("vt:variant")))
+                .map_err(pkg)?;
+        }
+        w.write_event(Event::End(BytesEnd::new("vt:vector")))
+            .map_err(pkg)?;
+        w.write_event(Event::End(BytesEnd::new("HeadingPairs")))
+            .map_err(pkg)?;
+    }
+    if !app.titles_of_parts.is_empty() {
+        w.write_event(Event::Start(start("TitlesOfParts")))
+            .map_err(pkg)?;
+        let mut vector = start("vt:vector");
+        vector.push_attribute(("size", app.titles_of_parts.len().to_string().as_str()));
+        vector.push_attribute(("baseType", "lpstr"));
+        w.write_event(Event::Start(vector)).map_err(pkg)?;
+        for title in &app.titles_of_parts {
+            write_text_element(&mut w, "vt:lpstr", title)?;
+        }
+        w.write_event(Event::End(BytesEnd::new("vt:vector")))
+            .map_err(pkg)?;
+        w.write_event(Event::End(BytesEnd::new("TitlesOfParts")))
+            .map_err(pkg)?;
+    }
+    if let Some(value) = app.links_up_to_date {
+        write_text_element(&mut w, "LinksUpToDate", bool_token(value))?;
+    }
+    if let Some(value) = app.characters_with_spaces {
+        write_text_element(&mut w, "CharactersWithSpaces", &value.to_string())?;
+    }
+    if let Some(value) = app.shared_doc {
+        write_text_element(&mut w, "SharedDoc", bool_token(value))?;
+    }
+    if let Some(value) = &app.hyperlink_base {
+        write_text_element(&mut w, "HyperlinkBase", value)?;
+    }
+    if let Some(value) = &app.application {
+        write_text_element(&mut w, "Application", value)?;
+    }
+    if let Some(value) = &app.app_version {
+        write_text_element(&mut w, "AppVersion", value)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("Properties")))
+        .map_err(pkg)?;
+    Ok(finish(w))
+}
+
+/// Emits `docProps/custom.xml`. Each property is stamped with the standard
+/// format id and a sequential `pid` starting at 2 (the OPC minimum).
+fn custom_properties_xml(custom: &[CustomProperty]) -> Result<Vec<u8>, ExportError> {
+    let mut w = new_writer();
+    let mut root = start("Properties");
+    root.push_attribute(("xmlns", CUSTOM_PROPS_NS));
+    root.push_attribute(("xmlns:vt", VT_NS));
+    w.write_event(Event::Start(root)).map_err(pkg)?;
+    for (index, property) in custom.iter().enumerate() {
+        let mut element = start("property");
+        element.push_attribute(("fmtid", CUSTOM_PROPS_FMTID));
+        element.push_attribute(("pid", (index + 2).to_string().as_str()));
+        element.push_attribute(("name", property.name.as_str()));
+        w.write_event(Event::Start(element)).map_err(pkg)?;
+        let (tag, value) = custom_value_tag(&property.value);
+        write_text_element(&mut w, &format!("vt:{tag}"), &value)?;
+        w.write_event(Event::End(BytesEnd::new("property")))
+            .map_err(pkg)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("Properties")))
+        .map_err(pkg)?;
+    Ok(finish(w))
+}
+
+/// The `vt:` local name and text form for a typed custom value. `Other`
+/// preserves its original `vt:` local name so it round-trips exactly.
+fn custom_value_tag(value: &CustomValue) -> (String, String) {
+    match value {
+        CustomValue::Text { value } => ("lpwstr".to_owned(), value.clone()),
+        CustomValue::I4 { value } => ("i4".to_owned(), value.to_string()),
+        CustomValue::R8 { value } => ("r8".to_owned(), value.clone()),
+        CustomValue::Bool { value } => ("bool".to_owned(), bool_token(*value).to_owned()),
+        CustomValue::FileTime { value } => ("filetime".to_owned(), value.clone()),
+        CustomValue::Other { kind, value } => (kind.clone(), value.clone()),
+    }
+}
+
+/// The docProps boolean token.
+const fn bool_token(value: bool) -> &'static str {
+    if value { "true" } else { "false" }
 }
 
 /// Emits `word/_rels/document.xml.rels`. With no entries it is the empty

@@ -102,6 +102,7 @@ pub struct DocxPackage<'a> {
     entries: Vec<PackageEntry>,
     archive_indexes: BTreeMap<String, usize>,
     total_expanded_bytes: u64,
+    package_bytes: u64,
     main_document_part: String,
     content_types: ContentTypes,
     main_document_relationships: Vec<DocumentRelationship>,
@@ -247,6 +248,7 @@ impl<'a> DocxPackage<'a> {
             entries,
             archive_indexes,
             total_expanded_bytes,
+            package_bytes: usize_to_u64(bytes.len()),
             main_document_part,
             content_types,
             main_document_relationships,
@@ -333,6 +335,15 @@ impl<'a> DocxPackage<'a> {
     #[must_use]
     pub const fn total_expanded_bytes(&self) -> u64 {
         self.total_expanded_bytes
+    }
+
+    /// Returns the total byte size of the source package (the input `.docx`
+    /// bytes). This is an envelope/filesystem fact, not document metadata: the
+    /// file *name* is supplied by the caller and is never stored here, and this
+    /// size is deliberately not folded into `DocumentProperties`.
+    #[must_use]
+    pub const fn package_bytes(&self) -> u64 {
+        self.package_bytes
     }
 
     /// Reads and verifies one admitted part into owned bytes.
