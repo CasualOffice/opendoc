@@ -97,6 +97,15 @@ pub struct InlineImage {
     pub size: Size,
 }
 
+/// A resolved text-box outline ready for layout and paint.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Deserialize, Serialize)]
+pub struct TextBoxStroke {
+    /// Resolved RGBA color.
+    pub color: [u8; 4],
+    /// Authored outline width converted to twips.
+    pub width: Twip,
+}
+
 /// An inline text box (`wps:txbx` / `v:textbox`) placed within a paragraph: a
 /// bordered/filled box whose recursive block content was flowed through the *same*
 /// pipeline as the document body (paragraphs, tables incl. nested, inline images —
@@ -110,16 +119,16 @@ pub struct InlineImage {
 pub struct InlineTextBox {
     /// Top-left of the box, relative to the paragraph content box (twips).
     pub origin: Point,
-    /// The box's outer size (twips): its width is the available column width, its
-    /// height the flowed content height plus the internal top/bottom margins.
+    /// The box's resolved outer size (twips). Positive authored dimensions win;
+    /// missing dimensions are resolved from available width and flowed content.
     pub size: Size,
     /// The flowed block fragments — the box's content, laid out through the shared
     /// flow pipeline, positioned relative to the box's content origin.
     pub blocks: Vec<BlockFragment>,
-    /// The box border color (RGBA), painted as a stroked outline; `None` = no
+    /// The box outline, including its authored color and width; `None` = no
     /// border. Serialized only when present so a plain galley stays byte-identical.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub border: Option<[u8; 4]>,
+    pub border: Option<TextBoxStroke>,
     /// The box background fill (RGBA), painted behind the content; `None` =
     /// transparent. Serialized only when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -2771,9 +2771,17 @@ fn drawingml_text_box_is_modeled_and_does_not_corrupt_the_paragraph() {
     let xml = br#"<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps"><w:body>
         <w:p>
             <w:r><w:t>Before</w:t></w:r>
-            <w:r><w:drawing><wp:inline><a:graphic><a:graphicData><wps:wsp><wps:txbx>
-                <w:txbxContent><w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:txbxContent>
-            </wps:txbx></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>
+            <w:r><w:drawing><wp:inline><wp:extent cx="1270000" cy="635000"/>
+                <a:graphic><a:graphicData><wps:wsp>
+                    <wps:spPr>
+                        <a:solidFill><a:srgbClr val="112233"/></a:solidFill>
+                        <a:ln w="19050"><a:solidFill><a:srgbClr val="445566"/></a:solidFill></a:ln>
+                    </wps:spPr>
+                    <wps:txbx>
+                        <w:txbxContent><w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:txbxContent>
+                    </wps:txbx>
+                </wps:wsp></a:graphicData></a:graphic>
+            </wp:inline></w:drawing></w:r>
             <w:r><w:t>After</w:t></w:r>
         </w:p>
     </w:body></w:document>"#;
@@ -2791,6 +2799,34 @@ fn drawingml_text_box_is_modeled_and_does_not_corrupt_the_paragraph() {
     assert_eq!(outer, "BeforeAfter");
     let text_box = find_textbox(&para.inlines).expect("text box modeled");
     assert_eq!(tb_block_text(&text_box.blocks), "Boxed");
+    assert_eq!(
+        text_box.extent,
+        Some(casual_doc_model::v1::Extent {
+            width_emu: 1_270_000,
+            height_emu: 635_000,
+        })
+    );
+    assert_eq!(
+        text_box.fill,
+        Some(casual_doc_model::v1::Rgba {
+            r: 0x11,
+            g: 0x22,
+            b: 0x33,
+            a: 255,
+        })
+    );
+    assert_eq!(
+        text_box.border,
+        Some(casual_doc_model::v1::ShapeStroke {
+            color: casual_doc_model::v1::Rgba {
+                r: 0x44,
+                g: 0x55,
+                b: 0x66,
+                a: 255,
+            },
+            width_emu: 19_050,
+        })
+    );
 }
 
 #[test]

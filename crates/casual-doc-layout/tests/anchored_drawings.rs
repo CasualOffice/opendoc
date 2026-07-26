@@ -206,8 +206,8 @@ fn behind_doc_controls_the_paint_order_relative_to_text() {
 }
 
 use casual_doc_model::v1::{
-    GroupChild, GroupPicture, GroupShape, GroupTransform, PointEmu, Rgba, ShapeGeometry, TextBox,
-    WordprocessingGroup,
+    GroupChild, GroupPicture, GroupShape, GroupTransform, PointEmu, Rgba, ShapeGeometry,
+    ShapeStroke, TextBox, WordprocessingGroup,
 };
 
 fn page_anchor(h: i64, v: i64) -> DrawingAnchor {
@@ -229,7 +229,7 @@ fn page_anchor(h: i64, v: i64) -> DrawingAnchor {
 fn a_floating_text_box_places_at_its_anchor_not_inline() {
     let (_media, definitions) = media_defs();
     // A paragraph carrying body text plus a FLOATING text box (anchor set) at page
-    // offset (1440, 2880) twips, 2x1 inch, white fill.
+    // offset (1440, 2880) twips, 2x1 inch, white fill, and a 30-twip outline.
     let float = InlineNode::TextBox(TextBox {
         id: node(20),
         anchor: Some(page_anchor(914_400, 1_828_800)),
@@ -244,7 +244,15 @@ fn a_floating_text_box_places_at_its_anchor_not_inline() {
             b: 255,
             a: 255,
         }),
-        border: None,
+        border: Some(ShapeStroke {
+            color: Rgba {
+                r: 10,
+                g: 20,
+                b: 30,
+                a: 255,
+            },
+            width_emu: 19_050,
+        }),
         blocks: vec![BlockNode::Paragraph(Paragraph {
             id: node(21),
             properties: ParagraphProperties::default(),
@@ -297,6 +305,24 @@ fn a_floating_text_box_places_at_its_anchor_not_inline() {
         fill.expect("the box fill paints").origin,
         Point::new(Twip(1_440), Twip(2_880)),
         "the box fill is at the anchor, not inline"
+    );
+    assert!(
+        list.items.iter().any(|item| matches!(
+            item,
+            PaintItem::Rect {
+                stroke: Some(stroke),
+                fill: None,
+                ..
+            } if stroke.color
+                == (casual_doc_layout::display::Color {
+                    r: 10,
+                    g: 20,
+                    b: 30,
+                    a: 255,
+                })
+                && (stroke.width - 2.0).abs() < f32::EPSILON
+        )),
+        "the floating box keeps its authored outline color and width"
     );
 }
 

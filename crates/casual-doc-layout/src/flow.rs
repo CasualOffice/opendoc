@@ -22,10 +22,10 @@ use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     Alignment, BlockNode, BorderEdge, BreakKind, Color, ColorScheme, DefinitionMap, Definitions,
     Document, Drawing, Extent, FontRef, FontScheme, HeightRule, HighlightColor, Indentation,
-    InlineNode, LevelSuffix, LineRule, MediaId, MediaReference, ParagraphProperties, RunProperties,
-    SchemeColor, SectionBoundary, SectionId, SectionType, StyleId, TabAlignment, TabLeader,
-    TabStop, Table, TableBorders, TableCell, TableLayout, TableRow, TableRowProperties, TextBox,
-    ThemeColorRef, ThemeFontRef, VerticalAlignment,
+    InlineNode, LevelSuffix, LineRule, MediaId, MediaReference, ParagraphProperties, Rgba,
+    RunProperties, SchemeColor, SectionBoundary, SectionId, SectionType, ShapeStroke, StyleId,
+    TabAlignment, TabLeader, TabStop, Table, TableBorders, TableCell, TableLayout, TableRow,
+    TableRowProperties, TextBox, ThemeColorRef, ThemeFontRef, VerticalAlignment,
 };
 
 use crate::block::{
@@ -41,7 +41,7 @@ use crate::tabs::{self, FlowItem};
 use crate::text::{
     Decoration, FieldKind, FieldMarker, FieldStyle, FontId, Glyph, GlyphRun, InlineImage,
     InlineTextBox, Line, LineBreak, LineConstraints, LineLayout, LineShaper, StyledRun,
-    TextAlignment,
+    TextAlignment, TextBoxStroke,
 };
 use crate::units::{Point, Size, Twip};
 
@@ -1333,24 +1333,16 @@ fn collect_items<'a>(
     }
 }
 
-/// The default border color (opaque black RGBA) drawn around an inline text box —
-/// Word's default text-box outline. Applied until the model carries the shape's
-/// own line/fill properties.
-const TEXTBOX_DEFAULT_BORDER: [u8; 4] = [0, 0, 0, 255];
-
 /// Flows an inline text box (`wps:txbx` / `v:textbox`) into an [`FlowItem::TextBox`]:
 /// its recursive block content is laid out through the **same** [`flow_blocks`]
 /// pipeline the document body uses (so it supports paragraphs, tables incl. nested,
 /// inline images, borders/shading — the uniform-flow-pipeline invariant), and it
 /// works identically in headers/footers/cells because they share this flow.
 ///
-/// The v1 model does not carry the DrawingML extent, so the box is sized to the
-/// available column `width`: its content flows at that width minus the internal
-/// margins on both sides, and the box height is the flowed content height plus the
-/// top/bottom margins. A default hairline border is applied so the box is visible
-/// (Word's default text-box outline); an explicit extent and border/fill from the
-/// shape's properties are a follow-up once the model carries them. Anchored /
-/// floating placement reuses the anchored-drawing path (`P1F-28`) in a later slice.
+/// A positive authored extent dimension wins. A missing or zero width falls back
+/// to the available flow width; a missing or zero height falls back to flowed
+/// content height plus the internal insets. Appearance is copied from the shape;
+/// no border is invented when the document declares none.
 fn textbox_item(
     text_box: &TextBox,
     shaper: &dyn LineShaper,
@@ -1358,21 +1350,41 @@ fn textbox_item(
     ctx: &mut FlowCtx,
 ) -> FlowItem<'static> {
     let inset = crate::compose::TEXTBOX_INSET;
-    let inner_width = Twip((width.raw() - 2 * inset.raw()).max(1));
+    let authored_size = text_box.extent.as_ref().map(extent_to_size);
+    let outer_width = authored_size
+        .map(|size| size.width)
+        .filter(|width| width.raw() > 0)
+        .unwrap_or(width)
+        .max(Twip(1));
+    let inner_width = Twip((outer_width.raw() - 2 * inset.raw()).max(1));
     let blocks = flow_blocks(&text_box.blocks, shaper, inner_width, ctx);
     let content_height = blocks
         .iter()
         .map(BlockFragment::height)
         .fold(Twip::ZERO, |a, h| a + h);
-    let size = Size::new(
-        width.max(Twip(1)),
-        Twip(content_height.raw() + 2 * inset.raw()),
-    );
+    let fallback_height = Twip(content_height.raw() + 2 * inset.raw());
+    let outer_height = authored_size
+        .map(|size| size.height)
+        .filter(|height| height.raw() > 0)
+        .unwrap_or(fallback_height)
+        .max(Twip(1));
+    let size = Size::new(outer_width, outer_height);
     FlowItem::TextBox {
         blocks,
         size,
-        border: Some(TEXTBOX_DEFAULT_BORDER),
-        fill: None,
+        border: text_box.border.map(text_box_stroke),
+        fill: text_box.fill.map(rgba),
+    }
+}
+
+fn rgba(color: Rgba) -> [u8; 4] {
+    [color.r, color.g, color.b, color.a]
+}
+
+fn text_box_stroke(stroke: ShapeStroke) -> TextBoxStroke {
+    TextBoxStroke {
+        color: rgba(stroke.color),
+        width: emu_to_twip(stroke.width_emu),
     }
 }
 
@@ -1598,7 +1610,7 @@ fn image_line(media: String, size: Size, range: ModelRange) -> Line {
 fn textbox_line(
     blocks: Vec<BlockFragment>,
     size: Size,
-    border: Option<[u8; 4]>,
+    border: Option<TextBoxStroke>,
     fill: Option<[u8; 4]>,
     range: ModelRange,
 ) -> Line {
@@ -4756,16 +4768,33 @@ mod tests {
     fn a_text_box_flows_its_paragraph_and_composes_text_inside_a_bordered_box() {
         use crate::compose::compose_paragraph;
         use crate::display::PaintItem;
-        use casual_doc_model::v1::TextBox;
+        use casual_doc_model::v1::{Extent, Rgba, ShapeStroke, TextBox};
 
-        // A paragraph whose only inline is a text box holding one paragraph.
+        // A paragraph whose only inline is an authored-size text box holding one
+        // paragraph, fill, and a 30-twip outline.
         let text_box = InlineNode::TextBox(TextBox {
             id: NodeId::from_parts(20, 1).unwrap(),
             anchor: None,
             relative_height: None,
-            extent: None,
-            fill: None,
-            border: None,
+            extent: Some(Extent {
+                width_emu: 1_270_000,
+                height_emu: 635_000,
+            }),
+            fill: Some(Rgba {
+                r: 1,
+                g: 2,
+                b: 3,
+                a: 255,
+            }),
+            border: Some(ShapeStroke {
+                color: Rgba {
+                    r: 4,
+                    g: 5,
+                    b: 6,
+                    a: 255,
+                },
+                width_emu: 19_050,
+            }),
             blocks: vec![paragraph(
                 21,
                 vec![run_node(22, "boxed", RunProperties::default())],
@@ -4789,10 +4818,18 @@ mod tests {
             inner.lines.iter().any(|l| !l.runs.is_empty()),
             "the inner paragraph shaped glyphs"
         );
-        assert!(tb.border.is_some(), "the box carries a default border");
-        assert!(
-            tb.size.height.raw() > inner.height().raw(),
-            "the box is taller than its content by the top/bottom margins"
+        assert_eq!(
+            tb.size,
+            Size::new(Twip(2_000), Twip(1_000)),
+            "positive authored dimensions win over flow fallbacks"
+        );
+        assert_eq!(tb.fill, Some([1, 2, 3, 255]));
+        assert_eq!(
+            tb.border,
+            Some(TextBoxStroke {
+                color: [4, 5, 6, 255],
+                width: Twip(30),
+            })
         );
 
         // Composition paints the border (a stroked rect) and the inner glyphs.
@@ -4875,6 +4912,15 @@ mod tests {
         assert!(
             matches!(tb.blocks[0], BlockFragment::TableRow { .. }),
             "the nested table flowed to a table-row fragment"
+        );
+        assert_eq!(
+            tb.size.width,
+            Twip::from_points(400),
+            "a missing authored width falls back to the available flow width"
+        );
+        assert!(
+            tb.border.is_none(),
+            "layout must not fabricate an outline when the shape has none"
         );
 
         // Composition emits both cells' text inside the box.

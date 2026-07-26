@@ -26,8 +26,6 @@ const COLUMN_SEPARATOR_WIDTH: Twip = Twip(10);
 pub(crate) const TEXTBOX_INSET: Twip = Twip(72);
 
 /// Stroke width (device px) of an inline text box's border (a hairline).
-const TEXTBOX_BORDER_WIDTH: f32 = 1.0;
-
 /// Builds a display list for one paragraph's shaped lines, placed with the
 /// paragraph's top-left at `origin` (in twips). The shaper positions each glyph
 /// run relative to the paragraph's own origin (run `origin` = the run's left edge
@@ -104,8 +102,8 @@ pub fn compose_paragraph(layout: &LineLayout, origin: Point) -> DisplayList {
                     rect: box_rect,
                     fill: None,
                     stroke: Some(Stroke {
-                        color: rgba(border),
-                        width: TEXTBOX_BORDER_WIDTH,
+                        color: rgba(border.color),
+                        width: stroke_px(border.width),
                     }),
                 });
             }
@@ -229,8 +227,8 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor) {
                     rect: anchor.rect,
                     fill: None,
                     stroke: Some(Stroke {
-                        color: rgba(*border),
-                        width: TEXTBOX_BORDER_WIDTH,
+                        color: rgba(border.color),
+                        width: stroke_px(border.width),
                     }),
                 });
             }
@@ -786,7 +784,7 @@ mod tests {
 
     #[test]
     fn an_inline_text_box_paints_its_fill_border_and_content() {
-        use crate::text::InlineTextBox;
+        use crate::text::{InlineTextBox, TextBoxStroke};
 
         // A text box carrying one inner paragraph fragment (a single glyph run),
         // with an explicit fill and border.
@@ -801,7 +799,10 @@ mod tests {
             origin: Point::new(Twip(500), Twip(600)),
             size: Size::new(Twip(3000), Twip(1000)),
             blocks: vec![inner],
-            border: Some([10, 20, 30, 255]),
+            border: Some(TextBoxStroke {
+                color: [10, 20, 30, 255],
+                width: Twip(30),
+            }),
             fill: Some([200, 210, 220, 255]),
         };
         let mut layout = one_run_line(Twip(0), None);
@@ -842,6 +843,7 @@ mod tests {
                     fill: None,
                     ..
                 } if s.color == (Color { r: 10, g: 20, b: 30, a: 255 })
+                    && (s.width - 2.0).abs() < f32::EPSILON
             )),
             "the box border paints as a stroked rect"
         );
