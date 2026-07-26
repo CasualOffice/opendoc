@@ -9,9 +9,12 @@
 //! references), body-level section geometry (`w:sectPr` → page size, margins,
 //! columns), media references (image relationships → the media table, no bytes
 //! decoded), inline drawings (embedded pictures → media-referencing drawing
-//! nodes with their EMU extent), and hyperlinks (external `r:id` resolved
+//! nodes with their EMU extent), hyperlinks (external `r:id` resolved
 //! through the relationship graph or internal `w:anchor`, wrapping their child
-//! runs) into a deterministic `v1::Document`. Every traversed construct that is
+//! runs), and embedded objects (charts, SmartArt diagrams, and OLE objects →
+//! first-class reference nodes pointing at their side-table-preserved parts,
+//! which the writer re-references so they are no longer orphaned) into a
+//! deterministic `v1::Document`. Every traversed construct that is
 //! not modeled is recorded in a bounded, deterministic compatibility report
 //! under the dual-axis disposition taxonomy (`35-DISPOSITION-TAXONOMY.md`);
 //! nothing is dropped silently. Constructs not yet in the semantic model (tables
@@ -64,6 +67,7 @@ use casual_doc_model::v1::{
 };
 use casual_doc_ooxml::DocxPackage;
 
+use crate::body::EmbeddedRel;
 use crate::media::MediaSource;
 use crate::numbering::Numbering;
 use crate::report::Reporter;
@@ -83,6 +87,11 @@ pub struct Import {
     /// Populated by [`import_package`] (both modes); empty for the XML-only
     /// [`import_main_document_xml`] entry point (no package available).
     pub retained_parts: RetainedParts,
+    /// Package part names referenced by an embedded-object node (chart / diagram
+    /// / OLE). These parts are still byte-preserved by the side-table, but their
+    /// referencing relationship is emitted by the writer from the node — so the
+    /// side-table must NOT re-add it as an orphan (that would double-emit it).
+    pub(crate) embedded_part_names: std::collections::BTreeSet<String>,
 }
 
 /// Imports the main document of an admitted DOCX package into a v1 document,
@@ -310,6 +319,29 @@ pub fn import_package(
         .map(|relationship| (relationship.id.clone(), relationship.target.clone()))
         .collect();
 
+    // Embedded-object relationships (chart / SmartArt diagram / OLE), resolved
+    // through the main-document relationship graph (r:id -> part), so a
+    // `c:chart`/`dgm:relIds`/`o:OLEObject` reference resolves to a first-class
+    // embedded-object node instead of being reported-dropped. The referenced
+    // parts stay preserved by the side-table but are un-orphaned below (their
+    // rel is emitted by the writer from the node, not re-added as an orphan).
+    let embedded_index: std::collections::BTreeMap<String, EmbeddedRel> = package
+        .main_document_relationships()
+        .iter()
+        .filter(|relationship| is_embedded_object_rel(&relationship.relationship_type))
+        .filter(|relationship| !relationship.id.is_empty())
+        .filter_map(|relationship| {
+            let part = relationship.resolved_part.clone()?;
+            Some((
+                relationship.id.clone(),
+                EmbeddedRel {
+                    relationship_type: relationship.relationship_type.clone(),
+                    part_name: part,
+                },
+            ))
+        })
+        .collect();
+
     let mut import = import_with_sources(
         &document_bytes,
         styles_bytes.as_deref(),
@@ -325,6 +357,7 @@ pub fn import_package(
         comments.as_ref(),
         &media_sources,
         &hyperlink_rels,
+        &embedded_index,
         config,
     )?;
 
@@ -392,7 +425,8 @@ pub fn import_package(
     //     invalidates a signature. It is dropped and reported `not-retained` in
     //     Semantic mode (Retention's byte floor still keeps the bytes verbatim,
     //     so it is `preserved` there).
-    let (retained_parts, dispositions) = build_retained_parts(package, &consumed, config)?;
+    let (retained_parts, dispositions) =
+        build_retained_parts(package, &consumed, &import.embedded_part_names, config)?;
     import.retained_parts = retained_parts;
     import.report.add_part_dispositions(dispositions);
 
@@ -411,6 +445,7 @@ pub fn import_package(
 fn build_retained_parts(
     package: &mut DocxPackage<'_>,
     consumed: &std::collections::BTreeSet<String>,
+    embedded_part_names: &std::collections::BTreeSet<String>,
     config: ImportConfig,
 ) -> Result<(RetainedParts, Vec<(PartDisposition, RetentionOutcome)>), ImportError> {
     // The admitted part names (sorted), and the subset the model does not
@@ -427,11 +462,15 @@ fn build_retained_parts(
         .filter(|name| !is_package_plumbing(name) && !consumed.contains(name))
         .collect();
 
-    // The set of parts actually preserved via the side-table (non-signature),
-    // so a relationship targeting a preserved part can be re-added below.
+    // The set of parts whose referencing relationship the side-table re-adds as
+    // an orphan (non-signature, and NOT referenced by a first-class embedded-
+    // object node). A part referenced by a node is still byte-preserved (it stays
+    // in `unconsumed`), but its relationship is emitted by the writer FROM the
+    // node — so re-adding it here too would double-emit the same relationship.
     let preserved_names: std::collections::BTreeSet<String> = unconsumed
         .iter()
         .filter(|name| !opaque::is_signature_part(name, package.content_type(name)))
+        .filter(|name| !embedded_part_names.contains(name.as_str()))
         .cloned()
         .collect();
 
@@ -591,6 +630,24 @@ fn is_package_plumbing(part_name: &str) -> bool {
         || part_name.contains("/_rels/")
 }
 
+/// Whether a main-document relationship type points at a part an embedded-object
+/// node can reference: a chart, a SmartArt diagram's data/layout/quick-style/
+/// colors, or an OLE embedding (`oleObject`/`package`).
+fn is_embedded_object_rel(relationship_type: &str) -> bool {
+    matches!(
+        relationship_type.rsplit('/').next(),
+        Some(
+            "chart"
+                | "diagramData"
+                | "diagramLayout"
+                | "diagramQuickStyle"
+                | "diagramColors"
+                | "oleObject"
+                | "package"
+        )
+    )
+}
+
 /// Discovers the `docProps` property parts through the package root
 /// relationships (core / extended / custom), falling back to the well-known part
 /// names. Returns the read bytes plus the resolved part names (so the caller can
@@ -650,6 +707,7 @@ pub fn import_main_document_xml(xml: &[u8], config: ImportConfig) -> Result<Impo
         &[],
         None,
         &[],
+        &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
         config,
     )
@@ -925,6 +983,7 @@ pub(crate) fn import_with_sources(
     comments: Option<&PartSources>,
     media_sources: &[MediaSource],
     hyperlink_rels: &std::collections::BTreeMap<String, String>,
+    embedded_index: &std::collections::BTreeMap<String, EmbeddedRel>,
     config: ImportConfig,
 ) -> Result<Import, ImportError> {
     config.validate()?;
@@ -1049,7 +1108,11 @@ pub(crate) fn import_with_sources(
         config,
     )?;
 
-    let (mut body, sections) = body::parse(
+    let body::BodyParse {
+        blocks: mut body,
+        sections,
+        embedded_part_names,
+    } = body::parse(
         document_xml,
         &mut ids,
         &mut reporter,
@@ -1058,6 +1121,7 @@ pub(crate) fn import_with_sources(
             numbering: &numbering,
             media_index: &media_index,
             hyperlink_rels,
+            embedded_index,
             footnote_ids: &footnote_ids,
             endnote_ids: &endnote_ids,
             header_ids: &header_ids,
@@ -1110,6 +1174,7 @@ pub(crate) fn import_with_sources(
         // The XML-only path has no package, so no opaque parts to preserve;
         // `import_package` populates the side-table when a package is available.
         retained_parts: RetainedParts::default(),
+        embedded_part_names,
     })
 }
 

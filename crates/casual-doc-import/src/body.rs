@@ -1,13 +1,14 @@
 //! Main-document body parsing into v1 block nodes.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use casual_doc_model::v1::{
     Alignment, BlockNode, BlockSdt, Bookmark, BookmarkEnd, BookmarkId, BookmarkStart, BorderEdge,
     Break, BreakKind, CellVerticalAlignment, Comment, CommentId, CommentReference, DefinitionMap,
-    DocGrid, DocGridType, Drawing, Extent, ExternalTarget, Field, HeaderFooterId, HeaderFooterKind,
-    HeaderFooterRef, HeightRule, Hyperlink, HyperlinkTarget, InlineNode, InlineSdt, InternalTarget,
-    MAX_EMU, MAX_FIELD_INSTRUCTION_BYTES, MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH,
+    DocGrid, DocGridType, Drawing, EmbeddedKind, EmbeddedObject, EmbeddedPart, Extent,
+    ExternalTarget, Field, HeaderFooterId, HeaderFooterKind, HeaderFooterRef, HeightRule,
+    Hyperlink, HyperlinkTarget, InlineNode, InlineSdt, InternalTarget, MAX_EMU,
+    MAX_FIELD_INSTRUCTION_BYTES, MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH,
     MAX_TEXTBOX_DEPTH, Math, MediaId, NoteId, NoteKind, NoteReference, PageMargins, PageNumbering,
     PageSize, PageVerticalAlignment, Paragraph, ParagraphProperties, Revision, RevisionKind,
     RgbColor, Run, RunProperties, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind,
@@ -45,6 +46,15 @@ enum Segment {
     Drawing {
         media: MediaId,
         extent: Option<Extent>,
+    },
+    /// A first-class embedded object (chart / SmartArt diagram / OLE object).
+    EmbeddedObject {
+        kind: EmbeddedKind,
+        part: EmbeddedPart,
+        extra_parts: Vec<EmbeddedPart>,
+        preview: Option<MediaId>,
+        extent: Extent,
+        prog_id: Option<String>,
     },
     Hyperlink {
         target: HyperlinkTarget,
@@ -92,6 +102,54 @@ enum Segment {
         omml: String,
         text: String,
     },
+}
+
+/// The natural size used for an embedded object whose producer declared none.
+const ZERO_EXTENT: Extent = Extent {
+    width_emu: 0,
+    height_emu: 0,
+};
+
+/// A main-document relationship an embedded object can reference, resolved from
+/// the package (`r:id` -> part). The `r:id` is the lookup key.
+#[derive(Clone, Debug)]
+pub(crate) struct EmbeddedRel {
+    /// Relationship type URI (`.../chart`, `.../diagramData`, `.../oleObject`, …).
+    pub relationship_type: String,
+    /// Resolved package part name (e.g. `word/charts/chart1.xml`).
+    pub part_name: String,
+}
+
+/// The `a:graphicData` payload pointers collected while parsing an open
+/// `w:drawing`, resolved into an embedded-object node when the drawing closes.
+#[derive(Default)]
+struct PendingGraphic {
+    /// The `a:graphicData@uri` (identifies chart vs diagram vs other).
+    uri: Option<String>,
+    /// A `c:chart@r:id` (a chart payload).
+    chart_rid: Option<String>,
+    /// A `dgm:relIds` data-model id (`@r:dm`).
+    diagram_dm: Option<String>,
+    /// A `dgm:relIds` layout id (`@r:lo`).
+    diagram_lo: Option<String>,
+    /// A `dgm:relIds` quick-style id (`@r:qs`).
+    diagram_qs: Option<String>,
+    /// A `dgm:relIds` colors id (`@r:cs`).
+    diagram_cs: Option<String>,
+}
+
+/// The `w:object` pointers collected while parsing an open OLE object, resolved
+/// into an embedded-object node when the object closes.
+#[derive(Default)]
+struct PendingObject {
+    /// The `o:OLEObject@r:id` (the embedding part).
+    object_rid: Option<String>,
+    /// The `o:OLEObject@ProgID`.
+    prog_id: Option<String>,
+    /// The `v:imagedata@r:id` preview image (resolves through the media table).
+    preview_rid: Option<String>,
+    /// The natural size from `w:object@w:dxaOrig`/`@w:dyaOrig` (twips → EMU).
+    extent: Option<Extent>,
 }
 
 /// Which wrapper is currently the innermost open one. A single discriminator
@@ -199,6 +257,9 @@ struct ContentFrame {
     pending_extent: Option<Extent>,
     drawing_extra: bool,
     pict_depth: u32,
+    pending_graphic: PendingGraphic,
+    object_depth: u32,
+    pending_object: PendingObject,
     hyperlink: Option<HyperlinkAccumulator>,
     hyperlink_depth: u32,
     field: Option<FieldAccumulator>,
@@ -283,6 +344,13 @@ struct BodyParser<'a> {
     media_index: &'a BTreeMap<String, MediaId>,
     /// Resolution index: hyperlink relationship id -> external target URL.
     hyperlink_rels: &'a BTreeMap<String, String>,
+    /// Resolution index: relationship id -> an embedded-object part
+    /// (chart/diagram/OLE). Empty for parts that carry no such index.
+    embedded_index: &'a BTreeMap<String, EmbeddedRel>,
+    /// Package part names an embedded-object node references (accumulated across
+    /// the whole parse). The caller un-orphans exactly these in the side-table so
+    /// the writer emits their relationship once (from the node), not twice.
+    embedded_part_names: BTreeSet<String>,
     elements: u64,
     depth: u64,
     text_bytes: usize,
@@ -308,6 +376,12 @@ struct BodyParser<'a> {
     /// Depth of an open `w:pict` (legacy VML picture); `pending_embed` holds its
     /// `v:imagedata@r:id` until the picture closes.
     pict_depth: u32,
+    /// `a:graphicData` payload pointers for the open drawing (chart/diagram).
+    pending_graphic: PendingGraphic,
+    /// Depth of an open `w:object` (an OLE object wrapper).
+    object_depth: u32,
+    /// `w:object` pointers collected until the object closes.
+    pending_object: PendingObject,
     hyperlink: Option<HyperlinkAccumulator>,
     hyperlink_depth: u32,
     /// The open field, if any (simple or complex). Mutually exclusive with an
@@ -447,6 +521,7 @@ pub(crate) struct ParseInputs<'a> {
     pub numbering: &'a Numbering,
     pub media_index: &'a BTreeMap<String, MediaId>,
     pub hyperlink_rels: &'a BTreeMap<String, String>,
+    pub embedded_index: &'a BTreeMap<String, EmbeddedRel>,
     pub footnote_ids: &'a BTreeMap<String, NoteId>,
     pub endnote_ids: &'a BTreeMap<String, NoteId>,
     pub header_ids: &'a BTreeMap<String, HeaderFooterId>,
@@ -471,6 +546,8 @@ impl<'a> BodyParser<'a> {
             config,
             media_index: inputs.media_index,
             hyperlink_rels: inputs.hyperlink_rels,
+            embedded_index: inputs.embedded_index,
+            embedded_part_names: BTreeSet::new(),
             elements: 0,
             depth: 0,
             text_bytes: 0,
@@ -494,6 +571,9 @@ impl<'a> BodyParser<'a> {
             pending_extent: None,
             drawing_extra: false,
             pict_depth: 0,
+            pending_graphic: PendingGraphic::default(),
+            object_depth: 0,
+            pending_object: PendingObject::default(),
             hyperlink: None,
             hyperlink_depth: 0,
             field: None,
@@ -548,6 +628,15 @@ impl<'a> BodyParser<'a> {
     }
 }
 
+/// The main-document body parse result: ordered block nodes, section boundaries,
+/// and the package part names embedded-object nodes reference (so the caller can
+/// un-orphan exactly those parts in the side-table).
+pub(crate) struct BodyParse {
+    pub blocks: Vec<BlockNode>,
+    pub sections: Vec<SectionBoundary>,
+    pub embedded_part_names: BTreeSet<String>,
+}
+
 /// Parses main-document body bytes into ordered block nodes, allocating ids.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn parse<'a>(
@@ -557,7 +646,7 @@ pub(crate) fn parse<'a>(
     inputs: ParseInputs<'a>,
     bookmarks: &'a mut DefinitionMap<BookmarkId, Bookmark>,
     config: ImportConfig,
-) -> Result<(Vec<BlockNode>, Vec<SectionBoundary>), ImportError> {
+) -> Result<BodyParse, ImportError> {
     let mut parser = BodyParser::build(ids, reporter, &inputs, bookmarks, None, config);
     parser.run(xml)?;
     // Unwind any text box left open by malformed input so the true body root is
@@ -573,7 +662,11 @@ pub(crate) fn parse<'a>(
     // would otherwise be stranded in the `TableStack` at EOF).
     let roots = parser.tables.flush_open(&mut *parser.ids)?;
     parser.blocks.extend(roots);
-    Ok((parser.blocks, parser.sections))
+    Ok(BodyParse {
+        blocks: parser.blocks,
+        sections: parser.sections,
+        embedded_part_names: parser.embedded_part_names,
+    })
 }
 
 /// Parses a notes part (`word/footnotes.xml` / `word/endnotes.xml`) into its
@@ -597,11 +690,13 @@ pub(crate) fn parse_notes(
     let empty_notes = BTreeMap::new();
     let empty_hf = BTreeMap::new();
     let empty_comment = BTreeMap::new();
+    let empty_embedded = BTreeMap::new();
     let inputs = ParseInputs {
         styles,
         numbering,
         media_index,
         hyperlink_rels,
+        embedded_index: &empty_embedded,
         footnote_ids: &empty_notes,
         endnote_ids: &empty_notes,
         header_ids: &empty_hf,
@@ -640,11 +735,13 @@ pub(crate) fn parse_header_footer(
     let empty_notes = BTreeMap::new();
     let empty_hf = BTreeMap::new();
     let empty_comment = BTreeMap::new();
+    let empty_embedded = BTreeMap::new();
     let inputs = ParseInputs {
         styles,
         numbering,
         media_index,
         hyperlink_rels,
+        embedded_index: &empty_embedded,
         footnote_ids: &empty_notes,
         endnote_ids: &empty_notes,
         header_ids: &empty_hf,
@@ -684,11 +781,13 @@ pub(crate) fn parse_comments(
     let empty_notes = BTreeMap::new();
     let empty_hf = BTreeMap::new();
     let empty_comment = BTreeMap::new();
+    let empty_embedded = BTreeMap::new();
     let inputs = ParseInputs {
         styles,
         numbering,
         media_index,
         hyperlink_rels,
+        embedded_index: &empty_embedded,
         footnote_ids: &empty_notes,
         endnote_ids: &empty_notes,
         header_ids: &empty_hf,
@@ -1202,7 +1301,26 @@ impl BodyParser<'_> {
                     self.pending_extent = None;
                     self.drawing_extra = false;
                     self.blipfill_depth = 0;
+                    self.pending_graphic = PendingGraphic::default();
                 }
+            }
+            // The `a:graphicData@uri` distinguishes a chart / diagram / picture /
+            // other payload; captured so `commit_drawing` can route it. Only the
+            // first (outermost) graphicData in the drawing is recorded.
+            b"graphicData" if self.drawing_depth > 0 && self.pending_graphic.uri.is_none() => {
+                self.pending_graphic.uri = attribute_value(element, b"uri");
+            }
+            // A DrawingML chart payload: `c:chart@r:id` points at the chart part.
+            b"chart" if self.drawing_depth > 0 && self.pending_graphic.chart_rid.is_none() => {
+                self.pending_graphic.chart_rid = attribute_value(element, b"id");
+            }
+            // A SmartArt diagram payload: `dgm:relIds` names the data/layout/
+            // quick-style/colors parts through four relationship ids.
+            b"relIds" if self.drawing_depth > 0 => {
+                self.pending_graphic.diagram_dm = attribute_value(element, b"dm");
+                self.pending_graphic.diagram_lo = attribute_value(element, b"lo");
+                self.pending_graphic.diagram_qs = attribute_value(element, b"qs");
+                self.pending_graphic.diagram_cs = attribute_value(element, b"cs");
             }
             b"extent" if self.drawing_depth > 0 => {
                 if let (Some(cx), Some(cy)) = (attr_i64(element, b"cx"), attr_i64(element, b"cy"))
@@ -1239,6 +1357,36 @@ impl BodyParser<'_> {
             }
             b"imagedata" if self.pict_depth > 0 && self.pending_embed.is_none() => {
                 self.pending_embed = attribute_value(element, b"id");
+            }
+            // An OLE object (`w:object`): its `o:OLEObject` names the embedding and
+            // an optional `v:shape/v:imagedata` supplies the preview image. Origin
+            // sizes (`w:dxaOrig`/`w:dyaOrig`, in twips) give the natural extent.
+            b"object" if self.run_open => {
+                self.object_depth += 1;
+                if self.object_depth == 1 {
+                    self.pending_object = PendingObject::default();
+                    if let (Some(dxa), Some(dya)) =
+                        (attr_i64(element, b"dxaOrig"), attr_i64(element, b"dyaOrig"))
+                        && dxa >= 0
+                        && dya >= 0
+                    {
+                        self.pending_object.extent = Some(Extent {
+                            width_emu: dxa.saturating_mul(635).min(MAX_EMU),
+                            height_emu: dya.saturating_mul(635).min(MAX_EMU),
+                        });
+                    }
+                }
+            }
+            b"imagedata" if self.object_depth > 0 && self.pending_object.preview_rid.is_none() => {
+                self.pending_object.preview_rid = attribute_value(element, b"id");
+            }
+            b"OLEObject" if self.object_depth > 0 => {
+                if self.pending_object.object_rid.is_none() {
+                    self.pending_object.object_rid = attribute_value(element, b"id");
+                }
+                if self.pending_object.prog_id.is_none() {
+                    self.pending_object.prog_id = attribute_value(element, b"ProgID");
+                }
             }
             // A `w:sectPr` nested in a paragraph's `w:pPr` marks the END of a
             // section: this paragraph is the last of that section. It is a real
@@ -1894,6 +2042,10 @@ impl BodyParser<'_> {
             // silently; any OTHER element inside a drawing (e.g. a text box)
             // still falls through to the report arm below — no silent loss.
             _ if self.drawing_depth > 0 && is_drawing_scaffolding(local) => {}
+            // Known VML shape scaffolding inside a `w:object` is consumed silently
+            // (the object round-trips as a first-class reference to its preserved
+            // parts, so the presentation shape is not separately modeled).
+            _ if self.object_depth > 0 && is_object_scaffolding(local) => {}
             _ if self.in_document => self.reporter.report(local),
             _ => {}
         }
@@ -2068,6 +2220,12 @@ impl BodyParser<'_> {
                     self.commit_pict();
                 }
             }
+            b"object" if self.object_depth > 0 => {
+                self.object_depth -= 1;
+                if self.object_depth == 0 {
+                    self.commit_object();
+                }
+            }
             b"hyperlink" if self.hyperlink_depth > 0 => {
                 if self.hyperlink_depth == 1 {
                     self.commit_hyperlink();
@@ -2118,12 +2276,57 @@ impl BodyParser<'_> {
         Ok(())
     }
 
-    /// Commits the top-level drawing that just closed. A resolved embed becomes
-    /// a `Drawing` segment; an unresolved/dangling embed is reported and
-    /// dropped. A resolved drawing carrying unmodeled detail is also reported.
+    /// Commits the top-level drawing that just closed. A `c:chart`/`dgm:relIds`
+    /// payload becomes a first-class `EmbeddedObject` referencing its preserved
+    /// part(s); a resolved `a:blip@r:embed` becomes a `Drawing`; an
+    /// unresolved/dangling reference is reported and dropped. A resolved drawing
+    /// carrying unmodeled detail is also reported.
     fn commit_drawing(&mut self) {
         let extent = self.pending_extent.take();
         let extra = self.drawing_extra;
+        let graphic = std::mem::take(&mut self.pending_graphic);
+        // A chart payload (`a:graphicData` -> `c:chart`).
+        if let Some(rid) = &graphic.chart_rid
+            && let Some(part) = self.resolve_embedded_part(rid)
+        {
+            self.embedded_part_names.insert(part.part_name.clone());
+            self.push_segment(Segment::EmbeddedObject {
+                kind: EmbeddedKind::Chart,
+                part,
+                extra_parts: Vec::new(),
+                preview: None,
+                extent: extent.unwrap_or(ZERO_EXTENT),
+                prog_id: None,
+            });
+            return;
+        }
+        // A SmartArt diagram payload (`a:graphicData` -> `dgm:relIds`): the data
+        // model is primary, layout/quick-style/colors are extra parts.
+        if let Some(part) = self.resolve_embedded_part_opt(&graphic.diagram_dm) {
+            self.embedded_part_names.insert(part.part_name.clone());
+            let mut extra_parts = Vec::new();
+            for rid in [
+                &graphic.diagram_lo,
+                &graphic.diagram_qs,
+                &graphic.diagram_cs,
+            ] {
+                if let Some(extra_part) = self.resolve_embedded_part_opt(rid) {
+                    self.embedded_part_names
+                        .insert(extra_part.part_name.clone());
+                    extra_parts.push(extra_part);
+                }
+            }
+            self.push_segment(Segment::EmbeddedObject {
+                kind: EmbeddedKind::Diagram,
+                part,
+                extra_parts,
+                preview: None,
+                extent: extent.unwrap_or(ZERO_EXTENT),
+                prog_id: None,
+            });
+            return;
+        }
+        // Otherwise the embedded-picture path.
         match self.pending_embed.take() {
             Some(embed) => match self.media_index.get(&embed) {
                 Some(media) => {
@@ -2139,6 +2342,60 @@ impl BodyParser<'_> {
             },
             None => self.reporter.report(b"drawing"),
         }
+    }
+
+    /// Commits a `w:object` OLE embedding that just closed into a first-class
+    /// `EmbeddedObject` (kind `OleObject`) referencing the embedding part, with
+    /// the optional preview image and `ProgID`. An unresolved embedding is
+    /// reported and dropped.
+    fn commit_object(&mut self) {
+        let object = std::mem::take(&mut self.pending_object);
+        let Some(part) = self.resolve_embedded_part_opt(&object.object_rid) else {
+            self.reporter.report(b"object");
+            return;
+        };
+        self.embedded_part_names.insert(part.part_name.clone());
+        let preview = object
+            .preview_rid
+            .as_ref()
+            .and_then(|rid| self.media_index.get(rid).copied());
+        let prog_id = object
+            .prog_id
+            .filter(|value| !value.is_empty() && value.len() <= 255);
+        self.push_segment(Segment::EmbeddedObject {
+            kind: EmbeddedKind::OleObject,
+            part,
+            extra_parts: Vec::new(),
+            preview,
+            extent: object.extent.unwrap_or(ZERO_EXTENT),
+            prog_id,
+        });
+    }
+
+    /// Resolves a relationship id to an embedded-object part reference through the
+    /// embedded index, bounding each field to the model's domain (an out-of-domain
+    /// or unresolved id yields `None`, so the caller reports/drops).
+    fn resolve_embedded_part(&self, relationship_id: &str) -> Option<EmbeddedPart> {
+        let rel = self.embedded_index.get(relationship_id)?;
+        if relationship_id.is_empty()
+            || relationship_id.len() > 255
+            || rel.relationship_type.is_empty()
+            || rel.relationship_type.len() > 2048
+            || rel.part_name.is_empty()
+            || rel.part_name.len() > 1024
+        {
+            return None;
+        }
+        Some(EmbeddedPart {
+            relationship_id: relationship_id.to_owned(),
+            relationship_type: rel.relationship_type.clone(),
+            part_name: rel.part_name.clone(),
+        })
+    }
+
+    /// [`resolve_embedded_part`] for an optional id.
+    fn resolve_embedded_part_opt(&self, relationship_id: &Option<String>) -> Option<EmbeddedPart> {
+        self.resolve_embedded_part(relationship_id.as_deref()?)
     }
 
     /// Commits a legacy VML picture that just closed. A resolvable
@@ -2441,6 +2698,9 @@ impl BodyParser<'_> {
             pending_extent: self.pending_extent.take(),
             drawing_extra: std::mem::take(&mut self.drawing_extra),
             pict_depth: std::mem::take(&mut self.pict_depth),
+            pending_graphic: std::mem::take(&mut self.pending_graphic),
+            object_depth: std::mem::take(&mut self.object_depth),
+            pending_object: std::mem::take(&mut self.pending_object),
             hyperlink: self.hyperlink.take(),
             hyperlink_depth: std::mem::take(&mut self.hyperlink_depth),
             field: self.field.take(),
@@ -2502,6 +2762,9 @@ impl BodyParser<'_> {
         self.pending_extent = frame.pending_extent;
         self.drawing_extra = frame.drawing_extra;
         self.pict_depth = frame.pict_depth;
+        self.pending_graphic = frame.pending_graphic;
+        self.object_depth = frame.object_depth;
+        self.pending_object = frame.pending_object;
         self.hyperlink = frame.hyperlink;
         self.hyperlink_depth = frame.hyperlink_depth;
         self.field = frame.field;
@@ -3061,6 +3324,25 @@ impl BodyParser<'_> {
                 let id = self.next_id()?;
                 Ok(InlineNode::Drawing(Drawing { id, media, extent }))
             }
+            Segment::EmbeddedObject {
+                kind,
+                part,
+                extra_parts,
+                preview,
+                extent,
+                prog_id,
+            } => {
+                let id = self.next_id()?;
+                Ok(InlineNode::EmbeddedObject(EmbeddedObject {
+                    id,
+                    kind,
+                    part,
+                    extra_parts,
+                    preview,
+                    extent,
+                    prog_id,
+                }))
+            }
             Segment::Hyperlink {
                 target,
                 tooltip,
@@ -3292,6 +3574,29 @@ fn is_drawing_scaffolding(local: &[u8]) -> bool {
             | b"blip"
             | b"extLst"
             | b"svgBlip"
+    )
+}
+
+/// Whether a local element name is known VML shape scaffolding inside a
+/// `w:object` (consumed silently; the object is modeled as a first-class
+/// reference). `imagedata` and `OLEObject` are handled by dedicated arms, not
+/// here. Anything not listed still reports, so unmodeled content is never lost.
+fn is_object_scaffolding(local: &[u8]) -> bool {
+    matches!(
+        local,
+        b"shape"
+            | b"shapetype"
+            | b"stroke"
+            | b"fill"
+            | b"path"
+            | b"formulas"
+            | b"f"
+            | b"lock"
+            | b"shadow"
+            | b"textpath"
+            | b"handles"
+            | b"h"
+            | b"wrap"
     )
 }
 

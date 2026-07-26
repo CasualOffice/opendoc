@@ -67,6 +67,73 @@ pub struct Drawing {
     pub extent: Option<Extent>,
 }
 
+/// The relationship type and package part a first-class embedded object
+/// references. The referenced part's BYTES are not modeled (they live in the
+/// preservation side-table, doc-45 invariant I4); this carries only the pointer
+/// the writer needs to re-emit the referencing relationship.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EmbeddedPart {
+    /// Source relationship id (`r:id`), reused verbatim on export so the body's
+    /// reference and the emitted relationship agree.
+    pub relationship_id: String,
+    /// Relationship type URI (`.../chart`, `.../diagramData`, `.../oleObject`, …).
+    pub relationship_type: String,
+    /// Package part name (e.g. `word/charts/chart1.xml`).
+    pub part_name: String,
+}
+
+/// What kind of embedded object a first-class reference points at.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EmbeddedKind {
+    /// A DrawingML chart (`a:graphicData` with a `c:chart`).
+    Chart,
+    /// A SmartArt diagram (`a:graphicData` with a `dgm:relIds`).
+    Diagram,
+    /// An embedded OLE object (`w:object` with an `o:OLEObject`).
+    OleObject,
+    /// Any other `a:graphicData` payload, keyed by its `uri`.
+    Other(String),
+}
+
+/// An inline embedded object — a chart, SmartArt diagram, or OLE object — modeled
+/// as a first-class reference to its preserved package part(s).
+///
+/// Unlike an inline picture (whose bytes flow through the media table), an
+/// embedded object's parts (`word/charts/chart1.xml`, `word/diagrams/*`,
+/// `word/embeddings/*`) are opaque XML/binary the semantic model does not parse;
+/// they are byte-preserved by the side-table (P1F-2). This node re-links the
+/// regenerated body to those parts so they round-trip as an *editable reference*
+/// rather than surviving as orphaned bytes. Anchored/floating positioning is not
+/// modeled (P1F-28); the object is treated as inline.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EmbeddedObject {
+    /// Stable identity.
+    pub id: NodeId,
+    /// Which kind of embedded object this references.
+    pub kind: EmbeddedKind,
+    /// The primary referenced part (the chart, the diagram *data model*, or the
+    /// OLE embedding).
+    pub part: EmbeddedPart,
+    /// Additional referenced parts (a diagram's layout/quick-style/colors), in
+    /// the order they were declared.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_parts: Vec<EmbeddedPart>,
+    /// The fallback preview image (a chart/diagram cached bitmap or an OLE
+    /// `o:OLEObject` imagedata), resolving in `Definitions::media`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<MediaId>,
+    /// The object's natural size in EMU (from `wp:extent` or `w:object` origins;
+    /// `0×0` when the producer declared none).
+    pub extent: Extent,
+    /// The OLE `ProgID` (`o:OLEObject@ProgID`), if declared (non-empty, <= 255
+    /// bytes). `None` for charts and diagrams.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prog_id: Option<String>,
+}
+
 /// An external hyperlink target (a resolved relationship URL).
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -500,6 +567,9 @@ pub enum InlineNode {
     Break(Break),
     /// An inline drawing referencing embedded media.
     Drawing(Drawing),
+    /// An inline embedded object (chart, SmartArt diagram, or OLE object)
+    /// referencing preserved package part(s).
+    EmbeddedObject(EmbeddedObject),
     /// An inline hyperlink wrapping inline content.
     Hyperlink(Hyperlink),
     /// An inline field: an instruction and its cached result.
@@ -531,6 +601,7 @@ impl InlineNode {
             Self::Tab(tab) => tab.id,
             Self::Break(node) => node.id,
             Self::Drawing(drawing) => drawing.id,
+            Self::EmbeddedObject(object) => object.id,
             Self::Hyperlink(hyperlink) => hyperlink.id,
             Self::Field(field) => field.id,
             Self::TextBox(text_box) => text_box.id,

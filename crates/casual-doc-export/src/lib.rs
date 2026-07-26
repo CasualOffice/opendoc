@@ -2338,6 +2338,247 @@ mod semantic_tests {
         );
     }
 
+    /// Returns the first inline node of the first paragraph of a document body.
+    fn first_inline(
+        document: &casual_doc_model::v1::Document,
+    ) -> &casual_doc_model::v1::InlineNode {
+        use casual_doc_model::v1::BlockNode;
+        let BlockNode::Paragraph(paragraph) = &document.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        &paragraph.inlines[0]
+    }
+
+    #[test]
+    fn chart_drawing_round_trips_as_an_editable_reference() {
+        use casual_doc_model::v1::{EmbeddedKind, InlineNode};
+
+        // A drawing whose `a:graphicData` carries a `c:chart` reference to a chart
+        // part, which itself references an embedded workbook via its own `_rels`.
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/charts/chart1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><w:body><w:p><w:r><w:drawing><wp:inline><wp:extent cx="914400" cy="304800"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart r:id="rId5"/></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="charts/chart1.xml"/></Relationships>"#;
+        let chart = br#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart/></c:chartSpace>"#;
+        let chart_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/package" Target="../embeddings/Microsoft_Excel_Worksheet.xlsx"/></Relationships>"#;
+        let workbook = b"PK\x03\x04-fake-xlsx";
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/charts/chart1.xml", chart),
+            ("word/charts/_rels/chart1.xml.rels", chart_rels),
+            ("word/embeddings/Microsoft_Excel_Worksheet.xlsx", workbook),
+        ]);
+
+        // Import: the drawing is a first-class chart reference, not dropped.
+        let import = import_semantic(&source);
+        let InlineNode::EmbeddedObject(object) = first_inline(&import.document) else {
+            panic!("expected an embedded object");
+        };
+        assert_eq!(object.kind, EmbeddedKind::Chart);
+        assert_eq!(object.part.part_name, "word/charts/chart1.xml");
+        assert_eq!(object.extent.width_emu, 914400);
+        assert_eq!(object.extent.height_emu, 304800);
+        // The chart part is byte-preserved by the side-table...
+        assert!(
+            import
+                .retained_parts
+                .parts
+                .iter()
+                .any(|part| part.part_name == "word/charts/chart1.xml")
+        );
+        // ...but its referencing relationship is NOT re-added as an orphan (the
+        // writer emits it from the node instead — no double-emission).
+        assert!(
+            !import
+                .retained_parts
+                .relationships
+                .iter()
+                .any(|rel| rel.target.contains("charts/chart1.xml"))
+        );
+
+        // Write + reopen: the package opens, the chart part is present AND
+        // referenced by a relationship (not orphaned).
+        let written = write_document_with_retained_parts(
+            &import.document,
+            &BTreeMap::new(),
+            &import.retained_parts,
+        )
+        .unwrap();
+        let mut reopened = DocxPackage::open(&written, PackageLimits::default()).unwrap();
+        assert_eq!(reopened.read_part("word/charts/chart1.xml").unwrap(), chart);
+        // The embedded workbook (referenced through the chart's own carried rels)
+        // survives too.
+        assert_eq!(
+            reopened
+                .read_part("word/embeddings/Microsoft_Excel_Worksheet.xlsx")
+                .unwrap(),
+            workbook
+        );
+        let doc_rels_out = reopened.read_part("word/_rels/document.xml.rels").unwrap();
+        let doc_rels_out = String::from_utf8_lossy(&doc_rels_out);
+        assert!(doc_rels_out.contains("charts/chart1.xml"));
+        assert!(doc_rels_out.contains("/relationships/chart"));
+        // The chart relationship is emitted exactly once.
+        assert_eq!(doc_rels_out.matches("charts/chart1.xml").count(), 1);
+
+        // Re-import the written package: the chart reference still round-trips.
+        let reimport = import_semantic(&written);
+        let InlineNode::EmbeddedObject(object) = first_inline(&reimport.document) else {
+            panic!("expected an embedded object after re-import");
+        };
+        assert_eq!(object.kind, EmbeddedKind::Chart);
+        assert_eq!(object.part.part_name, "word/charts/chart1.xml");
+    }
+
+    #[test]
+    fn smartart_diagram_round_trips_with_its_parts_referenced() {
+        use casual_doc_model::v1::{EmbeddedKind, InlineNode};
+
+        // A drawing whose `a:graphicData` carries a `dgm:relIds` naming the four
+        // diagram parts (data / layout / quick-style / colors).
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/diagrams/data1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.diagramData+xml"/><Override PartName="/word/diagrams/layout1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.diagramLayout+xml"/><Override PartName="/word/diagrams/quickStyle1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.diagramStyle+xml"/><Override PartName="/word/diagrams/colors1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.diagramColors+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram"><w:body><w:p><w:r><w:drawing><wp:inline><wp:extent cx="5486400" cy="3200400"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram"><dgm:relIds r:dm="rId4" r:lo="rId5" r:qs="rId6" r:cs="rId7"/></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/diagramData" Target="diagrams/data1.xml"/><Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/diagramLayout" Target="diagrams/layout1.xml"/><Relationship Id="rId6" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/diagramQuickStyle" Target="diagrams/quickStyle1.xml"/><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/diagramColors" Target="diagrams/colors1.xml"/></Relationships>"#;
+        let data = br#"<dsp:dataModel xmlns:dsp="urn:d"/>"#;
+        let layout = br#"<dgm:layoutDef xmlns:dgm="urn:l"/>"#;
+        let quick_style = br#"<dgm:styleDef xmlns:dgm="urn:s"/>"#;
+        let colors = br#"<dgm:colorsDef xmlns:dgm="urn:c"/>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/diagrams/data1.xml", data),
+            ("word/diagrams/layout1.xml", layout),
+            ("word/diagrams/quickStyle1.xml", quick_style),
+            ("word/diagrams/colors1.xml", colors),
+        ]);
+
+        let import = import_semantic(&source);
+        let InlineNode::EmbeddedObject(object) = first_inline(&import.document) else {
+            panic!("expected an embedded object");
+        };
+        assert_eq!(object.kind, EmbeddedKind::Diagram);
+        assert_eq!(object.part.part_name, "word/diagrams/data1.xml");
+        assert_eq!(object.extra_parts.len(), 3);
+        // None of the four diagram parts is re-added as an orphan relationship.
+        for part_name in ["data1", "layout1", "quickStyle1", "colors1"] {
+            assert!(
+                !import
+                    .retained_parts
+                    .relationships
+                    .iter()
+                    .any(|rel| rel.target.contains(part_name))
+            );
+        }
+
+        let written = write_document_with_retained_parts(
+            &import.document,
+            &BTreeMap::new(),
+            &import.retained_parts,
+        )
+        .unwrap();
+        let mut reopened = DocxPackage::open(&written, PackageLimits::default()).unwrap();
+        for part_name in [
+            "word/diagrams/data1.xml",
+            "word/diagrams/layout1.xml",
+            "word/diagrams/quickStyle1.xml",
+            "word/diagrams/colors1.xml",
+        ] {
+            assert!(reopened.read_part(part_name).is_ok(), "{part_name} present");
+        }
+        let doc_rels_out = reopened.read_part("word/_rels/document.xml.rels").unwrap();
+        let doc_rels_out = String::from_utf8_lossy(&doc_rels_out);
+        for (target, count) in [
+            ("diagrams/data1.xml", 1),
+            ("diagrams/layout1.xml", 1),
+            ("diagrams/quickStyle1.xml", 1),
+            ("diagrams/colors1.xml", 1),
+        ] {
+            // Each part's relationship is emitted exactly once (no double-emit).
+            assert_eq!(doc_rels_out.matches(target).count(), count, "{target}");
+        }
+
+        let reimport = import_semantic(&written);
+        let InlineNode::EmbeddedObject(object) = first_inline(&reimport.document) else {
+            panic!("expected an embedded object after re-import");
+        };
+        assert_eq!(object.kind, EmbeddedKind::Diagram);
+        assert_eq!(object.extra_parts.len(), 3);
+    }
+
+    #[test]
+    fn ole_object_round_trips_with_progid_and_preview() {
+        use casual_doc_model::v1::{EmbeddedKind, InlineNode};
+
+        // A `w:object` with a `v:shape`/`v:imagedata` preview and an `o:OLEObject`
+        // naming the embedding part and its `ProgID`.
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="emf" ContentType="image/x-emf"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/embeddings/oleObject1.bin" ContentType="application/vnd.openxmlformats-officedocument.oleObject"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br##"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"><w:body><w:p><w:r><w:object w:dxaOrig="1440" w:dyaOrig="720"><v:shape id="_x0000_i1025" type="#_x0000_t75" style="width:72pt;height:36pt"><v:imagedata r:id="rId6" o:title=""/></v:shape><o:OLEObject Type="Embed" ProgID="Excel.Sheet.12" ShapeID="_x0000_i1025" DrawAspect="Content" r:id="rId7"/></w:object></w:r></w:p></w:body></w:document>"##;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId6" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.emf"/><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject" Target="embeddings/oleObject1.bin"/></Relationships>"#;
+        let preview = b"\x01\x00\x00\x00-fake-emf";
+        let ole = b"\x00\x01OLE-BINARY-BLOB\x02\x03";
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/media/image1.emf", preview),
+            ("word/embeddings/oleObject1.bin", ole),
+        ]);
+
+        let import = import_semantic(&source);
+        let InlineNode::EmbeddedObject(object) = first_inline(&import.document) else {
+            panic!("expected an embedded object");
+        };
+        assert_eq!(object.kind, EmbeddedKind::OleObject);
+        assert_eq!(object.prog_id.as_deref(), Some("Excel.Sheet.12"));
+        assert!(object.preview.is_some());
+        assert_eq!(object.part.part_name, "word/embeddings/oleObject1.bin");
+        // 1440 twips * 635 EMU/twip.
+        assert_eq!(object.extent.width_emu, 914400);
+        // The embedding is not re-added as an orphan relationship.
+        assert!(
+            !import
+                .retained_parts
+                .relationships
+                .iter()
+                .any(|rel| rel.target.contains("oleObject1.bin"))
+        );
+
+        let written = write_document_with_retained_parts(
+            &import.document,
+            &BTreeMap::from([("word/media/image1.emf".to_owned(), preview.to_vec())]),
+            &import.retained_parts,
+        )
+        .unwrap();
+        let mut reopened = DocxPackage::open(&written, PackageLimits::default()).unwrap();
+        assert_eq!(
+            reopened
+                .read_part("word/embeddings/oleObject1.bin")
+                .unwrap(),
+            ole
+        );
+        let doc_rels_out = reopened.read_part("word/_rels/document.xml.rels").unwrap();
+        let doc_rels_out = String::from_utf8_lossy(&doc_rels_out);
+        assert!(doc_rels_out.contains("embeddings/oleObject1.bin"));
+        assert!(doc_rels_out.contains("media/image1.emf"));
+        assert_eq!(doc_rels_out.matches("oleObject1.bin").count(), 1);
+
+        let reimport = import_semantic(&written);
+        let InlineNode::EmbeddedObject(object) = first_inline(&reimport.document) else {
+            panic!("expected an embedded object after re-import");
+        };
+        assert_eq!(object.kind, EmbeddedKind::OleObject);
+        assert_eq!(object.prog_id.as_deref(), Some("Excel.Sheet.12"));
+        assert!(object.preview.is_some());
+    }
+
     #[test]
     fn digital_signature_is_not_preserved_and_is_reported_dropped() {
         // A signed package: editing regenerates the body, which invalidates any

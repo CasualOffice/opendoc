@@ -358,6 +358,24 @@ impl Document {
         Ok(())
     }
 
+    /// Bounds an embedded object's part pointer (relationship id, type URI, and
+    /// package part name), matching the media-reference bounds.
+    fn check_embedded_part(&self, part: &EmbeddedPart) -> Result<(), ModelError> {
+        check_domain(
+            !part.relationship_id.is_empty() && part.relationship_id.len() <= 255,
+            "embeddedObject.part.relationshipId",
+        )?;
+        check_domain(
+            !part.relationship_type.is_empty() && part.relationship_type.len() <= 2048,
+            "embeddedObject.part.relationshipType",
+        )?;
+        check_domain(
+            !part.part_name.is_empty() && part.part_name.len() <= 1024,
+            "embeddedObject.part.partName",
+        )?;
+        Ok(())
+    }
+
     fn validate_unique_ids(&self) -> Result<(), ModelError> {
         let mut ids = BTreeSet::new();
         insert_id(&mut ids, self.document_id)?;
@@ -878,6 +896,38 @@ impl Document {
                     }
                     previous_run_properties = None;
                 }
+                InlineNode::EmbeddedObject(object) => {
+                    self.check_embedded_part(&object.part)?;
+                    for extra in &object.extra_parts {
+                        self.check_embedded_part(extra)?;
+                    }
+                    if let EmbeddedKind::Other(uri) = &object.kind {
+                        check_domain(
+                            !uri.is_empty() && uri.len() <= 2048,
+                            "embeddedObject.kind.uri",
+                        )?;
+                    }
+                    if let Some(preview) = &object.preview
+                        && !self.definitions.media.contains_key(preview)
+                    {
+                        return Err(ModelError::DanglingMediaRef(preview.node_id()));
+                    }
+                    check_domain(
+                        (0..=MAX_EMU).contains(&object.extent.width_emu),
+                        "embeddedObject.extent.width",
+                    )?;
+                    check_domain(
+                        (0..=MAX_EMU).contains(&object.extent.height_emu),
+                        "embeddedObject.extent.height",
+                    )?;
+                    if let Some(prog_id) = &object.prog_id {
+                        check_domain(
+                            !prog_id.is_empty() && prog_id.len() <= 255,
+                            "embeddedObject.progId",
+                        )?;
+                    }
+                    previous_run_properties = None;
+                }
                 InlineNode::Hyperlink(link) => {
                     if in_wrapper {
                         return Err(ModelError::NestedHyperlink(link.id));
@@ -1288,6 +1338,7 @@ fn accumulate_inline_limits(
         InlineNode::Tab(_)
         | InlineNode::Break(_)
         | InlineNode::Drawing(_)
+        | InlineNode::EmbeddedObject(_)
         | InlineNode::NoteReference(_)
         | InlineNode::CommentReference(_)
         | InlineNode::BookmarkStart(_)

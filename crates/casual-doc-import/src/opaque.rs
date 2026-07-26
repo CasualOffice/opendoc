@@ -14,14 +14,15 @@
 //! signature over regenerated content would be misleading. They are dropped and
 //! reported (`not-retained`) instead.
 //!
-//! Scope: a part referenced only from the document *body* (a chart/embedding a
-//! dropped drawing pointed at) survives as bytes but may be **orphaned** in the
-//! output, because `document.xml` is regenerated from the model without that
-//! reference. Its relationship is re-added (keeping the part in the package
-//! graph), but the body no longer names the id. Re-linking is a future
-//! object-node slice (Tier-3), out of scope here. Root-referenced parts
-//! (customXml, thumbnail, docProps-like) keep their referencing rels and remain
-//! fully reachable.
+//! Scope: a part referenced only from the document *body* survives as bytes and,
+//! when a first-class node re-references it (a chart/diagram/OLE embedded-object
+//! node, P1F-26/27), the writer emits its relationship from that node — so the
+//! importer excludes such a part from the orphan-rel set here (its bytes stay
+//! preserved, but its relationship is NOT re-added, avoiding a double-emit). A
+//! body-referenced part that no node re-references still has its relationship
+//! re-added (keeping the part in the package graph) though the body no longer
+//! names the id. Root-referenced parts (customXml, thumbnail, docProps-like)
+//! keep their referencing rels and remain fully reachable.
 
 /// Which regenerated relationships part carries a retained relationship.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
