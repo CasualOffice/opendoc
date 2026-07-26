@@ -11,7 +11,7 @@ use casual_doc_render::{BundledFontSource, NoMediaSource, Surface, render};
 
 fn styled(text: &str, bold: bool, italic: bool, color: [u8; 4]) -> StyledRun<'_> {
     StyledRun {
-        text,
+        text: text.into(),
         font: face_id(bold, italic),
         size: Twip::from_points(26),
         bold,
@@ -20,6 +20,7 @@ fn styled(text: &str, bold: bool, italic: bool, color: [u8; 4]) -> StyledRun<'_>
         color,
         decoration: Decoration::default(),
         highlight: None,
+        baseline_shift: Twip::ZERO,
     }
 }
 

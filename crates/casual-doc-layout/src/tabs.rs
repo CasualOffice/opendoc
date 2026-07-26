@@ -507,7 +507,7 @@ fn leader_run(
     let ch = leader_char(leader);
     let s = ch.to_string();
     let probe = StyledRun {
-        text: &s,
+        text: s.as_str().into(),
         font: style.font,
         size: style.size,
         bold: false,
@@ -516,6 +516,7 @@ fn leader_run(
         color: style.color,
         decoration: Decoration::default(),
         highlight: None,
+        baseline_shift: Twip::ZERO,
     };
     let dummy = ModelRange::new(
         ModelPos::new(NodeId::from_parts(1, 1).ok()?, 0),
@@ -617,7 +618,7 @@ mod tests {
 
     fn styled(text: &str) -> StyledRun<'_> {
         StyledRun {
-            text,
+            text: text.into(),
             font: FontId(0),
             size: Twip::from_points(11),
             bold: false,
@@ -626,6 +627,7 @@ mod tests {
             color: [0, 0, 0, 255],
             decoration: Decoration::default(),
             highlight: None,
+            baseline_shift: Twip::ZERO,
         }
     }
 
