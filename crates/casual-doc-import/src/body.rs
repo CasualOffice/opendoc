@@ -42,6 +42,10 @@ use crate::properties::{
 use crate::report::Reporter;
 use crate::styles::Styles;
 use crate::tables::TableStack;
+use crate::vml::{
+    VmlColor, VmlDrawing, VmlFill, VmlPosition, VmlRelFrame, VmlShapeKind, VmlStroke,
+    parse_vml_pict,
+};
 
 /// A run/tab/break/drawing/hyperlink/field segment before ids and normalization.
 // `Run` is the largest and most common variant (it holds the full
@@ -701,6 +705,23 @@ struct BodyParser<'a> {
     /// Depth of an open `w:pict` (legacy VML picture); `pending_embed` holds its
     /// `v:imagedata@r:id` until the picture closes.
     pict_depth: u32,
+    /// Raw-XML re-serializer for the currently-open `w:pict` subtree, mirroring
+    /// every event so the closed pict can be re-parsed by
+    /// [`parse_vml_pict`](crate::vml::parse_vml_pict) for its positioned VML shapes
+    /// (rules, callout boxes, header text boxes, images). `Some` only while a `pict`
+    /// is open; loop-level state independent of the text-box frame stack (a VML text
+    /// box's `w:txbxContent` closes *inside* the pict, so capture must span it).
+    vml_capture: Option<Writer<Vec<u8>>>,
+    /// Nesting depth of `w:pict` elements captured into [`Self::vml_capture`], so a
+    /// (pathological) nested pict does not finalize the outer capture early.
+    vml_capture_depth: u32,
+    /// The raw XML of the most-recently-closed `w:pict`, handed to
+    /// [`Self::commit_pict`] to map its VML drawings onto the float layer.
+    pending_pict_xml: Option<String>,
+    /// Flowed block content of VML text boxes (`v:textbox` inside the open `w:pict`),
+    /// in document order, redirected here instead of emitted inline so
+    /// [`Self::commit_pict`] can place each at its `v:shape`'s absolute VML box.
+    vml_textbox_blocks: Vec<Vec<BlockNode>>,
     /// `a:graphicData` payload pointers for the open drawing (chart/diagram).
     pending_graphic: PendingGraphic,
     /// `wp:anchor` placement pointers for the open drawing; `Some` while inside a
@@ -952,6 +973,10 @@ impl<'a> BodyParser<'a> {
             pending_extent: None,
             drawing_extra: false,
             pict_depth: 0,
+            vml_capture: None,
+            vml_capture_depth: 0,
+            pending_pict_xml: None,
+            vml_textbox_blocks: Vec::new(),
             pending_graphic: PendingGraphic::default(),
             pending_anchor: None,
             object_depth: 0,
@@ -1238,6 +1263,12 @@ impl BodyParser<'_> {
             let event = reader
                 .read_event_into(&mut buffer)
                 .map_err(|_| ImportError::MalformedXml)?;
+            // VML raw-XML capture: mirror every event inside a `w:pict` subtree so
+            // the closed pict can be re-parsed by `parse_vml_pict` for its positioned
+            // shapes. Teeing runs BEFORE dispatch (and before the math guard) so the
+            // captured fragment is faithful; normal dispatch is unaffected, so the
+            // inline `v:imagedata` path and the `w:txbxContent` block flow still run.
+            self.capture_pict_event(&event);
             // While capturing an OMML subtree, every event is buffered verbatim
             // and NOT dispatched to the `w:`-namespace element handlers — this is
             // the C1 namespace guard, so a math run's `m:r`/`m:t` can never be
@@ -1305,6 +1336,37 @@ impl BodyParser<'_> {
             buffer.clear();
         }
         Ok(())
+    }
+
+    /// Mirrors one XML event into the open `w:pict` raw-XML capture (see
+    /// [`Self::vml_capture`]). Opens a fresh capture on the outermost `<w:pict>`
+    /// start, appends every event within it, and, on the matching end, hands the
+    /// re-serialized fragment to [`Self::pending_pict_xml`] for [`Self::commit_pict`].
+    fn capture_pict_event(&mut self, event: &Event<'_>) {
+        let pict_start = matches!(event, Event::Start(e) if e.local_name().as_ref() == b"pict");
+        let pict_end = matches!(event, Event::End(e) if e.local_name().as_ref() == b"pict");
+        if pict_start && self.vml_capture.is_none() {
+            self.vml_capture = Some(Writer::new(Vec::new()));
+            self.vml_capture_depth = 0;
+        }
+        if self.vml_capture.is_none() {
+            return;
+        }
+        if let Some(writer) = self.vml_capture.as_mut() {
+            // Best-effort: a write failure just yields a shorter fragment, which
+            // `parse_vml_pict` handles by returning the shapes parsed so far.
+            let _ = writer.write_event(event.borrow());
+        }
+        if pict_start {
+            self.vml_capture_depth += 1;
+        } else if pict_end {
+            self.vml_capture_depth = self.vml_capture_depth.saturating_sub(1);
+            if self.vml_capture_depth == 0
+                && let Some(writer) = self.vml_capture.take()
+            {
+                self.pending_pict_xml = String::from_utf8(writer.into_inner()).ok();
+            }
+        }
     }
 
     /// Whether an OMML `m:oMath`/`m:oMathPara` may begin capture here: only in
@@ -3368,7 +3430,7 @@ impl BodyParser<'_> {
             b"pict" if self.pict_depth > 0 => {
                 self.pict_depth -= 1;
                 if self.pict_depth == 0 {
-                    self.commit_pict();
+                    self.commit_pict()?;
                 }
             }
             b"object" if self.object_depth > 0 => {
@@ -3823,21 +3885,235 @@ impl BodyParser<'_> {
         self.resolve_embedded_part(relationship_id.as_deref()?)
     }
 
-    /// Commits a legacy VML picture that just closed. A resolvable
-    /// `v:imagedata@r:id` becomes a `Drawing` (no EMU extent — VML sizes in CSS,
-    /// which the model does not capture); an unresolved id or an image-less shape
-    /// (e.g. a VML text box, handled elsewhere) is reported.
-    fn commit_pict(&mut self) {
-        match self.pending_embed.take() {
-            Some(id) => match self.media_index.get(&id) {
-                Some(media) => self.push_segment(Segment::Drawing {
-                    media: *media,
-                    extent: None,
-                }),
-                None => self.reporter.report(b"pict"),
-            },
-            None => self.reporter.report(b"pict"),
+    /// Commits a legacy VML picture (`w:pict`) that just closed, mapping its
+    /// positioned VML shapes onto the float layer.
+    ///
+    /// The pict's raw XML (captured by [`Self::capture_pict_event`]) is re-parsed by
+    /// [`parse_vml_pict`] into a flat list of [`VmlDrawing`]s, each already carrying
+    /// an absolute-twip box (group coordinate systems flattened). Each drawing maps
+    /// onto the EXISTING float model: a `v:rect`/`v:roundrect`/`v:oval` becomes a
+    /// standalone anchored [`GroupShape`] (a group-of-one), a `v:line` a line float,
+    /// a `v:imagedata` a positioned [`AnchoredDrawing`], and a `v:textbox` a floating
+    /// [`TextBox`] whose flowed blocks were redirected here by [`Self::exit_frame`].
+    /// A bare inline `v:imagedata` with no absolute position keeps the legacy inline
+    /// [`Segment::Drawing`] behaviour. A generic `v:shape` path is deferred (its
+    /// bounding box is not filled — see [`Self::vml_shape_segment`]).
+    fn commit_pict(&mut self) -> Result<(), ImportError> {
+        let raw = self.pending_pict_xml.take();
+        let mut textbox_blocks = std::mem::take(&mut self.vml_textbox_blocks).into_iter();
+        let drawings = raw.as_deref().map(parse_vml_pict).unwrap_or_default();
+        let mut emitted = false;
+        for drawing in &drawings {
+            if let Some(segment) = self.vml_segment(drawing, &mut textbox_blocks)? {
+                self.push_segment(segment);
+                emitted = true;
+            }
         }
+        if emitted {
+            // The VML path consumed the picture; drop any stale inline embed so it is
+            // not re-emitted as a duplicate inline image.
+            self.pending_embed = None;
+        } else {
+            // No mappable positioned VML: preserve the legacy inline `v:imagedata`
+            // behaviour (a bare inline image resolves through the media table).
+            match self.pending_embed.take() {
+                Some(id) => match self.media_index.get(&id) {
+                    Some(media) => self.push_segment(Segment::Drawing {
+                        media: *media,
+                        extent: None,
+                    }),
+                    None => self.reporter.report(b"pict"),
+                },
+                // Report an image-less, shape-less pict only when it yielded nothing
+                // at all (an unmodeled/empty fragment) so nothing is silently lost;
+                // a deferred shape has already reported itself.
+                None if drawings.is_empty() => self.reporter.report(b"pict"),
+                None => {}
+            }
+        }
+        // Any flowed text-box blocks not matched to a drawing (defensive: malformed
+        // markup) are emitted inline so their text is never dropped.
+        for blocks in textbox_blocks {
+            if blocks.is_empty() {
+                continue;
+            }
+            let id = self.next_id()?;
+            self.push_segment(Segment::TextBox(TextBox {
+                id,
+                anchor: None,
+                relative_height: None,
+                extent: None,
+                fill: None,
+                border: None,
+                blocks,
+            }));
+        }
+        Ok(())
+    }
+
+    /// Maps one parsed [`VmlDrawing`] onto a float-layer [`Segment`], pulling the
+    /// next redirected text-box block set for a `v:textbox`. Returns `None` when the
+    /// drawing is not mappable (an unresolved image rid, an empty text box, or a
+    /// deferred generic path shape), each already reported.
+    fn vml_segment(
+        &mut self,
+        drawing: &VmlDrawing,
+        textbox_blocks: &mut impl Iterator<Item = Vec<BlockNode>>,
+    ) -> Result<Option<Segment>, ImportError> {
+        // A positioned image (`v:imagedata@r:id`): a float, unless it is a genuinely
+        // inline image (no absolute VML box), which keeps the legacy inline mapping.
+        if let Some(rid) = &drawing.image_rid {
+            let Some(&media) = self.media_index.get(rid) else {
+                self.reporter.report(b"pict");
+                return Ok(None);
+            };
+            if vml_is_floating(&drawing.position) {
+                let (anchor, relative_height) = vml_anchor(&drawing.position);
+                return Ok(Some(Segment::AnchoredDrawing {
+                    media,
+                    extent: vml_extent(&drawing.position),
+                    anchor,
+                    descr: None,
+                    relative_height,
+                }));
+            }
+            // Inline VML image: unchanged (the model does not capture CSS sizing).
+            return Ok(Some(Segment::Drawing {
+                media,
+                extent: None,
+            }));
+        }
+        // A VML text box: place its flowed blocks at the shape's absolute box.
+        if drawing.textbox.is_some() {
+            let Some(blocks) = textbox_blocks.next().filter(|blocks| !blocks.is_empty()) else {
+                self.reporter.report(b"txbxContent");
+                return Ok(None);
+            };
+            let id = self.next_id()?;
+            let (anchor, relative_height) = vml_anchor(&drawing.position);
+            return Ok(Some(Segment::TextBox(TextBox {
+                id,
+                anchor: Some(anchor),
+                relative_height,
+                extent: Some(vml_extent(&drawing.position)),
+                fill: vml_fill(&drawing.fill),
+                border: vml_stroke(&drawing.stroke),
+                blocks,
+            })));
+        }
+        // A geometric shape (rule / callout box / line).
+        self.vml_shape_segment(drawing)
+    }
+
+    /// Maps a geometric VML shape (`v:rect`/`v:roundrect`/`v:oval`/`v:line`/generic
+    /// `v:shape`) onto a standalone anchored float, wrapped as a group-of-one so it
+    /// reuses the float layer's group placement and z-order.
+    fn vml_shape_segment(&mut self, drawing: &VmlDrawing) -> Result<Option<Segment>, ImportError> {
+        // A generic `v:shape` path is approximated by the OUTLINE of its bounding
+        // box, not its solid fill: the SDS callout frames are hairline path outlines
+        // (a filled "ring" tracing a thin border), so filling the box would blacken
+        // the whole callout, while a stroked box reproduces the frame LibreOffice
+        // shows. Honoring the exact `path` is a follow-up (complex path geometry).
+        let (geometry, fill, stroke) = match &drawing.kind {
+            VmlShapeKind::Rect => (
+                ShapeGeometry::Rectangle,
+                vml_fill(&drawing.fill),
+                vml_stroke(&drawing.stroke),
+            ),
+            VmlShapeKind::RoundRect { .. } => (
+                ShapeGeometry::RoundRectangle,
+                vml_fill(&drawing.fill),
+                vml_stroke(&drawing.stroke),
+            ),
+            VmlShapeKind::Oval => (
+                ShapeGeometry::Ellipse,
+                vml_fill(&drawing.fill),
+                vml_stroke(&drawing.stroke),
+            ),
+            VmlShapeKind::Line { from, to } => {
+                return Ok(Some(self.vml_line_segment(drawing, *from, *to)?));
+            }
+            VmlShapeKind::Shape { .. } => (
+                ShapeGeometry::Other,
+                None,
+                Some(vml_path_outline(&drawing.fill, &drawing.stroke)),
+            ),
+        };
+        let extent = vml_extent(&drawing.position);
+        let (anchor, relative_height) = vml_anchor(&drawing.position);
+        let child = GroupChild::Shape(GroupShape {
+            id: self.next_id()?,
+            offset: PointEmu { x_emu: 0, y_emu: 0 },
+            extent,
+            geometry,
+            fill,
+            stroke,
+        });
+        Ok(Some(Segment::Group(self.vml_group_of_one(
+            anchor,
+            relative_height,
+            extent,
+            child,
+        )?)))
+    }
+
+    /// Maps a `v:line` onto a line float: the segment's bounding box becomes the
+    /// float box (so the float layer draws its top-left→bottom-right diagonal, which
+    /// is the segment for a horizontal/vertical rule or a main-diagonal line; an
+    /// anti-diagonal line is a documented deferral).
+    fn vml_line_segment(
+        &mut self,
+        drawing: &VmlDrawing,
+        from: Option<(i64, i64)>,
+        to: Option<(i64, i64)>,
+    ) -> Result<Segment, ImportError> {
+        let (fx, fy) = from.unwrap_or((0, 0));
+        let (tx, ty) = to.unwrap_or((0, 0));
+        let (left, top) = (fx.min(tx), fy.min(ty));
+        let extent = Extent {
+            width_emu: twip_emu_len((fx - tx).abs()),
+            height_emu: twip_emu_len((fy - ty).abs()),
+        };
+        let (anchor, relative_height) = vml_anchor_at(&drawing.position, left, top);
+        let child = GroupChild::Shape(GroupShape {
+            id: self.next_id()?,
+            offset: PointEmu { x_emu: 0, y_emu: 0 },
+            extent,
+            geometry: ShapeGeometry::Line,
+            fill: vml_fill(&drawing.fill),
+            stroke: vml_stroke(&drawing.stroke),
+        });
+        Ok(Segment::Group(self.vml_group_of_one(
+            anchor,
+            relative_height,
+            extent,
+            child,
+        )?))
+    }
+
+    /// Wraps a single float-layer child in an anchored group-of-one: an identity
+    /// transform whose child space equals the box, so the child paints at the
+    /// group's resolved origin sized to its own extent.
+    fn vml_group_of_one(
+        &mut self,
+        anchor: DrawingAnchor,
+        relative_height: Option<u32>,
+        extent: Extent,
+        child: GroupChild,
+    ) -> Result<WordprocessingGroup, ImportError> {
+        Ok(WordprocessingGroup {
+            id: self.next_id()?,
+            anchor: Some(anchor),
+            relative_height,
+            extent,
+            transform: GroupTransform {
+                offset: PointEmu { x_emu: 0, y_emu: 0 },
+                extent,
+                child_offset: PointEmu { x_emu: 0, y_emu: 0 },
+                child_extent: extent,
+            },
+            children: vec![child],
+        })
     }
 
     /// Parses a `w:shd`'s background fill: an explicit sRGB `@w:fill` becomes an
@@ -4296,8 +4572,15 @@ impl BodyParser<'_> {
                     // a group child or a floating/inline text box; `frame.node_id`
                     // is unused (the shape's own id identifies the box).
                     shape.textbox_blocks = Some(blocks);
+                } else if self.vml_capture.is_some() {
+                    // A legacy VML `v:textbox` inside an open `w:pict`: redirect its
+                    // flowed blocks so `commit_pict` can place the box at its
+                    // `v:shape`'s absolute VML position (a floating text box) rather
+                    // than dropping it into the inline flow. Blocks are queued in
+                    // document order, matching the `parse_vml_pict` drawing order.
+                    self.vml_textbox_blocks.push(blocks);
                 } else {
-                    // A legacy VML `v:textbox` (no DrawingML shape wrapper): inline,
+                    // A legacy VML `v:textbox` with no positioning context: inline,
                     // as before.
                     self.push_segment(Segment::TextBox(TextBox {
                         id: frame.node_id,
@@ -5725,4 +6008,160 @@ fn normalize_segments(segments: Vec<Segment>) -> Vec<Segment> {
         }
     }
     normalized
+}
+
+// --- VML → float-layer mapping helpers -------------------------------------
+
+/// EMU per twip (`914400 EMU/in ÷ 1440 twips/in`).
+const EMU_PER_TWIP: i64 = 635;
+
+/// A twip length (non-negative extent) to EMU, clamped to the model's coordinate
+/// bound.
+fn twip_emu_len(twips: i64) -> i64 {
+    twips.saturating_mul(EMU_PER_TWIP).clamp(0, MAX_EMU)
+}
+
+/// A signed twip offset (a float may overhang its reference edge) to EMU, clamped
+/// to the model's signed coordinate bound.
+fn twip_emu_offset(twips: i64) -> i64 {
+    twips.saturating_mul(EMU_PER_TWIP).clamp(-MAX_EMU, MAX_EMU)
+}
+
+/// The EMU box of a VML shape (its width/height, defaulting a missing dimension to
+/// zero — a horizon rule is a full-width, near-zero-height rectangle).
+fn vml_extent(position: &VmlPosition) -> Extent {
+    Extent {
+        width_emu: twip_emu_len(position.width.unwrap_or(0)),
+        height_emu: twip_emu_len(position.height.unwrap_or(0)),
+    }
+}
+
+/// Whether a VML shape is a positioned float (an absolute left/top or an explicit
+/// z-order) rather than a genuinely inline shape.
+fn vml_is_floating(position: &VmlPosition) -> bool {
+    position.left.is_some() || position.top.is_some() || position.z_index.is_some()
+}
+
+/// Resolves a VML box into a float-layer [`DrawingAnchor`] plus its z key, using
+/// the shape's own left/top offsets.
+fn vml_anchor(position: &VmlPosition) -> (DrawingAnchor, Option<u32>) {
+    vml_anchor_at(
+        position,
+        position.left.unwrap_or(0),
+        position.top.unwrap_or(0),
+    )
+}
+
+/// [`vml_anchor`] with explicit left/top twip offsets (a `v:line` anchors at its
+/// segment's bounding-box corner, which its style box does not carry).
+fn vml_anchor_at(
+    position: &VmlPosition,
+    left_twips: i64,
+    top_twips: i64,
+) -> (DrawingAnchor, Option<u32>) {
+    let anchor = DrawingAnchor {
+        horizontal: AnchorHorizontal {
+            relative_from: vml_h_anchor(position.h_relative),
+            position: HorizontalPosition::Offset(twip_emu_offset(left_twips)),
+        },
+        vertical: AnchorVertical {
+            relative_from: vml_v_anchor(position.v_relative),
+            position: VerticalPosition::Offset(twip_emu_offset(top_twips)),
+        },
+        wrap: WrapMode::None,
+        behind_doc: position.behind_doc(),
+    };
+    (anchor, position.z_index.map(vml_rel_height))
+}
+
+/// Maps a VML `z-index` (a signed 32-bit stacking order, negative meaning behind
+/// the text) onto the float layer's monotonic `u32` `relativeHeight` key, order-
+/// preservingly (so shapes keep their relative paint order within each band).
+fn vml_rel_height(z_index: i32) -> u32 {
+    (i64::from(z_index) - i64::from(i32::MIN)) as u32
+}
+
+/// Maps a VML horizontal reference frame onto the anchor's `relativeFrom`, falling
+/// back to the text margin/column as the float layer does.
+fn vml_h_anchor(frame: Option<VmlRelFrame>) -> HorizontalAnchor {
+    match frame {
+        Some(VmlRelFrame::Page) => HorizontalAnchor::Page,
+        Some(VmlRelFrame::Margin) => HorizontalAnchor::Margin,
+        Some(VmlRelFrame::Column) => HorizontalAnchor::Column,
+        Some(VmlRelFrame::Char) => HorizontalAnchor::Character,
+        // `text` is the content area (the text margin box); everything else
+        // (line/paragraph/other/unset) falls back to the text margin, which the
+        // float layer resolves identically to the column.
+        _ => HorizontalAnchor::Margin,
+    }
+}
+
+/// Maps a VML vertical reference frame onto the anchor's `relativeFrom`.
+fn vml_v_anchor(frame: Option<VmlRelFrame>) -> VerticalAnchor {
+    match frame {
+        Some(VmlRelFrame::Page) => VerticalAnchor::Page,
+        Some(VmlRelFrame::Margin) | Some(VmlRelFrame::Text) | Some(VmlRelFrame::Column) => {
+            VerticalAnchor::Margin
+        }
+        Some(VmlRelFrame::Line) => VerticalAnchor::Line,
+        // `paragraph` and everything else (char/other/unset) resolve against the
+        // anchoring paragraph, the float layer's vertical default.
+        _ => VerticalAnchor::Paragraph,
+    }
+}
+
+/// The resolved fill of a VML shape: `None` when unfilled or when filled with no
+/// declared color (a colorless fill is invisible over the page, so it is skipped
+/// rather than defaulted).
+fn vml_fill(fill: &VmlFill) -> Option<Rgba> {
+    if fill.on {
+        fill.color.map(vml_rgba)
+    } else {
+        None
+    }
+}
+
+/// The resolved outline of a VML shape: `None` when unstroked; otherwise the
+/// declared color (VML's default stroke is black) at the declared weight.
+fn vml_stroke(stroke: &VmlStroke) -> Option<ShapeStroke> {
+    if !stroke.on {
+        return None;
+    }
+    Some(ShapeStroke {
+        color: stroke.color.map(vml_rgba).unwrap_or(Rgba {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 255,
+        }),
+        width_emu: twip_emu_len(stroke.weight_twips.unwrap_or(0)),
+    })
+}
+
+/// The bounding-box outline used to approximate a generic `v:shape` path (see
+/// [`BodyParser::vml_shape_segment`]): a hairline stroke in the shape's fill color
+/// (the frame color), falling back to its stroke color, then black.
+fn vml_path_outline(fill: &VmlFill, stroke: &VmlStroke) -> ShapeStroke {
+    let color = fill.color.or(stroke.color).map(vml_rgba).unwrap_or(Rgba {
+        r: 0,
+        g: 0,
+        b: 0,
+        a: 255,
+    });
+    // A `0`-EMU width paints as the renderer's 1px hairline, matching the thin
+    // frame LibreOffice draws for these paths.
+    ShapeStroke {
+        color,
+        width_emu: stroke.weight_twips.map(twip_emu_len).unwrap_or(0),
+    }
+}
+
+/// A VML color to the model's RGBA.
+fn vml_rgba(color: VmlColor) -> Rgba {
+    Rgba {
+        r: color.r,
+        g: color.g,
+        b: color.b,
+        a: color.a,
+    }
 }

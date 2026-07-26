@@ -2080,6 +2080,128 @@ fn wpg_group_maps_to_a_group_with_children_sized_by_their_own_extent() {
 }
 
 #[test]
+fn vml_rect_horizon_rule_maps_to_a_behind_text_shape_float() {
+    use casual_doc_model::v1::{GroupChild, HorizontalAnchor, HorizontalPosition, ShapeGeometry};
+
+    // A real horizon-rule rect from the SDS header/body: a page-relative, behind-
+    // text filled rectangle inside a `w:pict`. It must become a positioned shape
+    // float (a group-of-one), NOT be dropped as it was before VML paint.
+    let pict = r##"<w:pict><v:rect style="position:absolute;margin-left:69.503998pt;margin-top:15.339811pt;width:456.55pt;height:.48001pt;mso-position-horizontal-relative:page;mso-position-vertical-relative:paragraph;z-index:-15728640" id="docshape10" filled="true" fillcolor="#000000" stroked="false"><v:fill type="solid"/></v:rect></w:pict>"##;
+    let document = format!(
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:v="urn:v"><w:body><w:p><w:r>{pict}</w:r></w:p></w:body></w:document>"#
+    );
+    let import = import(document.as_bytes());
+
+    let InlineNode::Group(group) = &paragraph(&import, 0).inlines[0] else {
+        panic!(
+            "expected a group-of-one shape float, got {:?}",
+            paragraph(&import, 0).inlines[0]
+        );
+    };
+    let anchor = group
+        .anchor
+        .expect("the shape float carries the VML anchor");
+    assert!(
+        anchor.behind_doc,
+        "a negative z-index paints behind the text"
+    );
+    assert_eq!(anchor.horizontal.relative_from, HorizontalAnchor::Page);
+    // 69.503998pt == 1390 twips; the offset is that in EMU (1390 * 635).
+    assert_eq!(
+        anchor.horizontal.position,
+        HorizontalPosition::Offset(1390 * 635)
+    );
+    // The box is the full-width, near-zero-height rule: 9131 twips wide, 10 tall.
+    assert_eq!(group.extent.width_emu, 9131 * 635);
+    assert_eq!(group.extent.height_emu, 10 * 635);
+    let GroupChild::Shape(shape) = &group.children[0] else {
+        panic!("expected a single shape child");
+    };
+    assert_eq!(shape.geometry, ShapeGeometry::Rectangle);
+    assert_eq!(shape.fill.map(|c| [c.r, c.g, c.b]), Some([0, 0, 0]));
+    assert!(
+        shape.stroke.is_none(),
+        "stroked=\"false\" leaves no outline"
+    );
+}
+
+#[test]
+fn vml_imagedata_shape_maps_to_a_positioned_picture() {
+    use casual_doc_model::v1::{HorizontalAnchor, HorizontalPosition, VerticalAnchor};
+
+    // A positioned `v:shape` carrying `v:imagedata@r:id` must resolve through the
+    // media table into an AnchoredDrawing placed at its absolute VML box (rather
+    // than the old inline, size-less mapping).
+    let pict = r##"<w:pict><v:shape style="position:absolute;margin-left:10pt;margin-top:20pt;width:100pt;height:50pt;z-index:-5;mso-position-horizontal-relative:page;mso-position-vertical-relative:page" type="#_x0000_t75" id="img"><v:imagedata r:id="rId7" o:title=""/></v:shape></w:pict>"##;
+    let document = format!(
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:v="urn:v" xmlns:o="urn:o"><w:body><w:p><w:r>{pict}</w:r></w:p></w:body></w:document>"#
+    );
+    let media = [("word/media/image1.png", b"PNGDATA".as_slice())];
+    let import = import_bytes(&build_package(document.as_bytes(), IMAGE_REL, &media));
+
+    let (media_id, _) = import.document.definitions().media.iter().next().unwrap();
+    let InlineNode::AnchoredDrawing(drawing) = &paragraph(&import, 0).inlines[0] else {
+        panic!(
+            "expected a positioned picture, got {:?}",
+            paragraph(&import, 0).inlines[0]
+        );
+    };
+    assert_eq!(drawing.media, *media_id);
+    // 100pt == 2000 twips, 50pt == 1000 twips.
+    assert_eq!(drawing.extent.width_emu, 2000 * 635);
+    assert_eq!(drawing.extent.height_emu, 1000 * 635);
+    assert_eq!(
+        drawing.anchor.horizontal.relative_from,
+        HorizontalAnchor::Page
+    );
+    assert_eq!(drawing.anchor.vertical.relative_from, VerticalAnchor::Page);
+    // 10pt == 200 twips from the page edge.
+    assert_eq!(
+        drawing.anchor.horizontal.position,
+        HorizontalPosition::Offset(200 * 635)
+    );
+    assert!(
+        drawing.anchor.behind_doc,
+        "a negative z-index paints behind"
+    );
+}
+
+#[test]
+fn vml_textbox_maps_to_a_floating_text_box_with_flowed_content() {
+    use casual_doc_model::v1::HorizontalAnchor;
+
+    // A positioned `v:shape`/`t202` text box (an SDS header box): its
+    // `w:txbxContent` flows through the shared block pipeline and the box is placed
+    // at its absolute VML position as a floating text box.
+    let pict = r##"<w:pict><v:shape style="position:absolute;margin-left:70pt;margin-top:36pt;width:157pt;height:28pt;mso-position-horizontal-relative:page;mso-position-vertical-relative:page;z-index:-16121856" type="#_x0000_t202" id="tb" filled="false" stroked="false"><v:textbox inset="0,0,0,0"><w:txbxContent><w:p><w:r><w:t>Header box</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict>"##;
+    let document = format!(
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:v="urn:v"><w:body><w:p><w:r>{pict}</w:r></w:p></w:body></w:document>"#
+    );
+    let import = import(document.as_bytes());
+
+    let InlineNode::TextBox(text_box) = &paragraph(&import, 0).inlines[0] else {
+        panic!(
+            "expected a floating text box, got {:?}",
+            paragraph(&import, 0).inlines[0]
+        );
+    };
+    let anchor = text_box
+        .anchor
+        .expect("the text box is floating, not inline");
+    assert_eq!(anchor.horizontal.relative_from, HorizontalAnchor::Page);
+    assert!(anchor.behind_doc);
+    assert!(
+        text_box.extent.is_some(),
+        "a floating box carries its extent"
+    );
+    assert_eq!(
+        text_box.blocks.len(),
+        1,
+        "its txbxContent flowed one paragraph"
+    );
+}
+
+#[test]
 fn drawing_with_a_dangling_embed_is_reported_and_dropped() {
     // The blip references rId9, which has no relationship: no media, no node.
     let document = r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:a="urn:a"><w:body><w:p><w:r><w:drawing><a:blip r:embed="rId9"/></w:drawing></w:r></w:p></w:body></w:document>"#;

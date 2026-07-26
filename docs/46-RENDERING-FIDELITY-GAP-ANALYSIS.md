@@ -77,12 +77,22 @@ Replace the binary `behindDoc` split with a single z-ordered float layer over
 Files: `anchor.rs collect:53/place:138/resolve:232`, `flow.rs textbox_item:1012`,
 `compose.rs z-order:135`, model `body.rs TextBox:667`, import `commit_drawing:3083`.
 
-### F5 — VML shape layout + paint (High)
-VML (`v:rect`/`v:line`/`v:oval`/`v:shape` + `v:imagedata` + `v:textbox`) is
-modeled only as inline image/textbox; positioned VML shapes/lines are dropped
-entirely. VML-primary docs (SDS: 32 `w:pict` + 8 `v:shape` — rules, callouts,
-images) render empty of graphics. Model VML shapes as positioned objects (parse
-`style` left/top/width/height/z-index + fill/stroke) and paint via the F4 layer.
+### F5 — VML shape layout + paint (High) — DONE (P1F-VML, `feat/vml-paint`)
+VML (`v:rect`/`v:line`/`v:oval`/`v:shape` + `v:imagedata` + `v:textbox`) was
+modeled only as inline image/textbox; positioned VML shapes/lines were dropped
+entirely, so VML-primary docs (SDS: 32 `w:pict` + 8 `v:shape` — rules, callouts,
+text boxes) rendered empty of graphics. **Resolved:** `commit_pict` re-parses each
+`w:pict`'s raw XML via `parse_vml_pict` (P1F-VML) and maps every `VmlDrawing` onto
+the F4 float layer — `v:rect`/`roundrect`/`oval` → anchored `GroupShape`
+(group-of-one), `v:line` → `Line` float, `v:imagedata` → positioned
+`AnchoredDrawing` (shared media index), `v:textbox` → floating `TextBox` (blocks
+flowed through the shared block pipeline); `style` left/top/width/height →
+EMU anchor offsets/extent, `z-index<0` → `behindDoc` + monotonic `relativeHeight`.
+Header/footer VML rides F4's band walk. SDS page 0 now shows the horizon rules,
+callout-box outline, right-positioned header date/title text boxes, and footer
+bar (vs LibreOffice); 16 pages preserved. **Deferred:** exact `v:shape` path
+geometry (approximated by its bounding-box OUTLINE), gradient fills,
+anti-diagonal `v:line` orientation.
 
 ### F6a — Header/footer band nesting (P0, systematic over-pagination)
 `PageConfig::content_area()` (`paginate.rs:63`) subtracts measured header + footer
