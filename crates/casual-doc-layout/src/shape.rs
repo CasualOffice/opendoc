@@ -297,6 +297,7 @@ impl LineShaper for ParleyShaper {
                 line_break,
                 page_break_after: false,
                 bars: Vec::new(),
+                images: Vec::new(),
             });
         }
         LineLayout { lines }

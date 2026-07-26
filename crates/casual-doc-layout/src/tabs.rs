@@ -23,7 +23,7 @@ use crate::text::{
     Decoration, Glyph, GlyphRun, Line, LineBreak, LineConstraints, LineLayout, LineShaper,
     StyledRun,
 };
-use crate::units::{Point, Twip};
+use crate::units::{Point, Size, Twip};
 
 /// Word's standard default tab-stop interval (720 twips = 0.5in), used when the
 /// document declares no `w:defaultTabStop`.
@@ -50,6 +50,15 @@ pub enum FlowItem<'a> {
     Tab,
     /// A hard break (`w:br`/`w:cr`) with its kind.
     Break(BreakKind),
+    /// An inline embedded picture (`w:drawing`/`wp:inline`): its resolved media
+    /// key (part name) and box size (twips, from the EMU extent). Laid out as an
+    /// inline box on its own line; the renderer resolves the media to pixels.
+    Image {
+        /// The media part name — the display list's stable media key.
+        media: String,
+        /// The image box size in twips (from the drawing's EMU extent).
+        size: Size,
+    },
 }
 
 /// Whether an item stream needs the tab/break layer at all: any tab, any hard
@@ -230,6 +239,9 @@ fn split_blocks<'a>(items: &'a [FlowItem<'a>], base: u32) -> Vec<Block<'a>> {
                 has_tab = false;
                 start_offset = byte;
             }
+            // Inline images are split out and laid out as image lines before the
+            // stream reaches the tab/break layer, so none reach here.
+            FlowItem::Image { .. } => {}
         }
     }
     blocks.push(Block {
@@ -351,6 +363,7 @@ fn layout_tabbed_line(
         line_break: LineBreak::ParagraphEnd,
         page_break_after: false,
         bars: Vec::new(),
+        images: Vec::new(),
     };
     vec![line]
 }
@@ -565,6 +578,7 @@ fn empty_line(node: NodeId, offset: u32, bars: Vec<Twip>) -> Line {
         line_break: LineBreak::ParagraphEnd,
         page_break_after: false,
         bars,
+        images: Vec::new(),
     }
 }
 

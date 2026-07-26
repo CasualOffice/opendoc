@@ -14,6 +14,8 @@
 
 #![forbid(unsafe_code)]
 
+use std::collections::HashMap;
+
 use casual_doc_layout::display::{DisplayList, PaintItem};
 use casual_doc_layout::text::{FontId, GlyphRun};
 use casual_doc_layout::units::Rect;
@@ -22,7 +24,8 @@ use skrifa::metrics::Metrics;
 use skrifa::outline::{DrawSettings, OutlinePen};
 use skrifa::{FontRef, GlyphId, MetadataProvider};
 use tiny_skia::{
-    Color, FillRule, Mask, Paint, PathBuilder, Pixmap, Rect as SkRect, Stroke, Transform,
+    Color, FillRule, FilterQuality, IntSize, Mask, Paint, PathBuilder, Pixmap, PixmapPaint,
+    Rect as SkRect, Stroke, Transform,
 };
 
 /// Supplies the raw font bytes (and face index) for a [`FontId`] so the renderer
@@ -30,6 +33,16 @@ use tiny_skia::{
 pub trait GlyphSource {
     /// The font file bytes for `font`, or `None` if unknown (glyphs are skipped).
     fn font_data(&self, font: FontId) -> Option<&[u8]>;
+}
+
+/// Supplies the raw encoded bytes for an inline image, keyed by the display list's
+/// media key (the package part name) — the image analogue of [`GlyphSource`]. The
+/// bytes live in the package (`word/media/*`); the pipeline/example serves them
+/// here, keeping this crate independent of how the package is opened.
+pub trait MediaSource {
+    /// The encoded image bytes for `media` (its package part name), or `None` if
+    /// unknown (the image renders nothing).
+    fn media_bytes(&self, media: &str) -> Option<&[u8]>;
 }
 
 /// Errors from rendering.
@@ -69,8 +82,15 @@ impl Surface {
 
 /// Renders `list` onto `surface`, applying the device scale `dpi` (device pixels
 /// per inch × zoom) to the twip-space display list. Glyph outlines are taken from
-/// `fonts`; a glyph whose font is unknown is skipped.
-pub fn render(list: &DisplayList, surface: &mut Surface, dpi: f32, fonts: &dyn GlyphSource) {
+/// `fonts`; a glyph whose font is unknown is skipped. Inline-image bytes are taken
+/// from `media`; an image whose media is unknown or undecodable renders nothing.
+pub fn render(
+    list: &DisplayList,
+    surface: &mut Surface,
+    dpi: f32,
+    fonts: &dyn GlyphSource,
+    media: &dyn MediaSource,
+) {
     // A stack of clip masks: each entry is the *effective* clip (the intersection
     // of every enclosing `PushClip` rectangle). While non-empty, its top is
     // passed to every paint call so content outside an `exact`-height row's clip
@@ -136,11 +156,70 @@ pub fn render(list: &DisplayList, surface: &mut Surface, dpi: f32, fonts: &dyn G
             PaintItem::PopClip => {
                 clip_stack.pop();
             }
-            PaintItem::Image { .. } => {
-                // Images land with a later slice.
+            PaintItem::Image { media: id, rect } => {
+                render_image(id, *rect, surface, dpi, media, clip_stack.last());
             }
         }
     }
+}
+
+/// Decodes an inline image's bytes and blits them, scaled, into `rect` (twips,
+/// scaled to device pixels here) under the current `clip`. Unknown media, an
+/// unsupported/undecodable format (e.g. EMF/WMF vector metafiles — deferred to
+/// `P1F-28`), or a degenerate box all render nothing without panicking.
+fn render_image(
+    media_id: &str,
+    rect: Rect,
+    surface: &mut Surface,
+    dpi: f32,
+    media: &dyn MediaSource,
+    clip: Option<&Mask>,
+) {
+    let Some(bytes) = media.media_bytes(media_id) else {
+        return;
+    };
+    let Some(source) = decode_to_pixmap(bytes) else {
+        return;
+    };
+    let (src_w, src_h) = (source.width() as f32, source.height() as f32);
+    if src_w <= 0.0 || src_h <= 0.0 {
+        return;
+    }
+    let dx = rect.origin.x.to_device_px(dpi);
+    let dy = rect.origin.y.to_device_px(dpi);
+    let dw = rect.size.width.to_device_px(dpi);
+    let dh = rect.size.height.to_device_px(dpi);
+    if dw <= 0.0 || dh <= 0.0 {
+        return;
+    }
+    // Scale the source pixmap to the destination box, then translate to its
+    // top-left; `draw_pixmap` maps pixmap space through this transform.
+    let transform = Transform::from_row(dw / src_w, 0.0, 0.0, dh / src_h, dx, dy);
+    let paint = PixmapPaint {
+        quality: FilterQuality::Bilinear,
+        ..PixmapPaint::default()
+    };
+    surface
+        .pixmap
+        .draw_pixmap(0, 0, source.as_ref(), &paint, transform, clip);
+}
+
+/// Decodes PNG/JPEG bytes to a premultiplied-RGBA `tiny-skia` pixmap. Returns
+/// `None` for an unsupported/corrupt format or a zero-size image (graceful skip).
+fn decode_to_pixmap(bytes: &[u8]) -> Option<Pixmap> {
+    let image = image::load_from_memory(bytes).ok()?;
+    let rgba = image.to_rgba8();
+    let (w, h) = rgba.dimensions();
+    let mut data = rgba.into_raw();
+    // `Pixmap::from_vec` expects premultiplied alpha; the decoder yields straight
+    // (non-premultiplied) RGBA, so premultiply each channel by its alpha.
+    for px in data.chunks_exact_mut(4) {
+        let a = u16::from(px[3]);
+        px[0] = (u16::from(px[0]) * a / 255) as u8;
+        px[1] = (u16::from(px[1]) * a / 255) as u8;
+        px[2] = (u16::from(px[2]) * a / 255) as u8;
+    }
+    Pixmap::from_vec(data, IntSize::from_wh(w, h)?)
 }
 
 /// Builds the effective clip mask for a `PushClip(rect)`: the rectangle painted
@@ -378,6 +457,44 @@ impl GlyphSource for BundledFontSource {
     }
 }
 
+/// A [`MediaSource`] that serves no media — every lookup misses, so inline images
+/// render nothing. The default for callers with no embedded pictures.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoMediaSource;
+
+impl MediaSource for NoMediaSource {
+    fn media_bytes(&self, _media: &str) -> Option<&[u8]> {
+        None
+    }
+}
+
+/// A [`MediaSource`] backed by an in-memory map from media key (package part name)
+/// to encoded bytes — built by the pipeline/example from the package's
+/// `word/media` parts (mirroring how fonts are served).
+#[derive(Clone, Debug, Default)]
+pub struct MapMediaSource {
+    parts: HashMap<String, Vec<u8>>,
+}
+
+impl MapMediaSource {
+    /// An empty media source.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Registers the encoded bytes for a media key (its package part name).
+    pub fn insert(&mut self, media: impl Into<String>, bytes: Vec<u8>) {
+        self.parts.insert(media.into(), bytes);
+    }
+}
+
+impl MediaSource for MapMediaSource {
+    fn media_bytes(&self, media: &str) -> Option<&[u8]> {
+        self.parts.get(media).map(Vec::as_slice)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -429,7 +546,7 @@ mod tests {
 
         let mut surface = Surface::new(400, 100).unwrap();
         let fonts = SingleFontSource::new(ROBOTO_REGULAR);
-        render(&list, &mut surface, 96.0, &fonts);
+        render(&list, &mut surface, 96.0, &fonts, &NoMediaSource);
 
         let ink = dark_pixel_count(&surface);
         assert!(
@@ -460,7 +577,7 @@ mod tests {
         let mut list = DisplayList::new();
         list.push(PaintItem::Glyphs { run });
         let fonts = SingleFontSource::new(ROBOTO_REGULAR); // only serves FontId(0)
-        render(&list, &mut surface, 96.0, &fonts); // FontId(9) unknown -> skipped
+        render(&list, &mut surface, 96.0, &fonts, &NoMediaSource); // FontId(9) unknown -> skipped
         assert_eq!(dark_pixel_count(&surface), 0, "unknown font paints nothing");
     }
 
@@ -492,7 +609,7 @@ mod tests {
         list.push(PaintItem::PopClip);
 
         let fonts = SingleFontSource::new(ROBOTO_REGULAR);
-        render(&list, &mut surface, dpi, &fonts);
+        render(&list, &mut surface, dpi, &fonts, &NoMediaSource);
 
         let pixel = |x: usize, y: usize| {
             let i = (y * 100 + x) * 4;
@@ -537,7 +654,7 @@ mod tests {
         });
 
         let fonts = SingleFontSource::new(ROBOTO_REGULAR);
-        render(&list, &mut surface, dpi, &fonts);
+        render(&list, &mut surface, dpi, &fonts, &NoMediaSource);
 
         let i = (60 * 100 + 60) * 4;
         let px = &surface.data()[i..i + 4];
@@ -586,6 +703,7 @@ mod tests {
             &mut surface,
             96.0,
             &SingleFontSource::new(ROBOTO_REGULAR),
+            &NoMediaSource,
         );
         (surface, baseline_px)
     }
@@ -666,6 +784,126 @@ mod tests {
             band_dark(&plain, baseline + 2, baseline + 12),
             0,
             "a plain run has no underline"
+        );
+    }
+
+    /// Encodes a solid `w×h` image of `rgba` to `format` bytes, in memory.
+    fn solid_image(w: u32, h: u32, rgba: [u8; 4], format: image::ImageFormat) -> Vec<u8> {
+        let mut img = image::RgbaImage::new(w, h);
+        for pixel in img.pixels_mut() {
+            *pixel = image::Rgba(rgba);
+        }
+        let mut buf = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut buf, format)
+            .unwrap();
+        buf.into_inner()
+    }
+
+    /// Reads a surface pixel `[r, g, b, a]` (surface is `w`-wide).
+    fn pixel_at(surface: &Surface, w: usize, x: usize, y: usize) -> [u8; 4] {
+        let i = (y * w + x) * 4;
+        let d = &surface.data()[i..i + 4];
+        [d[0], d[1], d[2], d[3]]
+    }
+
+    /// Renders a single `Image` paint item of `media_bytes` (keyed `"pic"`) into a
+    /// 20×20-twip box at (10,10) on a 50×50 surface at 1440 dpi (1 twip = 1 px), so
+    /// the box lands at device px [10,30)². Returns the surface.
+    fn render_one_image(media_bytes: Vec<u8>) -> Surface {
+        use casual_doc_layout::units::Size;
+        let mut media = MapMediaSource::new();
+        media.insert("pic", media_bytes);
+        let rect = Rect::new(
+            Point::new(Twip(10), Twip(10)),
+            Size::new(Twip(20), Twip(20)),
+        );
+        let mut list = DisplayList::new();
+        list.push(PaintItem::Image {
+            media: "pic".to_owned(),
+            rect,
+        });
+        let mut surface = Surface::new(50, 50).unwrap();
+        render(&list, &mut surface, 1440.0, &BundledFontSource, &media);
+        surface
+    }
+
+    #[test]
+    fn a_png_image_decodes_and_blits_pixels_into_its_rect() {
+        // A solid-red 8×8 PNG, scaled into the 20×20-px box: ink inside, white out.
+        let bytes = solid_image(8, 8, [210, 40, 40, 255], image::ImageFormat::Png);
+        let surface = render_one_image(bytes);
+        let inside = pixel_at(&surface, 50, 20, 20);
+        assert!(
+            inside[0] > 150 && inside[1] < 120 && inside[2] < 120,
+            "the PNG's red ink lands inside the box (got {inside:?})"
+        );
+        assert_eq!(
+            pixel_at(&surface, 50, 2, 2),
+            [255, 255, 255, 255],
+            "outside the image box stays background white"
+        );
+    }
+
+    #[test]
+    fn a_jpeg_image_decodes_and_blits_pixels_into_its_rect() {
+        // JPEG is lossy, so assert a reddish, clearly non-white blit (not exact).
+        let bytes = solid_image(16, 16, [200, 30, 30, 255], image::ImageFormat::Jpeg);
+        let surface = render_one_image(bytes);
+        let inside = pixel_at(&surface, 50, 20, 20);
+        assert!(
+            inside[0] > 130 && inside[0] > inside[2] + 40,
+            "the JPEG's red ink lands inside the box (got {inside:?})"
+        );
+        assert_eq!(
+            pixel_at(&surface, 50, 2, 2),
+            [255, 255, 255, 255],
+            "outside the image box stays background white"
+        );
+    }
+
+    #[test]
+    fn unknown_or_undecodable_media_renders_nothing_and_does_not_panic() {
+        use casual_doc_layout::units::Size;
+        let rect = Rect::new(
+            Point::new(Twip(10), Twip(10)),
+            Size::new(Twip(20), Twip(20)),
+        );
+
+        // Unknown media id: no source bytes -> nothing painted.
+        let mut list = DisplayList::new();
+        list.push(PaintItem::Image {
+            media: "missing".to_owned(),
+            rect,
+        });
+        let mut surface = Surface::new(50, 50).unwrap();
+        render(
+            &list,
+            &mut surface,
+            1440.0,
+            &BundledFontSource,
+            &NoMediaSource,
+        );
+        assert_eq!(
+            dark_pixel_count(&surface),
+            0,
+            "unknown media paints nothing"
+        );
+
+        // Present but undecodable bytes (not PNG/JPEG, e.g. an EMF stub): skipped.
+        let mut media = MapMediaSource::new();
+        media.insert("junk", vec![1, 2, 3, 4, 5, 6, 7, 8]);
+        let mut list2 = DisplayList::new();
+        list2.push(PaintItem::Image {
+            media: "junk".to_owned(),
+            rect,
+        });
+        let mut surface2 = Surface::new(50, 50).unwrap();
+        render(&list2, &mut surface2, 1440.0, &BundledFontSource, &media);
+        assert_eq!(
+            dark_pixel_count(&surface2),
+            0,
+            "undecodable media paints nothing"
         );
     }
 }
