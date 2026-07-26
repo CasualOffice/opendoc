@@ -70,6 +70,15 @@ pub struct Page {
     pub content_area: Rect,
     /// Fragments placed in the content area, in flow order.
     pub placed: Vec<PlacedFragment>,
+    /// The running header laid out in the top band (the per-page-selected
+    /// header for this page's number + section). Empty until the running-content
+    /// pass ([`crate::running::place_running_content`]) fills it; kept off the
+    /// pagination hot path so page reuse stays field-value-free.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub header: Vec<PlacedFragment>,
+    /// The running footer laid out in the bottom band (see [`Page::header`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub footer: Vec<PlacedFragment>,
     /// Footnotes placed at the bottom of this page.
     pub footnotes: Vec<PlacedFragment>,
     /// First model position on this page (the stabilization-halt key).

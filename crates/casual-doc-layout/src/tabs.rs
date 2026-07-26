@@ -20,8 +20,8 @@ use casual_doc_model::v1::{BreakKind, TabAlignment, TabLeader, TabStop};
 
 use crate::model::{ModelPos, ModelRange};
 use crate::text::{
-    Decoration, Glyph, GlyphRun, Line, LineBreak, LineConstraints, LineLayout, LineShaper,
-    StyledRun,
+    Decoration, FieldKind, FieldStyle, Glyph, GlyphRun, Line, LineBreak, LineConstraints,
+    LineLayout, LineShaper, StyledRun,
 };
 use crate::units::{Point, Size, Twip};
 
@@ -58,6 +58,18 @@ pub enum FlowItem<'a> {
         media: String,
         /// The image box size in twips (from the drawing's EMU extent).
         size: Size,
+    },
+    /// An inline field (`w:fldSimple`/`w:instrText`): its resolved kind, a
+    /// placeholder value (the producer's cached result) shaped at flow time, and
+    /// the styling to reshape a recomputed value. Laid out inline like a run; the
+    /// post-pagination field pass stamps `PAGE`/`NUMPAGES` values.
+    Field {
+        /// What value the field yields.
+        kind: FieldKind,
+        /// The placeholder display value (the cached result text) shaped now.
+        value: String,
+        /// The run styling, so the field pass can reshape a new value.
+        style: FieldStyle,
     },
 }
 
@@ -239,9 +251,9 @@ fn split_blocks<'a>(items: &'a [FlowItem<'a>], base: u32) -> Vec<Block<'a>> {
                 has_tab = false;
                 start_offset = byte;
             }
-            // Inline images are split out and laid out as image lines before the
-            // stream reaches the tab/break layer, so none reach here.
-            FlowItem::Image { .. } => {}
+            // Inline images and fields are handled by their own layout paths
+            // before the stream reaches the tab/break layer, so none reach here.
+            FlowItem::Image { .. } | FlowItem::Field { .. } => {}
         }
     }
     blocks.push(Block {
@@ -364,6 +376,7 @@ fn layout_tabbed_line(
         page_break_after: false,
         bars: Vec::new(),
         images: Vec::new(),
+        fields: Vec::new(),
     };
     vec![line]
 }
@@ -442,16 +455,20 @@ fn advance_of(run: &GlyphRun) -> Twip {
 }
 
 /// A resolved tab stop: its position and how the following text aligns to it.
-struct ResolvedStop {
-    position: i32,
-    alignment: TabAlignment,
-    leader: Option<TabLeader>,
+pub(crate) struct ResolvedStop {
+    pub(crate) position: i32,
+    pub(crate) alignment: TabAlignment,
+    pub(crate) leader: Option<TabLeader>,
 }
 
 /// Resolves the tab stop a tab at pen position `pen` advances to: the nearest
 /// explicit non-`bar` stop past `pen`, else the next multiple of `default_tab`
 /// strictly past `pen`.
-fn resolve_next_stop(pen: i32, tab_stops: &[TabStop], default_tab: Twip) -> ResolvedStop {
+pub(crate) fn resolve_next_stop(
+    pen: i32,
+    tab_stops: &[TabStop],
+    default_tab: Twip,
+) -> ResolvedStop {
     let explicit = tab_stops
         .iter()
         .filter(|t| t.alignment != TabAlignment::Bar && t.position_twips > pen)
@@ -560,7 +577,7 @@ fn leader_char(leader: TabLeader) -> char {
 
 /// Constraints for measuring/probing a single unwrapped segment: effectively
 /// infinite width, no wrap, start-aligned, no indent.
-fn unwrapped_constraints() -> LineConstraints {
+pub(crate) fn unwrapped_constraints() -> LineConstraints {
     LineConstraints {
         max_width: Twip(1_000_000),
         ..LineConstraints::default()
@@ -579,6 +596,7 @@ fn empty_line(node: NodeId, offset: u32, bars: Vec<Twip>) -> Line {
         page_break_after: false,
         bars,
         images: Vec::new(),
+        fields: Vec::new(),
     }
 }
 

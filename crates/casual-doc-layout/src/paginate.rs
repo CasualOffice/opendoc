@@ -20,12 +20,21 @@ use casual_doc_model::NodeId;
 use casual_doc_model::v1::SectionId;
 
 use crate::block::{BlockFragment, BoxMetrics, BreakControl, CellFragment, ParagraphDecor};
+use crate::flow::shape_field_run;
 use crate::model::ModelPos;
 use crate::page::{FlowPos, FlowSpan, Page, PaginatedLayout, PlacedFragment};
-use crate::text::LineLayout;
+use crate::text::{FieldKind, GlyphRun, Line, LineLayout, LineShaper};
 use crate::units::{Point, Rect, Size, Twip};
 
-/// The page geometry of a section: the page box and its margins.
+/// The page geometry of a section: the page box, its margins, and the header /
+/// footer bands reserved inside the top and bottom margins.
+///
+/// The header band sits at the top margin and the footer band at the bottom
+/// margin; the body [`content_area`](PageConfig::content_area) shrinks by both so
+/// running content never overlaps the flow. Band heights are **fixed per section**
+/// (the tallest of the section's header/footer variants), so every page in the
+/// section shares one content area — which is what lets the incremental paginator
+/// reuse pages (it keys reuse on a single `content_area()`).
 #[derive(Clone, Copy, Debug)]
 pub struct PageConfig {
     /// The section this geometry belongs to.
@@ -40,17 +49,52 @@ pub struct PageConfig {
     pub margin_start: Twip,
     /// Trailing (end) margin.
     pub margin_end: Twip,
+    /// Reserved header-band height at the top of the page (`0` = no header). The
+    /// body content area starts this far below the top margin.
+    pub header_height: Twip,
+    /// Reserved footer-band height at the bottom of the page (`0` = no footer). The
+    /// body content area ends this far above the bottom margin.
+    pub footer_height: Twip,
 }
 
 impl PageConfig {
-    /// The content area (page box minus margins) — where flow content is placed.
+    /// The content area (page box minus margins and the header/footer bands) —
+    /// where flow content is placed.
     #[must_use]
     pub fn content_area(&self) -> Rect {
         let width = self.page_size.width - self.margin_start - self.margin_end;
-        let height = self.page_size.height - self.margin_top - self.margin_bottom;
+        let height = self.page_size.height
+            - self.margin_top
+            - self.margin_bottom
+            - self.header_height
+            - self.footer_height;
+        Rect::new(
+            Point::new(self.margin_start, self.margin_top + self.header_height),
+            Size::new(width.max(Twip::ZERO), height.max(Twip::ZERO)),
+        )
+    }
+
+    /// The header band rectangle (at the top margin, `header_height` tall), where
+    /// the running-content pass lays the selected header. Zero-height when the
+    /// section has no header.
+    #[must_use]
+    pub fn header_band(&self) -> Rect {
+        let width = self.page_size.width - self.margin_start - self.margin_end;
         Rect::new(
             Point::new(self.margin_start, self.margin_top),
-            Size::new(width.max(Twip::ZERO), height.max(Twip::ZERO)),
+            Size::new(width.max(Twip::ZERO), self.header_height),
+        )
+    }
+
+    /// The footer band rectangle (just above the bottom margin, `footer_height`
+    /// tall). Zero-height when the section has no footer.
+    #[must_use]
+    pub fn footer_band(&self) -> Rect {
+        let width = self.page_size.width - self.margin_start - self.margin_end;
+        let y = self.page_size.height - self.margin_bottom - self.footer_height;
+        Rect::new(
+            Point::new(self.margin_start, y),
+            Size::new(width.max(Twip::ZERO), self.footer_height),
         )
     }
 }
@@ -997,11 +1041,126 @@ fn build_page(
         section: config.section,
         content_area: content,
         placed,
+        header: Vec::new(),
+        footer: Vec::new(),
         footnotes: Vec::new(),
         start,
         end,
         flow,
     }
+}
+
+/// Resolves the page-dependent fields (`PAGE`, `NUMPAGES`) in a **final** paginated
+/// layout — the post-pagination field pass.
+///
+/// Pagination is field-value-free: [`paginate`]/[`repaginate`] place field runs
+/// carrying only a marker (never a baked number), so a page the incremental
+/// paginator reuses or splices carries no stale value. This pass is a **pure
+/// function of the final page list**: it stamps each `PAGE` marker with its page's
+/// [`number`](Page::number) and each `NUMPAGES` marker with the total page count,
+/// then reshapes the field's glyph run in place. Because it depends only on the
+/// final list — the same list a full [`paginate`] and an incremental
+/// [`repaginate`] both produce — applying it to either yields identical layouts, so
+/// `repaginate == paginate` still holds with fields resolved. It is idempotent
+/// (running it twice is a no-op), so re-stamping a reused page is always safe.
+///
+/// Body content, headers, and footers are all resolved (a footer may hold a
+/// `Page X of Y`). Call it after pagination and after
+/// [`crate::running::place_running_content`] (so headers/footers exist to stamp).
+pub fn resolve_fields(layout: &mut PaginatedLayout, shaper: &dyn LineShaper) {
+    let total = layout.pages.len() as u32;
+    for page in &mut layout.pages {
+        let number = page.number;
+        for placed in &mut page.placed {
+            resolve_in_fragment(&mut placed.fragment, number, total, shaper);
+        }
+        for placed in &mut page.header {
+            resolve_in_fragment(&mut placed.fragment, number, total, shaper);
+        }
+        for placed in &mut page.footer {
+            resolve_in_fragment(&mut placed.fragment, number, total, shaper);
+        }
+    }
+}
+
+/// Resolves fields inside one block fragment, recursing into table cells.
+fn resolve_in_fragment(
+    fragment: &mut BlockFragment,
+    number: u32,
+    total: u32,
+    shaper: &dyn LineShaper,
+) {
+    match fragment {
+        BlockFragment::Paragraph { lines, .. } => {
+            for line in &mut lines.lines {
+                resolve_in_line(line, number, total, shaper);
+            }
+        }
+        BlockFragment::TableRow { cells, .. } => {
+            for cell in cells {
+                for block in &mut cell.blocks {
+                    resolve_in_fragment(block, number, total, shaper);
+                }
+            }
+        }
+    }
+}
+
+/// Stamps every field marker on `line` with its resolved value, reshapes the
+/// field's glyph run, then repositions the runs from the first field onward so a
+/// value whose width changed (e.g. `9` → `10`) keeps the following text contiguous.
+/// The reposition seeds from each field's stored `base_x` (its flow anchor), so the
+/// pass is idempotent.
+fn resolve_in_line(line: &mut Line, number: u32, total: u32, shaper: &dyn LineShaper) {
+    if line.fields.is_empty() {
+        return;
+    }
+    // Phase 1: stamp values and reshape each field's glyph run in place.
+    let field_runs: Vec<usize> = line.fields.iter().map(|f| f.run as usize).collect();
+    for field in &mut line.fields {
+        let idx = field.run as usize;
+        if idx >= line.runs.len() {
+            continue;
+        }
+        field.value = match field.kind {
+            FieldKind::Page => number.to_string(),
+            FieldKind::NumPages => total.to_string(),
+            // Any other field displays its cached result verbatim.
+            FieldKind::Passthrough => std::mem::take(&mut field.value),
+        };
+        let baseline = line.runs[idx].origin.y;
+        let shape = shape_field_run(
+            shaper,
+            &field.value,
+            field.style,
+            Point::new(field.base_x, baseline),
+        );
+        line.runs[idx] = shape.run;
+    }
+    // Phase 2: reflow from the first field so trailing runs stay contiguous. Runs
+    // before the first field are field-independent and keep their shaper positions.
+    let Some(first) = field_runs.iter().copied().min() else {
+        return;
+    };
+    let Some(start_x) = line
+        .fields
+        .iter()
+        .filter(|f| f.run as usize == first)
+        .map(|f| f.base_x)
+        .next()
+    else {
+        return;
+    };
+    let mut pen = start_x;
+    for idx in first..line.runs.len() {
+        line.runs[idx].origin.x = pen;
+        pen = pen + advance_of(&line.runs[idx]);
+    }
+}
+
+/// The total advance of a glyph run (sum of its glyphs' advances).
+fn advance_of(run: &GlyphRun) -> Twip {
+    run.glyphs.iter().fold(Twip::ZERO, |a, g| a + g.advance)
 }
 
 #[cfg(test)]
@@ -1022,6 +1181,8 @@ mod tests {
             margin_bottom: Twip(1_440),
             margin_start: Twip(1_440),
             margin_end: Twip(1_440),
+            header_height: Twip::ZERO,
+            footer_height: Twip::ZERO,
         }
     }
 
@@ -1043,6 +1204,7 @@ mod tests {
             page_break_after: false,
             bars: Vec::new(),
             images: Vec::new(),
+            fields: Vec::new(),
         };
         BlockFragment::Paragraph {
             id: node,
@@ -1089,6 +1251,7 @@ mod tests {
                     page_break_after: false,
                     bars: Vec::new(),
                     images: Vec::new(),
+                    fields: Vec::new(),
                 }
             })
             .collect();

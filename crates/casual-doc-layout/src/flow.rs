@@ -17,6 +17,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
+use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     Alignment, BlockNode, BorderEdge, BreakKind, Color, DefinitionMap, Document, Drawing, Extent,
     FontRef, FontScheme, HeightRule, HighlightColor, InlineNode, MediaId, MediaReference,
@@ -33,8 +34,8 @@ use crate::model::{ModelPos, ModelRange};
 use crate::resolve::{FaceRequest, FontResolutionReport, FontResolver};
 use crate::tabs::{self, FlowItem};
 use crate::text::{
-    Decoration, FontId, InlineImage, Line, LineBreak, LineConstraints, LineLayout, LineShaper,
-    StyledRun, TextAlignment,
+    Decoration, FieldKind, FieldMarker, FieldStyle, FontId, Glyph, GlyphRun, InlineImage, Line,
+    LineBreak, LineConstraints, LineLayout, LineShaper, StyledRun, TextAlignment,
 };
 use crate::units::{Point, Size, Twip};
 
@@ -87,6 +88,34 @@ pub fn build_galley_with_report(
     };
     let galley = flow_blocks(document.body(), shaper, content_width, &mut ctx);
     (galley, report)
+}
+
+/// Flows a header's or footer's block content into a galley of fragments at
+/// `content_width` (the header/footer band width, normally the body content
+/// width), reusing the document's font scheme, media table, and default tab stop.
+///
+/// This is the running-content counterpart to [`build_galley`]: the returned
+/// fragments are laid out into the page's header/footer band by
+/// [`crate::running::place_running_content`], and any `PAGE`/`NUMPAGES` field they
+/// contain is resolved by [`crate::paginate::resolve_fields`]. `blocks` is a
+/// [`casual_doc_model::v1::HeaderFooter::blocks`] list.
+#[must_use]
+pub fn flow_header_footer(
+    document: &Document,
+    blocks: &[BlockNode],
+    shaper: &dyn LineShaper,
+    content_width: Twip,
+) -> Vec<BlockFragment> {
+    let resolver = FontResolver::new();
+    let mut report = FontResolutionReport::new();
+    let mut ctx = FlowCtx {
+        resolver: &resolver,
+        scheme: document.definitions().font_scheme.as_ref(),
+        report: &mut report,
+        default_tab: tabs::default_tab_stop(document.definitions().settings.default_tab_stop),
+        media: &document.definitions().media,
+    };
+    flow_blocks(blocks, shaper, content_width, &mut ctx)
 }
 
 /// Builds the galley like [`build_galley`], but reuses the shaped lines of
@@ -265,6 +294,19 @@ fn paragraph_hash(
                 media.hash(&mut hasher);
                 size.width.0.hash(&mut hasher);
                 size.height.0.hash(&mut hasher);
+            }
+            FlowItem::Field { kind, value, style } => {
+                4u8.hash(&mut hasher);
+                (*kind as u8).hash(&mut hasher);
+                value.hash(&mut hasher);
+                style.font.0.hash(&mut hasher);
+                style.size.0.hash(&mut hasher);
+                style.color.hash(&mut hasher);
+                style.bold.hash(&mut hasher);
+                style.italic.hash(&mut hasher);
+                style.letter_spacing.0.hash(&mut hasher);
+                style.decoration.underline.hash(&mut hasher);
+                style.decoration.strikethrough.hash(&mut hasher);
             }
         }
     }
@@ -862,11 +904,88 @@ fn collect_items<'a>(inlines: &'a [InlineNode], out: &mut Vec<FlowItem<'a>>, ctx
                     out.push(item);
                 }
             }
+            InlineNode::Field(field) => out.push(field_item(field, ctx)),
             InlineNode::Hyperlink(hyperlink) => collect_items(&hyperlink.inlines, out, ctx),
             InlineNode::Revision(revision) => collect_items(&revision.inlines, out, ctx),
             InlineNode::Sdt(sdt) => collect_items(&sdt.inlines, out, ctx),
             _ => {}
         }
+    }
+}
+
+/// Maps an inline field to a [`FlowItem::Field`]: classifies its instruction
+/// (`PAGE`/`NUMPAGES`/other), shapes a placeholder value from its cached result,
+/// and captures the run styling so the post-pagination field pass can reshape a
+/// recomputed value. A field is laid out inline like a run; page-dependent fields
+/// carry only a marker through pagination (never a baked number).
+fn field_item(field: &casual_doc_model::v1::Field, ctx: &mut FlowCtx) -> FlowItem<'static> {
+    let kind = field_kind(&field.instruction);
+    let cached = cached_result_text(&field.inlines);
+    let value = if cached.is_empty() {
+        match kind {
+            // A placeholder so the flowed field has sensible width/height before the
+            // field pass runs; `Passthrough` shows nothing when it has no result.
+            FieldKind::Page | FieldKind::NumPages => "1".to_owned(),
+            FieldKind::Passthrough => String::new(),
+        }
+    } else {
+        cached
+    };
+    let style = field_style(&field.inlines, &value, ctx);
+    FlowItem::Field { kind, value, style }
+}
+
+/// Classifies a field instruction by its leading keyword (case-insensitive):
+/// `PAGE` and `NUMPAGES` are the page-dependent fields the field pass recomputes;
+/// everything else passes its cached result through unchanged.
+fn field_kind(instruction: &str) -> FieldKind {
+    match instruction
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_ascii_uppercase()
+        .as_str()
+    {
+        "PAGE" => FieldKind::Page,
+        "NUMPAGES" => FieldKind::NumPages,
+        _ => FieldKind::Passthrough,
+    }
+}
+
+/// Concatenates the text of a field's cached-result runs (its `inlines`, which are
+/// leaf-only) — the value shown before the field pass recomputes it.
+fn cached_result_text(inlines: &[InlineNode]) -> String {
+    let mut out = String::new();
+    for inline in inlines {
+        match inline {
+            InlineNode::Run(run) => out.push_str(&run.text),
+            InlineNode::Tab(_) => out.push('\t'),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The styling used to shape (and later reshape) a field's value: the first
+/// cached-result run's resolved style, or the document default when the field has
+/// no cached result.
+fn field_style(inlines: &[InlineNode], value: &str, ctx: &mut FlowCtx) -> FieldStyle {
+    let props = inlines.iter().find_map(|n| match n {
+        InlineNode::Run(run) => Some(&run.properties),
+        _ => None,
+    });
+    let styled = match props {
+        Some(props) => styled_run(value, props, ctx),
+        None => styled_run(value, &RunProperties::default(), ctx),
+    };
+    FieldStyle {
+        font: styled.font,
+        size: styled.size,
+        color: styled.color,
+        bold: styled.bold,
+        italic: styled.italic,
+        letter_spacing: styled.letter_spacing,
+        decoration: styled.decoration,
     }
 }
 
@@ -910,6 +1029,12 @@ fn shape_paragraph_items(
     constraints: LineConstraints,
     range: ModelRange,
 ) -> LineLayout {
+    // A paragraph carrying an inline field takes the fielded path, which lays runs,
+    // tabs, and fields on one horizontal line per hard-break block and records a
+    // field marker per field for the post-pagination field pass.
+    if items.iter().any(|i| matches!(i, FlowItem::Field { .. })) {
+        return shape_fielded_paragraph(shaper, items, tab_stops, default_tab, constraints, range);
+    }
     if !items.iter().any(|i| matches!(i, FlowItem::Image { .. })) {
         return shape_text_items(shaper, items, tab_stops, default_tab, constraints, range);
     }
@@ -983,6 +1108,7 @@ fn image_line(media: String, size: Size, range: ModelRange) -> Line {
             origin: Point::new(Twip::ZERO, Twip::ZERO),
             size,
         }],
+        fields: Vec::new(),
     }
 }
 
@@ -1000,6 +1126,390 @@ fn stack_lines(out: &mut Vec<Line>, mut lines: Vec<Line>, cursor_y: &mut Twip) {
         *cursor_y = *cursor_y + line.height;
     }
     out.extend(lines);
+}
+
+// --- Inline fields ---------------------------------------------------------
+
+/// A field's value shaped into a single glyph run at `origin` — the shared shaping
+/// used both to lay a field out at flow time and to restamp it in the field pass
+/// ([`crate::paginate::resolve_fields`]), so a resolved field is byte-identical
+/// however it was produced. The glyphs of `value`'s shaped runs are concatenated
+/// into one run (clusters zeroed — a field's value is not model text), and its
+/// advance / metrics are returned so callers can position following content and
+/// size the line.
+#[must_use]
+pub(crate) fn shape_field_run(
+    shaper: &dyn LineShaper,
+    value: &str,
+    style: FieldStyle,
+    origin: Point,
+) -> FieldRunShape {
+    let styled = StyledRun {
+        text: value,
+        font: style.font,
+        size: style.size,
+        bold: style.bold,
+        italic: style.italic,
+        letter_spacing: style.letter_spacing,
+        color: style.color,
+        decoration: style.decoration,
+        highlight: None,
+    };
+    let node = NodeId::from_parts(1, 1).expect("1/1 is a valid node id");
+    let dummy = ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, 0));
+    let layout = shaper.shape_paragraph(&[styled], tabs::unwrapped_constraints(), dummy);
+    let mut glyphs: Vec<Glyph> = Vec::new();
+    let (mut ascent, mut descent) = (Twip::ZERO, Twip::ZERO);
+    if let Some(line) = layout.lines.first() {
+        ascent = line.ascent;
+        descent = line.descent;
+        for run in &line.runs {
+            for g in &run.glyphs {
+                glyphs.push(Glyph {
+                    id: g.id,
+                    advance: g.advance,
+                    cluster: 0,
+                });
+            }
+        }
+    }
+    let advance = glyphs.iter().fold(Twip::ZERO, |a, g| a + g.advance);
+    FieldRunShape {
+        run: GlyphRun {
+            font: style.font,
+            size: style.size,
+            color: style.color,
+            origin,
+            bidi_level: 0,
+            decoration: style.decoration,
+            highlight: None,
+            glyphs,
+        },
+        ascent,
+        descent,
+        advance,
+    }
+}
+
+/// The result of [`shape_field_run`]: the shaped run plus the metrics a caller
+/// needs to place following content and size the line.
+pub(crate) struct FieldRunShape {
+    /// The single glyph run for the field's value.
+    pub run: GlyphRun,
+    /// Ascent above the baseline.
+    pub ascent: Twip,
+    /// Descent below the baseline.
+    pub descent: Twip,
+    /// Total advance width.
+    pub advance: Twip,
+}
+
+/// The total advance of a glyph run.
+fn run_advance(run: &GlyphRun) -> Twip {
+    run.glyphs.iter().fold(Twip::ZERO, |a, g| a + g.advance)
+}
+
+/// One tab-delimited segment of a fielded line: its shaped runs (local x from the
+/// segment's left edge), the field markers pointing into those runs, and its box
+/// metrics.
+struct FieldedSegment {
+    runs: Vec<GlyphRun>,
+    fields: Vec<FieldPiece>,
+    width: Twip,
+    ascent: Twip,
+    descent: Twip,
+}
+
+/// A field within a [`FieldedSegment`]: which of the segment's runs holds it, plus
+/// the marker payload carried to the line.
+struct FieldPiece {
+    run: usize,
+    kind: FieldKind,
+    style: FieldStyle,
+    value: String,
+}
+
+/// Shapes a paragraph whose inline stream contains fields. Runs, tabs, and fields
+/// are laid out on a single horizontal line per hard-break block (fielded
+/// paragraphs are not soft-wrapped — the target cases, header/footer and
+/// page-number lines, are single-line in Word); each field becomes its own glyph
+/// run tagged with a [`FieldMarker`] the post-pagination field pass resolves.
+fn shape_fielded_paragraph(
+    shaper: &dyn LineShaper,
+    items: &[FlowItem<'_>],
+    tab_stops: &[TabStop],
+    default_tab: Twip,
+    constraints: LineConstraints,
+    range: ModelRange,
+) -> LineLayout {
+    let ctx = FieldedCtx {
+        shaper,
+        node: range.start.node,
+        base: range.start.offset,
+        tab_stops,
+        default_tab,
+        constraints,
+    };
+    let bars: Vec<Twip> = tab_stops
+        .iter()
+        .filter(|t| t.alignment == TabAlignment::Bar)
+        .map(|t| Twip(t.position_twips))
+        .collect();
+
+    // Split the stream into hard-break-delimited blocks (each is one line).
+    let mut blocks: Vec<(Vec<&FlowItem<'_>>, Option<BreakKind>)> = Vec::new();
+    let mut current: Vec<&FlowItem<'_>> = Vec::new();
+    for item in items {
+        match item {
+            FlowItem::Break(kind) => {
+                blocks.push((std::mem::take(&mut current), Some(*kind)));
+            }
+            other => current.push(other),
+        }
+    }
+    blocks.push((current, None));
+
+    let mut out: Vec<Line> = Vec::new();
+    let mut cursor_y = Twip::ZERO;
+    let last = blocks.len().saturating_sub(1);
+    for (bi, (block_items, trailing)) in blocks.iter().enumerate() {
+        let first_line_indent = if bi == 0 {
+            constraints.first_line_indent
+        } else {
+            Twip::ZERO
+        };
+        let mut line = layout_fielded_line(&ctx, block_items, first_line_indent);
+        for run in &mut line.runs {
+            run.origin.y = run.origin.y + cursor_y;
+        }
+        line.bars = bars.clone();
+        match trailing {
+            Some(kind) => {
+                line.line_break = LineBreak::Hard;
+                line.page_break_after = matches!(kind, BreakKind::Page | BreakKind::Column);
+            }
+            None if bi == last => line.line_break = LineBreak::ParagraphEnd,
+            None => line.line_break = LineBreak::Hard,
+        }
+        cursor_y = cursor_y + line.height;
+        out.push(line);
+    }
+    LineLayout { lines: out }
+}
+
+/// The invariant context threaded through a fielded paragraph's line layout: the
+/// shaper, the node/byte anchor, and the paragraph's tab + wrap settings.
+struct FieldedCtx<'a> {
+    shaper: &'a dyn LineShaper,
+    node: NodeId,
+    base: u32,
+    tab_stops: &'a [TabStop],
+    default_tab: Twip,
+    constraints: LineConstraints,
+}
+
+/// Lays out one hard-break block of a fielded paragraph onto a single line: splits
+/// it at tabs into segments, measures each, then positions segment 0 at the
+/// (indented) start and each later segment at its resolved tab stop. Records a
+/// [`FieldMarker`] per field with the run's absolute origin as its idempotent
+/// reposition anchor.
+fn layout_fielded_line(
+    ctx: &FieldedCtx<'_>,
+    items: &[&FlowItem<'_>],
+    first_line_indent: Twip,
+) -> Line {
+    let shaper = ctx.shaper;
+    let node = ctx.node;
+    let base = ctx.base;
+    let tab_stops = ctx.tab_stops;
+    let default_tab = ctx.default_tab;
+    let constraints = ctx.constraints;
+    // Split at tabs into segments.
+    let mut segments: Vec<Vec<&FlowItem<'_>>> = vec![Vec::new()];
+    for item in items {
+        if matches!(item, FlowItem::Tab) {
+            segments.push(Vec::new());
+        } else {
+            segments.last_mut().expect("non-empty").push(item);
+        }
+    }
+    let has_tab = segments.len() > 1;
+    let measured: Vec<FieldedSegment> = segments
+        .iter()
+        .map(|seg| measure_fielded_segment(shaper, node, seg))
+        .collect();
+
+    let ascent = measured
+        .iter()
+        .map(|s| s.ascent)
+        .max()
+        .unwrap_or(Twip::ZERO);
+    let descent = measured
+        .iter()
+        .map(|s| s.descent)
+        .max()
+        .unwrap_or(Twip::ZERO);
+    let baseline = ascent;
+
+    let mut runs: Vec<GlyphRun> = Vec::new();
+    let mut fields: Vec<FieldMarker> = Vec::new();
+    let mut pen = first_line_indent.raw().max(0);
+
+    for (i, seg) in measured.iter().enumerate() {
+        let left = if i == 0 {
+            pen
+        } else {
+            let stop = tabs::resolve_next_stop(pen, tab_stops, default_tab);
+            let mut l = match stop.alignment {
+                TabAlignment::Start | TabAlignment::Bar => stop.position,
+                TabAlignment::End | TabAlignment::Decimal => stop.position - seg.width.raw(),
+                TabAlignment::Center => stop.position - seg.width.raw() / 2,
+            };
+            if l < pen {
+                l = pen;
+            }
+            l
+        };
+        place_segment(seg, Twip(left), baseline, &mut runs, &mut fields);
+        pen = left + seg.width.raw();
+    }
+
+    // A tab-free fielded line honors paragraph alignment (a centered / right page
+    // number). Tabbed lines are positioned by their stops, as in Word.
+    if !has_tab {
+        let width = pen - first_line_indent.raw().max(0);
+        let slack = constraints.max_width.raw() - width;
+        let offset = match constraints.alignment {
+            TextAlignment::Center => slack / 2,
+            TextAlignment::End => slack,
+            TextAlignment::Start | TextAlignment::Justify => 0,
+        };
+        if offset > 0 {
+            for run in &mut runs {
+                run.origin.x = run.origin.x + Twip(offset);
+            }
+            for field in &mut fields {
+                field.base_x = field.base_x + Twip(offset);
+            }
+        }
+    }
+
+    Line {
+        runs,
+        ascent,
+        descent,
+        height: ascent + descent,
+        range: ModelRange::new(ModelPos::new(node, base), ModelPos::new(node, base)),
+        line_break: LineBreak::ParagraphEnd,
+        page_break_after: false,
+        bars: Vec::new(),
+        images: Vec::new(),
+        fields,
+    }
+}
+
+/// Places a measured segment at absolute `left`/`baseline`, appending its runs to
+/// `runs` and its field markers (with absolute `base_x`) to `fields`.
+fn place_segment(
+    seg: &FieldedSegment,
+    left: Twip,
+    baseline: Twip,
+    runs: &mut Vec<GlyphRun>,
+    fields: &mut Vec<FieldMarker>,
+) {
+    let base_index = runs.len();
+    for run in &seg.runs {
+        let mut placed = run.clone();
+        placed.origin = Point::new(run.origin.x + left, baseline);
+        runs.push(placed);
+    }
+    for piece in &seg.fields {
+        let run_idx = base_index + piece.run;
+        fields.push(FieldMarker {
+            kind: piece.kind,
+            run: run_idx as u32,
+            base_x: runs[run_idx].origin.x,
+            style: piece.style,
+            value: piece.value.clone(),
+        });
+    }
+}
+
+/// Measures one tab-delimited segment of a fielded line: consecutive text runs are
+/// shaped together (preserving intra-group kerning); each field is shaped on its
+/// own. Runs carry local x from the segment's left edge; field pieces point at the
+/// run holding each field.
+fn measure_fielded_segment(
+    shaper: &dyn LineShaper,
+    node: NodeId,
+    seg: &[&FlowItem<'_>],
+) -> FieldedSegment {
+    let mut runs: Vec<GlyphRun> = Vec::new();
+    let mut fields: Vec<FieldPiece> = Vec::new();
+    let mut pen = 0i32;
+    let mut ascent = Twip::ZERO;
+    let mut descent = Twip::ZERO;
+    let range = ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, 0));
+
+    let mut i = 0;
+    while i < seg.len() {
+        match seg[i] {
+            FlowItem::Field { kind, value, style } => {
+                let shape =
+                    shape_field_run(shaper, value, *style, Point::new(Twip(pen), Twip::ZERO));
+                ascent = ascent.max(shape.ascent);
+                descent = descent.max(shape.descent);
+                let idx = runs.len();
+                runs.push(shape.run);
+                fields.push(FieldPiece {
+                    run: idx,
+                    kind: *kind,
+                    style: *style,
+                    value: value.clone(),
+                });
+                pen += shape.advance.raw();
+                i += 1;
+            }
+            FlowItem::Run(_) => {
+                let start = i;
+                while i < seg.len() && matches!(seg[i], FlowItem::Run(_)) {
+                    i += 1;
+                }
+                let styled: Vec<StyledRun<'_>> = seg[start..i]
+                    .iter()
+                    .filter_map(|it| match it {
+                        FlowItem::Run(r) => Some(r.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                let layout = shaper.shape_paragraph(&styled, tabs::unwrapped_constraints(), range);
+                if let Some(line) = layout.lines.first() {
+                    ascent = ascent.max(line.ascent);
+                    descent = descent.max(line.descent);
+                    let mut group_w = 0i32;
+                    for r in &line.runs {
+                        let end = r.origin.x.raw() + run_advance(r).raw();
+                        group_w = group_w.max(end);
+                        let mut placed = r.clone();
+                        placed.origin = Point::new(r.origin.x + Twip(pen), Twip::ZERO);
+                        runs.push(placed);
+                    }
+                    pen += group_w;
+                }
+            }
+            // Images/tabs/breaks do not reach here (tabs split the segment; images
+            // and breaks are handled by their own paths).
+            _ => i += 1,
+        }
+    }
+
+    FieldedSegment {
+        runs,
+        fields,
+        width: Twip(pen),
+        ascent,
+        descent,
+    }
 }
 
 /// Maps a run's text + properties to a styled run, resolving its declared font
