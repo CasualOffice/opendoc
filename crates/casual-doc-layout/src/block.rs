@@ -151,6 +151,22 @@ pub enum CellVAlign {
     Bottom,
 }
 
+/// A flowed cell's role in a validated vertical merge.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+pub enum CellVerticalMerge {
+    /// The cell is not part of a conforming vertical merge.
+    #[default]
+    None,
+    /// The content-owning first cell. `height` is the final height of every row
+    /// covered by the merge.
+    Restart {
+        /// Merged cell-box height in twips.
+        height: Twip,
+    },
+    /// A subsequent physical cell covered by the restart cell above it.
+    Continue,
+}
+
 /// One cell's laid-out content within a table-row fragment.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct CellFragment {
@@ -171,6 +187,10 @@ pub struct CellFragment {
     /// The cell's vertical content alignment (`w:vAlign`); `Top` = Word's default.
     #[serde(default, skip_serializing_if = "CellVAlign::is_top")]
     pub vertical_alignment: CellVAlign,
+    /// Validated vertical-merge role. Continuations preserve their model identity
+    /// but own no independently painted box or content.
+    #[serde(default, skip_serializing_if = "CellVerticalMerge::is_none")]
+    pub vertical_merge: CellVerticalMerge,
     /// The cell's resolved visible borders (border-conflict winners).
     #[serde(default, skip_serializing_if = "CellBorders::is_empty")]
     pub borders: CellBorders,
@@ -188,7 +208,25 @@ impl CellVAlign {
     }
 }
 
+impl CellVerticalMerge {
+    /// Whether this cell is outside a conforming vertical merge.
+    #[must_use]
+    pub fn is_none(&self) -> bool {
+        matches!(self, CellVerticalMerge::None)
+    }
+}
+
 impl CellFragment {
+    /// The physical height of this cell box. A merge restart spans every covered
+    /// row; ordinary cells and continuations use their current row height.
+    #[must_use]
+    pub fn box_height(&self, row_height: Twip) -> Twip {
+        match self.vertical_merge {
+            CellVerticalMerge::Restart { height } => height,
+            CellVerticalMerge::None | CellVerticalMerge::Continue => row_height,
+        }
+    }
+
     /// The stacked height of the cell's flowed content (twips), excluding margins.
     #[must_use]
     pub fn content_height(&self) -> Twip {
@@ -287,6 +325,10 @@ pub enum BlockFragment {
         can_split: bool,
         /// Is this a header row repeated at the top of each page?
         header: bool,
+        /// Keep this row with the following table row because a conforming
+        /// vertical merge crosses their boundary.
+        #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+        merge_keep_next: bool,
         /// Clip the content to the row height (`w:trHeight` rule `exact`).
         #[serde(default, skip_serializing_if = "core::ops::Not::not")]
         clip: bool,
@@ -337,7 +379,24 @@ impl BlockFragment {
     pub fn break_control(&self) -> BreakControl {
         match self {
             BlockFragment::Paragraph { break_control, .. } => *break_control,
-            BlockFragment::TableRow { .. } => BreakControl::default(),
+            BlockFragment::TableRow {
+                merge_keep_next, ..
+            } => BreakControl {
+                keep_next: *merge_keep_next,
+                ..BreakControl::default()
+            },
         }
+    }
+
+    /// Whether this row participates in a multi-row vertical-merge keep group.
+    #[must_use]
+    pub fn is_vertical_merge_row(&self) -> bool {
+        matches!(
+            self,
+            BlockFragment::TableRow {
+                merge_keep_next: true,
+                ..
+            }
+        )
     }
 }

@@ -94,7 +94,7 @@ open as a PR at the time of writing.
 | P1F-22 | Footnotes/endnotes placement (bottom-of-page band) | `paginate.rs:963`, `flow.rs:731` | Reserve bottom band; flow note bodies |
 | P1F-23 | Theme/`auto` run color → everything non-RGB renders black | `flow.rs:745-748` | Resolve theme/auto colors against theme + context |
 | P1F-24 | Per-script font slots (`cs`/`eastAsia`/`hAnsi`) — only ascii slot used | `flow.rs:797-802`, `properties.rs:738-744` | Per-codepoint slot selection |
-| P1F-25 | Cell vertical align + cell margins (`w:vAlign`/`w:tcMar`); vertical merge (`w:vMerge`) render | `flow.rs:288-318`, `compose.rs:59-80`, model `table.rs:24-31` | Apply inset+vAlign; flow vMerge continuation |
+| P1F-25 | Cell vertical align + cell margins (`w:vAlign`/`w:tcMar`); vertical merge (`w:vMerge`) render | `flow.rs`, `compose.rs`, model `table.rs:24-31` | Implemented: resolved insets/vAlign plus exact-grid vertical-merge content ownership, merged height, paint suppression, and page-local grouping (`P1F-TBL-VMERGE`; docs 46/49). |
 
 ### Tier 3 — Content families dropped on the semantic path (reported, not silent)
 | ID | Gap | Evidence | Fix |

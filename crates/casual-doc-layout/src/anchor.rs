@@ -627,7 +627,7 @@ fn walk_paragraph_rects(
             for cell in cells {
                 let content_origin = Point::new(
                     origin.x + cell.x + cell.margins.start,
-                    origin.y + cell.content_y_offset(row_height),
+                    origin.y + cell.content_y_offset(cell.box_height(row_height)),
                 );
                 let content_width = Twip(
                     (cell.width.raw() - cell.margins.start.raw() - cell.margins.end.raw()).max(1),

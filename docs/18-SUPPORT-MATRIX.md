@@ -74,7 +74,7 @@ report.
 | Area | v1 expectation | Current status |
 | --- | --- | --- |
 | Paragraphs, marks, lists | Supported | Modeled and imported (Phase 1A); shaped, laid out, and rendered via the style cascade; edit surface pending. |
-| Tables and merged cells | Supported | Modeled and imported (Phase 1A); direct widths, horizontal grid spans, cell margins, vertical alignment, borders, and cross-page row splitting render. Vertical-merge collapsing, table-style cascade, cell spacing, bidi/alignment, floating tables, and the edit surface remain pending (see doc 46). |
+| Tables and merged cells | Supported | Modeled and imported (Phase 1A); direct widths, horizontal grid spans, cell margins, vertical alignment, borders, cross-page row splitting, and conforming vertical merges render. Table-style cascade, cell spacing, bidi/alignment, floating tables, segmented border styles, and the edit surface remain pending (see docs 46 and 49). |
 | Sections, headers, footers | Supported | Modeled and imported (Phase 1A); headers/footers flow and render with Word band nesting; multi-column section layout and edit surface pending. |
 | Images and anchors | Supported | Modeled and imported (Phase 1A); rendered via the z-ordered float layer (groups, floating text boxes, header/footer floats); text-wrap around floats and edit surface pending. |
 | Comments and tracked changes | Supported | Modeled and imported (Phase 1A); layout/render display and edit surface pending. |

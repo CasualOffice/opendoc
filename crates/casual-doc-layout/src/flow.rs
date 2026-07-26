@@ -15,7 +15,7 @@
 //! contribute no text yet (never panic).
 
 use std::borrow::Cow;
-use std::collections::hash_map::DefaultHasher;
+use std::collections::{BTreeMap, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
 
 use casual_doc_model::NodeId;
@@ -25,12 +25,12 @@ use casual_doc_model::v1::{
     InlineNode, LevelSuffix, LineRule, MediaId, MediaReference, ParagraphProperties, Rgba,
     RunProperties, SchemeColor, SectionBoundary, SectionId, SectionType, ShapeStroke, StyleId,
     TabAlignment, TabLeader, TabStop, Table, TableBorders, TableCell, TableLayout, TableRow,
-    TableRowProperties, TextBox, ThemeColorRef, ThemeFontRef, VerticalAlignment,
+    TableRowProperties, TextBox, ThemeColorRef, ThemeFontRef, VerticalAlignment, VerticalMerge,
 };
 
 use crate::block::{
     BlockBorders, BlockFragment, BoxMetrics, BreakControl, CellBorders, CellContentMargins,
-    CellFragment, CellVAlign, ParagraphDecor, ResolvedEdge,
+    CellFragment, CellVAlign, CellVerticalMerge, ParagraphDecor, ResolvedEdge,
 };
 use crate::cascade::StyleCascade;
 use crate::incremental::{DirtySet, GalleyCache};
@@ -642,9 +642,10 @@ fn flow_table(
     galley: &mut Vec<BlockFragment>,
     ctx: &mut FlowCtx,
 ) {
+    let merge_roles = resolve_vertical_merge_roles(table);
     let indent = table.properties.indent_twips.unwrap_or(0);
     let available = (width.raw() - indent).max(1);
-    let widths = solve_table_columns(table, shaper, available, ctx);
+    let widths = solve_table_columns(table, shaper, available, ctx, &merge_roles);
 
     // Cumulative left edge of each column, shifted by the table indent.
     let ncols = widths.len();
@@ -657,6 +658,7 @@ fn flow_table(
     edges.push(x);
     let edge = |col: usize| Twip(edges[col.min(edges.len() - 1)]);
 
+    let mut rows = Vec::with_capacity(table.rows.len());
     for (row_index, row) in table.rows.iter().enumerate() {
         let mut cells = Vec::new();
         let mut col = 0usize;
@@ -683,31 +685,210 @@ fn flow_table(
                 resolve_cell_margins(&cell.properties.margins, &table.properties.cell_margins);
             let inner_width =
                 Twip((cell_width.raw() - margins.start.raw() - margins.end.raw()).max(1));
+            let merge_role = merge_roles[row_index][index];
             cells.push(CellFragment {
                 id: cell.id,
                 grid_span: span as u32,
                 x: cell_x,
                 width: cell_width,
-                blocks: flow_blocks(&cell.blocks, shaper, inner_width, ctx),
+                blocks: if matches!(merge_role, VerticalMergeRole::Continue) {
+                    Vec::new()
+                } else {
+                    flow_blocks(&cell.blocks, shaper, inner_width, ctx)
+                },
                 margins,
                 vertical_alignment: cell_vertical_alignment(&cell.properties),
+                vertical_merge: if matches!(merge_role, VerticalMergeRole::Continue) {
+                    CellVerticalMerge::Continue
+                } else {
+                    CellVerticalMerge::None
+                },
                 borders,
                 shading,
             });
             col += span;
         }
-        let content_h = BlockFragment::cells_content_height(&cells);
+        let content_h = cells
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| match merge_roles[row_index][*index] {
+                VerticalMergeRole::Continue => false,
+                VerticalMergeRole::Restart { end_row, .. } => end_row == row_index,
+                VerticalMergeRole::None => true,
+            })
+            .map(|(_, cell)| cell.occupied_height())
+            .max()
+            .unwrap_or(Twip::ZERO);
         let (height, clip) = resolve_row_height(&row.properties, content_h);
-        galley.push(BlockFragment::TableRow {
+        rows.push(FlowedTableRow {
             id: row.id,
-            table: table.id,
             cells,
             height,
             can_split: !row.properties.cant_split,
             header: row.properties.header,
             clip,
+            exact: row_has_exact_height(&row.properties),
+            merge_keep_next: false,
         });
     }
+
+    resolve_vertical_merge_geometry(&merge_roles, &mut rows);
+    galley.extend(rows.into_iter().map(|row| BlockFragment::TableRow {
+        id: row.id,
+        table: table.id,
+        cells: row.cells,
+        height: row.height,
+        can_split: row.can_split,
+        header: row.header,
+        merge_keep_next: row.merge_keep_next,
+        clip: row.clip,
+    }));
+}
+
+/// One table row while vertical-merge height constraints are being resolved.
+struct FlowedTableRow {
+    id: NodeId,
+    cells: Vec<CellFragment>,
+    height: Twip,
+    can_split: bool,
+    header: bool,
+    clip: bool,
+    exact: bool,
+    merge_keep_next: bool,
+}
+
+/// A model cell's validated role in a vertical merge. Invalid/orphan
+/// continuations remain `None` so their content stays visible.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum VerticalMergeRole {
+    #[default]
+    None,
+    Restart {
+        end_row: usize,
+        end_cell: usize,
+    },
+    Continue,
+}
+
+/// Resolves `w:vMerge` runs by exact half-open grid-column range. A continuation
+/// with no matching active restart is deliberately left ordinary.
+fn resolve_vertical_merge_roles(table: &Table) -> Vec<Vec<VerticalMergeRole>> {
+    let mut roles: Vec<Vec<VerticalMergeRole>> = table
+        .rows
+        .iter()
+        .map(|row| vec![VerticalMergeRole::None; row.cells.len()])
+        .collect();
+    let mut active: BTreeMap<(usize, usize), (usize, usize)> = BTreeMap::new();
+
+    for (row_index, row) in table.rows.iter().enumerate() {
+        let mut next = BTreeMap::new();
+        let mut column = 0usize;
+        for (cell_index, cell) in row.cells.iter().enumerate() {
+            let span = cell.properties.grid_span.unwrap_or(1).max(1) as usize;
+            let key = (column, column.saturating_add(span));
+            match cell.properties.vertical_merge {
+                Some(VerticalMerge::Restart) => {
+                    roles[row_index][cell_index] = VerticalMergeRole::Restart {
+                        end_row: row_index,
+                        end_cell: cell_index,
+                    };
+                    next.insert(key, (row_index, cell_index));
+                }
+                Some(VerticalMerge::Continue) => {
+                    if let Some(&(start_row, start_cell)) = active.get(&key) {
+                        roles[row_index][cell_index] = VerticalMergeRole::Continue;
+                        roles[start_row][start_cell] = VerticalMergeRole::Restart {
+                            end_row: row_index,
+                            end_cell: cell_index,
+                        };
+                        next.insert(key, (start_row, start_cell));
+                    }
+                }
+                None => {}
+            }
+            column = column.saturating_add(span);
+        }
+        active = next;
+    }
+    roles
+}
+
+/// Applies merged-cell minimum heights, closing-edge ownership, and pagination
+/// keep boundaries after every physical row has its ordinary minimum height.
+fn resolve_vertical_merge_geometry(roles: &[Vec<VerticalMergeRole>], rows: &mut [FlowedTableRow]) {
+    // First solve every merged-height inequality. Multiple merges can overlap the
+    // same physical rows, so no origin caches its final height until every
+    // constraint has had a chance to grow those rows.
+    for (row_index, row_roles) in roles.iter().enumerate() {
+        for (cell_index, role) in row_roles.iter().copied().enumerate() {
+            let VerticalMergeRole::Restart { end_row, .. } = role else {
+                continue;
+            };
+            if end_row == row_index {
+                continue;
+            }
+
+            let required = rows[row_index].cells[cell_index].occupied_height().raw();
+            let current: i32 = rows[row_index..=end_row]
+                .iter()
+                .map(|row| row.height.raw())
+                .sum();
+            if required > current {
+                if let Some(row) = rows[row_index..=end_row].iter_mut().find(|row| !row.exact) {
+                    row.height = Twip(row.height.raw().saturating_add(required - current));
+                } else {
+                    rows[row_index].clip = true;
+                }
+            }
+
+            for row in &mut rows[row_index..end_row] {
+                row.merge_keep_next = true;
+            }
+            let header = rows[row_index].header;
+            if rows[row_index..=end_row]
+                .iter()
+                .any(|row| row.header != header)
+            {
+                // A repeated header cannot reproduce only part of a merged box.
+                // Disable repetition for the crossing group; a merge wholly
+                // inside the header band remains repeatable as a unit.
+                for row in &mut rows[row_index..=end_row] {
+                    row.header = false;
+                }
+            }
+        }
+    }
+
+    // Then materialize final merged boxes and closing borders from the stable
+    // physical row heights.
+    for (row_index, row_roles) in roles.iter().enumerate() {
+        for (cell_index, role) in row_roles.iter().copied().enumerate() {
+            let VerticalMergeRole::Restart { end_row, end_cell } = role else {
+                continue;
+            };
+            if end_row == row_index {
+                continue;
+            }
+            let merged_height = Twip(
+                rows[row_index..=end_row]
+                    .iter()
+                    .map(|row| row.height.raw())
+                    .sum(),
+            );
+            let closing_bottom = rows[end_row].cells[end_cell].borders.bottom;
+            let origin = &mut rows[row_index].cells[cell_index];
+            origin.vertical_merge = CellVerticalMerge::Restart {
+                height: merged_height,
+            };
+            origin.borders.bottom = closing_bottom;
+        }
+    }
+}
+
+/// Whether a row has an authored exact height that merge constraints must not
+/// grow.
+fn row_has_exact_height(props: &TableRowProperties) -> bool {
+    props.height.value_twips.is_some() && matches!(props.height.rule, Some(HeightRule::Exact))
 }
 
 /// Word's built-in default cell content margin for the leading/trailing edges
@@ -795,6 +976,7 @@ fn solve_table_columns(
     shaper: &dyn LineShaper,
     available: i32,
     ctx: &FlowCtx,
+    merge_roles: &[Vec<VerticalMergeRole>],
 ) -> Vec<Twip> {
     let ncols = if table.grid.is_empty() {
         table
@@ -821,18 +1003,23 @@ fn solve_table_columns(
         })
         .collect();
 
-    for row in &table.rows {
+    for (row_index, row) in table.rows.iter().enumerate() {
         let mut col = 0usize;
-        for cell in &row.cells {
+        for (cell_index, cell) in row.cells.iter().enumerate() {
             let span = cell.properties.grid_span.unwrap_or(1).max(1) as usize;
-            let (cmin, cmax) = block_intrinsic(&cell.blocks, shaper, ctx);
-            let cpref = cmax.max(cell.properties.width_twips.unwrap_or(0));
-            // A spanning cell's demand is shared over the columns it covers.
-            let per_min = div_ceil(cmin, span as i32);
-            let per_pref = div_ceil(cpref, span as i32);
-            for c in cols.iter_mut().skip(col).take(span) {
-                c.min = c.min.max(per_min);
-                c.preferred = c.preferred.max(per_pref);
+            if !matches!(
+                merge_roles[row_index][cell_index],
+                VerticalMergeRole::Continue
+            ) {
+                let (cmin, cmax) = block_intrinsic(&cell.blocks, shaper, ctx);
+                let cpref = cmax.max(cell.properties.width_twips.unwrap_or(0));
+                // A spanning cell's demand is shared over the columns it covers.
+                let per_min = div_ceil(cmin, span as i32);
+                let per_pref = div_ceil(cpref, span as i32);
+                for c in cols.iter_mut().skip(col).take(span) {
+                    c.min = c.min.max(per_min);
+                    c.preferred = c.preferred.max(per_pref);
+                }
             }
             col += span;
         }
@@ -4203,6 +4390,330 @@ mod tests {
     }
 
     #[test]
+    fn vertical_merge_owns_content_height_and_closing_border_by_grid_range() {
+        let blue = RgbColor { r: 0, g: 0, b: 255 };
+        let table = Table {
+            id: node(500),
+            grid: vec![
+                GridColumn {
+                    width_twips: Some(1200),
+                },
+                GridColumn {
+                    width_twips: Some(1200),
+                },
+                GridColumn {
+                    width_twips: Some(1200),
+                },
+            ],
+            grid_change: None,
+            properties: TableProperties::default(),
+            rows: vec![
+                ModelRow {
+                    id: node(501),
+                    properties: TableRowProperties {
+                        header: true,
+                        ..TableRowProperties::default()
+                    },
+                    cells: vec![
+                        text_cell(510, TableCellProperties::default(), "left top"),
+                        text_cell(
+                            511,
+                            TableCellProperties {
+                                grid_span: Some(2),
+                                vertical_merge: Some(VerticalMerge::Restart),
+                                ..TableCellProperties::default()
+                            },
+                            "The merged cell owns enough wrapped content to constrain the sum of both physical rows.",
+                        ),
+                    ],
+                },
+                ModelRow {
+                    id: node(502),
+                    properties: TableRowProperties::default(),
+                    cells: vec![
+                        text_cell(520, TableCellProperties::default(), "left bottom"),
+                        text_cell(
+                            521,
+                            TableCellProperties {
+                                grid_span: Some(2),
+                                vertical_merge: Some(VerticalMerge::Continue),
+                                borders: TableBorders {
+                                    bottom: Some(colored_edge("single", 8, blue)),
+                                    ..TableBorders::default()
+                                },
+                                ..TableCellProperties::default()
+                            },
+                            "continuation content must not render",
+                        ),
+                    ],
+                },
+            ],
+        };
+
+        let rows = flow_table_rows(table, Twip(3600));
+        let [
+            BlockFragment::TableRow {
+                cells: top,
+                height: top_height,
+                header: top_header,
+                merge_keep_next,
+                ..
+            },
+            BlockFragment::TableRow {
+                cells: bottom,
+                height: bottom_height,
+                header: bottom_header,
+                ..
+            },
+        ] = rows.as_slice()
+        else {
+            panic!("expected two table rows");
+        };
+
+        let merged_height = match top[1].vertical_merge {
+            CellVerticalMerge::Restart { height } => height,
+            other => panic!("expected a merge restart, got {other:?}"),
+        };
+        assert_eq!(merged_height, *top_height + *bottom_height);
+        assert!(
+            merged_height.raw() >= top[1].occupied_height().raw(),
+            "the merged content constrains the sum of covered row heights"
+        );
+        assert_eq!(bottom[1].vertical_merge, CellVerticalMerge::Continue);
+        assert!(
+            bottom[1].blocks.is_empty(),
+            "the continuation cell owns no independently rendered content"
+        );
+        assert_eq!((top[1].x, top[1].width), (bottom[1].x, bottom[1].width));
+        assert!(*merge_keep_next, "the merge boundary is page-local");
+        assert!(
+            !*top_header && !*bottom_header,
+            "a merge crossing from a header row into body rows cannot repeat partially"
+        );
+        assert_eq!(
+            top[1].borders.bottom,
+            Some(ResolvedEdge {
+                color: [0, 0, 255, 255],
+                width: Twip(20),
+            }),
+            "the merged box closes with the final continuation's bottom edge"
+        );
+    }
+
+    #[test]
+    fn a_range_mismatched_vertical_continuation_remains_an_ordinary_visible_cell() {
+        let table = Table {
+            id: node(600),
+            grid: vec![
+                GridColumn {
+                    width_twips: Some(1200),
+                },
+                GridColumn {
+                    width_twips: Some(1200),
+                },
+                GridColumn {
+                    width_twips: Some(1200),
+                },
+            ],
+            grid_change: None,
+            properties: TableProperties::default(),
+            rows: vec![
+                ModelRow {
+                    id: node(601),
+                    properties: TableRowProperties::default(),
+                    cells: vec![
+                        text_cell(610, TableCellProperties::default(), "left"),
+                        text_cell(
+                            611,
+                            TableCellProperties {
+                                grid_span: Some(2),
+                                vertical_merge: Some(VerticalMerge::Restart),
+                                ..TableCellProperties::default()
+                            },
+                            "restart over two columns",
+                        ),
+                    ],
+                },
+                ModelRow {
+                    id: node(602),
+                    properties: TableRowProperties::default(),
+                    cells: vec![
+                        text_cell(620, TableCellProperties::default(), "left"),
+                        text_cell(
+                            621,
+                            TableCellProperties {
+                                vertical_merge: Some(VerticalMerge::Continue),
+                                ..TableCellProperties::default()
+                            },
+                            "mismatched continuation stays visible",
+                        ),
+                        text_cell(622, TableCellProperties::default(), "right"),
+                    ],
+                },
+            ],
+        };
+
+        let rows = flow_table_rows(table, Twip(3600));
+        let [
+            BlockFragment::TableRow {
+                cells: top,
+                merge_keep_next,
+                ..
+            },
+            BlockFragment::TableRow { cells: bottom, .. },
+        ] = rows.as_slice()
+        else {
+            panic!("expected two table rows");
+        };
+        assert_eq!(top[1].vertical_merge, CellVerticalMerge::None);
+        assert_eq!(bottom[1].vertical_merge, CellVerticalMerge::None);
+        assert!(
+            !bottom[1].blocks.is_empty(),
+            "malformed producer content is not silently hidden"
+        );
+        assert!(!merge_keep_next);
+    }
+
+    #[test]
+    fn overlapping_merge_constraints_publish_only_final_row_heights() {
+        let merge = |id, role, text| {
+            text_cell(
+                id,
+                TableCellProperties {
+                    vertical_merge: Some(role),
+                    ..TableCellProperties::default()
+                },
+                text,
+            )
+        };
+        let table = Table {
+            id: node(700),
+            grid: vec![
+                GridColumn {
+                    width_twips: Some(1000),
+                },
+                GridColumn {
+                    width_twips: Some(1000),
+                },
+            ],
+            grid_change: None,
+            properties: TableProperties::default(),
+            rows: vec![
+                ModelRow {
+                    id: node(701),
+                    properties: TableRowProperties::default(),
+                    cells: vec![
+                        merge(710, VerticalMerge::Restart, "short"),
+                        merge(
+                            711,
+                            VerticalMerge::Restart,
+                            "A much taller second merge wraps over many lines and grows a physical row shared with the first merge.",
+                        ),
+                    ],
+                },
+                ModelRow {
+                    id: node(702),
+                    properties: TableRowProperties::default(),
+                    cells: vec![
+                        merge(720, VerticalMerge::Continue, "ignored"),
+                        merge(721, VerticalMerge::Continue, "ignored"),
+                    ],
+                },
+                ModelRow {
+                    id: node(703),
+                    properties: TableRowProperties::default(),
+                    cells: vec![
+                        text_cell(730, TableCellProperties::default(), "ordinary"),
+                        merge(731, VerticalMerge::Continue, "ignored"),
+                    ],
+                },
+            ],
+        };
+
+        let rows = flow_table_rows(table, Twip(2000));
+        let heights: Vec<Twip> = rows.iter().map(BlockFragment::height).collect();
+        let BlockFragment::TableRow { cells: origins, .. } = &rows[0] else {
+            unreachable!()
+        };
+        assert_eq!(
+            origins[0].vertical_merge,
+            CellVerticalMerge::Restart {
+                height: heights[0] + heights[1]
+            },
+            "the shorter merge observes growth caused by the overlapping taller merge"
+        );
+        assert_eq!(
+            origins[1].vertical_merge,
+            CellVerticalMerge::Restart {
+                height: heights[0] + heights[1] + heights[2]
+            }
+        );
+    }
+
+    #[test]
+    fn all_exact_rows_clip_merged_content_to_their_authored_total() {
+        let exact = TableRowProperties {
+            height: RowHeight {
+                value_twips: Some(100),
+                rule: Some(HeightRule::Exact),
+            },
+            ..TableRowProperties::default()
+        };
+        let table = Table {
+            id: node(800),
+            grid: vec![GridColumn {
+                width_twips: Some(1200),
+            }],
+            grid_change: None,
+            properties: TableProperties::default(),
+            rows: vec![
+                ModelRow {
+                    id: node(801),
+                    properties: exact.clone(),
+                    cells: vec![text_cell(
+                        810,
+                        TableCellProperties {
+                            vertical_merge: Some(VerticalMerge::Restart),
+                            ..TableCellProperties::default()
+                        },
+                        "This merged content is deliberately much taller than two exact one-hundred-twip rows.",
+                    )],
+                },
+                ModelRow {
+                    id: node(802),
+                    properties: exact,
+                    cells: vec![text_cell(
+                        820,
+                        TableCellProperties {
+                            vertical_merge: Some(VerticalMerge::Continue),
+                            ..TableCellProperties::default()
+                        },
+                        "ignored",
+                    )],
+                },
+            ],
+        };
+
+        let rows = flow_table_rows(table, Twip(1200));
+        let BlockFragment::TableRow {
+            cells,
+            height,
+            clip,
+            ..
+        } = &rows[0]
+        else {
+            unreachable!()
+        };
+        assert_eq!(*height, Twip(100));
+        assert!(*clip);
+        assert_eq!(
+            cells[0].vertical_merge,
+            CellVerticalMerge::Restart { height: Twip(200) }
+        );
+        assert_eq!(rows[1].height(), Twip(100));
+    }
+
+    #[test]
     fn border_conflict_resolution_picks_the_higher_precedence_edge() {
         // Two adjacent cells share an edge: cell 0's end is a thin single line,
         // cell 1's start is a thick double line. The thicker/double border wins on
@@ -5055,7 +5566,7 @@ mod tests {
 
     #[test]
     fn cell_vertical_alignment_slack_placement() {
-        use crate::block::{CellContentMargins, CellFragment};
+        use crate::block::{CellContentMargins, CellFragment, CellVerticalMerge};
 
         // A cell 100 twips tall of content, inset 10 top / 10 bottom, inside a row
         // 200 twips tall: 80 twips of slack above/below the content box.
@@ -5097,6 +5608,7 @@ mod tests {
             }],
             margins,
             vertical_alignment: valign,
+            vertical_merge: CellVerticalMerge::None,
             borders: CellBorders::default(),
             shading: None,
         };

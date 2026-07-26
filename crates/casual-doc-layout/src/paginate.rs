@@ -482,11 +482,14 @@ impl<'a> Paginator<'a> {
             let group_height: i32 = group.iter().map(|f| f.height().raw()).sum();
             let group_fits_page = group_height <= self.content_height;
             let is_keep_group = group.len() > 1 || group[0].break_control().keep_lines;
+            let is_vertical_merge_group = group.iter().any(BlockFragment::is_vertical_merge_row);
 
             let forced = group[0].break_control().page_break_before;
             let doesnt_fit_here = self.cursor_y.raw() + group_height > self.content_bottom;
             if !self.placed.is_empty()
-                && (forced || (is_keep_group && group_fits_page && doesnt_fit_here))
+                && (forced
+                    || (is_keep_group && group_fits_page && doesnt_fit_here)
+                    || (is_vertical_merge_group && doesnt_fit_here))
             {
                 self.flush();
             }
@@ -498,9 +501,30 @@ impl<'a> Paginator<'a> {
             // A keep-together group that fits a page is placed atomically;
             // otherwise (a normal paragraph, or an oversized keep group) paragraphs
             // may split.
-            let allow_split = !is_keep_group || !group_fits_page;
+            let allow_split = !is_vertical_merge_group && (!is_keep_group || !group_fits_page);
+            // A body merge group landing on a fresh continuation page also needs
+            // the table's repeated headers. Include them when deciding whether
+            // the explicit intact-overflow fallback is required.
+            let repeated_header_height = if is_vertical_merge_group && self.placed.is_empty() {
+                match group.first() {
+                    Some(BlockFragment::TableRow {
+                        table,
+                        header: false,
+                        ..
+                    }) if self.current_table == Some(*table) => self
+                        .table_headers
+                        .iter()
+                        .map(|header| header.height().raw())
+                        .sum(),
+                    _ => 0,
+                }
+            } else {
+                0
+            };
+            let target_height = group_height.saturating_add(repeated_header_height);
+            let force_overflow = is_vertical_merge_group && target_height > self.content_height;
             for (offset, fragment) in group.iter().enumerate() {
-                self.place(i + offset, fragment, allow_split);
+                self.place(i + offset, fragment, allow_split, force_overflow);
                 if self.halted.is_some() {
                     return;
                 }
@@ -558,7 +582,13 @@ impl<'a> Paginator<'a> {
 
     /// Places fragment `idx`, splitting a multi-line paragraph across pages when
     /// `allow_split` and it does not fit whole.
-    fn place(&mut self, idx: usize, fragment: &BlockFragment, allow_split: bool) {
+    fn place(
+        &mut self,
+        idx: usize,
+        fragment: &BlockFragment,
+        allow_split: bool,
+        force_overflow: bool,
+    ) {
         self.at = FlowPos::at(idx as u32);
         // Leaving a run of table rows ends the current table's header context.
         if !matches!(fragment, BlockFragment::TableRow { .. }) {
@@ -587,7 +617,14 @@ impl<'a> Paginator<'a> {
                 header,
                 ..
             } => {
-                self.place_table_row(idx, fragment, *table, *can_split, *header);
+                self.place_table_row(
+                    idx,
+                    fragment,
+                    *table,
+                    *can_split && allow_split,
+                    *header,
+                    force_overflow,
+                );
             }
             _ => {
                 let height = fragment.height();
@@ -616,9 +653,17 @@ impl<'a> Paginator<'a> {
         table: NodeId,
         can_split: bool,
         header: bool,
+        force_overflow: bool,
     ) {
         self.enter_table(table);
         self.at = FlowPos::at(idx as u32);
+        if force_overflow {
+            self.repeat_headers_if_needed(idx, header);
+            self.push(fragment.clone(), fragment.height());
+            self.at = FlowPos::at(idx as u32 + 1);
+            self.capture_header(fragment, header);
+            return;
+        }
         // Header rows are never split — they move whole and repeat.
         let can_split = can_split && !header;
         let height = fragment.height();
@@ -951,6 +996,7 @@ pub(crate) fn make_row_chunk(
         height,
         can_split,
         header,
+        merge_keep_next: false,
         clip: false,
     }
 }
@@ -1858,7 +1904,9 @@ mod tests {
 
     // --- Table pagination (P1D-003) -------------------------------------------
 
-    use crate::block::{CellBorders, CellContentMargins, CellFragment, CellVAlign};
+    use crate::block::{
+        CellBorders, CellContentMargins, CellFragment, CellVAlign, CellVerticalMerge,
+    };
 
     fn tnode(id: u64) -> NodeId {
         NodeId::from_parts(id, 1).unwrap()
@@ -1874,6 +1922,7 @@ mod tests {
             blocks,
             margins: CellContentMargins::default(),
             vertical_alignment: CellVAlign::default(),
+            vertical_merge: CellVerticalMerge::None,
             borders: CellBorders::default(),
             shading: None,
         }
@@ -1895,6 +1944,7 @@ mod tests {
             height,
             can_split,
             header,
+            merge_keep_next: false,
             clip: false,
         }
     }
@@ -1927,6 +1977,139 @@ mod tests {
             page2.placed[0].fragment.height(),
             Twip(1000),
             "the row is intact"
+        );
+    }
+
+    #[test]
+    fn a_vertical_merge_group_moves_whole_when_only_part_fits() {
+        let config = letter_config();
+        let content_h = config.content_area().size.height.raw();
+        let filler = paragraph(1, Twip(content_h - 700));
+        let mut restart = table_row(
+            2,
+            500,
+            vec![cell_of(3, vec![paragraph(4, Twip(500))])],
+            true,
+            false,
+        );
+        let BlockFragment::TableRow {
+            merge_keep_next, ..
+        } = &mut restart
+        else {
+            unreachable!()
+        };
+        *merge_keep_next = true;
+        let continuation = table_row(
+            5,
+            500,
+            vec![cell_of(6, vec![paragraph(7, Twip(500))])],
+            true,
+            false,
+        );
+
+        let layout = paginate(&[filler, restart, continuation], &config);
+        assert_eq!(layout.page_count(), 2);
+        assert_eq!(
+            layout.pages[0].placed.len(),
+            1,
+            "neither half of the merge remains below the filler"
+        );
+        assert_eq!(
+            layout.pages[1].placed.len(),
+            2,
+            "both physical rows move together"
+        );
+        assert_eq!(layout.pages[1].placed[0].fragment.node_id(), tnode(2));
+        assert_eq!(layout.pages[1].placed[1].fragment.node_id(), tnode(5));
+    }
+
+    #[test]
+    fn a_moved_vertical_merge_group_reserves_its_repeated_table_header() {
+        let config = letter_config();
+        let content_h = config.content_area().size.height.raw();
+        let header = table_row(
+            1,
+            500,
+            vec![cell_of(2, vec![paragraph(3, Twip(300))])],
+            false,
+            true,
+        );
+        let body = table_row(
+            4,
+            500,
+            vec![cell_of(5, vec![paragraph(6, Twip(content_h - 1000))])],
+            false,
+            false,
+        );
+        let mut restart = table_row(
+            7,
+            500,
+            vec![cell_of(8, vec![paragraph(9, Twip(600))])],
+            true,
+            false,
+        );
+        let BlockFragment::TableRow {
+            merge_keep_next, ..
+        } = &mut restart
+        else {
+            unreachable!()
+        };
+        *merge_keep_next = true;
+        let continuation = table_row(
+            10,
+            500,
+            vec![cell_of(11, vec![paragraph(12, Twip(600))])],
+            true,
+            false,
+        );
+
+        let layout = paginate(&[header, body, restart, continuation], &config);
+        assert_eq!(layout.page_count(), 2);
+        assert_eq!(
+            layout.pages[1].placed.len(),
+            3,
+            "the repeated header and both merge rows share page two"
+        );
+        assert_eq!(layout.pages[1].placed[0].fragment.node_id(), tnode(1));
+        assert_eq!(layout.pages[1].placed[1].fragment.node_id(), tnode(7));
+        assert_eq!(layout.pages[1].placed[2].fragment.node_id(), tnode(10));
+        assert!(
+            layout.pages[1].placed[2].rect.bottom().raw() <= config.content_area().bottom().raw()
+        );
+    }
+
+    #[test]
+    fn an_oversized_vertical_merge_group_overflows_intact_without_looping() {
+        let config = letter_config();
+        let content_h = config.content_area().size.height.raw();
+        let mut restart = table_row(
+            2,
+            500,
+            vec![cell_of(3, vec![paragraph(4, Twip(content_h / 2 + 500))])],
+            true,
+            false,
+        );
+        let BlockFragment::TableRow {
+            merge_keep_next, ..
+        } = &mut restart
+        else {
+            unreachable!()
+        };
+        *merge_keep_next = true;
+        let continuation = table_row(
+            5,
+            500,
+            vec![cell_of(6, vec![paragraph(7, Twip(content_h / 2 + 500))])],
+            true,
+            false,
+        );
+
+        let layout = paginate(&[restart, continuation], &config);
+        assert_eq!(layout.page_count(), 1);
+        assert_eq!(layout.pages[0].placed.len(), 2);
+        assert!(
+            layout.pages[0].placed[1].rect.bottom().raw() > config.content_area().bottom().raw(),
+            "the explicit fallback is one intact overflowing merged box"
         );
     }
 
