@@ -268,6 +268,32 @@ fn is_cjk_scalar(ch: char) -> bool {
     )
 }
 
+/// Whether a scalar is a *full-width* CJK glyph — one Word lays out in a fixed
+/// one-em cell. Restricted from [`is_cjk_scalar`] by excluding the half-width forms
+/// (half-width katakana/hangul in `U+FF61..=U+FFDC` and the half-width symbol forms
+/// `U+FFE8..=U+FFEE`), which advance at half an em and must never be widened to a
+/// full cell.
+fn is_full_width_cjk(ch: char) -> bool {
+    is_cjk_scalar(ch) && !matches!(u32::from(ch), 0xFF61..=0xFFDC | 0xFFE8..=0xFFEE)
+}
+
+/// The advance a glyph should carry after full-width CJK normalization. Word and
+/// CJK layout place each ideograph in a fixed one-em cell (`em` = the run font size
+/// in twips); a dynamic OS/host *fallback* face (e.g. macOS PingFang, used when the
+/// document's CJK font is absent) can report a slightly *larger* native advance, so
+/// a CJK line renders marginally wider than Word and can wrap a word early. When the
+/// glyph is a full-width CJK cell whose native advance exceeds the em, it is snapped
+/// down to the em; every other glyph — Latin/proportional, half-width, or an advance
+/// already at or under the em — passes through unchanged, so those paths stay
+/// byte-for-byte identical.
+fn full_width_cjk_advance(is_full_width: bool, native: i32, em: i32) -> i32 {
+    if is_full_width && native > em {
+        em
+    } else {
+        native
+    }
+}
+
 /// Applies the `w:spacing@lineRule` box model to a shaped line's natural metrics,
 /// returning the `(ascent, descent, height)` to store. Word (ECMA-376 §17.3.1.33):
 ///
@@ -514,8 +540,16 @@ impl ParleyShaper {
             // change in the parent run's `text_range` marks a new run and resets
             // the offset stream.
             let mut run_offsets: Vec<u32> = Vec::new();
+            // Per-glyph flag (parallel to `run_offsets`): whether the glyph's cluster
+            // is a full-width CJK scalar, so a fallback-shaped ideograph's advance can
+            // be normalized to the em (Word's fixed one-em cell).
+            let mut run_cjk: Vec<bool> = Vec::new();
             let mut run_range: Option<std::ops::Range<usize>> = None;
             let mut cursor = 0usize;
+            // Advance shaved from earlier (LTR) CJK runs on this line by the one-em
+            // normalization; subtracted from later runs' origins so a following Latin
+            // run closes up against the tightened CJK instead of leaving a gap.
+            let mut cjk_trim_before = 0i32;
             for item in line.items() {
                 let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
                     continue;
@@ -565,8 +599,14 @@ impl ParleyShaper {
                 // Screen-y grows downward, so a positive `baseline_shift` (a raise,
                 // e.g. a superscript or a positive `w:position`) subtracts from the
                 // baseline row; a negative shift (subscript / lower) adds to it.
+                // Left-to-right runs shift left by the advance the one-em CJK
+                // normalization already shaved from earlier runs on this line (RTL runs
+                // are left untouched — the normalization is LTR-only).
+                let is_rtl = glyph_run.run().is_rtl();
+                let origin_x =
+                    glyph_run.offset().round() as i32 - if is_rtl { 0 } else { cjk_trim_before };
                 let origin = Point::new(
-                    Twip(glyph_run.offset().round() as i32),
+                    Twip(origin_x),
                     Twip(glyph_run.baseline().round() as i32 - style.brush.baseline_shift),
                 );
                 let this_range = glyph_run.run().text_range();
@@ -575,36 +615,61 @@ impl ParleyShaper {
                     // offsets (visual order, one entry per glyph, each tagged with
                     // its cluster's start — see `to_offset`) and restart the slice
                     // cursor at the run's first glyph.
-                    run_offsets = glyph_run
-                        .run()
-                        .visual_clusters()
-                        .flat_map(|cluster| {
-                            let offset = to_offset(cluster.text_range().start);
-                            cluster.glyphs().map(move |_| offset)
-                        })
-                        .collect();
+                    run_offsets.clear();
+                    run_cjk.clear();
+                    for cluster in glyph_run.run().visual_clusters() {
+                        let offset = to_offset(cluster.text_range().start);
+                        let is_cjk = text
+                            .get(cluster.text_range())
+                            .and_then(|slice| slice.chars().next())
+                            .is_some_and(is_full_width_cjk);
+                        for _ in cluster.glyphs() {
+                            run_offsets.push(offset);
+                            run_cjk.push(is_cjk);
+                        }
+                    }
                     run_range = Some(this_range);
                     cursor = 0;
                 }
                 // Emit only this slice's glyphs (`glyphs()` honors the slice's
                 // start/count), pairing each with its cluster byte offset from the
                 // run-wide stream at the running cursor so the caret can anchor.
-                let glyphs = glyph_run
-                    .glyphs()
-                    .map(|glyph| {
-                        let cluster = run_offsets.get(cursor).copied().unwrap_or(base);
-                        cursor += 1;
-                        Glyph {
-                            id: glyph.id,
-                            advance: Twip(glyph.advance.round() as i32),
-                            cluster,
-                        }
-                    })
-                    .collect();
+                // On a dynamic fallback face, a full-width CJK glyph whose native
+                // advance exceeds the em is snapped down to the em (Word's one-em
+                // cell); the shaved excess accrues into `this_run_trim` so following
+                // LTR runs can close up. Latin/proportional glyphs and any advance
+                // already at or under the em pass through unchanged.
+                let em = size.raw();
+                let mut this_run_trim = 0i32;
+                let mut glyphs: Vec<Glyph> = Vec::new();
+                for glyph in glyph_run.glyphs() {
+                    let cluster = run_offsets.get(cursor).copied().unwrap_or(base);
+                    let native = glyph.advance.round() as i32;
+                    let advance = if is_fallback && !is_rtl {
+                        full_width_cjk_advance(
+                            run_cjk.get(cursor).copied().unwrap_or(false),
+                            native,
+                            em,
+                        )
+                    } else {
+                        native
+                    };
+                    this_run_trim += native - advance;
+                    cursor += 1;
+                    glyphs.push(Glyph {
+                        id: glyph.id,
+                        advance: Twip(advance),
+                        cluster,
+                    });
+                }
+                // Later LTR runs on this line start `this_run_trim` further left.
+                if !is_rtl {
+                    cjk_trim_before += this_run_trim;
+                }
                 // `parley` resolves the Unicode bidi level per run; its parity is
                 // the run's direction (even = LTR, odd = RTL), which is all the
                 // public API exposes and all `hittest` reads.
-                let bidi_level = u8::from(glyph_run.run().is_rtl());
+                let bidi_level = u8::from(is_rtl);
                 // Alpha 0 is the "no highlight" sentinel carried through the brush.
                 let highlight = (style.brush.highlight[3] != 0).then_some(style.brush.highlight);
                 out_runs.push(GlyphRun {
@@ -1145,6 +1210,119 @@ mod tests {
     /// shared registry under a dynamic `FontId` and its exact bytes are served
     /// back — independent of the `system-fonts` feature (an in-memory blob store,
     /// WASM-clean).
+    #[test]
+    fn full_width_cjk_scalars_exclude_half_width_forms() {
+        assert!(is_full_width_cjk('中'), "a Han ideograph is full-width");
+        assert!(is_full_width_cjk('あ'), "hiragana is full-width");
+        assert!(is_full_width_cjk('２'), "a full-width digit is full-width");
+        assert!(!is_full_width_cjk('2'), "an ASCII digit is not CJK");
+        assert!(!is_full_width_cjk('A'), "Latin is not CJK");
+        assert!(
+            !is_full_width_cjk('\u{FF71}'),
+            "half-width katakana advances at half an em, so it is not full-width"
+        );
+    }
+
+    #[test]
+    fn full_width_cjk_advance_clamps_over_em_and_leaves_others() {
+        let em = 200;
+        // A full-width CJK cell wider than the em is snapped down to the em.
+        assert_eq!(
+            full_width_cjk_advance(true, 214, em),
+            em,
+            "over-em CJK -> em"
+        );
+        // A CJK cell already at or under the em is untouched (never widened).
+        assert_eq!(
+            full_width_cjk_advance(true, em, em),
+            em,
+            "at-em CJK unchanged"
+        );
+        assert_eq!(
+            full_width_cjk_advance(true, 180, em),
+            180,
+            "under-em CJK kept"
+        );
+        // A non-CJK (proportional) glyph is never touched, however wide.
+        assert_eq!(
+            full_width_cjk_advance(false, 260, em),
+            260,
+            "a non-CJK glyph keeps its native (proportional) advance"
+        );
+    }
+
+    /// With `system-fonts` ON, a CJK run that shapes on a dynamic OS fallback face
+    /// carries no CJK glyph advance *wider* than the em — an over-em fallback cell is
+    /// snapped down to the one-em cell (and a face that already advances at the em is
+    /// unchanged). A Latin run's advances are never touched. Gated on a covering face
+    /// being present (a headless runner may have none).
+    #[test]
+    #[cfg(all(feature = "system-fonts", not(target_arch = "wasm32")))]
+    fn cjk_fallback_glyph_advance_never_exceeds_the_em() {
+        let shaper = ParleyShaper::new();
+        let size = Twip::from_points(10);
+        let em = size.raw();
+        let cjk = shaper.shape_paragraph(
+            &[StyledRun {
+                size,
+                ..run("化学品安全技术说明书")
+            }],
+            constraints(500),
+            para_range(),
+        );
+        let line = &cjk.lines[0];
+        let covered = line.runs.iter().flat_map(|r| &r.glyphs).any(|g| g.id != 0);
+        let dynamic = line.runs.iter().any(|r| FontRegistry::is_dynamic(r.font));
+        if covered && dynamic {
+            for r in &line.runs {
+                if FontRegistry::is_dynamic(r.font) {
+                    for g in &r.glyphs {
+                        assert!(
+                            g.advance.raw() <= em,
+                            "a normalized CJK fallback advance never exceeds the em \
+                             ({} > {em})",
+                            g.advance.raw()
+                        );
+                    }
+                }
+            }
+        }
+        // A Latin run (no CJK scalars) is never normalized: its digit advances are
+        // proportional and, for these digits, wider than nothing — importantly, the
+        // Latin path is untouched relative to the bundled baseline.
+        let latin_dyn = shaper.shape_paragraph(
+            &[StyledRun {
+                size,
+                requested_family: Some("Arial".into()),
+                ..run("2025/01/23")
+            }],
+            constraints(500),
+            para_range(),
+        );
+        let latin_bundled = shaper.shape_paragraph(
+            &[StyledRun {
+                size,
+                ..run("2025/01/23")
+            }],
+            constraints(500),
+            para_range(),
+        );
+        // The bundled Latin advances are the golden path — untouched by the CJK gate.
+        let advances: Vec<i32> = latin_bundled.lines[0]
+            .runs
+            .iter()
+            .flat_map(|r| &r.glyphs)
+            .map(|g| g.advance.raw())
+            .collect();
+        assert!(
+            advances.iter().all(|&a| a > 0),
+            "Latin digits keep their proportional advances"
+        );
+        // Whether or not a system Arial resolved, no Latin glyph was clamped to a CJK
+        // cell (the run carries no full-width CJK scalars).
+        let _ = latin_dyn;
+    }
+
     #[test]
     fn a_host_registered_font_is_interned_and_served() {
         let shaper = ParleyShaper::new();

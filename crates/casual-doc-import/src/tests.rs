@@ -2415,6 +2415,17 @@ fn header_vml_text_box_with_absolute_position_is_a_positioned_float() {
         text_box.extent.is_some(),
         "a floating header box carries its absolute extent"
     );
+    assert_eq!(
+        text_box.body_properties.insets,
+        casual_doc_model::v1::TextBoxInsets {
+            left_emu: 0,
+            top_emu: 0,
+            right_emu: 0,
+            bottom_emu: 0,
+        },
+        "an explicit inset=\"0,0,0,0\" is honored so the content box is not shrunk by \
+         a default inset (which would wrap the date a line early)"
+    );
     assert_eq!(tb_block_text(&text_box.blocks), "修订日期");
 }
 
