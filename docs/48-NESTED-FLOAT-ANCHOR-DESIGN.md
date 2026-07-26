@@ -35,6 +35,8 @@ never descended, so floating drawings inside its cells are invisible.
 
 ## Compatibility boundary
 
-This slice does not implement text wrapping around floats, per-section page
-geometry, table vertical merges, or VML absolute-text-box restoration. It fixes
+This slice did not implement text wrapping around floats, per-section page
+geometry, table vertical merges, or VML absolute-text-box restoration. It fixed
 only discovery and paragraph-relative placement for already modeled floats.
+Per-section page/margin/column geometry is implemented separately by P1F-53
+(`docs/53-PER-SECTION-ANCHOR-GEOMETRY-DESIGN.md`).
