@@ -2231,6 +2231,142 @@ mod tests {
         );
     }
 
+    /// Regression: dense inline formatting must not overprint (P1F inline-overprint
+    /// fix). A `parley` shaping run is split into one `GlyphRun` per contiguous
+    /// brush/decoration span; the shaper must emit each `GlyphRun`'s *own* glyph
+    /// slice, not the whole parent run's glyphs. Before the fix, adjacent same-face
+    /// runs that differed only in brush (a highlighted run beside a recolored
+    /// "inverse video" run) each re-emitted every glyph of the merged run, so their
+    /// glyph clusters and x-ranges overlapped and the text drew on top of itself.
+    ///
+    /// The invariant asserted here is the one that was violated: on a line, the
+    /// runs' glyph *cluster ranges* are pairwise disjoint (no byte is emitted by
+    /// two runs), and each run's x-range starts at or after the previous run's end
+    /// (allowing only `parley`'s <=1-twip per-run rounding, never a real backtrack).
+    #[test]
+    fn dense_inline_runs_do_not_overprint() {
+        use casual_doc_model::v1::{Color, HighlightColor, RgbColor, VerticalAlignment};
+        // Every run shares one face (no bold/italic split) so `parley` shapes them
+        // as a single run split only by brush/decoration — the overprint trigger.
+        let colored = |r, g, b| Some(Color::Rgb(RgbColor { r, g, b }));
+        let inlines = vec![
+            run_node(11, "Here is ", RunProperties::default()),
+            run_node(
+                12,
+                "red",
+                RunProperties {
+                    color: colored(200, 0, 0),
+                    ..RunProperties::default()
+                },
+            ),
+            run_node(
+                13,
+                " strike",
+                RunProperties {
+                    strike: Some(true),
+                    ..RunProperties::default()
+                },
+            ),
+            run_node(
+                14,
+                "sup",
+                RunProperties {
+                    vertical_alignment: Some(VerticalAlignment::Superscript),
+                    ..RunProperties::default()
+                },
+            ),
+            run_node(
+                15,
+                "highlight",
+                RunProperties {
+                    highlight: Some(HighlightColor::Yellow),
+                    ..RunProperties::default()
+                },
+            ),
+            // "Inverse video": white glyphs, same face as the neighbours, so it
+            // merges into the same shaping run as the highlighted span before it.
+            run_node(
+                16,
+                "INVERSE",
+                RunProperties {
+                    color: colored(255, 255, 255),
+                    ..RunProperties::default()
+                },
+            ),
+            run_node(17, " tail", RunProperties::default()),
+        ];
+        let doc = document(vec![paragraph(10, inlines)]);
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&doc, &shaper, Twip::from_points(600));
+        let lines = first_paragraph_lines(&galley);
+        assert_eq!(lines.lines.len(), 1, "the text fits on one line");
+        let runs = &lines.lines[0].runs;
+        assert!(
+            runs.len() >= 6,
+            "the brush/decoration changes split the line into distinct runs (got {})",
+            runs.len()
+        );
+
+        // 1) Cluster ranges are pairwise disjoint: no glyph byte offset is emitted
+        //    by two runs. Before the fix, the highlighted and inverse runs both
+        //    carried the whole merged run's clusters, so this set had duplicates.
+        let mut seen: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+        for run in runs {
+            for glyph in &run.glyphs {
+                assert!(
+                    seen.insert(glyph.cluster),
+                    "cluster byte {} is emitted by two runs — runs overprint",
+                    glyph.cluster
+                );
+            }
+        }
+
+        // 2) Runs advance in x: each run starts at or after the previous run's
+        //    right edge. A tolerance of 1 twip absorbs `parley`'s independent
+        //    per-run offset/advance rounding; the pre-fix bug backtracked by
+        //    hundreds of twips (a whole span's width), far outside it.
+        let mut prev_end = i32::MIN;
+        for run in runs {
+            let start = run.origin.x.raw();
+            let end = start + run_advance(run).raw();
+            assert!(
+                start + 1 >= prev_end,
+                "run at x={start} overprints the previous run ending at x={prev_end}"
+            );
+            prev_end = end;
+        }
+    }
+
+    /// Regression: consecutive non-empty paragraphs must each have a positive
+    /// height so composition stacks them at distinct, non-overlapping y ranges.
+    #[test]
+    fn consecutive_paragraphs_have_positive_distinct_heights() {
+        let doc = document(vec![
+            paragraph(
+                10,
+                vec![run_node(11, "First paragraph", RunProperties::default())],
+            ),
+            paragraph(
+                20,
+                vec![run_node(21, "Second paragraph", RunProperties::default())],
+            ),
+        ]);
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&doc, &shaper, Twip::from_points(400));
+        let heights: Vec<i32> = galley
+            .iter()
+            .filter_map(|f| match f {
+                BlockFragment::Paragraph { lines, .. } => Some(lines.height().raw()),
+                BlockFragment::TableRow { .. } => None,
+            })
+            .collect();
+        assert_eq!(heights.len(), 2, "two paragraph fragments");
+        assert!(
+            heights.iter().all(|&h| h > 0),
+            "each paragraph has positive height so the next stacks below it: {heights:?}"
+        );
+    }
+
     /// A run with the given size (half-points) and extra run properties.
     fn sized_run(id: u64, text: &str, half_points: u32, properties: RunProperties) -> InlineNode {
         run_node(

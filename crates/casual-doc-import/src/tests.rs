@@ -2733,9 +2733,22 @@ fn comment_reference_body_and_metadata_are_modeled() {
         _ => None,
     });
     let comment_ref = comment_ref.expect("comment reference modeled");
-    // The comment-range markers are not modeled but are reported.
-    assert!(features(&import).contains(&"commentRangeStart"));
-    assert!(features(&import).contains(&"commentRangeEnd"));
+    // The comment-range markers are modeled (not reported) and bracket the
+    // commented span, each resolving to the same comment as the reference.
+    let range_start = paragraph(&import, 0).inlines.iter().find_map(|i| match i {
+        InlineNode::CommentRangeStart(c) => Some(c),
+        _ => None,
+    });
+    let range_end = paragraph(&import, 0).inlines.iter().find_map(|i| match i {
+        InlineNode::CommentRangeEnd(c) => Some(c),
+        _ => None,
+    });
+    let range_start = range_start.expect("comment range start modeled");
+    let range_end = range_end.expect("comment range end modeled");
+    assert_eq!(range_start.comment, comment_ref.comment);
+    assert_eq!(range_end.comment, comment_ref.comment);
+    assert!(!features(&import).contains(&"commentRangeStart"));
+    assert!(!features(&import).contains(&"commentRangeEnd"));
 
     assert_eq!(import.document.definitions().comments.len(), 1);
     let comment = import
