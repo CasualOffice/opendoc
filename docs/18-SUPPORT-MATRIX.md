@@ -1,7 +1,7 @@
 # Support Matrix
 
 **Status:** Accepted for Phase 0
-**Last updated:** 2026-07-24
+**Last updated:** 2026-07-27
 
 This document distinguishes target support from implemented support. A target is
 not considered supported until its required CI and conformance gates pass.
@@ -61,8 +61,9 @@ report.
 | --- | --- | --- |
 | Normalized JSON snapshot | Yes | Strict bounded schema v0 load/export implemented. |
 | Canonical normalized CBOR | Yes | Designed, not implemented. |
-| DOCX import/export | Yes | Bounded ZIP inspection implemented; semantic import complete (every construct family modeled); the semantic writer (Phase 1B) round-trips essentially all content and is nearly feature-complete. |
+| DOCX import/export | Yes | Bounded ZIP inspection implemented; semantic import complete (every construct family modeled); the semantic writer (Phase 1B) is complete and round-trips the modeled surface (import → write → reopen = identical model). |
 | TXT import/export | Yes | Planned as a simple conformance path. |
+| Page render to raster (PNG) | Yes | CPU backend implemented: real pages, tables, images, and VML render via `tiny-skia`/`skrifa`; structurally strong, not yet pixel-perfect Word-grade (see doc 46). |
 | PDF render/export | Yes | Backend decision pending. |
 | ODT import/export | Later | Not a v1 release gate. |
 | HTML/Markdown interchange | Later | Not an editing source of truth. |
@@ -72,13 +73,13 @@ report.
 
 | Area | v1 expectation | Current status |
 | --- | --- | --- |
-| Paragraphs, marks, lists | Supported | Paragraph/text/mark model implemented; list/numbering semantics modeled and imported (Phase 1A complete). |
-| Tables and merged cells | Supported | Modeled and imported (Phase 1A); layout/edit surface pending. |
-| Sections, headers, footers | Supported | Modeled and imported (Phase 1A); layout/edit surface pending. |
-| Images and anchors | Supported | Modeled and imported (Phase 1A); layout/edit surface pending. |
-| Comments and tracked changes | Supported | Modeled and imported (Phase 1A); layout/edit surface pending. |
-| Fields and notes | Supported or render-only by subtype | Modeled and imported (Phase 1A); layout/edit surface pending. |
-| Shapes, text boxes, VML | Preserve or flatten with warning | Modeled and imported (Phase 1A); layout/edit surface pending. |
+| Paragraphs, marks, lists | Supported | Modeled and imported (Phase 1A); shaped, laid out, and rendered via the style cascade; edit surface pending. |
+| Tables and merged cells | Supported | Modeled and imported (Phase 1A); laid out and rendered with cell margins, vertical alignment, borders, and merges; cross-page row splitting and edit surface pending. |
+| Sections, headers, footers | Supported | Modeled and imported (Phase 1A); headers/footers flow and render with Word band nesting; multi-column section layout and edit surface pending. |
+| Images and anchors | Supported | Modeled and imported (Phase 1A); rendered via the z-ordered float layer (groups, floating text boxes, header/footer floats); text-wrap around floats and edit surface pending. |
+| Comments and tracked changes | Supported | Modeled and imported (Phase 1A); layout/render display and edit surface pending. |
+| Fields and notes | Supported or render-only by subtype | Modeled and imported (Phase 1A); simple/page fields render; footnote/endnote body placement pending. |
+| Shapes, text boxes, VML | Preserve or flatten with warning | Modeled and imported (Phase 1A); VML shapes and text boxes parsed and painted via the float layer; exact path geometry and text-wrap pending. |
 | Real-time collaboration | Adapter-based | Post local transaction stability. |
 | Accessibility semantics | Required | Designed, not implemented. |
 

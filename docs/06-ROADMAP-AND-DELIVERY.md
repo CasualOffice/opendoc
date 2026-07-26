@@ -90,12 +90,27 @@ Exit gate:
 
 ## Phase 1B — Semantic DOCX writer (model → WordprocessingML)
 
-**Status:** In progress (nearly feature-complete)
+**Status:** Complete
 **Design:** `39-PHASE-1B-SEMANTIC-DOCX-WRITER-DESIGN.md`
+**Exit evidence:** `41-PHASE-1B-EXIT-REPORT.md`
+
+The semantic writer re-emits an edited model as a valid, editable `.docx`; the
+import → write → reopen model round-trip (the "semantic fixed point") holds over
+the real-producer fixture corpus and the output opens cleanly in LibreOffice.
 
 ## Phase 1C — Typography and paragraph layout
 
-**Status:** Not started
+**Status:** Substantially implemented
+**Design:** `43-PHASE-1C-LAYOUT-RENDERING-DESIGN.md`
+**Fidelity roadmap:** `46-RENDERING-FIDELITY-GAP-ANALYSIS.md`
+
+The `casual-doc-layout` crate shapes styled paragraphs into positioned lines via
+`parley` (UAX#14 line breaking, bidi, face selection), resolves effective run and
+paragraph properties through the full style cascade (`docDefaults →
+styles/basedOn → direct`), and builds a block/flow galley including tables with
+cell margins and vertical alignment. Remaining before the phase is declared
+complete: full tab-stop/justification/hanging-indent fidelity, per-script font
+slots, and the residual appearance items tracked in doc 46 (F7).
 
 Deliver:
 
@@ -117,7 +132,18 @@ Exit gate:
 
 ## Phase 1D — Pagination and display list
 
-**Status:** Not started
+**Status:** Substantially implemented
+**Design:** `43-PHASE-1C-LAYOUT-RENDERING-DESIGN.md`
+
+The paginator slices the galley into pages with page geometry, header/footer band
+nesting, break control (page-break-before, keep-next/keep-lines, widow/orphan),
+and line-level paragraph splitting, and emits a backend-neutral display list.
+Block-level SDT content is flowed (recovering tables of contents), and a
+z-ordered floating-object layer (DrawingML groups, floating text boxes, VML) is
+placed over the body and header/footer bands. Remaining before the phase is
+declared complete: cross-page table row splitting, multi-column section layout,
+footnote/endnote body placement, and the ±1 page-count convergence tracked in
+doc 46.
 
 Deliver:
 
@@ -136,7 +162,18 @@ Exit gate:
 
 ## Phase 1E — Renderer and hit testing
 
-**Status:** Not started
+**Status:** CPU rendering implemented; other backends and hit testing not started
+**Design:** `43-PHASE-1C-LAYOUT-RENDERING-DESIGN.md`
+
+The `casual-doc-render` CPU backend executes the backend-neutral display list on
+a `tiny-skia` pixmap, rasterizing glyph runs from `skrifa` outlines of the same
+face the shaper used and painting page backgrounds, tables, images, and VML
+shapes — real DOCX pages render to PNG. Measured against LibreOffice as the
+layout oracle, sample-corpus page counts are exact on 3 of 5 documents and
+within ±1 on the other 2. The renderer is structurally strong but not yet
+pixel-perfect Word-grade (see doc 46 for residual gaps). The WASM reference
+renderer, GPU backend, pointer-to-position hit testing, and caret geometry are
+not started.
 
 Deliver:
 
