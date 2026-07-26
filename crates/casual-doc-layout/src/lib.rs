@@ -41,6 +41,7 @@ pub mod paginate;
 pub mod resolve;
 pub mod running;
 pub mod shape;
+pub mod symbol_map;
 pub mod tabs;
 pub mod text;
 pub mod units;
