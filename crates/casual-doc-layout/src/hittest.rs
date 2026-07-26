@@ -317,9 +317,10 @@ fn collect_fragment<'a>(
             }
         }
         BlockFragment::TableRow { cells, .. } => {
+            let row_height = fragment.height();
             for cell in cells {
-                let cell_left = left + cell.x;
-                let mut cell_top = top;
+                let cell_left = left + cell.x + cell.margins.start;
+                let mut cell_top = top + cell.content_y_offset(cell.box_height(row_height));
                 for block in &cell.blocks {
                     collect_fragment(block, cell_left, cell_top, page, out);
                     cell_top = cell_top + block.height();
@@ -635,6 +636,48 @@ mod tests {
             assert_eq!(hit.pos, pos, "caret→hit round-trips for offset {off}");
             assert_eq!(hit.zone, HitZone::Content);
         }
+    }
+
+    #[test]
+    fn merged_cell_hit_geometry_uses_margins_and_the_full_vertical_alignment_box() {
+        use crate::block::{
+            CellBorders, CellContentMargins, CellFragment, CellVAlign, CellVerticalMerge,
+        };
+        let inner = ltr_para(100, &[1]);
+        let row = BlockFragment::TableRow {
+            id: node(10),
+            table: node(20),
+            cells: vec![CellFragment {
+                id: node(11),
+                grid_span: 1,
+                x: Twip(200),
+                width: Twip(3000),
+                blocks: vec![inner],
+                margins: CellContentMargins {
+                    top: Twip(50),
+                    start: Twip(120),
+                    bottom: Twip(50),
+                    end: Twip::ZERO,
+                },
+                vertical_alignment: CellVAlign::Bottom,
+                vertical_merge: CellVerticalMerge::Restart { height: Twip(1000) },
+                borders: CellBorders::default(),
+                shading: None,
+            }],
+            height: Twip(500),
+            can_split: false,
+            header: false,
+            merge_keep_next: true,
+            clip: false,
+        };
+        let mut lines = Vec::new();
+        collect_fragment(&row, Twip(100), Twip(200), 1, &mut lines);
+
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].left, Twip(420));
+        // Occupied height is 50 + 240 + 50 = 340; bottom alignment in the
+        // 1000-twip merged box adds all 660 twips of slack after the top margin.
+        assert_eq!(lines[0].top, Twip(910));
     }
 
     #[test]

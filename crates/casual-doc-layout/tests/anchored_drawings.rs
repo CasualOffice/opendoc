@@ -22,11 +22,13 @@ use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_layout::units::{Point, Size, Twip};
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
-    AnchorHorizontal, AnchorVertical, AnchoredDrawing, BlockNode, DefinitionMap, Definitions,
-    Document, DrawingAnchor, Extent, GridColumn, HeaderFooter as ModelHeaderFooter, HeaderFooterId,
-    HorizontalAnchor, HorizontalPosition, InlineNode, MediaId, MediaReference, Paragraph,
-    ParagraphProperties, Run, RunProperties, SectionId, Table, TableCell, TableCellProperties,
-    TableProperties, TableRow, TableRowProperties, VerticalAnchor, VerticalPosition, WrapMode,
+    AnchorHorizontal, AnchorVertical, AnchoredDrawing, BlockNode, CellVerticalAlignment,
+    DefinitionMap, Definitions, Document, DrawingAnchor, Extent, GridColumn,
+    HeaderFooter as ModelHeaderFooter, HeaderFooterId, HeightRule, HorizontalAnchor,
+    HorizontalPosition, InlineNode, MediaId, MediaReference, Paragraph, ParagraphProperties,
+    RowHeight, Run, RunProperties, SectionId, Table, TableCell, TableCellProperties,
+    TableProperties, TableRow, TableRowProperties, VerticalAnchor, VerticalMerge, VerticalPosition,
+    WrapMode,
 };
 
 fn node(id: u64) -> NodeId {
@@ -334,11 +336,90 @@ fn a_float_in_a_body_table_cell_uses_the_nested_paragraph_on_its_actual_page() {
     let BlockFragment::TableRow { cells, .. } = &placed_row.fragment else {
         unreachable!()
     };
+    let row_height = placed_row.fragment.height();
     let expected_y =
-        placed_row.rect.origin.y + cells[0].content_y_offset(placed_row.fragment.height());
+        placed_row.rect.origin.y + cells[0].content_y_offset(cells[0].box_height(row_height));
     assert_eq!(
         layout.pages[1].anchored[0].rect.origin.y, expected_y,
         "paragraph-relative placement includes the table cell content offset"
+    );
+}
+
+#[test]
+fn a_float_in_a_bottom_aligned_vertical_merge_uses_the_full_merged_box() {
+    let (media_id, definitions) = media_defs();
+    let exact = TableRowProperties {
+        height: RowHeight {
+            value_twips: Some(1_000),
+            rule: Some(HeightRule::Exact),
+        },
+        ..TableRowProperties::default()
+    };
+    let table = BlockNode::Table(Table {
+        id: node(500),
+        grid: vec![GridColumn {
+            width_twips: Some(4_000),
+        }],
+        grid_change: None,
+        properties: TableProperties::default(),
+        rows: vec![
+            TableRow {
+                id: node(501),
+                properties: exact.clone(),
+                cells: vec![TableCell {
+                    id: node(510),
+                    properties: TableCellProperties {
+                        vertical_merge: Some(VerticalMerge::Restart),
+                        vertical_alignment: Some(CellVerticalAlignment::Bottom),
+                        ..TableCellProperties::default()
+                    },
+                    blocks: vec![BlockNode::Paragraph(Paragraph {
+                        id: node(511),
+                        properties: ParagraphProperties::default(),
+                        inlines: vec![run(512, "merged"), anchored_at_paragraph(513, media_id)],
+                    })],
+                }],
+            },
+            TableRow {
+                id: node(502),
+                properties: exact,
+                cells: vec![TableCell {
+                    id: node(520),
+                    properties: TableCellProperties {
+                        vertical_merge: Some(VerticalMerge::Continue),
+                        ..TableCellProperties::default()
+                    },
+                    blocks: vec![BlockNode::Paragraph(Paragraph {
+                        id: node(521),
+                        properties: ParagraphProperties::default(),
+                        inlines: Vec::new(),
+                    })],
+                }],
+            },
+        ],
+    });
+    let doc = Document::new(node(1), vec![table], definitions).unwrap();
+
+    let shaper = ParleyShaper::new();
+    let cfg = config();
+    let galley = build_galley(&doc, &shaper, cfg.content_area().size.width);
+    let mut layout = paginate(&galley, &cfg);
+    place_floats(&mut layout, &doc, &shaper, &cfg);
+
+    assert_eq!(layout.pages.len(), 1);
+    assert_eq!(layout.pages[0].anchored.len(), 1);
+    let placed_row = &layout.pages[0].placed[0];
+    let BlockFragment::TableRow { cells, .. } = &placed_row.fragment else {
+        unreachable!()
+    };
+    let row_height = placed_row.fragment.height();
+    let cell_height = cells[0].box_height(row_height);
+    assert_eq!(cell_height, Twip(2_000));
+    let expected_y = placed_row.rect.origin.y + cells[0].content_y_offset(cell_height);
+    assert_eq!(layout.pages[0].anchored[0].rect.origin.y, expected_y);
+    assert!(
+        expected_y.raw() > placed_row.rect.bottom().raw(),
+        "bottom alignment is resolved against both covered rows, not row one"
     );
 }
 
@@ -410,8 +491,9 @@ fn a_float_in_a_header_table_cell_is_discovered_and_repeated_per_page() {
         let BlockFragment::TableRow { cells, .. } = &placed_row.fragment else {
             panic!("expected a header table row");
         };
+        let row_height = placed_row.fragment.height();
         let expected_y =
-            placed_row.rect.origin.y + cells[0].content_y_offset(placed_row.fragment.height());
+            placed_row.rect.origin.y + cells[0].content_y_offset(cells[0].box_height(row_height));
         assert_eq!(page.anchored[0].rect.origin.y, expected_y);
     }
 }

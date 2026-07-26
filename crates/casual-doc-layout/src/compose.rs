@@ -6,7 +6,7 @@
 //! rendering backend applies the device scale (DPI × zoom) when it paints, which
 //! is the "scale only at paint" rule from `43-…`.
 
-use crate::block::{BlockFragment, CellBorders, ParagraphDecor};
+use crate::block::{BlockFragment, CellBorders, CellVerticalMerge, ParagraphDecor};
 use crate::display::{Color, DisplayList, PaintItem, Stroke};
 use crate::page::{AnchorContent, Page, PlacedAnchor};
 use crate::text::LineLayout;
@@ -275,8 +275,12 @@ fn compose_fragment(list: &mut DisplayList, fragment: &BlockFragment, origin: Po
         BlockFragment::TableRow { cells, clip, .. } => {
             let row_height = fragment.height();
             for cell in cells {
+                if matches!(cell.vertical_merge, CellVerticalMerge::Continue) {
+                    continue;
+                }
+                let cell_height = cell.box_height(row_height);
                 let cell_origin = Point::new(origin.x + cell.x, origin.y);
-                let cell_rect = Rect::new(cell_origin, Size::new(cell.width, row_height));
+                let cell_rect = Rect::new(cell_origin, Size::new(cell.width, cell_height));
                 // Cell background shading (`w:shd`) fills the cell before anything
                 // else, behind both the grid line and the content.
                 if let Some(fill) = cell.shading {
@@ -298,7 +302,7 @@ fn compose_fragment(list: &mut DisplayList, fragment: &BlockFragment, origin: Po
                 // the whole cell — only the flowed content moves.
                 let content_origin = Point::new(
                     cell_origin.x + cell.margins.start,
-                    cell_origin.y + cell.content_y_offset(row_height),
+                    cell_origin.y + cell.content_y_offset(cell_height),
                 );
                 // An `exact` row height clips content that overflows the cell.
                 if *clip {
@@ -470,7 +474,8 @@ mod tests {
     #[test]
     fn an_exact_row_clips_and_draws_its_resolved_borders() {
         use crate::block::{
-            BlockFragment, CellBorders, CellContentMargins, CellFragment, CellVAlign, ResolvedEdge,
+            BlockFragment, CellBorders, CellContentMargins, CellFragment, CellVAlign,
+            CellVerticalMerge, ResolvedEdge,
         };
         use crate::units::Size;
         let cell = CellFragment {
@@ -481,6 +486,7 @@ mod tests {
             blocks: Vec::new(),
             margins: CellContentMargins::default(),
             vertical_alignment: CellVAlign::default(),
+            vertical_merge: CellVerticalMerge::None,
             borders: CellBorders {
                 bottom: Some(ResolvedEdge {
                     color: [10, 20, 30, 255],
@@ -497,6 +503,7 @@ mod tests {
             height: Twip(300),
             can_split: false,
             header: false,
+            merge_keep_next: false,
             clip: true,
         };
         let mut list = DisplayList::new();
@@ -735,7 +742,9 @@ mod tests {
 
     #[test]
     fn a_shaded_cell_emits_a_fill_behind_its_content() {
-        use crate::block::{CellBorders, CellContentMargins, CellFragment, CellVAlign};
+        use crate::block::{
+            CellBorders, CellContentMargins, CellFragment, CellVAlign, CellVerticalMerge,
+        };
         let cell = CellFragment {
             id: node(1),
             grid_span: 1,
@@ -744,6 +753,7 @@ mod tests {
             blocks: Vec::new(),
             margins: CellContentMargins::default(),
             vertical_alignment: CellVAlign::default(),
+            vertical_merge: CellVerticalMerge::None,
             borders: CellBorders::default(),
             shading: Some([200, 100, 50, 255]),
         };
@@ -754,6 +764,7 @@ mod tests {
             height: Twip(500),
             can_split: true,
             header: false,
+            merge_keep_next: false,
             clip: false,
         };
         let mut list = DisplayList::new();
@@ -780,6 +791,80 @@ mod tests {
         );
         assert_eq!(rect.origin, Point::new(Twip(100), Twip(200)));
         assert_eq!(rect.size, Size::new(Twip(3000), Twip(500)));
+    }
+
+    #[test]
+    fn a_vertical_merge_paints_one_box_and_skips_its_continuation() {
+        use crate::block::{
+            CellBorders, CellContentMargins, CellFragment, CellVAlign, CellVerticalMerge,
+        };
+        let cell = |id, vertical_merge, shading| CellFragment {
+            id: node(id),
+            grid_span: 1,
+            x: Twip::ZERO,
+            width: Twip(3000),
+            blocks: Vec::new(),
+            margins: CellContentMargins::default(),
+            vertical_alignment: CellVAlign::default(),
+            vertical_merge,
+            borders: CellBorders::default(),
+            shading,
+        };
+        let restart = BlockFragment::TableRow {
+            id: node(10),
+            table: node(20),
+            cells: vec![cell(
+                11,
+                CellVerticalMerge::Restart { height: Twip(1000) },
+                Some([200, 100, 50, 255]),
+            )],
+            height: Twip(500),
+            can_split: true,
+            header: false,
+            merge_keep_next: true,
+            clip: false,
+        };
+        let continuation = BlockFragment::TableRow {
+            id: node(12),
+            table: node(20),
+            cells: vec![cell(
+                13,
+                CellVerticalMerge::Continue,
+                Some([10, 20, 30, 255]),
+            )],
+            height: Twip(500),
+            can_split: true,
+            header: false,
+            merge_keep_next: false,
+            clip: false,
+        };
+        let mut list = DisplayList::new();
+        compose_fragment(&mut list, &restart, Point::new(Twip(100), Twip(200)));
+        compose_fragment(&mut list, &continuation, Point::new(Twip(100), Twip(700)));
+
+        let fills: Vec<_> = list
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                PaintItem::Rect {
+                    rect,
+                    fill: Some(fill),
+                    ..
+                } => Some((*rect, *fill)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(fills.len(), 1, "the continuation emits no duplicate box");
+        assert_eq!(fills[0].0.size.height, Twip(1000));
+        assert_eq!(
+            fills[0].1,
+            Color {
+                r: 200,
+                g: 100,
+                b: 50,
+                a: 255
+            }
+        );
     }
 
     #[test]
