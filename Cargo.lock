@@ -81,6 +81,7 @@ dependencies = [
  "parley",
  "serde",
  "serde_json",
+ "skrifa",
 ]
 
 [[package]]
