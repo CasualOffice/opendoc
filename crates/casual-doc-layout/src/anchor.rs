@@ -154,7 +154,7 @@ fn collect_inlines(
     inlines: &[InlineNode],
     paragraph: Option<NodeId>,
     scope: PageScope,
-    band_origin: Option<(usize, Point)>,
+    known_target: Option<(usize, Rect)>,
 ) {
     for inline in inlines {
         match inline {
@@ -167,7 +167,7 @@ fn collect_inlines(
                     relative_height: drawing.relative_height.unwrap_or(0),
                     order: ctx.next_order(),
                 };
-                let (page_index, refs) = target(layout, ctx, paragraph, scope, band_origin);
+                let (page_index, refs) = target(layout, ctx, paragraph, scope, known_target);
                 let rect = resolve_anchor_rect(&drawing.anchor, drawing.extent, &refs);
                 push(
                     layout,
@@ -191,7 +191,7 @@ fn collect_inlines(
                     relative_height: text_box.relative_height.unwrap_or(0),
                     order: ctx.next_order(),
                 };
-                let (page_index, refs) = target(layout, ctx, paragraph, scope, band_origin);
+                let (page_index, refs) = target(layout, ctx, paragraph, scope, known_target);
                 let rect = resolve_anchor_rect(&anchor, extent, &refs);
                 let blocks = flow_box(ctx, &text_box.blocks, rect.size.width);
                 push(
@@ -214,7 +214,7 @@ fn collect_inlines(
                 let Some(anchor) = group.anchor else {
                     continue;
                 };
-                let (page_index, refs) = target(layout, ctx, paragraph, scope, band_origin);
+                let (page_index, refs) = target(layout, ctx, paragraph, scope, known_target);
                 let origin = resolve_anchor_rect(&anchor, group.extent, &refs).origin;
                 let relative_height = group.relative_height.unwrap_or(0);
                 let behind_doc = anchor.behind_doc;
@@ -231,10 +231,10 @@ fn collect_inlines(
                 );
             }
             InlineNode::Hyperlink(link) => {
-                collect_inlines(layout, ctx, &link.inlines, paragraph, scope, band_origin);
+                collect_inlines(layout, ctx, &link.inlines, paragraph, scope, known_target);
             }
             InlineNode::Field(field) => {
-                collect_inlines(layout, ctx, &field.inlines, paragraph, scope, band_origin);
+                collect_inlines(layout, ctx, &field.inlines, paragraph, scope, known_target);
             }
             InlineNode::Revision(revision) => {
                 collect_inlines(
@@ -243,11 +243,11 @@ fn collect_inlines(
                     &revision.inlines,
                     paragraph,
                     scope,
-                    band_origin,
+                    known_target,
                 );
             }
             InlineNode::Sdt(sdt) => {
-                collect_inlines(layout, ctx, &sdt.inlines, paragraph, scope, band_origin);
+                collect_inlines(layout, ctx, &sdt.inlines, paragraph, scope, known_target);
             }
             _ => {}
         }
@@ -385,11 +385,23 @@ fn collect_band_block(
     page_index: usize,
     band: PageScope,
 ) {
-    if let BlockFragment::Paragraph { id, .. } = &placed.fragment {
-        // Resolve band floats against the band fragment's placed rectangle.
-        let band_origin = Some((page_index, placed.rect.origin));
-        if let Some(BlockNode::Paragraph(para)) = find_paragraph(ctx.document, *id, band) {
-            collect_inlines(layout, ctx, &para.inlines, Some(para.id), band, band_origin);
+    let mut paragraphs = Vec::new();
+    collect_paragraph_rects(
+        &placed.fragment,
+        placed.rect.origin,
+        placed.rect.size.width,
+        &mut paragraphs,
+    );
+    for (id, rect) in paragraphs {
+        if let Some(BlockNode::Paragraph(para)) = find_paragraph(ctx.document, id, band) {
+            collect_inlines(
+                layout,
+                ctx,
+                &para.inlines,
+                Some(para.id),
+                band,
+                Some((page_index, rect)),
+            );
         }
     }
 }
@@ -438,12 +450,9 @@ fn target(
     ctx: &FloatCtx<'_>,
     paragraph: Option<NodeId>,
     scope: PageScope,
-    band_origin: Option<(usize, Point)>,
+    known_target: Option<(usize, Rect)>,
 ) -> (usize, AnchorRefs) {
-    if let Some((page_index, origin)) = band_origin {
-        // The band fragment's placed rectangle is the paragraph reference; page/
-        // margin references still resolve against the page geometry.
-        let paragraph_box = Rect::new(origin, Size::default());
+    if let Some((page_index, paragraph_box)) = known_target {
         return (page_index, AnchorRefs::new(ctx.config, paragraph_box));
     }
     let (page_index, paragraph_box) = locate(layout, paragraph, ctx.config, scope);
@@ -551,16 +560,94 @@ fn locate(
 ) -> (usize, Rect) {
     if let Some(id) = paragraph {
         for (index, page) in layout.pages.iter().enumerate() {
-            if let Some(placed) = page
-                .placed
-                .iter()
-                .find(|placed| placed.fragment.node_id() == id)
-            {
-                return (index, placed.rect);
+            for placed in &page.placed {
+                if let Some(rect) = find_paragraph_rect(
+                    &placed.fragment,
+                    placed.rect.origin,
+                    placed.rect.size.width,
+                    id,
+                ) {
+                    return (index, rect);
+                }
             }
         }
     }
     (0, config.content_area())
+}
+
+/// Finds one paragraph's page-local box inside a placed fragment tree. Geometry
+/// mirrors composition: table-cell offsets and margins, vertical alignment, and
+/// nested block stacking are applied once at every level.
+fn find_paragraph_rect(
+    fragment: &BlockFragment,
+    origin: Point,
+    width: Twip,
+    target: NodeId,
+) -> Option<Rect> {
+    let mut found = None;
+    walk_paragraph_rects(fragment, origin, width, &mut |id, rect| {
+        if id == target {
+            found = Some(rect);
+            true
+        } else {
+            false
+        }
+    });
+    found
+}
+
+/// Collects every paragraph and its page-local box in fragment order. Running
+/// content uses this to discover floats inside selected header/footer tables.
+fn collect_paragraph_rects(
+    fragment: &BlockFragment,
+    origin: Point,
+    width: Twip,
+    out: &mut Vec<(NodeId, Rect)>,
+) {
+    walk_paragraph_rects(fragment, origin, width, &mut |id, rect| {
+        out.push((id, rect));
+        false
+    });
+}
+
+/// Visits paragraph boxes in fragment order. Returning `true` from `visit`
+/// stops the walk, allowing lookup and collection to share one geometry path.
+fn walk_paragraph_rects(
+    fragment: &BlockFragment,
+    origin: Point,
+    width: Twip,
+    visit: &mut impl FnMut(NodeId, Rect) -> bool,
+) -> bool {
+    match fragment {
+        BlockFragment::Paragraph { id, .. } => {
+            visit(*id, Rect::new(origin, Size::new(width, fragment.height())))
+        }
+        BlockFragment::TableRow { cells, .. } => {
+            let row_height = fragment.height();
+            for cell in cells {
+                let content_origin = Point::new(
+                    origin.x + cell.x + cell.margins.start,
+                    origin.y + cell.content_y_offset(row_height),
+                );
+                let content_width = Twip(
+                    (cell.width.raw() - cell.margins.start.raw() - cell.margins.end.raw()).max(1),
+                );
+                let mut y = content_origin.y;
+                for block in &cell.blocks {
+                    if walk_paragraph_rects(
+                        block,
+                        Point::new(content_origin.x, y),
+                        content_width,
+                        visit,
+                    ) {
+                        return true;
+                    }
+                    y = y + block.height();
+                }
+            }
+            false
+        }
+    }
 }
 
 /// The reference boxes a float's offsets/alignments resolve against, in page-local
