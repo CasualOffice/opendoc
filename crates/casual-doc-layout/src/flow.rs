@@ -124,6 +124,43 @@ pub fn build_galley_with_report(
     (galley, report)
 }
 
+/// Flows an arbitrary slice of a document's **body** blocks into a galley at
+/// `content_width` — the per-section building block the multi-column driver uses.
+///
+/// This is exactly [`build_galley`] restricted to `blocks` (a contiguous run of
+/// the body belonging to one section) and laid out at that section's column
+/// width, so each section flows at its own line-break width. The full section
+/// list is threaded into the flow context, so a paragraph that carries a section
+/// break still stamps the correct trailing page break (`nextPage` ⇒ break,
+/// `continuous` ⇒ none) relative to the *next* section.
+#[must_use]
+pub fn build_galley_for_blocks(
+    document: &Document,
+    shaper: &dyn LineShaper,
+    blocks: &[BlockNode],
+    content_width: Twip,
+) -> Vec<BlockFragment> {
+    let resolver = FontResolver::new();
+    let mut report = FontResolutionReport::new();
+    let palette = document
+        .definitions()
+        .color_scheme
+        .as_ref()
+        .map(resolve_palette);
+    let mut ctx = FlowCtx {
+        resolver: &resolver,
+        scheme: document.definitions().font_scheme.as_ref(),
+        report: &mut report,
+        default_tab: tabs::default_tab_stop(document.definitions().settings.default_tab_stop),
+        media: &document.definitions().media,
+        palette: palette.as_ref(),
+        cascade: StyleCascade::new(document.definitions()),
+        para_style: None,
+        sections: &document.definitions().sections,
+    };
+    flow_blocks(blocks, shaper, content_width, &mut ctx)
+}
+
 /// Flows a header's or footer's block content into a galley of fragments at
 /// `content_width` (the header/footer band width, normally the body content
 /// width), reusing the document's font scheme, media table, and default tab stop.
