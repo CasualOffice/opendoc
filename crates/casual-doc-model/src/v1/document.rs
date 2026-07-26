@@ -118,6 +118,7 @@ impl Document {
         self.validate_notes()?;
         self.validate_headers_footers()?;
         self.validate_comments()?;
+        self.validate_people()?;
         self.validate_bookmarks()?;
         self.validate_font_table()?;
         self.validate_font_scheme()?;
@@ -1074,8 +1075,39 @@ impl Document {
             if let Some(date) = &comment.date {
                 check_domain(!date.is_empty() && date.len() <= 64, "comment.date")?;
             }
+            // Threading/identity join ids are bounded hex tokens; the person link
+            // is a bounded author-name key into the identity table.
+            for value in [
+                &comment.para_id,
+                &comment.parent_para_id,
+                &comment.durable_id,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                check_domain(!value.is_empty() && value.len() <= 64, "comment.threadId")?;
+            }
+            if let Some(person) = &comment.person {
+                check_domain(!person.is_empty() && person.len() <= 255, "comment.person")?;
+            }
             for block in &comment.blocks {
                 self.validate_block(block, 0, 0, 0)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Validates the collaborator identity table (`word/people.xml`): a non-empty
+    /// bounded author name plus bounded presence-provider fields.
+    fn validate_people(&self) -> Result<(), ModelError> {
+        for person in &self.definitions.people {
+            check_domain(
+                !person.author.is_empty() && person.author.len() <= 255,
+                "person.author",
+            )?;
+            if let Some(presence) = &person.presence {
+                check_domain(presence.provider_id.len() <= 255, "person.providerId")?;
+                check_domain(presence.user_id.len() <= 255, "person.userId")?;
             }
         }
         Ok(())

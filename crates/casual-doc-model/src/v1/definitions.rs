@@ -370,6 +370,12 @@ pub struct Note {
 /// A comment definition (its id is the map key). Its content reuses the recursive
 /// block model; `blocks` may be empty. Author/date/initials are retained as the
 /// producer wrote them (opaque, bounded).
+///
+/// Review threading, resolved-state, and durable identity are carried in the
+/// companion parts (`commentsExtended.xml`, `commentsIds.xml`, `people.xml`).
+/// They join to the base comment on `para_id` — the durable id (`w14:paraId`) of
+/// the comment's last paragraph — so a threaded conversation survives a semantic
+/// edit->save instead of collapsing to flat comments.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Comment {
@@ -385,6 +391,54 @@ pub struct Comment {
     /// The comment date as written (ISO-8601 string), if declared (<= 64 bytes).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub date: Option<String>,
+    /// The durable paragraph id (`w14:paraId`) of the comment's last paragraph —
+    /// the join key for the companion parts. `<= 64` bytes when present.
+    /// Additive: omitted when absent so pre-threading snapshots stay identical.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub para_id: Option<String>,
+    /// The `para_id` of the parent comment when this comment is a reply
+    /// (`commentsExtended.xml` `w15:paraIdParent`); this is the thread edge.
+    /// `<= 64` bytes when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_para_id: Option<String>,
+    /// Resolved/done state (`commentsExtended.xml` `w15:done`).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub done: bool,
+    /// The durable id (`commentsIds.xml` `w16cid:durableId`) bound to this
+    /// comment's `para_id`. `<= 64` bytes when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub durable_id: Option<String>,
+    /// The collaborator identity (an entry in [`Definitions::people`], keyed by
+    /// author name) matching this comment's author, when `people.xml` declares
+    /// one. `<= 255` bytes when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub person: Option<String>,
+}
+
+/// A collaborator identity from `word/people.xml` (`w15:person`): an author
+/// display name plus optional presence-provider info. A [`Comment`] whose author
+/// matches `author` references it through [`Comment::person`].
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Person {
+    /// The author display name (`w15:author`) — the identity key (non-empty, at
+    /// most 255 bytes).
+    pub author: String,
+    /// Presence-provider info (`w15:presenceInfo`), if declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presence: Option<PresenceInfo>,
+}
+
+/// Presence-provider info (`w15:presenceInfo`) for a [`Person`]: the presence
+/// provider and the provider-scoped user id.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PresenceInfo {
+    /// The presence provider (`w15:providerId`, e.g. `AD`, `Windows Live`), at
+    /// most 255 bytes.
+    pub provider_id: String,
+    /// The provider-scoped user id (`w15:userId`), at most 255 bytes.
+    pub user_id: String,
 }
 
 /// A bookmark definition (its id is the map key). A bookmark is a named range;
@@ -656,4 +710,9 @@ pub struct Definitions {
     /// default so existing snapshots serialize byte-identically.
     #[serde(default, skip_serializing_if = "DocumentSettings::is_default")]
     pub settings: DocumentSettings,
+    /// Collaborator identities (`word/people.xml`), keyed by author name; a
+    /// `Comment` links to one through [`Comment::person`]. Additive: omitted when
+    /// empty so existing snapshots serialize byte-identically.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub people: Vec<Person>,
 }

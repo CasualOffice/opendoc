@@ -712,6 +712,9 @@ pub(crate) fn parse_comments(
                     author: meta.author,
                     date: meta.date,
                     initials: meta.initials,
+                    // Threading, durable id, and identity are joined from the
+                    // companion parts in `build_comments`.
+                    ..Comment::default()
                 },
             )
         })

@@ -30,6 +30,7 @@
 #![forbid(unsafe_code)]
 
 mod body;
+mod comments_ext;
 mod config;
 mod error;
 mod font_table;
@@ -59,7 +60,7 @@ use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
     BlockNode, Bookmark, BookmarkId, Comment, CommentId, DefinitionMap, Definitions, Document,
     DocumentSettings, HeaderFooter, HeaderFooterId, MediaId, Note, NoteId, Paragraph,
-    ParagraphProperties,
+    ParagraphProperties, Person,
 };
 use casual_doc_ooxml::DocxPackage;
 
@@ -204,7 +205,53 @@ pub fn import_package(
         None => None,
     };
     let comments = match comments_part {
-        Some(part) => Some(resolve_part_sources(package, &part)?),
+        Some(part) => {
+            let mut sources = resolve_part_sources(package, &part)?;
+            // Comment companion parts (P1F-10): reply threading
+            // (`commentsExtended.xml`), durable ids (`commentsIds.xml`), and
+            // collaborator identity (`people.xml`). They hang off the main-
+            // document relationships, with a well-known part-name fallback for
+            // producers that omit the relationship. Reading them here (and marking
+            // them consumed) lets `build_comments` join threading/identity onto the
+            // comments and keeps the disposition pass / side-table from double-
+            // handling them.
+            let extended_part =
+                related_or_wellknown(package, "/commentsExtended", "word/commentsExtended.xml");
+            let ids_part = related_or_wellknown(package, "/commentsIds", "word/commentsIds.xml");
+            let people_part = related_or_wellknown(package, "/people", "word/people.xml");
+            for companion in [
+                extended_part.as_ref(),
+                ids_part.as_ref(),
+                people_part.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                consumed.insert(companion.clone());
+            }
+            if let Some(companion) = extended_part {
+                sources.comments_extended = Some(
+                    package
+                        .read_part(&companion)
+                        .map_err(ImportError::Package)?,
+                );
+            }
+            if let Some(companion) = ids_part {
+                sources.comments_ids = Some(
+                    package
+                        .read_part(&companion)
+                        .map_err(ImportError::Package)?,
+                );
+            }
+            if let Some(companion) = people_part {
+                sources.people = Some(
+                    package
+                        .read_part(&companion)
+                        .map_err(ImportError::Package)?,
+                );
+            }
+            Some(sources)
+        }
         None => None,
     };
     // Header/footer parts: one per relationship, keyed by the `r:id` a `w:sectPr`
@@ -608,6 +655,25 @@ pub fn import_main_document_xml(xml: &[u8], config: ImportConfig) -> Result<Impo
     )
 }
 
+/// Resolves an admitted part reached through a main-document relationship whose
+/// type ends with `suffix`, falling back to a well-known part name when the
+/// relationship is absent. Returns `None` unless the resolved part is admitted.
+fn related_or_wellknown(package: &DocxPackage<'_>, suffix: &str, fallback: &str) -> Option<String> {
+    let admitted = |name: &str| {
+        package
+            .entries()
+            .iter()
+            .any(|entry| entry.part_name == name)
+    };
+    package
+        .main_document_relationships()
+        .iter()
+        .find(|relationship| relationship.relationship_type.ends_with(suffix))
+        .and_then(|relationship| relationship.resolved_part.clone())
+        .or_else(|| admitted(fallback).then(|| fallback.to_owned()))
+        .filter(|part| admitted(part))
+}
+
 /// Reads an extra part and resolves its own image and external-hyperlink
 /// relationships (via the part's `_rels`), so content inside it can be modeled.
 fn resolve_part_sources(
@@ -647,6 +713,7 @@ fn resolve_part_sources(
         xml,
         images,
         hyperlinks,
+        ..PartSources::default()
     })
 }
 
@@ -696,16 +763,20 @@ fn build_notes(
     Ok((map, index))
 }
 
-/// A comment definition map plus its source-`w:id` -> id resolution index.
+/// A comment definition map, its source-`w:id` -> id resolution index, and the
+/// collaborator identity table (`people.xml`).
 type BuiltComments = (
     DefinitionMap<CommentId, Comment>,
     std::collections::BTreeMap<String, CommentId>,
+    Vec<Person>,
 );
 
 /// Parses the comments part into a `CommentId`-keyed definition map plus a
 /// source-`w:id` resolution index for in-body `w:commentReference`s. The part's
 /// own image and hyperlink relationships are resolved so images/links inside a
-/// comment are modeled. Missing part → empty.
+/// comment are modeled. The companion parts (`commentsExtended`/`commentsIds`/
+/// `people`) are joined on `paraId` so reply threading, resolved-state, durable
+/// ids, and author identity survive. Missing part → empty.
 #[allow(clippy::too_many_arguments)]
 fn build_comments(
     part: Option<&PartSources>,
@@ -719,6 +790,7 @@ fn build_comments(
 ) -> Result<BuiltComments, ImportError> {
     let mut map = DefinitionMap::default();
     let mut index = std::collections::BTreeMap::new();
+    let mut people = Vec::new();
     if let Some(part) = part {
         let media_index = media::build_into(&part.images, media, ids, reporter)?;
         let comments = body::parse_comments(
@@ -732,12 +804,42 @@ fn build_comments(
             bookmarks,
             config,
         )?;
-        for (source_id, comment_id, comment) in comments {
+        // Companion-part joins: the last-paragraph `paraId` per comment (from the
+        // base part) is the key into commentsExtended (parent/done) and
+        // commentsIds (durable id); people supplies author identity.
+        let para_ids = comments_ext::scan_comment_para_ids(&part.xml, config)?;
+        let extended = match &part.comments_extended {
+            Some(xml) => comments_ext::parse_comments_extended(xml, config)?,
+            None => std::collections::BTreeMap::new(),
+        };
+        let durable = match &part.comments_ids {
+            Some(xml) => comments_ext::parse_comments_ids(xml, config)?,
+            None => std::collections::BTreeMap::new(),
+        };
+        if let Some(xml) = &part.people {
+            people = comments_ext::parse_people(xml, config)?;
+        }
+        for (source_id, comment_id, mut comment) in comments {
+            if let Some(para_id) = para_ids.get(&source_id) {
+                if let Some(entry) = extended.get(para_id) {
+                    comment.parent_para_id = entry.parent_para_id.clone();
+                    comment.done = entry.done;
+                }
+                if let Some(durable_id) = durable.get(para_id) {
+                    comment.durable_id = Some(durable_id.clone());
+                }
+                comment.para_id = Some(para_id.clone());
+            }
+            if let Some(author) = &comment.author
+                && people.iter().any(|person| &person.author == author)
+            {
+                comment.person = Some(author.clone());
+            }
             index.insert(source_id, comment_id);
             map.insert(comment_id, comment);
         }
     }
-    Ok((map, index))
+    Ok((map, index, people))
 }
 
 /// A header/footer definition map plus its relationship-id -> id resolution index.
@@ -792,11 +894,19 @@ fn build_header_footers(
 
 /// An extra part's bytes plus its own resolved image and external-hyperlink
 /// relationships, so images and links inside a note/header/footer are modeled.
+/// For the comments part, the companion parts (`commentsExtended`/`commentsIds`/
+/// `people`) ride along so `build_comments` can join threading and identity.
 #[derive(Default)]
 pub(crate) struct PartSources {
     pub xml: Vec<u8>,
     pub images: Vec<MediaSource>,
     pub hyperlinks: std::collections::BTreeMap<String, String>,
+    /// `word/commentsExtended.xml` bytes (comments part only), when present.
+    pub comments_extended: Option<Vec<u8>>,
+    /// `word/commentsIds.xml` bytes (comments part only), when present.
+    pub comments_ids: Option<Vec<u8>>,
+    /// `word/people.xml` bytes (comments part only), when present.
+    pub people: Option<Vec<u8>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -928,7 +1038,7 @@ pub(crate) fn import_with_sources(
         &mut reporter,
         config,
     )?;
-    let (comments_map, comment_ids) = build_comments(
+    let (comments_map, comment_ids, people) = build_comments(
         comments,
         &styles,
         &numbering,
@@ -990,6 +1100,7 @@ pub(crate) fn import_with_sources(
         color_scheme: theme.color_scheme,
         format_scheme_xml: theme.format_scheme_xml,
         settings,
+        people,
     };
     let document = Document::new(document_id, body, definitions).map_err(ImportError::Model)?;
     Ok(Import {
