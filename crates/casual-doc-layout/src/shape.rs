@@ -211,6 +211,44 @@ impl Default for ParleyShaper {
     }
 }
 
+/// Word's default single-line height as a multiple of the run's font size (its
+/// "single" line spacing). Used to re-base a line whose height was set by an
+/// oversized (or over-tight) coverage-fallback face back onto the run font —
+/// matching Word/LibreOffice, which normalize a CJK line to the run font's
+/// single-line height rather than inheriting a substituted face's native metrics.
+///
+/// `1.2` reproduces LibreOffice's CJK line pitch on the reference corpus (a 10 pt
+/// CJK line renders at ~16 px / 240 twips) while leaving ample room above and
+/// below the baseline for the glyph ink so CJK is never clipped.
+const CJK_SINGLE_LINE_FACTOR: f32 = 1.2;
+
+/// Whether a scalar belongs to an East-Asian (CJK/Japanese/Korean) block that the
+/// bundled Latin faces never cover. Used to recognize a run that shaped with an OS
+/// *coverage-fallback* face (as opposed to a run on its real requested Latin face,
+/// whose metrics we must never touch — Latin docs stay pixel-identical).
+fn is_cjk_scalar(ch: char) -> bool {
+    matches!(u32::from(ch),
+        0x1100..=0x11FF   // Hangul Jamo
+        | 0x2E80..=0x2EFF // CJK Radicals Supplement
+        | 0x3000..=0x303F // CJK Symbols and Punctuation
+        | 0x3040..=0x30FF // Hiragana + Katakana
+        | 0x3100..=0x312F // Bopomofo
+        | 0x3130..=0x318F // Hangul Compatibility Jamo
+        | 0x3190..=0x319F // Kanbun
+        | 0x31A0..=0x31BF // Bopomofo Extended
+        | 0x31F0..=0x31FF // Katakana Phonetic Extensions
+        | 0x3200..=0x33FF // Enclosed CJK Letters/Months + CJK Compatibility
+        | 0x3400..=0x4DBF // CJK Unified Ideographs Extension A
+        | 0x4E00..=0x9FFF // CJK Unified Ideographs
+        | 0xA960..=0xA97F // Hangul Jamo Extended-A
+        | 0xAC00..=0xD7FF // Hangul Syllables + Jamo Extended-B
+        | 0xF900..=0xFAFF // CJK Compatibility Ideographs
+        | 0xFE30..=0xFE4F // CJK Compatibility Forms
+        | 0xFF00..=0xFFEF // Halfwidth and Fullwidth Forms
+        | 0x20000..=0x3FFFF // CJK Unified Ideographs Extensions B–G + Supplement
+    )
+}
+
 /// Applies the `w:spacing@lineRule` box model to a shaped line's natural metrics,
 /// returning the `(ascent, descent, height)` to store. Word (ECMA-376 §17.3.1.33):
 ///
@@ -272,6 +310,40 @@ impl LineShaper for ParleyShaper {
         constraints: LineConstraints,
         range: ModelRange,
     ) -> LineLayout {
+        // Shape once with the natural (face-metric) line heights. This pass is
+        // byte-for-byte identical to the pre-normalization shaper, so Latin-only
+        // paragraphs, the bundled/deterministic path, and every golden are
+        // unchanged. It also reports whether the paragraph contains a CJK run that
+        // shaped with a dynamic (non-bundled) OS/host *fallback* face, whose native
+        // line height does not represent the run font's size.
+        let (layout, cjk_fallback) = self.shape_inner(runs, constraints, range, false);
+        if !cjk_fallback {
+            return layout;
+        }
+        // Re-shape the CJK paragraph with the line box driven by the *run font size*
+        // (`LineHeight::FontSizeRelative`, ~1.2× the em — Word's default single line)
+        // instead of the fallback face's ascent+descent+leading. Doing it inside
+        // `parley` (rather than rewriting the box afterwards) keeps the glyph
+        // baselines and the line box consistent on every downstream path, including
+        // paragraphs that never go through the flow layer's line restacking.
+        self.shape_inner(runs, constraints, range, true).0
+    }
+}
+
+impl ParleyShaper {
+    /// Shapes a paragraph once. When `normalize_cjk` is set, the line box is driven
+    /// by the run font size (`LineHeight::FontSizeRelative`, [`CJK_SINGLE_LINE_FACTOR`]
+    /// scaled by any `w:spacing@line` percent) rather than the shaped face's native
+    /// metrics — the CJK fallback normalization. Returns the layout and whether the
+    /// paragraph carried a CJK run shaped with a dynamic fallback face (so the caller
+    /// knows whether the normalized re-shape is warranted).
+    fn shape_inner(
+        &self,
+        runs: &[StyledRun<'_>],
+        constraints: LineConstraints,
+        range: ModelRange,
+        normalize_cjk: bool,
+    ) -> (LineLayout, bool) {
         // A paragraph with no runs (a model-empty paragraph, or a break/section
         // paragraph whose only content is a zero-width control) has nothing to
         // shape. Returning no lines — rather than letting `parley` fabricate one at
@@ -281,7 +353,7 @@ impl LineShaper for ParleyShaper {
         // default-size line here silently discards the mark metrics and mis-sizes
         // the empty line, shifting pagination.
         if runs.is_empty() {
-            return LineLayout { lines: Vec::new() };
+            return (LineLayout { lines: Vec::new() }, false);
         }
 
         let mut fonts = self.fonts.borrow_mut();
@@ -322,10 +394,24 @@ impl LineShaper for ParleyShaper {
         // Feed sizes in twips with scale = 1 so all outputs are in twips.
         let mut builder = layout_cx.ranged_builder(&mut fonts, &text, 1.0, false);
         builder.push_default(FontFamily::from(self.default_family.as_str()));
-        // Line height as a percent of the metrics line height (`w:spacing@line`).
-        if let Some(percent) = constraints.line_height_percent {
+        // The `w:spacing@line` percent multiple (`None` = single spacing = 1.0).
+        let percent = constraints
+            .line_height_percent
+            .map_or(1.0, |p| f32::from(p) / 100.0);
+        if normalize_cjk {
+            // Drive the line box from the run font size (Word's single-line height),
+            // not the fallback face's native metrics: every run's line height becomes
+            // `CJK_SINGLE_LINE_FACTOR * percent * font_size`, so a CJK line matches
+            // Word/LibreOffice instead of inheriting an oversized (or over-tight)
+            // substitute face's ascent+descent. `parley` positions the baseline
+            // within this box, leaving room for the glyph ink so CJK is not clipped.
+            builder.push_default(StyleProperty::LineHeight(LineHeight::FontSizeRelative(
+                CJK_SINGLE_LINE_FACTOR * percent,
+            )));
+        } else if constraints.line_height_percent.is_some() {
+            // Line height as a percent of the metrics line height (`w:spacing@line`).
             builder.push_default(StyleProperty::LineHeight(LineHeight::MetricsRelative(
-                f32::from(percent) / 100.0,
+                percent,
             )));
         }
         for (i, (start, end, run)) in spans.iter().enumerate() {
@@ -389,6 +475,10 @@ impl LineShaper for ParleyShaper {
 
         let line_count = layout.lines().count();
         let mut lines = Vec::with_capacity(line_count);
+        // Whether any line carries a CJK run shaped with a dynamic (non-bundled)
+        // coverage-fallback face — the signal that this paragraph should be re-shaped
+        // with the run-font-driven line box (see `shape_paragraph`).
+        let mut cjk_fallback = false;
         for (index, line) in layout.lines().enumerate() {
             let metrics = line.metrics();
             let mut out_runs = Vec::new();
@@ -422,11 +512,24 @@ impl LineShaper for ParleyShaper {
                 // code points (`system-fonts`) or a host-registered blob — we
                 // intern it so the renderer fetches its bytes by the same `FontId`.
                 let resolved = run.font();
-                let font = if self.bundled_blobs.contains(&resolved.data.id()) {
-                    FontId(style.brush.font)
-                } else {
+                let is_fallback = !self.bundled_blobs.contains(&resolved.data.id());
+                let font = if is_fallback {
                     self.registry.intern(resolved.data.clone(), resolved.index)
+                } else {
+                    FontId(style.brush.font)
                 };
+                // A run that shaped CJK text with a dynamic (non-bundled)
+                // coverage-fallback face marks the paragraph for run-font-driven line
+                // normalization. Latin runs on their real requested face (also dynamic
+                // under `system-fonts`, e.g. installed Arial) carry no CJK scalars, so
+                // they never qualify — Latin docs stay pixel-identical. The bundled /
+                // deterministic path is never a fallback face, so it never qualifies.
+                if is_fallback
+                    && let Some(slice) = text.get(run.text_range())
+                    && slice.chars().any(is_cjk_scalar)
+                {
+                    cjk_fallback = true;
+                }
                 // Record any code point that shaped to `.notdef` (glyph id 0) —
                 // no bundled, system, or host face covered it — as a coverage gap
                 // a host can query (`registry.missing_coverage`) and fetch a face
@@ -519,6 +622,10 @@ impl LineShaper for ParleyShaper {
             // the baseline), `exact` pins the height exactly (content may clip).
             let ascent = Twip(metrics.ascent.round() as i32);
             let descent = Twip(metrics.descent.round() as i32);
+            // The natural line box from the font metrics; on the normalized re-shape
+            // this is already the run-font-driven height (`parley` folded
+            // `LineHeight::FontSizeRelative` into it). The `atLeast`/`exact` rules
+            // reshape it further below.
             let natural = Twip(metrics.line_height.round() as i32);
             let (ascent, descent, height) = apply_line_rule(ascent, descent, natural, &constraints);
             lines.push(Line {
@@ -535,7 +642,7 @@ impl LineShaper for ParleyShaper {
                 text_boxes: Vec::new(),
             });
         }
-        LineLayout { lines }
+        (LineLayout { lines }, cjk_fallback)
     }
 }
 
@@ -846,6 +953,99 @@ mod tests {
     }
 
     use crate::font_registry::FontRegistry;
+
+    /// The run-font-driven single line for a size (Word's default), the target the
+    /// CJK fallback normalization drives a line box to.
+    fn normalized_single_line(size: Twip) -> i32 {
+        (CJK_SINGLE_LINE_FACTOR * size.raw() as f32).round() as i32
+    }
+
+    /// Without a fallback face (the deterministic / bundled path), a CJK run shapes
+    /// to `.notdef` with a bundled face and is therefore **not** normalized: its line
+    /// box stays the bundled face's natural height, identical to a Latin run of the
+    /// same size. This pins that the normalization never perturbs the deterministic
+    /// path (no re-shape happens when nothing fell back to a non-bundled face).
+    #[test]
+    #[cfg(not(feature = "system-fonts"))]
+    fn cjk_line_box_is_unchanged_on_the_bundled_path() {
+        let shaper = ParleyShaper::new();
+        let size = Twip::from_points(10);
+        let cjk = shaper.shape_paragraph(
+            &[StyledRun {
+                size,
+                ..run("中文字")
+            }],
+            constraints(500),
+            para_range(),
+        );
+        let latin = shaper.shape_paragraph(
+            &[StyledRun {
+                size,
+                ..run("Hello")
+            }],
+            constraints(500),
+            para_range(),
+        );
+        assert_eq!(
+            cjk.lines[0].height, latin.lines[0].height,
+            "bundled .notdef CJK keeps the natural bundled line box (not normalized)"
+        );
+        assert_ne!(
+            cjk.lines[0].height.raw(),
+            normalized_single_line(size),
+            "the bundled path is not driven to the run-font single line"
+        );
+    }
+
+    /// With the `system-fonts` feature ON, a CJK run that shapes with a dynamic OS
+    /// fallback face has its line box driven by the *run font size* (Word's single
+    /// line, [`CJK_SINGLE_LINE_FACTOR`]) rather than that face's native metrics — so
+    /// the height is exactly `round(factor * size)` regardless of which substitute
+    /// face the OS supplied. A Latin run (no CJK scalars) is left on its natural
+    /// bundled line box, proving the normalization is CJK-fallback-gated. Gated on a
+    /// covering face being present (a headless runner may have none).
+    #[test]
+    #[cfg(all(feature = "system-fonts", not(target_arch = "wasm32")))]
+    fn cjk_fallback_line_is_normalized_to_the_run_font_single_line() {
+        let shaper = ParleyShaper::new();
+        let size = Twip::from_points(10);
+        let cjk = shaper.shape_paragraph(
+            &[StyledRun {
+                size,
+                ..run("化学品安全技术说明书")
+            }],
+            constraints(500),
+            para_range(),
+        );
+        let line = &cjk.lines[0];
+        let covered = line.runs.iter().flat_map(|r| &r.glyphs).any(|g| g.id != 0);
+        let dynamic = line.runs.iter().any(|r| FontRegistry::is_dynamic(r.font));
+        if covered && dynamic {
+            assert_eq!(
+                line.height.raw(),
+                normalized_single_line(size),
+                "the CJK fallback line is driven to the run-font single line"
+            );
+            assert!(
+                line.ascent.raw() > 0 && line.descent.raw() >= 0,
+                "the box still has room for the glyph ink"
+            );
+        }
+        // A Latin run never carries CJK scalars, so it is never re-shaped: it keeps
+        // the bundled face's natural (taller than 1.2x) single line.
+        let latin = shaper.shape_paragraph(
+            &[StyledRun {
+                size,
+                ..run("Hello")
+            }],
+            constraints(500),
+            para_range(),
+        );
+        assert!(
+            latin.lines[0].height.raw() > normalized_single_line(size),
+            "Latin keeps its natural bundled line box (not normalized)"
+        );
+    }
 
     /// With the `system-fonts` feature OFF (the deterministic / WASM path), no
     /// bundled Latin face covers CJK, so a CJK run shapes to `.notdef`, keeps a
