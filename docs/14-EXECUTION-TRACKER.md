@@ -183,3 +183,5 @@ floor for unmodeled long-tail constructs.
 | P1E-003 | GPU backend (`vello`/`wgpu`) | Claude Code | Planned | Native performance behind the same display-list interface. |
 
 | P1C-TBL | Tables in the galley + rendering | Claude Code | Done | `flow_blocks`/`flow_table` recurse: tables expand to `TableRow` fragments with cells positioned by grid columns (grid_span honored), cell content flowed at column width; nested tables via mutual recursion. `compose_page` renders cell content + grid borders. Verified: real-producer-rich.docx renders its table AND nested table with borders. Cross-page row split + header repeat = P1D-003. 1 test. |
+
+| P1D-002b | Line-level paragraph splitting + widow/orphan | Claude Code | Done | Paginator rewritten as a state machine that splits a paragraph at line boundaries across pages (re-origining the carried lines), honoring keepLines (moved whole) and keepNext (kept together); widow/orphan control keeps >= 2 lines each side of a break; oversized content overflows (terminates). Golden invariant (incremental == full) is P1D-004. 9 tests. |
