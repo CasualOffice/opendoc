@@ -3421,6 +3421,139 @@ mod semantic_tests {
             );
         }
     }
+
+    #[test]
+    fn hyphen_glyphs_round_trip_as_inert_inline_nodes() {
+        use casual_doc_model::v1::{BlockNode, InlineNode};
+
+        // A paragraph carrying a non-breaking hyphen followed by a soft (optional)
+        // hyphen inside a run. Both hit the run catch-all before P1F-39 and
+        // vanished; now each is a first-class inert inline glyph.
+        let xml = br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t xml:space="preserve">re</w:t><w:noBreakHyphen/><w:softHyphen/><w:t>do</w:t></w:r></w:p></w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(
+            m1, m2,
+            "hyphen glyphs are an import→write→reopen fixed point"
+        );
+
+        let BlockNode::Paragraph(paragraph) = &m2.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let kinds: Vec<&str> = paragraph
+            .inlines
+            .iter()
+            .map(|inline| match inline {
+                InlineNode::Run(_) => "run",
+                InlineNode::NoBreakHyphen(_) => "nbhyphen",
+                InlineNode::SoftHyphen(_) => "softhyphen",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(kinds, ["run", "nbhyphen", "softhyphen", "run"]);
+    }
+
+    #[test]
+    fn positional_tab_round_trips_with_its_attributes() {
+        use casual_doc_model::v1::{
+            BlockNode, InlineNode, PositionalTabAlignment, PositionalTabLeader,
+            PositionalTabRelativeTo,
+        };
+
+        // A `w:ptab` (absolute-position tab) carrying all three required
+        // attributes; it hit the run catch-all before P1F-39.
+        let xml = br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:ptab w:alignment="center" w:relativeTo="indent" w:leader="dot"/></w:r></w:p></w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(m1, m2, "a positional tab is a fixed point");
+
+        let BlockNode::Paragraph(paragraph) = &m2.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::PositionalTab(tab) = &paragraph.inlines[0] else {
+            panic!("expected a positional tab");
+        };
+        assert_eq!(tab.alignment, PositionalTabAlignment::Center);
+        assert_eq!(tab.relative_to, PositionalTabRelativeTo::Indent);
+        assert_eq!(tab.leader, PositionalTabLeader::Dot);
+    }
+
+    #[test]
+    fn alt_chunk_round_trips_as_an_editable_reference() {
+        use casual_doc_model::v1::{BlockNode, Document};
+
+        /// The `BlockNode::AltChunk` at body index 1 (after the leading paragraph).
+        fn alt_chunk(document: &Document) -> &casual_doc_model::v1::AltChunk {
+            let BlockNode::AltChunk(chunk) = &document.body()[1] else {
+                panic!("expected an alt chunk at body[1]");
+            };
+            chunk
+        }
+
+        // A `w:altChunk` referencing an aggregated HTML content part, with a
+        // `w:matchSrc` property. Before P1F-39 it hit the block catch-all and the
+        // sub-document vanished.
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/afchunk.htm" ContentType="text/html"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p><w:altChunk r:id="rId5"><w:altChunkPr><w:matchSrc w:val="1"/></w:altChunkPr></w:altChunk></w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk" Target="afchunk.htm"/></Relationships>"#;
+        let chunk_html = b"<html><body><p>imported content</p></body></html>";
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/afchunk.htm", chunk_html),
+        ]);
+
+        // Import: the alt chunk is a first-class reference, not dropped.
+        let import = import_semantic(&source);
+        let chunk = alt_chunk(&import.document);
+        assert_eq!(chunk.part.part_name, "word/afchunk.htm");
+        assert_eq!(chunk.part.relationship_id, "rId5");
+        assert_eq!(chunk.properties.match_source, Some(true));
+        // The chunk part is byte-preserved by the side-table...
+        assert!(
+            import
+                .retained_parts
+                .parts
+                .iter()
+                .any(|part| part.part_name == "word/afchunk.htm")
+        );
+        // ...but its relationship is NOT re-added as an orphan (the writer emits it
+        // from the node instead).
+        assert!(
+            !import
+                .retained_parts
+                .relationships
+                .iter()
+                .any(|rel| rel.target.contains("afchunk.htm"))
+        );
+
+        // Write + reopen: the package opens, the chunk part is present AND
+        // referenced by an `aFChunk` relationship emitted exactly once.
+        let written = write_document_with_retained_parts(
+            &import.document,
+            &BTreeMap::new(),
+            &import.retained_parts,
+        )
+        .unwrap();
+        let mut reopened = DocxPackage::open(&written, PackageLimits::default()).unwrap();
+        assert_eq!(reopened.read_part("word/afchunk.htm").unwrap(), chunk_html);
+        assert_eq!(reopened.content_type("word/afchunk.htm"), Some("text/html"));
+        let doc_out = reopened.read_part("word/document.xml").unwrap();
+        let doc_out = String::from_utf8_lossy(&doc_out);
+        assert!(doc_out.contains("<w:altChunk"));
+        assert!(doc_out.contains("w:matchSrc"));
+        let doc_rels_out = reopened.read_part("word/_rels/document.xml.rels").unwrap();
+        let doc_rels_out = String::from_utf8_lossy(&doc_rels_out);
+        assert!(doc_rels_out.contains("/relationships/aFChunk"));
+        assert_eq!(doc_rels_out.matches("afchunk.htm").count(), 1);
+
+        // Re-import the written package: the alt chunk reference still round-trips.
+        let reimport = import_semantic(&written);
+        let rechunk = alt_chunk(&reimport.document);
+        assert_eq!(rechunk.part.part_name, "word/afchunk.htm");
+        assert_eq!(rechunk.properties.match_source, Some(true));
+    }
 }
 
 #[cfg(test)]
@@ -3471,6 +3604,7 @@ mod tests {
                         .any(|cell| walk_blocks(&cell.blocks, predicate))
                 }),
                 BlockNode::Sdt(sdt) => walk_blocks(&sdt.blocks, predicate),
+                BlockNode::AltChunk(_) => false,
             })
         }
         walk_blocks(document.body(), predicate)
@@ -3538,7 +3672,7 @@ mod tests {
             .iter()
             .find_map(|block| match block {
                 BlockNode::Table(table) => Some(table),
-                BlockNode::Paragraph(_) | BlockNode::Sdt(_) => None,
+                BlockNode::Paragraph(_) | BlockNode::Sdt(_) | BlockNode::AltChunk(_) => None,
             })
             .expect("a table in the body")
     }

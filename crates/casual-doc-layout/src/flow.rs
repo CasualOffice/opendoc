@@ -237,6 +237,8 @@ pub fn build_galley_cached(
                 flow_table(table, shaper, content_width, &mut galley, &mut ctx)
             }
             BlockNode::Sdt(_) => {}
+            // An alt chunk's aggregated external content is not laid out here.
+            BlockNode::AltChunk(_) => {}
         }
     }
     galley
@@ -416,6 +418,8 @@ fn flow_blocks(
             }
             BlockNode::Table(table) => flow_table(table, shaper, width, &mut galley, ctx),
             BlockNode::Sdt(_) => {}
+            // An alt chunk's aggregated external content is not laid out here.
+            BlockNode::AltChunk(_) => {}
         }
     }
     galley
@@ -784,6 +788,8 @@ fn block_intrinsic(blocks: &[BlockNode], shaper: &dyn LineShaper, ctx: &FlowCtx)
                 preferred = preferred.max(grid);
             }
             BlockNode::Sdt(_) => {}
+            // An alt chunk contributes no laid-out width.
+            BlockNode::AltChunk(_) => {}
         }
     }
     (min, preferred)

@@ -18,7 +18,7 @@ use std::io::{Cursor, Write};
 
 use casual_doc_import::{RelationshipOwner, RetainedParts};
 use casual_doc_model::v1::{
-    AbstractNumbering, AbstractNumberingId, Alignment, AnchorHorizontal, AnchorVertical,
+    AbstractNumbering, AbstractNumberingId, Alignment, AltChunk, AnchorHorizontal, AnchorVertical,
     AnchoredDrawing, AppProperties, BlockNode, BorderEdge, BreakKind, CellVerticalAlignment,
     CnfStyle, Color, ColorScheme, Comment, CommentId, CoreProperties, CustomProperty, CustomValue,
     DefinitionMap, Definitions, DocGridType, Document, DocumentDefaults, DocumentProtectionEdit,
@@ -30,7 +30,8 @@ use casual_doc_model::v1::{
     MediaReference, MoveKind, Note, NoteId, NoteKind, NoteNumberRestart, NotePosition,
     NoteProperties, NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel,
     PageBorderDisplay, PageBorderOffset, PageOrientation, PageVerticalAlignment,
-    ParagraphProperties, Person, ProofState, RevisionKind, RgbColor, RunFontHint, RunProperties,
+    ParagraphProperties, Person, PositionalTabAlignment, PositionalTabLeader,
+    PositionalTabRelativeTo, ProofState, RevisionKind, RgbColor, RunFontHint, RunProperties,
     SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind, SdtDate,
     SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionType, Style, StyleId, StyleKind,
     TabAlignment, TabLeader, Table, TableAnchor, TableBorders, TableCell, TableCellProperties,
@@ -2572,7 +2573,35 @@ fn write_block(
                 .map_err(pkg)?;
             Ok(())
         }
+        // An aggregated external content chunk: an empty `w:altChunk` referencing
+        // the preserved part by its verbatim `r:id` (the relationship is emitted in
+        // `document.xml.rels`, see `collect_embedded_rels`), plus `w:altChunkPr`
+        // when it carries `w:matchSrc`.
+        BlockNode::AltChunk(chunk) => write_alt_chunk(w, chunk),
     }
+}
+
+fn write_alt_chunk(w: &mut Writer<Cursor<Vec<u8>>>, chunk: &AltChunk) -> Result<(), ExportError> {
+    let mut el = start("w:altChunk");
+    el.push_attribute(("r:id", chunk.part.relationship_id.as_str()));
+    match chunk.properties.match_source {
+        None => {
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+        Some(match_source) => {
+            w.write_event(Event::Start(el)).map_err(pkg)?;
+            w.write_event(Event::Start(start("w:altChunkPr")))
+                .map_err(pkg)?;
+            let mut match_src = start("w:matchSrc");
+            match_src.push_attribute(("w:val", if match_source { "true" } else { "false" }));
+            w.write_event(Event::Empty(match_src)).map_err(pkg)?;
+            w.write_event(Event::End(BytesEnd::new("w:altChunkPr")))
+                .map_err(pkg)?;
+            w.write_event(Event::End(BytesEnd::new("w:altChunk")))
+                .map_err(pkg)?;
+        }
+    }
+    Ok(())
 }
 
 fn write_table(
@@ -3297,6 +3326,9 @@ fn collect_block_embedded_rels(
                 collect_block_embedded_rels(block, out, seen);
             }
         }
+        // An alt chunk references its preserved part exactly like an embedded
+        // object; its relationship is emitted from the node (verbatim `r:id`).
+        BlockNode::AltChunk(chunk) => push_embedded_part(&chunk.part, out, seen),
     }
 }
 
@@ -3658,6 +3690,57 @@ fn write_inline(
             sym.push_attribute(("w:font", symbol.font.as_str()));
             sym.push_attribute(("w:char", char.as_str()));
             w.write_event(Event::Empty(sym)).map_err(pkg)?;
+            w.write_event(Event::End(BytesEnd::new("w:r")))
+                .map_err(pkg)?;
+        }
+        // A non-breaking / soft hyphen glyph: an empty run child, mirroring the
+        // tab/break/symbol run-child shape. The importer reads them back inside the
+        // enclosing `w:r`.
+        InlineNode::NoBreakHyphen(_) => {
+            w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
+            w.write_event(Event::Empty(start("w:noBreakHyphen")))
+                .map_err(pkg)?;
+            w.write_event(Event::End(BytesEnd::new("w:r")))
+                .map_err(pkg)?;
+        }
+        InlineNode::SoftHyphen(_) => {
+            w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
+            w.write_event(Event::Empty(start("w:softHyphen")))
+                .map_err(pkg)?;
+            w.write_event(Event::End(BytesEnd::new("w:r")))
+                .map_err(pkg)?;
+        }
+        // An absolute-position tab: an empty `w:ptab` run child carrying its three
+        // required attributes (alignment / relativeTo / leader).
+        InlineNode::PositionalTab(tab) => {
+            w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
+            let mut ptab = start("w:ptab");
+            ptab.push_attribute((
+                "w:alignment",
+                match tab.alignment {
+                    PositionalTabAlignment::Left => "left",
+                    PositionalTabAlignment::Center => "center",
+                    PositionalTabAlignment::Right => "right",
+                },
+            ));
+            ptab.push_attribute((
+                "w:relativeTo",
+                match tab.relative_to {
+                    PositionalTabRelativeTo::Margin => "margin",
+                    PositionalTabRelativeTo::Indent => "indent",
+                },
+            ));
+            ptab.push_attribute((
+                "w:leader",
+                match tab.leader {
+                    PositionalTabLeader::None => "none",
+                    PositionalTabLeader::Dot => "dot",
+                    PositionalTabLeader::Hyphen => "hyphen",
+                    PositionalTabLeader::Underscore => "underscore",
+                    PositionalTabLeader::MiddleDot => "middleDot",
+                },
+            ));
+            w.write_event(Event::Empty(ptab)).map_err(pkg)?;
             w.write_event(Event::End(BytesEnd::new("w:r")))
                 .map_err(pkg)?;
         }

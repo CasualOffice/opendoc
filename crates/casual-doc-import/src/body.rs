@@ -3,25 +3,27 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use casual_doc_model::v1::{
-    Alignment, AnchorHorizontal, AnchorVertical, AnchoredDrawing, BlockNode, BlockSdt, Bookmark,
-    BookmarkEnd, BookmarkId, BookmarkStart, BorderEdge, Break, BreakKind, CellVerticalAlignment,
-    CnfStyle, Comment, CommentId, CommentRangeEnd, CommentRangeStart, CommentReference,
-    DefinitionMap, DocGrid, DocGridType, Drawing, DrawingAnchor, EmbeddedKind, EmbeddedObject,
-    EmbeddedPart, Extent, ExternalTarget, Field, FormCheckBox, FormCheckBoxSize, FormDropDown,
-    FormFieldData, FormFieldKind, FormTextInput, FormTextType, HeaderFooterId, HeaderFooterKind,
-    HeaderFooterRef, HeightRule, HorizontalAlign, HorizontalAnchor, HorizontalPosition, Hyperlink,
-    HyperlinkTarget, InlineNode, InlineSdt, InternalTarget, LineNumberRestart, LineNumbering,
-    MAX_DESCR_BYTES, MAX_EMU, MAX_FIELD_INSTRUCTION_BYTES, MAX_FORM_FIELD_ENTRIES,
-    MAX_FORM_FIELD_STRING_BYTES, MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH,
-    MAX_TEXTBOX_DEPTH, Math, MediaId, MoveKind, MoveRangeEnd, MoveRangeStart, NoteId, NoteKind,
-    NoteNumberRestart, NotePosition, NoteProperties, NoteReference, PageBorderDisplay,
-    PageBorderOffset, PageBorders, PageMargins, PageNumbering, PageOrientation, PageSize,
-    PageVerticalAlignment, PaperSource, Paragraph, ParagraphProperties, Revision, RevisionKind,
-    RgbColor, Run, RunProperties, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind,
-    SdtDataBinding, SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionColumns,
-    SectionId, SectionType, StyleKind, Symbol, Tab, TabAlignment, TabLeader, TabStop, TableAnchor,
-    TableFloatPosition, TableLayout, TableOverlap, TableXAlign, TableYAlign, TextBox,
-    TextDirection, VerticalAlign, VerticalAnchor, VerticalMerge, VerticalPosition, WrapMode,
+    Alignment, AltChunk, AltChunkProperties, AnchorHorizontal, AnchorVertical, AnchoredDrawing,
+    BlockNode, BlockSdt, Bookmark, BookmarkEnd, BookmarkId, BookmarkStart, BorderEdge, Break,
+    BreakKind, CellVerticalAlignment, CnfStyle, Comment, CommentId, CommentRangeEnd,
+    CommentRangeStart, CommentReference, DefinitionMap, DocGrid, DocGridType, Drawing,
+    DrawingAnchor, EmbeddedKind, EmbeddedObject, EmbeddedPart, Extent, ExternalTarget, Field,
+    FormCheckBox, FormCheckBoxSize, FormDropDown, FormFieldData, FormFieldKind, FormTextInput,
+    FormTextType, HeaderFooterId, HeaderFooterKind, HeaderFooterRef, HeightRule, HorizontalAlign,
+    HorizontalAnchor, HorizontalPosition, Hyperlink, HyperlinkTarget, InlineNode, InlineSdt,
+    InternalTarget, LineNumberRestart, LineNumbering, MAX_DESCR_BYTES, MAX_EMU,
+    MAX_FIELD_INSTRUCTION_BYTES, MAX_FORM_FIELD_ENTRIES, MAX_FORM_FIELD_STRING_BYTES,
+    MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH, MAX_TEXTBOX_DEPTH, Math, MediaId, MoveKind,
+    MoveRangeEnd, MoveRangeStart, NoBreakHyphen, NoteId, NoteKind, NoteNumberRestart, NotePosition,
+    NoteProperties, NoteReference, PageBorderDisplay, PageBorderOffset, PageBorders, PageMargins,
+    PageNumbering, PageOrientation, PageSize, PageVerticalAlignment, PaperSource, Paragraph,
+    ParagraphProperties, PositionalTab, PositionalTabAlignment, PositionalTabLeader,
+    PositionalTabRelativeTo, Revision, RevisionKind, RgbColor, Run, RunProperties, SdtCheckbox,
+    SdtCheckboxSymbol, SdtControlData, SdtControlKind, SdtDataBinding, SdtDate, SdtListItem,
+    SdtLock, SdtProperties, SectionBoundary, SectionColumns, SectionId, SectionType, SoftHyphen,
+    StyleKind, Symbol, Tab, TabAlignment, TabLeader, TabStop, TableAnchor, TableFloatPosition,
+    TableLayout, TableOverlap, TableXAlign, TableYAlign, TextBox, TextDirection, VerticalAlign,
+    VerticalAnchor, VerticalMerge, VerticalPosition, WrapMode,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::events::{BytesStart, Event};
@@ -137,6 +139,16 @@ enum Segment {
     Symbol {
         font: String,
         char: u32,
+    },
+    /// A non-breaking hyphen glyph (`w:noBreakHyphen`).
+    NoBreakHyphen,
+    /// A soft (optional) hyphen glyph (`w:softHyphen`).
+    SoftHyphen,
+    /// An absolute-position tab (`w:ptab`).
+    PositionalTab {
+        alignment: PositionalTabAlignment,
+        relative_to: PositionalTabRelativeTo,
+        leader: PositionalTabLeader,
     },
     /// An anchored (floating) drawing: an embedded picture plus its placement.
     AnchoredDrawing {
@@ -254,6 +266,15 @@ struct PendingObject {
     extent: Option<Extent>,
 }
 
+/// The open `w:altChunk`: the resolved chunk part and the properties gathered
+/// from its `w:altChunkPr` until the element closes.
+struct PendingAltChunk {
+    /// The referenced chunk part (`w:altChunk@r:id`, resolved to a part).
+    part: EmbeddedPart,
+    /// The accumulated `w:altChunkPr` properties.
+    properties: AltChunkProperties,
+}
+
 /// Which wrapper is currently the innermost open one. A single discriminator
 /// stack records the relative open order of the three inline wrappers so a
 /// segment routes into whichever nests deepest, regardless of kind — hyperlinks
@@ -365,6 +386,9 @@ struct ContentFrame {
     pending_anchor: Option<PendingAnchor>,
     object_depth: u32,
     pending_object: PendingObject,
+    /// The open `w:altChunk`, if any: its resolved chunk part plus the properties
+    /// (`w:altChunkPr`) accumulated until `</w:altChunk>` commits the block.
+    pending_alt_chunk: Option<PendingAltChunk>,
     hyperlink: Option<HyperlinkAccumulator>,
     hyperlink_depth: u32,
     field: Option<FieldAccumulator>,
@@ -537,6 +561,9 @@ struct BodyParser<'a> {
     object_depth: u32,
     /// `w:object` pointers collected until the object closes.
     pending_object: PendingObject,
+    /// The open `w:altChunk`, if any: its resolved chunk part plus the properties
+    /// (`w:altChunkPr`) accumulated until `</w:altChunk>` commits the block.
+    pending_alt_chunk: Option<PendingAltChunk>,
     hyperlink: Option<HyperlinkAccumulator>,
     hyperlink_depth: u32,
     /// The open field, if any (simple or complex). Mutually exclusive with an
@@ -737,6 +764,7 @@ impl<'a> BodyParser<'a> {
             pending_anchor: None,
             object_depth: 0,
             pending_object: PendingObject::default(),
+            pending_alt_chunk: None,
             hyperlink: None,
             hyperlink_depth: 0,
             field: None,
@@ -1520,6 +1548,39 @@ impl BodyParser<'_> {
                 Some((font, char)) => self.push_segment(Segment::Symbol { font, char }),
                 None => self.reporter.report(b"sym"),
             },
+            // Inert typographic glyphs inside a run: a non-breaking hyphen (never a
+            // line-break opportunity) and a soft/optional hyphen (a hyphenation
+            // point drawn only when the line breaks there). Both are leaves, like a
+            // tab or a symbol.
+            b"noBreakHyphen" if self.run_open => self.push_segment(Segment::NoBreakHyphen),
+            b"softHyphen" if self.run_open => self.push_segment(Segment::SoftHyphen),
+            // An absolute-position tab (`w:ptab`): its stop is positioned relative
+            // to the margin/indent with an alignment and optional leader. The three
+            // attributes are required; a missing/unrecognized one falls back to the
+            // schema defaults (left / margin / none) so the tab is never dropped.
+            b"ptab" if self.run_open => {
+                let alignment = match attribute_value(element, b"alignment").as_deref() {
+                    Some("center") => PositionalTabAlignment::Center,
+                    Some("right") => PositionalTabAlignment::Right,
+                    _ => PositionalTabAlignment::Left,
+                };
+                let relative_to = match attribute_value(element, b"relativeTo").as_deref() {
+                    Some("indent") => PositionalTabRelativeTo::Indent,
+                    _ => PositionalTabRelativeTo::Margin,
+                };
+                let leader = match attribute_value(element, b"leader").as_deref() {
+                    Some("dot") => PositionalTabLeader::Dot,
+                    Some("hyphen") => PositionalTabLeader::Hyphen,
+                    Some("underscore") => PositionalTabLeader::Underscore,
+                    Some("middleDot") => PositionalTabLeader::MiddleDot,
+                    _ => PositionalTabLeader::None,
+                };
+                self.push_segment(Segment::PositionalTab {
+                    alignment,
+                    relative_to,
+                    leader,
+                });
+            }
             b"hyperlink" if self.paragraph_open && !self.run_open && self.field.is_none() => {
                 self.hyperlink_depth += 1;
                 if self.hyperlink_depth == 1 {
@@ -2034,6 +2095,38 @@ impl BodyParser<'_> {
             b"tbl" if self.in_body => {
                 self.suppressed_tbl_depth = 1;
                 self.reporter.report(b"tbl");
+            }
+            // An aggregated external content chunk (`w:altChunk`): a block-level
+            // sibling of paragraphs/tables referencing an imported sub-document
+            // part by `r:id`. Modeled as a first-class `BlockNode::AltChunk` when
+            // the reference resolves (the part is un-orphaned in the side-table so
+            // its relationship is emitted once, from the node); an unresolved or
+            // out-of-context reference is reported and dropped.
+            b"altChunk"
+                if self.in_body
+                    && !self.run_open
+                    && !self.paragraph_open
+                    && self.pending_alt_chunk.is_none() =>
+            {
+                match self.resolve_embedded_part_opt(&attribute_value(element, b"id")) {
+                    Some(part) => {
+                        self.embedded_part_names.insert(part.part_name.clone());
+                        self.pending_alt_chunk = Some(PendingAltChunk {
+                            part,
+                            properties: AltChunkProperties::default(),
+                        });
+                    }
+                    None => self.reporter.report(b"altChunk"),
+                }
+            }
+            // `w:matchSrc` inside the open chunk's `w:altChunkPr`: whether the
+            // chunk renders with its own formatting. Present-but-empty means true
+            // (`CT_OnOff`).
+            b"matchSrc" if self.pending_alt_chunk.is_some() => {
+                if let Some(chunk) = self.pending_alt_chunk.as_mut() {
+                    chunk.properties.match_source =
+                        Some(is_true(attribute_value(element, b"val").as_deref()));
+                }
             }
             // Table properties (`w:tblPr`), a direct child of `w:tbl` before any
             // row. Its property children are guarded by `tblpr_depth`.
@@ -2566,6 +2659,23 @@ impl BodyParser<'_> {
             _ if self.pr_change_depth > 0 => {}
             b"document" => self.in_document = false,
             b"body" => self.in_body = false,
+            // An `w:altChunk` closes: commit the accumulated chunk as a first-class
+            // block, routed into the open table cell if any, else the body root
+            // (like a paragraph). An unresolved chunk left `pending_alt_chunk`
+            // `None`, so this is inert.
+            b"altChunk" => {
+                if let Some(chunk) = self.pending_alt_chunk.take() {
+                    let id = self.next_id()?;
+                    let block = BlockNode::AltChunk(AltChunk {
+                        id,
+                        part: chunk.part,
+                        properties: chunk.properties,
+                    });
+                    if let Some(returned) = self.tables.push_block(block) {
+                        self.blocks.push(returned);
+                    }
+                }
+            }
             b"AlternateContent" => {
                 self.alt_stack.pop();
             }
@@ -3326,6 +3436,7 @@ impl BodyParser<'_> {
             pending_anchor: self.pending_anchor.take(),
             object_depth: std::mem::take(&mut self.object_depth),
             pending_object: std::mem::take(&mut self.pending_object),
+            pending_alt_chunk: self.pending_alt_chunk.take(),
             hyperlink: self.hyperlink.take(),
             hyperlink_depth: std::mem::take(&mut self.hyperlink_depth),
             field: self.field.take(),
@@ -3391,6 +3502,7 @@ impl BodyParser<'_> {
         self.pending_anchor = frame.pending_anchor;
         self.object_depth = frame.object_depth;
         self.pending_object = frame.pending_object;
+        self.pending_alt_chunk = frame.pending_alt_chunk;
         self.hyperlink = frame.hyperlink;
         self.hyperlink_depth = frame.hyperlink_depth;
         self.field = frame.field;
@@ -4168,6 +4280,27 @@ impl BodyParser<'_> {
             Segment::Symbol { font, char } => {
                 let id = self.next_id()?;
                 Ok(InlineNode::Symbol(Symbol { id, font, char }))
+            }
+            Segment::NoBreakHyphen => {
+                let id = self.next_id()?;
+                Ok(InlineNode::NoBreakHyphen(NoBreakHyphen { id }))
+            }
+            Segment::SoftHyphen => {
+                let id = self.next_id()?;
+                Ok(InlineNode::SoftHyphen(SoftHyphen { id }))
+            }
+            Segment::PositionalTab {
+                alignment,
+                relative_to,
+                leader,
+            } => {
+                let id = self.next_id()?;
+                Ok(InlineNode::PositionalTab(PositionalTab {
+                    id,
+                    alignment,
+                    relative_to,
+                    leader,
+                }))
             }
             // A text box is already fully built (id and inner ids allocated while
             // parsing its content), so it converts directly.
