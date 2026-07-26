@@ -1,5 +1,21 @@
 # Execution Tracker
 
+> [!NOTE]
+> ## Proposed restructure (from external review — not yet actioned)
+>
+> This file has grown large. A reviewer recommended splitting it into a
+> `docs/tracking/` directory (`phase-0.md`, `phase-1a.md`, `phase-1b.md`,
+> `phase-1c-1e.md`, `maintenance.md`, `deferred.md`) with this file kept as a
+> short summary index linking to them. **Deferred** — it is a structural change
+> to design and agree separately, not part of the status refresh.
+>
+> The review also flagged status values used below that are **outside the
+> documented vocabulary** (see "Status Values"): `Accepted` (P1A-001, P1A-003),
+> `Designed` (P1B-001), `Accepted (full scope)` (P1B-FONT), `Fixed by P1B-004`
+> (P1B-R2), and `Planned` (P1C-003, P1D-003, P1E-001..003). These should either
+> be mapped onto the vocabulary (e.g. Accepted/Designed → Ready or Done;
+> Planned → Not started) or the vocabulary should be extended to admit them.
+
 ## Purpose
 
 Records project execution state. Each entry is terse: id, title, status, and a
