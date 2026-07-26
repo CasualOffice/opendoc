@@ -11,7 +11,8 @@ use casual_doc_model::v1::{
     MAX_FIELD_INSTRUCTION_BYTES, MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH,
     MAX_TEXTBOX_DEPTH, Math, MediaId, NoteId, NoteKind, NoteReference, PageMargins, PageNumbering,
     PageSize, PageVerticalAlignment, Paragraph, ParagraphProperties, Revision, RevisionKind,
-    RgbColor, Run, RunProperties, SdtControlKind, SdtProperties, SectionBoundary, SectionColumns,
+    RgbColor, Run, RunProperties, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind,
+    SdtDataBinding, SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionColumns,
     SectionId, SectionType, StyleKind, Tab, TabAlignment, TabLeader, TabStop, TableLayout,
     TableOverlap, TextBox, TextDirection, VerticalMerge,
 };
@@ -1834,14 +1835,154 @@ impl BodyParser<'_> {
                     self.enter_sdt_block()?;
                 }
             }
-            // Recognized `w:sdtPr` type markers set the control kind.
-            b"richText" | b"text" | b"comboBox" | b"dropDownList" | b"date" | b"picture"
-            | b"checkbox" | b"group" | b"repeatingSection" | b"citation" | b"bibliography"
+            // Recognized `w:sdtPr` type markers set the control kind. The
+            // combo/dropdown, date, and checkbox markers additionally open their
+            // control-specific `data`, populated from the child markers below.
+            b"richText" | b"text" | b"picture" | b"group" | b"repeatingSection" | b"citation"
+            | b"bibliography"
                 if self.sdt_prop_depth > 0 =>
             {
                 let kind = sdt_control_kind(local);
                 if let Some(properties) = self.current_sdt_properties() {
                     properties.control_kind = kind;
+                }
+            }
+            b"comboBox" | b"dropDownList" if self.sdt_prop_depth > 0 => {
+                let kind = sdt_control_kind(local);
+                if let Some(properties) = self.current_sdt_properties() {
+                    properties.control_kind = kind;
+                    properties.data = Some(SdtControlData::List(Vec::new()));
+                }
+            }
+            b"date" if self.sdt_prop_depth > 0 => {
+                let full_date = attribute_value(element, b"fullDate")
+                    .filter(|v| !v.is_empty() && v.len() <= 64);
+                if let Some(properties) = self.current_sdt_properties() {
+                    properties.control_kind = Some(SdtControlKind::Date);
+                    properties.data = Some(SdtControlData::Date(SdtDate {
+                        full_date,
+                        ..SdtDate::default()
+                    }));
+                }
+            }
+            b"checkbox" if self.sdt_prop_depth > 0 => {
+                if let Some(properties) = self.current_sdt_properties() {
+                    properties.control_kind = Some(SdtControlKind::Checkbox);
+                    properties.data = Some(SdtControlData::Checkbox(SdtCheckbox::default()));
+                }
+            }
+            // A combo/dropdown choice entry (`w:listItem`): display + value.
+            b"listItem" if self.sdt_prop_depth > 0 => {
+                let display = attribute_value(element, b"displayText")
+                    .filter(|v| !v.is_empty() && v.len() <= 255);
+                let value = attribute_value(element, b"value")
+                    .filter(|v| v.len() <= 255)
+                    .unwrap_or_default();
+                if let Some(SdtControlData::List(items)) = self.current_sdt_data()
+                    && items.len() < 1024
+                {
+                    items.push(SdtListItem { display, value });
+                }
+            }
+            // Date-picker detail children (`w:date`'s format/lid/calendar/mapping).
+            b"dateFormat" if self.sdt_prop_depth > 0 => {
+                let value =
+                    attribute_value(element, b"val").filter(|v| !v.is_empty() && v.len() <= 255);
+                if let Some(SdtControlData::Date(date)) = self.current_sdt_data() {
+                    date.date_format = value;
+                }
+            }
+            b"lid" if self.sdt_prop_depth > 0 => {
+                let value =
+                    attribute_value(element, b"val").filter(|v| !v.is_empty() && v.len() <= 64);
+                if let Some(SdtControlData::Date(date)) = self.current_sdt_data() {
+                    date.lid = value;
+                }
+            }
+            b"calendar" if self.sdt_prop_depth > 0 => {
+                let value =
+                    attribute_value(element, b"val").filter(|v| !v.is_empty() && v.len() <= 64);
+                if let Some(SdtControlData::Date(date)) = self.current_sdt_data() {
+                    date.calendar = value;
+                }
+            }
+            b"storeMappedDataAs" if self.sdt_prop_depth > 0 => {
+                let value =
+                    attribute_value(element, b"val").filter(|v| !v.is_empty() && v.len() <= 64);
+                if let Some(SdtControlData::Date(date)) = self.current_sdt_data() {
+                    date.store_mapped_as = value;
+                }
+            }
+            // Checkbox detail children (`w14:checked`/`w14:checkedState`/`w14:uncheckedState`).
+            b"checked" if self.sdt_prop_depth > 0 => {
+                let on = is_true(attribute_value(element, b"val").as_deref());
+                if let Some(SdtControlData::Checkbox(checkbox)) = self.current_sdt_data() {
+                    checkbox.checked = on;
+                }
+            }
+            b"checkedState" if self.sdt_prop_depth > 0 => {
+                let symbol = sdt_checkbox_symbol(element);
+                if let Some(SdtControlData::Checkbox(checkbox)) = self.current_sdt_data() {
+                    checkbox.checked_state = symbol;
+                }
+            }
+            b"uncheckedState" if self.sdt_prop_depth > 0 => {
+                let symbol = sdt_checkbox_symbol(element);
+                if let Some(SdtControlData::Checkbox(checkbox)) = self.current_sdt_data() {
+                    checkbox.unchecked_state = symbol;
+                }
+            }
+            // The customXML data binding (`w:dataBinding`): `w:xpath` is required;
+            // without it the binding is meaningless, so it is reported and dropped.
+            b"dataBinding" if self.sdt_prop_depth > 0 => {
+                let xpath =
+                    attribute_value(element, b"xpath").filter(|v| !v.is_empty() && v.len() <= 1024);
+                if let Some(xpath) = xpath {
+                    let store_item_id = attribute_value(element, b"storeItemID")
+                        .filter(|v| !v.is_empty() && v.len() <= 128);
+                    let prefix_mappings = attribute_value(element, b"prefixMappings")
+                        .filter(|v| !v.is_empty() && v.len() <= 1024);
+                    if let Some(properties) = self.current_sdt_properties() {
+                        properties.data_binding = Some(SdtDataBinding {
+                            xpath,
+                            store_item_id,
+                            prefix_mappings,
+                        });
+                    }
+                } else {
+                    self.reporter.report(b"dataBinding");
+                }
+            }
+            // The edit-lock behaviour (`w:lock@w:val`); an unknown token is reported.
+            b"lock" if self.sdt_prop_depth > 0 => {
+                match attribute_value(element, b"val").as_deref().map(sdt_lock) {
+                    Some(Some(lock)) => {
+                        if let Some(properties) = self.current_sdt_properties() {
+                            properties.lock = Some(lock);
+                        }
+                    }
+                    _ => self.reporter.report(b"lock"),
+                }
+            }
+            // The placeholder wrapper is a transparent container; its `w:docPart`
+            // child carries the building-block name.
+            b"placeholder" if self.sdt_prop_depth > 0 => {}
+            b"docPart" if self.sdt_prop_depth > 0 => {
+                let value = self.sdt_bounded_value(element, b"placeholder", 255);
+                if let Some(properties) = self.current_sdt_properties() {
+                    properties.placeholder = value;
+                }
+            }
+            b"showingPlcHdr" if self.sdt_prop_depth > 0 => {
+                let on = is_true(attribute_value(element, b"val").as_deref());
+                if let Some(properties) = self.current_sdt_properties() {
+                    properties.showing_placeholder = on;
+                }
+            }
+            b"temporary" if self.sdt_prop_depth > 0 => {
+                let on = is_true(attribute_value(element, b"val").as_deref());
+                if let Some(properties) = self.current_sdt_properties() {
+                    properties.temporary = on;
                 }
             }
             // Both building-block gallery forms collapse to one control kind, so the
@@ -3028,6 +3169,12 @@ impl BodyParser<'_> {
         }
     }
 
+    /// The control-specific `data` of the current open content control, if it was
+    /// opened by a combo/dropdown, date, or checkbox type marker.
+    fn current_sdt_data(&mut self) -> Option<&mut SdtControlData> {
+        self.current_sdt_properties()?.data.as_mut()
+    }
+
     /// Reads a `w:sdtPr` marker's bounded `@w:val`. A value that is present but out
     /// of domain (empty or too long) is reported and dropped rather than mapped.
     fn sdt_bounded_value(
@@ -3299,6 +3446,26 @@ impl BodyParser<'_> {
 /// Maps a recognized `w:sdtPr` type-marker element name to a control kind. The
 /// caller guarantees `local` is one of the mapped markers (the building-block
 /// gallery forms `w:docPartObj`/`w:docPartList` are handled separately).
+/// Maps a `w:lock@w:val` token to its `SdtLock`; an unknown token yields `None`.
+fn sdt_lock(value: &str) -> Option<SdtLock> {
+    Some(match value {
+        "unlocked" => SdtLock::Unlocked,
+        "sdtLocked" => SdtLock::SdtLocked,
+        "contentLocked" => SdtLock::ContentLocked,
+        "sdtContentLocked" => SdtLock::SdtContentLocked,
+        _ => return None,
+    })
+}
+
+/// Reads a checkbox state glyph (`w14:checkedState` / `w14:uncheckedState`): a
+/// bounded `w14:val` code point in an optional `w14:font`. A missing/out-of-bound
+/// `val` drops the glyph.
+fn sdt_checkbox_symbol(element: &BytesStart<'_>) -> Option<SdtCheckboxSymbol> {
+    let val = attribute_value(element, b"val").filter(|v| !v.is_empty() && v.len() <= 8)?;
+    let font = attribute_value(element, b"font").filter(|v| !v.is_empty() && v.len() <= 64);
+    Some(SdtCheckboxSymbol { val, font })
+}
+
 fn sdt_control_kind(local: &[u8]) -> Option<SdtControlKind> {
     Some(match local {
         b"richText" => SdtControlKind::RichText,

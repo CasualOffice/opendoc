@@ -344,8 +344,10 @@ pub enum SdtControlKind {
 }
 
 /// Typed content-control properties (`w:sdtPr`). An empty value serializes to
-/// `{}`. Everything else in `w:sdtPr` (lock, placeholder, data binding, list
-/// entries, date/checkbox detail) is retained-and-reported, not modeled here.
+/// `{}`. The cross-cutting properties (`lock`, `placeholder`,
+/// `showing_placeholder`, `temporary`, `data_binding`) and the control-specific
+/// `data` (list entries, date, checkbox detail) are modeled here; the remaining
+/// long tail (end-mark `w:rPr`, `w15` label/tabIndex) is retained-and-reported.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SdtProperties {
@@ -362,6 +364,136 @@ pub struct SdtProperties {
     /// and non-unique across controls — a grouping key, NOT a node identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub control_id: Option<String>,
+    /// The edit-lock behaviour (`w:lock@w:val`), if declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lock: Option<SdtLock>,
+    /// The placeholder building-block name (`w:placeholder`/`w:docPart@w:val`), if
+    /// declared (non-empty, <= 255 bytes): the prompt shown while the control is
+    /// empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placeholder: Option<String>,
+    /// The control is currently displaying its placeholder text
+    /// (`w:showingPlcHdr`) rather than real user content.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub showing_placeholder: bool,
+    /// The control is temporary and removed once its contents are edited
+    /// (`w:temporary`).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub temporary: bool,
+    /// The customXML data binding (`w:dataBinding`), if declared: pairs the
+    /// control with an element in a preserved custom XML data part.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_binding: Option<SdtDataBinding>,
+    /// The control-specific detail (list entries, date, checkbox), when the
+    /// control kind carries any. Validated to agree with `control_kind`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<SdtControlData>,
+}
+
+/// The edit-lock behaviour of a content control (`w:lock@w:val`, `ST_Lock`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SdtLock {
+    /// `unlocked` — the control may be edited and deleted (an explicit default).
+    Unlocked,
+    /// `sdtLocked` — the control may not be deleted, but its contents may edit.
+    SdtLocked,
+    /// `contentLocked` — the contents may not be edited, but the control may delete.
+    ContentLocked,
+    /// `sdtContentLocked` — neither the control nor its contents may be changed.
+    SdtContentLocked,
+}
+
+/// A customXML data binding (`w:dataBinding`): maps a content control to an
+/// element in a custom XML data part, so edits flow to and from that stored XML.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SdtDataBinding {
+    /// The XPath selecting the bound element (`w:xpath`; non-empty, <= 1024 bytes).
+    pub xpath: String,
+    /// The bound custom XML part's store id (`w:storeItemID`; typically a GUID,
+    /// <= 128 bytes), if declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub store_item_id: Option<String>,
+    /// The prefix-to-namespace declarations the `xpath` resolves against
+    /// (`w:prefixMappings`; <= 1024 bytes), if declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_mappings: Option<String>,
+}
+
+/// The control-specific data of a content control, keyed to its `control_kind`.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SdtControlData {
+    /// Choice entries for a combo-box or drop-down-list (`w:listItem`).
+    List(Vec<SdtListItem>),
+    /// Date-picker detail (`w:date`).
+    Date(SdtDate),
+    /// Checkbox detail (`w14:checkbox`).
+    Checkbox(SdtCheckbox),
+}
+
+/// A single choice entry of a combo-box / drop-down-list control (`w:listItem`).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SdtListItem {
+    /// The label shown to the user (`w:displayText`; <= 255 bytes). When absent,
+    /// `value` is displayed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<String>,
+    /// The stored value selected by this entry (`w:value`; <= 255 bytes). May be
+    /// empty.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub value: String,
+}
+
+/// Date-picker detail (`w:date`). Every field is optional; all-empty means the
+/// producer wrote a bare `<w:date/>` type marker.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SdtDate {
+    /// The stored full date (`w:date@w:fullDate`, an ISO datetime; <= 64 bytes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub full_date: Option<String>,
+    /// The display format string (`w:dateFormat@w:val`; <= 255 bytes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date_format: Option<String>,
+    /// The calendar type (`w:calendar@w:val`; <= 64 bytes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub calendar: Option<String>,
+    /// The language id keying the format (`w:lid@w:val`; <= 64 bytes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lid: Option<String>,
+    /// How the mapped date is stored (`w:storeMappedDataAs@w:val`; <= 64 bytes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub store_mapped_as: Option<String>,
+}
+
+/// Checkbox detail (`w14:checkbox`, the `w14` compatibility namespace).
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SdtCheckbox {
+    /// Whether the box is currently checked (`w14:checked@w14:val`).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub checked: bool,
+    /// The glyph drawn when checked (`w14:checkedState`), if declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked_state: Option<SdtCheckboxSymbol>,
+    /// The glyph drawn when unchecked (`w14:uncheckedState`), if declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unchecked_state: Option<SdtCheckboxSymbol>,
+}
+
+/// A checkbox state glyph (`w14:checkedState` / `w14:uncheckedState`): a code
+/// point drawn in a named font.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SdtCheckboxSymbol {
+    /// The glyph code point as a hex string (`w14:val`, e.g. `2612`; <= 8 bytes).
+    pub val: String,
+    /// The font that provides the glyph (`w14:font`; <= 64 bytes), if declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font: Option<String>,
 }
 
 /// A block-level content control (`w:sdt` around paragraphs/tables). Its content
