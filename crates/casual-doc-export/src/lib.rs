@@ -427,6 +427,56 @@ mod semantic_tests {
     }
 
     #[test]
+    fn symbol_survives_the_semantic_round_trip() {
+        // A run carrying a `w:sym` (a Wingdings glyph in the Private Use Area).
+        // The symbol must import to a first-class `Symbol` node — not vanish into
+        // the catch-all — and survive write -> reopen unchanged (ids included).
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:r><w:t>before</w:t></w:r>
+                <w:r><w:sym w:font="Wingdings" w:char="F0FC"/></w:r>
+                <w:r><w:t>after</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+        let m2 = import_package(
+            &mut package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+
+        assert_eq!(m1, m2, "the symbol survives write -> reopen unchanged");
+
+        // The reopened symbol preserves both its font binding and code point, and
+        // sits between the two runs (the surrounding text is untouched).
+        use casual_doc_model::v1::{BlockNode, InlineNode};
+        let BlockNode::Paragraph(para) = &m2.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Symbol(symbol) = &para.inlines[1] else {
+            panic!("expected the symbol node between the two runs");
+        };
+        assert_eq!(symbol.font, "Wingdings");
+        assert_eq!(symbol.char, 0xF0FC);
+        let run_text: String = para
+            .inlines
+            .iter()
+            .filter_map(|inline| match inline {
+                InlineNode::Run(run) => Some(run.text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(run_text, "beforeafter");
+    }
+
+    #[test]
     fn tables_survive_the_semantic_round_trip() {
         // A table exercising the grid, table/row/cell properties (borders,
         // shading, margins, merges, vAlign, layout, look), and a nested table

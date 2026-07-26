@@ -1093,6 +1093,15 @@ impl Document {
                     check_domain(math.text.len() <= MAX_MATH_BYTES, "math.text")?;
                     previous_run_properties = None;
                 }
+                // A symbol is an inert leaf: the font name is a non-empty,
+                // length-bounded face name; the code point is unconstrained.
+                InlineNode::Symbol(symbol) => {
+                    check_domain(
+                        !symbol.font.is_empty() && symbol.font.len() <= MAX_SYMBOL_FONT_LEN,
+                        "symbol.font",
+                    )?;
+                    previous_run_properties = None;
+                }
                 InlineNode::Tab(_) | InlineNode::Break(_) => {
                     previous_run_properties = None;
                 }
@@ -1342,7 +1351,8 @@ fn accumulate_inline_limits(
         | InlineNode::NoteReference(_)
         | InlineNode::CommentReference(_)
         | InlineNode::BookmarkStart(_)
-        | InlineNode::BookmarkEnd(_) => {}
+        | InlineNode::BookmarkEnd(_)
+        | InlineNode::Symbol(_) => {}
     }
     Ok(())
 }

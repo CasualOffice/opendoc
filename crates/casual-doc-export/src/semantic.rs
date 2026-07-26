@@ -3146,6 +3146,20 @@ fn write_inline(
         InlineNode::Math(math) => {
             w.get_mut().write_all(math.omml.as_bytes()).map_err(pkg)?;
         }
+        // A symbol glyph: an empty `w:sym` (font + hex code point) inside its own
+        // `w:r`, mirroring the tab/break run-child shape. `w:char` is written as
+        // uppercase, at least four hex digits (Word's canonical form, e.g.
+        // `F0FC`); the importer parses it back case-insensitively.
+        InlineNode::Symbol(symbol) => {
+            w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
+            let char = format!("{:04X}", symbol.char);
+            let mut sym = start("w:sym");
+            sym.push_attribute(("w:font", symbol.font.as_str()));
+            sym.push_attribute(("w:char", char.as_str()));
+            w.write_event(Event::Empty(sym)).map_err(pkg)?;
+            w.write_event(Event::End(BytesEnd::new("w:r")))
+                .map_err(pkg)?;
+        }
     }
     Ok(())
 }

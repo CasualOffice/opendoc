@@ -40,6 +40,29 @@ pub struct Break {
     pub kind: BreakKind,
 }
 
+/// The upper bound on a [`Symbol`] font name, in bytes.
+pub const MAX_SYMBOL_FONT_LEN: usize = 255;
+
+/// An inline symbol: a single glyph named by a font and a code point.
+///
+/// Maps OOXML `w:sym` (`w:font` + `w:char`). Word uses this for glyphs pulled
+/// from a specific font — most often a symbol font (Wingdings, Symbol, …) whose
+/// code point sits in the Unicode Private Use Area (`0xF0xx`) — so the character
+/// cannot be represented as ordinary run text without losing the font binding.
+/// The glyph is an inert leaf: `char` is the raw code point and `font` names the
+/// face to resolve it against; neither is decoded to display text here.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Symbol {
+    /// Stable identity.
+    pub id: NodeId,
+    /// The font the glyph is resolved against (non-empty, at most
+    /// `MAX_SYMBOL_FONT_LEN` bytes; validated on `Document::validate`).
+    pub font: String,
+    /// The glyph's code point (`w:char`, a hex value, often PUA `0xF0xx`).
+    pub char: u32,
+}
+
 /// The natural size of a drawing, in English Metric Units (EMU).
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -458,6 +481,8 @@ pub enum InlineNode {
     Sdt(InlineSdt),
     /// An opaque inline math object retaining its OMML subtree verbatim.
     Math(Math),
+    /// An inline symbol glyph (a font plus a code point).
+    Symbol(Symbol),
 }
 
 impl InlineNode {
@@ -480,6 +505,7 @@ impl InlineNode {
             Self::BookmarkEnd(node) => node.id,
             Self::Sdt(sdt) => sdt.id,
             Self::Math(math) => math.id,
+            Self::Symbol(symbol) => symbol.id,
         }
     }
 }

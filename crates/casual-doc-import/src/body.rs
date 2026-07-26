@@ -12,7 +12,7 @@ use casual_doc_model::v1::{
     MAX_TEXTBOX_DEPTH, Math, MediaId, NoteId, NoteKind, NoteReference, PageMargins, PageNumbering,
     PageSize, PageVerticalAlignment, Paragraph, ParagraphProperties, Revision, RevisionKind,
     RgbColor, Run, RunProperties, SdtControlKind, SdtProperties, SectionBoundary, SectionColumns,
-    SectionId, SectionType, StyleKind, Tab, TabAlignment, TabLeader, TabStop, TableLayout,
+    SectionId, SectionType, StyleKind, Symbol, Tab, TabAlignment, TabLeader, TabStop, TableLayout,
     TableOverlap, TextBox, TextDirection, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
@@ -24,6 +24,7 @@ use crate::error::ImportError;
 use crate::numbering::Numbering;
 use crate::properties::{
     apply_paragraph_property, apply_run_property, attribute_value, break_kind, is_true, parse_rgb,
+    symbol_glyph,
 };
 use crate::report::Reporter;
 use crate::styles::Styles;
@@ -100,6 +101,11 @@ enum Segment {
     Math {
         omml: String,
         text: String,
+    },
+    /// A symbol glyph (`w:sym`): a font face plus a code point.
+    Symbol {
+        font: String,
+        char: u32,
     },
 }
 
@@ -1250,6 +1256,14 @@ impl BodyParser<'_> {
                 let kind = break_kind(element);
                 self.push_segment(Segment::Break(kind));
             }
+            // A symbol glyph: `w:sym@w:font` + `@w:char` (a hex code point, often
+            // PUA `0xF0xx`). Modeled only when both a bounded, non-empty font name
+            // and a parseable hex char are present; anything else is reported so
+            // the glyph is not silently dropped without a trace.
+            b"sym" if self.run_open => match symbol_glyph(element) {
+                Some((font, char)) => self.push_segment(Segment::Symbol { font, char }),
+                None => self.reporter.report(b"sym"),
+            },
             b"hyperlink" if self.paragraph_open && !self.run_open && self.field.is_none() => {
                 self.hyperlink_depth += 1;
                 if self.hyperlink_depth == 1 {
@@ -3231,6 +3245,10 @@ impl BodyParser<'_> {
             Segment::Math { omml, text } => {
                 let id = self.next_id()?;
                 Ok(InlineNode::Math(Math { id, omml, text }))
+            }
+            Segment::Symbol { font, char } => {
+                let id = self.next_id()?;
+                Ok(InlineNode::Symbol(Symbol { id, font, char }))
             }
             // A text box is already fully built (id and inner ids allocated while
             // parsing its content), so it converts directly.
