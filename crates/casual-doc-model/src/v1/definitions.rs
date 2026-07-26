@@ -309,8 +309,22 @@ pub struct PageMargins {
     pub footer_twips: Option<i32>,
 }
 
-/// Section column layout (`w:cols`).
+/// One explicit column's geometry inside a `w:cols` (`w:col`). Word writes these
+/// (with `w:cols/@w:equalWidth="0"`) when the columns are unequal; each carries the
+/// column's own width and the space that follows it.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ColumnDef {
+    /// This column's width in twips (`w:col/@w:w`).
+    pub width_twips: i32,
+    /// The space in twips following this column (`w:col/@w:space`); absent on the
+    /// last column (and any column that omits it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub space_twips: Option<i32>,
+}
+
+/// Section column layout (`w:cols`).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SectionColumns {
     /// Column count (`w:num`).
@@ -321,6 +335,16 @@ pub struct SectionColumns {
     /// Draw a line between columns (`w:sep`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub separator: Option<bool>,
+    /// Whether the columns are of equal width (`w:cols/@w:equalWidth`). `None` when
+    /// the attribute is absent (Word's default is `true`); `Some(false)` signals
+    /// per-column widths carried in [`columns`](Self::columns). Additive in schema v1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub equal_width: Option<bool>,
+    /// Explicit per-column geometries (`w:col`), in column order. Empty when the
+    /// columns are equal-width (the geometry is then derived from `count`/`space`).
+    /// Additive in schema v1.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub columns: Vec<ColumnDef>,
 }
 
 /// A section break's type (`w:type/@w:val`) — where the new section begins.

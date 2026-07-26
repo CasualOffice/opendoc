@@ -146,6 +146,20 @@ pub struct PlacedAnchor {
     pub descr: Option<String>,
 }
 
+/// A column separator rule (`w:cols/@w:sep`) to paint on a page: a thin vertical
+/// line centered in an inter-column gap, spanning its column band. Produced by the
+/// column paginator and painted by [`compose_page`](crate::compose::compose_page);
+/// it participates in neither flow nor hit-testing.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct ColumnSeparator {
+    /// The rule's x in page-local twips (the gap's horizontal center).
+    pub x: Twip,
+    /// The band top in page-local twips (the rule's upper end).
+    pub top: Twip,
+    /// The band bottom in page-local twips (the rule's lower end).
+    pub bottom: Twip,
+}
+
 /// One laid-out page.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct Page {
@@ -175,6 +189,12 @@ pub struct Page {
     pub anchored: Vec<PlacedAnchor>,
     /// Footnotes placed at the bottom of this page.
     pub footnotes: Vec<PlacedFragment>,
+    /// Column separator rules (`w:cols/@w:sep`) to paint between the columns of
+    /// this page's multi-column section bands. Empty for single-column pages and
+    /// for multi-column sections that declare no separator; produced by the column
+    /// paginator, off the single-column hot path.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub separators: Vec<ColumnSeparator>,
     /// First model position on this page (the stabilization-halt key).
     pub start: ModelPos,
     /// One-past-last model position on this page.

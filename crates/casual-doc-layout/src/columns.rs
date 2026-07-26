@@ -25,11 +25,16 @@
 //!
 //! ## Documented approximations (deferred fidelity)
 //!
-//! - **Equal column widths.** The model ([`SectionColumns`]) carries the column
-//!   *count* and inter-column *space*, not `w:equalWidth`/per-column `w:col` widths,
-//!   so every multi-column section is laid out as *N* equal columns. A section with
-//!   specified unequal widths flows into equal columns of the same total width
-//!   (content still packs column-wise; only the per-column split differs).
+//! - **Unequal columns share one flow width.** A section's galley is flowed once, at
+//!   a single width, then placed column by column. When the section declares unequal
+//!   per-column widths (`w:cols/@w:equalWidth="0"` with explicit `w:col` widths),
+//!   the columns are *placed* at their true widths and x-positions (so the layout
+//!   shows the correct narrow/wide proportions and the separator sits in the real
+//!   gap), but the galley is flowed at the **widest** column's width — the common
+//!   "narrow label + wide content" case, where the wide column carries the bulk of
+//!   the text and the narrow column holds short labels that do not wrap either way.
+//!   Content in a narrow column that is wider than that column can overrun it; true
+//!   per-column reflow (a distinct galley per column width) is deferred.
 //! - **No last-page balancing.** Columns fill in order; the final page of a section
 //!   is left unbalanced (Word balances the last page of a non-final column section).
 //!   Because a following `continuous` section must begin below *all* of the previous
@@ -43,7 +48,7 @@ use casual_doc_model::NodeId;
 use casual_doc_model::v1::{SectionBoundary, SectionColumns};
 
 use crate::block::{BlockFragment, BoxMetrics, BreakControl, CellFragment, ParagraphDecor};
-use crate::page::{FlowPos, FlowSpan, Page, PaginatedLayout, PlacedFragment};
+use crate::page::{ColumnSeparator, FlowPos, FlowSpan, Page, PaginatedLayout, PlacedFragment};
 use crate::paginate::{PageConfig, build_page, make_row_chunk, slice_paragraph, split_cells};
 use crate::text::LineLayout;
 use crate::units::{Point, Rect, Size, Twip};
@@ -72,9 +77,8 @@ struct ColumnGeom {
 pub struct ColumnLayout {
     /// One geometry per column (at least one).
     columns: Vec<ColumnGeom>,
-    /// Draw a separator rule between columns (`w:cols/@w:sep`). Retained for the
-    /// renderer; not consumed by pagination.
-    #[allow(dead_code)]
+    /// Draw a separator rule between columns (`w:cols/@w:sep`). Consumed by the
+    /// column paginator, which emits a [`ColumnSeparator`] per gap per page band.
     separator: bool,
 }
 
@@ -92,17 +96,29 @@ impl ColumnLayout {
         }
     }
 
-    /// The line-break / placement width shared by every (equal) column — the width
-    /// the section's galley must be flowed at.
+    /// The width the section's galley is flowed (line-broken) at. Equal columns all
+    /// share one width; unequal columns are flowed at the **widest** column's width
+    /// (see the module-level "unequal columns share one flow width" note), so the
+    /// wide content column wraps at its true width and short labels in a narrow
+    /// column are unaffected.
     #[must_use]
     pub fn flow_width(&self) -> Twip {
-        self.columns.first().map_or(Twip::ZERO, |c| c.width)
+        self.columns
+            .iter()
+            .map(|c| c.width)
+            .max_by_key(|w| w.raw())
+            .unwrap_or(Twip::ZERO)
     }
 }
 
 /// Resolves a section's [`SectionColumns`] into a laid-out [`ColumnLayout`] across
-/// the body content area, dividing the width into *N* equal columns separated by
-/// the declared (or default) inter-column space.
+/// the body content area.
+///
+/// When the section declares explicit unequal per-column widths (`w:equalWidth="0"`
+/// with `w:col` entries), the columns are placed at those widths and the per-column
+/// (`w:col/@w:space`) gaps, left to right from the content's leading edge. Otherwise
+/// the content width is divided into *N* equal columns separated by the declared (or
+/// default) inter-column space.
 #[must_use]
 pub fn column_layout(columns: &SectionColumns, content: Rect) -> ColumnLayout {
     let n = (columns.count.max(1)) as i32;
@@ -116,6 +132,12 @@ pub fn column_layout(columns: &SectionColumns, content: Rect) -> ColumnLayout {
             separator,
         };
     }
+    // Explicit per-column widths win unless the section forces equal widths. Word
+    // writes `w:col` widths with `equalWidth="0"`; a stray `equalWidth="1"` alongside
+    // `w:col` means Word ignores the widths, so honor that.
+    if !columns.columns.is_empty() && columns.equal_width != Some(true) {
+        return unequal_layout(columns, content, separator);
+    }
     let space = columns.space_twips.unwrap_or(DEFAULT_COLUMN_SPACE).max(0);
     let total_gap = space * (n - 1);
     let col_w = ((content.size.width.raw() - total_gap) / n).max(1);
@@ -125,6 +147,33 @@ pub fn column_layout(columns: &SectionColumns, content: Rect) -> ColumnLayout {
             width: Twip(col_w),
         })
         .collect();
+    ColumnLayout {
+        columns: geoms,
+        separator,
+    }
+}
+
+/// Lays out a section's explicit per-column widths (`w:col`) left to right from the
+/// content's leading edge, each followed by its own (`w:col/@w:space`) gap — falling
+/// back to the section space, then the default, when a column omits its gap.
+fn unequal_layout(columns: &SectionColumns, content: Rect, separator: bool) -> ColumnLayout {
+    let default_gap = columns.space_twips.unwrap_or(DEFAULT_COLUMN_SPACE).max(0);
+    let last = columns.columns.len().saturating_sub(1);
+    let mut x = content.origin.x.raw();
+    let mut geoms = Vec::with_capacity(columns.columns.len());
+    for (i, def) in columns.columns.iter().enumerate() {
+        let width = def.width_twips.max(1);
+        geoms.push(ColumnGeom {
+            x: Twip(x),
+            width: Twip(width),
+        });
+        // The gap follows every column but the last; a column's own `@w:space`
+        // overrides the section default.
+        if i < last {
+            let gap = def.space_twips.unwrap_or(default_gap).max(0);
+            x += width + gap;
+        }
+    }
     ColumnLayout {
         columns: geoms,
         separator,
@@ -185,6 +234,11 @@ struct ColPaginator {
     content: Rect,
     /// The current section's column geometries.
     columns: Vec<ColumnGeom>,
+    /// Whether the current section draws a separator rule between its columns.
+    separator: bool,
+    /// Separator rules accumulated for the page currently being built, flushed into
+    /// the [`Page`] alongside its placed fragments.
+    page_separators: Vec<ColumnSeparator>,
     /// The current column index within the active band.
     col: usize,
     /// The y at which the active column band begins (content top on a fresh page,
@@ -231,6 +285,8 @@ impl ColPaginator {
                 Size::new(Twip::ZERO, Twip::ZERO),
             ),
             columns: Vec::new(),
+            separator: false,
+            page_separators: Vec::new(),
             col: 0,
             band_top: Twip::ZERO,
             y: Twip::ZERO,
@@ -245,19 +301,25 @@ impl ColPaginator {
     /// Processes one section: enters its geometry, positions its column band
     /// (new page vs. mid-page continuation), then fills its galley into columns.
     fn run_section(&mut self, run: &SectionRun) {
-        self.config = run.config;
-        self.content = run.config.content_area();
-        self.columns = run.layout.columns.clone();
         self.base = self.next_base;
         self.next_base += run.galley.len() as u32;
         self.at = FlowPos::at(self.base);
 
-        // A `nextPage`-style section starts a fresh page (unless the page is
-        // already empty). A `continuous` section keeps the page and drops its band
-        // below the previous section's deepest content.
+        // Transition off the previous section's band, closing its separator rule
+        // with the *previous* section's geometry — before this section's geometry is
+        // adopted below. A `nextPage`-style section starts a fresh page (unless the
+        // page is already empty); a `continuous` section keeps the page and drops
+        // its band below the previous section's deepest content.
         if run.starts_new_page && !self.placed.is_empty() {
             self.flush_page();
+        } else if !self.placed.is_empty() {
+            self.close_band(self.page_max_y);
         }
+
+        self.config = run.config;
+        self.content = run.config.content_area();
+        self.columns = run.layout.columns.clone();
+        self.separator = run.layout.separator;
         self.band_top = if self.placed.is_empty() {
             self.content.origin.y
         } else {
@@ -588,22 +650,50 @@ impl ColPaginator {
         }
     }
 
+    /// Emits a separator rule for each inter-column gap of the current band, from
+    /// the band top down to `bottom` (the band's deepest content on this page), when
+    /// the section draws a separator and has more than one column. A gap whose band
+    /// has no height (an empty band) contributes nothing.
+    fn close_band(&mut self, bottom: Twip) {
+        if !self.separator || self.columns.len() < 2 || bottom.raw() <= self.band_top.raw() {
+            return;
+        }
+        for pair in self.columns.windows(2) {
+            // The gap between the left column's trailing edge and the right column's
+            // leading edge; the rule sits at its horizontal center.
+            let gap_left = pair[0].x.raw() + pair[0].width.raw();
+            let gap_right = pair[1].x.raw();
+            let x = Twip((gap_left + gap_right) / 2);
+            self.page_separators.push(ColumnSeparator {
+                x,
+                top: self.band_top,
+                bottom,
+            });
+        }
+    }
+
     /// Ends the current page (if it has content) and resets to a fresh full-height
     /// column band at the content top.
     fn flush_page(&mut self) {
+        // Close the active band's separator on this page before the page ends.
+        self.close_band(self.page_max_y);
         if !self.placed.is_empty() {
             let flow = FlowSpan {
                 start: self.page_start,
                 end: self.at,
             };
-            let page = build_page(
+            let mut page = build_page(
                 self.pages.len(),
                 &self.config,
                 self.content,
                 std::mem::take(&mut self.placed),
                 flow,
             );
+            page.separators = std::mem::take(&mut self.page_separators);
             self.pages.push(page);
+        } else {
+            // A page with no content carries no separators.
+            self.page_separators.clear();
         }
         self.col = 0;
         self.band_top = self.content.origin.y;
@@ -619,7 +709,7 @@ mod tests {
     use crate::block::ParagraphDecor;
     use crate::model::{ModelPos, ModelRange};
     use crate::text::{Line, LineBreak, LineLayout};
-    use casual_doc_model::v1::SectionId;
+    use casual_doc_model::v1::{ColumnDef, SectionId};
 
     /// A US-Letter page with 1-inch margins → a 9360×12960-twip content area.
     fn letter_config() -> PageConfig {
@@ -667,6 +757,8 @@ mod tests {
             count: 2,
             space_twips: Some(720),
             separator: None,
+            equal_width: None,
+            columns: Vec::new(),
         };
         SectionRun {
             config,
@@ -723,6 +815,8 @@ mod tests {
             count: 2,
             space_twips: Some(720),
             separator: None,
+            equal_width: None,
+            columns: Vec::new(),
         };
         let layout = column_layout(&cols, config.content_area());
         let content_w = config.content_area().size.width.raw();
@@ -762,6 +856,118 @@ mod tests {
             layout.pages[0].placed[1].rect.origin.y.raw(),
             top + 1_000,
             "the continuous section begins just below the previous section"
+        );
+    }
+
+    #[test]
+    fn unequal_columns_use_the_specified_per_column_widths_and_gaps() {
+        let config = letter_config();
+        // The SDS's "narrow label + wide content" split: 3163 + 40-gap + 6447.
+        let cols = SectionColumns {
+            count: 2,
+            space_twips: None,
+            separator: Some(true),
+            equal_width: Some(false),
+            columns: vec![
+                ColumnDef {
+                    width_twips: 3_163,
+                    space_twips: Some(40),
+                },
+                ColumnDef {
+                    width_twips: 6_447,
+                    space_twips: None,
+                },
+            ],
+        };
+        let content = config.content_area();
+        let layout = column_layout(&cols, content);
+        assert_eq!(layout.columns.len(), 2);
+        // Placed at their true widths, left to right from the content edge.
+        assert_eq!(layout.columns[0].x.raw(), content.origin.x.raw());
+        assert_eq!(layout.columns[0].width.raw(), 3_163);
+        assert_eq!(
+            layout.columns[1].x.raw(),
+            content.origin.x.raw() + 3_163 + 40,
+            "the second column follows the first plus its own 40-twip gap"
+        );
+        assert_eq!(layout.columns[1].width.raw(), 6_447);
+        // The galley flows at the widest column so the wide content column wraps at
+        // its true width.
+        assert_eq!(layout.flow_width().raw(), 6_447);
+    }
+
+    #[test]
+    fn equal_width_true_ignores_explicit_column_widths() {
+        // A stray `w:equalWidth="1"` alongside `w:col` widths → equal division.
+        let config = letter_config();
+        let cols = SectionColumns {
+            count: 2,
+            space_twips: Some(720),
+            separator: None,
+            equal_width: Some(true),
+            columns: vec![
+                ColumnDef {
+                    width_twips: 3_163,
+                    space_twips: Some(40),
+                },
+                ColumnDef {
+                    width_twips: 6_447,
+                    space_twips: None,
+                },
+            ],
+        };
+        let content_w = config.content_area().size.width.raw();
+        let layout = column_layout(&cols, config.content_area());
+        assert_eq!(layout.columns[0].width.raw(), (content_w - 720) / 2);
+        assert_eq!(layout.columns[1].width.raw(), (content_w - 720) / 2);
+    }
+
+    #[test]
+    fn separator_rule_is_emitted_between_columns_when_sep_is_set() {
+        let config = letter_config();
+        let content_h = config.content_area().size.height.raw();
+        let cols = SectionColumns {
+            count: 2,
+            space_twips: Some(720),
+            separator: Some(true),
+            equal_width: None,
+            columns: Vec::new(),
+        };
+        let row_h = 240;
+        let rows = content_h / row_h + 4; // spill into column 1
+        let galley: Vec<_> = (0..rows)
+            .map(|i| paragraph(i as u64 + 1, Twip(row_h)))
+            .collect();
+        let run = SectionRun {
+            config,
+            layout: column_layout(&cols, config.content_area()),
+            galley,
+            starts_new_page: true,
+        };
+        let layout = paginate_columns(&[run]);
+        assert_eq!(layout.pages.len(), 1);
+        let seps = &layout.pages[0].separators;
+        assert_eq!(seps.len(), 1, "one rule between the two columns");
+        let content = config.content_area();
+        // Centered in the 720-twip gap between the two equal columns.
+        let col_w = (content.size.width.raw() - 720) / 2;
+        let expected_x = content.origin.x.raw() + col_w + 720 / 2;
+        assert_eq!(seps[0].x.raw(), expected_x);
+        assert_eq!(seps[0].top.raw(), content.origin.y.raw());
+        assert!(
+            seps[0].bottom.raw() > seps[0].top.raw(),
+            "the rule spans a positive band height"
+        );
+    }
+
+    #[test]
+    fn no_separator_rule_when_sep_is_absent() {
+        let config = letter_config();
+        let galley = vec![paragraph(1, Twip(400)), paragraph(2, Twip(400))];
+        let layout = paginate_columns(&[two_column_run(config, galley)]);
+        assert!(
+            layout.pages.iter().all(|p| p.separators.is_empty()),
+            "no separator rules without w:cols/@w:sep"
         );
     }
 }

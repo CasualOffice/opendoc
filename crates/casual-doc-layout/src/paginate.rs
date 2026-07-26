@@ -1090,6 +1090,9 @@ pub(crate) fn build_page(
         // Filled by the post-pagination anchored-placement pass, off the hot path.
         anchored: Vec::new(),
         footnotes: Vec::new(),
+        // Filled by the column paginator for multi-column separator sections; the
+        // single-column paginator leaves it empty.
+        separators: Vec::new(),
         start,
         end,
         flow,
