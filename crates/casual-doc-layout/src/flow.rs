@@ -14,6 +14,9 @@
 //! table splitting (`P1D-003`) are the following slices; unmapped inline nodes
 //! contribute no text yet (never panic).
 
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+
 use casual_doc_model::v1::{
     Alignment, BlockNode, BorderEdge, Color, Document, HeightRule, InlineNode, ParagraphProperties,
     Table, TableBorders, TableCell, TableLayout, TableRowProperties,
@@ -22,6 +25,7 @@ use casual_doc_model::v1::{
 use crate::block::{
     BlockFragment, BoxMetrics, BreakControl, CellBorders, CellFragment, ResolvedEdge,
 };
+use crate::incremental::{DirtySet, GalleyCache};
 use crate::model::{ModelPos, ModelRange};
 use crate::text::{Decoration, LineConstraints, LineShaper, StyledRun, TextAlignment};
 use crate::units::Twip;
@@ -35,6 +39,118 @@ pub fn build_galley(
     content_width: Twip,
 ) -> Vec<BlockFragment> {
     flow_blocks(document.body(), shaper, content_width)
+}
+
+/// Builds the galley like [`build_galley`], but reuses the shaped lines of
+/// unchanged paragraphs from `cache` instead of re-shaping them — the incremental
+/// path (`43-…` §7.4 step 2). Only paragraphs whose content changed (their hash
+/// differs) or whose node the transaction reported in `dirty` are handed to the
+/// `shaper`; everything else is cloned from the cache. Shaping is the dominant
+/// cost of building a galley, so this is what makes an edit `O(edit)` rather than
+/// `O(document)`.
+///
+/// The result is identical to a fresh [`build_galley`] of the same document — the
+/// cache changes only *how much shaping* happens, never the galley's content. The
+/// cache is scoped to `content_width`; a width change transparently clears it.
+///
+/// Top-level body paragraphs are cached; tables (and their nested cell paragraphs)
+/// are re-flowed each call, so a document dominated by large tables sees less
+/// benefit — paragraph editing, the common case, is fully incremental.
+#[must_use]
+pub fn build_galley_cached(
+    document: &Document,
+    shaper: &dyn LineShaper,
+    content_width: Twip,
+    cache: &mut GalleyCache,
+    dirty: &DirtySet,
+) -> Vec<BlockFragment> {
+    cache.begin_build(content_width);
+    let mut galley = Vec::new();
+    for block in document.body() {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                let mut runs = Vec::new();
+                collect_runs(&paragraph.inlines, &mut runs);
+                let spacing = paragraph.properties.spacing.as_ref();
+                let constraints = LineConstraints {
+                    max_width: content_width,
+                    rtl: false,
+                    alignment: alignment(&paragraph.properties),
+                    line_height_percent: spacing.and_then(|s| s.line_percent),
+                };
+                let box_metrics = box_metrics(&paragraph.properties);
+                let break_control = break_control(&paragraph.properties);
+                let hash = paragraph_hash(
+                    paragraph.id,
+                    &runs,
+                    &constraints,
+                    box_metrics,
+                    break_control,
+                );
+
+                if let Some(fragment) = cache.reusable(paragraph.id, hash, dirty) {
+                    galley.push(fragment.clone());
+                    continue;
+                }
+                let range = ModelRange::new(
+                    ModelPos::new(paragraph.id, 0),
+                    ModelPos::new(paragraph.id, 0),
+                );
+                let lines = shaper.shape_paragraph(&runs, constraints, range);
+                let fragment = BlockFragment::Paragraph {
+                    id: paragraph.id,
+                    lines,
+                    box_metrics,
+                    break_control,
+                };
+                cache.store(paragraph.id, hash, fragment.clone());
+                galley.push(fragment);
+            }
+            BlockNode::Table(table) => flow_table(table, shaper, content_width, &mut galley),
+            BlockNode::Sdt(_) => {}
+        }
+    }
+    galley
+}
+
+/// Hashes every input that determines a paragraph's shaped fragment: its node
+/// identity, each run's text and styling, the wrap constraints, and the box/break
+/// metrics. Because the hash is computed from the exact values fed to the shaper
+/// and the fragment builder, a matching hash guarantees an identical fragment —
+/// the [`GalleyCache`] reuse condition.
+fn paragraph_hash(
+    id: casual_doc_model::NodeId,
+    runs: &[StyledRun<'_>],
+    constraints: &LineConstraints,
+    box_metrics: BoxMetrics,
+    break_control: BreakControl,
+) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    id.as_u128().hash(&mut hasher);
+    for run in runs {
+        run.text.hash(&mut hasher);
+        run.font.0.hash(&mut hasher);
+        run.size.0.hash(&mut hasher);
+        run.bold.hash(&mut hasher);
+        run.italic.hash(&mut hasher);
+        run.letter_spacing.0.hash(&mut hasher);
+        run.color.hash(&mut hasher);
+        run.decoration.underline.hash(&mut hasher);
+        run.decoration.strikethrough.hash(&mut hasher);
+    }
+    constraints.max_width.0.hash(&mut hasher);
+    constraints.rtl.hash(&mut hasher);
+    (constraints.alignment as u8).hash(&mut hasher);
+    constraints.line_height_percent.hash(&mut hasher);
+    box_metrics.space_before.0.hash(&mut hasher);
+    box_metrics.space_after.0.hash(&mut hasher);
+    box_metrics.indent_start.0.hash(&mut hasher);
+    box_metrics.indent_end.0.hash(&mut hasher);
+    break_control.page_break_before.hash(&mut hasher);
+    break_control.keep_next.hash(&mut hasher);
+    break_control.keep_lines.hash(&mut hasher);
+    break_control.widow_control.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// Flows a sequence of block nodes (a body or a table cell) into shaped
