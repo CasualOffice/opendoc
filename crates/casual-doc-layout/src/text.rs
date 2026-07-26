@@ -10,7 +10,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::model::ModelRange;
-use crate::units::{Point, Twip};
+use crate::units::{Point, Size, Twip};
 
 /// A resolved font identity (an index into the engine's resolved font set). The
 /// resolution itself is `casual-doc-fonts`' concern (`40-FONT-MANAGEMENT-DESIGN.md`).
@@ -76,6 +76,24 @@ pub enum LineBreak {
     ParagraphEnd,
 }
 
+/// An inline image (embedded picture) placed within a paragraph, positioned like
+/// a glyph run: `origin` is the box's top-left relative to the paragraph content
+/// box, in twips. The renderer resolves `media` to bytes (a [`MediaSource`]) and
+/// blits them scaled into the box. Only the inline case is modeled; anchored /
+/// floating drawings are a later slice (`P1F-28`).
+///
+/// [`MediaSource`]: https://docs.rs/casual-doc-render
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct InlineImage {
+    /// The media part name (the display list's stable media key), resolved by the
+    /// backend against the document's media table.
+    pub media: String,
+    /// Top-left of the image box, relative to the paragraph content box (twips).
+    pub origin: Point,
+    /// The image box size (twips), derived from the drawing's EMU extent.
+    pub size: Size,
+}
+
 /// One laid-out line: its glyph runs (visually ordered), vertical metrics, the
 /// model range it covers (for hit-testing), and how it ends.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -104,6 +122,11 @@ pub struct Line {
     /// Empty for the common case; serialized only when non-empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bars: Vec<Twip>,
+    /// Inline images placed on this line (embedded pictures). Empty for the common
+    /// text-only line; serialized only when non-empty so a plain galley stays
+    /// byte-identical.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<InlineImage>,
 }
 
 /// The result of shaping one paragraph: its ordered lines.
@@ -231,6 +254,7 @@ mod tests {
             line_break: LineBreak::Wrap,
             page_break_after: false,
             bars: Vec::new(),
+            images: Vec::new(),
         };
         let layout = LineLayout {
             lines: vec![line(240), line(240), line(200)],

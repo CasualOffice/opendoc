@@ -1042,6 +1042,7 @@ mod tests {
             line_break: LineBreak::ParagraphEnd,
             page_break_after: false,
             bars: Vec::new(),
+            images: Vec::new(),
         };
         BlockFragment::Paragraph {
             id: node,
@@ -1087,6 +1088,7 @@ mod tests {
                     line_break: LineBreak::Wrap,
                     page_break_after: false,
                     bars: Vec::new(),
+                    images: Vec::new(),
                 }
             })
             .collect();

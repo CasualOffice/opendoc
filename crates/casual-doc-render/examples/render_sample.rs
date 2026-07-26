@@ -7,7 +7,7 @@ use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_layout::text::{Decoration, LineConstraints, LineShaper, StyledRun, TextAlignment};
 use casual_doc_layout::units::{Point, Twip};
 use casual_doc_model::NodeId;
-use casual_doc_render::{BundledFontSource, Surface, render};
+use casual_doc_render::{BundledFontSource, NoMediaSource, Surface, render};
 
 fn styled(text: &str, bold: bool, italic: bool, color: [u8; 4]) -> StyledRun<'_> {
     StyledRun {
@@ -47,7 +47,13 @@ fn main() {
         Point::new(Twip::from_points(16), Twip::from_points(40)),
     );
     let mut surface = Surface::new(680, 100).unwrap();
-    render(&list, &mut surface, 96.0, &BundledFontSource);
+    render(
+        &list,
+        &mut surface,
+        96.0,
+        &BundledFontSource,
+        &NoMediaSource,
+    );
     std::fs::write(&out, surface.encode_png().unwrap()).unwrap();
     eprintln!("done -> {out}");
 }

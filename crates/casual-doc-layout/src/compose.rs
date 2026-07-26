@@ -64,6 +64,18 @@ pub fn compose_paragraph(layout: &LineLayout, origin: Point) -> DisplayList {
             placed.origin = Point::new(placed_x, baseline_y);
             list.push(PaintItem::Glyphs { run: placed });
         }
+        // Inline images (embedded pictures): the box's `origin` is already
+        // paragraph-absolute; translate into page space and emit a blit. The
+        // backend resolves `media` to pixels and scales them into the box.
+        for image in &line.images {
+            list.push(PaintItem::Image {
+                media: image.media.clone(),
+                rect: Rect::new(
+                    Point::new(origin.x + image.origin.x, origin.y + image.origin.y),
+                    image.size,
+                ),
+            });
+        }
     }
     list
 }
@@ -402,6 +414,7 @@ mod tests {
                 line_break: LineBreak::ParagraphEnd,
                 page_break_after: false,
                 bars: Vec::new(),
+                images: Vec::new(),
             }],
         }
     }

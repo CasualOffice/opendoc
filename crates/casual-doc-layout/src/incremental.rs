@@ -464,6 +464,7 @@ mod tests {
                     line_break: LineBreak::ParagraphEnd,
                     page_break_after: false,
                     bars: Vec::new(),
+                    images: Vec::new(),
                 }],
             }
         }
