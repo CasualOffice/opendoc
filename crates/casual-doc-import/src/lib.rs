@@ -48,6 +48,7 @@ mod settings;
 mod styles;
 mod tables;
 mod theme;
+mod vml;
 
 pub use config::{ImportConfig, ImportMode};
 pub use error::ImportError;
@@ -58,6 +59,10 @@ pub use report::{
     CompatibilityEntry, CompatibilityReport, ModelOutcome, PartDisposition, RetentionOutcome,
 };
 pub use retain::RetainedSource;
+pub use vml::{
+    VmlColor, VmlDrawing, VmlFill, VmlPosition, VmlRelFrame, VmlShapeKind, VmlStroke, VmlTextbox,
+    parse_vml_pict,
+};
 
 use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
