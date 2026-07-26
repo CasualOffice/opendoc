@@ -155,6 +155,48 @@ fn based_on_cycle_and_kind_mismatch_are_rejected() {
 }
 
 #[test]
+fn dangling_next_style_reference_is_rejected() {
+    // A `w:next` (like `w:link`) must resolve; a dangling one fails validation.
+    let json = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{"type":"paragraph","id":"00000000000000030000000000000002","properties":{},"inlines":[]}],
+            "definitions":{"styles":{
+              "0000000000000000000000000000000a":{"kind":"paragraph","next":"00000000000000000000000000000099"}
+            }}}"#;
+    assert!(matches!(
+        Document::from_json(json, SnapshotLimits::default()),
+        Err(SnapshotError::InvalidModel(ModelError::DanglingStyleRef(_)))
+    ));
+}
+
+#[test]
+fn table_style_conditional_formatting_snapshot_round_trips() {
+    // A table style with style-level borders plus two `w:tblStylePr` regions
+    // (a bold, shaded first row and a banded row) is a JSON snapshot fixed point,
+    // proving the additive style shape serializes and re-validates cleanly.
+    let json = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{"type":"paragraph","id":"00000000000000030000000000000002","properties":{},"inlines":[]}],
+            "definitions":{"styles":{
+              "0000000000000000000000000000000a":{"kind":"table","isDefault":true,"name":"Grid","uiPriority":59,
+                "table":{"borders":{"top":{"style":"single","sizeEighthPoints":4}}},
+                "conditional":[
+                  {"region":"firstRow","run":{"bold":true},
+                    "tableCell":{"shading":{"fill":{"r":68,"g":114,"b":196}}}},
+                  {"region":"band1Horizontal",
+                    "tableCell":{"shading":{"fill":{"r":217,"g":226,"b":243}}}}
+                ]}
+            }}}"#;
+    let document = Document::from_json(json, SnapshotLimits::default()).unwrap();
+    let first = document.to_json().unwrap();
+    let reloaded = Document::from_json(&first, SnapshotLimits::default()).unwrap();
+    assert_eq!(reloaded.to_json().unwrap(), first);
+
+    let (_, style) = document.definitions().styles.iter().next().unwrap();
+    assert_eq!(style.kind, StyleKind::Table);
+    assert_eq!(style.conditional.len(), 2);
+    assert_eq!(style.conditional[0].region, TableStyleRegion::FirstRow);
+}
+
+#[test]
 fn numbering_reference_integrity_is_enforced() {
     let dangling = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
             "body":[{"type":"paragraph","id":"00000000000000030000000000000002",
@@ -1783,6 +1825,7 @@ fn comment_reference_resolves_and_round_trips() {
             author: Some("Alice".to_owned()),
             initials: Some("AL".to_owned()),
             date: Some("2026-07-25T00:00:00Z".to_owned()),
+            ..Comment::default()
         },
     );
     let document =
@@ -1792,6 +1835,97 @@ fn comment_reference_resolves_and_round_trips() {
     assert_eq!(document, reloaded);
     let comment = document.definitions().comments.get(&id).unwrap();
     assert_eq!(comment.author.as_deref(), Some("Alice"));
+}
+
+#[test]
+fn comment_threading_and_identity_round_trip_through_json() {
+    // A resolved root plus a reply, with a linked collaborator identity, survives
+    // the strict JSON round-trip and validation.
+    let root_id = CommentId::new(tid(20));
+    let reply_id = CommentId::new(tid(21));
+    let mut definitions = Definitions::default();
+    definitions.comments.insert(
+        root_id,
+        Comment {
+            blocks: vec![paragraph_block(tid(30))],
+            author: Some("Ada".to_owned()),
+            para_id: Some("00000001".to_owned()),
+            done: true,
+            durable_id: Some("1A2B3C4D".to_owned()),
+            person: Some("Ada".to_owned()),
+            ..Comment::default()
+        },
+    );
+    definitions.comments.insert(
+        reply_id,
+        Comment {
+            blocks: vec![paragraph_block(tid(31))],
+            author: Some("Grace".to_owned()),
+            para_id: Some("00000002".to_owned()),
+            parent_para_id: Some("00000001".to_owned()),
+            ..Comment::default()
+        },
+    );
+    definitions.people.push(Person {
+        author: "Ada".to_owned(),
+        presence: Some(PresenceInfo {
+            provider_id: "AD".to_owned(),
+            user_id: "S::ada@example.com::a1b2".to_owned(),
+        }),
+    });
+    let body = vec![BlockNode::Paragraph(Paragraph {
+        id: tid(1),
+        properties: ParagraphProperties::default(),
+        inlines: vec![
+            InlineNode::CommentReference(CommentReference {
+                id: tid(2),
+                comment: root_id,
+            }),
+            InlineNode::CommentReference(CommentReference {
+                id: tid(3),
+                comment: reply_id,
+            }),
+        ],
+    })];
+    let document = Document::new(tid(99), body, definitions).unwrap();
+    let json = document.to_json().unwrap();
+    let reloaded = Document::from_json(&json, SnapshotLimits::default()).unwrap();
+    assert_eq!(document, reloaded);
+    let reply = reloaded.definitions().comments.get(&reply_id).unwrap();
+    assert_eq!(reply.parent_para_id.as_deref(), Some("00000001"));
+    assert_eq!(reloaded.definitions().people.len(), 1);
+}
+
+#[test]
+fn base_comment_and_empty_people_are_omitted_from_serialization() {
+    // The threading/identity additions are omitted when unset, so pre-threading
+    // snapshots serialize byte-identically.
+    let id = CommentId::new(tid(20));
+    let mut definitions = Definitions::default();
+    definitions.comments.insert(
+        id,
+        Comment {
+            blocks: vec![paragraph_block(tid(30))],
+            author: Some("Alice".to_owned()),
+            ..Comment::default()
+        },
+    );
+    let document =
+        Document::new(tid(99), vec![comment_paragraph(tid(2), id)], definitions).unwrap();
+    let json = String::from_utf8(document.to_json().unwrap()).unwrap();
+    for absent in [
+        "paraId",
+        "parentParaId",
+        "durableId",
+        "\"person\"",
+        "people",
+        "\"done\"",
+    ] {
+        assert!(
+            !json.contains(absent),
+            "unset field {absent} must be omitted"
+        );
+    }
 }
 
 #[test]

@@ -26,12 +26,12 @@ use casual_doc_model::v1::{
     FontRef, FontScheme, HeaderFooterId, HeaderFooterKind, HeightRule, HighlightColor,
     HyperlinkTarget, InlineNode, LevelJustification, LevelSuffix, MediaId, MediaReference, Note,
     NoteId, NoteKind, NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel,
-    PageVerticalAlignment, ParagraphProperties, ProofState, RevisionKind, RgbColor, RunFontHint,
-    RunProperties, SchemeColor, SdtControlKind, SdtProperties, SectionBoundary, SectionType, Style,
-    StyleId, StyleKind, TabAlignment, TabLeader, Table, TableBorders, TableCell,
-    TableCellProperties, TableLayout, TableOverlap, TableProperties, TableRow, TableRowProperties,
-    TextDirection, ThemeFontRef, VerticalAlignment, VerticalMerge, VerticalTextAlignment, Zoom,
-    ZoomMode,
+    PageVerticalAlignment, ParagraphProperties, Person, ProofState, RevisionKind, RgbColor,
+    RunFontHint, RunProperties, SchemeColor, SdtControlKind, SdtProperties, SectionBoundary,
+    SectionType, Style, StyleId, StyleKind, TabAlignment, TabLeader, Table, TableBorders,
+    TableCell, TableCellProperties, TableLayout, TableOverlap, TableProperties, TableRow,
+    TableRowProperties, TableStyleOverride, TableStyleRegion, TextDirection, ThemeFontRef,
+    VerticalAlignment, VerticalMerge, VerticalTextAlignment, Zoom, ZoomMode,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -76,6 +76,20 @@ const COMMENTS_REL_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
 const COMMENTS_CT: &str =
     "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml";
+// Comment companion parts (P1F-10): threading, durable ids, and identity.
+const W14_NS: &str = "http://schemas.microsoft.com/office/word/2010/wordml";
+const W15_NS: &str = "http://schemas.microsoft.com/office/word/2012/wordml";
+const W16CID_NS: &str = "http://schemas.microsoft.com/office/word/2016/wordml/cid";
+const COMMENTS_EXTENDED_REL_TYPE: &str =
+    "http://schemas.microsoft.com/office/2011/relationships/commentsExtended";
+const COMMENTS_EXTENDED_CT: &str =
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml";
+const COMMENTS_IDS_REL_TYPE: &str =
+    "http://schemas.microsoft.com/office/2016/relationships/commentsIds";
+const COMMENTS_IDS_CT: &str =
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.commentsIds+xml";
+const PEOPLE_REL_TYPE: &str = "http://schemas.microsoft.com/office/2011/relationships/people";
+const PEOPLE_CT: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.people+xml";
 const HEADER_REL_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header";
 const HEADER_CT: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml";
@@ -431,6 +445,35 @@ pub fn write_document_with_retained_parts(
             )
             .with_own_rels(own_rels),
         );
+        // Comment companion parts (P1F-10), each emitted only when it carries
+        // data so a package without threading/identity stays byte-identical.
+        if let Some(bytes) = comments_extended_xml(&definitions.comments)? {
+            extras.push(ExtraPart::new(
+                "word/commentsExtended.xml",
+                COMMENTS_EXTENDED_CT,
+                COMMENTS_EXTENDED_REL_TYPE,
+                "commentsExtended.xml",
+                bytes,
+            ));
+        }
+        if let Some(bytes) = comments_ids_xml(&definitions.comments)? {
+            extras.push(ExtraPart::new(
+                "word/commentsIds.xml",
+                COMMENTS_IDS_CT,
+                COMMENTS_IDS_REL_TYPE,
+                "commentsIds.xml",
+                bytes,
+            ));
+        }
+    }
+    if !definitions.people.is_empty() {
+        extras.push(ExtraPart::new(
+            "word/people.xml",
+            PEOPLE_CT,
+            PEOPLE_REL_TYPE,
+            "people.xml",
+            people_xml(&definitions.people)?,
+        ));
     }
     // Headers then footers, each a part with an id-derived relationship id the
     // section's `w:sectPr` references. Emitted in ascending-id order so the
@@ -1115,7 +1158,10 @@ fn notes_xml(
 }
 
 /// Emits `word/comments.xml`: each comment keyed by a `w:id` derived from its
-/// `CommentId`, with author/initials/date attributes, wrapping its blocks.
+/// `CommentId`, with author/initials/date attributes, wrapping its blocks. When
+/// the comment carries a `para_id` (its companion-part join key), that `w14:paraId`
+/// is stamped on the comment's last top-level paragraph so the threading in
+/// `commentsExtended.xml`/`commentsIds.xml` resolves back to it.
 fn comments_xml(
     comments: &DefinitionMap<CommentId, Comment>,
     defs: &Definitions,
@@ -1128,6 +1174,7 @@ fn comments_xml(
     let mut r = start("w:comments");
     r.push_attribute(("xmlns:w", W_NS));
     r.push_attribute(("xmlns:r", R_NS));
+    r.push_attribute(("xmlns:w14", W14_NS));
     w.write_event(Event::Start(r)).map_err(pkg)?;
     for (id, comment) in comments.iter() {
         let mut el = start("w:comment");
@@ -1142,8 +1189,24 @@ fn comments_xml(
             el.push_attribute(("w:date", date.as_str()));
         }
         w.write_event(Event::Start(el)).map_err(pkg)?;
-        for block in &comment.blocks {
-            write_block(&mut w, block, &mut ctx)?;
+        // The `w14:paraId` anchors on the comment's last top-level paragraph.
+        let anchor = comment
+            .para_id
+            .as_deref()
+            .and_then(|_| comment.blocks.iter().rposition(is_paragraph));
+        for (index, block) in comment.blocks.iter().enumerate() {
+            match (block, anchor) {
+                (BlockNode::Paragraph(paragraph), Some(anchor)) if anchor == index => {
+                    write_paragraph(
+                        &mut w,
+                        &paragraph.properties,
+                        &paragraph.inlines,
+                        &mut ctx,
+                        comment.para_id.as_deref(),
+                    )?;
+                }
+                _ => write_block(&mut w, block, &mut ctx)?,
+            }
         }
         w.write_event(Event::End(BytesEnd::new("w:comment")))
             .map_err(pkg)?;
@@ -1151,6 +1214,112 @@ fn comments_xml(
     w.write_event(Event::End(BytesEnd::new("w:comments")))
         .map_err(pkg)?;
     Ok((finish(w), ctx.rels.entries))
+}
+
+/// Whether a block is a paragraph (the anchor kind for a comment's `w14:paraId`).
+fn is_paragraph(block: &BlockNode) -> bool {
+    matches!(block, BlockNode::Paragraph(_))
+}
+
+/// Emits `word/commentsExtended.xml` from the comments that carry threading
+/// state (a parent link or a done flag). Returns `None` when no comment does, so
+/// the part (and its content-type/rels) is omitted entirely.
+fn comments_extended_xml(
+    comments: &DefinitionMap<CommentId, Comment>,
+) -> Result<Option<Vec<u8>>, ExportError> {
+    let has_threading = comments
+        .iter()
+        .any(|(_, comment)| comment.parent_para_id.is_some() || comment.done);
+    if !has_threading {
+        return Ok(None);
+    }
+    let mut w = new_writer();
+    let mut root = start("w15:commentsEx");
+    root.push_attribute(("xmlns:w15", W15_NS));
+    w.write_event(Event::Start(root)).map_err(pkg)?;
+    // An entry is written for every comment with a `para_id` (its key), so a
+    // resolved root and its replies all round-trip.
+    for (_, comment) in comments.iter() {
+        let Some(para_id) = comment.para_id.as_deref() else {
+            continue;
+        };
+        if comment.parent_para_id.is_none() && !comment.done {
+            continue;
+        }
+        let mut el = start("w15:commentEx");
+        el.push_attribute(("w15:paraId", para_id));
+        if let Some(parent) = comment.parent_para_id.as_deref() {
+            el.push_attribute(("w15:paraIdParent", parent));
+        }
+        if comment.done {
+            el.push_attribute(("w15:done", "1"));
+        }
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("w15:commentsEx")))
+        .map_err(pkg)?;
+    Ok(Some(finish(w)))
+}
+
+/// Emits `word/commentsIds.xml` mapping each comment's `para_id` to its durable
+/// id (falling back to the `para_id` itself when the model carries no distinct
+/// durable id). Returns `None` when no comment has a `para_id`.
+fn comments_ids_xml(
+    comments: &DefinitionMap<CommentId, Comment>,
+) -> Result<Option<Vec<u8>>, ExportError> {
+    if comments
+        .iter()
+        .all(|(_, comment)| comment.para_id.is_none())
+    {
+        return Ok(None);
+    }
+    let mut w = new_writer();
+    let mut root = start("w16cid:commentsIds");
+    root.push_attribute(("xmlns:w16cid", W16CID_NS));
+    w.write_event(Event::Start(root)).map_err(pkg)?;
+    for (_, comment) in comments.iter() {
+        let Some(para_id) = comment.para_id.as_deref() else {
+            continue;
+        };
+        let durable_id = comment.durable_id.as_deref().unwrap_or(para_id);
+        let mut el = start("w16cid:commentId");
+        el.push_attribute(("w16cid:paraId", para_id));
+        el.push_attribute(("w16cid:durableId", durable_id));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("w16cid:commentsIds")))
+        .map_err(pkg)?;
+    Ok(Some(finish(w)))
+}
+
+/// Emits `word/people.xml`: the collaborator identity table, each `w15:person`
+/// keyed by author name with optional `w15:presenceInfo`.
+fn people_xml(people: &[Person]) -> Result<Vec<u8>, ExportError> {
+    let mut w = new_writer();
+    let mut root = start("w15:people");
+    root.push_attribute(("xmlns:w15", W15_NS));
+    w.write_event(Event::Start(root)).map_err(pkg)?;
+    for person in people {
+        let mut el = start("w15:person");
+        el.push_attribute(("w15:author", person.author.as_str()));
+        match &person.presence {
+            Some(presence) => {
+                w.write_event(Event::Start(el)).map_err(pkg)?;
+                let mut info = start("w15:presenceInfo");
+                info.push_attribute(("w15:providerId", presence.provider_id.as_str()));
+                info.push_attribute(("w15:userId", presence.user_id.as_str()));
+                w.write_event(Event::Empty(info)).map_err(pkg)?;
+                w.write_event(Event::End(BytesEnd::new("w15:person")))
+                    .map_err(pkg)?;
+            }
+            None => {
+                w.write_event(Event::Empty(el)).map_err(pkg)?;
+            }
+        }
+    }
+    w.write_event(Event::End(BytesEnd::new("w15:people")))
+        .map_err(pkg)?;
+    Ok(finish(w))
 }
 
 fn note_id_token(id: NoteId) -> String {
@@ -1490,42 +1659,65 @@ fn styles_xml(
     for (id, style) in styles.iter() {
         let style_id = style_id_token(*id);
         let mut el = start("w:style");
-        el.push_attribute((
-            "w:type",
-            match style.kind {
-                StyleKind::Paragraph => "paragraph",
-                StyleKind::Character => "character",
-            },
-        ));
+        el.push_attribute(("w:type", style_kind_token(style.kind)));
         el.push_attribute(("w:styleId", style_id.as_str()));
+        if style.is_default {
+            el.push_attribute(("w:default", "1"));
+        }
         w.write_event(Event::Start(el)).map_err(pkg)?;
-        // The importer ignores `w:name`, but Word requires one; emit the id.
-        let mut name = start("w:name");
-        name.push_attribute(("w:val", style_id.as_str()));
-        w.write_event(Event::Empty(name)).map_err(pkg)?;
-        if let Some(based_on) = style.based_on {
-            let mut el = start("w:basedOn");
-            el.push_attribute(("w:val", style_id_token(based_on).as_str()));
+        // Metadata in `CT_Style` order. `w:name` is emitted only when modeled: a
+        // style with no captured name re-imports to `None`, so emitting a
+        // placeholder would break the fixed point.
+        if let Some(name) = &style.name {
+            let mut el = start("w:name");
+            el.push_attribute(("w:val", name.as_str()));
             w.write_event(Event::Empty(el)).map_err(pkg)?;
         }
-        // A `Some(default)` pPr/rPr must still emit its (empty) element: the
-        // importer keys on the tag's PRESENCE (Some vs None), while the property
-        // writers elide an all-default value — so emit a bare `<w:pPr/>`/`<w:rPr/>`
-        // for the default case to preserve presence across the round trip.
-        if let Some(paragraph) = &style.paragraph {
-            if *paragraph == ParagraphProperties::default() {
-                w.write_event(Event::Empty(start("w:pPr"))).map_err(pkg)?;
-            } else {
-                // A style never carries a section break (that is a body concept).
-                write_paragraph_properties(&mut w, paragraph, None)?;
+        if let Some(aliases) = &style.aliases {
+            let mut el = start("w:aliases");
+            el.push_attribute(("w:val", aliases.as_str()));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+        for (element, reference) in [
+            ("w:basedOn", style.based_on),
+            ("w:next", style.next),
+            ("w:link", style.link),
+        ] {
+            if let Some(reference) = reference {
+                let mut el = start(element);
+                el.push_attribute(("w:val", style_id_token(reference).as_str()));
+                w.write_event(Event::Empty(el)).map_err(pkg)?;
             }
         }
-        if let Some(run) = &style.run {
-            if *run == RunProperties::default() {
-                w.write_event(Event::Empty(start("w:rPr"))).map_err(pkg)?;
-            } else {
-                write_run_properties(&mut w, run)?;
+        if style.hidden {
+            w.write_event(Event::Empty(start("w:hidden")))
+                .map_err(pkg)?;
+        }
+        if let Some(priority) = style.ui_priority {
+            let mut el = start("w:uiPriority");
+            el.push_attribute(("w:val", priority.to_string().as_str()));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+        for (on, element) in [
+            (style.semi_hidden, "w:semiHidden"),
+            (style.unhide_when_used, "w:unhideWhenUsed"),
+            (style.q_format, "w:qFormat"),
+            (style.locked, "w:locked"),
+        ] {
+            if on {
+                w.write_event(Event::Empty(start(element))).map_err(pkg)?;
             }
+        }
+        write_style_properties(
+            &mut w,
+            &style.paragraph,
+            &style.run,
+            &style.table,
+            &style.table_row,
+            &style.table_cell,
+        )?;
+        for over in &style.conditional {
+            write_conditional_format(&mut w, over)?;
         }
         w.write_event(Event::End(BytesEnd::new("w:style")))
             .map_err(pkg)?;
@@ -1533,6 +1725,108 @@ fn styles_xml(
     w.write_event(Event::End(BytesEnd::new("w:styles")))
         .map_err(pkg)?;
     Ok(finish(w))
+}
+
+/// The `w:style/@w:type` token for a style kind.
+fn style_kind_token(kind: StyleKind) -> &'static str {
+    match kind {
+        StyleKind::Paragraph => "paragraph",
+        StyleKind::Character => "character",
+        StyleKind::Table => "table",
+        StyleKind::Numbering => "numbering",
+    }
+}
+
+/// Emits the property containers a style (or a `w:tblStylePr` region) carries, in
+/// `CT_Style`/`CT_TblStylePr` order (pPr, rPr, tblPr, trPr, tcPr). A `Some(default)`
+/// value still emits its bare element: the importer keys on the tag's PRESENCE
+/// (Some vs None), while the property writers elide an all-default value — so a
+/// bare element preserves presence across the round trip.
+fn write_style_properties(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    paragraph: &Option<ParagraphProperties>,
+    run: &Option<RunProperties>,
+    table: &Option<TableProperties>,
+    table_row: &Option<TableRowProperties>,
+    table_cell: &Option<TableCellProperties>,
+) -> Result<(), ExportError> {
+    if let Some(paragraph) = paragraph {
+        if *paragraph == ParagraphProperties::default() {
+            w.write_event(Event::Empty(start("w:pPr"))).map_err(pkg)?;
+        } else {
+            // A style never carries a section break (that is a body concept).
+            write_paragraph_properties(w, paragraph, None)?;
+        }
+    }
+    if let Some(run) = run {
+        if *run == RunProperties::default() {
+            w.write_event(Event::Empty(start("w:rPr"))).map_err(pkg)?;
+        } else {
+            write_run_properties(w, run)?;
+        }
+    }
+    if let Some(table) = table {
+        if *table == TableProperties::default() {
+            w.write_event(Event::Empty(start("w:tblPr"))).map_err(pkg)?;
+        } else {
+            write_table_properties(w, table)?;
+        }
+    }
+    if let Some(row) = table_row {
+        if *row == TableRowProperties::default() {
+            w.write_event(Event::Empty(start("w:trPr"))).map_err(pkg)?;
+        } else {
+            write_row_properties(w, row)?;
+        }
+    }
+    if let Some(cell) = table_cell {
+        if *cell == TableCellProperties::default() {
+            w.write_event(Event::Empty(start("w:tcPr"))).map_err(pkg)?;
+        } else {
+            write_cell_properties(w, cell)?;
+        }
+    }
+    Ok(())
+}
+
+/// Emits one `w:tblStylePr` conditional-formatting block (region + overrides).
+fn write_conditional_format(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    over: &TableStyleOverride,
+) -> Result<(), ExportError> {
+    let mut el = start("w:tblStylePr");
+    el.push_attribute(("w:type", table_style_region_token(over.region)));
+    w.write_event(Event::Start(el)).map_err(pkg)?;
+    write_style_properties(
+        w,
+        &over.paragraph,
+        &over.run,
+        &over.table,
+        &over.table_row,
+        &over.table_cell,
+    )?;
+    w.write_event(Event::End(BytesEnd::new("w:tblStylePr")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+/// The `w:tblStylePr/@w:type` token for a table-style region.
+fn table_style_region_token(region: TableStyleRegion) -> &'static str {
+    match region {
+        TableStyleRegion::WholeTable => "wholeTable",
+        TableStyleRegion::FirstRow => "firstRow",
+        TableStyleRegion::LastRow => "lastRow",
+        TableStyleRegion::FirstColumn => "firstCol",
+        TableStyleRegion::LastColumn => "lastCol",
+        TableStyleRegion::Band1Horizontal => "band1Horz",
+        TableStyleRegion::Band2Horizontal => "band2Horz",
+        TableStyleRegion::Band1Vertical => "band1Vert",
+        TableStyleRegion::Band2Vertical => "band2Vert",
+        TableStyleRegion::NorthEastCell => "neCell",
+        TableStyleRegion::NorthWestCell => "nwCell",
+        TableStyleRegion::SouthEastCell => "seCell",
+        TableStyleRegion::SouthWestCell => "swCell",
+    }
 }
 
 /// Emits `word/settings.xml` with the modeled settings, in `CT_Settings` schema
@@ -1981,7 +2275,7 @@ fn write_block(
 ) -> Result<(), ExportError> {
     match block {
         BlockNode::Paragraph(paragraph) => {
-            write_paragraph(w, &paragraph.properties, &paragraph.inlines, ctx)
+            write_paragraph(w, &paragraph.properties, &paragraph.inlines, ctx, None)
         }
         BlockNode::Table(table) => write_table(w, table, ctx),
         BlockNode::Sdt(sdt) => {
@@ -2365,8 +2659,15 @@ fn write_paragraph(
     properties: &ParagraphProperties,
     inlines: &[InlineNode],
     ctx: &mut Ctx,
+    para_id: Option<&str>,
 ) -> Result<(), ExportError> {
-    w.write_event(Event::Start(start("w:p"))).map_err(pkg)?;
+    let mut p = start("w:p");
+    // `para_id` is set only for a comment's anchor paragraph, carrying the
+    // durable `w14:paraId` its companion parts join on.
+    if let Some(para_id) = para_id {
+        p.push_attribute(("w14:paraId", para_id));
+    }
+    w.write_event(Event::Start(p)).map_err(pkg)?;
     // A per-paragraph section break resolves to its boundary in the shared
     // section table; it is emitted as the last `w:pPr` child.
     let section = properties

@@ -5,24 +5,134 @@ use serde::{Deserialize, Serialize};
 use super::{
     AbstractNumberingId, BlockNode, BookmarkId, ColorScheme, CommentId, DefinitionMap,
     FontDescriptor, FontScheme, HeaderFooterId, MediaId, NoteId, NumberingInstanceId,
-    ParagraphProperties, RunProperties, SectionId, StyleId, StyleKind,
+    ParagraphProperties, RunProperties, SectionId, StyleId, StyleKind, TableCellProperties,
+    TableProperties, TableRowProperties,
 };
 
-/// A style definition (its id is the map key).
+/// The table region a `w:tblStylePr` conditional format applies to
+/// (`w:tblStylePr/@w:type`, ECMA-376 §17.7.6). Each region carries its own
+/// pPr/rPr/tblPr/trPr/tcPr overrides (banding, first-row emphasis, corners).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TableStyleRegion {
+    /// The whole table (`wholeTable`).
+    WholeTable,
+    /// The first (header) row (`firstRow`).
+    FirstRow,
+    /// The last (total) row (`lastRow`).
+    LastRow,
+    /// The first column (`firstCol`).
+    FirstColumn,
+    /// The last column (`lastCol`).
+    LastColumn,
+    /// Odd horizontal bands (`band1Horz`).
+    Band1Horizontal,
+    /// Even horizontal bands (`band2Horz`).
+    Band2Horizontal,
+    /// Odd vertical bands (`band1Vert`).
+    Band1Vertical,
+    /// Even vertical bands (`band2Vert`).
+    Band2Vertical,
+    /// The top-right (north-east) corner cell (`neCell`).
+    NorthEastCell,
+    /// The top-left (north-west) corner cell (`nwCell`).
+    NorthWestCell,
+    /// The bottom-right (south-east) corner cell (`seCell`).
+    SouthEastCell,
+    /// The bottom-left (south-west) corner cell (`swCell`).
+    SouthWestCell,
+}
+
+/// One `w:tblStylePr` conditional-formatting block: the property overrides a
+/// table style applies to a single [`TableStyleRegion`]. Each override reuses the
+/// shared property types; every field is additive and omitted when absent.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TableStyleOverride {
+    /// The region this override formats (`@w:type`).
+    pub region: TableStyleRegion,
+    /// Paragraph property overrides (`w:pPr`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paragraph: Option<ParagraphProperties>,
+    /// Run property overrides (`w:rPr`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<RunProperties>,
+    /// Table property overrides (`w:tblPr`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table: Option<TableProperties>,
+    /// Table-row property overrides (`w:trPr`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table_row: Option<TableRowProperties>,
+    /// Table-cell property overrides (`w:tcPr`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table_cell: Option<TableCellProperties>,
+}
+
+/// A style definition (its id is the map key). Fields follow `CT_Style`
+/// (ECMA-376 §17.7.4.17) order; metadata beyond the id is modeled so it survives
+/// an edit round trip. All fields past `kind` are additive: a style that predates
+/// this shape (paragraph/character with just pPr/rPr) serializes byte-identically.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Style {
-    /// Style kind.
+    /// Style kind (`@w:type`).
     pub kind: StyleKind,
-    /// Inherited style.
+    /// Whether this is the document default for its kind (`@w:default="1"`).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub is_default: bool,
+    /// Human-readable primary style name (`w:name`), retained as written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Alternate style names (`w:aliases`), the comma-separated list retained
+    /// verbatim as one string.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aliases: Option<String>,
+    /// Inherited style (`w:basedOn`); must share this style's kind.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub based_on: Option<StyleId>,
-    /// Paragraph property overrides.
+    /// The style applied to the following paragraph (`w:next`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<StyleId>,
+    /// The companion style of the opposite kind (`w:link`), e.g. a paragraph
+    /// style linked to its character style; the linked style is not kind-checked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<StyleId>,
+    /// Hidden from the style UI entirely (`w:hidden`).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub hidden: bool,
+    /// Sort priority in the style UI (`w:uiPriority`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui_priority: Option<i32>,
+    /// Hidden until used (`w:semiHidden`).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub semi_hidden: bool,
+    /// Reveal in the UI once used (`w:unhideWhenUsed`).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub unhide_when_used: bool,
+    /// Marked as a primary (quick) format (`w:qFormat`).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub q_format: bool,
+    /// Locked against use when document protection is active (`w:locked`).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub locked: bool,
+    /// Paragraph property overrides (`w:pPr`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub paragraph: Option<ParagraphProperties>,
-    /// Run property overrides.
+    /// Run property overrides (`w:rPr`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub run: Option<RunProperties>,
+    /// Table property defaults (`w:tblPr`), for a table style.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table: Option<TableProperties>,
+    /// Table-row property defaults (`w:trPr`), for a table style.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table_row: Option<TableRowProperties>,
+    /// Table-cell property defaults (`w:tcPr`), for a table style.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table_cell: Option<TableCellProperties>,
+    /// Per-region conditional formatting (`w:tblStylePr`), in document order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conditional: Vec<TableStyleOverride>,
 }
 
 /// Document-wide default properties.
@@ -370,6 +480,12 @@ pub struct Note {
 /// A comment definition (its id is the map key). Its content reuses the recursive
 /// block model; `blocks` may be empty. Author/date/initials are retained as the
 /// producer wrote them (opaque, bounded).
+///
+/// Review threading, resolved-state, and durable identity are carried in the
+/// companion parts (`commentsExtended.xml`, `commentsIds.xml`, `people.xml`).
+/// They join to the base comment on `para_id` — the durable id (`w14:paraId`) of
+/// the comment's last paragraph — so a threaded conversation survives a semantic
+/// edit->save instead of collapsing to flat comments.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Comment {
@@ -385,6 +501,54 @@ pub struct Comment {
     /// The comment date as written (ISO-8601 string), if declared (<= 64 bytes).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub date: Option<String>,
+    /// The durable paragraph id (`w14:paraId`) of the comment's last paragraph —
+    /// the join key for the companion parts. `<= 64` bytes when present.
+    /// Additive: omitted when absent so pre-threading snapshots stay identical.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub para_id: Option<String>,
+    /// The `para_id` of the parent comment when this comment is a reply
+    /// (`commentsExtended.xml` `w15:paraIdParent`); this is the thread edge.
+    /// `<= 64` bytes when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_para_id: Option<String>,
+    /// Resolved/done state (`commentsExtended.xml` `w15:done`).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub done: bool,
+    /// The durable id (`commentsIds.xml` `w16cid:durableId`) bound to this
+    /// comment's `para_id`. `<= 64` bytes when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub durable_id: Option<String>,
+    /// The collaborator identity (an entry in [`Definitions::people`], keyed by
+    /// author name) matching this comment's author, when `people.xml` declares
+    /// one. `<= 255` bytes when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub person: Option<String>,
+}
+
+/// A collaborator identity from `word/people.xml` (`w15:person`): an author
+/// display name plus optional presence-provider info. A [`Comment`] whose author
+/// matches `author` references it through [`Comment::person`].
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Person {
+    /// The author display name (`w15:author`) — the identity key (non-empty, at
+    /// most 255 bytes).
+    pub author: String,
+    /// Presence-provider info (`w15:presenceInfo`), if declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presence: Option<PresenceInfo>,
+}
+
+/// Presence-provider info (`w15:presenceInfo`) for a [`Person`]: the presence
+/// provider and the provider-scoped user id.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PresenceInfo {
+    /// The presence provider (`w15:providerId`, e.g. `AD`, `Windows Live`), at
+    /// most 255 bytes.
+    pub provider_id: String,
+    /// The provider-scoped user id (`w15:userId`), at most 255 bytes.
+    pub user_id: String,
 }
 
 /// A bookmark definition (its id is the map key). A bookmark is a named range;
@@ -656,4 +820,9 @@ pub struct Definitions {
     /// default so existing snapshots serialize byte-identically.
     #[serde(default, skip_serializing_if = "DocumentSettings::is_default")]
     pub settings: DocumentSettings,
+    /// Collaborator identities (`word/people.xml`), keyed by author name; a
+    /// `Comment` links to one through [`Comment::person`]. Additive: omitted when
+    /// empty so existing snapshots serialize byte-identically.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub people: Vec<Person>,
 }

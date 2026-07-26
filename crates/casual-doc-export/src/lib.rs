@@ -906,6 +906,170 @@ mod semantic_tests {
         assert_eq!(m1, m2, "styles + style references survive write -> reopen");
     }
 
+    /// Wraps a `word/document.xml` + `word/styles.xml` pair into a minimal
+    /// package whose content-types/relationships declare the styles part.
+    fn package_with_styles(document: &[u8], styles: &[u8]) -> Vec<u8> {
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>"#;
+        zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/styles.xml", styles),
+        ])
+    }
+
+    const MINIMAL_BODY: &[u8] = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+
+    #[test]
+    fn table_style_with_banding_survives_the_semantic_round_trip() {
+        // A table style with style-level `w:tblPr` borders plus two `w:tblStylePr`
+        // conditional-format blocks: a `firstRow` with bold run + shaded/bordered
+        // cell, and a `band1Horz` with a distinct cell fill. The conditional
+        // formatting (what drives banding / first-row emphasis) must survive the
+        // model round trip unchanged.
+        use casual_doc_model::v1::{RgbColor, StyleKind, TableStyleRegion};
+        let styles = br#"<w:styles xmlns:w="urn:w">
+            <w:style w:type="table" w:styleId="Grid" w:default="1">
+                <w:name w:val="Table Grid"/>
+                <w:uiPriority w:val="59"/>
+                <w:tblPr>
+                    <w:tblBorders>
+                        <w:top w:val="single" w:sz="4" w:color="000000"/>
+                        <w:insideH w:val="single" w:sz="4" w:color="000000"/>
+                    </w:tblBorders>
+                </w:tblPr>
+                <w:tblStylePr w:type="firstRow">
+                    <w:rPr><w:b/></w:rPr>
+                    <w:tcPr>
+                        <w:shd w:val="clear" w:fill="4472C4"/>
+                        <w:tcBorders><w:bottom w:val="single" w:sz="8" w:color="2E4B7A"/></w:tcBorders>
+                    </w:tcPr>
+                </w:tblStylePr>
+                <w:tblStylePr w:type="band1Horz">
+                    <w:tcPr><w:shd w:val="clear" w:fill="D9E2F3"/></w:tcPr>
+                </w:tblStylePr>
+            </w:style>
+        </w:styles>"#;
+        let m1 = reopen(&package_with_styles(MINIMAL_BODY, styles));
+
+        // Sanity: the table style and its conditional formatting were captured.
+        let (_, style) = m1
+            .definitions()
+            .styles
+            .iter()
+            .find(|(_, style)| style.kind == StyleKind::Table)
+            .expect("a table style");
+        assert!(style.is_default);
+        assert_eq!(style.name.as_deref(), Some("Table Grid"));
+        assert!(style.table.as_ref().unwrap().borders.top.is_some());
+        assert_eq!(style.conditional.len(), 2);
+        let first_row = style
+            .conditional
+            .iter()
+            .find(|over| over.region == TableStyleRegion::FirstRow)
+            .expect("firstRow override");
+        assert_eq!(first_row.run.as_ref().unwrap().bold, Some(true));
+        let first_row_cell = first_row.table_cell.as_ref().unwrap();
+        assert_eq!(
+            first_row_cell.shading.fill,
+            Some(RgbColor {
+                r: 0x44,
+                g: 0x72,
+                b: 0xC4
+            })
+        );
+        assert!(first_row_cell.borders.bottom.is_some());
+        let band = style
+            .conditional
+            .iter()
+            .find(|over| over.region == TableStyleRegion::Band1Horizontal)
+            .expect("band1Horz override");
+        assert_eq!(
+            band.table_cell.as_ref().unwrap().shading.fill,
+            Some(RgbColor {
+                r: 0xD9,
+                g: 0xE2,
+                b: 0xF3
+            })
+        );
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(
+            m1, m2,
+            "the table style + tblStylePr conditional formatting is a fixed point"
+        );
+    }
+
+    #[test]
+    fn paragraph_style_metadata_survives_the_semantic_round_trip() {
+        // A paragraph style carrying next/link/uiPriority/qFormat/semiHidden. The
+        // `w:link` deliberately points at a character style (the opposite kind);
+        // every metadata field must round-trip populated.
+        use casual_doc_model::v1::StyleKind;
+        let styles = br#"<w:styles xmlns:w="urn:w">
+            <w:style w:type="paragraph" w:styleId="Body" w:default="1"><w:name w:val="Body Text"/></w:style>
+            <w:style w:type="paragraph" w:styleId="Heading"><w:name w:val="heading 1"/>
+                <w:basedOn w:val="Body"/><w:next w:val="Body"/><w:link w:val="HeadingChar"/>
+                <w:uiPriority w:val="9"/><w:semiHidden/><w:unhideWhenUsed/><w:qFormat/>
+                <w:rPr><w:b/></w:rPr></w:style>
+            <w:style w:type="character" w:styleId="HeadingChar"><w:name w:val="Heading Char"/>
+                <w:rPr><w:b/></w:rPr></w:style>
+        </w:styles>"#;
+        let m1 = reopen(&package_with_styles(MINIMAL_BODY, styles));
+
+        let (_, heading) = m1
+            .definitions()
+            .styles
+            .iter()
+            .find(|(_, style)| {
+                style.kind == StyleKind::Paragraph && style.name.as_deref() == Some("heading 1")
+            })
+            .expect("the heading style");
+        assert!(heading.based_on.is_some());
+        assert!(heading.next.is_some());
+        assert!(heading.link.is_some());
+        assert_eq!(heading.ui_priority, Some(9));
+        assert!(heading.semi_hidden);
+        assert!(heading.unhide_when_used);
+        assert!(heading.q_format);
+        // `next` resolves to the Body style; `link` to the character style.
+        let link = heading.link.unwrap();
+        assert_eq!(
+            m1.definitions().styles.get(&link).unwrap().kind,
+            StyleKind::Character
+        );
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(m1, m2, "paragraph-style metadata is a fixed point");
+    }
+
+    #[test]
+    fn numbering_style_is_captured_and_survives_the_round_trip() {
+        // A `w:type="numbering"` style must be captured as a Numbering-kind style,
+        // not dropped or misclassified, and survive the round trip.
+        use casual_doc_model::v1::StyleKind;
+        let styles = br#"<w:styles xmlns:w="urn:w">
+            <w:style w:type="numbering" w:styleId="MyList"><w:name w:val="My List"/>
+                <w:uiPriority w:val="99"/></w:style>
+        </w:styles>"#;
+        let m1 = reopen(&package_with_styles(MINIMAL_BODY, styles));
+
+        let (_, style) = m1.definitions().styles.iter().next().expect("one style");
+        assert_eq!(style.kind, StyleKind::Numbering);
+        assert_eq!(style.name.as_deref(), Some("My List"));
+        assert_eq!(style.ui_priority, Some(99));
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(m1, m2, "a numbering style is a fixed point");
+    }
+
     #[test]
     fn theme_color_and_format_schemes_survive_the_semantic_round_trip() {
         // A full theme: a 12-slot clrScheme (sysClr with lastClr for dk1/lt1,
@@ -2298,6 +2462,109 @@ mod semantic_tests {
                 .iter()
                 .any(|entry| entry.part_name.starts_with("customXml/"))
         );
+    }
+
+    // ---- comment threading / identity (P1F-10) ---------------------------
+
+    /// A package with a two-comment thread (a resolved root plus a reply), the
+    /// durable-id map, and a collaborator identity — enough to exercise every
+    /// companion part.
+    fn comment_thread_package() -> Vec<u8> {
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/><Override PartName="/word/commentsExtended.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml"/><Override PartName="/word/commentsIds.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.commentsIds+xml"/><Override PartName="/word/people.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.people+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Draft.</w:t></w:r><w:r><w:commentReference w:id="0"/></w:r><w:r><w:commentReference w:id="1"/></w:r></w:p></w:body></w:document>"#;
+        let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="comments.xml"/><Relationship Id="rId2" Type="http://schemas.microsoft.com/office/2011/relationships/commentsExtended" Target="commentsExtended.xml"/><Relationship Id="rId3" Type="http://schemas.microsoft.com/office/2016/relationships/commentsIds" Target="commentsIds.xml"/><Relationship Id="rId4" Type="http://schemas.microsoft.com/office/2011/relationships/people" Target="people.xml"/></Relationships>"#;
+        let comments = br#"<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"><w:comment w:id="0" w:author="Ada Lovelace" w:initials="AL" w:date="2026-07-25T10:00:00Z"><w:p w14:paraId="00000001"><w:r><w:t>Please clarify.</w:t></w:r></w:p></w:comment><w:comment w:id="1" w:author="Charles Babbage" w:initials="CB" w:date="2026-07-25T11:00:00Z"><w:p w14:paraId="00000002"><w:r><w:t>Done, see revision.</w:t></w:r></w:p></w:comment></w:comments>"#;
+        let extended = br#"<w15:commentsEx xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml"><w15:commentEx w15:paraId="00000001" w15:done="1"/><w15:commentEx w15:paraId="00000002" w15:paraIdParent="00000001" w15:done="0"/></w15:commentsEx>"#;
+        let ids = br#"<w16cid:commentsIds xmlns:w16cid="http://schemas.microsoft.com/office/word/2016/wordml/cid"><w16cid:commentId w16cid:paraId="00000001" w16cid:durableId="1A2B3C4D"/><w16cid:commentId w16cid:paraId="00000002" w16cid:durableId="5E6F7A8B"/></w16cid:commentsIds>"#;
+        let people = br#"<w15:people xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml"><w15:person w15:author="Ada Lovelace"><w15:presenceInfo w15:providerId="AD" w15:userId="S::ada@example.com::a1b2"/></w15:person></w15:people>"#;
+        zip_named(&[
+            ("[Content_Types].xml", content_types.as_slice()),
+            ("_rels/.rels", root_rels.as_slice()),
+            ("word/document.xml", document.as_slice()),
+            ("word/_rels/document.xml.rels", document_rels.as_slice()),
+            ("word/comments.xml", comments.as_slice()),
+            ("word/commentsExtended.xml", extended.as_slice()),
+            ("word/commentsIds.xml", ids.as_slice()),
+            ("word/people.xml", people.as_slice()),
+        ])
+    }
+
+    #[test]
+    fn comment_thread_and_identity_survive_the_semantic_round_trip() {
+        // Import -> model -> write -> reopen must be a fixed point: the reply's
+        // parent link, the resolved-state flag, durable ids, and the collaborator
+        // identity all survive the semantic writer.
+        let source = comment_thread_package();
+        let m1 = reopen(&source);
+        let comments = &m1.definitions().comments;
+
+        let root = comments
+            .iter()
+            .map(|(_, c)| c)
+            .find(|c| c.author.as_deref() == Some("Ada Lovelace"))
+            .expect("root comment modeled");
+        let reply = comments
+            .iter()
+            .map(|(_, c)| c)
+            .find(|c| c.author.as_deref() == Some("Charles Babbage"))
+            .expect("reply comment modeled");
+
+        assert_eq!(root.para_id.as_deref(), Some("00000001"));
+        assert!(root.done, "the root comment is resolved");
+        assert_eq!(root.durable_id.as_deref(), Some("1A2B3C4D"));
+        assert_eq!(root.parent_para_id, None, "the root has no parent");
+        // The reply threads onto the root via the parent para id.
+        assert_eq!(reply.parent_para_id.as_deref(), Some("00000001"));
+        assert_eq!(reply.parent_para_id, root.para_id);
+        assert!(!reply.done);
+        assert_eq!(reply.durable_id.as_deref(), Some("5E6F7A8B"));
+
+        // people.xml identity: modeled into the table and linked from the comment
+        // whose author matches.
+        assert_eq!(m1.definitions().people.len(), 1);
+        let person = &m1.definitions().people[0];
+        assert_eq!(person.author, "Ada Lovelace");
+        let presence = person.presence.as_ref().expect("presence info modeled");
+        assert_eq!(presence.provider_id, "AD");
+        assert_eq!(presence.user_id, "S::ada@example.com::a1b2");
+        assert_eq!(root.person.as_deref(), Some("Ada Lovelace"));
+        assert_eq!(reply.person, None, "no identity for the reply author");
+
+        let written = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&written);
+        assert_eq!(m1, m2, "comment thread + identity survive write -> reopen");
+    }
+
+    #[test]
+    fn comment_companion_parts_are_marked_consumed() {
+        // The three companion parts are consumed by the semantic import, so the
+        // manifest-disposition pass does not report them as dropped and the
+        // opaque side-table does not double-carry them.
+        let import = import_semantic(&comment_thread_package());
+        let companions = [
+            "word/commentsExtended.xml",
+            "word/commentsIds.xml",
+            "word/people.xml",
+        ];
+        for name in companions {
+            assert!(
+                !import
+                    .report
+                    .entries
+                    .iter()
+                    .any(|entry| entry.feature == name),
+                "{name} must not be reported as a dropped part"
+            );
+            assert!(
+                !import
+                    .retained_parts
+                    .parts
+                    .iter()
+                    .any(|part| part.part_name == name),
+                "{name} must not be carried by the side-table"
+            );
+        }
     }
 }
 

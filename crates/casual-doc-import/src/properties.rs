@@ -347,6 +347,8 @@ pub(crate) fn style_kind_from(value: &str) -> Option<StyleKind> {
     match value {
         "paragraph" => Some(StyleKind::Paragraph),
         "character" => Some(StyleKind::Character),
+        "table" => Some(StyleKind::Table),
+        "numbering" => Some(StyleKind::Numbering),
         _ => None,
     }
 }

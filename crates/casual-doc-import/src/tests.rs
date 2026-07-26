@@ -1266,16 +1266,29 @@ fn character_spacing_in_rpr_is_the_run_metric_not_paragraph_spacing() {
 }
 
 #[test]
-fn styles_part_unmapped_constructs_are_reported() {
+fn style_metadata_is_modeled_and_truly_unmapped_constructs_are_reported() {
+    // `qFormat`/`uiPriority` are now modeled (not reported); a construct we do
+    // not model (`w:autoRedefine`) is still reported so nothing is silently lost.
     let styles = br#"<w:styles xmlns:w="urn:w">
-        <w:style w:type="paragraph" w:styleId="A"><w:qFormat/><w:uiPriority w:val="1"/></w:style>
+        <w:style w:type="paragraph" w:styleId="A"><w:qFormat/><w:uiPriority w:val="1"/>
+            <w:autoRedefine/></w:style>
     </w:styles>"#;
     let document = br#"<w:document xmlns:w="urn:w"><w:body>
         <w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
     let import = import_with_styles(document, styles);
+    let (_, style) = import
+        .document
+        .definitions()
+        .styles
+        .iter()
+        .next()
+        .expect("one style");
+    assert!(style.q_format);
+    assert_eq!(style.ui_priority, Some(1));
     let feats = features(&import);
-    assert!(feats.contains(&"qFormat"));
-    assert!(feats.contains(&"uiPriority"));
+    assert!(feats.contains(&"autoRedefine"));
+    assert!(!feats.contains(&"qFormat"));
+    assert!(!feats.contains(&"uiPriority"));
 }
 
 #[test]
@@ -2673,6 +2686,94 @@ fn dangling_comment_reference_is_reported_not_modeled() {
     assert!(features(&import).contains(&"commentReference"));
 }
 
+/// Imports a document + comments part plus the three companion parts
+/// (`commentsExtended`/`commentsIds`/`people`), exercising the `build_comments`
+/// join directly.
+fn import_with_comment_companions(
+    document: &[u8],
+    comments: &[u8],
+    extended: &[u8],
+    ids: &[u8],
+    people: &[u8],
+) -> Import {
+    let comments = crate::PartSources {
+        xml: comments.to_vec(),
+        comments_extended: Some(extended.to_vec()),
+        comments_ids: Some(ids.to_vec()),
+        people: Some(people.to_vec()),
+        ..Default::default()
+    };
+    import_with_sources(
+        document,
+        None,
+        None,
+        None,
+        &std::collections::BTreeMap::new(),
+        None,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        Some(&comments),
+        &[],
+        &std::collections::BTreeMap::new(),
+        &std::collections::BTreeMap::new(),
+        ImportConfig::default(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn comment_companion_parts_wire_threading_and_identity() {
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:commentReference w:id="0"/></w:r><w:r><w:commentReference w:id="1"/></w:r></w:p>
+    </w:body></w:document>"#;
+    let comments = br#"<w:comments xmlns:w="urn:w" xmlns:w14="urn:w14">
+        <w:comment w:id="0" w:author="Ada Lovelace"><w:p w14:paraId="00000001"><w:r><w:t>Clarify?</w:t></w:r></w:p></w:comment>
+        <w:comment w:id="1" w:author="Charles Babbage"><w:p w14:paraId="00000002"><w:r><w:t>Fixed.</w:t></w:r></w:p></w:comment>
+    </w:comments>"#;
+    let extended = br#"<w15:commentsEx xmlns:w15="urn:w15">
+        <w15:commentEx w15:paraId="00000001" w15:done="1"/>
+        <w15:commentEx w15:paraId="00000002" w15:paraIdParent="00000001"/>
+    </w15:commentsEx>"#;
+    let ids = br#"<w16cid:commentsIds xmlns:w16cid="urn:cid">
+        <w16cid:commentId w16cid:paraId="00000001" w16cid:durableId="1A2B3C4D"/>
+        <w16cid:commentId w16cid:paraId="00000002" w16cid:durableId="5E6F7A8B"/>
+    </w16cid:commentsIds>"#;
+    let people = br#"<w15:people xmlns:w15="urn:w15">
+        <w15:person w15:author="Ada Lovelace"><w15:presenceInfo w15:providerId="AD" w15:userId="S::ada::1"/></w15:person>
+    </w15:people>"#;
+    let import = import_with_comment_companions(document, comments, extended, ids, people);
+    let defs = import.document.definitions();
+
+    let root = defs
+        .comments
+        .iter()
+        .map(|(_, c)| c)
+        .find(|c| c.author.as_deref() == Some("Ada Lovelace"))
+        .expect("root comment");
+    let reply = defs
+        .comments
+        .iter()
+        .map(|(_, c)| c)
+        .find(|c| c.author.as_deref() == Some("Charles Babbage"))
+        .expect("reply comment");
+
+    assert_eq!(root.para_id.as_deref(), Some("00000001"));
+    assert!(root.done);
+    assert_eq!(root.durable_id.as_deref(), Some("1A2B3C4D"));
+    assert_eq!(root.person.as_deref(), Some("Ada Lovelace"));
+    assert_eq!(reply.parent_para_id.as_deref(), Some("00000001"));
+    assert!(!reply.done);
+    assert_eq!(reply.person, None);
+
+    assert_eq!(defs.people.len(), 1);
+    let presence = defs.people[0].presence.as_ref().expect("presence");
+    assert_eq!(presence.provider_id, "AD");
+    assert_eq!(presence.user_id, "S::ada::1");
+}
+
 #[test]
 fn comment_containing_a_text_box_preserves_its_content() {
     // A comment reuses the note-container machinery, so closing it must unwind
@@ -3320,6 +3421,7 @@ fn image_inside_a_footnote_is_modeled_via_the_notes_part_relationships() {
         xml: footnote_xml.into_bytes(),
         images: vec![image_source("rId7", "word/media/image1.png")],
         hyperlinks: std::collections::BTreeMap::new(),
+        ..Default::default()
     };
     let import = import_with_sources(
         document,
@@ -3376,6 +3478,7 @@ fn external_hyperlink_inside_a_header_is_modeled_via_the_header_part_relationshi
         xml: header.to_vec(),
         images: Vec::new(),
         hyperlinks,
+        ..Default::default()
     };
     let import = import_with_sources(
         document,
