@@ -21,6 +21,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod anchor;
 pub mod block;
 pub mod compose;
 pub mod display;

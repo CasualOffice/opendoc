@@ -18,23 +18,26 @@ use std::io::{Cursor, Write};
 
 use casual_doc_import::{RelationshipOwner, RetainedParts};
 use casual_doc_model::v1::{
-    AbstractNumbering, AbstractNumberingId, Alignment, AppProperties, BlockNode, BorderEdge,
-    BreakKind, CellVerticalAlignment, CnfStyle, Color, ColorScheme, Comment, CommentId,
-    CoreProperties, CustomProperty, CustomValue, DefinitionMap, Definitions, DocGridType, Document,
-    DocumentDefaults, DocumentProtectionEdit, DocumentSettings, EmbeddedKind, EmbeddedObject,
-    EmbeddedPart, EmphasisMark, Extent, FontCollection, FontDescriptor, FontFamilyKind, FontPitch,
-    FontRef, FontScheme, FormCheckBoxSize, FormFieldData, FormFieldKind, FormTextType,
-    HeaderFooterId, HeaderFooterKind, HeightRule, HighlightColor, HyperlinkTarget, InlineNode,
-    LevelJustification, LevelSuffix, LineNumberRestart, MediaId, MediaReference, MoveKind, Note,
-    NoteId, NoteKind, NoteNumberRestart, NotePosition, NoteProperties, NumberFormat,
-    NumberingInstance, NumberingInstanceId, NumberingLevel, PageBorderDisplay, PageBorderOffset,
-    PageOrientation, PageVerticalAlignment, ParagraphProperties, Person, ProofState, RevisionKind,
-    RgbColor, RunFontHint, RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol,
-    SdtControlData, SdtControlKind, SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary,
-    SectionType, Style, StyleId, StyleKind, TabAlignment, TabLeader, Table, TableBorders,
-    TableCell, TableCellProperties, TableLayout, TableOverlap, TableProperties, TableRow,
-    TableRowProperties, TableStyleOverride, TableStyleRegion, TextDirection, ThemeFontRef,
-    VerticalAlignment, VerticalMerge, VerticalTextAlignment, Zoom, ZoomMode,
+    AbstractNumbering, AbstractNumberingId, Alignment, AnchorHorizontal, AnchorVertical,
+    AnchoredDrawing, AppProperties, BlockNode, BorderEdge, BreakKind, CellVerticalAlignment,
+    CnfStyle, Color, ColorScheme, Comment, CommentId, CoreProperties, CustomProperty, CustomValue,
+    DefinitionMap, Definitions, DocGridType, Document, DocumentDefaults, DocumentProtectionEdit,
+    DocumentSettings, EmbeddedKind, EmbeddedObject, EmbeddedPart, EmphasisMark, Extent,
+    FontCollection, FontDescriptor, FontFamilyKind, FontPitch, FontRef, FontScheme,
+    FormCheckBoxSize, FormFieldData, FormFieldKind, FormTextType, HeaderFooterId, HeaderFooterKind,
+    HeightRule, HighlightColor, HorizontalAlign, HorizontalAnchor, HorizontalPosition,
+    HyperlinkTarget, InlineNode, LevelJustification, LevelSuffix, LineNumberRestart, MediaId,
+    MediaReference, MoveKind, Note, NoteId, NoteKind, NoteNumberRestart, NotePosition,
+    NoteProperties, NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel,
+    PageBorderDisplay, PageBorderOffset, PageOrientation, PageVerticalAlignment,
+    ParagraphProperties, Person, ProofState, RevisionKind, RgbColor, RunFontHint, RunProperties,
+    SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind, SdtDate,
+    SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionType, Style, StyleId, StyleKind,
+    TabAlignment, TabLeader, Table, TableBorders, TableCell, TableCellProperties, TableLayout,
+    TableOverlap, TableProperties, TableRow, TableRowProperties, TableStyleOverride,
+    TableStyleRegion, TextDirection, ThemeFontRef, VerticalAlign, VerticalAlignment,
+    VerticalAnchor, VerticalMerge, VerticalPosition, VerticalTextAlignment, WrapMode, Zoom,
+    ZoomMode,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -3530,6 +3533,15 @@ fn write_inline(
                 .unwrap_or((0, 0));
             write_drawing(w, &embed, drawing.extent.as_ref(), cx, cy)?;
         }
+        // An anchored (floating) drawing: a `w:drawing`/`wp:anchor` carrying the
+        // picture's position, wrap, z-order, and alt text.
+        InlineNode::AnchoredDrawing(drawing) => {
+            let Some(reference) = ctx.defs.media.get(&drawing.media) else {
+                return Ok(());
+            };
+            let embed = reference.relationship_id.clone();
+            write_anchored_drawing(w, &embed, drawing)?;
+        }
         // An embedded object (chart / SmartArt diagram / OLE): the drawing wrapper
         // (chart/diagram) or `w:object` (OLE) referencing the preserved part(s) by
         // their verbatim `r:id`; the relationships are emitted in
@@ -3596,6 +3608,26 @@ fn write_drawing(
     doc_pr.push_attribute(("id", "1"));
     doc_pr.push_attribute(("name", "Picture 1"));
     w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
+    write_pic_graphic(w, embed, cx, cy)?;
+    w.write_event(Event::End(BytesEnd::new("wp:inline")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("w:drawing")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("w:r")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits the `a:graphic`/`pic:pic` subtree shared by inline and anchored
+/// drawings: the picture frame referencing `embed` (the media relationship id)
+/// at the `cx`×`cy` EMU extent. The importer reads back `a:blip@r:embed` and the
+/// enclosing `wp:extent`; the geometry here is fixed scaffold.
+fn write_pic_graphic(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    embed: &str,
+    cx: i64,
+    cy: i64,
+) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("a:graphic")))
         .map_err(pkg)?;
     let mut graphic_data = start("a:graphicData");
@@ -3652,13 +3684,193 @@ fn write_drawing(
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("a:graphic")))
         .map_err(pkg)?;
-    w.write_event(Event::End(BytesEnd::new("wp:inline")))
+    Ok(())
+}
+
+/// Emits a floating `w:drawing`/`wp:anchor` for an [`AnchoredDrawing`]: the
+/// position (`wp:positionH`/`wp:positionV`), size (`wp:extent`), wrap
+/// (`wp:wrap*`), z-order (`@behindDoc`), and alt text (`wp:docPr@descr`), around
+/// the shared picture frame. Round-trips through the importer's `wp:anchor` path.
+fn write_anchored_drawing(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    embed: &str,
+    drawing: &AnchoredDrawing,
+) -> Result<(), ExportError> {
+    let anchor = &drawing.anchor;
+    let (cx, cy) = (drawing.extent.width_emu, drawing.extent.height_emu);
+    w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
+    w.write_event(Event::Start(start("w:drawing")))
+        .map_err(pkg)?;
+    let mut el = start("wp:anchor");
+    for name in ["distT", "distB", "distL", "distR"] {
+        el.push_attribute((name, "0"));
+    }
+    el.push_attribute(("simplePos", "0"));
+    el.push_attribute(("relativeHeight", "0"));
+    el.push_attribute(("behindDoc", if anchor.behind_doc { "1" } else { "0" }));
+    el.push_attribute(("locked", "0"));
+    el.push_attribute(("layoutInCell", "1"));
+    el.push_attribute(("allowOverlap", "1"));
+    w.write_event(Event::Start(el)).map_err(pkg)?;
+    // `simplePos` is a required child; `simplePos="0"` above means it is ignored
+    // (the positionH/V pair drives placement), so a zero point suffices.
+    let mut simple_pos = start("wp:simplePos");
+    simple_pos.push_attribute(("x", "0"));
+    simple_pos.push_attribute(("y", "0"));
+    w.write_event(Event::Empty(simple_pos)).map_err(pkg)?;
+    write_position_h(w, &anchor.horizontal)?;
+    write_position_v(w, &anchor.vertical)?;
+    let mut extent = start("wp:extent");
+    extent.push_attribute(("cx", cx.to_string().as_str()));
+    extent.push_attribute(("cy", cy.to_string().as_str()));
+    w.write_event(Event::Empty(extent)).map_err(pkg)?;
+    write_wrap(w, anchor.wrap)?;
+    let mut doc_pr = start("wp:docPr");
+    doc_pr.push_attribute(("id", "1"));
+    doc_pr.push_attribute(("name", "Picture 1"));
+    if let Some(descr) = &drawing.descr {
+        doc_pr.push_attribute(("descr", descr.as_str()));
+    }
+    w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
+    write_pic_graphic(w, embed, cx, cy)?;
+    w.write_event(Event::End(BytesEnd::new("wp:anchor")))
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("w:drawing")))
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("w:r")))
         .map_err(pkg)?;
     Ok(())
+}
+
+/// Emits `wp:positionH` (reference edge + `wp:posOffset`/`wp:align`).
+fn write_position_h(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    horizontal: &AnchorHorizontal,
+) -> Result<(), ExportError> {
+    let mut el = start("wp:positionH");
+    el.push_attribute((
+        "relativeFrom",
+        horizontal_anchor_str(horizontal.relative_from),
+    ));
+    w.write_event(Event::Start(el)).map_err(pkg)?;
+    match horizontal.position {
+        HorizontalPosition::Offset(emu) => write_text_child(w, "wp:posOffset", &emu.to_string())?,
+        HorizontalPosition::Align(align) => {
+            write_text_child(w, "wp:align", horizontal_align_str(align))?;
+        }
+    }
+    w.write_event(Event::End(BytesEnd::new("wp:positionH")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits `wp:positionV` (reference edge + `wp:posOffset`/`wp:align`).
+fn write_position_v(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    vertical: &AnchorVertical,
+) -> Result<(), ExportError> {
+    let mut el = start("wp:positionV");
+    el.push_attribute(("relativeFrom", vertical_anchor_str(vertical.relative_from)));
+    w.write_event(Event::Start(el)).map_err(pkg)?;
+    match vertical.position {
+        VerticalPosition::Offset(emu) => write_text_child(w, "wp:posOffset", &emu.to_string())?,
+        VerticalPosition::Align(align) => {
+            write_text_child(w, "wp:align", vertical_align_str(align))?;
+        }
+    }
+    w.write_event(Event::End(BytesEnd::new("wp:positionV")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits a simple `<tag>text</tag>` element.
+fn write_text_child(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    tag: &str,
+    text: &str,
+) -> Result<(), ExportError> {
+    w.write_event(Event::Start(start(tag))).map_err(pkg)?;
+    w.write_event(Event::Text(BytesText::new(text)))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new(tag))).map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits the wrap element for an anchor. `wrapNone` is an empty element; the
+/// others carry a `wrapText="bothSides"` (the round-trip only reads the element
+/// name, so the attribute is fixed scaffold).
+fn write_wrap(w: &mut Writer<Cursor<Vec<u8>>>, wrap: WrapMode) -> Result<(), ExportError> {
+    match wrap {
+        WrapMode::None => {
+            w.write_event(Event::Empty(start("wp:wrapNone")))
+                .map_err(pkg)?;
+        }
+        WrapMode::Square | WrapMode::Tight | WrapMode::Through => {
+            let tag = match wrap {
+                WrapMode::Square => "wp:wrapSquare",
+                WrapMode::Tight => "wp:wrapTight",
+                _ => "wp:wrapThrough",
+            };
+            let mut el = start(tag);
+            el.push_attribute(("wrapText", "bothSides"));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+        WrapMode::TopAndBottom => {
+            w.write_event(Event::Empty(start("wp:wrapTopAndBottom")))
+                .map_err(pkg)?;
+        }
+    }
+    Ok(())
+}
+
+/// The `wp:positionH@relativeFrom` string for a horizontal reference.
+fn horizontal_anchor_str(anchor: HorizontalAnchor) -> &'static str {
+    match anchor {
+        HorizontalAnchor::Page => "page",
+        HorizontalAnchor::Margin => "margin",
+        HorizontalAnchor::Column => "column",
+        HorizontalAnchor::Character => "character",
+        HorizontalAnchor::LeftMargin => "leftMargin",
+        HorizontalAnchor::RightMargin => "rightMargin",
+        HorizontalAnchor::InsideMargin => "insideMargin",
+        HorizontalAnchor::OutsideMargin => "outsideMargin",
+    }
+}
+
+/// The `wp:positionV@relativeFrom` string for a vertical reference.
+fn vertical_anchor_str(anchor: VerticalAnchor) -> &'static str {
+    match anchor {
+        VerticalAnchor::Page => "page",
+        VerticalAnchor::Margin => "margin",
+        VerticalAnchor::Paragraph => "paragraph",
+        VerticalAnchor::Line => "line",
+        VerticalAnchor::TopMargin => "topMargin",
+        VerticalAnchor::BottomMargin => "bottomMargin",
+        VerticalAnchor::InsideMargin => "insideMargin",
+        VerticalAnchor::OutsideMargin => "outsideMargin",
+    }
+}
+
+/// The horizontal `wp:align` keyword.
+fn horizontal_align_str(align: HorizontalAlign) -> &'static str {
+    match align {
+        HorizontalAlign::Left => "left",
+        HorizontalAlign::Center => "center",
+        HorizontalAlign::Right => "right",
+        HorizontalAlign::Inside => "inside",
+        HorizontalAlign::Outside => "outside",
+    }
+}
+
+/// The vertical `wp:align` keyword.
+fn vertical_align_str(align: VerticalAlign) -> &'static str {
+    match align {
+        VerticalAlign::Top => "top",
+        VerticalAlign::Center => "center",
+        VerticalAlign::Bottom => "bottom",
+        VerticalAlign::Inside => "inside",
+        VerticalAlign::Outside => "outside",
+    }
 }
 
 /// Emits an inline embedded object. A chart/diagram is a `w:drawing`/`wp:inline`

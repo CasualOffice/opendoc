@@ -939,6 +939,33 @@ impl Document {
                     }
                     previous_run_properties = None;
                 }
+                InlineNode::AnchoredDrawing(drawing) => {
+                    if !self.definitions.media.contains_key(&drawing.media) {
+                        return Err(ModelError::DanglingMediaRef(drawing.media.node_id()));
+                    }
+                    check_domain(
+                        (0..=MAX_EMU).contains(&drawing.extent.width_emu),
+                        "anchoredDrawing.extent.width",
+                    )?;
+                    check_domain(
+                        (0..=MAX_EMU).contains(&drawing.extent.height_emu),
+                        "anchoredDrawing.extent.height",
+                    )?;
+                    // A `posOffset` is signed (`ST_PositionOffset`, xsd:int) but is
+                    // bounded to the positive-coordinate magnitude so it cannot name
+                    // a point unrepresentably far off the page.
+                    check_anchor_offset(
+                        &drawing.anchor.horizontal.position,
+                        &drawing.anchor.vertical.position,
+                    )?;
+                    if let Some(descr) = &drawing.descr {
+                        check_domain(
+                            !descr.is_empty() && descr.len() <= MAX_DESCR_BYTES,
+                            "anchoredDrawing.descr",
+                        )?;
+                    }
+                    previous_run_properties = None;
+                }
                 InlineNode::EmbeddedObject(object) => {
                     self.check_embedded_part(&object.part)?;
                     for extra in &object.extra_parts {
@@ -1425,6 +1452,7 @@ fn accumulate_inline_limits(
         InlineNode::Tab(_)
         | InlineNode::Break(_)
         | InlineNode::Drawing(_)
+        | InlineNode::AnchoredDrawing(_)
         | InlineNode::EmbeddedObject(_)
         | InlineNode::NoteReference(_)
         | InlineNode::CommentReference(_)
@@ -1702,6 +1730,28 @@ fn check_domain(condition: bool, property: &'static str) -> Result<(), ModelErro
     } else {
         Err(ModelError::PropertyValueOutOfDomain { property })
     }
+}
+
+/// Bounds an anchored drawing's horizontal and vertical offsets. A `posOffset`
+/// is signed (`ST_PositionOffset`), so the magnitude — not a `0..` range — is
+/// bounded to the positive-coordinate limit. An alignment carries no magnitude.
+fn check_anchor_offset(
+    horizontal: &HorizontalPosition,
+    vertical: &VerticalPosition,
+) -> Result<(), ModelError> {
+    if let HorizontalPosition::Offset(offset) = horizontal {
+        check_domain(
+            offset.unsigned_abs() <= MAX_EMU as u64,
+            "anchoredDrawing.offsetH",
+        )?;
+    }
+    if let VerticalPosition::Offset(offset) = vertical {
+        check_domain(
+            offset.unsigned_abs() <= MAX_EMU as u64,
+            "anchoredDrawing.offsetV",
+        )?;
+    }
+    Ok(())
 }
 
 /// Bounds every present edge of a border set. `property` is the stable domain
