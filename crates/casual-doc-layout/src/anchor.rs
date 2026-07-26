@@ -28,7 +28,7 @@ use casual_doc_model::v1::{
 };
 
 use crate::block::BlockFragment;
-use crate::compose::TEXTBOX_INSET;
+use crate::flow::flow_anchored_text_box;
 use crate::page::{
     AnchorContent, AnchorStroke, AnchorZ, PaginatedLayout, PlacedAnchor, PlacedFragment,
 };
@@ -192,16 +192,24 @@ fn collect_inlines(
                     order: ctx.next_order(),
                 };
                 let (page_index, refs) = target(layout, ctx, paragraph, scope, known_target);
-                let rect = resolve_anchor_rect(&anchor, extent, &refs);
-                let blocks = flow_box(ctx, &text_box.blocks, rect.size.width);
+                let mut rect = resolve_anchor_rect(&anchor, extent, &refs);
+                let flowed = flow_anchored_text_box(
+                    ctx.document,
+                    &text_box.blocks,
+                    ctx.shaper,
+                    rect.size,
+                    &text_box.body_properties,
+                );
+                rect.size = flowed.size;
                 push(
                     layout,
                     page_index,
                     PlacedAnchor {
                         content: AnchorContent::TextBox {
-                            blocks,
+                            blocks: flowed.blocks,
                             fill: text_box.fill.map(rgba),
                             border: text_box.border.map(text_box_stroke),
+                            content_layout: flowed.content_layout,
                         },
                         rect,
                         behind_doc: anchor.behind_doc,
@@ -292,8 +300,15 @@ fn place_group_children(
                 );
             }
             GroupChild::TextBox(text_box) => {
-                let rect = mapper.child_rect(origin, text_box.offset, text_box.extent);
-                let blocks = flow_box(ctx, &text_box.blocks, rect.size.width);
+                let mut rect = mapper.child_rect(origin, text_box.offset, text_box.extent);
+                let flowed = flow_anchored_text_box(
+                    ctx.document,
+                    &text_box.blocks,
+                    ctx.shaper,
+                    rect.size,
+                    &text_box.body_properties,
+                );
+                rect.size = flowed.size;
                 let z = AnchorZ {
                     relative_height,
                     order: ctx.next_order(),
@@ -303,9 +318,10 @@ fn place_group_children(
                     page_index,
                     PlacedAnchor {
                         content: AnchorContent::TextBox {
-                            blocks,
+                            blocks: flowed.blocks,
                             fill: text_box.fill.map(rgba),
                             border: text_box.border.map(text_box_stroke),
+                            content_layout: flowed.content_layout,
                         },
                         rect,
                         behind_doc,
@@ -363,14 +379,6 @@ fn place_group_children(
             }
         }
     }
-}
-
-/// Flows a text box's block content through the shared body pipeline at the box's
-/// own inner width (its outer width minus the two internal margins), so the box
-/// renders paragraphs, nested tables, and images identically to the body.
-fn flow_box(ctx: &FloatCtx<'_>, blocks: &[BlockNode], outer_width: Twip) -> Vec<BlockFragment> {
-    let inner = Twip((outer_width.raw() - 2 * TEXTBOX_INSET.raw()).max(1));
-    crate::flow::flow_header_footer(ctx.document, blocks, ctx.shaper, inner)
 }
 
 // --- Band walk -------------------------------------------------------------

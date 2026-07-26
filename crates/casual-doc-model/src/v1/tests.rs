@@ -1862,6 +1862,21 @@ fn text_box_with_block_content_validates_and_round_trips_json() {
         extent: None,
         fill: None,
         border: None,
+        body_properties: TextBoxBodyProperties {
+            insets: TextBoxInsets {
+                left_emu: -12_700,
+                top_emu: 25_400,
+                right_emu: 38_100,
+                bottom_emu: 50_800,
+            },
+            vertical_anchor: TextBoxVerticalAnchor::Bottom,
+            horizontal_overflow: TextBoxHorizontalOverflow::Clip,
+            vertical_overflow: TextBoxVerticalOverflow::Ellipsis,
+            auto_fit: TextBoxAutoFit::Normal {
+                font_scale: 80_000,
+                line_spacing_reduction: 20_000,
+            },
+        },
         blocks: vec![paragraph_block(tid(11))],
     };
     let document = table_document(vec![textbox_paragraph(tid(1), text_box)]).unwrap();
@@ -1876,6 +1891,32 @@ fn text_box_with_block_content_validates_and_round_trips_json() {
         panic!("expected a text box");
     };
     assert_eq!(text_box.blocks.len(), 1);
+}
+
+#[test]
+fn invalid_text_box_normal_autofit_percentage_is_rejected() {
+    let text_box = TextBox {
+        id: tid(10),
+        anchor: None,
+        relative_height: None,
+        extent: None,
+        fill: None,
+        border: None,
+        body_properties: TextBoxBodyProperties {
+            auto_fit: TextBoxAutoFit::Normal {
+                font_scale: 999,
+                line_spacing_reduction: 0,
+            },
+            ..TextBoxBodyProperties::default()
+        },
+        blocks: vec![paragraph_block(tid(11))],
+    };
+    assert!(matches!(
+        table_document(vec![textbox_paragraph(tid(1), text_box)]),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "textBox.bodyProperties"
+        })
+    ));
 }
 
 #[test]
@@ -1957,6 +1998,7 @@ fn group_with_shape_and_text_box_children_validates_and_round_trips_json() {
                 blocks: vec![paragraph_block(tid(33))],
                 fill: None,
                 border: None,
+                body_properties: TextBoxBodyProperties::default(),
             }),
         ],
     };
@@ -1980,6 +2022,7 @@ fn empty_text_box_is_rejected() {
         extent: None,
         fill: None,
         border: None,
+        body_properties: TextBoxBodyProperties::default(),
         blocks: Vec::new(),
     };
     assert!(matches!(
@@ -1997,6 +2040,7 @@ fn duplicate_id_inside_a_text_box_is_rejected() {
         extent: None,
         fill: None,
         border: None,
+        body_properties: TextBoxBodyProperties::default(),
         blocks: vec![paragraph_block(tid(10))], // inner paragraph id collides
     };
     assert!(matches!(
@@ -2025,6 +2069,7 @@ fn wrap_in_textboxes(depth: u32, counter: &mut u64) -> BlockNode {
             extent: None,
             fill: None,
             border: None,
+            body_properties: TextBoxBodyProperties::default(),
             blocks: vec![inner],
         })],
     })

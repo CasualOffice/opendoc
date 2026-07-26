@@ -2345,6 +2345,10 @@ mod semantic_tests {
                         <w:p><w:r><w:rPr><w:b/></w:rPr><w:t>boxed text</w:t></w:r></w:p>
                         <w:p><w:r><w:t>second line</w:t></w:r></w:p>
                     </w:txbxContent></wps:txbx>
+                    <wps:bodyPr lIns="-12700" tIns="25400" rIns="38100" bIns="50800"
+                        anchor="b" horzOverflow="clip" vertOverflow="clip">
+                        <a:normAutofit fontScale="80000" lnSpcReduction="15000"/>
+                    </wps:bodyPr>
                 </wps:wsp></a:graphicData></a:graphic>
             </wp:inline></w:drawing></w:r></w:p>
         </w:body></w:document>"#;

@@ -79,7 +79,7 @@ report.
 | Images and anchors | Supported | Modeled and imported (Phase 1A); rendered via the z-ordered float layer (groups, floating text boxes, header/footer floats). Paragraph/line-relative `topAndBottom` wrapping now reserves shared flow in the body, nested table cells, headers, and footers; square/tight/through and page-coupled reflow remain pending. Edit surface pending. |
 | Comments and tracked changes | Supported | Modeled and imported (Phase 1A); layout/render display and edit surface pending. |
 | Fields and notes | Supported or render-only by subtype | Modeled and imported (Phase 1A); simple/page fields render; footnote/endnote body placement pending. |
-| Shapes, text boxes, VML | Preserve or flatten with warning | Modeled and imported (Phase 1A); VML shapes and text boxes parsed and painted via the float layer. Local DrawingML `topAndBottom` exclusions share the body/header/footer flow path; VML wrap mapping, exact paths, side wrapping, and page-coupled reflow remain pending. |
+| Shapes, text boxes, VML | Preserve or flatten with warning | DrawingML text boxes preserve extent/fill/outline plus independent `bodyPr` insets, top/center/bottom anchoring, overflow policy, shape autofit, and normal-autofit authored scaling; the same recursive flow/paint path covers body, cells, groups, headers, and footers. Vertical ellipsis currently clips without synthesizing dots. VML boxes/shapes are parsed and painted via the float layer, but VML-specific inset/CSS positioning, exact paths, rotation/vertical writing, side wrapping, and page-coupled reflow remain pending. |
 | Real-time collaboration | Adapter-based | Post local transaction stability. |
 | Accessibility semantics | Required | Designed, not implemented. |
 

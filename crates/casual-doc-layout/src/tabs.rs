@@ -22,7 +22,7 @@ use crate::block::BlockFragment;
 use crate::model::{ModelPos, ModelRange};
 use crate::text::{
     Decoration, FieldKind, FieldStyle, Glyph, GlyphRun, InlineRule, Line, LineBreak,
-    LineConstraints, LineLayout, LineShaper, StyledRun, TextBoxStroke,
+    LineConstraints, LineLayout, LineShaper, StyledRun, TextBoxContentLayout, TextBoxStroke,
 };
 use crate::units::{Point, Size, Twip};
 
@@ -86,6 +86,8 @@ pub enum FlowItem<'a> {
         border: Option<TextBoxStroke>,
         /// The background fill (RGBA), or `None` for transparent.
         fill: Option<[u8; 4]>,
+        /// Resolved content offset and overflow clipping.
+        content_layout: TextBoxContentLayout,
     },
     /// An inline horizontal rule (`w:pict` / `v:rect@o:hr`): a filled full-content-
     /// width line, already resolved (origin, size, color) against the content width

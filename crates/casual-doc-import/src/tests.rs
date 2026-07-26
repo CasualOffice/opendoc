@@ -2134,7 +2134,7 @@ fn wpg_group_maps_to_a_group_with_children_sized_by_their_own_extent() {
 
     // A `wpg:wgp` with a rectangle (red fill, green outline), a picture, and a
     // text box, in document order, inside a 2000000x1000000 EMU group.
-    let group = r#"<w:drawing><wp:anchor behindDoc="0" relativeHeight="251659264" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="2000000" cy="1000000"/><wp:wrapNone/><wp:docPr id="1" name="Group 1"/><a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2000000" cy="1000000"/><a:chOff x="0" y="0"/><a:chExt cx="2000000" cy="1000000"/></a:xfrm></wpg:grpSpPr><wps:wsp><wps:cNvPr id="2" name="Rectangle"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2000000" cy="1000000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill><a:ln w="9525"><a:solidFill><a:srgbClr val="00FF00"/></a:solidFill></a:ln></wps:spPr><wps:bodyPr/></wps:wsp><pic:pic><pic:nvPicPr><pic:cNvPr id="3" name="Pic"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill><pic:spPr><a:xfrm><a:off x="100000" y="50000"/><a:ext cx="500000" cy="500000"/></a:xfrm><a:prstGeom prst="rect"/></pic:spPr></pic:pic><wps:wsp><wps:cNvPr id="4" name="Text Box"/><wps:spPr><a:xfrm><a:off x="200000" y="100000"/><a:ext cx="800000" cy="300000"/></a:xfrm><a:prstGeom prst="rect"/></wps:spPr><wps:txbx><w:txbxContent><w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing>"#;
+    let group = r#"<w:drawing><wp:anchor behindDoc="0" relativeHeight="251659264" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="2000000" cy="1000000"/><wp:wrapNone/><wp:docPr id="1" name="Group 1"/><a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2000000" cy="1000000"/><a:chOff x="0" y="0"/><a:chExt cx="2000000" cy="1000000"/></a:xfrm></wpg:grpSpPr><wps:wsp><wps:cNvPr id="2" name="Rectangle"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2000000" cy="1000000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill><a:ln w="9525"><a:solidFill><a:srgbClr val="00FF00"/></a:solidFill></a:ln></wps:spPr><wps:bodyPr/></wps:wsp><pic:pic><pic:nvPicPr><pic:cNvPr id="3" name="Pic"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill><pic:spPr><a:xfrm><a:off x="100000" y="50000"/><a:ext cx="500000" cy="500000"/></a:xfrm><a:prstGeom prst="rect"/></pic:spPr></pic:pic><wps:wsp><wps:cNvPr id="4" name="Text Box"/><wps:spPr><a:xfrm><a:off x="200000" y="100000"/><a:ext cx="800000" cy="300000"/></a:xfrm><a:prstGeom prst="rect"/></wps:spPr><wps:txbx><w:txbxContent><w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr lIns="12700" tIns="25400" rIns="38100" bIns="50800" anchor="b" vertOverflow="clip"><a:spAutoFit/></wps:bodyPr></wps:wsp></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing>"#;
     let document = format!(
         r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic" xmlns:wps="urn:wps" xmlns:wpg="urn:wpg"><w:body><w:p><w:r>{group}</w:r></w:p></w:body></w:document>"#
     );
@@ -2185,6 +2185,20 @@ fn wpg_group_maps_to_a_group_with_children_sized_by_their_own_extent() {
     };
     assert_eq!(text_box.extent.width_emu, 800_000);
     assert_eq!(text_box.blocks.len(), 1, "the text box flows its paragraph");
+    assert_eq!(text_box.body_properties.insets.left_emu, 12_700);
+    assert_eq!(text_box.body_properties.insets.bottom_emu, 50_800);
+    assert_eq!(
+        text_box.body_properties.vertical_anchor,
+        casual_doc_model::v1::TextBoxVerticalAnchor::Bottom
+    );
+    assert_eq!(
+        text_box.body_properties.vertical_overflow,
+        casual_doc_model::v1::TextBoxVerticalOverflow::Clip
+    );
+    assert_eq!(
+        text_box.body_properties.auto_fit,
+        casual_doc_model::v1::TextBoxAutoFit::Shape
+    );
     // The whole group is fully modeled, not reported-dropped.
     assert!(!features(&import).contains(&"drawing"));
 }
@@ -2920,6 +2934,10 @@ fn drawingml_text_box_is_modeled_and_does_not_corrupt_the_paragraph() {
                     <wps:txbx>
                         <w:txbxContent><w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:txbxContent>
                     </wps:txbx>
+                    <wps:bodyPr lIns="-12700" tIns="25400" rIns="38100" bIns="50800"
+                        anchor="ctr" horzOverflow="clip" vertOverflow="ellipsis">
+                        <a:normAutofit fontScale="75000" lnSpcReduction="20000"/>
+                    </wps:bodyPr>
                 </wps:wsp></a:graphicData></a:graphic>
             </wp:inline></w:drawing></w:r>
             <w:r><w:t>After</w:t></w:r>
@@ -2966,6 +2984,24 @@ fn drawingml_text_box_is_modeled_and_does_not_corrupt_the_paragraph() {
             },
             width_emu: 19_050,
         })
+    );
+    assert_eq!(
+        text_box.body_properties,
+        casual_doc_model::v1::TextBoxBodyProperties {
+            insets: casual_doc_model::v1::TextBoxInsets {
+                left_emu: -12_700,
+                top_emu: 25_400,
+                right_emu: 38_100,
+                bottom_emu: 50_800,
+            },
+            vertical_anchor: casual_doc_model::v1::TextBoxVerticalAnchor::Center,
+            horizontal_overflow: casual_doc_model::v1::TextBoxHorizontalOverflow::Clip,
+            vertical_overflow: casual_doc_model::v1::TextBoxVerticalOverflow::Ellipsis,
+            auto_fit: casual_doc_model::v1::TextBoxAutoFit::Normal {
+                font_scale: 75_000,
+                line_spacing_reduction: 20_000,
+            },
+        }
     );
 }
 

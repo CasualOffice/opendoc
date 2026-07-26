@@ -29,9 +29,8 @@ which silently loses floating anchors and authored appearance on save.
 
 ## Compatibility boundary
 
-This slice does not add `wps:bodyPr` insets, vertical anchoring, rotation,
-autofit, overflow clipping, or text wrapping around floating objects. It also
-does not change the deliberate legacy-VML fallback that keeps overlapping
-absolute VML text boxes inline for readability. Those gaps remain explicit
-follow-ups rather than being approximated silently.
-
+This slice did not add `wps:bodyPr` insets, vertical anchoring, rotation,
+autofit, overflow clipping, or text wrapping around floating objects. Insets,
+vertical anchoring, bounded autofit, and overflow policy are designed separately
+in `docs/52-TEXT-BOX-BODY-PROPERTIES-DESIGN.md`; rotation and the deliberate
+legacy-VML fallback remain later work.

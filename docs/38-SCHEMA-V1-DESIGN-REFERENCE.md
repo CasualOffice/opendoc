@@ -573,7 +573,26 @@ export preserve `wp:anchor@distT/distB/distL/distR` for DrawingML anchored
 pictures, text boxes, and groups. This is additive schema-v1 data with a default,
 so existing snapshots remain valid. Layout currently consumes `distB` only for
 the paragraph/line-relative `wrapTopAndBottom` flow barrier; `distT/distL/distR`
-are preserved for the bounded page-level wrapping pass rather than discarded.
+remain preserved for the later side/cross-paragraph reflow slices.
+
+### Current text-body box-model extension (2026-07-27)
+
+`TextBox` and `GroupTextBox` now carry a defaulted
+`TextBoxBodyProperties { insets, vertical_anchor, horizontal_overflow,
+vertical_overflow, auto_fit }`. Insets are signed `ST_Coordinate32` EMU values
+with DrawingML's asymmetric defaults (91,440 left/right; 45,720 top/bottom).
+Autofit distinguishes no-autofit, shape growth, and normal-autofit's bounded
+`font_scale`/`line_spacing_reduction` percentages. The percentage domain is
+validated, while the `i32` inset representation provides the coordinate bound by
+construction.
+
+The importer attaches `wps:bodyPr` after the suspended `w:txbxContent` frame
+restores its open shape builder; semantic export emits the attributes and
+mutually-exclusive `a:*AutoFit` child. Layout resolves one content origin and
+clip policy for inline and anchored/grouped boxes, so body, nested cell,
+header/footer, and group rendering cannot diverge. Exact vertical ellipsis,
+rotation/vertical writing, `anchorCtr`, and VML-specific `inset` remain outside
+this bounded extension.
 
 ---
 

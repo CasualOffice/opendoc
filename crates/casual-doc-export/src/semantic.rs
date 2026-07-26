@@ -38,9 +38,10 @@ use casual_doc_model::v1::{
     ShapeStroke, Style, StyleId, StyleKind, TabAlignment, TabLeader, Table, TableAnchor,
     TableBorders, TableCell, TableCellProperties, TableFloatPosition, TableLayout, TableOverlap,
     TableProperties, TableRow, TableRowProperties, TableStyleOverride, TableStyleRegion,
-    TableXAlign, TableYAlign, TextBox, TextDirection, ThemeFontRef, VerticalAlign,
-    VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition, VerticalTextAlignment,
-    WordprocessingGroup, WrapMode, Zoom, ZoomMode,
+    TableXAlign, TableYAlign, TextBox, TextBoxAutoFit, TextBoxBodyProperties,
+    TextBoxHorizontalOverflow, TextBoxVerticalAnchor, TextBoxVerticalOverflow, TextDirection,
+    ThemeFontRef, VerticalAlign, VerticalAlignment, VerticalAnchor, VerticalMerge,
+    VerticalPosition, VerticalTextAlignment, WordprocessingGroup, WrapMode, Zoom, ZoomMode,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -4410,8 +4411,7 @@ fn write_group_text_box(
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("wps:txbx")))
         .map_err(pkg)?;
-    w.write_event(Event::Empty(start("wps:bodyPr")))
-        .map_err(pkg)?;
+    write_text_box_body_properties(w, &text_box.body_properties)?;
     w.write_event(Event::End(BytesEnd::new("wps:wsp")))
         .map_err(pkg)?;
     Ok(())
@@ -4885,8 +4885,7 @@ fn write_text_box(
     for tag in ["w:txbxContent", "wps:txbx"] {
         w.write_event(Event::End(BytesEnd::new(tag))).map_err(pkg)?;
     }
-    w.write_event(Event::Empty(start("wps:bodyPr")))
-        .map_err(pkg)?;
+    write_text_box_body_properties(w, &text_box.body_properties)?;
     for tag in ["wps:wsp", "a:graphicData", "a:graphic"] {
         w.write_event(Event::End(BytesEnd::new(tag))).map_err(pkg)?;
     }
@@ -4907,6 +4906,76 @@ fn write_text_box_extent(
     el.push_attribute(("cx", extent.width_emu.to_string().as_str()));
     el.push_attribute(("cy", extent.height_emu.to_string().as_str()));
     w.write_event(Event::Empty(el)).map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits the supported `wps:bodyPr` attributes and its mutually-exclusive
+/// DrawingML autofit child. Schema-default attributes stay omitted.
+fn write_text_box_body_properties(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    properties: &TextBoxBodyProperties,
+) -> Result<(), ExportError> {
+    let mut body = start("wps:bodyPr");
+    let insets = properties.insets;
+    let left = insets.left_emu.to_string();
+    let top = insets.top_emu.to_string();
+    let right = insets.right_emu.to_string();
+    let bottom = insets.bottom_emu.to_string();
+    if insets.left_emu != casual_doc_model::v1::TextBoxInsets::DEFAULT_HORIZONTAL_EMU {
+        body.push_attribute(("lIns", left.as_str()));
+    }
+    if insets.top_emu != casual_doc_model::v1::TextBoxInsets::DEFAULT_VERTICAL_EMU {
+        body.push_attribute(("tIns", top.as_str()));
+    }
+    if insets.right_emu != casual_doc_model::v1::TextBoxInsets::DEFAULT_HORIZONTAL_EMU {
+        body.push_attribute(("rIns", right.as_str()));
+    }
+    if insets.bottom_emu != casual_doc_model::v1::TextBoxInsets::DEFAULT_VERTICAL_EMU {
+        body.push_attribute(("bIns", bottom.as_str()));
+    }
+    match properties.vertical_anchor {
+        TextBoxVerticalAnchor::Top => {}
+        TextBoxVerticalAnchor::Center => body.push_attribute(("anchor", "ctr")),
+        TextBoxVerticalAnchor::Bottom => body.push_attribute(("anchor", "b")),
+    }
+    if properties.horizontal_overflow == TextBoxHorizontalOverflow::Clip {
+        body.push_attribute(("horzOverflow", "clip"));
+    }
+    match properties.vertical_overflow {
+        TextBoxVerticalOverflow::Overflow => {}
+        TextBoxVerticalOverflow::Clip => body.push_attribute(("vertOverflow", "clip")),
+        TextBoxVerticalOverflow::Ellipsis => body.push_attribute(("vertOverflow", "ellipsis")),
+    }
+    match properties.auto_fit {
+        TextBoxAutoFit::None => {
+            w.write_event(Event::Empty(body)).map_err(pkg)?;
+        }
+        TextBoxAutoFit::Shape => {
+            w.write_event(Event::Start(body)).map_err(pkg)?;
+            w.write_event(Event::Empty(start("a:spAutoFit")))
+                .map_err(pkg)?;
+            w.write_event(Event::End(BytesEnd::new("wps:bodyPr")))
+                .map_err(pkg)?;
+        }
+        TextBoxAutoFit::Normal {
+            font_scale,
+            line_spacing_reduction,
+        } => {
+            w.write_event(Event::Start(body)).map_err(pkg)?;
+            let mut normal = start("a:normAutofit");
+            let font_scale_text = font_scale.to_string();
+            let line_reduction_text = line_spacing_reduction.to_string();
+            if font_scale != 100_000 {
+                normal.push_attribute(("fontScale", font_scale_text.as_str()));
+            }
+            if line_spacing_reduction != 0 {
+                normal.push_attribute(("lnSpcReduction", line_reduction_text.as_str()));
+            }
+            w.write_event(Event::Empty(normal)).map_err(pkg)?;
+            w.write_event(Event::End(BytesEnd::new("wps:bodyPr")))
+                .map_err(pkg)?;
+        }
+    }
     Ok(())
 }
 
