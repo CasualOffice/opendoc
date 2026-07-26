@@ -636,20 +636,25 @@ fn a_header_can_contain_a_nested_table() {
     place_running_content(&mut layout, &running, &config);
     resolve_fields(&mut layout, &shaper);
 
-    // The nested table's cell grid lines paint in the header band.
+    // The nested table's content paints in the header band (its text glyphs,
+    // and any borders/shading it carries) — no default grid line is drawn.
     let page = &layout.pages[0];
     let band_top = config.header_band().origin.y.raw();
     let body_top = config.content_area().origin.y.raw();
     let list = compose_page(page);
-    let rect_in_header = list.items.iter().any(|i| match i {
-        PaintItem::Rect { rect, .. } => {
-            rect.origin.y.raw() >= band_top && rect.origin.y.raw() < body_top
-        }
-        _ => false,
+    let content_in_header = list.items.iter().any(|i| {
+        let y = match i {
+            PaintItem::Rect { rect, .. } | PaintItem::Image { rect, .. } => {
+                Some(rect.origin.y.raw())
+            }
+            PaintItem::Glyphs { run } => Some(run.origin.y.raw()),
+            _ => None,
+        };
+        y.is_some_and(|y| y >= band_top && y < body_top)
     });
     assert!(
-        rect_in_header,
-        "the header table's grid lines paint in the band"
+        content_in_header,
+        "the header table's content paints in the band"
     );
 }
 

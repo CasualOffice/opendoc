@@ -12,3 +12,10 @@ node_modules/
 
 # Claude Code local worktrees and session data
 .claude/
+
+# Local-only fidelity-probe docs (not redistributable; kept out of the repo)
+/fixtures/corpus/Class notes.docx
+/fixtures/corpus/Medical-In...orm.docx
+/fixtures/corpus/SDS_ANTI-T..._ZH.docx
+/fixtures/corpus/Sample Document.docx
+/fixtures/corpus/demo.docx
