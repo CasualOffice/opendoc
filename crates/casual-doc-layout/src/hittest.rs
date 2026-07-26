@@ -507,6 +507,8 @@ mod tests {
             margin_bottom: Twip(MARGIN),
             margin_start: Twip(MARGIN),
             margin_end: Twip(MARGIN),
+            header_distance: Twip(720),
+            footer_distance: Twip(720),
             header_height: Twip::ZERO,
             footer_height: Twip::ZERO,
         }

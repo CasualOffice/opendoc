@@ -84,6 +84,8 @@ fn section(
             bottom_twips: margin,
             start_twips: margin,
             end_twips: margin,
+            header_twips: None,
+            footer_twips: None,
         },
         columns: SectionColumns {
             count: 1,

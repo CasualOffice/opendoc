@@ -295,6 +295,18 @@ pub struct PageMargins {
     pub start_twips: i32,
     /// Trailing margin.
     pub end_twips: i32,
+    /// Distance from the top edge of the page to the top of the header
+    /// (`w:pgMar/@w:header`). Word nests the header band inside the top margin,
+    /// so this — not the top margin — anchors the header. `None` when the
+    /// attribute is absent (Word defaults to 720 twips); additive in schema v1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header_twips: Option<i32>,
+    /// Distance from the bottom edge of the page to the bottom of the footer
+    /// (`w:pgMar/@w:footer`). Word nests the footer band inside the bottom
+    /// margin, so this — not the bottom margin — anchors the footer. `None` when
+    /// the attribute is absent (Word defaults to 720 twips); additive in schema v1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub footer_twips: Option<i32>,
 }
 
 /// Section column layout (`w:cols`).
