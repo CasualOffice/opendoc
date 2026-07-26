@@ -19,7 +19,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use casual_doc_import::{ImportConfig, import_package};
-use casual_doc_model::v1::{BlockNode, InlineNode};
+use casual_doc_model::v1::{BlockNode, GroupChild, InlineNode, WordprocessingGroup};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
 
 fn main() {
@@ -102,6 +102,16 @@ fn extract_ours(bytes: &[u8]) -> Result<String, Box<dyn Error>> {
 
 /// Appends the text of a block sequence, recursing through table cells so cell
 /// text counts toward the fidelity comparison.
+fn push_group_text(group: &WordprocessingGroup, out: &mut String) {
+    for child in &group.children {
+        match child {
+            GroupChild::TextBox(text_box) => push_blocks_text(&text_box.blocks, out),
+            GroupChild::Group(nested) => push_group_text(nested, out),
+            GroupChild::Picture(_) | GroupChild::Shape(_) => {}
+        }
+    }
+}
+
 fn push_blocks_text(blocks: &[BlockNode], out: &mut String) {
     for block in blocks {
         match block {
@@ -146,6 +156,8 @@ fn push_inline_text(inline: &InlineNode, out: &mut String) {
             }
         }
         InlineNode::TextBox(text_box) => push_blocks_text(&text_box.blocks, out),
+        // A group's text boxes carry real text; recurse through the children.
+        InlineNode::Group(group) => push_group_text(group, out),
         // A tracked-change range's content is real text (an insertion reads as
         // present text; a deletion's `w:delText` is retained), so recurse into it.
         InlineNode::Revision(revision) => {
