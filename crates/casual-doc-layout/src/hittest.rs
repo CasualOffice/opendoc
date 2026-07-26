@@ -507,6 +507,8 @@ mod tests {
             margin_bottom: Twip(MARGIN),
             margin_start: Twip(MARGIN),
             margin_end: Twip(MARGIN),
+            header_height: Twip::ZERO,
+            footer_height: Twip::ZERO,
         }
     }
 
@@ -552,6 +554,7 @@ mod tests {
                 page_break_after: false,
                 bars: Vec::new(),
                 images: Vec::new(),
+                fields: Vec::new(),
             });
             baseline += LINE_H;
         }
@@ -596,6 +599,7 @@ mod tests {
             page_break_after: false,
             bars: Vec::new(),
             images: Vec::new(),
+            fields: Vec::new(),
         };
         BlockFragment::Paragraph {
             id: node,

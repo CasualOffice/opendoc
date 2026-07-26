@@ -465,6 +465,7 @@ mod tests {
                     page_break_after: false,
                     bars: Vec::new(),
                     images: Vec::new(),
+                    fields: Vec::new(),
                 }],
             }
         }
@@ -504,6 +505,8 @@ mod tests {
             margin_bottom: Twip(1_440),
             margin_start: Twip(1_440),
             margin_end: Twip(1_440),
+            header_height: Twip::ZERO,
+            footer_height: Twip::ZERO,
         }
     }
 

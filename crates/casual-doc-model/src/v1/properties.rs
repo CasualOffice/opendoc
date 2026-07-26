@@ -112,7 +112,7 @@ pub enum VerticalTextAlignment {
     Top,
 }
 
-/// The kind of a style definition.
+/// The kind of a style definition (`w:style/@w:type`).
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StyleKind {
@@ -120,6 +120,12 @@ pub enum StyleKind {
     Paragraph,
     /// A character (run) style.
     Character,
+    /// A table style: carries table/row/cell defaults and per-region
+    /// conditional formatting (`w:tblStylePr`).
+    Table,
+    /// A numbering style (`w:type="numbering"`), a thin style that names a
+    /// list definition and carries metadata (`uiPriority`, `name`).
+    Numbering,
 }
 
 /// An explicit break kind.

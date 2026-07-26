@@ -29,8 +29,9 @@ use casual_doc_model::v1::{
     ProofState, RevisionKind, RgbColor, RunFontHint, RunProperties, SchemeColor, SdtControlKind,
     SdtProperties, SectionBoundary, SectionType, Style, StyleId, StyleKind, TabAlignment,
     TabLeader, Table, TableBorders, TableCell, TableCellProperties, TableLayout, TableOverlap,
-    TableProperties, TableRow, TableRowProperties, TextDirection, ThemeFontRef, VerticalAlignment,
-    VerticalMerge, VerticalTextAlignment, Zoom, ZoomMode,
+    TableProperties, TableRow, TableRowProperties, TableStyleOverride, TableStyleRegion,
+    TextDirection, ThemeFontRef, VerticalAlignment, VerticalMerge, VerticalTextAlignment, Zoom,
+    ZoomMode,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -1613,42 +1614,65 @@ fn styles_xml(
     for (id, style) in styles.iter() {
         let style_id = style_id_token(*id);
         let mut el = start("w:style");
-        el.push_attribute((
-            "w:type",
-            match style.kind {
-                StyleKind::Paragraph => "paragraph",
-                StyleKind::Character => "character",
-            },
-        ));
+        el.push_attribute(("w:type", style_kind_token(style.kind)));
         el.push_attribute(("w:styleId", style_id.as_str()));
+        if style.is_default {
+            el.push_attribute(("w:default", "1"));
+        }
         w.write_event(Event::Start(el)).map_err(pkg)?;
-        // The importer ignores `w:name`, but Word requires one; emit the id.
-        let mut name = start("w:name");
-        name.push_attribute(("w:val", style_id.as_str()));
-        w.write_event(Event::Empty(name)).map_err(pkg)?;
-        if let Some(based_on) = style.based_on {
-            let mut el = start("w:basedOn");
-            el.push_attribute(("w:val", style_id_token(based_on).as_str()));
+        // Metadata in `CT_Style` order. `w:name` is emitted only when modeled: a
+        // style with no captured name re-imports to `None`, so emitting a
+        // placeholder would break the fixed point.
+        if let Some(name) = &style.name {
+            let mut el = start("w:name");
+            el.push_attribute(("w:val", name.as_str()));
             w.write_event(Event::Empty(el)).map_err(pkg)?;
         }
-        // A `Some(default)` pPr/rPr must still emit its (empty) element: the
-        // importer keys on the tag's PRESENCE (Some vs None), while the property
-        // writers elide an all-default value — so emit a bare `<w:pPr/>`/`<w:rPr/>`
-        // for the default case to preserve presence across the round trip.
-        if let Some(paragraph) = &style.paragraph {
-            if *paragraph == ParagraphProperties::default() {
-                w.write_event(Event::Empty(start("w:pPr"))).map_err(pkg)?;
-            } else {
-                // A style never carries a section break (that is a body concept).
-                write_paragraph_properties(&mut w, paragraph, None)?;
+        if let Some(aliases) = &style.aliases {
+            let mut el = start("w:aliases");
+            el.push_attribute(("w:val", aliases.as_str()));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+        for (element, reference) in [
+            ("w:basedOn", style.based_on),
+            ("w:next", style.next),
+            ("w:link", style.link),
+        ] {
+            if let Some(reference) = reference {
+                let mut el = start(element);
+                el.push_attribute(("w:val", style_id_token(reference).as_str()));
+                w.write_event(Event::Empty(el)).map_err(pkg)?;
             }
         }
-        if let Some(run) = &style.run {
-            if *run == RunProperties::default() {
-                w.write_event(Event::Empty(start("w:rPr"))).map_err(pkg)?;
-            } else {
-                write_run_properties(&mut w, run)?;
+        if style.hidden {
+            w.write_event(Event::Empty(start("w:hidden")))
+                .map_err(pkg)?;
+        }
+        if let Some(priority) = style.ui_priority {
+            let mut el = start("w:uiPriority");
+            el.push_attribute(("w:val", priority.to_string().as_str()));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+        for (on, element) in [
+            (style.semi_hidden, "w:semiHidden"),
+            (style.unhide_when_used, "w:unhideWhenUsed"),
+            (style.q_format, "w:qFormat"),
+            (style.locked, "w:locked"),
+        ] {
+            if on {
+                w.write_event(Event::Empty(start(element))).map_err(pkg)?;
             }
+        }
+        write_style_properties(
+            &mut w,
+            &style.paragraph,
+            &style.run,
+            &style.table,
+            &style.table_row,
+            &style.table_cell,
+        )?;
+        for over in &style.conditional {
+            write_conditional_format(&mut w, over)?;
         }
         w.write_event(Event::End(BytesEnd::new("w:style")))
             .map_err(pkg)?;
@@ -1656,6 +1680,108 @@ fn styles_xml(
     w.write_event(Event::End(BytesEnd::new("w:styles")))
         .map_err(pkg)?;
     Ok(finish(w))
+}
+
+/// The `w:style/@w:type` token for a style kind.
+fn style_kind_token(kind: StyleKind) -> &'static str {
+    match kind {
+        StyleKind::Paragraph => "paragraph",
+        StyleKind::Character => "character",
+        StyleKind::Table => "table",
+        StyleKind::Numbering => "numbering",
+    }
+}
+
+/// Emits the property containers a style (or a `w:tblStylePr` region) carries, in
+/// `CT_Style`/`CT_TblStylePr` order (pPr, rPr, tblPr, trPr, tcPr). A `Some(default)`
+/// value still emits its bare element: the importer keys on the tag's PRESENCE
+/// (Some vs None), while the property writers elide an all-default value — so a
+/// bare element preserves presence across the round trip.
+fn write_style_properties(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    paragraph: &Option<ParagraphProperties>,
+    run: &Option<RunProperties>,
+    table: &Option<TableProperties>,
+    table_row: &Option<TableRowProperties>,
+    table_cell: &Option<TableCellProperties>,
+) -> Result<(), ExportError> {
+    if let Some(paragraph) = paragraph {
+        if *paragraph == ParagraphProperties::default() {
+            w.write_event(Event::Empty(start("w:pPr"))).map_err(pkg)?;
+        } else {
+            // A style never carries a section break (that is a body concept).
+            write_paragraph_properties(w, paragraph, None)?;
+        }
+    }
+    if let Some(run) = run {
+        if *run == RunProperties::default() {
+            w.write_event(Event::Empty(start("w:rPr"))).map_err(pkg)?;
+        } else {
+            write_run_properties(w, run)?;
+        }
+    }
+    if let Some(table) = table {
+        if *table == TableProperties::default() {
+            w.write_event(Event::Empty(start("w:tblPr"))).map_err(pkg)?;
+        } else {
+            write_table_properties(w, table)?;
+        }
+    }
+    if let Some(row) = table_row {
+        if *row == TableRowProperties::default() {
+            w.write_event(Event::Empty(start("w:trPr"))).map_err(pkg)?;
+        } else {
+            write_row_properties(w, row)?;
+        }
+    }
+    if let Some(cell) = table_cell {
+        if *cell == TableCellProperties::default() {
+            w.write_event(Event::Empty(start("w:tcPr"))).map_err(pkg)?;
+        } else {
+            write_cell_properties(w, cell)?;
+        }
+    }
+    Ok(())
+}
+
+/// Emits one `w:tblStylePr` conditional-formatting block (region + overrides).
+fn write_conditional_format(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    over: &TableStyleOverride,
+) -> Result<(), ExportError> {
+    let mut el = start("w:tblStylePr");
+    el.push_attribute(("w:type", table_style_region_token(over.region)));
+    w.write_event(Event::Start(el)).map_err(pkg)?;
+    write_style_properties(
+        w,
+        &over.paragraph,
+        &over.run,
+        &over.table,
+        &over.table_row,
+        &over.table_cell,
+    )?;
+    w.write_event(Event::End(BytesEnd::new("w:tblStylePr")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+/// The `w:tblStylePr/@w:type` token for a table-style region.
+fn table_style_region_token(region: TableStyleRegion) -> &'static str {
+    match region {
+        TableStyleRegion::WholeTable => "wholeTable",
+        TableStyleRegion::FirstRow => "firstRow",
+        TableStyleRegion::LastRow => "lastRow",
+        TableStyleRegion::FirstColumn => "firstCol",
+        TableStyleRegion::LastColumn => "lastCol",
+        TableStyleRegion::Band1Horizontal => "band1Horz",
+        TableStyleRegion::Band2Horizontal => "band2Horz",
+        TableStyleRegion::Band1Vertical => "band1Vert",
+        TableStyleRegion::Band2Vertical => "band2Vert",
+        TableStyleRegion::NorthEastCell => "neCell",
+        TableStyleRegion::NorthWestCell => "nwCell",
+        TableStyleRegion::SouthEastCell => "seCell",
+        TableStyleRegion::SouthWestCell => "swCell",
+    }
 }
 
 /// Emits `word/settings.xml` with the modeled settings, in `CT_Settings` schema

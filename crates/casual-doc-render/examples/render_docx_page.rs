@@ -45,6 +45,8 @@ fn main() {
         margin_bottom: Twip(1_440),
         margin_start: Twip(1_440),
         margin_end: Twip(1_440),
+        header_height: Twip(0),
+        footer_height: Twip(0),
     };
     let shaper = ParleyShaper::new();
     let galley = build_galley(&document, &shaper, config.content_area().size.width);

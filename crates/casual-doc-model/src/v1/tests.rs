@@ -155,6 +155,48 @@ fn based_on_cycle_and_kind_mismatch_are_rejected() {
 }
 
 #[test]
+fn dangling_next_style_reference_is_rejected() {
+    // A `w:next` (like `w:link`) must resolve; a dangling one fails validation.
+    let json = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{"type":"paragraph","id":"00000000000000030000000000000002","properties":{},"inlines":[]}],
+            "definitions":{"styles":{
+              "0000000000000000000000000000000a":{"kind":"paragraph","next":"00000000000000000000000000000099"}
+            }}}"#;
+    assert!(matches!(
+        Document::from_json(json, SnapshotLimits::default()),
+        Err(SnapshotError::InvalidModel(ModelError::DanglingStyleRef(_)))
+    ));
+}
+
+#[test]
+fn table_style_conditional_formatting_snapshot_round_trips() {
+    // A table style with style-level borders plus two `w:tblStylePr` regions
+    // (a bold, shaded first row and a banded row) is a JSON snapshot fixed point,
+    // proving the additive style shape serializes and re-validates cleanly.
+    let json = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{"type":"paragraph","id":"00000000000000030000000000000002","properties":{},"inlines":[]}],
+            "definitions":{"styles":{
+              "0000000000000000000000000000000a":{"kind":"table","isDefault":true,"name":"Grid","uiPriority":59,
+                "table":{"borders":{"top":{"style":"single","sizeEighthPoints":4}}},
+                "conditional":[
+                  {"region":"firstRow","run":{"bold":true},
+                    "tableCell":{"shading":{"fill":{"r":68,"g":114,"b":196}}}},
+                  {"region":"band1Horizontal",
+                    "tableCell":{"shading":{"fill":{"r":217,"g":226,"b":243}}}}
+                ]}
+            }}}"#;
+    let document = Document::from_json(json, SnapshotLimits::default()).unwrap();
+    let first = document.to_json().unwrap();
+    let reloaded = Document::from_json(&first, SnapshotLimits::default()).unwrap();
+    assert_eq!(reloaded.to_json().unwrap(), first);
+
+    let (_, style) = document.definitions().styles.iter().next().unwrap();
+    assert_eq!(style.kind, StyleKind::Table);
+    assert_eq!(style.conditional.len(), 2);
+    assert_eq!(style.conditional[0].region, TableStyleRegion::FirstRow);
+}
+
+#[test]
 fn numbering_reference_integrity_is_enforced() {
     let dangling = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
             "body":[{"type":"paragraph","id":"00000000000000030000000000000002",

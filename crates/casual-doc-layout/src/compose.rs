@@ -90,12 +90,22 @@ fn rgba(c: [u8; 4]) -> Color {
     }
 }
 
-/// Builds the display list for a whole paginated [`Page`]: each placed fragment
-/// (paragraph or table row) is composed at its position on the page.
+/// Builds the display list for a whole paginated [`Page`]: the running header, the
+/// body content (each placed paragraph or table row), then the running footer —
+/// each fragment composed at its position on the page. Header and footer are laid
+/// out in their reserved bands by [`crate::running::place_running_content`] and
+/// their fields resolved by [`crate::paginate::resolve_fields`]; here they paint
+/// exactly like body fragments.
 #[must_use]
 pub fn compose_page(page: &Page) -> DisplayList {
     let mut list = DisplayList::new();
+    for placed in &page.header {
+        compose_fragment(&mut list, &placed.fragment, placed.rect.origin);
+    }
     for placed in &page.placed {
+        compose_fragment(&mut list, &placed.fragment, placed.rect.origin);
+    }
+    for placed in &page.footer {
         compose_fragment(&mut list, &placed.fragment, placed.rect.origin);
     }
     list
@@ -415,6 +425,7 @@ mod tests {
                 page_break_after: false,
                 bars: Vec::new(),
                 images: Vec::new(),
+                fields: Vec::new(),
             }],
         }
     }
