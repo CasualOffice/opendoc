@@ -797,9 +797,9 @@ mod semantic_tests {
     #[test]
     fn theme_font_scheme_survives_the_semantic_round_trip() {
         // A theme with a fontScheme (major + minor, base entries with hints, a
-        // per-script override, empty ea/cs) plus an unrelated clrScheme (which
-        // must be ignored) — the writer regenerates theme1.xml, its content-type
-        // override, and the /theme relationship, and the font scheme round-trips.
+        // per-script override, empty ea/cs) plus a minimal clrScheme (now also
+        // modeled) — the writer regenerates theme1.xml, its content-type
+        // override, and the /theme relationship, and the whole theme round-trips.
         let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/></Types>"#;
         let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
         let document = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
@@ -904,6 +904,142 @@ mod semantic_tests {
         .unwrap()
         .document;
         assert_eq!(m1, m2, "styles + style references survive write -> reopen");
+    }
+
+    #[test]
+    fn theme_color_and_format_schemes_survive_the_semantic_round_trip() {
+        // A full theme: a 12-slot clrScheme (sysClr with lastClr for dk1/lt1,
+        // srgbClr for the rest), a fontScheme, and an fmtScheme. The clrScheme is
+        // modeled and the fmtScheme is retained verbatim, so every theme colour
+        // reference resolves and the format scheme round-trips byte-for-byte.
+        use casual_doc_model::v1::{RgbColor, SchemeColor};
+
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/></Relationships>"#;
+        let theme = br#"<a:theme xmlns:a="urn:a" name="Office Theme"><a:themeElements>
+            <a:clrScheme name="Office">
+                <a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1>
+                <a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1>
+                <a:dk2><a:srgbClr val="44546A"/></a:dk2>
+                <a:lt2><a:srgbClr val="E7E6E6"/></a:lt2>
+                <a:accent1><a:srgbClr val="4472C4"/></a:accent1>
+                <a:accent2><a:srgbClr val="ED7D31"/></a:accent2>
+                <a:accent3><a:srgbClr val="A5A5A5"/></a:accent3>
+                <a:accent4><a:srgbClr val="FFC000"/></a:accent4>
+                <a:accent5><a:srgbClr val="5B9BD5"/></a:accent5>
+                <a:accent6><a:srgbClr val="70AD47"/></a:accent6>
+                <a:hlink><a:srgbClr val="0563C1"/></a:hlink>
+                <a:folHlink><a:srgbClr val="954F72"/></a:folHlink>
+            </a:clrScheme>
+            <a:fontScheme name="Office">
+                <a:majorFont><a:latin typeface="Calibri Light"/><a:ea typeface=""/><a:cs typeface=""/></a:majorFont>
+                <a:minorFont><a:latin typeface="Calibri"/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont>
+            </a:fontScheme>
+            <a:fmtScheme name="Office">
+                <a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:fillStyleLst>
+                <a:lnStyleLst><a:ln w="6350"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln></a:lnStyleLst>
+                <a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst>
+                <a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:bgFillStyleLst>
+            </a:fmtScheme>
+        </a:themeElements></a:theme>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/theme/theme1.xml", theme),
+        ]);
+        let m1 = reopen(&source);
+        let defs = m1.definitions();
+        let scheme = defs.color_scheme.as_ref().expect("clrScheme modeled");
+        assert_eq!(scheme.name, "Office");
+        match &scheme.dark1 {
+            SchemeColor::System(system) => {
+                assert_eq!(system.value, "windowText");
+                assert_eq!(system.last_color, Some(RgbColor { r: 0, g: 0, b: 0 }));
+            }
+            other => panic!("dk1 should be a sysClr, got {other:?}"),
+        }
+        assert_eq!(
+            scheme.accent1,
+            SchemeColor::Srgb(RgbColor {
+                r: 0x44,
+                g: 0x72,
+                b: 0xC4
+            })
+        );
+        assert_eq!(
+            scheme.followed_hyperlink,
+            SchemeColor::Srgb(RgbColor {
+                r: 0x95,
+                g: 0x4F,
+                b: 0x72
+            })
+        );
+        let retained = defs.format_scheme_xml.as_ref().expect("fmtScheme retained");
+        assert!(retained.contains("fillStyleLst"), "fmtScheme captured");
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(
+            m2.definitions().format_scheme_xml,
+            defs.format_scheme_xml,
+            "the retained fmtScheme is preserved across write -> reopen"
+        );
+        assert_eq!(
+            m1, m2,
+            "the theme colour + format schemes survive write -> reopen"
+        );
+    }
+
+    #[test]
+    fn doc_defaults_survive_the_semantic_round_trip() {
+        // A styles.xml with w:docDefaults (a default font + size in rPrDefault and
+        // default paragraph spacing in pPrDefault). Losing docDefaults shifts the
+        // whole document's base formatting, so it must be modeled and re-emitted.
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>"#;
+        let styles = br#"<w:styles xmlns:w="urn:w">
+            <w:docDefaults>
+                <w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="24"/></w:rPr></w:rPrDefault>
+                <w:pPrDefault><w:pPr><w:spacing w:before="120" w:after="240"/></w:pPr></w:pPrDefault>
+            </w:docDefaults>
+            <w:style w:type="paragraph" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
+        </w:styles>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/styles.xml", styles),
+        ]);
+        let m1 = reopen(&source);
+        let defaults = m1
+            .definitions()
+            .document_defaults
+            .as_ref()
+            .expect("docDefaults modeled");
+        let run = defaults.run.as_ref().expect("rPrDefault modeled");
+        assert_eq!(run.size_half_points, Some(24));
+        let paragraph = defaults.paragraph.as_ref().expect("pPrDefault modeled");
+        assert_eq!(paragraph.spacing.and_then(|s| s.before_twips), Some(120));
+        assert_eq!(paragraph.spacing.and_then(|s| s.after_twips), Some(240));
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(
+            m2.definitions().document_defaults,
+            m1.definitions().document_defaults,
+            "docDefaults survive write -> reopen"
+        );
+        assert_eq!(
+            m1, m2,
+            "the whole model (incl. docDefaults) is a fixed point"
+        );
     }
 
     #[test]

@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
-    DefinitionMap, ParagraphProperties, RunProperties, Style, StyleId, StyleKind,
+    DefinitionMap, DocumentDefaults, ParagraphProperties, RunProperties, Style, StyleId, StyleKind,
 };
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
@@ -23,6 +23,7 @@ use crate::report::Reporter;
 pub(crate) struct Styles {
     by_name: BTreeMap<String, (StyleId, StyleKind)>,
     definitions: DefinitionMap<StyleId, Style>,
+    document_defaults: Option<DocumentDefaults>,
 }
 
 impl Styles {
@@ -32,6 +33,11 @@ impl Styles {
             .get(name)
             .filter(|(_, kind)| *kind == expected)
             .map(|(id, _)| *id)
+    }
+
+    /// The `w:docDefaults` run/paragraph defaults, if the part carried any.
+    pub(crate) fn document_defaults(&self) -> Option<DocumentDefaults> {
+        self.document_defaults.clone()
     }
 
     pub(crate) fn into_definitions(self) -> DefinitionMap<StyleId, Style> {
@@ -54,7 +60,7 @@ pub(crate) fn parse(
     reporter: &mut Reporter,
     config: ImportConfig,
 ) -> Result<Styles, ImportError> {
-    let raw = parse_raw(xml, reporter, config)?;
+    let (raw, document_defaults) = parse_raw(xml, reporter, config)?;
 
     let mut by_name: BTreeMap<String, (StyleId, StyleKind)> = BTreeMap::new();
     let mut assigned: Vec<(StyleId, StyleKind, Option<String>, RawStyle)> = Vec::new();
@@ -131,6 +137,7 @@ pub(crate) fn parse(
     Ok(Styles {
         by_name,
         definitions,
+        document_defaults,
     })
 }
 
@@ -156,11 +163,13 @@ fn parse_raw(
     xml: &[u8],
     reporter: &mut Reporter,
     config: ImportConfig,
-) -> Result<Vec<RawStyle>, ImportError> {
+) -> Result<(Vec<RawStyle>, Option<DocumentDefaults>), ImportError> {
     let mut reader = Reader::from_reader(xml);
     let mut buffer = Vec::new();
     let mut styles = Vec::new();
     let mut in_style = false;
+    let mut in_doc_defaults = false;
+    let mut document_defaults = None;
     let mut state = StyleState::default();
     let mut elements = 0_u64;
     let mut depth = 0_u64;
@@ -180,6 +189,7 @@ fn parse_raw(
                 bump_elements(&mut elements, config.max_elements)?;
                 on_start(
                     &mut in_style,
+                    &mut in_doc_defaults,
                     &mut state,
                     reporter,
                     element.local_name().as_ref(),
@@ -191,19 +201,29 @@ fn parse_raw(
                 let local = element.local_name();
                 on_start(
                     &mut in_style,
+                    &mut in_doc_defaults,
                     &mut state,
                     reporter,
                     local.as_ref(),
                     &element,
                 );
-                on_end(&mut in_style, &mut state, local.as_ref(), &mut styles);
+                on_end(
+                    &mut in_style,
+                    &mut in_doc_defaults,
+                    &mut state,
+                    local.as_ref(),
+                    &mut styles,
+                    &mut document_defaults,
+                );
             }
             Event::End(element) => {
                 on_end(
                     &mut in_style,
+                    &mut in_doc_defaults,
                     &mut state,
                     element.local_name().as_ref(),
                     &mut styles,
+                    &mut document_defaults,
                 );
                 depth = depth.saturating_sub(1);
             }
@@ -211,7 +231,7 @@ fn parse_raw(
         }
         buffer.clear();
     }
-    Ok(styles)
+    Ok((styles, document_defaults))
 }
 
 fn bump_elements(elements: &mut u64, max: u64) -> Result<(), ImportError> {
@@ -226,6 +246,7 @@ fn bump_elements(elements: &mut u64, max: u64) -> Result<(), ImportError> {
 
 fn on_start(
     in_style: &mut bool,
+    in_doc_defaults: &mut bool,
     state: &mut StyleState,
     reporter: &mut Reporter,
     local: &[u8],
@@ -244,13 +265,20 @@ fn on_start(
                 };
             }
         }
+        // `w:docDefaults` is a sibling of `w:style`; its `w:rPrDefault>w:rPr` and
+        // `w:pPrDefault>w:pPr` reuse the style property parsers (the `rPrDefault`/
+        // `pPrDefault` wrappers themselves are structural and skipped).
+        b"docDefaults" => {
+            *in_doc_defaults = true;
+            *state = StyleState::default();
+        }
         b"name" if *in_style => {}
         b"basedOn" if *in_style => state.based_on = attribute_value(element, b"val"),
-        b"pPr" if *in_style && state.rpr_depth == 0 => {
+        b"pPr" if (*in_style || *in_doc_defaults) && state.rpr_depth == 0 => {
             state.ppr_depth += 1;
             state.has_paragraph = true;
         }
-        b"rPr" if *in_style => {
+        b"rPr" if *in_style || *in_doc_defaults => {
             state.rpr_depth += 1;
             state.has_run = true;
         }
@@ -269,7 +297,14 @@ fn on_start(
     }
 }
 
-fn on_end(in_style: &mut bool, state: &mut StyleState, local: &[u8], styles: &mut Vec<RawStyle>) {
+fn on_end(
+    in_style: &mut bool,
+    in_doc_defaults: &mut bool,
+    state: &mut StyleState,
+    local: &[u8],
+    styles: &mut Vec<RawStyle>,
+    document_defaults: &mut Option<DocumentDefaults>,
+) {
     match local {
         b"style" if *in_style => {
             *in_style = false;
@@ -278,6 +313,14 @@ fn on_end(in_style: &mut bool, state: &mut StyleState, local: &[u8], styles: &mu
                 style_id: finished.style_id,
                 kind: finished.kind,
                 based_on: finished.based_on,
+                paragraph: finished.has_paragraph.then_some(finished.paragraph),
+                run: finished.has_run.then_some(finished.run),
+            });
+        }
+        b"docDefaults" if *in_doc_defaults => {
+            *in_doc_defaults = false;
+            let finished = std::mem::take(state);
+            *document_defaults = Some(DocumentDefaults {
                 paragraph: finished.has_paragraph.then_some(finished.paragraph),
                 run: finished.has_run.then_some(finished.run),
             });

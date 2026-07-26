@@ -672,9 +672,9 @@ pub(crate) fn import_with_sources(
         Some(xml) => font_table::parse(xml, font_table_rels, config)?,
         None => Vec::new(),
     };
-    let font_scheme = match theme_xml {
+    let theme = match theme_xml {
         Some(xml) => theme::parse(xml, config)?,
-        None => None,
+        None => theme::ParsedTheme::default(),
     };
     let settings = match settings_xml {
         Some(xml) => settings::parse(xml, config)?,
@@ -784,6 +784,7 @@ pub(crate) fn import_with_sources(
     }
 
     let (abstract_numbering, numbering_instances) = numbering.into_definitions();
+    let document_defaults = styles.document_defaults();
     let definitions = Definitions {
         styles: styles.into_definitions(),
         abstract_numbering,
@@ -796,10 +797,12 @@ pub(crate) fn import_with_sources(
         footers,
         comments: comments_map,
         bookmarks,
+        document_defaults,
         font_table,
-        font_scheme,
+        font_scheme: theme.font_scheme,
+        color_scheme: theme.color_scheme,
+        format_scheme_xml: theme.format_scheme_xml,
         settings,
-        ..Definitions::default()
     };
     let document = Document::new(document_id, body, definitions).map_err(ImportError::Model)?;
     Ok(Import {

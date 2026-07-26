@@ -3,9 +3,9 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    AbstractNumberingId, BlockNode, BookmarkId, CommentId, DefinitionMap, FontDescriptor,
-    FontScheme, HeaderFooterId, MediaId, NoteId, NumberingInstanceId, ParagraphProperties,
-    RunProperties, SectionId, StyleId, StyleKind,
+    AbstractNumberingId, BlockNode, BookmarkId, ColorScheme, CommentId, DefinitionMap,
+    FontDescriptor, FontScheme, HeaderFooterId, MediaId, NoteId, NumberingInstanceId,
+    ParagraphProperties, RunProperties, SectionId, StyleId, StyleKind,
 };
 
 /// A style definition (its id is the map key).
@@ -404,6 +404,15 @@ pub struct Definitions {
     /// slots resolve. Additive: omitted when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font_scheme: Option<FontScheme>,
+    /// Theme color scheme (`theme1.xml` `a:clrScheme`) against which `w:themeColor`
+    /// references resolve. Additive: omitted when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color_scheme: Option<ColorScheme>,
+    /// Theme format scheme (`theme1.xml` `a:fmtScheme`), retained verbatim as an
+    /// opaque XML subtree so its fill/line/effect style lists round-trip without
+    /// full DrawingML modeling. Additive: omitted when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format_scheme_xml: Option<String>,
     /// Document-wide settings (`word/settings.xml`). Additive: omitted when
     /// default so existing snapshots serialize byte-identically.
     #[serde(default, skip_serializing_if = "DocumentSettings::is_default")]

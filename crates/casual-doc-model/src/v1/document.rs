@@ -121,6 +121,7 @@ impl Document {
         self.validate_bookmarks()?;
         self.validate_font_table()?;
         self.validate_font_scheme()?;
+        self.validate_color_scheme()?;
         self.validate_properties()?;
         self.validate_body()?;
         Ok(())
@@ -157,6 +158,39 @@ impl Document {
                 )?;
                 check_domain(over.typeface.len() <= 255, "fontScheme.override.typeface")?;
             }
+        }
+        Ok(())
+    }
+
+    fn validate_color_scheme(&self) -> Result<(), ModelError> {
+        if let Some(scheme) = &self.definitions.color_scheme {
+            check_domain(scheme.name.len() <= 255, "clrScheme.name")?;
+            for slot in [
+                &scheme.dark1,
+                &scheme.light1,
+                &scheme.dark2,
+                &scheme.light2,
+                &scheme.accent1,
+                &scheme.accent2,
+                &scheme.accent3,
+                &scheme.accent4,
+                &scheme.accent5,
+                &scheme.accent6,
+                &scheme.hyperlink,
+                &scheme.followed_hyperlink,
+            ] {
+                if let SchemeColor::System(system) = slot {
+                    check_domain(
+                        !system.value.is_empty() && system.value.len() <= 32,
+                        "clrScheme.sysClr.val",
+                    )?;
+                }
+            }
+        }
+        // The format scheme is retained verbatim; bound its size so a hostile
+        // theme cannot inflate the model unboundedly.
+        if let Some(xml) = &self.definitions.format_scheme_xml {
+            check_domain(!xml.is_empty() && xml.len() <= 1 << 20, "fmtScheme")?;
         }
         Ok(())
     }

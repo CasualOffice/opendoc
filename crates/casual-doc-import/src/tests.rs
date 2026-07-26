@@ -379,8 +379,16 @@ fn font_table_descriptors_are_parsed() {
 }
 
 #[test]
-fn theme_font_scheme_is_parsed_and_clr_scheme_ignored() {
+fn theme_font_color_and_format_schemes_are_parsed() {
+    use casual_doc_model::v1::{RgbColor, SchemeColor};
+
     let xml = br#"<a:theme xmlns:a="urn:a"><a:themeElements>
+        <a:clrScheme name="Office">
+            <a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1>
+            <a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1>
+            <a:dk2><a:srgbClr val="44546A"/></a:dk2>
+            <a:accent1><a:srgbClr val="4472C4"/></a:accent1>
+        </a:clrScheme>
         <a:fontScheme name="Office">
             <a:majorFont>
                 <a:latin typeface="Calibri Light" panose="020F0302" pitchFamily="34" charset="0"/>
@@ -388,11 +396,10 @@ fn theme_font_scheme_is_parsed_and_clr_scheme_ignored() {
                 <a:font script="Hang" typeface="Malgun Gothic"/></a:majorFont>
             <a:minorFont><a:latin typeface="Calibri"/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont>
         </a:fontScheme>
-        <a:clrScheme name="Office"><a:dk1><a:sysClr val="windowText"/></a:dk1></a:clrScheme>
+        <a:fmtScheme name="Office"><a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:fillStyleLst></a:fmtScheme>
     </a:themeElements></a:theme>"#;
-    let scheme = crate::theme::parse(xml, ImportConfig::default())
-        .unwrap()
-        .unwrap();
+    let parsed = crate::theme::parse(xml, ImportConfig::default()).unwrap();
+    let scheme = parsed.font_scheme.unwrap();
     assert_eq!(scheme.major.latin.typeface, "Calibri Light");
     assert_eq!(scheme.major.latin.panose.as_deref(), Some("020F0302"));
     assert_eq!(scheme.major.latin.pitch_family.as_deref(), Some("34"));
@@ -400,10 +407,38 @@ fn theme_font_scheme_is_parsed_and_clr_scheme_ignored() {
     assert_eq!(scheme.major.script_overrides.len(), 1);
     assert_eq!(scheme.major.script_overrides[0].script, "Hang");
     assert_eq!(scheme.minor.latin.typeface, "Calibri");
-    // A theme with no fontScheme yields None.
+    // The colour scheme is now modeled, not ignored.
+    let colors = parsed.color_scheme.unwrap();
+    assert_eq!(colors.name, "Office");
+    match colors.dark1 {
+        SchemeColor::System(system) => {
+            assert_eq!(system.value, "windowText");
+            assert_eq!(system.last_color, Some(RgbColor { r: 0, g: 0, b: 0 }));
+        }
+        other => panic!("dk1 should be a sysClr, got {other:?}"),
+    }
+    assert_eq!(
+        colors.accent1,
+        SchemeColor::Srgb(RgbColor {
+            r: 0x44,
+            g: 0x72,
+            b: 0xC4
+        })
+    );
+    // An unspecified slot defaults to opaque black.
+    assert_eq!(
+        colors.light2,
+        SchemeColor::Srgb(RgbColor { r: 0, g: 0, b: 0 })
+    );
+    // The format scheme is retained verbatim.
+    let retained = parsed.format_scheme_xml.unwrap();
+    assert!(retained.contains("fillStyleLst"));
+    // A theme with no scheme parts yields all-None.
     let none =
         crate::theme::parse(br#"<a:theme xmlns:a="urn:a"/>"#, ImportConfig::default()).unwrap();
-    assert!(none.is_none());
+    assert!(none.font_scheme.is_none());
+    assert!(none.color_scheme.is_none());
+    assert!(none.format_scheme_xml.is_none());
 }
 
 #[test]
