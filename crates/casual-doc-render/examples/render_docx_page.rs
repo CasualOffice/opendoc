@@ -6,13 +6,20 @@
 //! headers/footers, paginates, and runs the running-content / field / anchored
 //! -drawing passes — so this renders a real page at the document's true size, with
 //! its headers/footers and anchored images, rather than a hand-built US-Letter box.
+//!
+//! Fonts are served through a [`RegistryFontSource`] built from the shaper's
+//! dynamic font registry, so glyphs the shaper resolved to a fallback face render
+//! from that face's bytes. Built with `--features system-fonts` (native), a run of
+//! CJK / symbol / complex-script text that the bundled Latin faces do not cover
+//! shapes and rasterizes with an installed OS font instead of `.notdef` tofu:
+//! `cargo run --example render_docx_page --features system-fonts <out.png>`.
 #![allow(clippy::print_stderr)] // a manual example, not library code
 use casual_doc_import::{ImportConfig, ImportMode, import_package};
 use casual_doc_layout::compose::compose_page;
 use casual_doc_layout::document_layout::{document_page_config, paginate_document};
 use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
-use casual_doc_render::{BundledFontSource, MapMediaSource, Surface, render};
+use casual_doc_render::{MapMediaSource, RegistryFontSource, Surface, render};
 
 fn main() {
     let out = std::env::args()
@@ -53,18 +60,26 @@ fn main() {
     let w = config.page_size.width.to_device_px(dpi).ceil() as u32;
     let h = config.page_size.height.to_device_px(dpi).ceil() as u32;
     let mut surface = Surface::new(w, h).unwrap();
-    render(
-        &compose_page(page),
-        &mut surface,
-        dpi,
-        &BundledFontSource,
-        &media,
-    );
+    // Serve bundled faces *and* any fallback face the shaper resolved (an OS font
+    // with `--features system-fonts`, or a host-registered blob) from the shaper's
+    // dynamic registry — taken after pagination has shaped every paragraph.
+    let registry = shaper.registry();
+    let fonts = RegistryFontSource::new(&registry);
+    render(&compose_page(page), &mut surface, dpi, &fonts, &media);
     std::fs::write(&out, surface.encode_png().unwrap()).unwrap();
+    let uncovered = registry.missing_coverage();
     eprintln!(
         "rendered {} page(s) at {}×{} twips -> {out}",
         pages.page_count(),
         config.page_size.width.raw(),
         config.page_size.height.raw(),
     );
+    if !uncovered.is_empty() {
+        let sample: String = uncovered.iter().take(16).collect();
+        eprintln!(
+            "coverage gap: {} code point(s) with no covering face (e.g. {sample:?}) — \
+             build with --features system-fonts, or register a covering font",
+            uncovered.len(),
+        );
+    }
 }

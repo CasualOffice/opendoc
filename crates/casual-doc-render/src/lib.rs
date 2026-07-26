@@ -17,6 +17,7 @@
 use std::collections::HashMap;
 
 use casual_doc_layout::display::{DisplayList, PaintItem};
+use casual_doc_layout::font_registry::{DynFace, FontRegistry};
 use casual_doc_layout::text::{FontId, GlyphRun};
 use casual_doc_layout::units::Rect;
 use skrifa::instance::{LocationRef, Size};
@@ -33,6 +34,14 @@ use tiny_skia::{
 pub trait GlyphSource {
     /// The font file bytes for `font`, or `None` if unknown (glyphs are skipped).
     fn font_data(&self, font: FontId) -> Option<&[u8]>;
+
+    /// The face index within the file for `font` — `0` for a single-face
+    /// `.ttf`/`.otf`, nonzero for a face inside a `.ttc`/`.otc` collection (many OS
+    /// CJK fonts ship as collections). Defaults to `0`; only sources that serve
+    /// collection files (the system/host fallback path) override it.
+    fn face_index(&self, _font: FontId) -> u32 {
+        0
+    }
 }
 
 /// Supplies the raw encoded bytes for an inline image, keyed by the display list's
@@ -253,7 +262,9 @@ fn render_glyph_run(
     let Some(bytes) = fonts.font_data(run.font) else {
         return;
     };
-    let Ok(font) = FontRef::new(bytes) else {
+    // A system/host fallback face may live inside a `.ttc` collection, so select
+    // the exact face by index; bundled single-face files report index 0.
+    let Ok(font) = FontRef::from_index(bytes, fonts.face_index(run.font)) else {
         return;
     };
     let outlines = font.outline_glyphs();
@@ -454,6 +465,50 @@ pub struct BundledFontSource;
 impl GlyphSource for BundledFontSource {
     fn font_data(&self, font: FontId) -> Option<&[u8]> {
         Some(casual_doc_layout::fonts::face_bytes(font))
+    }
+}
+
+/// A [`GlyphSource`] over both the bundled faces *and* the shaper's dynamic
+/// [`FontRegistry`] — the seam that lets the renderer rasterize the same
+/// system-resolved (native `system-fonts`) or host-registered (e.g. browser
+/// network-fetched Noto CJK) faces the shaper shaped with. A bundled [`FontId`] is
+/// served from the bundled table; a dynamic id (a `.notdef`-avoiding fallback the
+/// shaper interned) is served, with its face index, from a snapshot of the
+/// registry taken at construction.
+#[derive(Clone, Debug, Default)]
+pub struct RegistryFontSource {
+    /// `FontId.0` → the interned face, snapshotted from the registry.
+    dynamic: HashMap<u32, DynFace>,
+}
+
+impl RegistryFontSource {
+    /// Snapshots `registry`'s dynamic faces so this source can serve their bytes.
+    /// Take it *after* shaping (or the render pass), when every fallback face the
+    /// document needs has been interned.
+    #[must_use]
+    pub fn new(registry: &FontRegistry) -> Self {
+        let dynamic = registry
+            .snapshot()
+            .into_iter()
+            .map(|(id, face)| (id.0, face))
+            .collect();
+        Self { dynamic }
+    }
+}
+
+impl GlyphSource for RegistryFontSource {
+    fn font_data(&self, font: FontId) -> Option<&[u8]> {
+        // A dynamic (system/host) face is served from the snapshot; anything else
+        // is a bundled id served from the bundled table (Roboto for an unknown id).
+        if let Some(face) = self.dynamic.get(&font.0) {
+            Some(face.bytes.as_slice())
+        } else {
+            Some(casual_doc_layout::fonts::face_bytes(font))
+        }
+    }
+
+    fn face_index(&self, font: FontId) -> u32 {
+        self.dynamic.get(&font.0).map_or(0, |face| face.index)
     }
 }
 
@@ -906,6 +961,107 @@ mod tests {
             dark_pixel_count(&surface2),
             0,
             "undecodable media paints nothing"
+        );
+    }
+
+    /// End to end for the host-registered (populator 3) path: a font handed to the
+    /// shaper at runtime gets a dynamic `FontId`, and the renderer rasterizes real
+    /// ink for glyphs addressed by that id through the `RegistryFontSource` — the
+    /// same seam a browser uses to feed network-fetched Noto CJK. Deterministic
+    /// (no `system-fonts` feature needed).
+    #[test]
+    fn a_host_registered_face_rasterizes_through_the_registry_source() {
+        use casual_doc_layout::font_registry::FontRegistry;
+
+        let shaper = ParleyShaper::new();
+        let host = shaper.register_font(ROBOTO_REGULAR.to_vec())[0];
+        assert!(FontRegistry::is_dynamic(host), "host faces get dynamic ids");
+
+        // Shape real text to obtain valid Roboto glyph ids, then re-address the run
+        // at the host `FontId`: the registry source must fetch the host bytes.
+        let node = NodeId::from_parts(1, 1).unwrap();
+        let layout = shaper.shape_paragraph(
+            &[StyledRun {
+                text: "Hi".into(),
+                font: FontId(0),
+                size: Twip::from_points(28),
+                bold: false,
+                italic: false,
+                letter_spacing: Twip::ZERO,
+                color: [0, 0, 0, 255],
+                decoration: Decoration::default(),
+                highlight: None,
+                baseline_shift: Twip::ZERO,
+            }],
+            LineConstraints {
+                max_width: Twip::from_points(500),
+                ..LineConstraints::default()
+            },
+            ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, 0)),
+        );
+        let mut list = DisplayList::new();
+        for line_run in &layout.lines[0].runs {
+            let mut run = line_run.clone();
+            run.font = host;
+            run.origin = Point::new(Twip::from_points(6), Twip::from_points(28));
+            list.push(PaintItem::Glyphs { run });
+        }
+
+        let fonts = RegistryFontSource::new(&shaper.registry());
+        let mut surface = Surface::new(200, 60).unwrap();
+        render(&list, &mut surface, 96.0, &fonts, &NoMediaSource);
+        assert!(
+            dark_pixel_count(&surface) > 50,
+            "the host-registered face rasterizes real ink via the registry source"
+        );
+    }
+
+    /// End to end with the `system-fonts` feature (native): a CJK run shapes to
+    /// real (non-`.notdef`) glyphs via an OS fallback face, and rasterizes real ink
+    /// — not the tofu box the bundled-only path produces. Gated on the feature +
+    /// native so the deterministic / WASM runs skip it.
+    #[test]
+    #[cfg(all(feature = "system-fonts", not(target_arch = "wasm32")))]
+    fn cjk_renders_real_ink_with_system_fonts() {
+        let shaper = ParleyShaper::new();
+        let node = NodeId::from_parts(1, 1).unwrap();
+        let layout = shaper.shape_paragraph(
+            &[StyledRun {
+                text: "中文字".into(),
+                font: FontId(0),
+                size: Twip::from_points(32),
+                bold: false,
+                italic: false,
+                letter_spacing: Twip::ZERO,
+                color: [0, 0, 0, 255],
+                decoration: Decoration::default(),
+                highlight: None,
+                baseline_shift: Twip::ZERO,
+            }],
+            LineConstraints {
+                max_width: Twip::from_points(500),
+                ..LineConstraints::default()
+            },
+            ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, 0)),
+        );
+        assert!(
+            layout.lines[0]
+                .runs
+                .iter()
+                .flat_map(|r| &r.glyphs)
+                .any(|g| g.id != 0),
+            "coverage found: the CJK run shapes to real glyphs, not .notdef"
+        );
+        let list = compose_paragraph(
+            &layout,
+            Point::new(Twip::from_points(6), Twip::from_points(32)),
+        );
+        let fonts = RegistryFontSource::new(&shaper.registry());
+        let mut surface = Surface::new(240, 90).unwrap();
+        render(&list, &mut surface, 96.0, &fonts, &NoMediaSource);
+        assert!(
+            dark_pixel_count(&surface) > 100,
+            "the OS fallback face rasterizes real CJK ink (not blank / not tofu)"
         );
     }
 }
