@@ -12,10 +12,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
     Alignment, BorderEdge, CellMargins, CellVerticalAlignment, DefinitionMap, DocumentDefaults,
-    HeightRule, ParagraphProperties, RgbColor, RowHeight, RunProperties, Shading, Style, StyleId,
-    StyleKind, TableBorders, TableCellProperties, TableLayout, TableLook, TableOverlap,
-    TableProperties, TableRowProperties, TableStyleOverride, TableStyleRegion, TextDirection,
-    VerticalMerge,
+    HeightRule, ParagraphBorders, ParagraphProperties, RgbColor, RowHeight, RunProperties, Shading,
+    Style, StyleId, StyleKind, TableBorders, TableCellProperties, TableLayout, TableLook,
+    TableOverlap, TableProperties, TableRowProperties, TableStyleOverride, TableStyleRegion,
+    TextDirection, VerticalMerge,
 };
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
@@ -680,6 +680,22 @@ fn read_paragraph_container(
                     consumed = true;
                 }
             }
+            // `w:pBdr` is a container of edge children, so the flat
+            // `apply_paragraph_property` (leaf elements only) cannot read it; a
+            // style-sourced paragraph border (e.g. a heading rule) is captured
+            // here, matching the body parser's edge handling.
+            b"pBdr" => {
+                if open {
+                    read_paragraph_borders(
+                        reader,
+                        buffer,
+                        ctx,
+                        depth + 1,
+                        &mut acc.paragraph.borders,
+                    )?;
+                    consumed = true;
+                }
+            }
             other => {
                 if !apply_paragraph_property(&mut acc.paragraph, other, &child) {
                     ctx.report(other);
@@ -973,6 +989,47 @@ fn read_borders(
                 None => ctx.report(container),
             },
             None => ctx.report(container),
+        }
+        if open {
+            skip_subtree(reader, buffer, ctx)?;
+        }
+    }
+    Ok(())
+}
+
+/// Reads a `w:pBdr` (paragraph border) container into [`ParagraphBorders`]. The
+/// six edges (`top`/`bottom`/`start`|`left`/`end`|`right`/`between`/`bar`) each
+/// map to one slot; a `nil`/`none` edge is retained verbatim so it can override an
+/// inherited border, matching the body parser.
+fn read_paragraph_borders(
+    reader: &mut Reader<&[u8]>,
+    buffer: &mut Vec<u8>,
+    ctx: &mut Ctx,
+    depth: u64,
+    borders: &mut ParagraphBorders,
+) -> Result<(), ImportError> {
+    ctx.check_depth(depth)?;
+    loop {
+        let (child, open) = match read_node(reader, buffer, ctx)? {
+            Node::Open(child) => (child, true),
+            Node::Empty(child) => (child, false),
+            Node::Close | Node::Eof => break,
+        };
+        let slot = match child.local_name().as_ref() {
+            b"top" => Some(&mut borders.top),
+            b"bottom" => Some(&mut borders.bottom),
+            b"start" | b"left" => Some(&mut borders.start),
+            b"end" | b"right" => Some(&mut borders.end),
+            b"between" => Some(&mut borders.between),
+            b"bar" => Some(&mut borders.bar),
+            _ => None,
+        };
+        match slot {
+            Some(slot) => match border_edge(&child) {
+                Some(edge) => *slot = Some(edge),
+                None => ctx.report(b"pBdr"),
+            },
+            None => ctx.report(b"pBdr"),
         }
         if open {
             skip_subtree(reader, buffer, ctx)?;
