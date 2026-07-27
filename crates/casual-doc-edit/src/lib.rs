@@ -18,14 +18,14 @@
 
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
-    BlockNode, Color, Document, HighlightColor, InlineNode, Paragraph, ParagraphProperties,
-    RgbColor, Run, RunProperties, VerticalAlignment,
+    BlockNode, Color, Document, FontName, FontRef, HighlightColor, InlineNode, Paragraph,
+    ParagraphProperties, RgbColor, Run, RunProperties, VerticalAlignment,
 };
 
 /// A run-property change to apply over a range: each `Some(_)` field sets that
 /// property, `None` leaves it untouched. Character formatting (`w:b`/`w:i`/`w:u`/
-/// `w:strike`/`w:color`/`w:highlight`/`w:sz`/`w:vertAlign`).
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+/// `w:strike`/`w:color`/`w:highlight`/`w:sz`/`w:vertAlign`/`w:rFonts`).
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct FormatDelta {
     /// Set bold on/off.
     pub bold: Option<bool>,
@@ -43,10 +43,12 @@ pub struct FormatDelta {
     pub size_half_points: Option<u32>,
     /// Set the baseline alignment (`w:vertAlign`): super/sub/baseline.
     pub vertical_alignment: Option<VerticalAlignment>,
+    /// Set the font family (`w:rFonts`, ascii + hAnsi slots).
+    pub font: Option<String>,
 }
 
 impl FormatDelta {
-    fn apply_to(self, props: &mut RunProperties) {
+    fn apply_to(&self, props: &mut RunProperties) {
         if let Some(b) = self.bold {
             props.bold = Some(b);
         }
@@ -70,6 +72,13 @@ impl FormatDelta {
         }
         if let Some(v) = self.vertical_alignment {
             props.vertical_alignment = Some(v);
+        }
+        if let Some(family) = &self.font {
+            let font = FontRef::Named(FontName {
+                name: family.clone(),
+            });
+            props.font_ref = Some(font.clone());
+            props.font_ref_h_ansi = Some(font);
         }
     }
 }
