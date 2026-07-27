@@ -212,6 +212,25 @@ pub enum Operation {
         /// The 0-based column position.
         index: u32,
     },
+    /// Remove the whole `table` from its container (the body, or a cell / content
+    /// control it nests in). Refuses to empty a table cell (a cell's blocks are
+    /// non-empty). Inverse: [`Operation::InsertTable`] carrying the removed table +
+    /// its position, so undo restores it verbatim.
+    DeleteTable {
+        /// The table to remove.
+        table: NodeId,
+    },
+    /// Insert `table` at 0-based `index` in `container` (`None` = the document body,
+    /// `Some(id)` = the cell or content control whose blocks hold it). Inverse:
+    /// [`Operation::DeleteTable`].
+    InsertTable {
+        /// The container: `None` for the body, else the owning cell / SDT node.
+        container: Option<NodeId>,
+        /// The 0-based block position within the container.
+        index: u32,
+        /// The table to insert (its ids must be those the inverse recorded).
+        table: Box<Table>,
+    },
 }
 
 /// Why an edit could not be applied. No partial mutation ever occurs: an op
@@ -448,7 +467,116 @@ pub fn apply(
                 cells,
             })
         }
+        Operation::DeleteTable { table } => {
+            let (container, index, removed) = remove_table(doc.body_mut(), None, *table)?;
+            Ok(Operation::InsertTable {
+                container,
+                index,
+                table: Box::new(removed),
+            })
+        }
+        Operation::InsertTable {
+            container,
+            index,
+            table,
+        } => {
+            let blocks = match container {
+                None => doc.body_mut(),
+                Some(id) => {
+                    find_container_blocks_mut(doc.body_mut(), *id).ok_or(EditError::NodeNotFound)?
+                }
+            };
+            let idx = *index as usize;
+            if idx > blocks.len() {
+                return Err(EditError::OffsetOutOfRange);
+            }
+            blocks.insert(idx, BlockNode::Table((**table).clone()));
+            Ok(Operation::DeleteTable { table: table.id })
+        }
     }
+}
+
+/// Removes the table `table_id` from `blocks` or any nested cell/SDT, returning its
+/// container (`None` = this level / the body, else the owning cell/SDT id), its
+/// 0-based index there, and the removed table (for the inverse). Refuses to empty a
+/// nested container (a cell's/SDT's blocks are non-empty). `container` is the id of
+/// the container `blocks` belongs to as the recursion descends.
+fn remove_table(
+    blocks: &mut Vec<BlockNode>,
+    container: Option<NodeId>,
+    table_id: NodeId,
+) -> Result<(Option<NodeId>, u32, Table), EditError> {
+    if let Some(i) = blocks
+        .iter()
+        .position(|b| matches!(b, BlockNode::Table(t) if t.id == table_id))
+    {
+        if container.is_some() && blocks.len() == 1 {
+            return Err(EditError::Unsupported);
+        }
+        let BlockNode::Table(t) = blocks.remove(i) else {
+            unreachable!("position matched a table");
+        };
+        return Ok((container, i as u32, t));
+    }
+    for block in blocks.iter_mut() {
+        match block {
+            BlockNode::Table(t) => {
+                for row in &mut t.rows {
+                    for cell in &mut row.cells {
+                        match remove_table(&mut cell.blocks, Some(cell.id), table_id) {
+                            Ok(found) => return Ok(found),
+                            Err(EditError::NodeNotFound) => {}
+                            Err(e) => return Err(e),
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                let sid = sdt.id;
+                match remove_table(&mut sdt.blocks, Some(sid), table_id) {
+                    Ok(found) => return Ok(found),
+                    Err(EditError::NodeNotFound) => {}
+                    Err(e) => return Err(e),
+                }
+            }
+            _ => {}
+        }
+    }
+    Err(EditError::NodeNotFound)
+}
+
+/// The mutable block list of the cell or SDT with id `id`, searched recursively —
+/// the re-insertion target for [`Operation::InsertTable`]. `None` if not found.
+fn find_container_blocks_mut(
+    blocks: &mut [BlockNode],
+    id: NodeId,
+) -> Option<&mut Vec<BlockNode>> {
+    for block in blocks.iter_mut() {
+        match block {
+            BlockNode::Table(t) => {
+                for row in &mut t.rows {
+                    for cell in &mut row.cells {
+                        if cell.id == id {
+                            return Some(&mut cell.blocks);
+                        }
+                        if let Some(found) = find_container_blocks_mut(&mut cell.blocks, id) {
+                            return Some(found);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if sdt.id == id {
+                    return Some(&mut sdt.blocks);
+                }
+                if let Some(found) = find_container_blocks_mut(&mut sdt.blocks, id) {
+                    return Some(found);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// A table is *regular* for column edits when it has a non-empty grid, every row

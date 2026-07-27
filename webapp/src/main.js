@@ -464,6 +464,7 @@ const TABLE_MENU_ITEMS = [
   { divider: true },
   { label: "Delete row", run: (n) => doc.deleteRow(n), danger: true },
   { label: "Delete column", run: (n) => doc.deleteColumn(n), danger: true },
+  { label: "Delete table", run: (n) => doc.deleteTable(n), danger: true },
 ];
 
 function showTableMenu(clientX, clientY, node) {
@@ -701,7 +702,9 @@ function updateToolbar() {
       : (pendingFormat?.[key] ?? (caretFmt ? caretFmt[key] : false));
     fmtButtons[key].setAttribute("aria-pressed", String(!!pressed));
   }
-  for (const el of runControls) el.disabled = !range;
+  // Run controls work with a range (apply) or a caret (arm for typing), so they are
+  // enabled whenever there is a selection.
+  for (const el of runControls) el.disabled = !hasSel;
   for (const el of paraControls) el.disabled = !hasSel;
 
   const align = hasSel && doc ? doc.alignmentAt(selection.focus.node, selection.focus.offset) : "start";
@@ -709,24 +712,38 @@ function updateToolbar() {
     btn.setAttribute("aria-pressed", String(key === align));
   }
 
-  // Reflect the current run styling (size / font / color / super-sub) of a range.
+  // Reflect the current run styling (size / font / color / super-sub) — over a
+  // selection, or what a collapsed caret inherits (so it's "picked up" on click,
+  // not only when text is selected).
   let size = "";
   let font = "";
   let sup = false;
   let sub = false;
-  if (range && doc) {
-    const rs = doc.selectionRunStyle(
-      selection.anchor.node,
-      selection.anchor.offset,
-      selection.focus.node,
-      selection.focus.offset,
-    );
+  if (doc && hasSel) {
+    const rs = range
+      ? doc.selectionRunStyle(
+          selection.anchor.node,
+          selection.anchor.offset,
+          selection.focus.node,
+          selection.focus.offset,
+        )
+      : doc.caretRunStyle(selection.focus.node, selection.focus.offset);
     if (rs.sizePoints) size = String(rs.sizePoints);
     font = rs.font;
     if (rs.color) textColorInput.value = rs.color;
     sup = rs.superscript;
     sub = rs.subscript;
     rs.free();
+  }
+  // An armed (pending) run format overrides the inherited value in the display.
+  if (pendingFormat) {
+    if (pendingFormat.sizeHalfPoints != null) size = String(pendingFormat.sizeHalfPoints / 2);
+    if (pendingFormat.font != null) font = pendingFormat.font;
+    if (pendingFormat.color) textColorInput.value = pendingFormat.color;
+    if (pendingFormat.vertAlign != null) {
+      sup = pendingFormat.vertAlign === "super";
+      sub = pendingFormat.vertAlign === "sub";
+    }
   }
   fontSizeSel.value = size;
   fontFamilySel.value = font;
@@ -764,8 +781,26 @@ function onButton(el, handler) {
 for (const key of ["bold", "italic", "underline", "strike"]) {
   onButton(fmtButtons[key], () => toggleFormat(key));
 }
-onButton(superBtn, () => runToolbarEdit((a, b, c, d) => doc.setVertAlign(a, b, c, d, "super")));
-onButton(subBtn, () => runToolbarEdit((a, b, c, d) => doc.setVertAlign(a, b, c, d, "sub")));
+/** A run-format control: apply to a range, or arm into `pendingFormat` at a caret
+ *  (so the next typed text carries it — same model as the B/I/U/S toggles). */
+function armOrApplyRun(patch, applyFn) {
+  if (hasRange()) {
+    applyFn();
+  } else if (selection) {
+    pendingFormat = { ...(pendingFormat || {}), ...patch };
+    updateToolbar();
+  }
+}
+onButton(superBtn, () =>
+  armOrApplyRun({ vertAlign: "super" }, () =>
+    runToolbarEdit((a, b, c, d) => doc.setVertAlign(a, b, c, d, "super")),
+  ),
+);
+onButton(subBtn, () =>
+  armOrApplyRun({ vertAlign: "sub" }, () =>
+    runToolbarEdit((a, b, c, d) => doc.setVertAlign(a, b, c, d, "sub")),
+  ),
+);
 for (const [key, btn] of Object.entries(alignBtns)) {
   onButton(btn, () => runToolbarEdit((a, b, c, d) => doc.setAlignment(a, b, c, d, key)));
 }
@@ -776,27 +811,35 @@ onButton(numberedListBtn, () => runToolbarEdit((a, b, c, d) => doc.toggleList(a,
 
 fontSizeSel.addEventListener("change", () => {
   const pt = Number(fontSizeSel.value);
-  if (pt) runToolbarEdit((a, b, c, d) => doc.setFontSize(a, b, c, d, pt));
-  fontSizeSel.value = "";
+  if (pt) {
+    armOrApplyRun({ sizeHalfPoints: pt * 2 }, () =>
+      runToolbarEdit((a, b, c, d) => doc.setFontSize(a, b, c, d, pt)),
+    );
+  }
 });
 lineSpacingSel.addEventListener("change", () => {
   const percent = Number(lineSpacingSel.value);
   if (percent) runToolbarEdit((a, b, c, d) => doc.setLineSpacing(a, b, c, d, percent));
-  lineSpacingSel.value = "";
 });
 highlightSel.addEventListener("change", () => {
   const name = highlightSel.value;
-  runToolbarEdit((a, b, c, d) => doc.setHighlight(a, b, c, d, name));
-  highlightSel.value = "none";
+  armOrApplyRun({ highlight: name }, () =>
+    runToolbarEdit((a, b, c, d) => doc.setHighlight(a, b, c, d, name)),
+  );
+  highlightSel.value = "none"; // highlight isn't reflected — keep it momentary
 });
 textColorInput.addEventListener("input", () => {
-  const [r, g, b] = hexToRgb(textColorInput.value);
-  runToolbarEdit((a, bo, c, d) => doc.setTextColor(a, bo, c, d, r, g, b));
+  const hex = textColorInput.value;
+  const [r, g, b] = hexToRgb(hex);
+  armOrApplyRun({ color: hex }, () =>
+    runToolbarEdit((a, bo, c, d) => doc.setTextColor(a, bo, c, d, r, g, b)),
+  );
 });
 fontFamilySel.addEventListener("change", () => {
   const family = fontFamilySel.value;
-  if (family) runToolbarEdit((a, b, c, d) => doc.setFont(a, b, c, d, family));
-  fontFamilySel.value = "";
+  if (family) {
+    armOrApplyRun({ font: family }, () => runToolbarEdit((a, b, c, d) => doc.setFont(a, b, c, d, family)));
+  }
 });
 paragraphStyleSel.addEventListener("change", () => {
   const name = paragraphStyleSel.value;
@@ -1021,7 +1064,20 @@ document.addEventListener("keydown", async (e) => {
     } else if (pendingFormat) {
       const pf = pendingFormat; // armed format persists across consecutive typing
       await runEdit(() =>
-        doc.insertStyledText(focus.node, focus.offset, key, pf.bold, pf.italic, pf.underline, pf.strike),
+        doc.insertStyledText(
+          focus.node,
+          focus.offset,
+          key,
+          pf.bold,
+          pf.italic,
+          pf.underline,
+          pf.strike,
+          pf.sizeHalfPoints,
+          pf.color,
+          pf.highlight,
+          pf.vertAlign,
+          pf.font,
+        ),
       );
     } else {
       await runEdit(() => doc.insertText(focus.node, focus.offset, key));
