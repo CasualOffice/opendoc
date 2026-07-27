@@ -371,6 +371,19 @@ pagesEl.addEventListener("dblclick", (e) => {
   const page = pageFromEvent(e);
   if (page) selectWord(page, e);
 });
+// Triple-click selects the paragraph (the click's `detail` is the click count).
+pagesEl.addEventListener("click", (e) => {
+  if (e.detail !== 3) return;
+  const page = pageFromEvent(e);
+  if (!page) return;
+  const a = anchorAt(page, e);
+  if (!a) return;
+  selection = {
+    anchor: { node: a.node, offset: 0 },
+    focus: { node: a.node, offset: doc.paragraphLength(a.node) },
+  };
+  drawSelection();
+});
 window.addEventListener("pointerup", onPointerUp);
 
 // ---- Editing (keys → semantic edits through the WASM choke point) ------------
@@ -621,7 +634,82 @@ function saveDocx() {
 }
 saveBtn.addEventListener("click", saveDocx);
 
-const ARROWS = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down" };
+/** The engine move direction for a navigation key, factoring in ⌘ (line/doc) and
+ *  ⌥ (word) modifiers, or null if the key is not a navigation key. */
+function navDirection(e) {
+  const mod = e.metaKey || e.ctrlKey;
+  switch (e.key) {
+    case "ArrowLeft":
+      return e.altKey ? "wordLeft" : mod ? "lineStart" : "left";
+    case "ArrowRight":
+      return e.altKey ? "wordRight" : mod ? "lineEnd" : "right";
+    case "ArrowUp":
+      return mod ? "docStart" : "up";
+    case "ArrowDown":
+      return mod ? "docEnd" : "down";
+    case "Home":
+      return "lineStart";
+    case "End":
+      return "lineEnd";
+    default:
+      return null;
+  }
+}
+
+/** Moves the caret to an engine Caret result (⌘↑/↓, doc bounds). Shift extends. */
+function navToPosition(caret, extend) {
+  const to = { node: caret.node, offset: caret.offset };
+  caret.free();
+  selection = extend ? { anchor: selection.anchor, focus: to } : { anchor: to, focus: to };
+  drawSelection();
+  scrollCaretIntoView();
+}
+
+/** Selects the whole document (⌘A). */
+function selectAll() {
+  if (!doc) return;
+  const a = doc.firstPosition();
+  const b = doc.lastPosition();
+  selection = {
+    anchor: { node: a.node, offset: a.offset },
+    focus: { node: b.node, offset: b.offset },
+  };
+  a.free();
+  b.free();
+  drawSelection();
+}
+
+/** Cut (⌘X): copy the selection to the clipboard, then delete it. */
+async function cut() {
+  if (!hasRange()) return;
+  await copySelection();
+  const { anchor, focus } = selection;
+  await runEdit(() => doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset));
+}
+
+/** Paste (⌘V): insert clipboard text at the caret, replacing any selection and
+ *  turning newlines into paragraph splits. */
+async function paste() {
+  if (!doc || !selection) return;
+  let text;
+  try {
+    text = await navigator.clipboard.readText();
+  } catch (err) {
+    console.warn("paste failed:", err);
+    return;
+  }
+  if (!text) return;
+  if (hasRange()) {
+    const { anchor, focus } = selection;
+    await runEdit(() => doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset));
+  }
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    if (i > 0) await runEdit(() => doc.splitParagraph(selection.focus.node, selection.focus.offset));
+    if (lines[i]) await runEdit(() => doc.insertText(selection.focus.node, selection.focus.offset, lines[i]));
+  }
+}
+
 const FORMAT_KEYS = { b: "bold", i: "italic", u: "underline" };
 
 document.addEventListener("keydown", async (e) => {
@@ -632,38 +720,66 @@ document.addEventListener("keydown", async (e) => {
 
   const mod = e.metaKey || e.ctrlKey;
   const key = e.key;
+  const lower = key.toLowerCase();
 
-  if (mod && key.toLowerCase() === "c") {
+  // Clipboard, select-all, history (⌘/Ctrl based).
+  if (mod && lower === "c") {
     copySelection();
     return;
   }
-  if (mod && key.toLowerCase() === "z") {
+  if (mod && lower === "x") {
+    e.preventDefault();
+    await cut();
+    return;
+  }
+  if (mod && lower === "v") {
+    e.preventDefault();
+    await paste();
+    return;
+  }
+  if (mod && lower === "a") {
+    e.preventDefault();
+    selectAll();
+    return;
+  }
+  if (mod && lower === "z") {
     e.preventDefault();
     await runEdit(() => (e.shiftKey ? doc.redo() : doc.undo()));
     return;
   }
-  if (mod && key.toLowerCase() === "y") {
+  if (mod && lower === "y") {
     e.preventDefault();
     await runEdit(() => doc.redo());
     return;
   }
-  if (mod && FORMAT_KEYS[key.toLowerCase()]) {
+  if (mod && FORMAT_KEYS[lower]) {
     e.preventDefault();
-    toggleFormat(FORMAT_KEYS[key.toLowerCase()]);
+    toggleFormat(FORMAT_KEYS[lower]);
     return;
   }
-  if (mod) return; // leave other shortcuts to the browser
 
   if (!selection) return;
+
+  // Navigation (arrows + Home/End) with ⌘ (line/doc) and ⌥ (word) granularity —
+  // handled before the generic `if (mod) return` so ⌘/⌥ + arrows work. Shift
+  // extends the selection.
+  const navDir = navDirection(e);
+  if (navDir === "docStart" || navDir === "docEnd") {
+    e.preventDefault();
+    navToPosition(navDir === "docStart" ? doc.firstPosition() : doc.lastPosition(), e.shiftKey);
+    return;
+  }
+  if (navDir) {
+    e.preventDefault();
+    navCaret(navDir, e.shiftKey);
+    return;
+  }
+
+  if (mod) return; // leave other ⌘ shortcuts to the browser
+
   const { anchor, focus } = selection;
   const range = hasRange();
 
-  // Arrow navigation — always preventDefault so the page doesn't also scroll.
-  if (ARROWS[key]) {
-    e.preventDefault();
-    navCaret(ARROWS[key], e.shiftKey);
-    return;
-  }
   if (key === "Backspace") {
     e.preventDefault();
     await runEdit(() =>

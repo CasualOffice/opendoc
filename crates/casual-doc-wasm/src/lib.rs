@@ -436,6 +436,45 @@ impl WasmDocument {
         })
     }
 
+    /// The byte length of paragraph `node`'s text (triple-click paragraph select).
+    #[wasm_bindgen(js_name = paragraphLength)]
+    #[must_use]
+    pub fn paragraph_length(&self, node: &str) -> u32 {
+        NodeId::from_str(node).map_or(0, |nid| self.paragraph_text(nid).len() as u32)
+    }
+
+    /// The first caret position in the document (⌘↑ / select-all anchor).
+    #[wasm_bindgen(js_name = firstPosition)]
+    #[must_use]
+    pub fn first_position(&self) -> Caret {
+        self.ordered_paragraphs().first().map_or_else(
+            || Caret {
+                node: self.document.id().to_string(),
+                offset: 0,
+            },
+            |(id, _)| Caret {
+                node: id.to_string(),
+                offset: 0,
+            },
+        )
+    }
+
+    /// The last caret position in the document (⌘↓ / select-all focus).
+    #[wasm_bindgen(js_name = lastPosition)]
+    #[must_use]
+    pub fn last_position(&self) -> Caret {
+        self.ordered_paragraphs().last().map_or_else(
+            || Caret {
+                node: self.document.id().to_string(),
+                offset: 0,
+            },
+            |(id, len)| Caret {
+                node: id.to_string(),
+                offset: *len,
+            },
+        )
+    }
+
     /// The byte range `[start, end]` of the word at `offset` (double-click select),
     /// as `[start, end]`; empty if the offset is not within a word.
     #[wasm_bindgen(js_name = wordAt)]
@@ -1339,6 +1378,38 @@ impl WasmDocument {
                     }
                 }
             }
+            // Line start/end: probe the same visual line at its far left/right via
+            // hit-testing (reuses the exact line geometry).
+            "lineStart" | "lineEnd" => {
+                let snapshot = LayoutSnapshot::new(&self.layout);
+                let Some((page, rect)) = snapshot.caret_rect(ModelPos::new(nid, offset)) else {
+                    return (nid, offset);
+                };
+                let y = Twip(rect.origin.y.raw() + rect.size.height.raw() / 2);
+                let x = if dir == "lineStart" {
+                    Twip(0)
+                } else {
+                    Twip(i32::MAX)
+                };
+                snapshot
+                    .hit_test(page, Point::new(x, y))
+                    .map_or((nid, offset), |h| (h.pos.node, h.pos.offset))
+            }
+            "wordRight" => {
+                let text = self.paragraph_text(nid);
+                match next_word_boundary(&text, offset as usize) {
+                    Some(o) => (nid, o as u32),
+                    None => self.moved_caret(nid, offset.max(text.len() as u32), "right"),
+                }
+            }
+            "wordLeft" => {
+                let text = self.paragraph_text(nid);
+                match prev_word_boundary(&text, offset as usize) {
+                    Some(o) => (nid, o as u32),
+                    None if offset == 0 => self.moved_caret(nid, 0, "left"),
+                    None => (nid, 0),
+                }
+            }
             _ => (nid, offset),
         }
     }
@@ -1812,6 +1883,24 @@ fn word_bounds(text: &str, offset: usize) -> Option<(usize, usize)> {
         }
     }
     None
+}
+
+/// The end of the next Unicode word at or after `offset` (⌥→), or `None` past the
+/// last word.
+fn next_word_boundary(text: &str, offset: usize) -> Option<usize> {
+    use unicode_segmentation::UnicodeSegmentation;
+    text.unicode_word_indices()
+        .map(|(start, word)| start + word.len())
+        .find(|&end| end > offset)
+}
+
+/// The start of the previous Unicode word before `offset` (⌥←), or `None` before
+/// the first word.
+fn prev_word_boundary(text: &str, offset: usize) -> Option<usize> {
+    use unicode_segmentation::UnicodeSegmentation;
+    text.unicode_word_indices()
+        .map(|(start, _)| start)
+        .rfind(|&start| start < offset)
 }
 
 /// The indices of pages that differ between two layouts (changed, added, or
