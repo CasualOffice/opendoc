@@ -14,8 +14,9 @@
 //! `device_px = twip / 1440 * dpi`.
 
 use casual_doc_edit::{
-    FormatDelta, Operation, Pos, Range as EditRange, apply as apply_edit, caret_format, find_table,
-    format_state, locate_table_cell, locate_table_row, paragraph_properties, run_style_state,
+    FormatDelta, Operation, Pos, Range as EditRange, apply as apply_edit, caret_format,
+    caret_run_style, find_table, format_state, locate_table_cell, locate_table_row,
+    paragraph_properties, run_style_state,
 };
 use casual_doc_export::write_document;
 use casual_doc_import::{ImportConfig, ImportMode, import_package};
@@ -604,26 +605,40 @@ impl WasmDocument {
         italic: Option<bool>,
         underline: Option<bool>,
         strike: Option<bool>,
+        size_half_points: Option<u32>,
+        color: Option<String>,
+        highlight: Option<String>,
+        vert_align: Option<String>,
+        font: Option<String>,
     ) -> Result<EditResult, JsValue> {
         let nid = node_id(node)?;
         let end = offset + text.len() as u32;
+        let delta = FormatDelta {
+            bold,
+            italic,
+            underline,
+            strike,
+            color: color.as_deref().and_then(parse_hex_color),
+            highlight: highlight.as_deref().map(parse_highlight),
+            size_half_points,
+            vertical_alignment: vert_align.as_deref().map(|v| match v {
+                "super" => VerticalAlignment::Superscript,
+                "sub" => VerticalAlignment::Subscript,
+                _ => VerticalAlignment::Baseline,
+            }),
+            font,
+        };
         let mut ops = vec![Operation::InsertText {
             at: Pos::new(nid, offset),
             text,
         }];
-        if bold.is_some() || italic.is_some() || underline.is_some() || strike.is_some() {
+        if delta != FormatDelta::default() {
             ops.push(Operation::FormatText {
                 range: EditRange {
                     start: Pos::new(nid, offset),
                     end: Pos::new(nid, end),
                 },
-                delta: FormatDelta {
-                    bold,
-                    italic,
-                    underline,
-                    strike,
-                    ..FormatDelta::default()
-                },
+                delta,
             });
         }
         // The batch's last op is FormatText, whose caret is its range start; the user
@@ -1043,6 +1058,31 @@ impl WasmDocument {
             .map_err(to_js)
     }
 
+    /// Deletes the whole table the caret is in (the innermost table for a nested
+    /// one). Refuses when the table is a cell's only content. The caret lands on the
+    /// first top-level body paragraph. Errors if the caret is not inside a table.
+    #[wasm_bindgen(js_name = deleteTable)]
+    pub fn delete_table(&mut self, node: &str) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let (table, _, _) = locate_table_row(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        // Caret rests on the first top-level body paragraph (always outside the
+        // deleted table); falls back to the document node for a table-only body.
+        let caret = self
+            .first_body_paragraph()
+            .map_or_else(|| Pos::new(self.document.id(), 0), |p| Pos::new(p, 0));
+        self.apply_action_caret(vec![Operation::DeleteTable { table }], caret)
+            .map_err(to_js)
+    }
+
+    /// The first top-level paragraph in the body, if any.
+    fn first_body_paragraph(&self) -> Option<NodeId> {
+        self.document.body().iter().find_map(|b| match b {
+            BlockNode::Paragraph(p) => Some(p.id),
+            _ => None,
+        })
+    }
+
     /// Whether the caret's paragraph is inside a table cell — drives the table
     /// controls' enabled state.
     #[wasm_bindgen(js_name = inTable)]
@@ -1130,15 +1170,19 @@ impl WasmDocument {
             return RunStyle::default();
         }
         let state = run_style_state(&self.document, EditRange { start, end });
-        RunStyle {
-            size_points: state.size_half_points.map_or(0.0, |h| h as f32 / 2.0),
-            color: state.color_rgb.map_or_else(String::new, |c| {
-                format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b)
-            }),
-            font: state.font.unwrap_or_default(),
-            superscript: state.superscript,
-            subscript: state.subscript,
-        }
+        run_style_to_wasm(&state)
+    }
+
+    /// The run styling a **collapsed caret** inherits — size / font / color /
+    /// super-sub of the run new typing there would carry. Lets the toolbar reflect
+    /// (and pre-fill) those at a caret, not only over a selection.
+    #[wasm_bindgen(js_name = caretRunStyle)]
+    #[must_use]
+    pub fn caret_run_style(&self, node: &str, offset: u32) -> RunStyle {
+        let Ok(nid) = NodeId::from_str(node) else {
+            return RunStyle::default();
+        };
+        run_style_to_wasm(&caret_run_style(&self.document, nid, offset))
     }
 
     /// The line-spacing percentage of the paragraph at `node` (0 if unset) — for
@@ -2017,6 +2061,20 @@ fn parse_range(
 }
 
 /// A page-local rectangle flattened to `[page, x, y, w, h]` twips.
+/// Converts an edit-crate run-style state into the WASM [`RunStyle`] the toolbar
+/// reads (shared by the selection and caret queries).
+fn run_style_to_wasm(state: &casual_doc_edit::RunStyleState) -> RunStyle {
+    RunStyle {
+        size_points: state.size_half_points.map_or(0.0, |h| h as f32 / 2.0),
+        color: state.color_rgb.map_or_else(String::new, |c| {
+            format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b)
+        }),
+        font: state.font.clone().unwrap_or_default(),
+        superscript: state.superscript,
+        subscript: state.subscript,
+    }
+}
+
 fn flat_rect(page: u32, rect: Rect) -> [i32; 5] {
     [
         page as i32,
@@ -2204,6 +2262,19 @@ fn to_js(message: String) -> JsValue {
 
 /// Maps a highlight name (case-insensitive) to a [`HighlightColor`]; unknown
 /// names fall back to `Yellow`, `"none"`/`""` clear the highlight.
+/// Parses a `#rrggbb` (or `rrggbb`) hex color, or `None` if malformed.
+fn parse_hex_color(hex: &str) -> Option<RgbColor> {
+    let h = hex.strip_prefix('#').unwrap_or(hex);
+    if h.len() != 6 {
+        return None;
+    }
+    Some(RgbColor {
+        r: u8::from_str_radix(&h[0..2], 16).ok()?,
+        g: u8::from_str_radix(&h[2..4], 16).ok()?,
+        b: u8::from_str_radix(&h[4..6], 16).ok()?,
+    })
+}
+
 fn parse_highlight(name: &str) -> HighlightColor {
     match name.to_ascii_lowercase().as_str() {
         "none" | "" => HighlightColor::None,
@@ -2298,6 +2369,13 @@ fn caret_after(op: &Operation, inverse: &Operation) -> Pos {
             .and_then(first_paragraph_of_cell)
             .map_or_else(|| Pos::new(*table, 0), |p| Pos::new(p, 0)),
         Operation::DeleteColumn { table, .. } => Pos::new(*table, 0),
+        // Row/table ops go through `apply_action_caret`, which overrides the caret.
+        Operation::DeleteTable { table } => Pos::new(*table, 0),
+        Operation::InsertTable { table, .. } => table
+            .rows
+            .first()
+            .and_then(first_paragraph_of_row)
+            .map_or_else(|| Pos::new(table.id, 0), |p| Pos::new(p, 0)),
     }
 }
 
@@ -2791,11 +2869,30 @@ mod tests {
             .expect("a non-empty paragraph");
 
         assert!(!d.caret_format(&node, 0).bold(), "caret not bold initially");
+        // Armed bold + 20pt: both land on the typed character.
         let res = d
-            .insert_styled_text(&node, 0, "B".to_string(), Some(true), None, None, None)
+            .insert_styled_text(
+                &node,
+                0,
+                "B".to_string(),
+                Some(true),
+                None,
+                None,
+                None,
+                Some(40),
+                None,
+                None,
+                None,
+                None,
+            )
             .expect("styled insert");
         assert_eq!(res.offset(), 1, "caret rests after the inserted char");
         assert!(d.format_at(&node, 0, 1).bold(), "the typed char is bold");
+        assert_eq!(
+            d.selection_run_style(&node, 0, &node, 1).size_points(),
+            20.0,
+            "the typed char carries the armed 20pt size"
+        );
 
         d.undo().expect("undo");
         assert!(
@@ -2964,6 +3061,55 @@ mod tests {
         assert_eq!(cols(&d), before_cols - 1);
         d.undo().expect("undo delete column");
         assert_eq!(cols(&d), before_cols);
+    }
+
+    /// Delete a whole table and undo it: the body's table count drops by one, the
+    /// caret lands on an editable body paragraph, and undo restores the table.
+    #[test]
+    fn delete_table_and_undo_restores() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        // A paragraph directly in the first top-level table's first cell.
+        let outer = d
+            .document
+            .body()
+            .iter()
+            .find_map(|b| match b {
+                BlockNode::Table(t) => {
+                    t.rows
+                        .first()?
+                        .cells
+                        .first()?
+                        .blocks
+                        .iter()
+                        .find_map(|bb| match bb {
+                            BlockNode::Paragraph(p) => Some(p.id.to_string()),
+                            _ => None,
+                        })
+                }
+                _ => None,
+            })
+            .expect("a paragraph in the top-level table's first cell");
+
+        let tables = |d: &WasmDocument| {
+            d.document
+                .body()
+                .iter()
+                .filter(|b| matches!(b, BlockNode::Table(_)))
+                .count()
+        };
+        let before = tables(&d);
+        assert!(before >= 1, "the fixture has a top-level table");
+
+        let res = d.delete_table(&outer).expect("delete the table");
+        assert_eq!(tables(&d), before - 1, "the table is gone");
+        // The caret landed on a real, editable body paragraph.
+        let caret = res.node();
+        d.insert_text(&caret, 0, "Z".to_string())
+            .expect("caret is a valid paragraph");
+
+        d.undo().expect("undo type");
+        d.undo().expect("undo delete");
+        assert_eq!(tables(&d), before, "undo restored the table");
     }
 
     /// Toggling a bullet list on a paragraph: `listStyleAt` reflects it, the list
