@@ -225,10 +225,36 @@ pub fn apply(
             }
             let para = find_paragraph_mut(doc.body_mut(), range.start.node)
                 .ok_or(EditError::NodeNotFound)?;
-            let removed = delete_text(&mut para.inlines, range.start.offset, range.end.offset)?;
-            Ok(Operation::InsertText {
-                at: range.start,
-                text: removed,
+            if range.end.offset > paragraph_text_len(para) {
+                return Err(EditError::OffsetOutOfRange);
+            }
+            // Fast path: the whole range lies inside one run — remove the substring
+            // and invert with `InsertText` (no clone; the common single-char
+            // backspace stays cheap).
+            if let Some(removed) =
+                delete_text(&mut para.inlines, range.start.offset, range.end.offset)?
+            {
+                return Ok(Operation::InsertText {
+                    at: range.start,
+                    text: removed,
+                });
+            }
+            // General path: the range spans several runs (a formatted paragraph, the
+            // tail/head of a cross-paragraph selection). Snapshot for an exact
+            // inverse, split runs at both ends, then drop every inline the range
+            // fully covers. The inverse restores the inlines verbatim, so undo brings
+            // back each deleted run's own formatting — an `InsertText` (plain text)
+            // inverse could not.
+            let old = para.inlines.clone();
+            ensure_run_boundary(&mut para.inlines, range.end.offset, ids)?;
+            ensure_run_boundary(&mut para.inlines, range.start.offset, ids)?;
+            remove_covered_range(&mut para.inlines, range.start.offset, range.end.offset)?;
+            // The removal can leave two equal-property runs adjacent (or a boundary
+            // split earlier did); the model forbids that, so merge them back.
+            coalesce_adjacent_runs(&mut para.inlines);
+            Ok(Operation::SetInlines {
+                node: range.start.node,
+                inlines: old,
             })
         }
         Operation::SplitParagraph { at, new_id } => {
@@ -390,6 +416,40 @@ pub fn format_state(document: &Document, range: Range) -> FormatState {
         italic: all(|p| p.italic),
         underline: all(|p| p.underline),
         strike: all(|p| p.strike),
+    }
+}
+
+/// The run formatting a caret at `(node, offset)` inherits — what new typing there
+/// would carry. Word's rule: the run to the **left** of the caret, or (at a
+/// paragraph start) the run to the right, or defaults for an empty paragraph. This
+/// drives the toolbar's active state at a collapsed caret and the "type bold"
+/// toggle direction, where [`format_state`] (which needs a non-empty range) returns
+/// all-false.
+#[must_use]
+pub fn caret_format(document: &Document, node: NodeId, offset: u32) -> FormatState {
+    let Some(para) = find_paragraph(document.body(), node) else {
+        return FormatState::default();
+    };
+    let segs = run_segments(&para.inlines);
+    // The run ending at / containing the caret (the character to its left); at
+    // offset 0 fall to the run starting there (the character to its right).
+    let pick = segs
+        .iter()
+        .find(|s| offset > s.start && offset <= s.end)
+        .or_else(|| segs.iter().find(|s| offset >= s.start && offset < s.end))
+        .or_else(|| segs.first());
+    let Some(seg) = pick else {
+        return FormatState::default();
+    };
+    let InlineNode::Run(run) = &para.inlines[seg.idx] else {
+        return FormatState::default();
+    };
+    let on = |v: Option<bool>| v == Some(true);
+    FormatState {
+        bold: on(run.properties.bold),
+        italic: on(run.properties.italic),
+        underline: on(run.properties.underline),
+        strike: on(run.properties.strike),
     }
 }
 
@@ -606,30 +666,95 @@ fn insert_text(
 }
 
 /// Deletes `[start, end)` when it lies within a single top-level run, returning
-/// the removed text (for the inverse). Cross-run / non-run ranges are a slice-2
-/// concern and report `Unsupported` rather than corrupting.
-fn delete_text(inlines: &mut Vec<InlineNode>, start: u32, end: u32) -> Result<String, EditError> {
+/// `Some(removed_text)`. Returns `None` when the range spans more than one run (or
+/// a non-run inline), so the caller falls to the general multi-run path; a
+/// mid-character offset is still a hard `NotCharBoundary` error.
+fn delete_text(
+    inlines: &mut [InlineNode],
+    start: u32,
+    end: u32,
+) -> Result<Option<String>, EditError> {
     let segs = run_segments(inlines);
-    let seg = segs
-        .iter()
-        .find(|s| start >= s.start && end <= s.end)
-        .ok_or(EditError::Unsupported)?;
+    let Some(seg) = segs.iter().find(|s| start >= s.start && end <= s.end) else {
+        return Ok(None);
+    };
+    // Deleting the whole run would remove it and could leave its neighbours adjacent
+    // (and possibly equal-propertied, which the model forbids). Defer that to the
+    // general path — its `SetInlines` inverse stays exact through the coalescing.
+    if start == seg.start && end == seg.end {
+        return Ok(None);
+    }
     let (from, to) = ((start - seg.start) as usize, (end - seg.start) as usize);
     let idx = seg.idx;
 
     let InlineNode::Run(run) = &mut inlines[idx] else {
-        return Err(EditError::Unsupported);
+        return Ok(None);
     };
     if !run.text.is_char_boundary(from) || !run.text.is_char_boundary(to) {
         return Err(EditError::NotCharBoundary);
     }
     let removed = run.text[from..to].to_string();
     run.text.replace_range(from..to, "");
-    // A run's text is non-empty by invariant; drop it if the edit emptied it.
-    if run.text.is_empty() {
-        inlines.remove(idx);
+    // The run keeps text (full-run deletion bailed above), so no neighbours merge
+    // and the plain-text `InsertText` inverse is exact.
+    Ok(Some(removed))
+}
+
+/// Merges adjacent top-level runs with equal properties into one. The model forbids
+/// adjacent equal-property runs, and a delete that drops the content separating two
+/// such runs (or empties a run between them) would otherwise leave them adjacent —
+/// so the delete path coalesces before returning. Text and total length are
+/// unchanged, so byte offsets are preserved; the merged run keeps the first's id.
+fn coalesce_adjacent_runs(inlines: &mut Vec<InlineNode>) {
+    let mut i = 0;
+    while i + 1 < inlines.len() {
+        let mergeable = matches!(
+            (&inlines[i], &inlines[i + 1]),
+            (InlineNode::Run(a), InlineNode::Run(b)) if a.properties == b.properties
+        );
+        if mergeable {
+            let InlineNode::Run(next) = inlines.remove(i + 1) else {
+                unreachable!("matched a run above");
+            };
+            if let InlineNode::Run(cur) = &mut inlines[i] {
+                cur.text.push_str(&next.text);
+            }
+        } else {
+            i += 1;
+        }
     }
-    Ok(removed)
+}
+
+/// Removes every inline that lies fully inside `[start, end)`, by cumulative text
+/// length. The caller runs [`ensure_run_boundary`] at both ends first, so every
+/// **run** is then either wholly inside or wholly outside the range. A non-run
+/// wrapper (hyperlink, content control, tab, symbol) cannot be split here, so a
+/// range that only *partially* covers one is refused (`Unsupported`) rather than
+/// silently mis-deleting — editing inside a nested wrapper is a later slice.
+fn remove_covered_range(
+    inlines: &mut Vec<InlineNode>,
+    start: u32,
+    end: u32,
+) -> Result<(), EditError> {
+    // First pass: reject a partial cut into an inline we cannot split.
+    let mut cum = 0u32;
+    for inline in inlines.iter() {
+        let len = inline_text_len(inline);
+        let (s, e) = (cum, cum + len);
+        cum = e;
+        if len > 0 && s < end && e > start && !(s >= start && e <= end) {
+            return Err(EditError::Unsupported);
+        }
+    }
+    // Second pass: drop the fully-covered inlines.
+    let mut cum = 0u32;
+    inlines.retain(|inline| {
+        let len = inline_text_len(inline);
+        let (s, e) = (cum, cum + len);
+        cum = e;
+        !(len > 0 && s >= start && e <= end)
+    });
+    Ok(())
 }
 
 /// Splits the paragraph `id` at byte `offset` into two, inserting the trailing
@@ -1119,5 +1244,138 @@ mod tests {
             Err(EditError::CrossParagraph)
         );
         assert_eq!(text_of(&d, p), "abc", "no mutation on error");
+    }
+
+    #[test]
+    fn delete_across_runs_removes_range_and_undo_restores_formatting() {
+        // A formatted paragraph: "Hello" (bold) + "World" (normal). Deleting a range
+        // that spans both runs must work (this is what a multi-paragraph selection's
+        // tail/head reduces to) and undo must bring back the bold run's formatting —
+        // the reason the inverse is `SetInlines`, not a plain-text `InsertText`.
+        let bold = RunProperties {
+            bold: Some(true),
+            ..RunProperties::default()
+        };
+        let p = n(2);
+        let mut d = doc(vec![BlockNode::Paragraph(Paragraph {
+            id: p,
+            properties: ParagraphProperties::default(),
+            inlines: vec![
+                InlineNode::Run(Run {
+                    id: n(3),
+                    properties: bold,
+                    text: "Hello".into(),
+                }),
+                run(4, "World"),
+            ],
+        })]);
+        let mut ids = IdGenerator::new(9);
+
+        // [3, 7) = "lo" (from bold "Hello") + "Wo" (from "World") → "Helrld".
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::DeleteText {
+                range: Range {
+                    start: Pos::new(p, 3),
+                    end: Pos::new(p, 7),
+                },
+            },
+        )
+        .expect("multi-run delete succeeds");
+        assert_eq!(text_of(&d, p), "Helrld");
+
+        apply(&mut d, &mut ids, &inverse).expect("undo restores");
+        assert_eq!(text_of(&d, p), "HelloWorld");
+        let BlockNode::Paragraph(para) = &d.body()[0] else {
+            panic!("paragraph");
+        };
+        let InlineNode::Run(first) = &para.inlines[0] else {
+            panic!("run");
+        };
+        assert_eq!(
+            first.properties.bold,
+            Some(true),
+            "undo restored the run's bold, not just its text"
+        );
+    }
+
+    #[test]
+    fn delete_whole_paragraph_text_leaves_it_empty() {
+        // Deleting a paragraph's entire content (what a cross-paragraph selection does
+        // to each whole middle paragraph before joining) empties its inlines cleanly.
+        // (Single run — the model forbids adjacent equal-property runs, so "alphabeta"
+        // is one run, not two.)
+        let p = n(2);
+        let mut d = doc(vec![para(2, vec![run(3, "alphabeta")])]);
+        let mut ids = IdGenerator::new(9);
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::DeleteText {
+                range: Range {
+                    start: Pos::new(p, 0),
+                    end: Pos::new(p, 9),
+                },
+            },
+        )
+        .expect("full delete");
+        assert_eq!(text_of(&d, p), "");
+    }
+
+    #[test]
+    fn delete_between_equal_runs_coalesces_to_stay_valid() {
+        // "a"(normal) "BOLD"(bold) "c"(normal): deleting the whole bold middle would
+        // leave the two normal runs adjacent — which the model forbids. The delete
+        // must coalesce them into one run so the document stays re-validatable.
+        let bold = RunProperties {
+            bold: Some(true),
+            ..RunProperties::default()
+        };
+        let p = n(2);
+        let mut d = doc(vec![BlockNode::Paragraph(Paragraph {
+            id: p,
+            properties: ParagraphProperties::default(),
+            inlines: vec![
+                run(3, "a"),
+                InlineNode::Run(Run {
+                    id: n(4),
+                    properties: bold,
+                    text: "BOLD".into(),
+                }),
+                run(5, "c"),
+            ],
+        })]);
+        let mut ids = IdGenerator::new(9);
+
+        // [1, 5) = the whole bold run.
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::DeleteText {
+                range: Range {
+                    start: Pos::new(p, 1),
+                    end: Pos::new(p, 5),
+                },
+            },
+        )
+        .expect("delete the middle run");
+        assert_eq!(text_of(&d, p), "ac");
+
+        let BlockNode::Paragraph(para) = &d.body()[0] else {
+            panic!("paragraph");
+        };
+        assert_eq!(
+            para.inlines.len(),
+            1,
+            "the two equal-property runs must coalesce into one"
+        );
+        // The whole document must still validate (the invariant we just protected).
+        Document::new(
+            n(1001),
+            d.body().to_vec(),
+            casual_doc_model::v1::Definitions::default(),
+        )
+        .expect("document stays valid after the delete");
     }
 }

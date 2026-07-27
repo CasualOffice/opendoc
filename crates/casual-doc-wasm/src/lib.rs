@@ -14,8 +14,8 @@
 //! `device_px = twip / 1440 * dpi`.
 
 use casual_doc_edit::{
-    FormatDelta, Operation, Pos, Range as EditRange, apply as apply_edit, format_state,
-    paragraph_properties, run_style_state,
+    FormatDelta, Operation, Pos, Range as EditRange, apply as apply_edit, caret_format,
+    format_state, paragraph_properties, run_style_state,
 };
 use casual_doc_export::write_document;
 use casual_doc_import::{ImportConfig, ImportMode, import_package};
@@ -558,6 +558,71 @@ impl WasmDocument {
             underline: state.underline,
             strike: state.strike,
         }
+    }
+
+    /// The run formatting a collapsed caret inherits — what new typing there would
+    /// carry (the run to the caret's left, Word's rule). Drives the toolbar's active
+    /// state at a caret and the "type bold" toggle direction, where `formatAt` on an
+    /// empty range reports all-false.
+    #[wasm_bindgen(js_name = caretFormat)]
+    #[must_use]
+    pub fn caret_format(&self, node: &str, offset: u32) -> Format {
+        let Ok(nid) = NodeId::from_str(node) else {
+            return Format::default();
+        };
+        let state = caret_format(&self.document, nid, offset);
+        Format {
+            bold: state.bold,
+            italic: state.italic,
+            underline: state.underline,
+            strike: state.strike,
+        }
+    }
+
+    /// Inserts `text` at a collapsed caret carrying explicit run formatting — typing
+    /// while Bold/Italic/… is *armed* at the caret. Inserts the text, then formats
+    /// exactly the inserted range, as one atomic single-undo action; the caret lands
+    /// after the inserted text. A toggle left `undefined` inherits the surrounding
+    /// run, so this equals `insertText` when nothing is armed. Consecutive armed
+    /// typing coalesces into one run (the second char inserts into the run the first
+    /// created).
+    #[wasm_bindgen(js_name = insertStyledText)]
+    #[allow(clippy::too_many_arguments)] // a flat JS signature is clearer than a bag struct
+    pub fn insert_styled_text(
+        &mut self,
+        node: &str,
+        offset: u32,
+        text: String,
+        bold: Option<bool>,
+        italic: Option<bool>,
+        underline: Option<bool>,
+        strike: Option<bool>,
+    ) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let end = offset + text.len() as u32;
+        let mut ops = vec![Operation::InsertText {
+            at: Pos::new(nid, offset),
+            text,
+        }];
+        if bold.is_some() || italic.is_some() || underline.is_some() || strike.is_some() {
+            ops.push(Operation::FormatText {
+                range: EditRange {
+                    start: Pos::new(nid, offset),
+                    end: Pos::new(nid, end),
+                },
+                delta: FormatDelta {
+                    bold,
+                    italic,
+                    underline,
+                    strike,
+                    ..FormatDelta::default()
+                },
+            });
+        }
+        // The batch's last op is FormatText, whose caret is its range start; the user
+        // expects the caret *after* the inserted text, so pin it explicitly.
+        self.apply_action_caret(ops, Pos::new(nid, end))
+            .map_err(to_js)
     }
 
     /// Like [`format_text`](Self::format_text) but across a selection that may span
@@ -1111,6 +1176,34 @@ impl WasmDocument {
         let snapshot = (ops.len() > 1).then(|| self.document.clone());
         match self.apply_group(ops) {
             Ok((caret, inverses)) => {
+                self.undo.push(inverses);
+                self.redo.clear();
+                Ok(self.finish_edit(caret))
+            }
+            Err(e) => {
+                if let Some(snapshot) = snapshot {
+                    self.document = snapshot;
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// Like [`apply_action`](Self::apply_action) but rests the caret at `caret`
+    /// instead of the last op's natural place — for a batch whose final op does not
+    /// define the caret the user expects (e.g. `InsertText` then `FormatText`, where
+    /// the caret should sit after the inserted text, not at the format range start).
+    fn apply_action_caret(
+        &mut self,
+        ops: Vec<Operation>,
+        caret: Pos,
+    ) -> Result<EditResult, String> {
+        if ops.is_empty() {
+            return Err("empty edit".into());
+        }
+        let snapshot = (ops.len() > 1).then(|| self.document.clone());
+        match self.apply_group(ops) {
+            Ok((_, inverses)) => {
                 self.undo.push(inverses);
                 self.redo.clear();
                 Ok(self.finish_edit(caret))
@@ -2249,6 +2342,66 @@ mod tests {
 
         d.undo().expect("undo");
         assert!(!d.format_at(&node, 0, 3).bold(), "undo cleared bold");
+    }
+
+    /// Typing with an armed format at a collapsed caret: `insertStyledText` inserts
+    /// the character bold and `caretFormat` reflects what the caret carries; the
+    /// whole thing undoes as one action.
+    #[test]
+    fn insert_styled_text_types_bold_and_undoes() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, t)| !t.is_empty())
+            .map(|(id, _)| id.to_string())
+            .expect("a non-empty paragraph");
+
+        assert!(!d.caret_format(&node, 0).bold(), "caret not bold initially");
+        let res = d
+            .insert_styled_text(&node, 0, "B".to_string(), Some(true), None, None, None)
+            .expect("styled insert");
+        assert_eq!(res.offset(), 1, "caret rests after the inserted char");
+        assert!(d.format_at(&node, 0, 1).bold(), "the typed char is bold");
+
+        d.undo().expect("undo");
+        assert!(
+            !d.format_at(&node, 0, 1).bold(),
+            "one undo reverts both the insert and its formatting"
+        );
+    }
+
+    /// A delete whose range spans several runs (a formatted paragraph) succeeds —
+    /// the bug that made a multi-paragraph selection Backspace a no-op ("edit
+    /// ignored: Unsupported"). Formatting part of the paragraph splits it into runs;
+    /// a range crossing that boundary must still delete, and undo must restore.
+    #[test]
+    fn delete_across_runs_succeeds_and_undoes() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let (node_id, text) = nodes
+            .iter()
+            .find(|(_, t)| t.is_ascii() && t.len() >= 6)
+            .map(|(id, t)| (*id, t.clone()))
+            .expect("an ASCII paragraph with >=6 chars");
+        let node = node_id.to_string();
+        let len = text.len() as u32;
+
+        // Bold [0,3): the paragraph is now at least two runs. [2,5) spans the
+        // bold/normal run boundary — the case that used to report Unsupported.
+        d.format_text(&node, 0, 3, Some(true), None, None, None)
+            .expect("bold");
+        d.delete_range(&node, 2, 5)
+            .expect("multi-run delete must succeed");
+        let after = d.copy_text(&node, 0, &node, len - 3);
+        assert_eq!(after, format!("{}{}", &text[..2], &text[5..]));
+
+        // Undo the delete, then the format; the original text returns intact.
+        d.undo().expect("undo delete");
+        d.undo().expect("undo bold");
+        assert_eq!(d.copy_text(&node, 0, &node, len), text);
     }
 
     /// Paragraph and run properties apply and undo: alignment (with a query),
