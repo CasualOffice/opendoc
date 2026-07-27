@@ -71,6 +71,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f1fe948ff07f4bd06c30984e69f5b4899c516a3ef74f34df92a2df2ab535495"
 
 [[package]]
+name = "casual-doc-edit"
+version = "0.0.1"
+dependencies = [
+ "casual-doc-model",
+]
+
+[[package]]
 name = "casual-doc-export"
 version = "0.0.1"
 dependencies = [
@@ -164,6 +171,7 @@ dependencies = [
 name = "casual-doc-wasm"
 version = "0.0.1"
 dependencies = [
+ "casual-doc-edit",
  "casual-doc-import",
  "casual-doc-layout",
  "casual-doc-model",
