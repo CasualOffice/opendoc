@@ -11,6 +11,8 @@
       <div class="brand">
         <span class="mark">OpenDoc</span>
         <span class="testing" title="Developer test harness — not a product or supported viewer.">testing</span>
+        <span class="divider" hidden id="titleDivider"></span>
+        <span class="doc-title" id="docTitle" hidden></span>
       </div>
       <div class="controls">
         <label class="btn btn-primary file">
@@ -22,19 +24,40 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V7zm-5 16a3 3 0 110-6 3 3 0 010 6zm3-10H5V5h10z"/></svg>
           Save
         </button>
-        <div class="zoom">
-          <button id="zoomOut" type="button" class="btn icon-only" title="Zoom out" aria-label="Zoom out"><svg viewBox="0 0 24 24"><path d="M19 13H5v-2h14z"/></svg></button>
-          <select id="zoom" aria-label="Zoom level">
-            <option value="0.75">75%</option>
-            <option value="1" selected>100%</option>
-            <option value="1.25">125%</option>
-            <option value="1.5">150%</option>
-            <option value="2">200%</option>
-          </select>
-          <button id="zoomIn" type="button" class="btn icon-only" title="Zoom in" aria-label="Zoom in"><svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z"/></svg></button>
-        </div>
+        <button id="settingsBtn" type="button" class="btn icon-only" title="Settings" aria-label="Settings" aria-expanded="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.14 12.94c.04-.3.06-.61.06-.94s-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.49.49 0 00-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 00-.48-.41h-3.84a.48.48 0 00-.48.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 00-.59.22L2.74 8.87a.49.49 0 00.12.61l2.03 1.58c-.05.3-.07.63-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.48-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 00-.12-.61l-2.03-1.58zM12 15.6A3.6 3.6 0 1112 8.4a3.6 3.6 0 010 7.2z"/></svg>
+        </button>
       </div>
     </header>
+
+    <div id="settingsPanel" class="settings-panel" hidden role="dialog" aria-label="Settings">
+      <div class="settings-section">
+        <div class="settings-label">Theme</div>
+        <div class="segmented" id="themeSeg" role="radiogroup" aria-label="Theme">
+          <button type="button" data-theme="system">System</button>
+          <button type="button" data-theme="light">Light</button>
+          <button type="button" data-theme="dark">Dark</button>
+        </div>
+      </div>
+      <div class="settings-section">
+        <div class="settings-label">Accent</div>
+        <div class="swatches" id="accentSwatches">
+          <button type="button" class="acc" data-accent="#e2622a" style="--c:#e2622a" title="Orange" aria-label="Orange"></button>
+          <button type="button" class="acc" data-accent="#2f7ae5" style="--c:#2f7ae5" title="Blue" aria-label="Blue"></button>
+          <button type="button" class="acc" data-accent="#2aa775" style="--c:#2aa775" title="Green" aria-label="Green"></button>
+          <button type="button" class="acc" data-accent="#8a63d2" style="--c:#8a63d2" title="Purple" aria-label="Purple"></button>
+          <button type="button" class="acc" data-accent="#d64562" style="--c:#d64562" title="Rose" aria-label="Rose"></button>
+          <button type="button" class="acc" data-accent="#c88a1a" style="--c:#c88a1a" title="Amber" aria-label="Amber"></button>
+          <label class="acc acc-custom" title="Custom color">
+            <input id="accentCustom" type="color" value="#e2622a" />
+          </label>
+        </div>
+      </div>
+      <div class="settings-foot">
+        <span class="oss">Open-source · customizable</span>
+        <button type="button" id="settingsReset" class="link">Reset</button>
+      </div>
+    </div>
 
     <div class="toolbar" role="toolbar" aria-label="Formatting">
       <div class="group">
@@ -115,13 +138,27 @@
     </main>
 
     <footer class="footer">
-      <span id="status" class="status">Loading engine…</span>
-      <span class="stats" id="stats" hidden>
-        <span id="statWords">0 words</span>
-        <span class="dot">·</span>
-        <span id="statParas">0 paragraphs</span>
-        <span class="dot">·</span>
-        <span id="statPages">Page 1 of 1</span>
+      <span class="foot-left">
+        <span id="status" class="status">Loading engine…</span>
+        <span class="stats" id="stats" hidden>
+          <span id="statWords">0 words</span>
+          <span class="dot">·</span>
+          <span id="statParas">0 paragraphs</span>
+        </span>
+      </span>
+      <span class="foot-right">
+        <span id="statPages" class="stat-pages" hidden>Page 1 of 1</span>
+        <span class="zoom">
+          <button id="zoomOut" type="button" class="zbtn" title="Zoom out" aria-label="Zoom out"><svg viewBox="0 0 24 24"><path d="M19 13H5v-2h14z"/></svg></button>
+          <select id="zoom" aria-label="Zoom level">
+            <option value="0.75">75%</option>
+            <option value="1" selected>100%</option>
+            <option value="1.25">125%</option>
+            <option value="1.5">150%</option>
+            <option value="2">200%</option>
+          </select>
+          <button id="zoomIn" type="button" class="zbtn" title="Zoom in" aria-label="Zoom in"><svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z"/></svg></button>
+        </span>
       </span>
     </footer>
 

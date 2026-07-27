@@ -88,6 +88,8 @@ const saveBtn = document.getElementById("save");
 const zoomInBtn = document.getElementById("zoomIn");
 const zoomOutBtn = document.getElementById("zoomOut");
 const tableGroup = document.getElementById("tableGroup");
+const docTitleEl = document.getElementById("docTitle");
+const titleDividerEl = document.getElementById("titleDivider");
 const statsEl = document.getElementById("stats");
 const statWords = document.getElementById("statWords");
 const statParas = document.getElementById("statParas");
@@ -133,6 +135,7 @@ function updateStats() {
   statWords.textContent = `${words.toLocaleString()} word${words === 1 ? "" : "s"}`;
   statParas.textContent = `${paras.toLocaleString()} paragraph${paras === 1 ? "" : "s"}`;
   statsEl.hidden = false;
+  statPages.hidden = false;
   updatePageNumber();
 }
 
@@ -166,6 +169,9 @@ async function openBytes(bytes, name) {
     doc = open(bytes);
     selection = null;
     currentName = name;
+    docTitleEl.textContent = name;
+    docTitleEl.hidden = false;
+    titleDividerEl.hidden = false;
     saveBtn.disabled = false;
     populateStyles();
     dropEl.hidden = true;
@@ -269,7 +275,7 @@ async function renderAll() {
 
   drawSelection(); // re-place any existing selection at the new zoom
   if (token === renderToken) {
-    setStatus(currentName);
+    setStatus("");
     updateStats();
   }
 }
@@ -1011,6 +1017,96 @@ viewportEl.addEventListener("drop", (e) => {
   viewportEl.classList.remove("dragging");
   handleFile(e.dataTransfer?.files?.[0]);
 });
+
+// ---- Settings: theme + accent, persisted (OSS-customizable) ------------------
+const settingsBtn = document.getElementById("settingsBtn");
+const settingsPanel = document.getElementById("settingsPanel");
+const themeSeg = document.getElementById("themeSeg");
+const accentSwatches = document.getElementById("accentSwatches");
+const accentCustom = document.getElementById("accentCustom");
+const settingsReset = document.getElementById("settingsReset");
+
+const DEFAULT_SETTINGS = { theme: "system", accent: "#e2622a" };
+let settings = loadSettings();
+
+function loadSettings() {
+  try {
+    return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem("opendoc.settings") || "{}") };
+  } catch {
+    return { ...DEFAULT_SETTINGS };
+  }
+}
+
+function saveSettings() {
+  try {
+    localStorage.setItem("opendoc.settings", JSON.stringify(settings));
+  } catch {
+    /* storage disabled — settings apply for the session only */
+  }
+}
+
+/** Applies the current settings to the document root + reflects them in the panel. */
+function applySettings() {
+  const root = document.documentElement;
+  if (settings.theme === "system") root.removeAttribute("data-theme");
+  else root.setAttribute("data-theme", settings.theme);
+  root.style.setProperty("--accent", settings.accent);
+
+  for (const b of themeSeg.querySelectorAll("button")) {
+    b.setAttribute("aria-pressed", String(b.dataset.theme === settings.theme));
+  }
+  for (const b of accentSwatches.querySelectorAll(".acc[data-accent]")) {
+    b.setAttribute(
+      "aria-pressed",
+      String(b.dataset.accent.toLowerCase() === settings.accent.toLowerCase()),
+    );
+  }
+  accentCustom.value = settings.accent;
+}
+
+themeSeg.addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-theme]");
+  if (!b) return;
+  settings.theme = b.dataset.theme;
+  saveSettings();
+  applySettings();
+});
+accentSwatches.addEventListener("click", (e) => {
+  const b = e.target.closest(".acc[data-accent]");
+  if (!b) return;
+  settings.accent = b.dataset.accent;
+  saveSettings();
+  applySettings();
+});
+accentCustom.addEventListener("input", () => {
+  settings.accent = accentCustom.value;
+  saveSettings();
+  applySettings();
+});
+settingsReset.addEventListener("click", () => {
+  settings = { ...DEFAULT_SETTINGS };
+  saveSettings();
+  applySettings();
+});
+
+function toggleSettings(open) {
+  const show = open ?? settingsPanel.hidden;
+  settingsPanel.hidden = !show;
+  settingsBtn.setAttribute("aria-expanded", String(show));
+}
+settingsBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  toggleSettings();
+});
+document.addEventListener("click", (e) => {
+  if (!settingsPanel.hidden && !settingsPanel.contains(e.target) && e.target !== settingsBtn) {
+    toggleSettings(false);
+  }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !settingsPanel.hidden) toggleSettings(false);
+});
+applySettings();
 
 fileEl.disabled = true;
 updateToolbar(); // start with the toolbar controls disabled (no selection yet)
