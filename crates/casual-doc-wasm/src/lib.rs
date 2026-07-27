@@ -16,13 +16,18 @@
 use casual_doc_import::{ImportConfig, ImportMode, import_package};
 use casual_doc_layout::compose::compose_page;
 use casual_doc_layout::document_layout::{document_page_config, paginate_document};
+use casual_doc_layout::flow::node_plain_text;
+use casual_doc_layout::hittest::{HitZone, LayoutSnapshot};
+use casual_doc_layout::model::{ModelPos, ModelRange};
 use casual_doc_layout::page::{Page, PaginatedLayout};
 use casual_doc_layout::paginate::PageConfig;
 use casual_doc_layout::shape::ParleyShaper;
-use casual_doc_layout::units::{Size, Twip};
-use casual_doc_model::v1::Document;
+use casual_doc_layout::units::{Point, Rect, Size, Twip};
+use casual_doc_model::NodeId;
+use casual_doc_model::v1::{BlockNode, Document};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
 use casual_doc_render::{MapMediaSource, RegistryFontSource, Surface, render};
+use std::str::FromStr;
 use wasm_bindgen::Clamped;
 use wasm_bindgen::prelude::*;
 
@@ -149,6 +154,93 @@ impl WasmDocument {
         self.shaper.register_font(bytes.to_vec());
         self.repaginate();
     }
+
+    // ---- Selection & copy (P1G-003) ----------------------------------------
+    //
+    // The interaction pipeline of doc 58: a page-local point resolves to a model
+    // anchor (`hitTest`); anchors form a `Selection` the frontend draws from
+    // engine geometry (`caretRect`/`selectionRects`) so the highlight matches the
+    // raster exactly; `copyText` is the first read-only action over a selection.
+    // All positions are `NodeId` (32-hex string) + node-relative UTF-8 byte
+    // offset — the layout anchor space (doc 58 §3).
+
+    /// Resolves a page-local point (twips) on 1-based `page` to the nearest caret
+    /// anchor. Returns `undefined` if the page has no lines. `zone` is `"content"`
+    /// (inside a line) or `"outside"` (snapped in from a margin).
+    #[wasm_bindgen(js_name = hitTest)]
+    #[must_use]
+    pub fn hit_test(&self, page: u32, x_twip: i32, y_twip: i32) -> Option<HitPayload> {
+        let snapshot = LayoutSnapshot::new(&self.layout);
+        let hit = snapshot.hit_test(page, Point::new(Twip(x_twip), Twip(y_twip)))?;
+        Some(HitPayload {
+            node: hit.pos.node.to_string(),
+            offset: hit.pos.offset,
+            zone: match hit.zone {
+                HitZone::Content => "content",
+                HitZone::Outside => "outside",
+            },
+        })
+    }
+
+    /// The caret box for a model anchor, as `[page, xTwip, yTwip, wTwip, hTwip]`
+    /// (page-local; `w` is 0). Empty if the anchor resolves to no line (e.g. a
+    /// stale position) or `node` is malformed.
+    #[wasm_bindgen(js_name = caretRect)]
+    #[must_use]
+    pub fn caret_rect(&self, node: &str, offset: u32) -> Vec<i32> {
+        let Some(pos) = parse_pos(node, offset) else {
+            return Vec::new();
+        };
+        LayoutSnapshot::new(&self.layout)
+            .caret_rect(pos)
+            .map(|(page, rect)| flat_rect(page, rect).to_vec())
+            .unwrap_or_default()
+    }
+
+    /// Highlight rectangles for a selection, flattened as `[page, x, y, w, h, …]`
+    /// (page-local twips), one 5-tuple per covered line-fragment. The range may
+    /// span nodes and pages; an empty/inverted range yields no rectangles.
+    #[wasm_bindgen(js_name = selectionRects)]
+    #[must_use]
+    pub fn selection_rects(
+        &self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+    ) -> Vec<i32> {
+        let Some(range) = parse_range(start_node, start_offset, end_node, end_offset) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for (page, rect) in LayoutSnapshot::new(&self.layout).selection_rects(range) {
+            out.extend_from_slice(&flat_rect(page, rect));
+        }
+        out
+    }
+
+    /// The plain text a selection covers — the first (read-only) action of the
+    /// interaction pipeline (doc 58 §4). Walks the model between the two anchors
+    /// in document order, slicing each node's shaped text at the byte offsets and
+    /// joining paragraphs with `\n`. Empty if either anchor is unknown.
+    ///
+    // Byte-exact for `Run`/`Tab`/wrapper content (the common case). Documents whose
+    // paragraphs contain fields/symbols/inline objects that contribute shaped
+    // glyphs may drift; hardening to a shaping-time extractor is a follow-up.
+    #[wasm_bindgen(js_name = copyText)]
+    #[must_use]
+    pub fn copy_text(
+        &self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+    ) -> String {
+        let Some(range) = parse_range(start_node, start_offset, end_node, end_offset) else {
+            return String::new();
+        };
+        self.copy_text_inner(range)
+    }
 }
 
 /// Internal engine calls, returning plain `Result<_, String>`. The `#[wasm_bindgen]`
@@ -226,6 +318,140 @@ impl WasmDocument {
                     Twip(s.page_size.height_twips),
                 )
             })
+    }
+
+    /// Plain text for a model range: slice the start/end nodes' shaped text at the
+    /// byte offsets and join the paragraphs the range spans with `\n`.
+    fn copy_text_inner(&self, range: ModelRange) -> String {
+        // Text-bearing nodes in document order — the order hit-testing traverses.
+        let mut nodes: Vec<(NodeId, String)> = Vec::new();
+        collect_block_text(self.document.body(), &mut nodes);
+
+        let start = nodes.iter().position(|(id, _)| *id == range.start.node);
+        let end = nodes.iter().position(|(id, _)| *id == range.end.node);
+        let (Some(mut si), Some(mut ei)) = (start, end) else {
+            return String::new();
+        };
+        let (mut so, mut eo) = (range.start.offset as usize, range.end.offset as usize);
+        // Order the endpoints (a backward drag selects the same text).
+        if si > ei || (si == ei && so > eo) {
+            std::mem::swap(&mut si, &mut ei);
+            std::mem::swap(&mut so, &mut eo);
+        }
+
+        if si == ei {
+            return slice_bytes(&nodes[si].1, so, eo);
+        }
+        let mut parts = Vec::with_capacity(ei - si + 1);
+        parts.push(slice_bytes(&nodes[si].1, so, nodes[si].1.len()));
+        for (_, text) in &nodes[si + 1..ei] {
+            parts.push(text.clone());
+        }
+        parts.push(slice_bytes(&nodes[ei].1, 0, eo));
+        parts.join("\n")
+    }
+}
+
+/// Collects every text-bearing node (paragraphs, including those inside tables and
+/// block content controls) in document order, paired with its shaped plain text —
+/// the byte space hit-testing addresses (doc 58 §3).
+fn collect_block_text(blocks: &[BlockNode], out: &mut Vec<(NodeId, String)>) {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(p) => out.push((p.id, node_plain_text(&p.inlines))),
+            BlockNode::Table(t) => {
+                for row in &t.rows {
+                    for cell in &row.cells {
+                        collect_block_text(&cell.blocks, out);
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => collect_block_text(&sdt.blocks, out),
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+}
+
+/// A model anchor `NodeId` + byte offset, or `None` if `node` is not a valid id.
+fn parse_pos(node: &str, offset: u32) -> Option<ModelPos> {
+    Some(ModelPos::new(NodeId::from_str(node).ok()?, offset))
+}
+
+/// A [`ModelRange`] from two string-encoded anchors, or `None` if either id is
+/// malformed.
+fn parse_range(
+    start_node: &str,
+    start_offset: u32,
+    end_node: &str,
+    end_offset: u32,
+) -> Option<ModelRange> {
+    Some(ModelRange::new(
+        parse_pos(start_node, start_offset)?,
+        parse_pos(end_node, end_offset)?,
+    ))
+}
+
+/// A page-local rectangle flattened to `[page, x, y, w, h]` twips.
+fn flat_rect(page: u32, rect: Rect) -> [i32; 5] {
+    [
+        page as i32,
+        rect.origin.x.raw(),
+        rect.origin.y.raw(),
+        rect.size.width.raw(),
+        rect.size.height.raw(),
+    ]
+}
+
+/// `text[from..to]` clamped to the string's byte length and snapped to char
+/// boundaries — never panics on a stale or off-boundary offset.
+fn slice_bytes(text: &str, from: usize, to: usize) -> String {
+    let clamp = |i: usize| {
+        let mut i = i.min(text.len());
+        while i < text.len() && !text.is_char_boundary(i) {
+            i += 1;
+        }
+        i
+    };
+    let (a, b) = (clamp(from), clamp(to));
+    if a >= b {
+        String::new()
+    } else {
+        text[a..b].to_string()
+    }
+}
+
+/// The model anchor a point resolved to (doc 58 §2 `TextCaret`/`Outside`): a
+/// `NodeId` (32-hex string), a node-relative UTF-8 byte offset, and whether the
+/// point was inside content or snapped in from outside.
+#[wasm_bindgen]
+#[derive(Clone, Debug)]
+pub struct HitPayload {
+    node: String,
+    offset: u32,
+    zone: &'static str,
+}
+
+#[wasm_bindgen]
+impl HitPayload {
+    /// The anchor node id (32-hex string; compare/pass back, never arithmetic).
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn node(&self) -> String {
+        self.node.clone()
+    }
+
+    /// The node-relative UTF-8 byte offset.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn offset(&self) -> u32 {
+        self.offset
+    }
+
+    /// `"content"` (inside a line) or `"outside"` (snapped from a margin).
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn zone(&self) -> String {
+        self.zone.to_string()
     }
 }
 
@@ -419,5 +645,68 @@ mod tests {
         let doc = open_document(RICH_DOCX).expect("open corpus docx");
         assert!(doc.page_size_inner(doc.page_count()).is_err());
         assert!(doc.render_page_inner(doc.page_count(), 96.0).is_err());
+    }
+
+    /// hit-test → caret/selection geometry → copy round-trips over a real
+    /// paragraph: copying a node's full range reproduces its plain text, the
+    /// geometry queries return well-formed rects, and a point inside the caret's
+    /// line resolves back to the same node (the doc 58 pipeline, read-only end).
+    #[test]
+    fn selection_and_copy_roundtrip() {
+        let doc = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(doc.document.body(), &mut nodes);
+        let (node_id, text) = nodes
+            .iter()
+            .find(|(_, t)| !t.is_empty())
+            .expect("a non-empty paragraph");
+        let node = node_id.to_string();
+        let end = text.len() as u32;
+
+        // Copying the whole node reproduces its shaped plain text exactly.
+        assert_eq!(doc.copy_text(&node, 0, &node, end), *text);
+        // A backward range copies the same text (endpoints are ordered).
+        assert_eq!(doc.copy_text(&node, end, &node, 0), *text);
+
+        // Caret geometry: [page, x, y, w=0, h>0].
+        let caret = doc.caret_rect(&node, 0);
+        assert_eq!(caret.len(), 5, "one flat rect");
+        assert_eq!(caret[3], 0, "caret is zero-width");
+        assert!(caret[4] > 0, "caret has line height");
+
+        // Selection geometry: at least one 5-tuple rect.
+        let rects = doc.selection_rects(&node, 0, &node, end);
+        assert!(!rects.is_empty() && rects.len().is_multiple_of(5));
+
+        // A point inside the caret's line resolves back to the same node.
+        let (page, x, y) = (caret[0] as u32, caret[1], caret[2]);
+        let hit = doc
+            .hit_test(page, x + 10, y + 10)
+            .expect("a hit on content");
+        assert_eq!(hit.node(), node);
+        assert_eq!(hit.zone(), "content");
+
+        // A malformed node id is an empty result, not a panic.
+        assert!(doc.caret_rect("not-a-node", 0).is_empty());
+        assert!(doc.copy_text("bad", 0, "bad", 1).is_empty());
+    }
+
+    /// Copy across two paragraphs joins them with a newline.
+    #[test]
+    fn copy_spans_paragraphs() {
+        let doc = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(doc.document.body(), &mut nodes);
+        // Two *adjacent* text nodes, so exactly one newline joins them (no empty
+        // paragraph in between contributing an extra break).
+        let pair = nodes
+            .windows(2)
+            .find(|w| !w[0].1.is_empty() && !w[1].1.is_empty())
+            .expect("two adjacent non-empty paragraphs");
+        let (a_id, a_text) = &pair[0];
+        let (b_id, b_text) = &pair[1];
+
+        let copied = doc.copy_text(&a_id.to_string(), 0, &b_id.to_string(), b_text.len() as u32);
+        assert_eq!(copied, format!("{a_text}\n{b_text}"));
     }
 }

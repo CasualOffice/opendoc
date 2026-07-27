@@ -163,9 +163,40 @@ body {
   gap: 18px;
 }
 
+.page-wrap {
+  position: relative;
+  line-height: 0; /* no descender gap under the canvas */
+}
+
 .page {
   background: #fff;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.16), 0 6px 20px rgba(0, 0, 0, 0.08);
   border-radius: 2px;
   max-width: 96vw;
+  cursor: text;
+}
+
+/* The selection/caret layer sits exactly over the canvas. Boxes are placed from
+   engine geometry (page-local twips → logical px), so they track the raster. */
+.overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.overlay .highlight {
+  position: absolute;
+  background: rgba(70, 130, 245, 0.32);
+}
+
+.overlay .caret {
+  position: absolute;
+  background: var(--ink);
+  animation: caret-blink 1.06s steps(1) infinite;
+}
+
+@keyframes caret-blink {
+  50% {
+    opacity: 0;
+  }
 }

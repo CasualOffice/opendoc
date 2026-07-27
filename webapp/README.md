@@ -17,9 +17,20 @@ browser**. Nothing is uploaded to a server. It is the browser-first surface the
 viewer→editor is developed and fine-tuned on (doc 56 decision: fat client,
 Rust→WASM, canvas paint).
 
-This corresponds to milestone **P1G-001** (WASM bridge + first pixel): `open`,
-`pageCount`, `pageSize`, `renderPage`. Selection/copy, hit-testing, and editing
-arrive in later milestones.
+Milestones landed here:
+
+- **P1G-001** (WASM bridge + first pixel): `open`, `pageCount`, `pageSize`,
+  `renderPage`.
+- **Web font provisioning**: CJK / complex-script fallback fetched over the
+  network (see below).
+- **P1G-003** (copy in view): drag to select, ⌘C to copy. The caret and
+  selection highlight are **drawn from the engine's own geometry** (`hitTest`,
+  `caretRect`, `selectionRects`), so they match the painted glyphs exactly. This
+  is the first read-only slice of the scalable interaction pipeline
+  (`docs/58-INTERACTION-SELECTION-EDITING-ARCHITECTURE.md`) that editing —
+  text, then tables/images/floats/headers — extends.
+
+Native find/AT overlay, hyperlink-open, and editing arrive in later milestones.
 
 ## Run it locally
 

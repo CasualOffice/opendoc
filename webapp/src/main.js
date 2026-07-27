@@ -56,6 +56,11 @@ const BASE_DPI = 96;
 let doc = null;
 /** Monotonic token so a slow render from a previous file/zoom is discarded. */
 let renderToken = 0;
+/** Per-page DOM: { pageNumber (1-based), canvas, overlay, twipPerPx }. */
+let pages = [];
+/** Current selection as model anchors, or null. `focus` trails the pointer. */
+let selection = null; // { anchor: {node, offset}, focus: {node, offset} }
+let dragging = false;
 
 function setStatus(text, kind = "") {
   statusEl.textContent = text;
@@ -79,6 +84,7 @@ async function openBytes(bytes, name) {
     // A previous document's memory is freed when it is dropped; replace it.
     if (doc) doc.free();
     doc = open(bytes);
+    selection = null;
     dropEl.hidden = true;
     await provisionFonts(name);
     await renderAll();
@@ -133,7 +139,12 @@ async function renderAll() {
   const count = doc.pageCount;
 
   pagesEl.replaceChildren();
+  pages = [];
   setStatus(`Rendering ${count} page${count === 1 ? "" : "s"} at ${Math.round(zoom * 100)}%…`);
+
+  // Engine twips → logical CSS px: device_px = twip/1440·dpi, logical = device/dpr,
+  // so logical_px = twip · zoom/15 and twipPerPx = 15/zoom (dpr cancels).
+  const twipPerPx = 1440 / (BASE_DPI * zoom);
 
   for (let i = 0; i < count; i++) {
     // Yield so a burst of pages does not freeze the tab; abort if superseded.
@@ -141,6 +152,9 @@ async function renderAll() {
     if (token !== renderToken) return;
 
     const bmp = doc.renderPage(i, dpi);
+    const wrap = document.createElement("div");
+    wrap.className = "page-wrap";
+
     const canvas = document.createElement("canvas");
     canvas.className = "page";
     canvas.width = bmp.widthPx;
@@ -154,11 +168,138 @@ async function renderAll() {
     // straight-alpha RGBA `ImageData` expects — a direct blit is correct.
     const image = new ImageData(bmp.rgba, bmp.widthPx, bmp.heightPx);
     ctx.putImageData(image, 0, 0);
-    pagesEl.appendChild(canvas);
+
+    // A transparent overlay above the canvas holds the caret/selection we draw
+    // ourselves from engine geometry — so the highlight matches the raster
+    // exactly (doc 58: custom engine-driven selection, no overlay-vs-glyph drift).
+    const overlay = document.createElement("div");
+    overlay.className = "overlay";
+
+    wrap.append(canvas, overlay);
+    pagesEl.appendChild(wrap);
+    pages.push({ pageNumber: i + 1, canvas, overlay, twipPerPx });
   }
 
+  drawSelection(); // re-place any existing selection at the new zoom
   if (token === renderToken) setStatus(`${count} page${count === 1 ? "" : "s"} · ${Math.round(zoom * 100)}%`);
 }
+
+// ---- Selection & copy (doc 58 pipeline: hit-test → selection → draw → copy) ---
+
+/** A pointer event on a page's overlay/canvas → that page's local twip point. */
+function pointToTwip(page, event) {
+  const rect = page.canvas.getBoundingClientRect();
+  const xPx = event.clientX - rect.left;
+  const yPx = event.clientY - rect.top;
+  return { x: Math.round(xPx * page.twipPerPx), y: Math.round(yPx * page.twipPerPx) };
+}
+
+/** Resolve a pointer event to a model anchor, or null if it misses content. */
+function anchorAt(page, event) {
+  const { x, y } = pointToTwip(page, event);
+  const hit = doc.hitTest(page.pageNumber, x, y);
+  if (!hit) return null;
+  const anchor = { node: hit.node, offset: hit.offset };
+  hit.free(); // release the WASM-owned payload; we copied out its fields
+  return anchor;
+}
+
+/** Clears every page's caret/selection layer. */
+function clearOverlays() {
+  for (const p of pages) p.overlay.replaceChildren();
+}
+
+/** Draws the current selection (or collapsed caret) from engine geometry. */
+function drawSelection() {
+  if (!doc) return;
+  clearOverlays();
+  if (!selection) return;
+  const { anchor, focus } = selection;
+
+  const collapsed = anchor.node === focus.node && anchor.offset === focus.offset;
+  if (collapsed) {
+    place(doc.caretRect(anchor.node, anchor.offset), "caret");
+    return;
+  }
+  const rects = doc.selectionRects(anchor.node, anchor.offset, focus.node, focus.offset);
+  for (let i = 0; i < rects.length; i += 5) {
+    place(rects.slice(i, i + 5), "highlight");
+  }
+}
+
+/** Places one flat `[page, x, y, w, h]` twip rect as a `kind` box on its page. */
+function place(flat, kind) {
+  if (flat.length < 5) return;
+  const [pageNumber, x, y, w, h] = flat;
+  const page = pages[pageNumber - 1];
+  if (!page) return;
+  const s = 1 / page.twipPerPx; // twip → logical px
+  const el = document.createElement("div");
+  el.className = kind;
+  el.style.left = `${x * s}px`;
+  el.style.top = `${y * s}px`;
+  el.style.width = `${Math.max(w * s, kind === "caret" ? 1 : 0)}px`;
+  el.style.height = `${h * s}px`;
+  page.overlay.appendChild(el);
+}
+
+function onPointerDown(page, event) {
+  if (event.button !== 0) return;
+  const anchor = anchorAt(page, event);
+  if (!anchor) return;
+  dragging = true;
+  selection = { anchor, focus: anchor };
+  drawSelection();
+  event.preventDefault();
+}
+
+function onPointerMove(page, event) {
+  if (!dragging) return;
+  const focus = anchorAt(page, event);
+  if (!focus) return;
+  selection = { anchor: selection.anchor, focus };
+  drawSelection();
+}
+
+function onPointerUp() {
+  dragging = false;
+}
+
+async function copySelection() {
+  if (!selection) return;
+  const { anchor, focus } = selection;
+  const text = doc.copyText(anchor.node, anchor.offset, focus.node, focus.offset);
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    const n = text.length;
+    setStatus(`Copied ${n} character${n === 1 ? "" : "s"}`);
+  } catch (err) {
+    console.warn("clipboard write failed:", err);
+  }
+}
+
+// Delegated pointer handling: resolve which page the event is over.
+function pageFromEvent(event) {
+  const wrap = event.target.closest?.(".page-wrap");
+  if (!wrap) return null;
+  const idx = [...pagesEl.children].indexOf(wrap);
+  return pages[idx] ?? null;
+}
+pagesEl.addEventListener("pointerdown", (e) => {
+  const page = pageFromEvent(e);
+  if (page) onPointerDown(page, e);
+});
+pagesEl.addEventListener("pointermove", (e) => {
+  const page = pageFromEvent(e);
+  if (page) onPointerMove(page, e);
+});
+window.addEventListener("pointerup", onPointerUp);
+document.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "c") {
+    copySelection();
+  }
+});
 
 async function handleFile(file) {
   if (!file) return;
