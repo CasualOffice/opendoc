@@ -74,6 +74,10 @@ const paraShadeNone = document.getElementById("paraShadeNone");
 const pgKeepNext = document.getElementById("pgKeepNext");
 const pgKeepLines = document.getElementById("pgKeepLines");
 const pgBreakBefore = document.getElementById("pgBreakBefore");
+const indentLeftInput = document.getElementById("indentLeft");
+const indentRightInput = document.getElementById("indentRight");
+const indentSpecialSel = document.getElementById("indentSpecial");
+const indentSpecialByInput = document.getElementById("indentSpecialBy");
 const indentDecBtn = document.getElementById("indentDec");
 const indentIncBtn = document.getElementById("indentInc");
 const bulletListBtn = document.getElementById("bulletList");
@@ -1028,9 +1032,9 @@ function registerPopover(btn, menu, reflect) {
   popovers.push(p);
   onButton(btn, () => (menu.hidden ? openPopover(p) : closePopover(p)));
   // Keep clicks inside the menu from stealing the selection focus, but let form
-  // controls (inputs) focus and toggle normally.
+  // controls (inputs, selects) focus, toggle, and open normally.
   menu.addEventListener("mousedown", (e) => {
-    if (e.target.tagName !== "INPUT") e.preventDefault();
+    if (!["INPUT", "SELECT", "OPTION"].includes(e.target.tagName)) e.preventDefault();
   });
   return p;
 }
@@ -1093,19 +1097,69 @@ spaceAfterInput.addEventListener("change", () =>
   applySpace(spaceAfterInput, (a, b, c, d, t) => doc.setSpaceAfter(a, b, c, d, t)),
 );
 
-// -- Paragraph options (shading + line/page-break flags) ----------------------
+// -- Paragraph options (indentation + shading + line/page-break flags) --------
+/** Twips → inches string, trimming trailing zeros; "" for zero. */
+function inchStr(twip) {
+  if (!twip) return "";
+  return (twip / TWIPS_PER_INCH).toFixed(2).replace(/\.?0+$/, "");
+}
+/** An inches field's value → twips (≥ 0); "" or non-numeric → 0. */
+function inchTwips(input) {
+  const raw = input.value.trim();
+  if (raw === "" || !Number.isFinite(Number(raw))) return 0;
+  return Math.max(0, Math.round(Number(raw) * TWIPS_PER_INCH));
+}
+
 function reflectParaOptsMenu() {
   if (!doc || !selection) return;
-  const f = doc.paragraphFlags(selection.focus.node);
+  const node = selection.focus.node;
+  // Indentation (inches).
+  const ind = doc.paragraphIndent(node);
+  const editingIndent = [indentLeftInput, indentRightInput, indentSpecialByInput, indentSpecialSel].includes(
+    document.activeElement,
+  );
+  if (!editingIndent) {
+    indentLeftInput.value = inchStr(ind.startTwip);
+    indentRightInput.value = inchStr(ind.endTwip);
+    if (ind.firstLineTwip > 0) {
+      indentSpecialSel.value = "first";
+      indentSpecialByInput.value = inchStr(ind.firstLineTwip);
+    } else if (ind.hangingTwip > 0) {
+      indentSpecialSel.value = "hanging";
+      indentSpecialByInput.value = inchStr(ind.hangingTwip);
+    } else {
+      indentSpecialSel.value = "none";
+    }
+  }
+  ind.free();
+  // Line/page-break flags.
+  const f = doc.paragraphFlags(node);
   pgKeepNext.checked = f.keepNext;
   pgKeepLines.checked = f.keepLines;
   pgBreakBefore.checked = f.pageBreakBefore;
-  const rgb = doc.paragraphShadingAt(selection.focus.node);
+  const rgb = doc.paragraphShadingAt(node);
   if (rgb >= 0 && document.activeElement !== paraShade) {
     paraShade.value = `#${rgb.toString(16).padStart(6, "0")}`;
   }
 }
 registerPopover(paraOptsBtn, paraOptsMenu, reflectParaOptsMenu);
+
+// Indentation: left/right absolute, and a first-line/hanging "special" indent
+// (setFirstLineIndent encodes hanging as a negative value, 0 clears both).
+indentLeftInput.addEventListener("change", () =>
+  runToolbarEdit((a, b, c, d) => doc.setLeftIndent(a, b, c, d, inchTwips(indentLeftInput))),
+);
+indentRightInput.addEventListener("change", () =>
+  runToolbarEdit((a, b, c, d) => doc.setRightIndent(a, b, c, d, inchTwips(indentRightInput))),
+);
+function applyIndentSpecial() {
+  const by = inchTwips(indentSpecialByInput);
+  const kind = indentSpecialSel.value;
+  const twips = kind === "first" ? by : kind === "hanging" ? -by : 0;
+  runToolbarEdit((a, b, c, d) => doc.setFirstLineIndent(a, b, c, d, twips));
+}
+indentSpecialSel.addEventListener("change", applyIndentSpecial);
+indentSpecialByInput.addEventListener("change", applyIndentSpecial);
 
 paraShade.addEventListener("input", () => {
   const [r, g, b] = hexToRgb(paraShade.value);

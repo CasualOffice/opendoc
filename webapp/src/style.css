@@ -430,6 +430,22 @@ input {
   border-color: var(--accent);
 }
 
+.menu-select {
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.menu-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .menu-unit {
   color: var(--muted);
   font-size: 12px;

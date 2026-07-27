@@ -127,6 +127,18 @@
     </div>
 
     <div id="paraOptsMenu" class="context-menu spacing-menu" hidden role="menu" aria-label="Paragraph options">
+      <div class="menu-heading">Indentation</div>
+      <label class="menu-row">Left<input id="indentLeft" type="number" min="0" max="12" step="0.1" inputmode="decimal" /><span class="menu-unit">in</span></label>
+      <label class="menu-row">Right<input id="indentRight" type="number" min="0" max="12" step="0.1" inputmode="decimal" /><span class="menu-unit">in</span></label>
+      <div class="menu-row">
+        <select id="indentSpecial" class="menu-select" aria-label="Special indent">
+          <option value="none">None</option>
+          <option value="first">First line</option>
+          <option value="hanging">Hanging</option>
+        </select>
+        <input id="indentSpecialBy" type="number" min="0" max="12" step="0.1" inputmode="decimal" value="0.5" aria-label="Special indent amount" /><span class="menu-unit">in</span>
+      </div>
+      <div class="menu-divider"></div>
       <div class="menu-heading">Shading</div>
       <div class="menu-row shade-row">
         <label class="shade-pick"><input id="paraShade" type="color" value="#ffe08a" /><span>Fill</span></label>
