@@ -1,17 +1,22 @@
 # OpenDoc
 
+[![Live demo](https://img.shields.io/badge/demo-opendoc.casualoffice.org-e2622a.svg)](https://opendoc.casualoffice.org)
 [![Status: Pre-release](https://img.shields.io/badge/status-pre--release-orange.svg)](docs/06-ROADMAP-AND-DELIVERY.md)
 [![Rust: 1.88+](https://img.shields.io/badge/rust-1.88%2B-black.svg?logo=rust)](rust-toolchain.toml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-**OpenDoc is a deterministic, embeddable Word-document engine written in Rust.**
-It reads and writes `.docx`, holds the document in a normalized editable model,
-and lays it out and renders it to pixels — for native, WebAssembly, and headless
-applications that need real DOCX fidelity without a browser, a server, or a UI
-framework.
+**A deterministic, embeddable Word-document engine written in Rust** — it reads
+and writes `.docx`, holds the document in a normalized editable model, and lays it
+out and renders it to pixels, for native, WebAssembly, and headless hosts that
+need real DOCX fidelity without a browser, a server, or a UI framework.
 
-It is developed by [CasualOffice](https://github.com/CasualOffice) as the future
-document engine for Casual Docs and as an SDK other applications can embed.
+The same engine compiles to WebAssembly and drives a **live in-browser editor** —
+[try it at **opendoc.casualoffice.org**](https://opendoc.casualoffice.org).
+
+[![OpenDoc in-browser editor](docs/assets/editor.jpg)](https://opendoc.casualoffice.org)
+
+Developed by [CasualOffice](https://github.com/CasualOffice) as the document engine
+for Casual Docs and an SDK others can embed.
 
 ## Why OpenDoc
 
@@ -50,6 +55,12 @@ other way around:
   CPU raster backend that renders real pages and tables to PNG via
   [`tiny-skia`](https://github.com/RazrFalcon/tiny-skia) and glyph outlines from
   [`skrifa`](https://github.com/googlefonts/fontations).
+- **In-browser editor** (WebAssembly): the engine compiled to
+  `wasm32-unknown-unknown` drives a live editor — hit-testing, a custom
+  engine-drawn caret and selection, incremental per-page repaint (sub-10 ms on a
+  large document), text and run/paragraph formatting with type-in-format, lists,
+  and table structure editing, all through a closed operation set with group
+  undo/redo. See [Try it in your browser](#try-it-in-your-browser).
 
 ## Quickstart
 
@@ -84,6 +95,30 @@ Rust **1.88.0** as its minimum supported version (MSRV). Every pull request runs
 the build, test, lint, docs, and WASM gates on the pinned toolchain plus a
 separate locked all-target check on the MSRV.
 
+## Try it in your browser
+
+**Live demo: [opendoc.casualoffice.org](https://opendoc.casualoffice.org)** — open
+a `.docx` and edit it right now, no install.
+
+`webapp/` is a zero-server harness that runs the engine as WebAssembly: open a
+`.docx`, see it rendered exactly as the engine lays it out, and **edit it live** —
+type with formatting, apply styles / fonts / sizes / colors, bulleted and numbered
+lists, and tables (right-click a cell for row/column operations), with undo/redo
+and save back to `.docx`. Nothing is uploaded; everything runs client-side. To run
+it locally:
+
+```sh
+# Requires wasm-pack (https://drager.github.io/wasm-pack) and the pinned toolchain.
+./webapp/build.sh     # compile the engine to webapp/pkg and wire the harness
+./webapp/serve.py     # serve on http://localhost:8099 with no-cache headers
+# then open http://localhost:8099/index.html
+```
+
+It is a developer test harness, not a supported product — the browser-first
+surface the editor is built and fine-tuned on. Theme and accent color are
+customizable from the in-app settings (⚙). See the architecture in
+[Editor shell & render (Phase 1G)](docs/56-EDITOR-SHELL-AND-RENDER-ARCHITECTURE.md).
+
 ## Example
 
 Import a `.docx` into the model and read back its content:
@@ -106,43 +141,24 @@ let document = outcome.document;
 
 ## Status & limitations
 
-OpenDoc is in **pre-release development**: the crates are unpublished and the
-public API is not yet stable. It is a maturing engine, not a finished product —
-here is an honest picture of where it stands.
+**Pre-release** — a maturing engine, not a finished product. An honest picture:
 
-**What works today**
+**Works today** — DOCX **import → model → semantic write-back** (round-trips to a
+LibreOffice-valid `.docx` and an identical model; unedited packages reconstruct
+byte-for-byte); a structurally strong **layout/render** path (style cascade,
+headers/footers, tables, floats with z-order, VML) that matches LibreOffice page
+counts exactly on 3/5 corpus docs and within ±1 on the rest; and an **in-browser
+editor** (WebAssembly) with hit-testing, a custom caret/selection, incremental
+repaint, text/format/list editing, table structure editing, undo/redo, and save.
 
-- The full DOCX **import → model → semantic write-back** path is complete: a
-  `.docx` reads into the normalized model and writes back to a LibreOffice-valid
-  `.docx` that reopens to an identical model (a semantic fixed point over the
-  real-producer fixture corpus). An unedited package can also be reconstructed
-  byte-for-byte.
-- The **layout and rendering path is structurally strong.** Recent fidelity work
-  (PRs #126–#135) added an effective-property style cascade
-  (`docDefaults → styles/basedOn → direct`, giving correct sizes, families,
-  bold/italic, theme colors, and paragraph/line spacing), Word header/footer band
-  nesting, table cell margins (`tcMar`) and vertical alignment (`vAlign`),
-  block-level SDT flow (which recovers tables of contents), a floating-object
-  layer with real z-order (DrawingML `wpg` groups, floating text boxes,
-  header/footer floats), VML shapes parsed and painted, and page-background color.
-- Measured against **LibreOffice as the layout oracle**, page counts on the
-  sample corpus are exact on 3 of 5 documents and within ±1 on the other 2.
+**Not yet** — the renderer is **not pixel-perfect Word-grade**: no text wrap
+around floats, slightly tall CJK fallback metrics, a couple of ±1 page-count gaps,
+some footer field-recompute edge cases. Footnote/endnote body placement, inline
+math (OMML), and multi-column layout aren't done. A GPU backend, the Tauri desktop
+shell, worker isolation, and a stable public SDK are not started.
 
-**Known limitations (not yet done)**
-
-The renderer is structurally strong but **not yet pixel-perfect Word-grade**:
-text wrapping around floats is not yet implemented, so body text can overlap a
-float; CJK fallback-font line metrics run slightly tall; a couple of ±1
-page-count gaps remain; footer `PAGE`/`NUMPAGES` recompute has edge cases where
-cached values can show; and floating-text-box export drops its anchor on
-round-trip. Footnote and endnote **body** placement, inline math (OMML) layout,
-and multi-column section layout are not done yet. Hit-testing over rendered
-pages, WASM/GPU render backends, the Tauri desktop viewer, and a stable public
-SDK are not started.
-
-See the [rendering fidelity gap analysis](docs/46-RENDERING-FIDELITY-GAP-ANALYSIS.md)
-for the evidence-backed diagnosis and prioritized roadmap, and the
-[support matrix](docs/18-SUPPORT-MATRIX.md) for current-vs-target support.
+Details: [fidelity gap analysis](docs/46-RENDERING-FIDELITY-GAP-ANALYSIS.md) ·
+[support matrix](docs/18-SUPPORT-MATRIX.md).
 
 ## Workspace
 
@@ -176,7 +192,8 @@ on design.
 | 1B | Semantic writer (model → valid editable `.docx`) | Complete |
 | 1C | Typography and paragraph/block layout | Substantially implemented |
 | 1D | Pagination and backend-neutral display list | Substantially implemented |
-| 1E | CPU rendering; then WASM/GPU backends and hit testing | CPU rendering implemented; other backends and hit testing not started |
+| 1E | CPU rendering; then WASM/GPU backends and hit testing | CPU rendering + hit testing implemented; GPU backend not started |
+| 1G | In-browser editor (Rust→WASM): viewer, editing, tables | In progress (developer harness in `webapp/`) |
 | 2 | Core editing SDK and DOCX save/reopen workflow | Planned |
 | 3 | Advanced office-document features | Planned |
 | 4 | Stable SDK surfaces and third-party embedding | Planned |
@@ -184,34 +201,21 @@ on design.
 | 6 | Stable 1.0 release | Planned |
 
 Phases 1C–1E are structurally in place and improving in fidelity; they are not
-yet declared complete. Product sequencing positions the **Tauri desktop
-application** before the public editing SDK and the WASM/embedding surfaces — but
-it is not started, and none of the rendering work above is a Word-grade or
-release claim. Detailed deliverables and exit gates live in the
-[roadmap](docs/06-ROADMAP-AND-DELIVERY.md).
+yet declared complete. Development is **web-first and open-source-first**: the
+editor is built and fine-tuned in the browser (Phase 1G, `webapp/`) before the
+public editing SDK and the desktop (Tauri) shell, which are not started. None of
+the rendering work above is a Word-grade or release claim. Detailed deliverables
+and exit gates live in the [roadmap](docs/06-ROADMAP-AND-DELIVERY.md).
 
 ## Documentation
 
-- [Architecture blueprint](docs/00-README.md)
-- [Outcome requirements](docs/01-ORD.md)
-- [Architecture](docs/02-ARCHITECTURE.md)
-- [SDK API specification](docs/05-SDK-API-SPEC.md)
-- [Roadmap and delivery](docs/06-ROADMAP-AND-DELIVERY.md)
-- [Quality, security, and compatibility](docs/07-QUALITY-SECURITY-AND-COMPATIBILITY.md)
-- [Architecture decision register](docs/08-ADR-REGISTER.md)
-- [Design-first delivery process](docs/11-DESIGN-FIRST-PROCESS.md)
-- [Execution tracker](docs/14-EXECUTION-TRACKER.md)
-- [CI and release gates](docs/15-CI-AND-RELEASE-GATES.md)
-- [Support matrix](docs/18-SUPPORT-MATRIX.md)
-- [Schema v1 design reference](docs/38-SCHEMA-V1-DESIGN-REFERENCE.md)
-- [Rendering architecture research](docs/42-RENDERING-ARCHITECTURE-RESEARCH.md)
-- [Layout/pagination/rendering design (Phases 1C–1E)](docs/43-PHASE-1C-LAYOUT-RENDERING-DESIGN.md)
-- [Coverage gap audit](docs/44-COVERAGE-GAP-AUDIT.md)
-- [Extensibility & collaboration seams](docs/45-EXTENSIBILITY-AND-COLLABORATION-SEAMS.md)
-- [Rendering fidelity gap analysis & roadmap](docs/46-RENDERING-FIDELITY-GAP-ANALYSIS.md)
-
-The numbered documents in `docs/` are the source of truth for accepted
-architecture, behavior, delivery status, and compatibility claims.
+The numbered documents in [`docs/`](docs/) are the source of truth for accepted
+architecture, behavior, and compatibility. Good entry points:
+[architecture](docs/02-ARCHITECTURE.md) ·
+[SDK API](docs/05-SDK-API-SPEC.md) ·
+[roadmap](docs/06-ROADMAP-AND-DELIVERY.md) ·
+[editor architecture (Phase 1G)](docs/56-EDITOR-SHELL-AND-RENDER-ARCHITECTURE.md) ·
+[execution tracker](docs/14-EXECUTION-TRACKER.md).
 
 ## Contributing
 
