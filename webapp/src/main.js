@@ -422,7 +422,9 @@ async function copySelection() {
 function pageFromEvent(event) {
   const wrap = event.target.closest?.(".page-wrap");
   if (!wrap) return null;
-  const idx = [...pagesEl.children].indexOf(wrap);
+  // Index among page wraps only — `pagesEl` also holds the ruler as a child, so
+  // indexing over all children would be off by the ruler's slot (dead clicks).
+  const idx = [...pagesEl.querySelectorAll(".page-wrap")].indexOf(wrap);
   return pages[idx] ?? null;
 }
 pagesEl.addEventListener("pointerdown", (e) => {
@@ -583,9 +585,9 @@ function buildRuler() {
     }
   }
 
-  // Indent markers (recreated each build; positioned by the selection). Purely
-  // visual for now — the whole ruler is pointer-events:none so it can never
-  // intercept a page click; draggable indents are a follow-up.
+  // Indent markers (recreated each build; positioned by the selection). Only the
+  // markers are pointer-interactive; the rest of the ruler is click-through, so a
+  // marker drag can never steal a page click.
   for (const [key, cls] of [
     ["firstLine", "down"],
     ["left", "up"],
@@ -594,6 +596,9 @@ function buildRuler() {
     const m = document.createElement("div");
     m.className = `ruler-marker ${cls}`;
     m.dataset.marker = key;
+    m.title =
+      key === "firstLine" ? "First-line indent" : key === "left" ? "Left indent" : "Right indent";
+    m.addEventListener("pointerdown", (e) => startMarkerDrag(key, e));
     rulerTrack.appendChild(m);
     markers[key] = m;
   }
@@ -621,6 +626,68 @@ function updateRulerMarkers() {
   markers.left.style.left = `${px(contentStart + start)}px`;
   markers.firstLine.style.left = `${px(contentStart + start + firstLine)}px`;
   markers.right.style.left = `${px(contentEnd - end)}px`;
+}
+
+/** Drag an indent marker. Uses window-level move/up listeners (never
+ *  setPointerCapture) so the pointer is always released — the ruler acts on the
+ *  caret paragraph, so a selection is required. */
+function startMarkerDrag(key, ev) {
+  if (!doc || !selection || !rulerGeom) return;
+  ev.preventDefault();
+  ev.stopPropagation(); // don't let the pointerdown fall through to the page
+
+  const trackRect = rulerTrack.getBoundingClientRect();
+  const px = (t) => t * rulerScale;
+  const contentStart = rulerGeom.marginStart;
+  const contentEnd = rulerGeom.width - rulerGeom.marginEnd;
+
+  // The left marker carries the first-line marker with it (Word/Docs behaviour);
+  // capture the current first-line offset so it is preserved during the drag.
+  const ind = doc.paragraphIndent(selection.focus.node);
+  const startTwip = ind.startTwip;
+  const firstLineOff = ind.firstLineTwip - ind.hangingTwip;
+  ind.free();
+
+  const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+  const xTwipAt = (clientX) => clamp((clientX - trackRect.left) / rulerScale, 0, rulerGeom.width);
+
+  // Live visual feedback while dragging (model is committed on pointerup).
+  const preview = (x) => {
+    if (key === "left") {
+      markers.left.style.left = `${px(x)}px`;
+      markers.firstLine.style.left = `${px(x + firstLineOff)}px`;
+    } else {
+      markers[key].style.left = `${px(x)}px`;
+    }
+  };
+
+  // Resolve the marker's ruler x to an absolute indent for the WASM setter.
+  const commit = async (x) => {
+    let call;
+    if (key === "left") {
+      const twips = Math.round(x - contentStart);
+      call = (sn, so, en, eo) => doc.setLeftIndent(sn, so, en, eo, twips);
+    } else if (key === "firstLine") {
+      const twips = Math.round(x - contentStart - startTwip);
+      call = (sn, so, en, eo) => doc.setFirstLineIndent(sn, so, en, eo, twips);
+    } else {
+      const twips = Math.round(contentEnd - x);
+      call = (sn, so, en, eo) => doc.setRightIndent(sn, so, en, eo, twips);
+    }
+    await runToolbarEdit(call);
+    updateRulerMarkers(); // snap to the model's clamped truth
+  };
+
+  markers[key].classList.add("dragging");
+  const onMove = (e) => preview(xTwipAt(e.clientX));
+  const onUp = (e) => {
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    markers[key].classList.remove("dragging");
+    commit(xTwipAt(e.clientX));
+  };
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
 }
 
 // ---- Editing (keys → semantic edits through the WASM choke point) ------------

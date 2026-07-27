@@ -553,7 +553,8 @@ input {
   border: 1px solid var(--line);
   border-radius: 5px;
   user-select: none;
-  /* Display-only: the ruler must never intercept a click meant for the page. */
+  /* The strip itself never intercepts a page click; only the small indent
+     markers below opt back in (pointer-events: auto) so they can be dragged. */
   pointer-events: none;
 }
 
@@ -613,13 +614,18 @@ input {
   transform: translateX(-50%);
   background: var(--accent);
   cursor: ew-resize;
+  /* The only interactive part of the ruler — grab to drag the paragraph indent. */
+  pointer-events: auto;
+  touch-action: none;
   filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.28));
 }
 
+/* Widen the grab target horizontally only, so it never reaches down into the
+   page area below the ruler. */
 .ruler-marker::after {
   content: "";
   position: absolute;
-  inset: -6px;
+  inset: -2px -6px;
 }
 
 .ruler-marker.down {
@@ -632,7 +638,8 @@ input {
   clip-path: polygon(50% 0, 100% 48%, 100% 100%, 0 100%, 0 48%);
 }
 
-.ruler-marker:hover {
+.ruler-marker:hover,
+.ruler-marker.dragging {
   filter: brightness(1.12) drop-shadow(0 1px 1px rgba(0, 0, 0, 0.28));
 }
 
