@@ -19,6 +19,38 @@
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{BlockNode, Document, InlineNode, Paragraph, Run, RunProperties};
 
+/// A run-property change to apply over a range: each `Some(_)` field sets that
+/// toggle, `None` leaves it untouched. Bold/italic/underline/strike (`w:b`, `w:i`,
+/// `w:u`, `w:strike`).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct FormatDelta {
+    /// Set bold on/off.
+    pub bold: Option<bool>,
+    /// Set italic on/off.
+    pub italic: Option<bool>,
+    /// Set underline on/off.
+    pub underline: Option<bool>,
+    /// Set strike-through on/off.
+    pub strike: Option<bool>,
+}
+
+impl FormatDelta {
+    fn apply_to(self, props: &mut RunProperties) {
+        if let Some(b) = self.bold {
+            props.bold = Some(b);
+        }
+        if let Some(i) = self.italic {
+            props.italic = Some(i);
+        }
+        if let Some(u) = self.underline {
+            props.underline = Some(u);
+        }
+        if let Some(s) = self.strike {
+            props.strike = Some(s);
+        }
+    }
+}
+
 /// A caret position: a paragraph node and a node-relative UTF-8 byte offset.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Pos {
@@ -77,6 +109,24 @@ pub enum Operation {
         first: NodeId,
         /// The paragraph appended and removed.
         second: NodeId,
+    },
+    /// Apply a run-property change over a range within one paragraph (bold,
+    /// italic, …). Runs straddling the range are split so the change lands
+    /// exactly on the selection.
+    FormatText {
+        /// The range to format (same node for `start`/`end`).
+        range: Range,
+        /// The property change.
+        delta: FormatDelta,
+    },
+    /// Replace a paragraph's entire inline content. This is the inverse vehicle
+    /// for structural edits (formatting run-splits) whose forward effect is not a
+    /// simple reverse op — undo restores the paragraph's inlines verbatim.
+    SetInlines {
+        /// The paragraph whose content is replaced.
+        node: NodeId,
+        /// The inlines to install.
+        inlines: Vec<InlineNode>,
     },
 }
 
@@ -158,7 +208,160 @@ pub fn apply(
                 None => Err(EditError::NodeNotFound),
             }
         }
+        Operation::FormatText { range, delta } => {
+            if range.start.node != range.end.node {
+                return Err(EditError::CrossParagraph);
+            }
+            if range.end.offset <= range.start.offset {
+                return Err(EditError::EmptyEdit);
+            }
+            let node = range.start.node;
+            let para = find_paragraph_mut(doc.body_mut(), node).ok_or(EditError::NodeNotFound)?;
+            if range.end.offset > paragraph_text_len(para) {
+                return Err(EditError::OffsetOutOfRange);
+            }
+            // Snapshot for an exact undo, then align run boundaries to the range
+            // (end first, so the start offset stays valid) and format the covered
+            // runs.
+            let old = para.inlines.clone();
+            ensure_run_boundary(&mut para.inlines, range.end.offset, ids)?;
+            ensure_run_boundary(&mut para.inlines, range.start.offset, ids)?;
+            let covered: Vec<usize> = run_segments(&para.inlines)
+                .into_iter()
+                .filter(|s| s.start >= range.start.offset && s.end <= range.end.offset)
+                .map(|s| s.idx)
+                .collect();
+            for idx in covered {
+                if let InlineNode::Run(run) = &mut para.inlines[idx] {
+                    delta.apply_to(&mut run.properties);
+                }
+            }
+            Ok(Operation::SetInlines { node, inlines: old })
+        }
+        Operation::SetInlines { node, inlines } => {
+            let para = find_paragraph_mut(doc.body_mut(), *node).ok_or(EditError::NodeNotFound)?;
+            let previous = std::mem::replace(&mut para.inlines, inlines.clone());
+            Ok(Operation::SetInlines {
+                node: *node,
+                inlines: previous,
+            })
+        }
     }
+}
+
+/// Ensures a run boundary exists at byte `offset` by splitting the run that
+/// straddles it (the tail becomes a new run with the same properties). A no-op
+/// when the offset already falls on a run boundary or outside every run.
+fn ensure_run_boundary(
+    inlines: &mut Vec<InlineNode>,
+    offset: u32,
+    ids: &mut dyn RunIds,
+) -> Result<(), EditError> {
+    let target = run_segments(inlines)
+        .into_iter()
+        .find(|s| offset > s.start && offset < s.end)
+        .map(|s| (s.idx, (offset - s.start) as usize));
+    let Some((idx, local)) = target else {
+        return Ok(());
+    };
+    let (head, tail, properties) = match &inlines[idx] {
+        InlineNode::Run(run) => {
+            if !run.text.is_char_boundary(local) {
+                return Err(EditError::NotCharBoundary);
+            }
+            (
+                run.text[..local].to_string(),
+                run.text[local..].to_string(),
+                run.properties.clone(),
+            )
+        }
+        _ => return Ok(()),
+    };
+    let tail_id = ids.next().ok_or(EditError::IdExhausted)?;
+    if let InlineNode::Run(run) = &mut inlines[idx] {
+        run.text = head;
+    }
+    inlines.insert(
+        idx + 1,
+        InlineNode::Run(Run {
+            id: tail_id,
+            properties,
+            text: tail,
+        }),
+    );
+    Ok(())
+}
+
+/// Whether each toggle is uniformly on across a formatted range — drives a
+/// toolbar's active state and the toggle direction.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct FormatState {
+    /// Every covered run is bold.
+    pub bold: bool,
+    /// Every covered run is italic.
+    pub italic: bool,
+    /// Every covered run is underlined.
+    pub underline: bool,
+    /// Every covered run is struck through.
+    pub strike: bool,
+}
+
+/// The [`FormatState`] of the runs a `range` covers within one paragraph — `true`
+/// for a toggle only when **every** covered run sets it (an empty range or no
+/// covered runs yields all-false).
+#[must_use]
+pub fn format_state(document: &Document, range: Range) -> FormatState {
+    if range.start.node != range.end.node || range.end.offset <= range.start.offset {
+        return FormatState::default();
+    }
+    let Some(para) = find_paragraph(document.body(), range.start.node) else {
+        return FormatState::default();
+    };
+    let covered: Vec<&RunProperties> = run_segments(&para.inlines)
+        .into_iter()
+        .filter(|s| s.end > range.start.offset && s.start < range.end.offset && s.start < s.end)
+        .filter_map(|s| match &para.inlines[s.idx] {
+            InlineNode::Run(run) => Some(&run.properties),
+            _ => None,
+        })
+        .collect();
+    if covered.is_empty() {
+        return FormatState::default();
+    }
+    let all = |f: fn(&RunProperties) -> Option<bool>| covered.iter().all(|p| f(p) == Some(true));
+    FormatState {
+        bold: all(|p| p.bold),
+        italic: all(|p| p.italic),
+        underline: all(|p| p.underline),
+        strike: all(|p| p.strike),
+    }
+}
+
+/// Finds the paragraph with `id` (immutable), recursing into tables and content
+/// controls.
+fn find_paragraph(blocks: &[BlockNode], id: NodeId) -> Option<&Paragraph> {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(p) if p.id == id => return Some(p),
+            BlockNode::Paragraph(_) => {}
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        if let Some(p) = find_paragraph(&cell.blocks, id) {
+                            return Some(p);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(p) = find_paragraph(&sdt.blocks, id) {
+                    return Some(p);
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    None
 }
 
 /// A source of fresh run identities. Backed by
@@ -599,6 +802,61 @@ mod tests {
         );
         apply(&mut d, &mut ids, &inverse).unwrap();
         assert_eq!(text_of(&d, p), "Hello world");
+    }
+
+    /// The runs (text, bold flag) of paragraph `id`, for formatting assertions.
+    fn runs_of(document: &Document, id: NodeId) -> Vec<(String, Option<bool>)> {
+        document
+            .body()
+            .iter()
+            .find_map(|b| match b {
+                BlockNode::Paragraph(p) if p.id == id => Some(
+                    p.inlines
+                        .iter()
+                        .filter_map(|i| match i {
+                            InlineNode::Run(r) => Some((r.text.clone(), r.properties.bold)),
+                            _ => None,
+                        })
+                        .collect(),
+                ),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn format_splits_runs_and_undo_restores() {
+        let p = n(2);
+        let mut d = doc(vec![para(2, vec![run(3, "HelloWorld")])]);
+        let mut ids = IdGenerator::new(9);
+
+        // Bold the first 5 bytes: the run splits, only "Hello" becomes bold.
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::FormatText {
+                range: Range {
+                    start: Pos::new(p, 0),
+                    end: Pos::new(p, 5),
+                },
+                delta: FormatDelta {
+                    bold: Some(true),
+                    ..FormatDelta::default()
+                },
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            runs_of(&d, p),
+            vec![
+                ("Hello".to_string(), Some(true)),
+                ("World".to_string(), None),
+            ]
+        );
+
+        // The inverse restores the original single, unformatted run.
+        apply(&mut d, &mut ids, &inverse).unwrap();
+        assert_eq!(runs_of(&d, p), vec![("HelloWorld".to_string(), None)]);
     }
 
     #[test]

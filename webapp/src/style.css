@@ -79,6 +79,39 @@ body {
   gap: 14px;
 }
 
+.format {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.fmt {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.fmt:hover {
+  border-color: var(--muted);
+}
+
+.fmt[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.fmt:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .footer {
   padding: 10px 18px;
   font-size: 12px;
