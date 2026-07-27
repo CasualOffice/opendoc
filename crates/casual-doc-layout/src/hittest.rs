@@ -305,11 +305,18 @@ fn collect_fragment<'a>(
         BlockFragment::Paragraph {
             lines, box_metrics, ..
         } => {
+            // The leading indent (`w:ind@start`) shifts the paragraph's content
+            // origin to the indented column — exactly as `compose_fragment` does
+            // when painting (list items and indented paragraphs carry it; normal
+            // paragraphs have zero). The line's run origins are relative to that
+            // indented origin, so the caret/selection geometry must start there
+            // too, or indented/list/tabbed lines resolve left of their glyphs.
+            let content_left = left + box_metrics.indent_start;
             let mut y = top + box_metrics.space_before;
             for line in &lines.lines {
                 out.push(LineBox {
                     page,
-                    left,
+                    left: content_left,
                     top: y,
                     line,
                 });
@@ -619,6 +626,65 @@ mod tests {
 
     fn layout(fragments: &[BlockFragment]) -> PaginatedLayout {
         paginate(fragments, &letter_config())
+    }
+
+    /// Sets a paragraph fragment's leading indent (`w:ind@start`).
+    fn with_indent(fragment: BlockFragment, indent: Twip) -> BlockFragment {
+        match fragment {
+            BlockFragment::Paragraph {
+                id,
+                lines,
+                mut box_metrics,
+                break_control,
+                decor,
+            } => {
+                box_metrics.indent_start = indent;
+                BlockFragment::Paragraph {
+                    id,
+                    lines,
+                    box_metrics,
+                    break_control,
+                    decor,
+                }
+            }
+            other => other,
+        }
+    }
+
+    /// An indented paragraph (list item / `w:ind`) resolves its caret and hits at
+    /// the indented content column — where the renderer paints the glyphs — not
+    /// left-shifted back to the page margin. Regression for the selection/caret
+    /// left-shift on bulleted/tabbed/indented lines.
+    #[test]
+    fn indent_shifts_caret_and_hit_geometry_to_the_content_column() {
+        let indent = Twip(720); // a 0.5in hanging/list indent
+        let n = node(1);
+        let pos0 = ModelPos::new(n, 0);
+
+        let plain = layout(&[ltr_para(1, &[3])]);
+        let plain_x = LayoutSnapshot::new(&plain)
+            .caret_rect(pos0)
+            .expect("plain caret")
+            .1
+            .origin
+            .x;
+
+        let indented = layout(&[with_indent(ltr_para(1, &[3]), indent)]);
+        let snap = LayoutSnapshot::new(&indented);
+        let (page, rect) = snap.caret_rect(pos0).expect("indented caret");
+        assert_eq!(
+            rect.origin.x,
+            plain_x + indent,
+            "caret starts at margin + indent, matching the painted glyphs"
+        );
+
+        // A click at that column round-trips to offset 0 (it used to snap left).
+        let center = Point::new(rect.origin.x, Twip(rect.origin.y.raw() + LINE_H / 2));
+        let hit = snap
+            .hit_test(page, center)
+            .expect("hit at the content column");
+        assert_eq!(hit.pos, pos0);
+        assert_eq!(hit.zone, HitZone::Content);
     }
 
     #[test]
