@@ -13,6 +13,11 @@ framework.
 It is developed by [CasualOffice](https://github.com/CasualOffice) as the future
 document engine for Casual Docs and as an SDK other applications can embed.
 
+The same engine compiles to WebAssembly and drives a **live in-browser editor**:
+open a `.docx`, see it laid out exactly as the engine renders it, and edit it —
+type with formatting, lists, and tables — with no server and nothing uploaded.
+See [Try it in your browser](#try-it-in-your-browser).
+
 ## Why OpenDoc
 
 Most ways to work with `.docx` force a trade-off: a full office suite you can't
@@ -50,6 +55,12 @@ other way around:
   CPU raster backend that renders real pages and tables to PNG via
   [`tiny-skia`](https://github.com/RazrFalcon/tiny-skia) and glyph outlines from
   [`skrifa`](https://github.com/googlefonts/fontations).
+- **In-browser editor** (WebAssembly): the engine compiled to
+  `wasm32-unknown-unknown` drives a live editor — hit-testing, a custom
+  engine-drawn caret and selection, incremental per-page repaint (sub-10 ms on a
+  large document), text and run/paragraph formatting with type-in-format, lists,
+  and table structure editing, all through a closed operation set with group
+  undo/redo. See [Try it in your browser](#try-it-in-your-browser).
 
 ## Quickstart
 
@@ -83,6 +94,26 @@ The repository pins Rust **1.96.0** through `rust-toolchain.toml` and supports
 Rust **1.88.0** as its minimum supported version (MSRV). Every pull request runs
 the build, test, lint, docs, and WASM gates on the pinned toolchain plus a
 separate locked all-target check on the MSRV.
+
+## Try it in your browser
+
+`webapp/` is a zero-server harness that runs the engine as WebAssembly: open a
+`.docx`, see it rendered exactly as the engine lays it out, and **edit it live** —
+type with formatting, apply styles / fonts / sizes / colors, bulleted and numbered
+lists, and tables (right-click a cell for row/column operations), with undo/redo
+and save back to `.docx`. Nothing is uploaded; everything runs client-side.
+
+```sh
+# Requires wasm-pack (https://drager.github.io/wasm-pack) and the pinned toolchain.
+./webapp/build.sh     # compile the engine to webapp/pkg and wire the harness
+./webapp/serve.py     # serve on http://localhost:8099 with no-cache headers
+# then open http://localhost:8099/index.html
+```
+
+It is a developer test harness, not a supported product — the browser-first
+surface the editor is built and fine-tuned on. Theme and accent color are
+customizable from the in-app settings (⚙). See the architecture in
+[Editor shell & render (Phase 1G)](docs/56-EDITOR-SHELL-AND-RENDER-ARCHITECTURE.md).
 
 ## Example
 
@@ -127,6 +158,11 @@ here is an honest picture of where it stands.
   header/footer floats), VML shapes parsed and painted, and page-background color.
 - Measured against **LibreOffice as the layout oracle**, page counts on the
   sample corpus are exact on 3 of 5 documents and within ±1 on the other 2.
+- An **in-browser editor** runs the engine as WebAssembly (Phase 1G): open a
+  `.docx`, and edit text, run/paragraph formatting, lists, and table structure
+  (rows/columns/whole-table via a right-click menu), with hit-testing, a custom
+  caret/selection, incremental repaint, undo/redo, and save. It is a developer
+  harness, not a released product surface.
 
 **Known limitations (not yet done)**
 
@@ -136,9 +172,10 @@ float; CJK fallback-font line metrics run slightly tall; a couple of ±1
 page-count gaps remain; footer `PAGE`/`NUMPAGES` recompute has edge cases where
 cached values can show; and floating-text-box export drops its anchor on
 round-trip. Footnote and endnote **body** placement, inline math (OMML) layout,
-and multi-column section layout are not done yet. Hit-testing over rendered
-pages, WASM/GPU render backends, the Tauri desktop viewer, and a stable public
-SDK are not started.
+and multi-column section layout are not done yet. A **GPU render backend**, the
+**Tauri desktop shell**, worker-thread/OffscreenCanvas isolation, and a stable
+public **SDK** are not started; the in-browser editor is a developer harness, not
+a supported embedding surface.
 
 See the [rendering fidelity gap analysis](docs/46-RENDERING-FIDELITY-GAP-ANALYSIS.md)
 for the evidence-backed diagnosis and prioritized roadmap, and the
@@ -176,7 +213,8 @@ on design.
 | 1B | Semantic writer (model → valid editable `.docx`) | Complete |
 | 1C | Typography and paragraph/block layout | Substantially implemented |
 | 1D | Pagination and backend-neutral display list | Substantially implemented |
-| 1E | CPU rendering; then WASM/GPU backends and hit testing | CPU rendering implemented; other backends and hit testing not started |
+| 1E | CPU rendering; then WASM/GPU backends and hit testing | CPU rendering + hit testing implemented; GPU backend not started |
+| 1G | In-browser editor (Rust→WASM): viewer, editing, tables | In progress (developer harness in `webapp/`) |
 | 2 | Core editing SDK and DOCX save/reopen workflow | Planned |
 | 3 | Advanced office-document features | Planned |
 | 4 | Stable SDK surfaces and third-party embedding | Planned |
@@ -184,11 +222,11 @@ on design.
 | 6 | Stable 1.0 release | Planned |
 
 Phases 1C–1E are structurally in place and improving in fidelity; they are not
-yet declared complete. Product sequencing positions the **Tauri desktop
-application** before the public editing SDK and the WASM/embedding surfaces — but
-it is not started, and none of the rendering work above is a Word-grade or
-release claim. Detailed deliverables and exit gates live in the
-[roadmap](docs/06-ROADMAP-AND-DELIVERY.md).
+yet declared complete. Development is **web-first and open-source-first**: the
+editor is built and fine-tuned in the browser (Phase 1G, `webapp/`) before the
+public editing SDK and the desktop (Tauri) shell, which are not started. None of
+the rendering work above is a Word-grade or release claim. Detailed deliverables
+and exit gates live in the [roadmap](docs/06-ROADMAP-AND-DELIVERY.md).
 
 ## Documentation
 
