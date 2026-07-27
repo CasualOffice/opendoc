@@ -14,8 +14,8 @@
 //! `device_px = twip / 1440 * dpi`.
 
 use casual_doc_edit::{
-    FormatDelta, Operation, Pos, Range as EditRange, apply as apply_edit, caret_format,
-    format_state, paragraph_properties, run_style_state,
+    FormatDelta, Operation, Pos, Range as EditRange, apply as apply_edit, caret_format, find_table,
+    format_state, locate_table_row, paragraph_properties, run_style_state,
 };
 use casual_doc_export::write_document;
 use casual_doc_import::{ImportConfig, ImportMode, import_package};
@@ -34,8 +34,8 @@ use casual_doc_layout::units::{Point, Rect, Size, Twip};
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, Document, HighlightColor,
     Indentation, LevelJustification, LevelSuffix, NumberFormat, NumberingInstance,
-    NumberingInstanceId, NumberingLevel, NumberingRef, ParagraphProperties, RgbColor, StyleId,
-    StyleKind, VerticalAlignment,
+    NumberingInstanceId, NumberingLevel, NumberingRef, Paragraph, ParagraphProperties, RgbColor,
+    StyleId, StyleKind, TableCell, TableRow, VerticalAlignment,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
@@ -947,6 +947,58 @@ impl WasmDocument {
         }
     }
 
+    /// Inserts an empty table row above or below the row containing the caret's
+    /// paragraph (`below` = after it). The new row mirrors the anchor row's column
+    /// structure (cell count, widths, spans) with empty cells; the caret lands in
+    /// its first cell. Errors if the caret is not inside a table.
+    #[wasm_bindgen(js_name = insertRow)]
+    pub fn insert_row(&mut self, node: &str, below: bool) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let (table, index, template) = locate_table_row(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        let row = self.empty_row_like(&template).map_err(to_js)?;
+        // Caret rests in the new row's first cell's paragraph.
+        let caret = first_paragraph_of_row(&row).map_or(Pos::new(nid, 0), |p| Pos::new(p, 0));
+        let new_index = if below { index + 1 } else { index };
+        self.apply_action_caret(
+            vec![Operation::InsertRow {
+                table,
+                index: new_index,
+                row: Box::new(row),
+            }],
+            caret,
+        )
+        .map_err(to_js)
+    }
+
+    /// Deletes the table row containing the caret's paragraph. Refuses to delete a
+    /// table's only row (a table's rows are non-empty — delete the table instead).
+    /// The caret lands in an adjacent surviving row. Errors if not inside a table.
+    #[wasm_bindgen(js_name = deleteRow)]
+    pub fn delete_row(&mut self, node: &str) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let (table, index, _) = locate_table_row(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        // Caret target: the first paragraph of the row that survives at this spot
+        // (the next row, or the previous one when deleting the last), computed
+        // before the edit removes it.
+        let caret = self
+            .surviving_row_anchor(table, index)
+            .map_or_else(|| Pos::new(nid, 0), |p| Pos::new(p, 0));
+        self.apply_action_caret(vec![Operation::DeleteRow { table, index }], caret)
+            .map_err(to_js)
+    }
+
+    /// Whether the caret's paragraph is inside a table cell — drives the table
+    /// controls' enabled state.
+    #[wasm_bindgen(js_name = inTable)]
+    #[must_use]
+    pub fn in_table(&self, node: &str) -> bool {
+        NodeId::from_str(node)
+            .ok()
+            .is_some_and(|nid| locate_table_row(&self.document, nid).is_some())
+    }
+
     /// Sets the paragraph background shading (`w:shd` fill) over the selection to
     /// an RGB, or clears it when `clear` is true.
     #[wasm_bindgen(js_name = setParagraphShading)]
@@ -1592,6 +1644,51 @@ impl WasmDocument {
         abstract_num.levels.first().and_then(|l| l.num_fmt.clone())
     }
 
+    /// Builds an empty row matching `template`'s column structure: one empty
+    /// paragraph per cell, cell properties (width / span / borders) preserved, and
+    /// fresh ids for the row, every cell, and every paragraph (from the edit
+    /// namespace, so they never collide with imported nodes).
+    fn empty_row_like(&mut self, template: &TableRow) -> Result<TableRow, String> {
+        let exhausted = || "id space exhausted".to_string();
+        let mut cells = Vec::with_capacity(template.cells.len());
+        for cell in &template.cells {
+            let cell_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
+            let para_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
+            cells.push(TableCell {
+                id: cell_id,
+                properties: cell.properties.clone(),
+                blocks: vec![BlockNode::Paragraph(Paragraph {
+                    id: para_id,
+                    properties: ParagraphProperties::default(),
+                    inlines: Vec::new(),
+                })],
+            });
+        }
+        let row_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
+        Ok(TableRow {
+            id: row_id,
+            properties: template.properties.clone(),
+            cells,
+        })
+    }
+
+    /// The first paragraph of the row that will occupy `index`'s neighbourhood after
+    /// the row at `index` is removed — the next row, or the previous one when the
+    /// last row is deleted — for placing the caret. `None` if the table has one row.
+    fn surviving_row_anchor(&self, table: NodeId, index: u32) -> Option<NodeId> {
+        let t = find_table(&self.document, table)?;
+        if t.rows.len() <= 1 {
+            return None;
+        }
+        let idx = index as usize;
+        let target = if idx + 1 < t.rows.len() {
+            idx + 1
+        } else {
+            idx.saturating_sub(1)
+        };
+        first_paragraph_of_row(t.rows.get(target)?)
+    }
+
     /// The id of the paragraph style with `name`, if one exists.
     fn style_id_by_name(&self, name: &str) -> Option<StyleId> {
         if name.is_empty() {
@@ -2005,6 +2102,15 @@ fn node_id(node: &str) -> Result<NodeId, JsValue> {
 /// Where the caret lands after `op` is applied: end of an insertion, start of a
 /// deletion, start of the new paragraph after a split, and the join seam after a
 /// join (recovered from the inverse split's boundary).
+/// The id of the first paragraph in a row's first cell (where a caret goes after a
+/// row edit), if the row has a leading paragraph.
+fn first_paragraph_of_row(row: &TableRow) -> Option<NodeId> {
+    row.cells.first()?.blocks.iter().find_map(|b| match b {
+        BlockNode::Paragraph(p) => Some(p.id),
+        _ => None,
+    })
+}
+
 /// A single top-level list level: a bullet glyph or a `1.` decimal, indented so the
 /// marker hangs to the left of the body text (Word's default 0.5″ indent with a
 /// 0.25″ hanging marker).
@@ -2050,6 +2156,12 @@ fn caret_after(op: &Operation, inverse: &Operation) -> Pos {
         Operation::SetInlines { node, .. } | Operation::SetParagraphProperties { node, .. } => {
             Pos::new(*node, 0)
         }
+        // Row ops go through `apply_action_caret`, which overrides the caret; these
+        // arms only keep the match exhaustive with a sensible fallback.
+        Operation::InsertRow { table, row, .. } => {
+            first_paragraph_of_row(row).map_or_else(|| Pos::new(*table, 0), |p| Pos::new(p, 0))
+        }
+        Operation::DeleteRow { table, .. } => Pos::new(*table, 0),
     }
 }
 
@@ -2553,6 +2665,87 @@ mod tests {
         d.undo().expect("undo delete");
         d.undo().expect("undo bold");
         assert_eq!(d.copy_text(&node, 0, &node, len), text);
+    }
+
+    /// Editing works **inside a table cell** exactly as in the body: hit-testing
+    /// resolves to the cell paragraph, and caret geometry, insert, delete, and
+    /// formatting all operate on that node. (The rich fixture's nested table has a
+    /// cell whose paragraph reads "Nested A".)
+    #[test]
+    fn edit_and_caret_inside_a_table_cell() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let (cell_id, text) = nodes
+            .iter()
+            .find(|(_, t)| t == "Nested A")
+            .map(|(id, t)| (*id, t.clone()))
+            .expect("the nested cell paragraph");
+        let node = cell_id.to_string();
+
+        // Caret geometry resolves for the cell paragraph (a non-empty flat rect).
+        assert_eq!(
+            d.caret_rect(&node, 0).len(),
+            5,
+            "caret rect resolves inside the cell"
+        );
+
+        // Insert, copy back, format, and delete — all on the cell node.
+        d.insert_text(&node, 0, "X".to_string())
+            .expect("insert into cell");
+        assert_eq!(
+            d.copy_text(&node, 0, &node, text.len() as u32 + 1),
+            format!("X{text}")
+        );
+        d.format_text(&node, 0, 1, Some(true), None, None, None)
+            .expect("bold in cell");
+        assert!(d.format_at(&node, 0, 1).bold(), "cell text is bold");
+        d.delete_range(&node, 0, 1).expect("delete in cell");
+        assert_eq!(d.copy_text(&node, 0, &node, text.len() as u32), text);
+    }
+
+    /// Insert / delete a table row: the row count changes, the new row is editable,
+    /// and both undo exactly.
+    #[test]
+    fn insert_and_delete_table_row_round_trip() {
+        use casual_doc_edit::{find_table, locate_table_row};
+
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let cell_id = nodes
+            .iter()
+            .find(|(_, t)| t == "Nested A")
+            .map(|(id, _)| *id)
+            .expect("the nested cell paragraph");
+        let node = cell_id.to_string();
+
+        let (table_id, _, _) =
+            locate_table_row(&d.document, cell_id).expect("node is inside a table");
+        let rows = |d: &WasmDocument| find_table(&d.document, table_id).unwrap().rows.len();
+        let before = rows(&d);
+
+        // Insert a row below and confirm its caret lands in a new, editable cell.
+        let res = d.insert_row(&node, true).expect("insert row below");
+        assert_eq!(rows(&d), before + 1);
+        let new_para = res.node();
+        d.insert_text(&new_para, 0, "NEW".to_string())
+            .expect("type in the new row's cell");
+        assert_eq!(d.copy_text(&new_para, 0, &new_para, 3), "NEW");
+
+        // Undo the typing, then the insert; the row count returns.
+        d.undo().expect("undo type");
+        d.undo().expect("undo insert");
+        assert_eq!(rows(&d), before);
+
+        // Now there are >=2 rows only after inserting; insert once so delete is legal
+        // (a table's last row cannot be deleted), then delete and undo.
+        d.insert_row(&node, true).expect("insert for delete test");
+        assert_eq!(rows(&d), before + 1);
+        d.delete_row(&node).expect("delete the anchor row");
+        assert_eq!(rows(&d), before);
+        d.undo().expect("undo delete");
+        assert_eq!(rows(&d), before + 1);
     }
 
     /// Toggling a bullet list on a paragraph: `listStyleAt` reflects it, the list

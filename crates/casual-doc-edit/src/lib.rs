@@ -19,7 +19,7 @@
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     BlockNode, Color, Document, FontName, FontRef, HighlightColor, InlineNode, Paragraph,
-    ParagraphProperties, RgbColor, Run, RunProperties, VerticalAlignment,
+    ParagraphProperties, RgbColor, Run, RunProperties, Table, TableRow, VerticalAlignment,
 };
 
 /// A run-property change to apply over a range: each `Some(_)` field sets that
@@ -168,6 +168,25 @@ pub enum Operation {
         node: NodeId,
         /// The properties to install.
         properties: Box<ParagraphProperties>,
+    },
+    /// Insert `row` into table `table` at the 0-based `index` (≤ the current row
+    /// count). Inverse: [`Operation::DeleteRow`] of the same position.
+    InsertRow {
+        /// The table to insert into.
+        table: NodeId,
+        /// The 0-based row position.
+        index: u32,
+        /// The row to insert (its ids must be fresh).
+        row: Box<TableRow>,
+    },
+    /// Remove the row at 0-based `index` from table `table`. Refuses to remove the
+    /// last row (a table's rows are non-empty). Inverse: [`Operation::InsertRow`]
+    /// carrying the removed row, so undo restores it verbatim.
+    DeleteRow {
+        /// The table to remove from.
+        table: NodeId,
+        /// The 0-based row position.
+        index: u32,
     },
 }
 
@@ -325,7 +344,148 @@ pub fn apply(
                 properties: Box::new(previous),
             })
         }
+        Operation::InsertRow { table, index, row } => {
+            let t = find_table_mut(doc.body_mut(), *table).ok_or(EditError::NodeNotFound)?;
+            let idx = *index as usize;
+            if idx > t.rows.len() {
+                return Err(EditError::OffsetOutOfRange);
+            }
+            t.rows.insert(idx, (**row).clone());
+            Ok(Operation::DeleteRow {
+                table: *table,
+                index: *index,
+            })
+        }
+        Operation::DeleteRow { table, index } => {
+            let t = find_table_mut(doc.body_mut(), *table).ok_or(EditError::NodeNotFound)?;
+            let idx = *index as usize;
+            if idx >= t.rows.len() {
+                return Err(EditError::OffsetOutOfRange);
+            }
+            // A table's rows are non-empty; removing the last row would make it
+            // invalid. Deleting a whole table is a separate op.
+            if t.rows.len() == 1 {
+                return Err(EditError::Unsupported);
+            }
+            let removed = t.rows.remove(idx);
+            Ok(Operation::InsertRow {
+                table: *table,
+                index: *index,
+                row: Box::new(removed),
+            })
+        }
     }
+}
+
+/// The table with id `table`, searching the body recursively (a table can nest in
+/// a cell or content control).
+fn find_table_mut(blocks: &mut [BlockNode], table: NodeId) -> Option<&mut Table> {
+    // First pass: a top-level table match at this level (a returned borrow in a
+    // loop that also recurses trips the borrow checker, so keep the passes apart).
+    if blocks
+        .iter()
+        .any(|b| matches!(b, BlockNode::Table(t) if t.id == table))
+    {
+        return blocks.iter_mut().find_map(|b| match b {
+            BlockNode::Table(t) if t.id == table => Some(t),
+            _ => None,
+        });
+    }
+    // Second pass: recurse into nested tables / content controls.
+    for block in blocks.iter_mut() {
+        match block {
+            BlockNode::Table(t) => {
+                for row in &mut t.rows {
+                    for cell in &mut row.cells {
+                        if let Some(found) = find_table_mut(&mut cell.blocks, table) {
+                            return Some(found);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(found) = find_table_mut(&mut sdt.blocks, table) {
+                    return Some(found);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The table with id `table` (read-only), searching the body recursively — a host
+/// query for reading a table's current rows (e.g. to place the caret after a
+/// row edit). `None` if no such table exists.
+#[must_use]
+pub fn find_table(document: &Document, table: NodeId) -> Option<&Table> {
+    fn walk(blocks: &[BlockNode], table: NodeId) -> Option<&Table> {
+        for block in blocks {
+            match block {
+                BlockNode::Table(t) if t.id == table => return Some(t),
+                BlockNode::Table(t) => {
+                    for row in &t.rows {
+                        for cell in &row.cells {
+                            if let Some(found) = walk(&cell.blocks, table) {
+                                return Some(found);
+                            }
+                        }
+                    }
+                }
+                BlockNode::Sdt(sdt) => {
+                    if let Some(found) = walk(&sdt.blocks, table) {
+                        return Some(found);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+    walk(document.body(), table)
+}
+
+/// Locates the table row that (recursively) contains paragraph `node`: the table's
+/// id, the 0-based row index, and a clone of that row (a host builds a matching
+/// empty row from it to insert). `None` if the node is not inside a table cell.
+#[must_use]
+pub fn locate_table_row(document: &Document, node: NodeId) -> Option<(NodeId, u32, TableRow)> {
+    fn walk(blocks: &[BlockNode], node: NodeId) -> Option<(NodeId, u32, TableRow)> {
+        for block in blocks {
+            match block {
+                BlockNode::Table(table) => {
+                    for (i, row) in table.rows.iter().enumerate() {
+                        for cell in &row.cells {
+                            if block_contains(&cell.blocks, node) {
+                                return Some((table.id, i as u32, row.clone()));
+                            }
+                            // Recurse into nested tables within the cell.
+                            if let Some(found) = walk(&cell.blocks, node) {
+                                return Some(found);
+                            }
+                        }
+                    }
+                }
+                BlockNode::Sdt(sdt) => {
+                    if let Some(found) = walk(&sdt.blocks, node) {
+                        return Some(found);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+    walk(document.body(), node)
+}
+
+/// Whether `node` is a paragraph directly in `blocks` (not descending into nested
+/// tables — the caller handles that level).
+fn block_contains(blocks: &[BlockNode], node: NodeId) -> bool {
+    blocks.iter().any(|b| match b {
+        BlockNode::Paragraph(p) => p.id == node,
+        _ => false,
+    })
 }
 
 /// The properties of paragraph `node` (a clone), for a host to read the current

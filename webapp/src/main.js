@@ -68,6 +68,8 @@ const indentDecBtn = document.getElementById("indentDec");
 const indentIncBtn = document.getElementById("indentInc");
 const bulletListBtn = document.getElementById("bulletList");
 const numberedListBtn = document.getElementById("numberedList");
+const insertRowBtn = document.getElementById("insertRow");
+const deleteRowBtn = document.getElementById("deleteRow");
 const fontFamilySel = document.getElementById("fontFamily");
 const paragraphStyleSel = document.getElementById("paragraphStyle");
 const runControls = [superBtn, subBtn, fontSizeSel, textColorInput, highlightSel, fontFamilySel];
@@ -617,6 +619,11 @@ function updateToolbar() {
   const listKind = hasSel && doc ? doc.listStyleAt(selection.focus.node) : "";
   bulletListBtn.setAttribute("aria-pressed", String(listKind === "bullet"));
   numberedListBtn.setAttribute("aria-pressed", String(listKind === "numbered"));
+
+  // Table row controls: enabled only when the caret is inside a table cell.
+  const inTable = hasSel && doc ? doc.inTable(selection.focus.node) : false;
+  insertRowBtn.disabled = !inTable;
+  deleteRowBtn.disabled = !inTable;
 }
 
 /** Fills the paragraph-style dropdown from the open document's styles. */
@@ -651,6 +658,14 @@ onButton(indentDecBtn, () => runToolbarEdit((a, b, c, d) => doc.adjustIndent(a, 
 onButton(indentIncBtn, () => runToolbarEdit((a, b, c, d) => doc.adjustIndent(a, b, c, d, 360)));
 onButton(bulletListBtn, () => runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "bullet")));
 onButton(numberedListBtn, () => runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "numbered")));
+// Row ops act on the caret's paragraph (not a range) and move the caret to the
+// new / surviving row, so they run through the edit path, not runToolbarEdit.
+onButton(insertRowBtn, () => {
+  if (selection) runEdit(() => doc.insertRow(selection.focus.node, true));
+});
+onButton(deleteRowBtn, () => {
+  if (selection) runEdit(() => doc.deleteRow(selection.focus.node));
+});
 
 fontSizeSel.addEventListener("change", () => {
   const pt = Number(fontSizeSel.value);
