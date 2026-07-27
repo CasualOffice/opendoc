@@ -72,3 +72,8 @@ dictionary).
   cache are P1G-002.
 - Worker threading (`SharedArrayBuffer`) needs COOP/COEP headers GitHub Pages
   cannot set, so rendering runs on the main thread here (P1G-005 territory).
+
+## Attribution
+
+Toolbar icons are from **Material Symbols** by Google, licensed under the
+**Apache License 2.0**, inlined as SVG paths.

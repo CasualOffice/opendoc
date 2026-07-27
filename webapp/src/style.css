@@ -159,6 +159,9 @@ body {
 }
 
 .fmt {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 30px;
   height: 30px;
   border: 1px solid var(--line);
@@ -169,6 +172,14 @@ body {
   line-height: 1;
   cursor: pointer;
   padding: 0;
+}
+
+/* Toolbar icons — Material Symbols (Apache License 2.0), inlined as SVG. */
+.fmt svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+  display: block;
 }
 
 .fmt:hover {
