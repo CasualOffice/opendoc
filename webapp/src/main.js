@@ -142,10 +142,6 @@ async function renderAll() {
   pages = [];
   setStatus(`Rendering ${count} page${count === 1 ? "" : "s"} at ${Math.round(zoom * 100)}%…`);
 
-  // Engine twips → logical CSS px: device_px = twip/1440·dpi, logical = device/dpr,
-  // so logical_px = twip · zoom/15 and twipPerPx = 15/zoom (dpr cancels).
-  const twipPerPx = 1440 / (BASE_DPI * zoom);
-
   for (let i = 0; i < count; i++) {
     // Yield so a burst of pages does not freeze the tab; abort if superseded.
     if (i > 0 && i % 4 === 0) await new Promise((r) => requestAnimationFrame(r));
@@ -175,9 +171,17 @@ async function renderAll() {
     const overlay = document.createElement("div");
     overlay.className = "overlay";
 
+    // The page box in twips — the domain of hit-testing and selection geometry.
+    // Scale to CSS px is derived from the canvas's *actual* on-screen rect
+    // (below), so alignment holds under any zoom, DPR, or CSS max-width scaling.
+    const size = doc.pageSize(i);
+    const wTwip = size.widthTwip;
+    const hTwip = size.heightTwip;
+    size.free();
+
     wrap.append(canvas, overlay);
     pagesEl.appendChild(wrap);
-    pages.push({ pageNumber: i + 1, canvas, overlay, twipPerPx });
+    pages.push({ pageNumber: i + 1, canvas, overlay, wTwip, hTwip });
   }
 
   drawSelection(); // re-place any existing selection at the new zoom
@@ -186,12 +190,20 @@ async function renderAll() {
 
 // ---- Selection & copy (doc 58 pipeline: hit-test → selection → draw → copy) ---
 
+/** twip → CSS px scale for a page, from the canvas's live on-screen size, so it
+ *  tracks the render under any zoom / DPR / CSS scaling. */
+function scaleOf(page) {
+  const rect = page.canvas.getBoundingClientRect();
+  return { rect, sx: rect.width / page.wTwip, sy: rect.height / page.hTwip };
+}
+
 /** A pointer event on a page's overlay/canvas → that page's local twip point. */
 function pointToTwip(page, event) {
-  const rect = page.canvas.getBoundingClientRect();
-  const xPx = event.clientX - rect.left;
-  const yPx = event.clientY - rect.top;
-  return { x: Math.round(xPx * page.twipPerPx), y: Math.round(yPx * page.twipPerPx) };
+  const { rect, sx, sy } = scaleOf(page);
+  return {
+    x: Math.round((event.clientX - rect.left) / sx),
+    y: Math.round((event.clientY - rect.top) / sy),
+  };
 }
 
 /** Resolve a pointer event to a model anchor, or null if it misses content. */
@@ -209,7 +221,9 @@ function clearOverlays() {
   for (const p of pages) p.overlay.replaceChildren();
 }
 
-/** Draws the current selection (or collapsed caret) from engine geometry. */
+/** Draws the current selection from engine geometry: a highlight for a real
+ *  range, else a caret at the focus (so a click — or a range with no visible
+ *  rects — always shows a cursor). */
 function drawSelection() {
   if (!doc) return;
   clearOverlays();
@@ -217,29 +231,31 @@ function drawSelection() {
   const { anchor, focus } = selection;
 
   const collapsed = anchor.node === focus.node && anchor.offset === focus.offset;
-  if (collapsed) {
-    place(doc.caretRect(anchor.node, anchor.offset), "caret");
-    return;
+  if (!collapsed) {
+    const rects = doc.selectionRects(anchor.node, anchor.offset, focus.node, focus.offset);
+    if (rects.length >= 5) {
+      for (let i = 0; i < rects.length; i += 5) place(rects.slice(i, i + 5), "highlight");
+      return;
+    }
+    // No visible rects (e.g. a tiny drag within one caret slot) → fall to caret.
   }
-  const rects = doc.selectionRects(anchor.node, anchor.offset, focus.node, focus.offset);
-  for (let i = 0; i < rects.length; i += 5) {
-    place(rects.slice(i, i + 5), "highlight");
-  }
+  place(doc.caretRect(focus.node, focus.offset), "caret");
 }
 
-/** Places one flat `[page, x, y, w, h]` twip rect as a `kind` box on its page. */
+/** Places one flat `[page, x, y, w, h]` twip rect as a `kind` box on its page,
+ *  converting twips → CSS px with that page's live scale. */
 function place(flat, kind) {
   if (flat.length < 5) return;
   const [pageNumber, x, y, w, h] = flat;
   const page = pages[pageNumber - 1];
   if (!page) return;
-  const s = 1 / page.twipPerPx; // twip → logical px
+  const { sx, sy } = scaleOf(page);
   const el = document.createElement("div");
   el.className = kind;
-  el.style.left = `${x * s}px`;
-  el.style.top = `${y * s}px`;
-  el.style.width = `${Math.max(w * s, kind === "caret" ? 1 : 0)}px`;
-  el.style.height = `${h * s}px`;
+  el.style.left = `${x * sx}px`;
+  el.style.top = `${y * sy}px`;
+  el.style.width = `${Math.max(w * sx, kind === "caret" ? 2 : 0)}px`;
+  el.style.height = `${h * sy}px`;
   page.overlay.appendChild(el);
 }
 

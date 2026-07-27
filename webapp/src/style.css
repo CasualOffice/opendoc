@@ -165,6 +165,7 @@ body {
 
 .page-wrap {
   position: relative;
+  width: fit-content; /* hug the canvas so the overlay box matches it exactly */
   line-height: 0; /* no descender gap under the canvas */
 }
 
@@ -189,9 +190,11 @@ body {
   background: rgba(70, 130, 245, 0.32);
 }
 
+/* The overlay sits over the (always-white) page canvas, so its colors are fixed
+   for a light surface — NOT the app theme, or the caret goes white-on-white. */
 .overlay .caret {
   position: absolute;
-  background: var(--ink);
+  background: #000;
   animation: caret-blink 1.06s steps(1) infinite;
 }
 
