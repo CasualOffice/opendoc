@@ -5,7 +5,7 @@
 # toolchain in ../rust-toolchain.toml (Rust 1.96.0 + wasm32-unknown-unknown).
 #
 # Usage:  ./build.sh          then serve this directory, e.g.
-#         python3 -m http.server 8080   →   http://localhost:8080
+#         ./serve.py   (no-cache dev server)   →   http://localhost:8099
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,4 +16,4 @@ wasm-pack build "$repo/crates/casual-doc-wasm" \
   --out-dir "$here/pkg" \
   --out-name casual_doc_wasm
 
-echo "Built webapp/pkg. Serve this directory and open index.html."
+echo "Built webapp/pkg. Run ./serve.py (no-cache) and open http://localhost:8099/index.html."

@@ -77,6 +77,11 @@ struct LineBox<'a> {
     left: Twip,
     /// Page-local y of the top of the line.
     top: Twip,
+    /// The page-local x-range `[left, right)` of the table cell this line belongs to
+    /// (the innermost cell for a nested table). `None` for a body paragraph, which
+    /// spans the content width. Lets hit-testing route a click to the cell it lands
+    /// in rather than always the first cell of a row (which all share a y-band).
+    cell: Option<(Twip, Twip)>,
     /// The line itself.
     line: &'a Line,
 }
@@ -90,6 +95,23 @@ impl<'a> LineBox<'a> {
     /// Whether `y` (page-local) falls within this line's vertical band.
     fn contains_y(&self, y: i32) -> bool {
         y >= self.top.raw() && y < self.bottom()
+    }
+
+    /// Whether `x` (page-local) falls within this line's cell. A body line (no cell)
+    /// contains every x — it is not competing with side-by-side cells.
+    fn cell_contains_x(&self, x: i32) -> bool {
+        self.cell.is_none_or(|(l, r)| x >= l.raw() && x < r.raw())
+    }
+
+    /// Horizontal distance from `x` to this line's cell (0 inside; `i32::MAX` for a
+    /// body line, so a real cell is always preferred when routing by column).
+    fn cell_x_distance(&self, x: i32) -> i32 {
+        match self.cell {
+            None => i32::MAX,
+            Some((l, _)) if x < l.raw() => l.raw() - x,
+            Some((_, r)) if x >= r.raw() => x - r.raw() + 1,
+            Some(_) => 0,
+        }
     }
 }
 
@@ -133,19 +155,46 @@ impl<'a> LayoutSnapshot<'a> {
             lines.iter().filter(|lb| lb.page == page_number).collect();
         let first = *page_lines.first()?;
 
-        // The line whose band contains the point, else the vertically nearest.
-        let (lb, vertically_inside) =
-            match page_lines.iter().find(|lb| lb.contains_y(point.y.raw())) {
-                Some(lb) => (*lb, true),
-                None => {
-                    let nearest = page_lines
+        let (x, y) = (point.x.raw(), point.y.raw());
+
+        // Choose the target line by vertical band *and* horizontal cell, so a click
+        // in a table row lands in the cell it falls in rather than always the first
+        // cell of the row (every cell shares the band). A body paragraph has no cell
+        // and so is never in horizontal competition — the logic reduces to the old
+        // "band, else nearest" for single-column content.
+        let band: Vec<&LineBox<'_>> = page_lines
+            .iter()
+            .copied()
+            .filter(|lb| lb.contains_y(y))
+            .collect();
+        let (lb, vertically_inside) = if !band.is_empty() {
+            // In the band: the line whose cell contains x, else the cell horizontally
+            // nearest (a click in a border/gap), else the first (single column).
+            let chosen = band
+                .iter()
+                .copied()
+                .find(|lb| lb.cell_contains_x(x))
+                .or_else(|| band.iter().copied().min_by_key(|lb| lb.cell_x_distance(x)))
+                .unwrap_or(band[0]);
+            (chosen, true)
+        } else {
+            // Above/below all content: prefer the vertically nearest line *within the
+            // clicked column* (so clicking empty space under a short cell stays in
+            // that column), else the globally nearest.
+            let nearest = page_lines
+                .iter()
+                .copied()
+                .filter(|lb| lb.cell_contains_x(x) && lb.cell.is_some())
+                .min_by_key(|lb| vertical_distance(lb, y))
+                .or_else(|| {
+                    page_lines
                         .iter()
-                        .min_by_key(|lb| vertical_distance(lb, point.y.raw()))
                         .copied()
-                        .unwrap_or(first);
-                    (nearest, false)
-                }
-            };
+                        .min_by_key(|lb| vertical_distance(lb, y))
+                })
+                .unwrap_or(first);
+            (nearest, false)
+        };
 
         let stops = stops_for(lb.line, lb.left);
         let nearest = nearest_stop(&stops, point.x);
@@ -284,6 +333,7 @@ impl<'a> LayoutSnapshot<'a> {
                     placed.rect.origin.x,
                     placed.rect.origin.y,
                     page.number,
+                    None,
                     &mut out,
                 );
             }
@@ -299,6 +349,7 @@ fn collect_fragment<'a>(
     left: Twip,
     top: Twip,
     page: u32,
+    cell: Option<(Twip, Twip)>,
     out: &mut Vec<LineBox<'a>>,
 ) {
     match fragment {
@@ -318,6 +369,7 @@ fn collect_fragment<'a>(
                     page,
                     left: content_left,
                     top: y,
+                    cell,
                     line,
                 });
                 y = y + line.height;
@@ -326,10 +378,15 @@ fn collect_fragment<'a>(
         BlockFragment::TableRow { cells, .. } => {
             let row_height = fragment.height();
             for cell in cells {
-                let cell_left = left + cell.x + cell.margins.start;
+                // The cell's full page-local x-box (its grid-column span), used to
+                // route a click to this cell rather than a same-row neighbour. The
+                // innermost cell wins for nested tables (this overrides `cell`).
+                let cell_x0 = left + cell.x;
+                let cell_bounds = Some((cell_x0, cell_x0 + cell.width));
+                let cell_left = cell_x0 + cell.margins.start;
                 let mut cell_top = top + cell.content_y_offset(cell.box_height(row_height));
                 for block in &cell.blocks {
-                    collect_fragment(block, cell_left, cell_top, page, out);
+                    collect_fragment(block, cell_left, cell_top, page, cell_bounds, out);
                     cell_top = cell_top + block.height();
                 }
             }
@@ -743,13 +800,67 @@ mod tests {
             clip: false,
         };
         let mut lines = Vec::new();
-        collect_fragment(&row, Twip(100), Twip(200), 1, &mut lines);
+        collect_fragment(&row, Twip(100), Twip(200), 1, None, &mut lines);
 
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].left, Twip(420));
         // Occupied height is 50 + 240 + 50 = 340; bottom alignment in the
         // 1000-twip merged box adds all 660 twips of slack after the top margin.
         assert_eq!(lines[0].top, Twip(910));
+    }
+
+    #[test]
+    fn hit_test_routes_a_click_to_the_clicked_column() {
+        use crate::block::{
+            CellBorders, CellContentMargins, CellFragment, CellVAlign, CellVerticalMerge,
+        };
+        let cell = |id: u64, x: i32, width: i32, para: u64| CellFragment {
+            id: node(id),
+            grid_span: 1,
+            x: Twip(x),
+            width: Twip(width),
+            blocks: vec![ltr_para(para, &[1])],
+            margins: CellContentMargins::default(),
+            vertical_alignment: CellVAlign::Top,
+            vertical_merge: CellVerticalMerge::None,
+            borders: CellBorders::default(),
+            shading: None,
+        };
+        // Two side-by-side cells: column A grid [0,3000), column B [3000,6000).
+        let row = BlockFragment::TableRow {
+            id: node(10),
+            table: node(20),
+            cells: vec![cell(11, 0, 3000, 100), cell(12, 3000, 3000, 200)],
+            height: Twip(500),
+            can_split: false,
+            header: false,
+            merge_keep_next: false,
+            clip: false,
+        };
+        let paginated = layout(&[row]);
+        let snap = LayoutSnapshot::new(&paginated);
+
+        // The row is placed at the page's top-left margin, so column A occupies
+        // page-local x [MARGIN, MARGIN+3000) and column B [MARGIN+3000, MARGIN+6000).
+        // A click in each column resolves to *that* column's paragraph — the fix for
+        // "click column 2 lands in column 1" (both cells share the row's y-band).
+        let y = Twip(MARGIN + LINE_H / 2);
+        let hit_a = snap
+            .hit_test(1, Point::new(Twip(MARGIN + 500), y))
+            .expect("hit in column A");
+        assert_eq!(
+            hit_a.pos.node,
+            node(100),
+            "click in column 1 → column 1 cell"
+        );
+        let hit_b = snap
+            .hit_test(1, Point::new(Twip(MARGIN + 4000), y))
+            .expect("hit in column B");
+        assert_eq!(
+            hit_b.pos.node,
+            node(200),
+            "click in column 2 → column 2 cell"
+        );
     }
 
     #[test]
