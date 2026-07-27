@@ -85,6 +85,13 @@ const paraControls = [
   paragraphStyleSel,
 ];
 const saveBtn = document.getElementById("save");
+const zoomInBtn = document.getElementById("zoomIn");
+const zoomOutBtn = document.getElementById("zoomOut");
+const tableGroup = document.getElementById("tableGroup");
+const statsEl = document.getElementById("stats");
+const statWords = document.getElementById("statWords");
+const statParas = document.getElementById("statParas");
+const statPages = document.getElementById("statPages");
 
 // The engine `render_page(i, dpi)` rasterizes at `dpi` device px per inch
 // (device_px = twip / 1440 * dpi). We render at 96·zoom·devicePixelRatio for a
@@ -111,6 +118,33 @@ let currentName = "document.docx";
 function setStatus(text, kind = "") {
   statusEl.textContent = text;
   statusEl.className = `status ${kind}`;
+}
+
+/** Refreshes the footer word / paragraph / page counts from the engine. */
+function updateStats() {
+  if (!doc) {
+    statsEl.hidden = true;
+    return;
+  }
+  const s = doc.documentStats();
+  const words = s.words;
+  const paras = s.paragraphs;
+  s.free();
+  statWords.textContent = `${words.toLocaleString()} word${words === 1 ? "" : "s"}`;
+  statParas.textContent = `${paras.toLocaleString()} paragraph${paras === 1 ? "" : "s"}`;
+  statsEl.hidden = false;
+  updatePageNumber();
+}
+
+/** Cheap current-page update (caret's page / total), for caret moves. */
+function updatePageNumber() {
+  if (!doc || !pages.length) return;
+  let cur = 1;
+  if (selection) {
+    const flat = doc.caretRect(selection.focus.node, selection.focus.offset);
+    if (flat.length) cur = flat[0];
+  }
+  statPages.textContent = `Page ${cur} of ${pages.length}`;
 }
 
 async function boot() {
@@ -234,7 +268,10 @@ async function renderAll() {
   }
 
   drawSelection(); // re-place any existing selection at the new zoom
-  if (token === renderToken) setStatus(`${count} page${count === 1 ? "" : "s"} · ${Math.round(zoom * 100)}%`);
+  if (token === renderToken) {
+    setStatus(currentName);
+    updateStats();
+  }
 }
 
 // ---- Selection & copy (doc 58 pipeline: hit-test → selection → draw → copy) ---
@@ -276,8 +313,19 @@ function clearOverlays() {
 function drawSelection() {
   if (!doc) return;
   clearOverlays();
-  if (selection) paintSelection(selection);
+  if (selection) {
+    paintActiveCell(selection.focus); // under the caret/highlight
+    paintSelection(selection);
+  }
   updateToolbar();
+  updatePageNumber();
+}
+
+/** Outlines the table cell the caret is in (nothing when not in a table), so the
+ *  user always sees which cell they are editing. */
+function paintActiveCell(focus) {
+  const flat = doc.cellRect(focus.node); // [page, x, y, w, h] twips, or []
+  if (flat.length >= 5) place(flat, "cell-outline");
 }
 
 /** Paints the caret or highlight for `sel` from engine geometry. */
@@ -452,6 +500,7 @@ async function applyEditResult(res) {
     for (const i of dirty) repaintPage(i);
     drawSelection();
   }
+  updateStats(); // word/paragraph counts may have changed
   scrollCaretIntoView();
 }
 
@@ -622,12 +671,10 @@ function updateToolbar() {
   bulletListBtn.setAttribute("aria-pressed", String(listKind === "bullet"));
   numberedListBtn.setAttribute("aria-pressed", String(listKind === "numbered"));
 
-  // Table row/column controls: enabled only when the caret is inside a table cell.
+  // Table controls: a contextual group that appears only when the caret is inside
+  // a table cell (Google-Docs style — no permanent clutter for non-table docs).
   const inTable = hasSel && doc ? doc.inTable(selection.focus.node) : false;
-  insertRowBtn.disabled = !inTable;
-  deleteRowBtn.disabled = !inTable;
-  insertColumnBtn.disabled = !inTable;
-  deleteColumnBtn.disabled = !inTable;
+  tableGroup.hidden = !inTable;
 }
 
 /** Fills the paragraph-style dropdown from the open document's styles. */
@@ -944,6 +991,15 @@ async function handleFile(file) {
 
 fileEl.addEventListener("change", (e) => handleFile(e.target.files[0]));
 zoomEl.addEventListener("change", () => renderAll());
+function stepZoom(dir) {
+  const i = zoomEl.selectedIndex + dir;
+  if (i >= 0 && i < zoomEl.options.length) {
+    zoomEl.selectedIndex = i;
+    renderAll();
+  }
+}
+zoomInBtn.addEventListener("click", () => stepZoom(1));
+zoomOutBtn.addEventListener("click", () => stepZoom(-1));
 
 // Drag-and-drop anywhere over the viewport.
 for (const type of ["dragover", "drop"]) {

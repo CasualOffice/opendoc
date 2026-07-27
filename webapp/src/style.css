@@ -1,21 +1,38 @@
 :root {
-  --bg: #f4f5f7;
+  --bg: #e9ebef;
+  --bg-2: #eef0f3;
   --surface: #ffffff;
-  --ink: #1b1c1f;
-  --muted: #6b7078;
-  --line: #e2e4e8;
-  --accent: #ea6a2b;
+  --ink: #1a1c20;
+  --muted: #6a7078;
+  --faint: #9aa0a8;
+  --line: #e3e6ea;
+  --line-strong: #d3d7dd;
+  --accent: #e2622a;
+  --accent-ink: #ffffff;
+  --accent-soft: rgba(226, 98, 42, 0.12);
+  --accent-line: rgba(226, 98, 42, 0.4);
   --error: #c0392b;
+  --shadow-sm: 0 1px 2px rgba(20, 22, 28, 0.06);
+  --shadow-page: 0 1px 3px rgba(20, 22, 28, 0.13), 0 10px 30px rgba(20, 22, 28, 0.09);
+  --radius: 8px;
+  --radius-sm: 7px;
   color-scheme: light dark;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #1a1b1e;
-    --surface: #26282c;
-    --ink: #ececed;
-    --muted: #9aa0a8;
-    --line: #34373c;
+    --bg: #141619;
+    --bg-2: #191c20;
+    --surface: #212429;
+    --ink: #e8eaed;
+    --muted: #969ba3;
+    --faint: #6b7178;
+    --line: #2e323a;
+    --line-strong: #383d46;
+    --accent: #f0733a;
+    --accent-soft: rgba(240, 115, 58, 0.16);
+    --accent-line: rgba(240, 115, 58, 0.5);
+    --shadow-page: 0 1px 3px rgba(0, 0, 0, 0.4), 0 10px 30px rgba(0, 0, 0, 0.35);
   }
 }
 
@@ -32,89 +49,150 @@ body {
 body {
   display: flex;
   flex-direction: column;
-  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font: 13px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
   color: var(--ink);
   background: var(--bg);
+  -webkit-font-smoothing: antialiased;
 }
 
+button,
+select,
+input {
+  font: inherit;
+}
+
+/* ---- Header bar ------------------------------------------------------------ */
 .bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 10px 18px;
+  height: 52px;
+  padding: 0 16px;
   background: var(--surface);
   border-bottom: 1px solid var(--line);
-  flex-wrap: wrap;
+  box-shadow: var(--shadow-sm);
+  z-index: 3;
 }
 
 .brand {
-  font-weight: 650;
-  letter-spacing: -0.01em;
+  display: flex;
+  align-items: center;
+  gap: 9px;
 }
 
-.tag {
-  font-weight: 500;
-  font-size: 12px;
-  color: var(--muted);
-  margin-left: 6px;
+.brand .mark {
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: -0.02em;
 }
 
 .testing {
-  margin-left: 8px;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   color: var(--accent);
-  border: 1px solid var(--accent);
+  background: var(--accent-soft);
   border-radius: 999px;
-  padding: 1px 8px;
-  vertical-align: middle;
+  padding: 2px 8px;
 }
 
 .controls {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 8px;
 }
 
-.save {
-  padding: 7px 14px;
-  border-radius: 8px;
-  border: 1px solid var(--line);
+/* ---- Buttons --------------------------------------------------------------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line-strong);
   background: var(--surface);
   color: var(--ink);
-  font: inherit;
-  font-weight: 600;
+  font-weight: 550;
   cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, border-color 0.12s, opacity 0.12s;
 }
 
-.save:hover:not(:disabled) {
+.btn svg {
+  width: 17px;
+  height: 17px;
+  fill: currentColor;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--bg-2);
   border-color: var(--muted);
 }
 
-.save:disabled {
-  opacity: 0.4;
+.btn:disabled {
+  opacity: 0.45;
   cursor: default;
 }
 
-/* Dedicated formatting toolbar, below the header. */
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.btn-primary:hover {
+  filter: brightness(1.05);
+}
+
+.btn.icon-only {
+  width: 30px;
+  padding: 0;
+  justify-content: center;
+}
+
+.file {
+  position: relative;
+}
+
+.zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 4px;
+}
+
+.zoom select {
+  height: 32px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--ink);
+  border-radius: var(--radius-sm);
+  padding: 0 6px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+/* ---- Toolbar --------------------------------------------------------------- */
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 18px;
+  gap: 4px;
+  padding: 7px 14px;
   background: var(--surface);
   border-bottom: 1px solid var(--line);
   flex-wrap: wrap;
+  z-index: 2;
 }
 
 .toolbar .group {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  padding-right: 10px;
+  gap: 3px;
+  padding-right: 6px;
+  margin-right: 3px;
   border-right: 1px solid var(--line);
 }
 
@@ -122,59 +200,107 @@ body {
   border-right: none;
 }
 
+/* `hidden` must beat the flex display above (contextual table group). */
+.toolbar .group[hidden] {
+  display: none;
+}
+
+.group-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--faint);
+  padding: 0 6px 0 2px;
+}
+
+.group-table {
+  padding-left: 6px;
+  border-left: 1px solid var(--line);
+}
+
+/* Select-based controls */
 .ctl {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--muted);
 }
 
 .ctl select {
-  font: inherit;
-  padding: 4px 6px;
-  border-radius: 6px;
-  border: 1px solid var(--line);
-  background: var(--surface);
+  height: 30px;
+  padding: 0 26px 0 9px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line-strong);
+  background: var(--surface)
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%236a7078'><path d='M7 10l5 5 5-5z'/></svg>")
+    no-repeat right 5px center;
+  background-size: 16px;
   color: var(--ink);
+  appearance: none;
+  cursor: pointer;
+  max-width: 150px;
+}
+
+.ctl select:hover {
+  border-color: var(--muted);
+}
+
+.ctl.size select {
+  min-width: 62px;
 }
 
 .ctl select:disabled {
   opacity: 0.4;
+  cursor: default;
+}
+
+/* Text-color swatch */
+.ctl.swatch {
+  gap: 2px;
+  height: 30px;
+  padding: 0 4px 0 7px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line-strong);
 }
 
 .ctl.swatch span {
   font-weight: 700;
-  color: var(--ink);
+  font-size: 14px;
 }
 
-.ctl input[type="color"] {
-  width: 26px;
-  height: 26px;
+.ctl.swatch input[type="color"] {
+  width: 20px;
+  height: 20px;
   padding: 0;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--surface);
+  border: none;
+  background: none;
   cursor: pointer;
 }
 
+.ctl.swatch input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.ctl.swatch input[type="color"]::-webkit-color-swatch {
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+}
+
+/* Icon toggle buttons */
 .fmt {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 30px;
   height: 30px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--surface);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--ink);
-  font-size: 15px;
-  line-height: 1;
   cursor: pointer;
   padding: 0;
+  transition: background 0.11s, color 0.11s, border-color 0.11s;
 }
 
-/* Toolbar icons — Material Symbols (Apache License 2.0), inlined as SVG. */
 .fmt svg {
   width: 18px;
   height: 18px;
@@ -182,121 +308,67 @@ body {
   display: block;
 }
 
-.fmt:hover {
-  border-color: var(--muted);
+.fmt:hover:not(:disabled) {
+  background: var(--bg-2);
 }
 
 .fmt[aria-pressed="true"] {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+  color: var(--accent);
 }
 
 .fmt:disabled {
-  opacity: 0.4;
+  opacity: 0.35;
   cursor: default;
 }
 
-.footer {
-  padding: 10px 18px;
-  font-size: 12px;
-  color: var(--muted);
-  text-align: center;
-  border-top: 1px solid var(--line);
-  background: var(--surface);
-}
-
-.file {
-  cursor: pointer;
-  padding: 7px 14px;
-  border-radius: 8px;
-  background: var(--accent);
-  color: #fff;
-  font-weight: 600;
-}
-
-.zoom {
-  color: var(--muted);
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.zoom select {
-  font: inherit;
-  padding: 4px 6px;
-  border-radius: 6px;
-  border: 1px solid var(--line);
-  background: var(--surface);
-  color: var(--ink);
-}
-
-.status {
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.status.error {
-  color: var(--error);
-  font-weight: 600;
-}
-
+/* ---- Viewport & pages ------------------------------------------------------ */
 .viewport {
   flex: 1;
   overflow: auto;
   position: relative;
-  padding: 24px 0 48px;
+  padding: 28px 0 56px;
+  background: var(--bg);
 }
 
 .viewport.dragging::after {
   content: "Drop to open";
   position: fixed;
-  inset: 60px 16px 16px;
+  inset: 116px 16px 16px;
   border: 2px dashed var(--accent);
-  border-radius: 12px;
+  border-radius: 14px;
   display: grid;
   place-items: center;
   font-weight: 700;
   color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
   pointer-events: none;
-}
-
-.drop {
-  max-width: 480px;
-  margin: 8vh auto;
-  text-align: center;
-  color: var(--ink);
-}
-
-.drop .muted,
-.muted {
-  color: var(--muted);
+  z-index: 5;
 }
 
 .pages {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 18px;
+  gap: 22px;
 }
 
 .page-wrap {
   position: relative;
-  width: fit-content; /* hug the canvas so the overlay box matches it exactly */
-  line-height: 0; /* no descender gap under the canvas */
+  width: fit-content;
+  line-height: 0;
 }
 
 .page {
   background: #fff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.16), 0 6px 20px rgba(0, 0, 0, 0.08);
-  border-radius: 2px;
+  box-shadow: var(--shadow-page);
+  border-radius: 3px;
   max-width: 96vw;
   cursor: text;
 }
 
-/* The selection/caret layer sits exactly over the canvas. Boxes are placed from
-   engine geometry (page-local twips → logical px), so they track the raster. */
+/* Selection / caret layer over the (white) canvas — fixed light-surface colors. */
 .overlay {
   position: absolute;
   inset: 0;
@@ -305,19 +377,104 @@ body {
 
 .overlay .highlight {
   position: absolute;
-  background: rgba(70, 130, 245, 0.32);
+  background: rgba(226, 98, 42, 0.22);
+  border-radius: 1px;
 }
 
-/* The overlay sits over the (always-white) page canvas, so its colors are fixed
-   for a light surface — NOT the app theme, or the caret goes white-on-white. */
 .overlay .caret {
   position: absolute;
-  background: #000;
+  background: #111;
   animation: caret-blink 1.06s steps(1) infinite;
+}
+
+/* Active table-cell outline: a soft accent ring so you see the cell you edit. */
+.overlay .cell-outline {
+  position: absolute;
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  background: rgba(226, 98, 42, 0.04);
 }
 
 @keyframes caret-blink {
   50% {
     opacity: 0;
   }
+}
+
+/* ---- Empty / drop state ---------------------------------------------------- */
+.drop {
+  display: grid;
+  place-items: center;
+  min-height: 60vh;
+}
+
+.drop[hidden] {
+  display: none;
+}
+
+.drop-card {
+  text-align: center;
+  max-width: 420px;
+  padding: 40px 32px;
+}
+
+.drop-icon {
+  width: 44px;
+  height: 44px;
+  fill: var(--faint);
+  margin-bottom: 8px;
+}
+
+.drop-title {
+  font-size: 17px;
+  font-weight: 600;
+  margin: 4px 0 6px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+/* ---- Footer status bar ----------------------------------------------------- */
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: 30px;
+  padding: 0 16px;
+  font-size: 12px;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+  z-index: 2;
+}
+
+.status {
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status.error {
+  color: var(--error);
+  font-weight: 600;
+}
+
+.stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.stats[hidden] {
+  display: none;
+}
+
+.stats .dot {
+  color: var(--faint);
 }
