@@ -18,8 +18,9 @@
 
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
-    BlockNode, Color, Document, FontName, FontRef, HighlightColor, InlineNode, Paragraph,
-    ParagraphProperties, RgbColor, Run, RunProperties, Table, TableRow, VerticalAlignment,
+    BlockNode, Color, Document, FontName, FontRef, GridColumn, HighlightColor, InlineNode,
+    Paragraph, ParagraphProperties, RgbColor, Run, RunProperties, Table, TableCell, TableRow,
+    VerticalAlignment,
 };
 
 /// A run-property change to apply over a range: each `Some(_)` field sets that
@@ -186,6 +187,29 @@ pub enum Operation {
         /// The table to remove from.
         table: NodeId,
         /// The 0-based row position.
+        index: u32,
+    },
+    /// Insert a column into a **regular** table (no `gridSpan`/`vMerge`; grid width
+    /// matches every row's cell count) at 0-based grid `index`: a grid column of
+    /// `width` and one `cells` entry per row (in row order, fresh ids). Inverse:
+    /// [`Operation::DeleteColumn`].
+    InsertColumn {
+        /// The table to insert into.
+        table: NodeId,
+        /// The 0-based column position.
+        index: u32,
+        /// The new grid column's width (twips), if any.
+        width: Option<i32>,
+        /// One new cell per row, in row order.
+        cells: Vec<TableCell>,
+    },
+    /// Remove the column at 0-based grid `index` from a **regular** table. Refuses a
+    /// table's only column. Inverse: [`Operation::InsertColumn`] carrying the removed
+    /// grid width + cells, so undo restores the column verbatim.
+    DeleteColumn {
+        /// The table to remove from.
+        table: NodeId,
+        /// The 0-based column position.
         index: u32,
     },
 }
@@ -374,7 +398,81 @@ pub fn apply(
                 row: Box::new(removed),
             })
         }
+        Operation::InsertColumn {
+            table,
+            index,
+            width,
+            cells,
+        } => {
+            let t = find_table_mut(doc.body_mut(), *table).ok_or(EditError::NodeNotFound)?;
+            ensure_regular_table(t)?;
+            let idx = *index as usize;
+            if idx > t.grid.len() {
+                return Err(EditError::OffsetOutOfRange);
+            }
+            if cells.len() != t.rows.len() {
+                return Err(EditError::Unsupported);
+            }
+            t.grid.insert(
+                idx,
+                GridColumn {
+                    width_twips: *width,
+                },
+            );
+            for (row, cell) in t.rows.iter_mut().zip(cells.iter()) {
+                row.cells.insert(idx, cell.clone());
+            }
+            Ok(Operation::DeleteColumn {
+                table: *table,
+                index: *index,
+            })
+        }
+        Operation::DeleteColumn { table, index } => {
+            let t = find_table_mut(doc.body_mut(), *table).ok_or(EditError::NodeNotFound)?;
+            ensure_regular_table(t)?;
+            let idx = *index as usize;
+            if idx >= t.grid.len() {
+                return Err(EditError::OffsetOutOfRange);
+            }
+            // A row's cells are non-empty; removing the only column is invalid.
+            if t.grid.len() == 1 {
+                return Err(EditError::Unsupported);
+            }
+            let width = t.grid.remove(idx).width_twips;
+            let cells: Vec<TableCell> =
+                t.rows.iter_mut().map(|row| row.cells.remove(idx)).collect();
+            Ok(Operation::InsertColumn {
+                table: *table,
+                index: *index,
+                width,
+                cells,
+            })
+        }
     }
+}
+
+/// A table is *regular* for column edits when it has a non-empty grid, every row
+/// has exactly one cell per grid column, and no cell is horizontally or vertically
+/// merged. Column insert/delete on a merged table would desync the grid from the
+/// cells, so those are refused (a later slice handles spans).
+fn ensure_regular_table(table: &Table) -> Result<(), EditError> {
+    let cols = table.grid.len();
+    if cols == 0 {
+        return Err(EditError::Unsupported);
+    }
+    for row in &table.rows {
+        if row.cells.len() != cols {
+            return Err(EditError::Unsupported);
+        }
+        for cell in &row.cells {
+            if cell.properties.grid_span.is_some_and(|s| s > 1)
+                || cell.properties.vertical_merge.is_some()
+            {
+                return Err(EditError::Unsupported);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The table with id `table`, searching the body recursively (a table can nest in
@@ -486,6 +584,40 @@ fn block_contains(blocks: &[BlockNode], node: NodeId) -> bool {
         BlockNode::Paragraph(p) => p.id == node,
         _ => false,
     })
+}
+
+/// Locates the table cell that (recursively) contains paragraph `node`: the table's
+/// id and the 0-based cell index within its row. For a regular table (the only kind
+/// column edits accept) the cell index equals the grid column index. `None` if the
+/// node is not inside a table cell.
+#[must_use]
+pub fn locate_table_cell(document: &Document, node: NodeId) -> Option<(NodeId, u32)> {
+    fn walk(blocks: &[BlockNode], node: NodeId) -> Option<(NodeId, u32)> {
+        for block in blocks {
+            match block {
+                BlockNode::Table(table) => {
+                    for row in &table.rows {
+                        for (ci, cell) in row.cells.iter().enumerate() {
+                            if block_contains(&cell.blocks, node) {
+                                return Some((table.id, ci as u32));
+                            }
+                            if let Some(found) = walk(&cell.blocks, node) {
+                                return Some(found);
+                            }
+                        }
+                    }
+                }
+                BlockNode::Sdt(sdt) => {
+                    if let Some(found) = walk(&sdt.blocks, node) {
+                        return Some(found);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+    walk(document.body(), node)
 }
 
 /// The properties of paragraph `node` (a clone), for a host to read the current

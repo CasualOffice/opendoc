@@ -15,7 +15,7 @@
 
 use casual_doc_edit::{
     FormatDelta, Operation, Pos, Range as EditRange, apply as apply_edit, caret_format, find_table,
-    format_state, locate_table_row, paragraph_properties, run_style_state,
+    format_state, locate_table_cell, locate_table_row, paragraph_properties, run_style_state,
 };
 use casual_doc_export::write_document;
 use casual_doc_import::{ImportConfig, ImportMode, import_package};
@@ -35,7 +35,7 @@ use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, Document, HighlightColor,
     Indentation, LevelJustification, LevelSuffix, NumberFormat, NumberingInstance,
     NumberingInstanceId, NumberingLevel, NumberingRef, Paragraph, ParagraphProperties, RgbColor,
-    StyleId, StyleKind, TableCell, TableRow, VerticalAlignment,
+    StyleId, StyleKind, TableCell, TableCellProperties, TableRow, VerticalAlignment,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
@@ -989,6 +989,60 @@ impl WasmDocument {
             .map_err(to_js)
     }
 
+    /// Inserts an empty column left or right of the caret's cell (`after` = to its
+    /// right) in a **regular** table (no merged cells; grid matches the cell count),
+    /// adding one empty cell to every row and a grid column. The caret stays in the
+    /// same row, moving to the new cell. Errors if the caret is not inside a regular
+    /// table.
+    #[wasm_bindgen(js_name = insertColumn)]
+    pub fn insert_column(&mut self, node: &str, after: bool) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let (table, col) = locate_table_cell(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        let (_, row_index, _) = locate_table_row(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        let t = find_table(&self.document, table).ok_or_else(|| to_js("table not found".into()))?;
+        let width = t.grid.get(col as usize).and_then(|g| g.width_twips);
+        let cells = self.empty_column_cells(t.rows.len()).map_err(to_js)?;
+        let new_index = if after { col + 1 } else { col };
+        // Caret rests in the new cell of the caret's own row.
+        let caret = cells
+            .get(row_index as usize)
+            .and_then(first_paragraph_of_cell)
+            .map_or(Pos::new(nid, 0), |p| Pos::new(p, 0));
+        self.apply_action_caret(
+            vec![Operation::InsertColumn {
+                table,
+                index: new_index,
+                width,
+                cells,
+            }],
+            caret,
+        )
+        .map_err(to_js)
+    }
+
+    /// Deletes the column containing the caret's cell from a **regular** table
+    /// (refusing a table's only column), removing that cell from every row. The
+    /// caret lands in an adjacent surviving cell of the same row. Errors if the
+    /// caret is not inside a regular table.
+    #[wasm_bindgen(js_name = deleteColumn)]
+    pub fn delete_column(&mut self, node: &str) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let (table, col) = locate_table_cell(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        let (_, row_index, _) = locate_table_row(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        // Caret target: the cell that survives at this spot in the caret's row (the
+        // next column, or the previous one when deleting the last), read before the
+        // edit removes it.
+        let caret = self
+            .surviving_cell_anchor(table, row_index, col)
+            .map_or_else(|| Pos::new(nid, 0), |p| Pos::new(p, 0));
+        self.apply_action_caret(vec![Operation::DeleteColumn { table, index: col }], caret)
+            .map_err(to_js)
+    }
+
     /// Whether the caret's paragraph is inside a table cell — drives the table
     /// controls' enabled state.
     #[wasm_bindgen(js_name = inTable)]
@@ -1689,6 +1743,45 @@ impl WasmDocument {
         first_paragraph_of_row(t.rows.get(target)?)
     }
 
+    /// `count` empty cells (one per row) for a new column: default cell properties,
+    /// a single empty paragraph each, all ids fresh from the edit namespace.
+    fn empty_column_cells(&mut self, count: usize) -> Result<Vec<TableCell>, String> {
+        let exhausted = || "id space exhausted".to_string();
+        let mut cells = Vec::with_capacity(count);
+        for _ in 0..count {
+            let cell_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
+            let para_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
+            cells.push(TableCell {
+                id: cell_id,
+                properties: TableCellProperties::default(),
+                blocks: vec![BlockNode::Paragraph(Paragraph {
+                    id: para_id,
+                    properties: ParagraphProperties::default(),
+                    inlines: Vec::new(),
+                })],
+            });
+        }
+        Ok(cells)
+    }
+
+    /// The paragraph of the cell that survives at `col`'s spot in `row` after the
+    /// column at `col` is removed — the next column, or the previous one when the
+    /// last column is deleted — for placing the caret. `None` if the row has one cell.
+    fn surviving_cell_anchor(&self, table: NodeId, row: u32, col: u32) -> Option<NodeId> {
+        let t = find_table(&self.document, table)?;
+        let row = t.rows.get(row as usize)?;
+        if row.cells.len() <= 1 {
+            return None;
+        }
+        let idx = col as usize;
+        let target = if idx + 1 < row.cells.len() {
+            idx + 1
+        } else {
+            idx.saturating_sub(1)
+        };
+        first_paragraph_of_cell(row.cells.get(target)?)
+    }
+
     /// The id of the paragraph style with `name`, if one exists.
     fn style_id_by_name(&self, name: &str) -> Option<StyleId> {
         if name.is_empty() {
@@ -2105,7 +2198,12 @@ fn node_id(node: &str) -> Result<NodeId, JsValue> {
 /// The id of the first paragraph in a row's first cell (where a caret goes after a
 /// row edit), if the row has a leading paragraph.
 fn first_paragraph_of_row(row: &TableRow) -> Option<NodeId> {
-    row.cells.first()?.blocks.iter().find_map(|b| match b {
+    row.cells.first().and_then(first_paragraph_of_cell)
+}
+
+/// The id of a cell's first paragraph, if it has one.
+fn first_paragraph_of_cell(cell: &TableCell) -> Option<NodeId> {
+    cell.blocks.iter().find_map(|b| match b {
         BlockNode::Paragraph(p) => Some(p.id),
         _ => None,
     })
@@ -2162,6 +2260,11 @@ fn caret_after(op: &Operation, inverse: &Operation) -> Pos {
             first_paragraph_of_row(row).map_or_else(|| Pos::new(*table, 0), |p| Pos::new(p, 0))
         }
         Operation::DeleteRow { table, .. } => Pos::new(*table, 0),
+        Operation::InsertColumn { table, cells, .. } => cells
+            .first()
+            .and_then(first_paragraph_of_cell)
+            .map_or_else(|| Pos::new(*table, 0), |p| Pos::new(p, 0)),
+        Operation::DeleteColumn { table, .. } => Pos::new(*table, 0),
     }
 }
 
@@ -2746,6 +2849,55 @@ mod tests {
         assert_eq!(rows(&d), before);
         d.undo().expect("undo delete");
         assert_eq!(rows(&d), before + 1);
+    }
+
+    /// Insert / delete a table column on a regular table: the grid + every row's
+    /// cell count change together, the new cell is editable, and both undo exactly.
+    #[test]
+    fn insert_and_delete_table_column_round_trip() {
+        use casual_doc_edit::{find_table, locate_table_cell};
+
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let cell_id = nodes
+            .iter()
+            .find(|(_, t)| t == "Nested A")
+            .map(|(id, _)| *id)
+            .expect("the nested cell paragraph");
+        let node = cell_id.to_string();
+        let (table_id, _) =
+            locate_table_cell(&d.document, cell_id).expect("node is inside a table cell");
+
+        // The nested "Nested A | Nested B" table is regular (2 columns, no merges).
+        let cols = |d: &WasmDocument| find_table(&d.document, table_id).unwrap().grid.len();
+        let cells0 = |d: &WasmDocument| {
+            find_table(&d.document, table_id).unwrap().rows[0]
+                .cells
+                .len()
+        };
+        let before_cols = cols(&d);
+        let before_cells = cells0(&d);
+
+        // Insert a column to the right; grid and each row grow by one, new cell edits.
+        let res = d.insert_column(&node, true).expect("insert column right");
+        assert_eq!(cols(&d), before_cols + 1);
+        assert_eq!(cells0(&d), before_cells + 1);
+        let new_para = res.node();
+        d.insert_text(&new_para, 0, "C".to_string())
+            .expect("type in the new column's cell");
+        assert_eq!(d.copy_text(&new_para, 0, &new_para, 1), "C");
+
+        d.undo().expect("undo type");
+        d.undo().expect("undo insert column");
+        assert_eq!(cols(&d), before_cols);
+        assert_eq!(cells0(&d), before_cells);
+
+        // Delete the anchor's column; grid and each row shrink; undo restores.
+        d.delete_column(&node).expect("delete column");
+        assert_eq!(cols(&d), before_cols - 1);
+        d.undo().expect("undo delete column");
+        assert_eq!(cols(&d), before_cols);
     }
 
     /// Toggling a bullet list on a paragraph: `listStyleAt` reflects it, the list
