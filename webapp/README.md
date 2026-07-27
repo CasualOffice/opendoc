@@ -38,6 +38,21 @@ python3 -m http.server 8080    # or any static server
 **GitHub Pages** on pushes to `main` that touch `webapp/` or the engine crates.
 The deployed site is, again, **only a testing surface**.
 
+## Fonts (CJK / complex scripts)
+
+The WASM build ships only bundled **Latin** faces, so CJK / complex-script text
+would otherwise render as blank/`.notdef` tofu (▯). On open, the viewer inspects
+`missingCoverage()`, works out which scripts are needed, and **fetches the
+matching Noto face(s) over the network** (jsDelivr) — Japanese/Korean/Simplified
+Chinese (CJK OTFs, ~16 MB each, fetched once and cached), plus Arabic,
+Devanagari, Hebrew, Thai — registers them via the engine's fallback seam, and
+re-renders. This is the "browser = network-fetched fonts" half of the
+font-provisioning strategy.
+
+Not yet covered: **color emoji** (a separate font case) and high-quality
+**Japanese line breaking** (parley currently has no `ja` segmentation
+dictionary).
+
 ## Notes / limitations
 
 - The `.wasm` is large (bundled fonts + shaping/ICU data). Acceptable for a test

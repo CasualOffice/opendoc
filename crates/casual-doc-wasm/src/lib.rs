@@ -109,6 +109,46 @@ impl WasmDocument {
     pub fn render_page(&self, index: u32, dpi: f32) -> Result<PageBitmap, JsValue> {
         self.render_page_inner(index, dpi).map_err(to_js)
     }
+
+    /// The code points the last pagination could **not** cover with any available
+    /// face — i.e. what renders as `.notdef` tofu (▯). Returned as `u32` scalar
+    /// values. A host queries this to decide which fallback fonts to fetch
+    /// (typically CJK / complex scripts absent from the bundled Latin faces).
+    #[wasm_bindgen(js_name = missingCoverage)]
+    #[must_use]
+    pub fn missing_coverage(&self) -> Vec<u32> {
+        self.shaper
+            .registry()
+            .missing_coverage()
+            .into_iter()
+            .map(|c| c as u32)
+            .collect()
+    }
+
+    /// Registers a host-provided font (e.g. a network-fetched Noto face) as a
+    /// **coverage fallback** for the given ISO-15924 scripts (`"Hani"`, `"Hira"`,
+    /// `"Kana"`, `"Hang"`, …), then re-paginates so runs the bundled faces miss now
+    /// shape and render with it. This is the browser half of the font-provisioning
+    /// strategy — the single host-populatable seam.
+    ///
+    /// `scripts` may be empty to register the face without wiring script fallback
+    /// (see [`WasmDocument::register_font`]).
+    #[wasm_bindgen(js_name = registerFallbackFont)]
+    pub fn register_fallback_font(&mut self, bytes: &[u8], scripts: Vec<String>) {
+        let refs: Vec<&str> = scripts.iter().map(String::as_str).collect();
+        self.shaper.register_fallback_font(bytes.to_vec(), &refs);
+        self.repaginate();
+    }
+
+    /// Registers a host-provided font by family (no script-fallback wiring), then
+    /// re-paginates. Use when a document names a face the host can supply directly;
+    /// for CJK / complex-script coverage prefer
+    /// [`register_fallback_font`](Self::register_fallback_font).
+    #[wasm_bindgen(js_name = registerFont)]
+    pub fn register_font(&mut self, bytes: &[u8]) {
+        self.shaper.register_font(bytes.to_vec());
+        self.repaginate();
+    }
 }
 
 /// Internal engine calls, returning plain `Result<_, String>`. The `#[wasm_bindgen]`
@@ -153,6 +193,13 @@ impl WasmDocument {
             height_px,
             rgba: surface.data().to_vec(),
         })
+    }
+
+    /// Re-runs pagination against the current document and shaper. Called after a
+    /// font registration so the new face participates in shaping + coverage. The
+    /// page geometry (`default_config`) is font-independent and unchanged.
+    fn repaginate(&mut self) {
+        self.layout = paginate_document(&self.document, &self.shaper);
     }
 
     /// The page at `index`, or an out-of-range message.
@@ -340,6 +387,28 @@ mod tests {
             let expected = bitmap.width_px() as usize * bitmap.height_px() as usize * 4;
             assert_eq!(bitmap.rgba().0.len(), expected);
         }
+    }
+
+    /// A Latin corpus document has no missing coverage (the bundled faces cover
+    /// it), and registering a fallback font runs the register → repaginate path
+    /// without panicking and without disturbing a covered document's pagination.
+    #[test]
+    fn font_registration_repaginates_without_panic() {
+        let mut doc = open_document(RICH_DOCX).expect("open corpus docx");
+        assert!(
+            doc.missing_coverage().is_empty(),
+            "bundled faces cover this Latin document"
+        );
+        let before = doc.page_count();
+
+        // A real face (bundled Roboto) wired as a Han fallback: exercises register
+        // + repaginate. It adds no Han glyphs, so a Latin doc's pages are stable.
+        doc.register_fallback_font(
+            casual_doc_layout::fonts::ROBOTO_REGULAR,
+            vec!["Hani".to_string()],
+        );
+        assert_eq!(doc.page_count(), before);
+        assert!(doc.missing_coverage().is_empty());
     }
 
     /// An out-of-range page index is a clean error, not a panic. Exercises the
