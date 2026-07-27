@@ -32,8 +32,10 @@ use casual_doc_layout::paginate::PageConfig;
 use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_layout::units::{Point, Rect, Size, Twip};
 use casual_doc_model::v1::{
-    Alignment, BlockNode, Document, HighlightColor, Indentation, ParagraphProperties, RgbColor,
-    StyleId, StyleKind, VerticalAlignment,
+    AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, Document, HighlightColor,
+    Indentation, LevelJustification, LevelSuffix, NumberFormat, NumberingInstance,
+    NumberingInstanceId, NumberingLevel, NumberingRef, ParagraphProperties, RgbColor, StyleId,
+    StyleKind, VerticalAlignment,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
@@ -91,6 +93,11 @@ pub struct WasmDocument {
     /// re-pagination is `O(edit)` rather than `O(document)`. Cleared whenever a font
     /// registration changes face resolution (see [`WasmDocument::repaginate`]).
     galley_cache: GalleyCache,
+    /// The shared bullet / numbered list definitions this editor created, if any —
+    /// allocated lazily on the first list toggle and reused for every later one, so
+    /// the document grows at most one abstract+instance per list kind.
+    bullet_list: Option<NumberingInstanceId>,
+    numbered_list: Option<NumberingInstanceId>,
 }
 
 impl core::fmt::Debug for WasmDocument {
@@ -879,6 +886,67 @@ impl WasmDocument {
         })
     }
 
+    /// Toggles a `"bullet"` or `"numbered"` list over the selection's paragraphs, as
+    /// one undoable action. The shared list definition is created on first use and
+    /// reused after; the toggle direction (on vs off) is decided by the first
+    /// selected paragraph — if it already belongs to this list it is turned off,
+    /// else every selected paragraph is turned on. Pressing Enter in a list item
+    /// continues the list automatically (split copies the paragraph properties).
+    #[wasm_bindgen(js_name = toggleList)]
+    pub fn toggle_list(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        kind: &str,
+    ) -> Result<EditResult, JsValue> {
+        let numbered = kind == "numbered";
+        let instance = self.ensure_list(numbered).map_err(to_js)?;
+        // Direction: turn the list off iff the first selected paragraph already uses
+        // exactly this list instance; otherwise turn it on for the whole selection.
+        let (start, _end) = self
+            .order_endpoints(start_node, start_offset, end_node, end_offset)
+            .map_err(to_js)?;
+        let already = paragraph_properties(&self.document, start.node)
+            .and_then(|p| p.numbering)
+            .is_some_and(|n| n.instance == instance);
+        let target = (!already).then_some(NumberingRef { instance, level: 0 });
+        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
+            p.numbering = target;
+        })
+    }
+
+    /// The list kind the paragraph belongs to: `"bullet"`, `"numbered"`, or `""` —
+    /// drives the toolbar's list-button active state.
+    #[wasm_bindgen(js_name = listStyleAt)]
+    #[must_use]
+    pub fn list_style_at(&self, node: &str) -> String {
+        let Ok(nid) = NodeId::from_str(node) else {
+            return String::new();
+        };
+        let Some(reference) = paragraph_properties(&self.document, nid).and_then(|p| p.numbering)
+        else {
+            return String::new();
+        };
+        if Some(reference.instance) == self.numbered_list {
+            "numbered".to_string()
+        } else if Some(reference.instance) == self.bullet_list {
+            "bullet".to_string()
+        } else {
+            // A list from the imported document (not one we created) — reflect its
+            // format so the right button still lights up.
+            self.list_format(reference.instance)
+                .map_or_else(String::new, |f| {
+                    if matches!(f, NumberFormat::Bullet) {
+                        "bullet".to_string()
+                    } else {
+                        "numbered".to_string()
+                    }
+                })
+        }
+    }
+
     /// Sets the paragraph background shading (`w:shd` fill) over the selection to
     /// an RGB, or clears it when `clear` is true.
     #[wasm_bindgen(js_name = setParagraphShading)]
@@ -1475,6 +1543,55 @@ impl WasmDocument {
         self.apply_action(ops).map_err(to_js)
     }
 
+    /// Ensures the shared bullet (or numbered) list definition exists in the
+    /// document and returns its instance id, creating the abstract definition +
+    /// instance on first use (ids from the edit namespace). Idempotent — every later
+    /// toggle of the same kind reuses it. The definition is document infrastructure,
+    /// not a body edit, so it is not part of undo; an unreferenced numbering instance
+    /// is valid and harmless.
+    fn ensure_list(&mut self, numbered: bool) -> Result<NumberingInstanceId, String> {
+        if let Some(id) = if numbered {
+            self.numbered_list
+        } else {
+            self.bullet_list
+        } {
+            return Ok(id);
+        }
+        let exhausted = || "id space exhausted".to_string();
+        let abs_id = AbstractNumberingId::new(self.edit_ids.next_id().map_err(|_| exhausted())?);
+        let inst_id = NumberingInstanceId::new(self.edit_ids.next_id().map_err(|_| exhausted())?);
+        let defs = self.document.definitions_mut();
+        defs.abstract_numbering.insert(
+            abs_id,
+            AbstractNumbering {
+                levels: vec![list_level(numbered)],
+            },
+        );
+        defs.numbering.insert(
+            inst_id,
+            NumberingInstance {
+                abstract_ref: abs_id,
+                overrides: Vec::new(),
+            },
+        );
+        if numbered {
+            self.numbered_list = Some(inst_id);
+        } else {
+            self.bullet_list = Some(inst_id);
+        }
+        Ok(inst_id)
+    }
+
+    /// The number format of an imported list instance's first level, if it resolves —
+    /// lets [`list_style_at`](Self::list_style_at) light the right button for a list
+    /// the document already carried (not one this editor created).
+    fn list_format(&self, instance: NumberingInstanceId) -> Option<NumberFormat> {
+        let defs = self.document.definitions();
+        let inst = defs.numbering.get(&instance)?;
+        let abstract_num = defs.abstract_numbering.get(&inst.abstract_ref)?;
+        abstract_num.levels.first().and_then(|l| l.num_fmt.clone())
+    }
+
     /// The id of the paragraph style with `name`, if one exists.
     fn style_id_by_name(&self, name: &str) -> Option<StyleId> {
         if name.is_empty() {
@@ -1848,6 +1965,9 @@ fn open_document(bytes: &[u8]) -> Result<WasmDocument, String> {
         // Populated lazily on the first edit's incremental re-pagination; the open
         // above uses the full path since there is nothing yet to reuse.
         galley_cache: GalleyCache::new(),
+        // List definitions are created on demand by the first bullet/numbered toggle.
+        bullet_list: None,
+        numbered_list: None,
     })
 }
 
@@ -1885,6 +2005,37 @@ fn node_id(node: &str) -> Result<NodeId, JsValue> {
 /// Where the caret lands after `op` is applied: end of an insertion, start of a
 /// deletion, start of the new paragraph after a split, and the join seam after a
 /// join (recovered from the inverse split's boundary).
+/// A single top-level list level: a bullet glyph or a `1.` decimal, indented so the
+/// marker hangs to the left of the body text (Word's default 0.5″ indent with a
+/// 0.25″ hanging marker).
+fn list_level(numbered: bool) -> NumberingLevel {
+    let (num_fmt, lvl_text) = if numbered {
+        (NumberFormat::Decimal, "%1.".to_string())
+    } else {
+        (NumberFormat::Bullet, "\u{2022}".to_string()) // •
+    };
+    NumberingLevel {
+        level: 0,
+        start: 1,
+        num_fmt: Some(num_fmt),
+        lvl_text: Some(lvl_text),
+        lvl_jc: Some(LevelJustification::Start),
+        suff: Some(LevelSuffix::Tab),
+        is_lgl: false,
+        paragraph_properties: Some(ParagraphProperties {
+            indentation: Some(Indentation {
+                start_twips: Some(720),
+                end_twips: None,
+                first_line_twips: None,
+                hanging_twips: Some(360),
+            }),
+            ..ParagraphProperties::default()
+        }),
+        run_properties: None,
+        style_ref: None,
+    }
+}
+
 fn caret_after(op: &Operation, inverse: &Operation) -> Pos {
     match op {
         Operation::InsertText { at, text } => Pos::new(at.node, at.offset + text.len() as u32),
@@ -2402,6 +2553,55 @@ mod tests {
         d.undo().expect("undo delete");
         d.undo().expect("undo bold");
         assert_eq!(d.copy_text(&node, 0, &node, len), text);
+    }
+
+    /// Toggling a bullet list on a paragraph: `listStyleAt` reflects it, the list
+    /// definition is created once (a second toggle on another paragraph reuses it),
+    /// the document still paginates, undo turns it off, and it survives export.
+    #[test]
+    fn toggle_bullet_list_reflects_creates_once_and_round_trips() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, t)| !t.is_empty())
+            .map(|(id, _)| id.to_string())
+            .expect("a non-empty paragraph");
+
+        assert_eq!(d.list_style_at(&node), "", "not a list initially");
+        d.toggle_list(&node, 0, &node, 0, "bullet")
+            .expect("toggle bullet on");
+        assert_eq!(d.list_style_at(&node), "bullet", "now a bullet list");
+        assert!(d.page_count() >= 1, "still paginates with a list marker");
+
+        // A second paragraph reuses the same instance (only one abstract+instance).
+        let before_abstracts = d.document.definitions().abstract_numbering.len();
+        if let Some((id2, _)) = nodes.iter().filter(|(_, t)| !t.is_empty()).nth(1) {
+            let n2 = id2.to_string();
+            d.toggle_list(&n2, 0, &n2, 0, "bullet")
+                .expect("toggle second");
+            assert_eq!(
+                d.document.definitions().abstract_numbering.len(),
+                before_abstracts,
+                "the bullet definition is reused, not duplicated"
+            );
+        }
+
+        d.undo().expect("undo second toggle");
+        d.undo().expect("undo first toggle");
+        assert_eq!(d.list_style_at(&node), "", "undo removed the list");
+
+        // Re-apply and confirm the numbering survives export → re-open.
+        d.toggle_list(&node, 0, &node, 0, "numbered")
+            .expect("toggle numbered on");
+        assert_eq!(d.list_style_at(&node), "numbered");
+        let bytes = d.export_docx().expect("export");
+        let reopened = open_document(&bytes).expect("re-open");
+        assert!(
+            !reopened.document.definitions().numbering.is_empty(),
+            "the list's numbering definition survived export/re-open"
+        );
     }
 
     /// Paragraph and run properties apply and undo: alignment (with a query),
