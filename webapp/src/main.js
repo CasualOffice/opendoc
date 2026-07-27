@@ -548,8 +548,34 @@ function updateToolbar() {
   for (const [key, btn] of Object.entries(alignBtns)) {
     btn.setAttribute("aria-pressed", String(key === align));
   }
-  // Reflect the current paragraph style in the dropdown.
+
+  // Reflect the current run styling (size / font / color / super-sub) of a range.
+  let size = "";
+  let font = "";
+  let sup = false;
+  let sub = false;
+  if (range && doc) {
+    const rs = doc.selectionRunStyle(
+      selection.anchor.node,
+      selection.anchor.offset,
+      selection.focus.node,
+      selection.focus.offset,
+    );
+    if (rs.sizePoints) size = String(rs.sizePoints);
+    font = rs.font;
+    if (rs.color) textColorInput.value = rs.color;
+    sup = rs.superscript;
+    sub = rs.subscript;
+    rs.free();
+  }
+  fontSizeSel.value = size;
+  fontFamilySel.value = font;
+  superBtn.setAttribute("aria-pressed", String(sup));
+  subBtn.setAttribute("aria-pressed", String(sub));
+
+  // Reflect the current paragraph style + line spacing.
   paragraphStyleSel.value = hasSel && doc ? doc.paragraphStyleAt(selection.focus.node) : "";
+  lineSpacingSel.value = hasSel && doc ? String(doc.lineSpacingAt(selection.focus.node) || "") : "";
 }
 
 /** Fills the paragraph-style dropdown from the open document's styles. */

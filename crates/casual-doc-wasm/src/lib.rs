@@ -15,7 +15,7 @@
 
 use casual_doc_edit::{
     FormatDelta, Operation, Pos, Range as EditRange, apply as apply_edit, format_state,
-    paragraph_properties,
+    paragraph_properties, run_style_state,
 };
 use casual_doc_export::write_document;
 use casual_doc_import::{ImportConfig, ImportMode, import_package};
@@ -222,7 +222,8 @@ impl WasmDocument {
 
     /// Highlight rectangles for a selection, flattened as `[page, x, y, w, h, …]`
     /// (page-local twips), one 5-tuple per covered line-fragment. The range may
-    /// span nodes and pages; an empty/inverted range yields no rectangles.
+    /// span nodes and pages and be given in either direction (a backward/upward
+    /// drag) — the endpoints are ordered in document order first.
     #[wasm_bindgen(js_name = selectionRects)]
     #[must_use]
     pub fn selection_rects(
@@ -232,9 +233,14 @@ impl WasmDocument {
         end_node: &str,
         end_offset: u32,
     ) -> Vec<i32> {
-        let Some(range) = parse_range(start_node, start_offset, end_node, end_offset) else {
+        let Ok((start, end)) = self.order_endpoints(start_node, start_offset, end_node, end_offset)
+        else {
             return Vec::new();
         };
+        let range = ModelRange::new(
+            ModelPos::new(start.node, start.offset),
+            ModelPos::new(end.node, end.offset),
+        );
         let mut out = Vec::new();
         for (page, rect) in LayoutSnapshot::new(&self.layout).selection_rects(range) {
             out.extend_from_slice(&flat_rect(page, rect));
@@ -822,6 +828,50 @@ impl WasmDocument {
                 Some(RgbColor { r, g, b })
             };
         })
+    }
+
+    /// The uniform run styling of the selection (size/color/font/vert-align) for
+    /// reflecting the current values in the toolbar. Blank/zero for a mixed or
+    /// cross-paragraph selection.
+    #[wasm_bindgen(js_name = selectionRunStyle)]
+    #[must_use]
+    pub fn selection_run_style(
+        &self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+    ) -> RunStyle {
+        let Ok((start, end)) = self.order_endpoints(start_node, start_offset, end_node, end_offset)
+        else {
+            return RunStyle::default();
+        };
+        if start.node != end.node {
+            return RunStyle::default();
+        }
+        let state = run_style_state(&self.document, EditRange { start, end });
+        RunStyle {
+            size_points: state.size_half_points.map_or(0.0, |h| h as f32 / 2.0),
+            color: state.color_rgb.map_or_else(String::new, |c| {
+                format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b)
+            }),
+            font: state.font.unwrap_or_default(),
+            superscript: state.superscript,
+            subscript: state.subscript,
+        }
+    }
+
+    /// The line-spacing percentage of the paragraph at `node` (0 if unset) — for
+    /// the toolbar's spacing dropdown.
+    #[wasm_bindgen(js_name = lineSpacingAt)]
+    #[must_use]
+    pub fn line_spacing_at(&self, node: &str) -> u32 {
+        NodeId::from_str(node)
+            .ok()
+            .and_then(|nid| paragraph_properties(&self.document, nid))
+            .and_then(|p| p.spacing)
+            .and_then(|s| s.line_percent)
+            .map_or(0, u32::from)
     }
 
     /// The alignment of the first paragraph the selection touches (`"start"`,
@@ -1844,6 +1894,56 @@ impl Format {
     #[must_use]
     pub fn strike(&self) -> bool {
         self.strike
+    }
+}
+
+/// The uniform run styling of a selection, for reflecting current values in the
+/// toolbar. `sizePoints` is 0 and `color`/`font` are empty for a mixed selection.
+#[wasm_bindgen]
+#[derive(Clone, Debug, Default)]
+pub struct RunStyle {
+    size_points: f32,
+    color: String,
+    font: String,
+    superscript: bool,
+    subscript: bool,
+}
+
+#[wasm_bindgen]
+impl RunStyle {
+    /// Common font size in points (0 if mixed/unset).
+    #[wasm_bindgen(getter, js_name = sizePoints)]
+    #[must_use]
+    pub fn size_points(&self) -> f32 {
+        self.size_points
+    }
+
+    /// Common text color as `#rrggbb` (empty if mixed/unset or a theme color).
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn color(&self) -> String {
+        self.color.clone()
+    }
+
+    /// Common font family (empty if mixed/unset).
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn font(&self) -> String {
+        self.font.clone()
+    }
+
+    /// Every covered run is superscript.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn superscript(&self) -> bool {
+        self.superscript
+    }
+
+    /// Every covered run is subscript.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn subscript(&self) -> bool {
+        self.subscript
     }
 }
 
