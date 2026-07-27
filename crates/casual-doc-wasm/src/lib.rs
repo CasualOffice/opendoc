@@ -15,6 +15,7 @@
 
 use casual_doc_edit::{
     FormatDelta, Operation, Pos, Range as EditRange, apply as apply_edit, format_state,
+    paragraph_properties,
 };
 use casual_doc_export::write_document;
 use casual_doc_import::{ImportConfig, ImportMode, import_package};
@@ -27,7 +28,10 @@ use casual_doc_layout::page::{Page, PaginatedLayout};
 use casual_doc_layout::paginate::PageConfig;
 use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_layout::units::{Point, Rect, Size, Twip};
-use casual_doc_model::v1::{BlockNode, Document};
+use casual_doc_model::v1::{
+    Alignment, BlockNode, Document, HighlightColor, Indentation, ParagraphProperties, RgbColor,
+    VerticalAlignment,
+};
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
 use casual_doc_render::{MediaSource, RegistryFontSource, Surface, render};
@@ -474,6 +478,7 @@ impl WasmDocument {
                 italic,
                 underline,
                 strike,
+                ..FormatDelta::default()
             },
         })
         .map_err(to_js)
@@ -526,6 +531,7 @@ impl WasmDocument {
             italic,
             underline,
             strike,
+            ..FormatDelta::default()
         };
         let ops: Vec<Operation> = self
             .selection_subranges(start, end)
@@ -584,6 +590,218 @@ impl WasmDocument {
             acc.strike &= st.strike;
         }
         acc
+    }
+
+    // ---- Run properties over a selection (color / highlight / size / vertAlign) --
+
+    /// Sets the text color over the selection to an explicit RGB.
+    #[wasm_bindgen(js_name = setTextColor)]
+    #[allow(clippy::too_many_arguments)] // flat JS signature (node/offsets + rgb)
+    pub fn set_text_color(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        r: u8,
+        g: u8,
+        b: u8,
+    ) -> Result<EditResult, JsValue> {
+        self.apply_run_format(
+            start_node,
+            start_offset,
+            end_node,
+            end_offset,
+            FormatDelta {
+                color: Some(RgbColor { r, g, b }),
+                ..FormatDelta::default()
+            },
+        )
+    }
+
+    /// Sets the highlight over the selection to a named color (`"yellow"`,
+    /// `"green"`, … or `"none"` to clear).
+    #[wasm_bindgen(js_name = setHighlight)]
+    pub fn set_highlight(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        name: &str,
+    ) -> Result<EditResult, JsValue> {
+        self.apply_run_format(
+            start_node,
+            start_offset,
+            end_node,
+            end_offset,
+            FormatDelta {
+                highlight: Some(parse_highlight(name)),
+                ..FormatDelta::default()
+            },
+        )
+    }
+
+    /// Sets the font size over the selection, in **points**.
+    #[wasm_bindgen(js_name = setFontSize)]
+    pub fn set_font_size(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        points: f32,
+    ) -> Result<EditResult, JsValue> {
+        let half_points = (points * 2.0).round().max(2.0) as u32;
+        self.apply_run_format(
+            start_node,
+            start_offset,
+            end_node,
+            end_offset,
+            FormatDelta {
+                size_half_points: Some(half_points),
+                ..FormatDelta::default()
+            },
+        )
+    }
+
+    /// Sets the baseline alignment over the selection: `"super"`, `"sub"`, or
+    /// `"baseline"`.
+    #[wasm_bindgen(js_name = setVertAlign)]
+    pub fn set_vert_align(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        which: &str,
+    ) -> Result<EditResult, JsValue> {
+        let value = match which {
+            "super" => VerticalAlignment::Superscript,
+            "sub" => VerticalAlignment::Subscript,
+            _ => VerticalAlignment::Baseline,
+        };
+        self.apply_run_format(
+            start_node,
+            start_offset,
+            end_node,
+            end_offset,
+            FormatDelta {
+                vertical_alignment: Some(value),
+                ..FormatDelta::default()
+            },
+        )
+    }
+
+    // ---- Paragraph properties over a selection --------------------------------
+
+    /// Sets paragraph alignment over every paragraph the selection touches:
+    /// `"start"`, `"center"`, `"end"`, or `"justify"`.
+    #[wasm_bindgen(js_name = setAlignment)]
+    pub fn set_alignment(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        align: &str,
+    ) -> Result<EditResult, JsValue> {
+        let value = match align {
+            "center" => Alignment::Center,
+            "end" | "right" => Alignment::End,
+            "justify" => Alignment::Justify,
+            _ => Alignment::Start,
+        };
+        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
+            p.alignment = Some(value);
+        })
+    }
+
+    /// Sets line spacing (as a percentage of single: 100/150/200) over the
+    /// selection's paragraphs.
+    #[wasm_bindgen(js_name = setLineSpacing)]
+    pub fn set_line_spacing(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        percent: u16,
+    ) -> Result<EditResult, JsValue> {
+        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
+            let mut spacing = p.spacing.unwrap_or_default();
+            spacing.line_percent = Some(percent);
+            spacing.line_rule = Some(casual_doc_model::v1::LineRule::Auto);
+            spacing.line_twips = None;
+            p.spacing = Some(spacing);
+        })
+    }
+
+    /// Adjusts the left (start) indent by `delta_twips` (positive indents,
+    /// negative outdents, clamped at 0) over the selection's paragraphs.
+    #[wasm_bindgen(js_name = adjustIndent)]
+    pub fn adjust_indent(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        delta_twips: i32,
+    ) -> Result<EditResult, JsValue> {
+        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
+            let mut indent = p.indentation.unwrap_or(Indentation {
+                start_twips: None,
+                end_twips: None,
+                first_line_twips: None,
+                hanging_twips: None,
+            });
+            let current = indent.start_twips.unwrap_or(0);
+            indent.start_twips = Some((current + delta_twips).max(0));
+            p.indentation = Some(indent);
+        })
+    }
+
+    /// Sets the paragraph background shading (`w:shd` fill) over the selection to
+    /// an RGB, or clears it when `clear` is true.
+    #[wasm_bindgen(js_name = setParagraphShading)]
+    #[allow(clippy::too_many_arguments)] // flat JS signature (node/offsets + rgb + clear)
+    pub fn set_paragraph_shading(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        r: u8,
+        g: u8,
+        b: u8,
+        clear: bool,
+    ) -> Result<EditResult, JsValue> {
+        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
+            p.shading.fill = if clear {
+                None
+            } else {
+                Some(RgbColor { r, g, b })
+            };
+        })
+    }
+
+    /// The alignment of the first paragraph the selection touches (`"start"`,
+    /// `"center"`, `"end"`, `"justify"`), or `"start"` if unset — for toolbar
+    /// state.
+    #[wasm_bindgen(js_name = alignmentAt)]
+    #[must_use]
+    pub fn alignment_at(&self, node: &str, offset: u32) -> String {
+        let _ = offset;
+        let Ok(nid) = NodeId::from_str(node) else {
+            return "start".into();
+        };
+        match paragraph_properties(&self.document, nid).and_then(|p| p.alignment) {
+            Some(Alignment::Center) => "center",
+            Some(Alignment::End) => "end",
+            Some(Alignment::Justify) => "justify",
+            _ => "start",
+        }
+        .into()
     }
 
     /// Undoes the last user action (one or many ops), returning the restored
@@ -914,6 +1132,80 @@ impl WasmDocument {
         out
     }
 
+    /// Applies a run-property `delta` across the selection (one `FormatText` per
+    /// covered paragraph sub-range) as one undoable action.
+    fn apply_run_format(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        delta: FormatDelta,
+    ) -> Result<EditResult, JsValue> {
+        let (start, end) = self
+            .order_endpoints(start_node, start_offset, end_node, end_offset)
+            .map_err(to_js)?;
+        let ops: Vec<Operation> = self
+            .selection_subranges(start, end)
+            .into_iter()
+            .map(|(node, s, e)| Operation::FormatText {
+                range: EditRange {
+                    start: Pos::new(node, s),
+                    end: Pos::new(node, e),
+                },
+                delta,
+            })
+            .collect();
+        if ops.is_empty() {
+            return Err(to_js("empty selection".into()));
+        }
+        self.apply_action(ops).map_err(to_js)
+    }
+
+    /// Applies a mutation `f` to the properties of every paragraph the selection
+    /// touches, as one undoable action.
+    fn apply_paragraph_props(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        f: impl Fn(&mut ParagraphProperties),
+    ) -> Result<EditResult, JsValue> {
+        let (start, end) = self
+            .order_endpoints(start_node, start_offset, end_node, end_offset)
+            .map_err(to_js)?;
+        let mut ops = Vec::new();
+        for node in self.paragraphs_in_selection(start, end) {
+            if let Some(mut props) = paragraph_properties(&self.document, node) {
+                f(&mut props);
+                ops.push(Operation::SetParagraphProperties {
+                    node,
+                    properties: Box::new(props),
+                });
+            }
+        }
+        if ops.is_empty() {
+            return Err(to_js("no paragraph in selection".into()));
+        }
+        self.apply_action(ops).map_err(to_js)
+    }
+
+    /// The paragraph node ids the selection touches, in document order.
+    fn paragraphs_in_selection(&self, start: Pos, end: Pos) -> Vec<NodeId> {
+        if start.node == end.node {
+            return vec![start.node];
+        }
+        let paras = self.ordered_paragraphs();
+        let (Some(si), Some(ei)) = (
+            paras.iter().position(|(id, _)| *id == start.node),
+            paras.iter().position(|(id, _)| *id == end.node),
+        ) else {
+            return Vec::new();
+        };
+        paras[si..=ei].iter().map(|(id, _)| *id).collect()
+    }
+
     /// The caret position one step in `dir` from `(nid, offset)` — crossing line/
     /// page boundaries (up/down) and paragraph boundaries (left/right).
     fn moved_caret(&self, nid: NodeId, offset: u32, dir: &str) -> (NodeId, u32) {
@@ -1233,6 +1525,24 @@ fn to_js(message: String) -> JsValue {
     JsError::new(&message).into()
 }
 
+/// Maps a highlight name (case-insensitive) to a [`HighlightColor`]; unknown
+/// names fall back to `Yellow`, `"none"`/`""` clear the highlight.
+fn parse_highlight(name: &str) -> HighlightColor {
+    match name.to_ascii_lowercase().as_str() {
+        "none" | "" => HighlightColor::None,
+        "black" => HighlightColor::Black,
+        "blue" => HighlightColor::Blue,
+        "cyan" => HighlightColor::Cyan,
+        "green" => HighlightColor::Green,
+        "magenta" => HighlightColor::Magenta,
+        "red" => HighlightColor::Red,
+        "white" => HighlightColor::White,
+        "darkgray" | "gray" | "grey" => HighlightColor::DarkGray,
+        "lightgray" => HighlightColor::LightGray,
+        _ => HighlightColor::Yellow,
+    }
+}
+
 /// Parses a 32-hex node-id string, or a thrown JS error.
 fn node_id(node: &str) -> Result<NodeId, JsValue> {
     NodeId::from_str(node).map_err(|_| to_js(format!("invalid node id: {node}")))
@@ -1252,7 +1562,9 @@ fn caret_after(op: &Operation, inverse: &Operation) -> Pos {
         },
         // Formatting keeps the selection; the frontend does not collapse to this.
         Operation::FormatText { range, .. } => range.start,
-        Operation::SetInlines { node, .. } => Pos::new(*node, 0),
+        Operation::SetInlines { node, .. } | Operation::SetParagraphProperties { node, .. } => {
+            Pos::new(*node, 0)
+        }
     }
 }
 
@@ -1628,6 +1940,44 @@ mod tests {
 
         d.undo().expect("undo");
         assert!(!d.format_at(&node, 0, 3).bold(), "undo cleared bold");
+    }
+
+    /// Paragraph and run properties apply and undo: alignment (with a query),
+    /// plus line spacing / indent / shading / color / size / vert-align without
+    /// error, all reversible, leaving the text intact.
+    #[test]
+    fn paragraph_and_run_properties_apply_and_undo() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let (node_id, text) = nodes
+            .iter()
+            .find(|(_, t)| t.len() >= 3)
+            .map(|(id, t)| (*id, t.clone()))
+            .expect("a paragraph with >=3 chars");
+        let node = node_id.to_string();
+
+        assert_eq!(d.alignment_at(&node, 0), "start");
+        d.set_alignment(&node, 0, &node, 0, "center")
+            .expect("align");
+        assert_eq!(d.alignment_at(&node, 0), "center");
+
+        d.set_line_spacing(&node, 0, &node, 0, 150)
+            .expect("spacing");
+        d.adjust_indent(&node, 0, &node, 0, 720).expect("indent");
+        d.set_paragraph_shading(&node, 0, &node, 0, 255, 255, 0, false)
+            .expect("shading");
+        d.set_text_color(&node, 0, &node, 3, 255, 0, 0)
+            .expect("color");
+        d.set_font_size(&node, 0, &node, 3, 18.0).expect("size");
+        d.set_vert_align(&node, 0, &node, 3, "super").expect("vert");
+
+        // Undo every action; alignment returns to start and the text is intact.
+        for _ in 0..7 {
+            d.undo().expect("undo");
+        }
+        assert_eq!(d.alignment_at(&node, 0), "start");
+        assert_eq!(d.copy_text(&node, 0, &node, text.len() as u32), text);
     }
 
     /// Formatting spans paragraphs: bold a selection across two paragraphs, and

@@ -17,11 +17,14 @@
 //! are additive follow-ups (doc 59 staging).
 
 use casual_doc_model::NodeId;
-use casual_doc_model::v1::{BlockNode, Document, InlineNode, Paragraph, Run, RunProperties};
+use casual_doc_model::v1::{
+    BlockNode, Color, Document, HighlightColor, InlineNode, Paragraph, ParagraphProperties,
+    RgbColor, Run, RunProperties, VerticalAlignment,
+};
 
 /// A run-property change to apply over a range: each `Some(_)` field sets that
-/// toggle, `None` leaves it untouched. Bold/italic/underline/strike (`w:b`, `w:i`,
-/// `w:u`, `w:strike`).
+/// property, `None` leaves it untouched. Character formatting (`w:b`/`w:i`/`w:u`/
+/// `w:strike`/`w:color`/`w:highlight`/`w:sz`/`w:vertAlign`).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct FormatDelta {
     /// Set bold on/off.
@@ -32,6 +35,14 @@ pub struct FormatDelta {
     pub underline: Option<bool>,
     /// Set strike-through on/off.
     pub strike: Option<bool>,
+    /// Set the text color (`w:color`) to an explicit RGB.
+    pub color: Option<RgbColor>,
+    /// Set the highlight (`w:highlight`) to a named color.
+    pub highlight: Option<HighlightColor>,
+    /// Set the font size in half-points (`w:sz`).
+    pub size_half_points: Option<u32>,
+    /// Set the baseline alignment (`w:vertAlign`): super/sub/baseline.
+    pub vertical_alignment: Option<VerticalAlignment>,
 }
 
 impl FormatDelta {
@@ -47,6 +58,18 @@ impl FormatDelta {
         }
         if let Some(s) = self.strike {
             props.strike = Some(s);
+        }
+        if let Some(c) = self.color {
+            props.color = Some(Color::Rgb(c));
+        }
+        if let Some(h) = self.highlight {
+            props.highlight = Some(h);
+        }
+        if let Some(sz) = self.size_half_points {
+            props.size_half_points = Some(sz);
+        }
+        if let Some(v) = self.vertical_alignment {
+            props.vertical_alignment = Some(v);
         }
     }
 }
@@ -127,6 +150,15 @@ pub enum Operation {
         node: NodeId,
         /// The inlines to install.
         inlines: Vec<InlineNode>,
+    },
+    /// Replace a paragraph's properties (alignment, spacing, indentation,
+    /// shading, style, …). Its own inverse (carrying the previous properties), so
+    /// undo is exact. Boxed to keep the enum small.
+    SetParagraphProperties {
+        /// The paragraph whose properties are replaced.
+        node: NodeId,
+        /// The properties to install.
+        properties: Box<ParagraphProperties>,
     },
 }
 
@@ -246,7 +278,22 @@ pub fn apply(
                 inlines: previous,
             })
         }
+        Operation::SetParagraphProperties { node, properties } => {
+            let para = find_paragraph_mut(doc.body_mut(), *node).ok_or(EditError::NodeNotFound)?;
+            let previous = std::mem::replace(&mut para.properties, (**properties).clone());
+            Ok(Operation::SetParagraphProperties {
+                node: *node,
+                properties: Box::new(previous),
+            })
+        }
     }
+}
+
+/// The properties of paragraph `node` (a clone), for a host to read the current
+/// alignment/spacing/… before computing a change. `None` if not a paragraph.
+#[must_use]
+pub fn paragraph_properties(document: &Document, node: NodeId) -> Option<ParagraphProperties> {
+    find_paragraph(document.body(), node).map(|p| p.properties.clone())
 }
 
 /// Ensures a run boundary exists at byte `offset` by splitting the run that
