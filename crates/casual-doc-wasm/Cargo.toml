@@ -1,0 +1,36 @@
+[package]
+name = "casual-doc-wasm"
+description = "wasm-bindgen façade over the OpenDoc engine (import → paginate → render) for the browser/webview viewer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lib]
+# `cdylib` for the web/webview WASM target (wasm-pack output); `rlib` so a native
+# desktop backend can link the same façade without WASM (doc 56 escape hatch) and
+# so native parity tests exercise the same code.
+crate-type = ["cdylib", "rlib"]
+
+# Modern rustc emits bulk-memory / sign-ext / nontrapping-fptoint instructions by
+# default; `wasm-opt` must be told to accept them, or validation fails. These
+# flags keep the -O size pass working with the version wasm-pack ships.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ['-O', '--enable-bulk-memory', '--enable-sign-ext', '--enable-nontrapping-float-to-int']
+
+[dependencies]
+casual-doc-import.workspace = true
+casual-doc-layout.workspace = true
+casual-doc-model.workspace = true
+casual-doc-ooxml.workspace = true
+casual-doc-render.workspace = true
+# The JS↔WASM boundary. MIT-or-Apache-2.0, pure-Rust glue; compiles on native
+# too (the annotations are inert without a JS host), so the parity tests run
+# under `cargo test`.
+wasm-bindgen = "0.2"
+
+[lints]
+workspace = true
