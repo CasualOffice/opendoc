@@ -68,10 +68,6 @@ const indentDecBtn = document.getElementById("indentDec");
 const indentIncBtn = document.getElementById("indentInc");
 const bulletListBtn = document.getElementById("bulletList");
 const numberedListBtn = document.getElementById("numberedList");
-const insertRowBtn = document.getElementById("insertRow");
-const deleteRowBtn = document.getElementById("deleteRow");
-const insertColumnBtn = document.getElementById("insertColumn");
-const deleteColumnBtn = document.getElementById("deleteColumn");
 const fontFamilySel = document.getElementById("fontFamily");
 const paragraphStyleSel = document.getElementById("paragraphStyle");
 const runControls = [superBtn, subBtn, fontSizeSel, textColorInput, highlightSel, fontFamilySel];
@@ -87,7 +83,6 @@ const paraControls = [
 const saveBtn = document.getElementById("save");
 const zoomInBtn = document.getElementById("zoomIn");
 const zoomOutBtn = document.getElementById("zoomOut");
-const tableGroup = document.getElementById("tableGroup");
 const docTitleEl = document.getElementById("docTitle");
 const titleDividerEl = document.getElementById("titleDivider");
 const statsEl = document.getElementById("stats");
@@ -454,6 +449,74 @@ pagesEl.addEventListener("click", (e) => {
 });
 window.addEventListener("pointerup", onPointerUp);
 
+// ---- Right-click table menu (Google-Docs style: structure lives here, not the
+//      toolbar) -----------------------------------------------------------------
+const tableMenu = document.createElement("div");
+tableMenu.className = "context-menu";
+tableMenu.hidden = true;
+document.body.appendChild(tableMenu);
+
+const TABLE_MENU_ITEMS = [
+  { label: "Insert row above", run: (n) => doc.insertRow(n, false) },
+  { label: "Insert row below", run: (n) => doc.insertRow(n, true) },
+  { label: "Insert column left", run: (n) => doc.insertColumn(n, false) },
+  { label: "Insert column right", run: (n) => doc.insertColumn(n, true) },
+  { divider: true },
+  { label: "Delete row", run: (n) => doc.deleteRow(n), danger: true },
+  { label: "Delete column", run: (n) => doc.deleteColumn(n), danger: true },
+];
+
+function showTableMenu(clientX, clientY, node) {
+  tableMenu.replaceChildren();
+  for (const item of TABLE_MENU_ITEMS) {
+    if (item.divider) {
+      const hr = document.createElement("div");
+      hr.className = "menu-divider";
+      tableMenu.appendChild(hr);
+      continue;
+    }
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = `menu-item${item.danger ? " danger" : ""}`;
+    b.textContent = item.label;
+    b.addEventListener("click", () => {
+      hideTableMenu();
+      runEdit(() => item.run(node));
+    });
+    tableMenu.appendChild(b);
+  }
+  tableMenu.hidden = false;
+  // Clamp the menu into the viewport near the cursor.
+  const w = tableMenu.offsetWidth;
+  const h = tableMenu.offsetHeight;
+  tableMenu.style.left = `${Math.max(8, Math.min(clientX, window.innerWidth - w - 8))}px`;
+  tableMenu.style.top = `${Math.max(8, Math.min(clientY, window.innerHeight - h - 8))}px`;
+}
+
+function hideTableMenu() {
+  tableMenu.hidden = true;
+}
+
+pagesEl.addEventListener("contextmenu", (e) => {
+  const page = pageFromEvent(e);
+  if (!page || !doc) return;
+  const anchor = anchorAt(page, e);
+  if (!anchor || !doc.inTable(anchor.node)) return; // not in a table → native menu
+  e.preventDefault();
+  selection = { anchor, focus: anchor }; // place the caret in the right-clicked cell
+  drawSelection();
+  showTableMenu(e.clientX, e.clientY, anchor.node);
+});
+
+document.addEventListener("pointerdown", (e) => {
+  if (!tableMenu.hidden && !tableMenu.contains(e.target)) hideTableMenu();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") hideTableMenu();
+});
+viewportEl.addEventListener("scroll", hideTableMenu, { passive: true });
+window.addEventListener("resize", hideTableMenu);
+
 // ---- Editing (keys → semantic edits through the WASM choke point) ------------
 
 /** Device DPI the pages are rastered at (HiDPI-crisp). */
@@ -676,11 +739,6 @@ function updateToolbar() {
   const listKind = hasSel && doc ? doc.listStyleAt(selection.focus.node) : "";
   bulletListBtn.setAttribute("aria-pressed", String(listKind === "bullet"));
   numberedListBtn.setAttribute("aria-pressed", String(listKind === "numbered"));
-
-  // Table controls: a contextual group that appears only when the caret is inside
-  // a table cell (Google-Docs style — no permanent clutter for non-table docs).
-  const inTable = hasSel && doc ? doc.inTable(selection.focus.node) : false;
-  tableGroup.hidden = !inTable;
 }
 
 /** Fills the paragraph-style dropdown from the open document's styles. */
@@ -715,20 +773,6 @@ onButton(indentDecBtn, () => runToolbarEdit((a, b, c, d) => doc.adjustIndent(a, 
 onButton(indentIncBtn, () => runToolbarEdit((a, b, c, d) => doc.adjustIndent(a, b, c, d, 360)));
 onButton(bulletListBtn, () => runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "bullet")));
 onButton(numberedListBtn, () => runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "numbered")));
-// Row ops act on the caret's paragraph (not a range) and move the caret to the
-// new / surviving row, so they run through the edit path, not runToolbarEdit.
-onButton(insertRowBtn, () => {
-  if (selection) runEdit(() => doc.insertRow(selection.focus.node, true));
-});
-onButton(deleteRowBtn, () => {
-  if (selection) runEdit(() => doc.deleteRow(selection.focus.node));
-});
-onButton(insertColumnBtn, () => {
-  if (selection) runEdit(() => doc.insertColumn(selection.focus.node, true));
-});
-onButton(deleteColumnBtn, () => {
-  if (selection) runEdit(() => doc.deleteColumn(selection.focus.node));
-});
 
 fontSizeSel.addEventListener("change", () => {
   const pt = Number(fontSizeSel.value);
