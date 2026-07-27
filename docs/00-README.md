@@ -89,6 +89,7 @@ The runtime is not a UI toolkit and is not a DOCX-only editor. It is a determini
 58. `58-INTERACTION-SELECTION-EDITING-ARCHITECTURE.md` — interaction, selection, and editing architecture over stable layout anchors.
 59. `59-V1-EDITING-OP-SET.md` — closed text-first editing operations over the rendered `v1::Document`.
 60. `60-FIDELITY-CORPUS-RENDERING-AUDIT.md` — fixture-backed rendering and pagination audit covering mixed page sizes, TOC leaders, section furniture, inline images, CJK overflow, and collision gates.
+61. `61-UNEQUAL-COLUMN-AND-CJK-CONTAINMENT-DESIGN.md` — post-PR-170 design for physical-width unequal-column flow, page/column break identity, authored dense CJK spacing, and bounded fallback-wrap correction.
 
 Also present (not in the numbered sequence): `PHASE-1A-SEMANTIC-MODELING-TRACKER.md`.
 
@@ -97,7 +98,7 @@ Also present (not in the numbered sequence): `PHASE-1A-SEMANTIC-MODELING-TRACKER
 The former per-construct schema-v1 design docs (32 and the earlier 38–53 set, sixteen files) were
 consolidated into the single `38-SCHEMA-V1-DESIGN-REFERENCE.md`; the originals were
 deleted with no information loss. Number 32 is intentionally retired (its content
-lives in the "Import architecture" section of doc 38). Numbers 44–60 are now in
+lives in the "Import architecture" section of doc 38). Numbers 44–61 are now in
 use by the later architecture, audit, and rendering-fidelity series listed above.
 
 ## Recommended project names

@@ -262,6 +262,7 @@ fn build_section_runs(
             config,
             layout,
             galley,
+            column_galleys: Vec::new(),
             starts_new_page: true,
         }];
     }
@@ -346,10 +347,20 @@ fn push_section_run(
 
     let layout = column_layout(&boundary.columns, config.content_area());
     let galley = build_galley_for_blocks(document, shaper, blocks, layout.flow_width());
+    let column_galleys = if layout.has_unequal_widths() {
+        layout
+            .flow_widths()
+            .into_iter()
+            .map(|width| build_galley_for_blocks(document, shaper, blocks, width))
+            .collect()
+    } else {
+        Vec::new()
+    };
     runs.push(SectionRun {
         config,
         layout,
         galley,
+        column_galleys,
         starts_new_page: section_starts_new_page(boundary),
     });
 }

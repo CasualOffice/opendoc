@@ -300,6 +300,117 @@ fn full_width_cjk_advance(is_full_width: bool, native: i32, em: i32) -> i32 {
     }
 }
 
+/// Merges a one-glyph fallback-font widow when the requested face is unavailable
+/// and fitting the authored measure requires no more than 3% horizontal
+/// compensation.
+///
+/// A substituted CJK face can be slightly wider than the requested Word font even
+/// after authored `w:w` scaling. Word's header text then fits while the fallback
+/// leaves one ideograph on a third visual line. The correction is intentionally
+/// narrow: exactly two plain LTR lines, a single-glyph final line, no hard break or
+/// inline object, and a bounded scale that keeps the merged output inside the
+/// original measure. Both glyph advances and paint-time outline scales are reduced
+/// together, so layout and rendering stay consistent.
+fn compact_fallback_glyph_widow(
+    layout: &mut LineLayout,
+    max_width: Twip,
+    final_scalar_is_cjk: bool,
+) {
+    if !final_scalar_is_cjk || layout.lines.len() != 2 || max_width <= Twip::ZERO {
+        return;
+    }
+    let (head, tail) = layout.lines.split_at_mut(1);
+    let previous = &mut head[0];
+    let last = &mut tail[0];
+    let plain = |line: &Line| {
+        line.images.is_empty()
+            && line.fields.is_empty()
+            && line.text_boxes.is_empty()
+            && line.rules.is_empty()
+            && line.bars.is_empty()
+            && line.runs.iter().all(|run| run.bidi_level % 2 == 0)
+    };
+    let final_glyphs = last.runs.iter().map(|run| run.glyphs.len()).sum::<usize>();
+    if previous.line_break != LineBreak::Wrap
+        || last.line_break != LineBreak::ParagraphEnd
+        || previous.page_break_after
+        || last.page_break_after
+        || previous.range.end != last.range.start
+        || !plain(previous)
+        || !plain(last)
+        || previous.runs.is_empty()
+        || last.runs.is_empty()
+        || final_glyphs != 1
+        || last
+            .range
+            .end
+            .offset
+            .saturating_sub(last.range.start.offset)
+            > 4
+        || previous
+            .runs
+            .iter()
+            .chain(&last.runs)
+            .any(|run| run.origin.x < Twip::ZERO)
+    {
+        return;
+    }
+
+    let run_end = |run: &GlyphRun| {
+        run.glyphs
+            .iter()
+            .fold(run.origin.x, |x, glyph| x + glyph.advance)
+    };
+    let previous_end = previous
+        .runs
+        .iter()
+        .map(run_end)
+        .max_by_key(|x| x.raw())
+        .unwrap_or(Twip::ZERO);
+    let last_start = last
+        .runs
+        .iter()
+        .map(|run| run.origin.x)
+        .min_by_key(|x| x.raw())
+        .unwrap_or(Twip::ZERO);
+    let last_end = last
+        .runs
+        .iter()
+        .map(run_end)
+        .max_by_key(|x| x.raw())
+        .unwrap_or(last_start);
+    let combined = previous_end + (last_end - last_start);
+    if combined <= max_width || i64::from(combined.raw()) * 100 > i64::from(max_width.raw()) * 103 {
+        return;
+    }
+
+    let target_baseline = previous
+        .runs
+        .first()
+        .map_or(previous.ascent, |run| run.origin.y);
+    let last_baseline = last.runs.first().map_or(last.ascent, |run| run.origin.y);
+    for run in &mut last.runs {
+        run.origin.x = previous_end + (run.origin.x - last_start);
+        run.origin.y = run.origin.y + (target_baseline - last_baseline);
+    }
+    previous.runs.append(&mut last.runs);
+
+    let numerator = i64::from(max_width.raw());
+    let denominator = i64::from(combined.raw());
+    for run in &mut previous.runs {
+        run.origin.x = Twip((i64::from(run.origin.x.raw()) * numerator / denominator) as i32);
+        run.character_scale_percent = ((u64::from(run.character_scale_percent) * numerator as u64
+            / denominator as u64) as u16)
+            .max(1);
+        for glyph in &mut run.glyphs {
+            glyph.advance = Twip((i64::from(glyph.advance.raw()) * numerator / denominator) as i32);
+        }
+    }
+    previous.range.end = last.range.end;
+    previous.line_break = LineBreak::ParagraphEnd;
+    layout.lines.pop();
+}
+
 /// Applies the `w:spacing@lineRule` box model to a shaped line's natural metrics,
 /// returning the `(ascent, descent, height)` to store. Word (ECMA-376 §17.3.1.33):
 ///
@@ -501,8 +612,22 @@ impl ParleyShaper {
         // `parley` (rather than rewriting the box afterwards) keeps the glyph
         // baselines and the line box consistent on every downstream path, including
         // paragraphs that never go through the flow layer's line restacking.
-        self.shape_inner(runs, images, floats, constraints, range, true)
-            .0
+        let mut normalized = self
+            .shape_inner(runs, images, floats, constraints, range, true)
+            .0;
+        if constraints.alignment == TextAlignment::Start && images.is_empty() && floats.is_empty() {
+            let final_scalar_is_cjk = runs
+                .iter()
+                .rev()
+                .find_map(|run| run.text.chars().next_back())
+                .is_some_and(is_cjk_scalar);
+            compact_fallback_glyph_widow(
+                &mut normalized,
+                constraints.max_width,
+                final_scalar_is_cjk,
+            );
+        }
+        normalized
     }
 
     /// Shapes a paragraph once. When `normalize_cjk` is set, the line box is driven
@@ -574,11 +699,11 @@ impl ParleyShaper {
         let percent = constraints
             .line_height_percent
             .map_or(1.0, |p| f32::from(p) / 100.0);
-        // A sub-single `auto` multiple may tighten leading, but must not make the
-        // CJK em cell itself shorter than the glyph em: that would make adjacent
-        // rows overprint. This still honors dense authored spacing (1.0em instead
-        // of the normal 1.2em) without the old blanket floor to single spacing.
-        let cjk_line_factor = (CJK_SINGLE_LINE_FACTOR * percent).max(1.0);
+        // An authored sub-single `auto` multiple is allowed to tighten below one
+        // em. PR #170's blanket one-em floor prevented overpaint but visibly
+        // enlarged selected SDS paragraphs. Exact-height lines retain their
+        // explicit clip/baseline containment; `auto` spacing remains source-faithful.
+        let cjk_line_factor = CJK_SINGLE_LINE_FACTOR * percent;
         if normalize_cjk {
             // Drive the line box from the run font size (Word's single-line height),
             // not the fallback face's native metrics: every run's line height becomes
@@ -985,6 +1110,103 @@ mod tests {
         }
     }
 
+    fn fallback_widow_line(
+        node: NodeId,
+        start: u32,
+        end: u32,
+        advance: Twip,
+        line_break: LineBreak,
+    ) -> Line {
+        Line {
+            runs: vec![GlyphRun {
+                font: FontId(0),
+                size: Twip(220),
+                character_scale_percent: 100,
+                color: [0, 0, 0, 255],
+                origin: Point::new(Twip::ZERO, Twip(180)),
+                bidi_level: 0,
+                decoration: Decoration::default(),
+                highlight: None,
+                glyphs: vec![Glyph {
+                    id: 1,
+                    advance,
+                    cluster: start,
+                }],
+            }],
+            ascent: Twip(180),
+            descent: Twip(40),
+            height: Twip(220),
+            clip: false,
+            range: ModelRange::new(ModelPos::new(node, start), ModelPos::new(node, end)),
+            line_break,
+            page_break_after: false,
+            bars: Vec::new(),
+            images: Vec::new(),
+            fields: Vec::new(),
+            text_boxes: Vec::new(),
+            rules: Vec::new(),
+        }
+    }
+
+    fn fallback_widow_layout() -> LineLayout {
+        let node = NodeId::from_parts(7, 1).unwrap();
+        LineLayout {
+            lines: vec![
+                fallback_widow_line(node, 0, 3, Twip(3_000), LineBreak::Wrap),
+                fallback_widow_line(node, 3, 6, Twip(200), LineBreak::ParagraphEnd),
+            ],
+        }
+    }
+
+    #[test]
+    fn bounded_fallback_glyph_widow_is_compacted_inside_the_measure() {
+        let max_width = Twip(3_122);
+        let mut layout = fallback_widow_layout();
+
+        compact_fallback_glyph_widow(&mut layout, max_width, true);
+
+        assert_eq!(layout.lines.len(), 1);
+        let line = &layout.lines[0];
+        let right_edge = line
+            .runs
+            .iter()
+            .map(|run| {
+                run.origin.x
+                    + run
+                        .glyphs
+                        .iter()
+                        .fold(Twip::ZERO, |width, glyph| width + glyph.advance)
+            })
+            .max_by_key(|edge| edge.raw())
+            .unwrap();
+        assert!(right_edge <= max_width);
+        assert_eq!(line.range.end.offset, 6);
+        assert_eq!(line.line_break, LineBreak::ParagraphEnd);
+        assert!(
+            line.runs
+                .iter()
+                .all(|run| run.character_scale_percent < 100)
+        );
+    }
+
+    #[test]
+    fn fallback_glyph_widow_beyond_the_compensation_bound_still_wraps() {
+        let mut layout = fallback_widow_layout();
+
+        compact_fallback_glyph_widow(&mut layout, Twip(3_000), true);
+
+        assert_eq!(layout.lines.len(), 2);
+    }
+
+    #[test]
+    fn non_cjk_glyph_widow_is_not_compacted() {
+        let mut layout = fallback_widow_layout();
+
+        compact_fallback_glyph_widow(&mut layout, Twip(3_122), false);
+
+        assert_eq!(layout.lines.len(), 2);
+    }
+
     #[test]
     fn shapes_a_single_line_of_text() {
         let shaper = ParleyShaper::new();
@@ -1130,7 +1352,7 @@ mod tests {
     }
 
     #[test]
-    fn dense_auto_spacing_keeps_a_horizontally_scaled_em_from_overprinting() {
+    fn dense_auto_spacing_preserves_the_authored_sub_single_pitch() {
         let shaper = ParleyShaper::new();
         let scaled = StyledRun {
             character_scale_percent: 95,
@@ -1147,9 +1369,13 @@ mod tests {
             para_range(),
         );
         assert!(layout.lines.len() > 1);
+        let expected = (authored_size.raw() as f32 * CJK_SINGLE_LINE_FACTOR * 0.70).round() as i32;
         assert!(
-            layout.lines.iter().all(|line| line.height >= authored_size),
-            "sub-single spacing may trim leading, not collapse the glyph em"
+            layout
+                .lines
+                .iter()
+                .all(|line| line.height.raw() == expected),
+            "the authored 70% auto multiple remains below one em"
         );
     }
 
