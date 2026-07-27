@@ -36,7 +36,8 @@ use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, BorderEdge, Document,
     HighlightColor, Indentation, LevelJustification, LevelSuffix, NumberFormat, NumberingInstance,
     NumberingInstanceId, NumberingLevel, NumberingRef, Paragraph, ParagraphProperties, RgbColor,
-    StyleId, StyleKind, TableCell, TableCellProperties, TableRow, VerticalAlignment,
+    StyleId, StyleKind, TabAlignment, TabStop, TableCell, TableCellProperties, TableRow,
+    VerticalAlignment,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
@@ -1497,6 +1498,100 @@ impl WasmDocument {
             })
     }
 
+    /// Adds or replaces a tab stop at `position_twips` (from the leading margin) with
+    /// alignment `align_code` (0 start, 1 center, 2 end, 3 decimal) over the
+    /// selection's paragraphs. Any existing stop at the same position is replaced;
+    /// stops stay sorted by position.
+    #[wasm_bindgen(js_name = setTabStop)]
+    pub fn set_tab_stop(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        position_twips: i32,
+        align_code: u8,
+    ) -> Result<EditResult, JsValue> {
+        let alignment = tab_alignment_from_code(align_code);
+        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
+            p.tabs.retain(|t| t.position_twips != position_twips);
+            p.tabs.push(TabStop {
+                position_twips,
+                alignment,
+                leader: None,
+            });
+            p.tabs.sort_by_key(|t| t.position_twips);
+        })
+    }
+
+    /// Removes the tab stop at exactly `position_twips` over the selection.
+    #[wasm_bindgen(js_name = removeTabStop)]
+    pub fn remove_tab_stop(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        position_twips: i32,
+    ) -> Result<EditResult, JsValue> {
+        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
+            p.tabs.retain(|t| t.position_twips != position_twips);
+        })
+    }
+
+    /// Moves the tab stop at `from_twips` to `to_twips` (keeping its alignment) over
+    /// the selection — one undoable action, for a ruler drag.
+    #[wasm_bindgen(js_name = moveTabStop)]
+    pub fn move_tab_stop(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        from_twips: i32,
+        to_twips: i32,
+    ) -> Result<EditResult, JsValue> {
+        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
+            if let Some(t) = p.tabs.iter_mut().find(|t| t.position_twips == from_twips) {
+                t.position_twips = to_twips;
+            }
+            p.tabs.retain(|t| t.position_twips >= 0);
+            p.tabs.sort_by_key(|t| t.position_twips);
+        })
+    }
+
+    /// Clears every explicit tab stop over the selection.
+    #[wasm_bindgen(js_name = clearTabStops)]
+    pub fn clear_tab_stops(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+    ) -> Result<EditResult, JsValue> {
+        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, |p| {
+            p.tabs.clear();
+        })
+    }
+
+    /// The paragraph's explicit tab stops as a flat `[pos0, code0, pos1, code1, …]`
+    /// (position in twips, alignment code 0 start / 1 center / 2 end / 3 decimal /
+    /// 4 bar) — what the ruler renders its tab glyphs from.
+    #[wasm_bindgen(js_name = paragraphTabs)]
+    #[must_use]
+    pub fn paragraph_tabs(&self, node: &str) -> Vec<i32> {
+        NodeId::from_str(node)
+            .ok()
+            .and_then(|nid| paragraph_properties(&self.document, nid))
+            .map(|p| {
+                p.tabs
+                    .iter()
+                    .flat_map(|t| [t.position_twips, tab_alignment_code(t.alignment)])
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// The uniform run styling of the selection (size/color/font/vert-align) for
     /// reflecting the current values in the toolbar. Blank/zero for a mixed or
     /// cross-paragraph selection.
@@ -2466,6 +2561,28 @@ fn flat_rect(page: u32, rect: Rect) -> [i32; 5] {
         rect.size.width.raw(),
         rect.size.height.raw(),
     ]
+}
+
+/// Ruler tab-alignment code (0 start / 1 center / 2 end / 3 decimal / 4 bar) → model.
+fn tab_alignment_from_code(code: u8) -> TabAlignment {
+    match code {
+        1 => TabAlignment::Center,
+        2 => TabAlignment::End,
+        3 => TabAlignment::Decimal,
+        4 => TabAlignment::Bar,
+        _ => TabAlignment::Start,
+    }
+}
+
+/// Model tab alignment → ruler code (inverse of [`tab_alignment_from_code`]).
+fn tab_alignment_code(alignment: TabAlignment) -> i32 {
+    match alignment {
+        TabAlignment::Start => 0,
+        TabAlignment::Center => 1,
+        TabAlignment::End => 2,
+        TabAlignment::Decimal => 3,
+        TabAlignment::Bar => 4,
+    }
 }
 
 /// `text[from..to]` clamped to the string's byte length and snapped to char
@@ -3854,6 +3971,44 @@ mod tests {
         // Undo the clear → back to bottom+left+right.
         d.undo().expect("undo");
         assert_eq!(d.paragraph_border_edges(&node), 0b1110);
+    }
+
+    /// Tab stops: add (sorted, with alignment), move, cycle-by-replace, remove, and
+    /// clear — reflected by `paragraphTabs` and undoable.
+    #[test]
+    fn tab_stops_apply_reflect_and_undo() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, t)| t.len() >= 3)
+            .map(|(id, _)| id.to_string())
+            .expect("a paragraph with >=3 chars");
+
+        assert!(d.paragraph_tabs(&node).is_empty());
+        d.set_tab_stop(&node, 0, &node, 0, 1440, 0)
+            .expect("tab 1in L");
+        d.set_tab_stop(&node, 0, &node, 0, 720, 2)
+            .expect("tab .5in R");
+        // Sorted by position: [720, End(2), 1440, Start(0)].
+        assert_eq!(d.paragraph_tabs(&node), vec![720, 2, 1440, 0]);
+        // Replace at 1440 with center (a "cycle").
+        d.set_tab_stop(&node, 0, &node, 0, 1440, 1).expect("cycle");
+        assert_eq!(d.paragraph_tabs(&node), vec![720, 2, 1440, 1]);
+        // Move 720 -> 2160.
+        d.move_tab_stop(&node, 0, &node, 0, 720, 2160)
+            .expect("move");
+        assert_eq!(d.paragraph_tabs(&node), vec![1440, 1, 2160, 2]);
+        // Remove 1440.
+        d.remove_tab_stop(&node, 0, &node, 0, 1440).expect("remove");
+        assert_eq!(d.paragraph_tabs(&node), vec![2160, 2]);
+        d.clear_tab_stops(&node, 0, &node, 0).expect("clear");
+        assert!(d.paragraph_tabs(&node).is_empty());
+
+        // Undo the clear → the single remaining stop returns.
+        d.undo().expect("undo");
+        assert_eq!(d.paragraph_tabs(&node), vec![2160, 2]);
     }
 
     /// A `pageBreakBefore` set through the live edit path must re-paginate and add a

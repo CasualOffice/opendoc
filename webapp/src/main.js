@@ -551,6 +551,8 @@ let rulerGeom = null; // { widthTwip, marginStartTwip, marginEndTwip }
 let rulerScale = 0; // px per twip at the current zoom
 const markers = {}; // key -> element
 const TWIPS_PER_INCH = 1440;
+let tabInsertCode = 0; // the type new ruler tabs get: 0 L, 1 C, 2 R, 3 decimal
+const TAB_LETTER = ["L", "C", "R", "."];
 
 /** Rebuilds the ruler scale, margin zones, and ticks for the current page/zoom. */
 function buildRuler() {
@@ -572,12 +574,33 @@ function buildRuler() {
   rulerTrack.replaceChildren();
   const contentStart = rulerGeom.marginStart;
 
-  // The white content span between the (shaded) page margins.
+  // The white content span between the (shaded) page margins. Clicking it adds a
+  // tab stop at that position (in the current tab type) on the caret paragraph.
   const content = document.createElement("div");
   content.className = "ruler-content";
   content.style.left = `${px(rulerGeom.marginStart)}px`;
   content.style.width = `${px(rulerGeom.width - rulerGeom.marginStart - rulerGeom.marginEnd)}px`;
+  content.addEventListener("pointerdown", (e) => {
+    if (!doc || !selection || e.button !== 0) return;
+    const pos = Math.max(0, Math.round(e.offsetX / rulerScale));
+    e.preventDefault();
+    e.stopPropagation();
+    runToolbarEdit((a, b, c, d) => doc.setTabStop(a, b, c, d, pos, tabInsertCode));
+    updateRulerMarkers();
+  });
   rulerTrack.appendChild(content);
+
+  // Word-style tab-type selector at the ruler's left edge; click to cycle L/C/R/dot.
+  const corner = document.createElement("button");
+  corner.type = "button";
+  corner.className = "tab-corner";
+  corner.title = "Tab stop type — click to change";
+  corner.textContent = TAB_LETTER[tabInsertCode];
+  corner.addEventListener("click", () => {
+    tabInsertCode = (tabInsertCode + 1) % TAB_LETTER.length;
+    corner.textContent = TAB_LETTER[tabInsertCode];
+  });
+  rulerTrack.appendChild(corner);
 
   // Minor ticks every 1/8", plus a numbered major tick at each inch measured from
   // the left margin (0 at the content edge).
@@ -642,6 +665,59 @@ function updateRulerMarkers() {
   markers.left.style.left = `${px(contentStart + start)}px`;
   markers.firstLine.style.left = `${px(contentStart + start + firstLine)}px`;
   markers.right.style.left = `${px(contentEnd - end)}px`;
+  renderTabStops();
+}
+
+/** Draws the caret paragraph's tab stops as glyphs on the ruler (recreated each
+ *  update). Each glyph: click cycles its type, drag moves it, drag off removes it. */
+function renderTabStops() {
+  for (const g of rulerTrack.querySelectorAll(".tab-glyph")) g.remove();
+  if (!doc || !selection || !rulerGeom) return;
+  const px = (t) => t * rulerScale;
+  const tabs = doc.paragraphTabs(selection.focus.node); // flat [pos, code, …]
+  for (let k = 0; k < tabs.length; k += 2) {
+    const pos = tabs[k];
+    const code = tabs[k + 1];
+    const g = document.createElement("div");
+    g.className = `tab-glyph tab-${code}`;
+    g.textContent = TAB_LETTER[code] ?? "L";
+    g.style.left = `${px(rulerGeom.marginStart + pos)}px`;
+    g.title = "Tab stop — click to change type, drag to move, drag off to remove";
+    g.addEventListener("pointerdown", (e) => startTabDrag(pos, code, g, e));
+    rulerTrack.appendChild(g);
+  }
+}
+
+/** A tab-glyph pointer interaction: no move → cycle type; horizontal move →
+ *  reposition; released off the ruler → delete (Word's drag-off-to-remove). */
+function startTabDrag(pos, code, glyph, ev) {
+  if (!doc || !selection || ev.button !== 0) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  const trackRect = rulerTrack.getBoundingClientRect();
+  const px = (t) => t * rulerScale;
+  let moved = false;
+  let curPos = pos;
+  const onMove = (e) => {
+    if (Math.abs(e.clientX - ev.clientX) > 3 || Math.abs(e.clientY - ev.clientY) > 3) moved = true;
+    curPos = Math.max(0, Math.round((e.clientX - trackRect.left) / rulerScale - rulerGeom.marginStart));
+    glyph.style.left = `${px(rulerGeom.marginStart + curPos)}px`; // live
+  };
+  const onUp = (e) => {
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    const offRuler = e.clientY > trackRect.bottom + 14 || e.clientY < trackRect.top - 14;
+    if (offRuler) {
+      runToolbarEdit((a, b, c, d) => doc.removeTabStop(a, b, c, d, pos));
+    } else if (moved && curPos !== pos) {
+      runToolbarEdit((a, b, c, d) => doc.moveTabStop(a, b, c, d, pos, curPos));
+    } else {
+      runToolbarEdit((a, b, c, d) => doc.setTabStop(a, b, c, d, pos, (code + 1) % TAB_LETTER.length));
+    }
+    updateRulerMarkers();
+  };
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
 }
 
 /** Drag an indent marker. Uses window-level move/up listeners (never
