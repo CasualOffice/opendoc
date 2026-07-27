@@ -547,10 +547,7 @@ fn remove_table(
 
 /// The mutable block list of the cell or SDT with id `id`, searched recursively —
 /// the re-insertion target for [`Operation::InsertTable`]. `None` if not found.
-fn find_container_blocks_mut(
-    blocks: &mut [BlockNode],
-    id: NodeId,
-) -> Option<&mut Vec<BlockNode>> {
+fn find_container_blocks_mut(blocks: &mut [BlockNode], id: NodeId) -> Option<&mut Vec<BlockNode>> {
     for block in blocks.iter_mut() {
         match block {
             BlockNode::Table(t) => {
