@@ -84,6 +84,11 @@ The runtime is not a UI toolkit and is not a DOCX-only editor. It is a determini
 53. `53-PER-SECTION-ANCHOR-GEOMETRY-DESIGN.md` — section-aware page/margin/column reference boxes for floating objects.
 54. `54-VML-TEXT-BOX-POSITIONING-DESIGN.md` — bounded VML position, wrap-distance, text-body, and safe body-float bridge.
 55. `55-CURRENT-DOCX-FIDELITY-GAP-AUDIT.md` — current-main reconciliation of remaining render, layout, nested-content, running-content, and semantic fidelity gaps, with PR order and acceptance gates.
+56. `56-EDITOR-SHELL-AND-RENDER-ARCHITECTURE.md` — fat-client editor/viewer shell and rendering architecture.
+57. `57-PHASE-1G-IMPLEMENTATION-PLAN.md` — build-level plan for the WASM bridge, viewer, text overlay, workers, and editing path.
+58. `58-INTERACTION-SELECTION-EDITING-ARCHITECTURE.md` — interaction, selection, and editing architecture over stable layout anchors.
+59. `59-V1-EDITING-OP-SET.md` — closed text-first editing operations over the rendered `v1::Document`.
+60. `60-FIDELITY-CORPUS-RENDERING-AUDIT.md` — fixture-backed rendering and pagination audit covering mixed page sizes, TOC leaders, section furniture, inline images, CJK overflow, and collision gates.
 
 Also present (not in the numbered sequence): `PHASE-1A-SEMANTIC-MODELING-TRACKER.md`.
 
@@ -92,7 +97,7 @@ Also present (not in the numbered sequence): `PHASE-1A-SEMANTIC-MODELING-TRACKER
 The former per-construct schema-v1 design docs (32 and the earlier 38–53 set, sixteen files) were
 consolidated into the single `38-SCHEMA-V1-DESIGN-REFERENCE.md`; the originals were
 deleted with no information loss. Number 32 is intentionally retired (its content
-lives in the "Import architecture" section of doc 38). Numbers 44–55 are now in
+lives in the "Import architecture" section of doc 38). Numbers 44–60 are now in
 use by the later architecture, audit, and rendering-fidelity series listed above.
 
 ## Recommended project names

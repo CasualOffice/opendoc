@@ -179,6 +179,15 @@ pub struct Symbol {
     pub font: String,
     /// The glyph's code point (`w:char`, a hex value, often PUA `0xF0xx`).
     pub char: u32,
+    /// Formatting of the `w:r` that owns the symbol. This is required for form
+    /// glyphs such as 16pt Wingdings checkboxes to retain their authored size and
+    /// color instead of falling back to the paragraph default.
+    #[serde(default, skip_serializing_if = "is_default_run_properties")]
+    pub properties: RunProperties,
+}
+
+fn is_default_run_properties(properties: &RunProperties) -> bool {
+    *properties == RunProperties::default()
 }
 
 /// The natural size of a drawing, in English Metric Units (EMU).

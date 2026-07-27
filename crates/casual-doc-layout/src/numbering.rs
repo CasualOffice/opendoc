@@ -381,6 +381,7 @@ impl PreparedMarker {
                 ascent: self.ascent,
                 descent: self.descent,
                 height: Twip(self.ascent.raw() + self.descent.raw()),
+                clip: false,
                 range,
                 line_break: crate::text::LineBreak::ParagraphEnd,
                 page_break_after: false,

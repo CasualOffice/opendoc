@@ -237,6 +237,18 @@ fn adjacent_equal_property_runs_are_merged() {
 }
 
 #[test]
+fn xml_references_are_preserved_in_run_text() {
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:r><w:t>A &amp; B &#x2014; C &lt; D &apos;x&apos; &quot;y&quot;</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let InlineNode::Run(run) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected run");
+    };
+    assert_eq!(run.text, "A & B — C < D 'x' \"y\"");
+}
+
+#[test]
 fn tabs_breaks_and_color_are_mapped() {
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
             <w:p><w:r><w:rPr><w:color w:val="FF0000"/></w:rPr><w:t>a</w:t><w:tab/><w:t>b</w:t>
@@ -890,6 +902,21 @@ fn paragraph_direct_formatting_is_mapped() {
 }
 
 #[test]
+fn a_literal_tab_inside_text_is_normalized_to_a_tab_node() {
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p>
+                <w:r><w:t xml:space="preserve">left	right</w:t></w:r>
+            </w:p>
+        </w:body></w:document>"#;
+    let import = import(xml);
+    let inlines = &paragraph(&import, 0).inlines;
+    assert_eq!(inlines.len(), 3);
+    assert!(matches!(&inlines[0], InlineNode::Run(run) if run.text == "left"));
+    assert!(matches!(&inlines[1], InlineNode::Tab(_)));
+    assert!(matches!(&inlines[2], InlineNode::Run(run) if run.text == "right"));
+}
+
+#[test]
 fn paragraph_flag_and_outline_properties_are_mapped() {
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
         <w:p><w:pPr>
@@ -1351,12 +1378,13 @@ fn character_spacing_in_rpr_is_the_run_metric_not_paragraph_spacing() {
     // map to the run's character_spacing_twips and must NOT be treated as the
     // paragraph spacing element.
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
-        <w:p><w:r><w:rPr><w:spacing w:val="-20"/><w:kern w:val="28"/><w:position w:val="6"/>
+        <w:p><w:r><w:rPr><w:spacing w:val="-20"/><w:w w:val="95"/><w:kern w:val="28"/><w:position w:val="6"/>
             <w:lang w:val="en-US" w:eastAsia="ja-JP"/></w:rPr><w:t>x</w:t></w:r></w:p>
     </w:body></w:document>"#;
     let import = import(xml);
     let p = first_run_props(&import);
     assert_eq!(p.character_spacing_twips, Some(-20));
+    assert_eq!(p.character_scale_percent, Some(95));
     assert_eq!(p.kerning_half_points, Some(28));
     assert_eq!(p.position_half_points, Some(6));
     let lang = p.language.as_ref().expect("lang modeled");
@@ -5499,7 +5527,7 @@ fn omml_math_is_retained_opaquely_and_never_leaks_into_run_text() {
     let xml = br#"<w:document xmlns:w="urn:w" xmlns:m="urn:m"><w:body>
         <w:p>
             <w:r><w:t>before</w:t></w:r>
-            <m:oMathPara><m:oMath><m:r><m:t>x+1</m:t></m:r></m:oMath></m:oMathPara>
+            <m:oMathPara><m:oMath><m:r><m:t>x&amp;y</m:t></m:r></m:oMath></m:oMathPara>
             <w:r><w:t>after</w:t></w:r>
         </w:p>
     </w:body></w:document>"#;
@@ -5538,10 +5566,10 @@ fn omml_math_is_retained_opaquely_and_never_leaks_into_run_text() {
     // including the inner `m:t` markup that would otherwise have been mangled.
     assert_eq!(
         math.omml,
-        "<m:oMathPara><m:oMath><m:r><m:t>x+1</m:t></m:r></m:oMath></m:oMathPara>"
+        "<m:oMathPara><m:oMath><m:r><m:t>x&amp;y</m:t></m:r></m:oMath></m:oMathPara>"
     );
     // The plain-text fallback is the concatenated `m:t` text.
-    assert_eq!(math.text, "x+1");
+    assert_eq!(math.text, "x&y");
 }
 
 #[test]
@@ -5551,11 +5579,17 @@ fn symbol_run_is_mapped_to_a_symbol_node() {
     // binding and code point preserved (the hex `w:char` parsed to a scalar).
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
         <w:p><w:r><w:t>a</w:t></w:r>
-            <w:r><w:sym w:font="Wingdings" w:char="F0FC"/></w:r></w:p>
+            <w:r><w:rPr><w:sz w:val="32"/><w:color w:val="1F4E79"/></w:rPr>
+                <w:sym w:font="Wingdings" w:char="F0FC"/></w:r></w:p>
     </w:body></w:document>"#;
     let import = import(xml);
     let paragraph = paragraph(&import, 0);
-    let Some(InlineNode::Symbol(Symbol { font, char, .. })) = paragraph
+    let Some(InlineNode::Symbol(Symbol {
+        font,
+        char,
+        properties,
+        ..
+    })) = paragraph
         .inlines
         .iter()
         .find(|inline| matches!(inline, InlineNode::Symbol(_)))
@@ -5564,6 +5598,15 @@ fn symbol_run_is_mapped_to_a_symbol_node() {
     };
     assert_eq!(font, "Wingdings");
     assert_eq!(*char, 0xF0FC);
+    assert_eq!(properties.size_half_points, Some(32));
+    assert_eq!(
+        properties.color,
+        Some(Color::Rgb(RgbColor {
+            r: 31,
+            g: 78,
+            b: 121
+        }))
+    );
     assert!(
         !features(&import).contains(&"sym"),
         "a well-formed symbol is mapped, not reported"

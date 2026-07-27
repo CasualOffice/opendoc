@@ -3842,6 +3842,7 @@ fn write_inline(
         // `F0FC`); the importer parses it back case-insensitively.
         InlineNode::Symbol(symbol) => {
             w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
+            write_run_properties(w, &symbol.properties)?;
             let char = format!("{:04X}", symbol.char);
             let mut sym = start("w:sym");
             sym.push_attribute(("w:font", symbol.font.as_str()));
@@ -5348,20 +5349,25 @@ fn write_run_properties(
         el.push_attribute(("w:val", emphasis_token(emphasis)));
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
-    // Typographic metrics, each a signed/unsigned integer `w:val`.
-    for (value, name) in [
-        (properties.character_spacing_twips, "w:spacing"),
-        (properties.position_half_points, "w:position"),
-    ] {
-        if let Some(v) = value {
-            let mut el = start(name);
-            el.push_attribute(("w:val", v.to_string().as_str()));
-            w.write_event(Event::Empty(el)).map_err(pkg)?;
-        }
+    // Typographic metrics in CT_RPr schema order.
+    if let Some(spacing) = properties.character_spacing_twips {
+        let mut el = start("w:spacing");
+        el.push_attribute(("w:val", spacing.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(scale) = properties.character_scale_percent {
+        let mut el = start("w:w");
+        el.push_attribute(("w:val", scale.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
     if let Some(kern) = properties.kerning_half_points {
         let mut el = start("w:kern");
         el.push_attribute(("w:val", kern.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(position) = properties.position_half_points {
+        let mut el = start("w:position");
+        el.push_attribute(("w:val", position.to_string().as_str()));
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
     if let Some(language) = &properties.language {

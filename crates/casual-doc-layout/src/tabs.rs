@@ -16,13 +16,17 @@
 //! (the base shaper alone), so ordinary text is byte-for-byte unchanged.
 
 use casual_doc_model::NodeId;
-use casual_doc_model::v1::{BreakKind, TabAlignment, TabLeader, TabStop};
+use casual_doc_model::v1::{
+    BreakKind, PositionalTabAlignment, PositionalTabLeader, PositionalTabRelativeTo, TabAlignment,
+    TabLeader, TabStop,
+};
 
 use crate::block::BlockFragment;
 use crate::model::{ModelPos, ModelRange};
 use crate::text::{
-    Decoration, FieldKind, FieldStyle, Glyph, GlyphRun, InlineRule, Line, LineBreak,
-    LineConstraints, LineLayout, LineShaper, StyledRun, TextBoxContentLayout, TextBoxStroke,
+    Decoration, FieldKind, FieldStyle, Glyph, GlyphRun, InlineFloatSide, InlineRule, Line,
+    LineBreak, LineConstraints, LineLayout, LineShaper, StyledRun, TextAlignment,
+    TextBoxContentLayout, TextBoxStroke,
 };
 use crate::units::{Point, Size, Twip};
 
@@ -49,6 +53,16 @@ pub enum FlowItem<'a> {
     Run(StyledRun<'a>),
     /// An explicit tab (`w:tab`) — advances to the next tab stop.
     Tab,
+    /// An absolute positional tab (`w:ptab`). Unlike [`FlowItem::Tab`], the stop
+    /// is selected directly from the paragraph indent or text-margin box.
+    PositionalTab {
+        /// How the following segment aligns at the selected edge/center.
+        alignment: PositionalTabAlignment,
+        /// Whether the target box is the paragraph indent or text margins.
+        relative_to: PositionalTabRelativeTo,
+        /// Optional leader drawn across the tab advance.
+        leader: PositionalTabLeader,
+    },
     /// A hard break (`w:br`/`w:cr`) with its kind.
     Break(BreakKind),
     /// An inline embedded picture (`w:drawing`/`wp:inline`): its resolved media
@@ -101,6 +115,16 @@ pub enum FlowItem<'a> {
         /// Required clearance in twips.
         height: Twip,
     },
+    /// A paragraph-local square/tight/through wrap exclusion. The anchored object
+    /// is painted separately; this marker narrows intersecting text lines.
+    FloatExclusion {
+        /// Inline edge occupied by the anchored object.
+        side: InlineFloatSide,
+        /// Horizontal exclusion including wrap distances.
+        width: Twip,
+        /// Vertical clearance from the anchor paragraph's top.
+        height: Twip,
+    },
 }
 
 /// Whether an item stream needs the tab/break layer at all: any tab, any hard
@@ -108,10 +132,12 @@ pub enum FlowItem<'a> {
 /// this is `false`, the caller uses the base shaper directly.
 #[must_use]
 pub fn needs_flow_layout(items: &[FlowItem<'_>], tab_stops: &[TabStop]) -> bool {
-    items
-        .iter()
-        .any(|i| matches!(i, FlowItem::Tab | FlowItem::Break(_)))
-        || tab_stops.iter().any(|t| t.alignment == TabAlignment::Bar)
+    items.iter().any(|i| {
+        matches!(
+            i,
+            FlowItem::Tab | FlowItem::PositionalTab { .. } | FlowItem::Break(_)
+        )
+    }) || tab_stops.iter().any(|t| t.alignment == TabAlignment::Bar)
 }
 
 /// A single text segment (the run of runs between two tabs / a break / line ends),
@@ -183,7 +209,7 @@ pub fn shape_with_flow(
             Twip::ZERO
         };
 
-        let mut lines = if block.has_tab {
+        let mut lines = if !block.tabs.is_empty() {
             layout_tabbed_line(
                 shaper,
                 node,
@@ -236,15 +262,28 @@ pub fn shape_with_flow(
 struct Block<'a> {
     /// Segments of styled runs split at tabs; `segments.len() == tabs + 1`.
     segments: Vec<Vec<(&'a StyledRun<'a>, u32)>>,
-    /// The tab-stop leaders/alignment are resolved at layout time, so a tab is
-    /// just a boundary here; this records whether the block contains any.
-    has_tab: bool,
+    /// The tab boundary preceding each segment after the first.
+    /// `tabs.len() + 1 == segments.len()`.
+    tabs: Vec<TabKind>,
     /// Node byte offset at which the block starts (for line ranges).
     start_offset: u32,
     /// Node byte offset at which the block ends.
     end_offset: u32,
     /// The break that ends this block.
     trailing: Option<BreakKind>,
+}
+
+/// A tab boundary retained while splitting a hard-break block.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum TabKind {
+    /// Ordinary `w:tab`, resolved through explicit/default tab stops.
+    Ordinary,
+    /// Absolute `w:ptab`, resolved directly against a box edge or center.
+    Positional {
+        alignment: PositionalTabAlignment,
+        relative_to: PositionalTabRelativeTo,
+        leader: PositionalTabLeader,
+    },
 }
 
 /// Splits the item stream into hard-break-delimited [`Block`]s, assigning each run
@@ -256,7 +295,7 @@ fn split_blocks<'a>(items: &'a [FlowItem<'a>], base: u32) -> Vec<Block<'a>> {
     let mut byte = base;
     let mut start_offset = base;
     let mut segments: Vec<Vec<(&StyledRun<'_>, u32)>> = vec![Vec::new()];
-    let mut has_tab = false;
+    let mut tabs = Vec::new();
 
     for item in items {
         match item {
@@ -268,18 +307,29 @@ fn split_blocks<'a>(items: &'a [FlowItem<'a>], base: u32) -> Vec<Block<'a>> {
                 byte += run.text.len() as u32;
             }
             FlowItem::Tab => {
-                has_tab = true;
+                tabs.push(TabKind::Ordinary);
+                segments.push(Vec::new());
+            }
+            FlowItem::PositionalTab {
+                alignment,
+                relative_to,
+                leader,
+            } => {
+                tabs.push(TabKind::Positional {
+                    alignment: *alignment,
+                    relative_to: *relative_to,
+                    leader: *leader,
+                });
                 segments.push(Vec::new());
             }
             FlowItem::Break(kind) => {
                 blocks.push(Block {
                     segments: std::mem::replace(&mut segments, vec![Vec::new()]),
-                    has_tab,
+                    tabs: std::mem::take(&mut tabs),
                     start_offset,
                     end_offset: byte,
                     trailing: Some(*kind),
                 });
-                has_tab = false;
                 start_offset = byte;
             }
             // Inline images, fields, text boxes, and float barriers are handled by their own
@@ -289,12 +339,13 @@ fn split_blocks<'a>(items: &'a [FlowItem<'a>], base: u32) -> Vec<Block<'a>> {
             | FlowItem::Field { .. }
             | FlowItem::TextBox { .. }
             | FlowItem::HorizontalRule(_)
-            | FlowItem::FloatBarrier { .. } => {}
+            | FlowItem::FloatBarrier { .. }
+            | FlowItem::FloatExclusion { .. } => {}
         }
     }
     blocks.push(Block {
         segments,
-        has_tab,
+        tabs,
         start_offset,
         end_offset: byte,
         trailing: None,
@@ -332,11 +383,14 @@ fn layout_wrapped_block(
     layout.lines
 }
 
-/// Lays out a block that contains tabs onto a single line, resolving each tab to a
-/// horizontal advance and positioning the following segment by the stop's
-/// alignment, filling leaders in the gap. (A tabbed line is not soft-wrapped:
-/// tab-positioned columns are a single line in Word's common uses — TOC rows,
-/// forms, aligned columns.)
+/// Lays out a block that contains tabs, resolving each tab to a horizontal
+/// advance and positioning the following segment by the stop's alignment,
+/// filling leaders in the gap.
+///
+/// Common TOC/form rows remain one line when they fit. If the trailing value
+/// exceeds the available measure, it soft-wraps at its resolved tab column and
+/// continuation lines keep that hanging column. This prevents long tabbed form
+/// values from escaping the page without disturbing right-aligned TOC numbers.
 fn layout_tabbed_line(
     shaper: &dyn LineShaper,
     node: NodeId,
@@ -367,7 +421,11 @@ fn layout_tabbed_line(
     let baseline = ascent;
 
     let mut runs: Vec<GlyphRun> = Vec::new();
-    let mut pen = first_line_indent.raw().max(0);
+    // A hanging indent deliberately starts the first line left of the
+    // paragraph's normal text origin. Keeping that negative local coordinate is
+    // essential for form rows whose tab stops are authored relative to the text
+    // margin: clamping it to zero shifts the label and every tabbed value right.
+    let mut pen = first_line_indent.raw();
 
     for (i, seg) in segments.iter().enumerate() {
         if i == 0 {
@@ -377,7 +435,7 @@ fn layout_tabbed_line(
             continue;
         }
         // A tab precedes segment `i`: resolve the stop it advances to.
-        let stop = resolve_next_stop(pen, tab_stops, default_tab);
+        let stop = resolve_stop(block.tabs[i - 1], pen, tab_stops, default_tab, constraints);
         // Where the following segment's box is placed relative to the stop.
         let mut left = match stop.alignment {
             TabAlignment::Start | TabAlignment::Bar => stop.position,
@@ -396,6 +454,25 @@ fn layout_tabbed_line(
         {
             runs.push(run);
         }
+        let available = constraints.max_width.raw() - left;
+        if i + 1 == segments.len()
+            && available > 0
+            && seg.width.raw() > available
+            && !block.segments[i].is_empty()
+        {
+            return layout_wrapped_tab_tail(
+                shaper,
+                node,
+                block,
+                i,
+                runs,
+                baseline,
+                ascent,
+                descent,
+                Twip(left),
+                constraints,
+            );
+        }
         push_shifted(&mut runs, &seg.runs, Twip(left), baseline);
         pen = left + seg.width.raw();
     }
@@ -405,30 +482,19 @@ fn layout_tabbed_line(
     // any `auto` multiple as a `MetricsRelative` factor), a tabbed line is built
     // here, so the rule — an `auto` multiple, `atLeast`, or `exact` — is applied to
     // its natural height directly.
-    let natural = Twip(ascent.raw() + descent.raw());
-    // `lineRule="auto"` with an explicit `w:line`: scale the single-line box by the
-    // percent, the extra height falling below the baseline as leading (matching the
-    // `MetricsRelative` growth parley applies on the wrapped path).
-    let (ascent, descent, natural) = match constraints.line_height_percent {
-        Some(percent) if percent != 100 => {
-            let scaled = (natural.raw() as i64 * percent as i64 / 100) as i32;
-            let extra = (scaled - natural.raw()).max(0);
-            (
-                ascent,
-                Twip(descent.raw() + extra),
-                Twip(natural.raw() + extra),
-            )
+    let (ascent, descent, height) = assembled_line_metrics(ascent, descent, constraints);
+    let baseline_delta = ascent - baseline;
+    if baseline_delta != Twip::ZERO {
+        for run in &mut runs {
+            run.origin.y = run.origin.y + baseline_delta;
         }
-        _ => (ascent, descent, natural),
-    };
-    // `atLeast`/`exact` then reshape the (possibly scaled) box.
-    let (ascent, descent, height) =
-        crate::shape::apply_line_rule(ascent, descent, natural, &constraints);
+    }
     let line = Line {
         runs,
         ascent,
         descent,
         height,
+        clip: constraints.line_exact.is_some(),
         range: ModelRange::new(
             ModelPos::new(node, block.start_offset),
             ModelPos::new(node, block.end_offset),
@@ -442,6 +508,121 @@ fn layout_tabbed_line(
         rules: Vec::new(),
     };
     vec![line]
+}
+
+/// Wraps an overflowing final tab segment at the tab's resolved left edge.
+///
+/// Earlier columns and the leader stay on the first line. The base shaper owns
+/// Unicode line breaking for the value; this layer only translates each
+/// resulting line into the tab column and reconciles the first line's metrics
+/// with the prefix columns.
+#[allow(clippy::too_many_arguments)]
+fn layout_wrapped_tab_tail(
+    shaper: &dyn LineShaper,
+    node: NodeId,
+    block: &Block<'_>,
+    segment_index: usize,
+    mut prefix_runs: Vec<GlyphRun>,
+    prefix_baseline: Twip,
+    assembled_ascent: Twip,
+    assembled_descent: Twip,
+    left: Twip,
+    constraints: LineConstraints,
+) -> Vec<Line> {
+    let segment = &block.segments[segment_index];
+    let start = segment
+        .first()
+        .map_or(block.end_offset, |(_, offset)| *offset);
+    let runs: Vec<StyledRun<'_>> = segment.iter().map(|(run, _)| (*run).clone()).collect();
+    let tail_constraints = LineConstraints {
+        max_width: Twip((constraints.max_width.raw() - left.raw()).max(1)),
+        margin_width: Twip((constraints.max_width.raw() - left.raw()).max(1)),
+        indent_start: Twip::ZERO,
+        alignment: TextAlignment::Start,
+        first_line_indent: Twip::ZERO,
+        ..constraints
+    };
+    let mut lines = shaper
+        .shape_paragraph(
+            &runs,
+            tail_constraints,
+            ModelRange::new(
+                ModelPos::new(node, start),
+                ModelPos::new(node, block.end_offset),
+            ),
+        )
+        .lines;
+    if lines.is_empty() {
+        return vec![empty_line(node, block.start_offset, Vec::new())];
+    }
+
+    let original_first_height = lines[0].height;
+    let (first_ascent, first_descent, first_height) =
+        assembled_line_metrics(assembled_ascent, assembled_descent, constraints);
+    let first_baseline_delta = first_ascent - lines[0].ascent;
+    let continuation_delta = first_height - original_first_height;
+
+    for (index, line) in lines.iter_mut().enumerate() {
+        let y_delta = if index == 0 {
+            first_baseline_delta
+        } else {
+            continuation_delta
+        };
+        for run in &mut line.runs {
+            run.origin.x = run.origin.x + left;
+            run.origin.y = run.origin.y + y_delta;
+        }
+        for image in &mut line.images {
+            image.origin.x = image.origin.x + left;
+            image.origin.y = image.origin.y + y_delta;
+        }
+        for text_box in &mut line.text_boxes {
+            text_box.origin.x = text_box.origin.x + left;
+            text_box.origin.y = text_box.origin.y + y_delta;
+        }
+        for rule in &mut line.rules {
+            rule.origin.x = rule.origin.x + left;
+            rule.origin.y = rule.origin.y + y_delta;
+        }
+    }
+
+    let prefix_delta = first_ascent - prefix_baseline;
+    for run in &mut prefix_runs {
+        run.origin.y = run.origin.y + prefix_delta;
+    }
+    let first = &mut lines[0];
+    prefix_runs.append(&mut first.runs);
+    first.runs = prefix_runs;
+    first.ascent = first_ascent;
+    first.descent = first_descent;
+    first.height = first_height;
+    first.clip = constraints.line_exact.is_some();
+    first.range.start = ModelPos::new(node, block.start_offset);
+    lines
+}
+
+/// Resolves the authored line rule for a line assembled outside the base shaper.
+fn assembled_line_metrics(
+    ascent: Twip,
+    descent: Twip,
+    constraints: LineConstraints,
+) -> (Twip, Twip, Twip) {
+    let natural = Twip(ascent.raw() + descent.raw());
+    // `lineRule="auto"` with an explicit `w:line`: scale the single-line box by
+    // the percent, with positive leading below the baseline.
+    let (ascent, descent, natural) = match constraints.line_height_percent {
+        Some(percent) if percent != 100 => {
+            let scaled = (natural.raw() as i64 * percent as i64 / 100) as i32;
+            let extra = (scaled - natural.raw()).max(0);
+            (
+                ascent,
+                Twip(descent.raw() + extra),
+                Twip(natural.raw() + extra),
+            )
+        }
+        _ => (ascent, descent, natural),
+    };
+    crate::shape::apply_line_rule(ascent, descent, natural, &constraints)
 }
 
 /// Shifts a segment's shaped runs by `dx` horizontally and onto `baseline`,
@@ -524,6 +705,71 @@ pub(crate) struct ResolvedStop {
     pub(crate) leader: Option<TabLeader>,
 }
 
+/// Resolves either an ordinary or absolute positional tab into the local
+/// coordinate system used by the paragraph shaper.
+pub(crate) fn resolve_stop(
+    tab: TabKind,
+    pen: i32,
+    tab_stops: &[TabStop],
+    default_tab: Twip,
+    constraints: LineConstraints,
+) -> ResolvedStop {
+    let TabKind::Positional {
+        alignment,
+        relative_to,
+        leader,
+    } = tab
+    else {
+        // Ordinary `w:tabs/@w:pos` coordinates are relative to the text margin,
+        // while this shaper's origin is already moved to the paragraph's start
+        // indent. Resolve in margin coordinates, then translate the stop back
+        // into the indent-local line coordinates. This is observable in hanging
+        // form rows where `w:left=3612`, `w:hanging=3049`, and the value stop is
+        // exactly `w:pos=3612`.
+        let absolute_pen = pen + constraints.indent_start.raw();
+        let mut stop = resolve_next_stop(absolute_pen, tab_stops, default_tab);
+        stop.position -= constraints.indent_start.raw();
+        return stop;
+    };
+
+    // `margin_width == 0` keeps hand-built/default constraints backwards
+    // compatible: in that case the indented wrap box is the only known box.
+    let margin_width = if constraints.margin_width > Twip::ZERO {
+        constraints.margin_width
+    } else {
+        constraints.max_width
+    };
+    let (left, right) = match relative_to {
+        PositionalTabRelativeTo::Indent => (0, constraints.max_width.raw()),
+        PositionalTabRelativeTo::Margin => (
+            -constraints.indent_start.raw(),
+            margin_width.raw() - constraints.indent_start.raw(),
+        ),
+    };
+    let position = match alignment {
+        PositionalTabAlignment::Left => left,
+        PositionalTabAlignment::Center => left + (right - left) / 2,
+        PositionalTabAlignment::Right => right,
+    };
+    let alignment = match alignment {
+        PositionalTabAlignment::Left => TabAlignment::Start,
+        PositionalTabAlignment::Center => TabAlignment::Center,
+        PositionalTabAlignment::Right => TabAlignment::End,
+    };
+    let leader = match leader {
+        PositionalTabLeader::None => None,
+        PositionalTabLeader::Dot => Some(TabLeader::Dot),
+        PositionalTabLeader::Hyphen => Some(TabLeader::Hyphen),
+        PositionalTabLeader::Underscore => Some(TabLeader::Underscore),
+        PositionalTabLeader::MiddleDot => Some(TabLeader::MiddleDot),
+    };
+    ResolvedStop {
+        position,
+        alignment,
+        leader,
+    }
+}
+
 /// Resolves the tab stop a tab at pen position `pen` advances to: the nearest
 /// explicit non-`bar` stop past `pen`, else the next multiple of `default_tab`
 /// strictly past `pen`.
@@ -575,6 +821,7 @@ fn leader_run(
         requested_family: None,
         font: style.font,
         size: style.size,
+        character_scale_percent: style.character_scale_percent,
         bold: false,
         italic: false,
         letter_spacing: Twip::ZERO,
@@ -609,6 +856,7 @@ fn leader_run(
     Some(GlyphRun {
         font: template.font,
         size: template.size,
+        character_scale_percent: template.character_scale_percent,
         color: style.color,
         origin: Point::new(x0, baseline),
         bidi_level: 0,
@@ -657,6 +905,7 @@ fn empty_line(node: NodeId, offset: u32, bars: Vec<Twip>) -> Line {
         ascent: Twip::ZERO,
         descent: Twip::ZERO,
         height: Twip::ZERO,
+        clip: false,
         range: ModelRange::new(ModelPos::new(node, offset), ModelPos::new(node, offset)),
         line_break: LineBreak::ParagraphEnd,
         page_break_after: false,
@@ -689,6 +938,7 @@ mod tests {
             requested_family: None,
             font: FontId(0),
             size: Twip::from_points(11),
+            character_scale_percent: 100,
             bold: false,
             italic: false,
             letter_spacing: Twip::ZERO,
@@ -768,6 +1018,221 @@ mod tests {
         assert!(
             (right_edge - 2000).abs() <= 20,
             "the text's right edge aligns to the stop (2000), got {right_edge}"
+        );
+    }
+
+    #[test]
+    fn margin_relative_positional_tab_right_aligns_at_the_text_margin() {
+        let shaper = ParleyShaper::new();
+        let items = vec![
+            FlowItem::Run(styled("Heading")),
+            FlowItem::PositionalTab {
+                alignment: PositionalTabAlignment::Right,
+                relative_to: PositionalTabRelativeTo::Margin,
+                leader: PositionalTabLeader::Dot,
+            },
+            FlowItem::Run(styled("23")),
+        ];
+        let constraints = LineConstraints {
+            // The paragraph is indented 1000 twips from each side of an
+            // 8000-twip text-margin box.
+            max_width: Twip(6000),
+            margin_width: Twip(8000),
+            indent_start: Twip(1000),
+            ..LineConstraints::default()
+        };
+        let layout = shape_with_flow(
+            &shaper,
+            &items,
+            &[],
+            DEFAULT_TAB_STOP,
+            constraints,
+            para_range(),
+        );
+        let page_number = layout.lines[0].runs.last().unwrap();
+        let right_edge = page_number.origin.x.raw() + run_width(page_number);
+        assert!(
+            (right_edge - 7000).abs() <= 20,
+            "the local right edge is the margin edge minus the start indent, got {right_edge}"
+        );
+        assert!(
+            layout.lines[0].runs.len() > 2,
+            "the positional tab emits a dot-leader run"
+        );
+    }
+
+    #[test]
+    fn an_exact_tabbed_line_reanchors_its_baseline_inside_the_clip_box() {
+        let shaper = crate::shape::ParleyShaper::new();
+        let items = vec![
+            FlowItem::Run(styled("left")),
+            FlowItem::Tab,
+            FlowItem::Run(styled("right")),
+        ];
+        let exact = Twip(120);
+        let layout = shape_with_flow(
+            &shaper,
+            &items,
+            &[TabStop {
+                position_twips: 1800,
+                alignment: TabAlignment::Start,
+                leader: None,
+            }],
+            DEFAULT_TAB_STOP,
+            LineConstraints {
+                max_width: Twip(4000),
+                line_exact: Some(exact),
+                ..LineConstraints::default()
+            },
+            para_range(),
+        );
+        let line = &layout.lines[0];
+        assert_eq!(line.height, exact);
+        assert!(line.clip);
+        assert!(
+            line.runs
+                .iter()
+                .all(|run| (0..=exact.raw()).contains(&run.origin.y.raw()))
+        );
+    }
+
+    #[test]
+    fn an_overflowing_tabbed_value_wraps_at_its_hanging_column() {
+        let shaper = crate::shape::ParleyShaper::new();
+        let items = vec![
+            FlowItem::Run(styled("label")),
+            FlowItem::Tab,
+            FlowItem::Run(styled("装有纯水的洗眼瓶 紧密贴合的防护眼罩")),
+        ];
+        let max_width = Twip(2200);
+        let tab_column = 700;
+        let layout = shape_with_flow(
+            &shaper,
+            &items,
+            &[TabStop {
+                position_twips: tab_column,
+                alignment: TabAlignment::Start,
+                leader: None,
+            }],
+            DEFAULT_TAB_STOP,
+            LineConstraints {
+                max_width,
+                ..LineConstraints::default()
+            },
+            para_range(),
+        );
+
+        assert!(
+            layout.lines.len() >= 2,
+            "the long trailing value must soft-wrap"
+        );
+        for line in &layout.lines {
+            for run in &line.runs {
+                assert!(
+                    run.origin.x.raw() + run_width(run) <= max_width.raw() + 2,
+                    "wrapped tab content escaped the available measure"
+                );
+            }
+        }
+        assert!(
+            layout.lines[1]
+                .runs
+                .iter()
+                .all(|run| run.origin.x.raw() >= tab_column),
+            "continuation text must retain the resolved tab column"
+        );
+    }
+
+    #[test]
+    fn ordinary_tabs_translate_from_margin_to_hanging_indent_coordinates() {
+        let shaper = crate::shape::ParleyShaper::new();
+        let items = vec![
+            FlowItem::Run(styled("eye protection")),
+            FlowItem::Tab,
+            FlowItem::Run(styled(":")),
+            FlowItem::Tab,
+            FlowItem::Run(styled(
+                "pure-water eyewash bottle close-fitting protective goggles",
+            )),
+        ];
+        let layout = shape_with_flow(
+            &shaper,
+            &items,
+            &[
+                TabStop {
+                    position_twips: 3328,
+                    alignment: TabAlignment::Start,
+                    leader: None,
+                },
+                TabStop {
+                    position_twips: 3612,
+                    alignment: TabAlignment::Start,
+                    leader: None,
+                },
+            ],
+            DEFAULT_TAB_STOP,
+            LineConstraints {
+                max_width: Twip(1803),
+                margin_width: Twip(9650),
+                indent_start: Twip(3612),
+                first_line_indent: Twip(-3049),
+                ..LineConstraints::default()
+            },
+            para_range(),
+        );
+
+        assert!(layout.lines.len() >= 2);
+        assert!(
+            layout.lines[0].runs[0].origin.x < Twip::ZERO,
+            "the hanging label must protrude left of the normal indent"
+        );
+        let value_start = layout.lines[0]
+            .runs
+            .iter()
+            .find(|run| run.glyphs.first().is_some_and(|glyph| glyph.cluster >= 15))
+            .expect("value run");
+        assert!(
+            value_start.origin.x.raw().abs() <= 2,
+            "the second stop equals the paragraph indent and should be local x=0"
+        );
+        assert!(
+            layout.lines[1]
+                .runs
+                .iter()
+                .all(|run| run.origin.x >= Twip::ZERO)
+        );
+    }
+
+    #[test]
+    fn indent_relative_positional_tab_centers_on_the_indented_column() {
+        let shaper = ParleyShaper::new();
+        let items = vec![
+            FlowItem::PositionalTab {
+                alignment: PositionalTabAlignment::Center,
+                relative_to: PositionalTabRelativeTo::Indent,
+                leader: PositionalTabLeader::None,
+            },
+            FlowItem::Run(styled("center")),
+        ];
+        let constraints = LineConstraints {
+            max_width: Twip(6000),
+            margin_width: Twip(8000),
+            indent_start: Twip(1000),
+            ..LineConstraints::default()
+        };
+        let layout = shape_with_flow(
+            &shaper,
+            &items,
+            &[],
+            DEFAULT_TAB_STOP,
+            constraints,
+            para_range(),
+        );
+        let run = layout.lines[0].runs.last().unwrap();
+        let center = run.origin.x.raw() + run_width(run) / 2;
+        assert!(
+            (center - 3000).abs() <= 20,
+            "the segment is centered in the 6000-twip indented column, got {center}"
         );
     }
 

@@ -15,6 +15,7 @@ fn styled(text: &str, bold: bool, italic: bool, color: [u8; 4]) -> StyledRun<'_>
         requested_family: None,
         font: face_id(bold, italic),
         size: Twip::from_points(26),
+        character_scale_percent: 100,
         bold,
         italic,
         letter_spacing: Twip::ZERO,

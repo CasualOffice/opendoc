@@ -639,7 +639,8 @@ mod semantic_tests {
         // the catch-all — and survive write -> reopen unchanged (ids included).
         let xml = br#"<w:document xmlns:w="urn:w"><w:body>
             <w:p><w:r><w:t>before</w:t></w:r>
-                <w:r><w:sym w:font="Wingdings" w:char="F0FC"/></w:r>
+                <w:r><w:rPr><w:color w:val="FF0000"/><w:sz w:val="28"/></w:rPr>
+                    <w:sym w:font="Wingdings" w:char="F0FC"/></w:r>
                 <w:r><w:t>after</w:t></w:r></w:p>
         </w:body></w:document>"#;
         let m1 = import_main_document_xml(xml, ImportConfig::default())
@@ -662,7 +663,7 @@ mod semantic_tests {
 
         // The reopened symbol preserves both its font binding and code point, and
         // sits between the two runs (the surrounding text is untouched).
-        use casual_doc_model::v1::{BlockNode, InlineNode};
+        use casual_doc_model::v1::{BlockNode, Color, InlineNode, RgbColor};
         let BlockNode::Paragraph(para) = &m2.body()[0] else {
             panic!("expected a paragraph");
         };
@@ -671,6 +672,11 @@ mod semantic_tests {
         };
         assert_eq!(symbol.font, "Wingdings");
         assert_eq!(symbol.char, 0xF0FC);
+        assert_eq!(
+            symbol.properties.color,
+            Some(Color::Rgb(RgbColor { r: 255, g: 0, b: 0 }))
+        );
+        assert_eq!(symbol.properties.size_half_points, Some(28));
         let run_text: String = para
             .inlines
             .iter()
@@ -2831,7 +2837,7 @@ mod semantic_tests {
                 <w:caps/><w:smallCaps w:val="0"/><w:vanish/><w:webHidden/>
                 <w:u/><w:color w:val="AABBCC"/><w:sz w:val="24"/>
                 <w:vertAlign w:val="superscript"/><w:highlight w:val="cyan"/><w:em w:val="dot"/>
-                <w:spacing w:val="20"/><w:position w:val="-6"/><w:kern w:val="18"/>
+                <w:spacing w:val="20"/><w:w w:val="95"/><w:position w:val="-6"/><w:kern w:val="18"/>
                 <w:lang w:val="en-US" w:eastAsia="ja-JP" w:bidi="ar-SA"/>
             </w:rPr><w:t>x</w:t></w:r></w:p>
         </w:body></w:document>"#;

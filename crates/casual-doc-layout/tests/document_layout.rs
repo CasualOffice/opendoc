@@ -216,6 +216,11 @@ fn a_distinct_page_size_paginates_at_that_size_not_us_letter() {
     let expected_w = Twip(w - 2 * margin);
     for page in &layout.pages {
         assert_eq!(
+            page.page_size,
+            Size::new(Twip(w), Twip(h)),
+            "each immutable page carries its section-resolved physical box"
+        );
+        assert_eq!(
             page.content_area.size.width, expected_w,
             "the content width comes from the section, not US-Letter"
         );
@@ -369,6 +374,123 @@ fn a_title_page_header_differs_on_page_one() {
     // Page 1 uses the first-page header (node 330); page 2 the default (310).
     assert_eq!(layout.pages[0].header[0].fragment.node_id(), node(330));
     assert_eq!(layout.pages[1].header[0].fragment.node_id(), node(310));
+}
+
+#[test]
+fn later_sections_use_their_own_geometry_running_content_and_first_page_variant() {
+    let shaper = ParleyShaper::new();
+    let mut headers = DefinitionMap::default();
+    headers.insert(
+        HeaderFooterId::new(node(300)),
+        ModelHeaderFooter {
+            blocks: vec![paragraph(310, vec![run(311, "First-section header")])],
+        },
+    );
+    headers.insert(
+        HeaderFooterId::new(node(600)),
+        ModelHeaderFooter {
+            blocks: vec![paragraph(610, vec![run(611, "Landscape default")])],
+        },
+    );
+    headers.insert(
+        HeaderFooterId::new(node(620)),
+        ModelHeaderFooter {
+            blocks: vec![paragraph(630, vec![run(631, "Landscape first")])],
+        },
+    );
+    let mut footers = DefinitionMap::default();
+    footers.insert(
+        HeaderFooterId::new(node(400)),
+        ModelHeaderFooter {
+            blocks: vec![paragraph(410, vec![run(411, "First-section footer")])],
+        },
+    );
+    footers.insert(
+        HeaderFooterId::new(node(700)),
+        ModelHeaderFooter {
+            blocks: vec![paragraph(710, vec![run(711, "Landscape default footer")])],
+        },
+    );
+    footers.insert(
+        HeaderFooterId::new(node(720)),
+        ModelHeaderFooter {
+            blocks: vec![paragraph(730, vec![run(731, "Landscape first footer")])],
+        },
+    );
+
+    let first = section(
+        9,
+        (12_240, 15_840),
+        1_440,
+        vec![href(HeaderFooterKind::Default, 300)],
+        vec![href(HeaderFooterKind::Default, 400)],
+        false,
+    );
+    let first_id = first.id;
+    let mut second = section(
+        19,
+        (15_840, 12_240),
+        720,
+        vec![
+            href(HeaderFooterKind::Default, 600),
+            href(HeaderFooterKind::First, 620),
+        ],
+        vec![
+            href(HeaderFooterKind::Default, 700),
+            href(HeaderFooterKind::First, 720),
+        ],
+        true,
+    );
+    second.section_type = Some(SectionType::NextPage);
+    let second_id = second.id;
+    let doc = Document::new(
+        node(1),
+        vec![
+            BlockNode::Paragraph(Paragraph {
+                id: node(100),
+                properties: ParagraphProperties {
+                    section_break: Some(first_id),
+                    ..ParagraphProperties::default()
+                },
+                inlines: vec![run(101, "Portrait")],
+            }),
+            paragraph(110, vec![run(111, "Landscape first page")]),
+            page_break(120, "Landscape second page"),
+        ],
+        Definitions {
+            sections: vec![first, second],
+            headers,
+            footers,
+            ..Definitions::default()
+        },
+    )
+    .unwrap();
+
+    let layout = paginate_document(&doc, &shaper);
+    assert_eq!(layout.page_count(), 3);
+    assert_eq!(
+        layout.pages[0].page_size,
+        Size::new(Twip(12_240), Twip(15_840))
+    );
+    assert_eq!(
+        layout.pages[1].page_size,
+        Size::new(Twip(15_840), Twip(12_240))
+    );
+    assert_eq!(
+        layout.pages[2].page_size,
+        Size::new(Twip(15_840), Twip(12_240))
+    );
+    assert_eq!(layout.pages[0].section, first_id);
+    assert_eq!(layout.pages[1].section, second_id);
+    assert_eq!(layout.pages[2].section, second_id);
+
+    assert_eq!(layout.pages[0].header[0].fragment.node_id(), node(310));
+    assert_eq!(layout.pages[0].footer[0].fragment.node_id(), node(410));
+    // `titlePg` is section-local: document page 2 is the first landscape page.
+    assert_eq!(layout.pages[1].header[0].fragment.node_id(), node(630));
+    assert_eq!(layout.pages[1].footer[0].fragment.node_id(), node(730));
+    assert_eq!(layout.pages[2].header[0].fragment.node_id(), node(610));
+    assert_eq!(layout.pages[2].footer[0].fragment.node_id(), node(710));
 }
 
 #[test]

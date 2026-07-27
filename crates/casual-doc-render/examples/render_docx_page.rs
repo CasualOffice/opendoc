@@ -16,7 +16,7 @@
 #![allow(clippy::print_stderr)] // a manual example, not library code
 use casual_doc_import::{ImportConfig, ImportMode, import_package};
 use casual_doc_layout::compose::compose_page;
-use casual_doc_layout::document_layout::{document_page_config, paginate_document};
+use casual_doc_layout::document_layout::paginate_document;
 use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
 use casual_doc_render::{MapMediaSource, RegistryFontSource, Surface, render};
@@ -53,12 +53,11 @@ fn main() {
     let pages = paginate_document(&document, &shaper);
     // The page dimensions for the render surface come from the same derived
     // geometry the driver used (full page size, band-independent).
-    let config = document_page_config(&document);
     let page = pages.pages.first().expect("at least one page");
 
     let dpi = 96.0;
-    let w = config.page_size.width.to_device_px(dpi).ceil() as u32;
-    let h = config.page_size.height.to_device_px(dpi).ceil() as u32;
+    let w = page.page_size.width.to_device_px(dpi).ceil() as u32;
+    let h = page.page_size.height.to_device_px(dpi).ceil() as u32;
     let mut surface = Surface::new(w, h).unwrap();
     // Serve bundled faces *and* any fallback face the shaper resolved (an OS font
     // with `--features system-fonts`, or a host-registered blob) from the shaper's
@@ -71,8 +70,8 @@ fn main() {
     eprintln!(
         "rendered {} page(s) at {}×{} twips -> {out}",
         pages.page_count(),
-        config.page_size.width.raw(),
-        config.page_size.height.raw(),
+        page.page_size.width.raw(),
+        page.page_size.height.raw(),
     );
     if !uncovered.is_empty() {
         let sample: String = uncovered.iter().take(16).collect();

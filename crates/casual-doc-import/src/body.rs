@@ -150,6 +150,7 @@ enum Segment {
     Symbol {
         font: String,
         char: u32,
+        properties: RunProperties,
     },
     /// An inline horizontal rule (`w:pict` / `v:rect@o:hr`): a full-content-width
     /// filled line occupying its paragraph's own line.
@@ -1337,6 +1338,14 @@ impl BodyParser<'_> {
                         anchor.capture_buffer.push_str(raw);
                     }
                 }
+                Event::GeneralRef(reference) if self.capturing_anchor_axis() => {
+                    let decoded = crate::decode_xml_reference(&reference)?;
+                    if let Some(anchor) = self.pending_anchor.as_mut()
+                        && anchor.capture_buffer.len() + decoded.len() <= 64
+                    {
+                        anchor.capture_buffer.push_str(&decoded);
+                    }
+                }
                 Event::Text(text) if self.in_text || self.in_instr => {
                     let raw = text.into_inner();
                     let raw =
@@ -1344,6 +1353,10 @@ impl BodyParser<'_> {
                     let decoded =
                         quick_xml::escape::unescape(raw).map_err(|_| ImportError::MalformedXml)?;
                     self.push_text(decoded.as_ref())?;
+                }
+                Event::GeneralRef(reference) if self.in_text || self.in_instr => {
+                    let decoded = crate::decode_xml_reference(&reference)?;
+                    self.push_text(&decoded)?;
                 }
                 Event::CData(cdata) if self.in_text || self.in_instr => {
                     let raw = cdata.into_inner();
@@ -1455,6 +1468,10 @@ impl BodyParser<'_> {
                 let raw = text.decode().map_err(|_| ImportError::MalformedXml)?;
                 let decoded =
                     quick_xml::escape::unescape(&raw).map_err(|_| ImportError::MalformedXml)?;
+                self.push_math_text(&decoded)?;
+            }
+            Event::GeneralRef(reference) if self.math_in_t => {
+                let decoded = crate::decode_xml_reference(reference)?;
                 self.push_math_text(&decoded)?;
             }
             _ => {}
@@ -1900,7 +1917,11 @@ impl BodyParser<'_> {
             // and a parseable hex char are present; anything else is reported so
             // the glyph is not silently dropped without a trace.
             b"sym" if self.run_open => match symbol_glyph(element) {
-                Some((font, char)) => self.push_segment(Segment::Symbol { font, char }),
+                Some((font, char)) => self.push_segment(Segment::Symbol {
+                    font,
+                    char,
+                    properties: self.run_properties.clone(),
+                }),
                 None => self.reporter.report(b"sym"),
             },
             // Inert typographic glyphs inside a run: a non-breaking hyphen (never a
@@ -5634,9 +5655,18 @@ impl BodyParser<'_> {
                 let id = self.next_id()?;
                 Ok(InlineNode::Math(Math { id, omml, text }))
             }
-            Segment::Symbol { font, char } => {
+            Segment::Symbol {
+                font,
+                char,
+                properties,
+            } => {
                 let id = self.next_id()?;
-                Ok(InlineNode::Symbol(Symbol { id, font, char }))
+                Ok(InlineNode::Symbol(Symbol {
+                    id,
+                    font,
+                    char,
+                    properties,
+                }))
             }
             Segment::HorizontalRule {
                 align,
@@ -6245,21 +6275,37 @@ fn normalize_segments(segments: Vec<Segment>) -> Vec<Segment> {
         match segment {
             Segment::Run { text, .. } if text.is_empty() => {}
             Segment::Run { properties, text } => {
-                if let Some(Segment::Run {
-                    properties: previous_properties,
-                    text: previous_text,
-                }) = normalized.last_mut()
-                    && *previous_properties == properties
-                {
-                    previous_text.push_str(&text);
-                    continue;
+                // Some producers encode a tab as a literal U+0009 inside `w:t`
+                // instead of the canonical empty `w:tab` element. Normalize both
+                // spellings to the same semantic Tab node so shaping resolves the
+                // paragraph's authored tab stop instead of drawing `.notdef`.
+                let mut parts = text.split('\t').peekable();
+                while let Some(part) = parts.next() {
+                    if !part.is_empty() {
+                        push_normalized_run(&mut normalized, properties.clone(), part.to_owned());
+                    }
+                    if parts.peek().is_some() {
+                        normalized.push(Segment::Tab);
+                    }
                 }
-                normalized.push(Segment::Run { properties, text });
             }
             other => normalized.push(other),
         }
     }
     normalized
+}
+
+fn push_normalized_run(normalized: &mut Vec<Segment>, properties: RunProperties, text: String) {
+    if let Some(Segment::Run {
+        properties: previous_properties,
+        text: previous_text,
+    }) = normalized.last_mut()
+        && *previous_properties == properties
+    {
+        previous_text.push_str(&text);
+    } else {
+        normalized.push(Segment::Run { properties, text });
+    }
 }
 
 // --- VML → float-layer mapping helpers -------------------------------------

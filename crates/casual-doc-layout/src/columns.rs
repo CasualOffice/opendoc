@@ -735,6 +735,7 @@ mod tests {
             ascent: height,
             descent: Twip::ZERO,
             height,
+            clip: false,
             range: ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, 0)),
             line_break: LineBreak::ParagraphEnd,
             page_break_after: false,

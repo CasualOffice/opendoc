@@ -542,6 +542,7 @@ mod tests {
             let run = GlyphRun {
                 font: FontId(0),
                 size: Twip(LINE_H),
+                character_scale_percent: 100,
                 color: [0, 0, 0, 255],
                 origin: Point::new(Twip::ZERO, Twip(baseline)),
                 bidi_level: 0,
@@ -555,6 +556,7 @@ mod tests {
                 ascent: Twip(LINE_H),
                 descent: Twip::ZERO,
                 height: Twip(LINE_H),
+                clip: false,
                 range: ModelRange::new(ModelPos::new(n, start), ModelPos::new(n, off)),
                 line_break: if li + 1 == line_lens.len() {
                     LineBreak::ParagraphEnd
@@ -594,6 +596,7 @@ mod tests {
         let run = GlyphRun {
             font: FontId(0),
             size: Twip(LINE_H),
+            character_scale_percent: 100,
             color: [0, 0, 0, 255],
             origin: Point::new(Twip::ZERO, Twip(LINE_H)),
             bidi_level: 1,
@@ -606,6 +609,7 @@ mod tests {
             ascent: Twip(LINE_H),
             descent: Twip::ZERO,
             height: Twip(LINE_H),
+            clip: false,
             range: ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, n)),
             line_break: LineBreak::ParagraphEnd,
             page_break_after: false,
@@ -903,6 +907,7 @@ mod tests {
             requested_family: None,
             font: FontId(0),
             size: Twip::from_points(11),
+            character_scale_percent: 100,
             bold: false,
             italic: false,
             letter_spacing: Twip::ZERO,
@@ -949,6 +954,7 @@ mod tests {
             requested_family: None,
             font: FontId(0),
             size: Twip::from_points(11),
+            character_scale_percent: 100,
             bold: false,
             italic: false,
             letter_spacing: Twip::ZERO,

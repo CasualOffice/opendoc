@@ -1416,6 +1416,7 @@ fn default_run_properties_still_serialize_to_empty_object() {
 fn run_metrics_and_language_round_trip_and_bound() {
     let properties = RunProperties {
         character_spacing_twips: Some(-40),
+        character_scale_percent: Some(95),
         kerning_half_points: Some(28),
         position_half_points: Some(6),
         language: Some(Language {
@@ -1457,6 +1458,17 @@ fn run_metrics_and_language_round_trip_and_bound() {
         table_document(vec![bad_block]),
         Err(ModelError::PropertyValueOutOfDomain {
             property: "run.character_spacing"
+        })
+    ));
+
+    let bad_scale = RunProperties {
+        character_scale_percent: Some(0),
+        ..RunProperties::default()
+    };
+    assert!(matches!(
+        table_document(vec![run_with_props(tid(2), bad_scale)]),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "run.character_scale"
         })
     ));
 }
@@ -1637,6 +1649,7 @@ fn symbol_validates_and_round_trips_json() {
         id: tid(10),
         font: "Wingdings".to_owned(),
         char: 0xF0FC,
+        properties: RunProperties::default(),
     };
     let document = table_document(vec![symbol_paragraph(symbol)]).unwrap();
     let json = document.to_json().unwrap();
@@ -1659,6 +1672,7 @@ fn empty_symbol_font_is_rejected() {
         id: tid(10),
         font: String::new(),
         char: 0xF0FC,
+        properties: RunProperties::default(),
     };
     assert!(matches!(
         table_document(vec![symbol_paragraph(symbol)]),
@@ -1674,6 +1688,7 @@ fn over_long_symbol_font_is_rejected() {
         id: tid(10),
         font: "W".repeat(MAX_SYMBOL_FONT_LEN + 1),
         char: 0x2022,
+        properties: RunProperties::default(),
     };
     assert!(matches!(
         table_document(vec![symbol_paragraph(symbol)]),

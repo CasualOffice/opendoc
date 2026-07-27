@@ -930,6 +930,9 @@ pub struct RunProperties {
     /// Inter-character spacing in twips (`w:spacing`), may be negative.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub character_spacing_twips: Option<i32>,
+    /// Horizontal character scaling percentage (`w:w` / `ST_TextScale`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub character_scale_percent: Option<u16>,
     /// Kerning activation threshold in half-points (`w:kern`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kerning_half_points: Option<u32>,

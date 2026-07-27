@@ -79,6 +79,26 @@ use crate::numbering::Numbering;
 use crate::report::Reporter;
 use crate::styles::Styles;
 
+/// Resolves one streamed XML character/general-reference event.
+///
+/// `quick-xml` emits `&amp;`, `&#x2014;`, and the other XML references as
+/// `Event::GeneralRef`, separate from the surrounding `Event::Text` chunks.
+/// Keeping the resolver here gives body text, OMML fallbacks, and document
+/// properties one strict policy: the five predefined XML entities and numeric
+/// character references are accepted; undeclared general entities are rejected.
+fn decode_xml_reference(
+    reference: &quick_xml::events::BytesRef<'_>,
+) -> Result<String, ImportError> {
+    let name = reference.decode().map_err(|_| ImportError::MalformedXml)?;
+    let mut encoded = String::with_capacity(name.len() + 2);
+    encoded.push('&');
+    encoded.push_str(&name);
+    encoded.push(';');
+    Ok(quick_xml::escape::unescape(&encoded)
+        .map_err(|_| ImportError::MalformedXml)?
+        .into_owned())
+}
+
 /// The result of importing a main document.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Import {

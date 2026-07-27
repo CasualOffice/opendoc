@@ -124,6 +124,10 @@ pub(crate) fn apply_run_property(
             }
             _ => return false,
         },
+        b"w" => match value.as_deref().and_then(|v| v.parse::<u16>().ok()) {
+            Some(v) if (1..=600).contains(&v) => properties.character_scale_percent = Some(v),
+            _ => return false,
+        },
         b"kern" => match value.as_deref().and_then(|v| v.parse::<u32>().ok()) {
             Some(v) if v <= 65_534 => properties.kerning_half_points = Some(v),
             _ => return false,

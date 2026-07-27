@@ -59,8 +59,14 @@ impl HeaderFooter {
     /// pages when even/odd is on; otherwise the default. A selected variant that is
     /// empty falls back to the default (Word's behavior when a reference is absent).
     #[must_use]
-    fn select(&self, number: u32, title_page: bool, even_and_odd: bool) -> &[BlockFragment] {
-        if number == 1 && title_page && !self.first.is_empty() {
+    fn select(
+        &self,
+        number: u32,
+        is_section_first: bool,
+        title_page: bool,
+        even_and_odd: bool,
+    ) -> &[BlockFragment] {
+        if is_section_first && title_page && !self.first.is_empty() {
             return &self.first;
         }
         if even_and_odd && number.is_multiple_of(2) && !self.even.is_empty() {
@@ -115,19 +121,49 @@ pub fn place_running_content(
     let header_band = config.header_band();
     let footer_band = config.footer_band();
     for page in &mut layout.pages {
-        place_page(page, content, header_band, footer_band);
+        place_page(page, content, header_band, footer_band, page.number == 1);
     }
 }
 
+/// Places one page from a section-aware driver. `section_page_number` is local to
+/// that section (1 for its first physical page), while odd/even selection still
+/// uses the page's final document page number.
+pub(crate) fn place_running_content_on_page(
+    page: &mut Page,
+    content: &RunningContent,
+    config: &PageConfig,
+    section_page_number: u32,
+) {
+    place_page(
+        page,
+        content,
+        config.header_band(),
+        config.footer_band(),
+        section_page_number == 1,
+    );
+}
+
 /// Places one page's header and footer bands.
-fn place_page(page: &mut Page, content: &RunningContent, header_band: Rect, footer_band: Rect) {
+fn place_page(
+    page: &mut Page,
+    content: &RunningContent,
+    header_band: Rect,
+    footer_band: Rect,
+    is_section_first: bool,
+) {
     let n = page.number;
-    let header = content
-        .header
-        .select(n, content.title_page, content.even_and_odd);
-    let footer = content
-        .footer
-        .select(n, content.title_page, content.even_and_odd);
+    let header = content.header.select(
+        n,
+        is_section_first,
+        content.title_page,
+        content.even_and_odd,
+    );
+    let footer = content.footer.select(
+        n,
+        is_section_first,
+        content.title_page,
+        content.even_and_odd,
+    );
     page.header = stack_in_band(header, header_band);
     page.footer = stack_in_band(footer, footer_band);
 }
