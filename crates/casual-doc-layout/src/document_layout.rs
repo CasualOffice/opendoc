@@ -28,21 +28,26 @@
 //! (which a valid imported DOCX never is — Word always writes a trailing `sectPr`)
 //! falls back to a single full-width run under US-Letter with 1-inch margins.
 //!
-//! Header/footer bands are reserved once, from the document's **first** section
-//! ([`RunningContent::band_heights`] — the tallest flowed variant), and every
-//! section's body content area shrinks by those same bands. Per-section
-//! header/footer *variants* and per-section balancing of the last column page are
-//! documented deferrals (see [`crate::columns`]).
+//! Header/footer variants and band reservations are resolved independently for
+//! every section. Each produced page selects the running-content plan identified
+//! by its immutable [`Page::section`](crate::page::Page::section), and `titlePg`
+//! is evaluated against that section's first page rather than only document page
+//! one. Per-section balancing of the last column page remains a documented
+//! deferral (see [`crate::columns`]).
 
-use casual_doc_model::v1::{BlockNode, Document, HeaderFooterKind, SectionBoundary};
+use std::collections::BTreeMap;
 
-use crate::anchor::{header_float_reserve, place_floats};
+use casual_doc_model::v1::{
+    BlockNode, Document, HeaderFooterKind, HeaderFooterRef, SectionBoundary,
+};
+
+use crate::anchor::{header_float_reserve_for_section, place_floats};
 use crate::columns::{
     ColumnLayout, SectionRun, column_layout, paginate_columns, section_starts_new_page,
 };
 use crate::flow::{build_galley_for_blocks, flow_header_footer};
 use crate::paginate::{PageConfig, resolve_anchored_fields, resolve_fields};
-use crate::running::{HeaderFooter, RunningContent, place_running_content};
+use crate::running::{HeaderFooter, RunningContent, place_running_content_on_page};
 use crate::units::{Size, Twip};
 use casual_doc_model::v1::SectionId;
 
@@ -114,7 +119,7 @@ fn section_page_config(section: &SectionBoundary) -> PageConfig {
     }
 }
 
-/// Builds the document's [`RunningContent`] — the first section's header/footer
+/// Builds one section's [`RunningContent`] — its header/footer
 /// variants, each flowed through the same [`flow_header_footer`] path the body
 /// uses (so a header holding a paragraph, table, or image lays out identically),
 /// plus the two flags that drive per-page variant selection.
@@ -127,32 +132,30 @@ fn section_page_config(section: &SectionBoundary) -> PageConfig {
 fn build_running_content(
     document: &Document,
     shaper: &dyn crate::text::LineShaper,
+    section: &SectionBoundary,
     content_width: Twip,
 ) -> RunningContent {
     let defs = document.definitions();
     let mut header = HeaderFooter::default();
     let mut footer = HeaderFooter::default();
-    let section = defs.sections.first();
 
-    if let Some(section) = section {
-        for reference in &section.headers {
-            if let Some(hf) = defs.headers.get(&reference.reference) {
-                let flowed = flow_header_footer(document, &hf.blocks, shaper, content_width);
-                *variant_mut(&mut header, reference.kind) = flowed;
-            }
+    for reference in &section.headers {
+        if let Some(hf) = defs.headers.get(&reference.reference) {
+            let flowed = flow_header_footer(document, &hf.blocks, shaper, content_width);
+            *variant_mut(&mut header, reference.kind) = flowed;
         }
-        for reference in &section.footers {
-            if let Some(hf) = defs.footers.get(&reference.reference) {
-                let flowed = flow_header_footer(document, &hf.blocks, shaper, content_width);
-                *variant_mut(&mut footer, reference.kind) = flowed;
-            }
+    }
+    for reference in &section.footers {
+        if let Some(hf) = defs.footers.get(&reference.reference) {
+            let flowed = flow_header_footer(document, &hf.blocks, shaper, content_width);
+            *variant_mut(&mut footer, reference.kind) = flowed;
         }
     }
 
     RunningContent {
         header,
         footer,
-        title_page: section.and_then(|s| s.title_page).unwrap_or(false),
+        title_page: section.title_page.unwrap_or(false),
         even_and_odd: defs.settings.even_and_odd_headers,
     }
 }
@@ -169,30 +172,94 @@ fn variant_mut(
     }
 }
 
+/// All layout inputs that are local to one section. The config already includes
+/// that section's measured header/footer (and positioned-header-float) bands.
+struct SectionPlan {
+    config: PageConfig,
+    running: RunningContent,
+}
+
+/// Resolves running-content inheritance and geometry for every section before
+/// body flow. In OOXML an omitted reference links to the previous section; an
+/// explicit reference (including one to an empty part) replaces that variant.
+fn build_section_plans(
+    document: &Document,
+    shaper: &dyn crate::text::LineShaper,
+) -> Vec<SectionPlan> {
+    let mut plans = Vec::new();
+    let mut effective_headers: Vec<HeaderFooterRef> = Vec::new();
+    let mut effective_footers: Vec<HeaderFooterRef> = Vec::new();
+
+    for section in &document.definitions().sections {
+        merge_running_refs(&mut effective_headers, &section.headers);
+        merge_running_refs(&mut effective_footers, &section.footers);
+
+        let mut effective_section = section.clone();
+        effective_section.headers.clone_from(&effective_headers);
+        effective_section.footers.clone_from(&effective_footers);
+
+        let mut config = section_page_config(section);
+        let content_width = config.content_area().size.width;
+        let running = build_running_content(document, shaper, &effective_section, content_width);
+        let (header_height, footer_height) = running.band_heights();
+        let header_float =
+            header_float_reserve_for_section(document, shaper, &config, &effective_section);
+        config.header_height = header_height.max(header_float);
+        config.footer_height = footer_height;
+        plans.push(SectionPlan { config, running });
+    }
+
+    // A sectionless model is malformed for imported DOCX but remains a supported
+    // deterministic fallback for programmatic callers.
+    if plans.is_empty() {
+        plans.push(SectionPlan {
+            config: document_page_config(document),
+            running: RunningContent {
+                even_and_odd: document.definitions().settings.even_and_odd_headers,
+                ..RunningContent::default()
+            },
+        });
+    }
+    plans
+}
+
+/// Applies explicit references over inherited references, one variant at a time.
+fn merge_running_refs(effective: &mut Vec<HeaderFooterRef>, current: &[HeaderFooterRef]) {
+    for reference in current {
+        if let Some(slot) = effective
+            .iter_mut()
+            .find(|existing| existing.kind == reference.kind)
+        {
+            *slot = *reference;
+        } else {
+            effective.push(*reference);
+        }
+    }
+}
+
 /// Builds one [`SectionRun`] per document section, in body order. The body is
 /// partitioned at each paragraph carrying a section break (the final section is
 /// body-level and covers the trailing blocks); each section's block slice is
 /// flowed at that section's column width, so line breaking happens at the column
 /// — not the full body — width.
 ///
-/// Every section shares the header/footer band heights already resolved into
-/// `base` (the running-content pass reserves one band per document), so the body
-/// content area is consistent across a multi-section document whose sections share
-/// page geometry (the common case). A document with no declared section produces a
-/// single full-width run under `base`.
+/// Each section uses the page geometry and header/footer band heights already
+/// resolved in its matching [`SectionPlan`]. A document with no declared section
+/// produces one full-width run under the fallback plan.
 fn build_section_runs(
     document: &Document,
     shaper: &dyn crate::text::LineShaper,
-    base: &PageConfig,
+    plans: &[SectionPlan],
 ) -> Vec<SectionRun> {
     let sections = &document.definitions().sections;
     let body = document.body();
     if sections.is_empty() {
-        let content = base.content_area();
+        let config = plans[0].config;
+        let content = config.content_area();
         let layout = ColumnLayout::single(content);
         let galley = build_galley_for_blocks(document, shaper, body, layout.flow_width());
         return vec![SectionRun {
-            config: *base,
+            config,
             layout,
             galley,
             starts_new_page: true,
@@ -206,7 +273,7 @@ fn build_section_runs(
         push_section_run(
             document,
             shaper,
-            base,
+            plan_for_section(plans, boundary.id),
             boundary,
             &body[start..end_excl],
             &mut runs,
@@ -215,9 +282,25 @@ fn build_section_runs(
     }
     // The trailing (body-level) final section covers everything left.
     if let Some(last) = sections.last() {
-        push_section_run(document, shaper, base, last, &body[start..], &mut runs);
+        push_section_run(
+            document,
+            shaper,
+            plan_for_section(plans, last.id),
+            last,
+            &body[start..],
+            &mut runs,
+        );
     }
     runs
+}
+
+/// Finds the precomputed plan for `section`, falling back to the first plan for
+/// malformed section references in the same way as [`section_break_points`].
+fn plan_for_section(plans: &[SectionPlan], section: SectionId) -> &SectionPlan {
+    plans
+        .iter()
+        .find(|plan| plan.config.section == section)
+        .unwrap_or(&plans[0])
 }
 
 /// The `(end_exclusive, boundary)` cut points of the non-final sections: for each
@@ -251,7 +334,7 @@ fn section_break_points<'a>(
 fn push_section_run(
     document: &Document,
     shaper: &dyn crate::text::LineShaper,
-    base: &PageConfig,
+    plan: &SectionPlan,
     boundary: &SectionBoundary,
     blocks: &[BlockNode],
     runs: &mut Vec<SectionRun>,
@@ -259,11 +342,7 @@ fn push_section_run(
     if blocks.is_empty() {
         return;
     }
-    // The section's own page geometry, but the document-wide header/footer band
-    // reservation (so the content area matches the running-content pass).
-    let mut config = section_page_config(boundary);
-    config.header_height = base.header_height;
-    config.footer_height = base.footer_height;
+    let config = plan.config;
 
     let layout = column_layout(&boundary.columns, config.content_area());
     let galley = build_galley_for_blocks(document, shaper, blocks, layout.flow_width());
@@ -281,15 +360,13 @@ fn push_section_run(
 ///
 /// The pipeline, all composed from existing engine functions:
 ///
-/// 1. Derive the [`PageConfig`] from the first section's geometry
-///    ([`document_page_config`]).
-/// 2. Flow the section's header/footer variants into [`RunningContent`] and
-///    reserve their band heights in the config, so the body content area is
-///    correct before pagination.
+/// 1. Derive a section-local [`PageConfig`] and [`RunningContent`] plan for every
+///    section, including inherited references and band reservations.
 /// 3. Partition the body into per-section runs (`build_section_runs`), each flowed
 ///    at its own column width.
 /// 4. [`paginate_columns`] the runs, then run the post-pagination passes **in
-///    order** — [`place_running_content`], [`resolve_fields`], [`place_floats`] —
+///    order** — section-scoped running-content placement, [`resolve_fields`],
+///    [`place_floats`] —
 ///    the order the incremental-golden post-passes require (running content before
 ///    fields so a `Page X of Y` footer resolves; anchors last, off the pagination
 ///    hot path).
@@ -303,38 +380,31 @@ pub fn paginate_document(
     document: &Document,
     shaper: &dyn crate::text::LineShaper,
 ) -> crate::page::PaginatedLayout {
-    let mut config = document_page_config(document);
-    // The content (and band) width is the page box minus the side margins; it does
-    // not depend on the header/footer bands, so it is stable before they are set.
-    let content_width = config.content_area().size.width;
-
-    let running = build_running_content(document, shaper, content_width);
-    let (header_height, footer_height) = running.band_heights();
-    // Positioned header floats (e.g. the SDS's VML title/version/date text boxes)
-    // are placed after pagination and so add nothing to the flowed band height;
-    // reserve the header band up to their painted extent so the body starts below
-    // them (`body_top = max(margin_top, header_distance + header_height)`) instead
-    // of colliding with them.
-    let header_float = header_float_reserve(document, shaper, &config);
-    config.header_height = header_height.max(header_float);
-    config.footer_height = footer_height;
+    let plans = build_section_plans(document, shaper);
+    let fallback_config = plans[0].config;
 
     // Build one paginated run per section, each flowed at its own column width,
     // then paginate them into shared pages (column-aware, section boundaries
     // carried across pages).
-    let runs = build_section_runs(document, shaper, &config);
+    let runs = build_section_runs(document, shaper, &plans);
     let mut layout = paginate_columns(&runs);
 
     // Post-pagination passes, in the required order: running content is placed
     // first so its fields exist to stamp, then the field pass resolves every
     // `PAGE`/`NUMPAGES` (body and running content), then anchored drawings are
     // placed onto the pages their paragraphs landed on.
-    place_running_content(&mut layout, &running, &config);
+    let mut section_page_numbers: BTreeMap<SectionId, u32> = BTreeMap::new();
+    for page in &mut layout.pages {
+        let section_page_number = section_page_numbers.entry(page.section).or_default();
+        *section_page_number = section_page_number.saturating_add(1);
+        let plan = plan_for_section(&plans, page.section);
+        place_running_content_on_page(page, &plan.running, &plan.config, *section_page_number);
+    }
     resolve_fields(&mut layout, shaper);
     // Floating objects last: anchored pictures, floating text boxes, and DrawingML
     // groups, over body AND header/footer bands, each resolved to a rect + z-key
     // for the float layer to paint in order.
-    place_floats(&mut layout, document, shaper, &config);
+    place_floats(&mut layout, document, shaper, &fallback_config);
     // A floating text box (e.g. the SDS footer's positioned `v:textbox` page-number
     // box) can itself hold `PAGE`/`NUMPAGES` fields; resolve them now that the
     // floats — and their flowed block content — exist on each page.

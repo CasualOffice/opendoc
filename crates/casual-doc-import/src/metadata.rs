@@ -123,6 +123,9 @@ fn parse_core(
             Event::Text(chunk) if current.is_some() && depth == 2 => {
                 text.push_str(&decode(&chunk)?);
             }
+            Event::GeneralRef(reference) if current.is_some() && depth == 2 => {
+                text.push_str(&crate::decode_xml_reference(&reference)?);
+            }
             Event::End(_) => {
                 if depth == 2
                     && let Some(name) = current.take()
@@ -239,6 +242,9 @@ fn parse_app(
             }
             Event::Text(chunk) if vt.is_some() || scalar.is_some() => {
                 text.push_str(&decode(&chunk)?);
+            }
+            Event::GeneralRef(reference) if vt.is_some() || scalar.is_some() => {
+                text.push_str(&crate::decode_xml_reference(&reference)?);
             }
             Event::End(element) => {
                 let local = element.local_name();
@@ -377,6 +383,9 @@ fn parse_custom(xml: &[u8], config: ImportConfig) -> Result<Vec<CustomProperty>,
             Event::Text(chunk) if vt.is_some() => {
                 text.push_str(&decode(&chunk)?);
             }
+            Event::GeneralRef(reference) if vt.is_some() => {
+                text.push_str(&crate::decode_xml_reference(&reference)?);
+            }
             Event::End(element) => {
                 if element.local_name().as_ref() == b"property" {
                     if let (Some(name), Some(value)) = (pending_name.take(), pending_value.take())
@@ -426,5 +435,50 @@ fn custom_value(local: &[u8], value: String) -> CustomValue {
             kind: String::from_utf8_lossy(other).into_owned(),
             value,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DocPropsSources, parse};
+    use crate::{ImportConfig, Reporter};
+    use casual_doc_model::v1::CustomValue;
+
+    #[test]
+    fn xml_references_are_preserved_in_all_property_parts() {
+        let sources = DocPropsSources {
+            core: Some(
+                br#"<cp:coreProperties xmlns:cp="urn:cp" xmlns:dc="urn:dc">
+                    <dc:title>Research &amp; Development &#x2014; 2026</dc:title>
+                </cp:coreProperties>"#
+                    .to_vec(),
+            ),
+            app: Some(
+                br#"<Properties xmlns="urn:app"><Company>A &amp; B</Company></Properties>"#
+                    .to_vec(),
+            ),
+            custom: Some(
+                br#"<Properties xmlns="urn:custom" xmlns:vt="urn:vt">
+                    <property name="Label"><vt:lpwstr>R&amp;D</vt:lpwstr></property>
+                </Properties>"#
+                    .to_vec(),
+            ),
+        };
+        let mut reporter = Reporter::default();
+        let properties = parse(&sources, ImportConfig::default(), &mut reporter)
+            .unwrap()
+            .expect("properties");
+
+        assert_eq!(
+            properties.core.title.as_deref(),
+            Some("Research & Development — 2026")
+        );
+        assert_eq!(properties.app.company.as_deref(), Some("A & B"));
+        assert_eq!(
+            properties.custom[0].value,
+            CustomValue::Text {
+                value: "R&D".to_owned()
+            }
+        );
     }
 }

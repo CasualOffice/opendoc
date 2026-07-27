@@ -304,7 +304,10 @@ fn safe_resume_page(
     let pages = &prev.pages;
     let first = pages.first()?;
     // Geometry must match, or reused pages would carry stale content areas.
-    if first.content_area != config.content_area() || first.section != config.section {
+    if first.page_size != config.page_size
+        || first.content_area != config.content_area()
+        || first.section != config.section
+    {
         return None;
     }
 
@@ -1129,6 +1132,7 @@ pub(crate) fn build_page(
     Page {
         number: (index + 1) as u32,
         section: config.section,
+        page_size: config.page_size,
         content_area: content,
         placed,
         header: Vec::new(),
@@ -1331,6 +1335,7 @@ mod tests {
             ascent: height,
             descent: Twip::ZERO,
             height,
+            clip: false,
             range: ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, 0)),
             line_break: LineBreak::ParagraphEnd,
             page_break_after: false,
@@ -1366,6 +1371,7 @@ mod tests {
                     runs: vec![GlyphRun {
                         font: FontId(0),
                         size: line_h,
+                        character_scale_percent: 100,
                         color: [0, 0, 0, 255],
                         origin: Point::new(Twip::ZERO, baseline),
                         bidi_level: 0,
@@ -1379,6 +1385,7 @@ mod tests {
                     }],
                     ascent: line_h,
                     descent: Twip::ZERO,
+                    clip: false,
                     height: line_h,
                     range: ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, 0)),
                     line_break: LineBreak::Wrap,

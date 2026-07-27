@@ -108,6 +108,18 @@ pub fn header_float_reserve(
     let Some(section) = document.definitions().sections.first() else {
         return Twip::ZERO;
     };
+    header_float_reserve_for_section(document, shaper, config, section)
+}
+
+/// Section-scoped form of [`header_float_reserve`], used by the document driver
+/// when each section owns a distinct running-content band and page geometry.
+#[must_use]
+pub(crate) fn header_float_reserve_for_section(
+    document: &Document,
+    shaper: &dyn LineShaper,
+    config: &PageConfig,
+    section: &SectionBoundary,
+) -> Twip {
     let defs = document.definitions();
     let ctx = FloatCtx {
         document,

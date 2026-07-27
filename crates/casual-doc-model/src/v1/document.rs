@@ -755,6 +755,9 @@ impl Document {
         if let Some(value) = properties.character_spacing_twips {
             check_domain((-31_680..=31_680).contains(&value), "run.character_spacing")?;
         }
+        if let Some(value) = properties.character_scale_percent {
+            check_domain((1..=600).contains(&value), "run.character_scale")?;
+        }
         if let Some(value) = properties.kerning_half_points {
             check_domain(value <= 65_534, "run.kerning")?;
         }
@@ -1329,6 +1332,7 @@ impl Document {
                         !symbol.font.is_empty() && symbol.font.len() <= MAX_SYMBOL_FONT_LEN,
                         "symbol.font",
                     )?;
+                    self.check_run_property_refs(&symbol.properties)?;
                     previous_run_properties = None;
                 }
                 // Comment range markers are inert leaves (like a tab): a zero-width

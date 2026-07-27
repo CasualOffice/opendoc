@@ -52,6 +52,14 @@ pub struct GlyphRun {
     pub font: FontId,
     /// Font size.
     pub size: Twip,
+    /// Horizontal glyph scaling percentage (`w:w`). Advances are already scaled
+    /// during shaping; the renderer uses this value to scale glyph outlines by
+    /// the same factor without changing vertical metrics.
+    #[serde(
+        default = "default_character_scale",
+        skip_serializing_if = "is_default_character_scale"
+    )]
+    pub character_scale_percent: u16,
     /// Fill color (RGBA packed as `[r, g, b, a]` to avoid a `display` cycle).
     pub color: [u8; 4],
     /// Left edge on the baseline.
@@ -95,6 +103,45 @@ pub struct InlineImage {
     pub origin: Point,
     /// The image box size (twips), derived from the drawing's EMU extent.
     pub size: Size,
+}
+
+/// An inline image handed to the line shaper as an in-flow box. `index` is the
+/// UTF-8 byte boundary in the concatenated paragraph text where the box occurs;
+/// multiple boxes may share a boundary and retain slice order.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InlineImageSpec {
+    /// Stable media key copied into the positioned [`InlineImage`].
+    pub media: String,
+    /// Byte boundary in the shaper's concatenated text.
+    pub index: u32,
+    /// Authored image box size.
+    pub size: Size,
+}
+
+/// Which inline edge of a paragraph-local floating object excludes text.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InlineFloatSide {
+    /// The float occupies the paragraph's leading/left edge.
+    Left,
+    /// The float occupies the paragraph's trailing/right edge.
+    Right,
+}
+
+/// A non-painting paragraph-local exclusion handed to the line shaper.
+///
+/// The anchored drawing is painted separately by the page float layer; this
+/// marker only changes the available line geometry for the vertical span of the
+/// object. `index` is a UTF-8 byte boundary in the concatenated paragraph text.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InlineFloatSpec {
+    /// Byte boundary where the anchored object occurs in the paragraph stream.
+    pub index: u32,
+    /// Inline edge occupied by the object.
+    pub side: InlineFloatSide,
+    /// Horizontal exclusion including authored wrap distances.
+    pub width: Twip,
+    /// Vertical exclusion from the anchor paragraph's top.
+    pub height: Twip,
 }
 
 /// An inline horizontal rule (`w:pict` / `v:rect@o:hr`) placed on a line: a filled
@@ -189,6 +236,12 @@ pub struct FieldStyle {
     pub font: FontId,
     /// Font size (twips).
     pub size: Twip,
+    /// Horizontal glyph scaling percentage (`w:w`).
+    #[serde(
+        default = "default_character_scale",
+        skip_serializing_if = "is_default_character_scale"
+    )]
+    pub character_scale_percent: u16,
     /// Fill color (RGBA).
     pub color: [u8; 4],
     /// Bold weight.
@@ -236,6 +289,11 @@ pub struct Line {
     pub descent: Twip,
     /// Total line height (`ascent + descent + leading`).
     pub height: Twip,
+    /// Whether paint must be clipped to this line's vertical box. Set for
+    /// `w:spacing@lineRule="exact"` so oversized glyph ink cannot collide with
+    /// the following line even though pagination honors the authored height.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub clip: bool,
     /// The model positions this line covers.
     pub range: ModelRange,
     /// How the line ends.
@@ -311,6 +369,8 @@ pub struct StyledRun<'a> {
     pub font: FontId,
     /// Font size.
     pub size: Twip,
+    /// Horizontal glyph scaling percentage (`w:w`), 100 for natural width.
+    pub character_scale_percent: u16,
     /// Bold weight (`w:b`).
     pub bold: bool,
     /// Italic style (`w:i`).
@@ -329,6 +389,14 @@ pub struct StyledRun<'a> {
     /// origin). Carries `w:vertAlign` super/subscript and the `w:position` offset;
     /// `Twip::ZERO` for an unshifted run.
     pub baseline_shift: Twip,
+}
+
+const fn default_character_scale() -> u16 {
+    100
+}
+
+fn is_default_character_scale(value: &u16) -> bool {
+    *value == default_character_scale()
 }
 
 /// Horizontal alignment of a paragraph's lines.
@@ -351,6 +419,15 @@ pub struct LineConstraints {
     /// Available inline width for wrapping. Already reduced by the paragraph's
     /// start/end indents so wrapping happens at the indented column.
     pub max_width: Twip,
+    /// Full text-margin width before paragraph start/end indents are removed.
+    ///
+    /// Absolute positional tabs (`w:ptab relativeTo="margin"`) resolve against
+    /// this box, while ordinary shaping continues to wrap against `max_width`.
+    pub margin_width: Twip,
+    /// Paragraph start indent measured from the leading text margin. This lets a
+    /// margin-relative positional tab convert its absolute target into the
+    /// shaper's indent-local coordinate system.
+    pub indent_start: Twip,
     /// Base direction (`true` = right-to-left paragraph).
     pub rtl: bool,
     /// Horizontal alignment of the lines.
@@ -375,6 +452,8 @@ impl Default for LineConstraints {
     fn default() -> Self {
         Self {
             max_width: Twip::ZERO,
+            margin_width: Twip::ZERO,
+            indent_start: Twip::ZERO,
             rtl: false,
             alignment: TextAlignment::Start,
             line_height_percent: None,
@@ -399,6 +478,67 @@ pub trait LineShaper {
         constraints: LineConstraints,
         range: ModelRange,
     ) -> LineLayout;
+
+    /// Shapes a paragraph with true in-flow image boxes interleaved at byte
+    /// boundaries. Implementations that do not override this retain a safe
+    /// compatibility fallback: text is shaped normally and each image occupies a
+    /// following standalone line. The default [`crate::shape::ParleyShaper`]
+    /// overrides it with native inline-box line breaking.
+    fn shape_paragraph_with_inline_images(
+        &self,
+        runs: &[StyledRun<'_>],
+        images: &[InlineImageSpec],
+        constraints: LineConstraints,
+        range: ModelRange,
+    ) -> LineLayout {
+        let mut layout = self.shape_paragraph(runs, constraints, range);
+        let mut y = layout.height();
+        for image in images {
+            layout.lines.push(Line {
+                runs: Vec::new(),
+                ascent: image.size.height,
+                descent: Twip::ZERO,
+                height: image.size.height,
+                clip: false,
+                range,
+                line_break: LineBreak::Wrap,
+                page_break_after: false,
+                bars: Vec::new(),
+                images: vec![InlineImage {
+                    media: image.media.clone(),
+                    origin: Point::new(Twip::ZERO, y),
+                    size: image.size,
+                }],
+                fields: Vec::new(),
+                text_boxes: Vec::new(),
+                rules: Vec::new(),
+            });
+            y = y + image.size.height;
+        }
+        layout
+    }
+
+    /// Shapes a paragraph containing both true inline images and paragraph-local
+    /// floating exclusions. The default is deliberately conservative: it reduces
+    /// every line by the largest exclusion so alternate shapers cannot overlap a
+    /// float, while the default [`crate::shape::ParleyShaper`] applies the reduced
+    /// geometry only to lines intersecting each float.
+    fn shape_paragraph_with_inline_objects(
+        &self,
+        runs: &[StyledRun<'_>],
+        images: &[InlineImageSpec],
+        floats: &[InlineFloatSpec],
+        mut constraints: LineConstraints,
+        range: ModelRange,
+    ) -> LineLayout {
+        let exclusion = floats
+            .iter()
+            .map(|float| float.width)
+            .max()
+            .unwrap_or(Twip::ZERO);
+        constraints.max_width = Twip((constraints.max_width.raw() - exclusion.raw()).max(1));
+        self.shape_paragraph_with_inline_images(runs, images, constraints, range)
+    }
 }
 
 #[cfg(test)]
@@ -419,6 +559,7 @@ mod tests {
             ascent: Twip(0),
             descent: Twip(0),
             height: Twip(h),
+            clip: false,
             range: range(),
             line_break: LineBreak::Wrap,
             page_break_after: false,
@@ -439,6 +580,7 @@ mod tests {
         let run = GlyphRun {
             font: FontId(0),
             size: Twip::from_points(11),
+            character_scale_percent: 100,
             color: [0, 0, 0, 255],
             origin: Point::default(),
             bidi_level: 0,

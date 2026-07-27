@@ -460,6 +460,7 @@ mod tests {
                     ascent: height,
                     descent: Twip::ZERO,
                     height,
+                    clip: false,
                     range,
                     line_break: LineBreak::ParagraphEnd,
                     page_break_after: false,

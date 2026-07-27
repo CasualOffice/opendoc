@@ -173,6 +173,7 @@ fn overlay_run(base: &mut RunProperties, over: &RunProperties) {
     set!(highlight);
     set!(emphasis);
     set!(character_spacing_twips);
+    set!(character_scale_percent);
     set!(kerning_half_points);
     set!(position_half_points);
     set!(language);

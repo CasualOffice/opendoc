@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::block::BlockFragment;
 use crate::model::ModelPos;
 use crate::text::TextBoxStroke;
-use crate::units::{Point, Rect, Twip};
+use crate::units::{Point, Rect, Size, Twip};
 
 /// A position in the galley's flow: a fragment (by index) and a line offset
 /// within it (`0` for a whole fragment or a split paragraph's first chunk).
@@ -170,6 +170,11 @@ pub struct Page {
     pub number: u32,
     /// The section whose geometry + header/footer set applies to this page.
     pub section: SectionId,
+    /// The immutable physical page box resolved for this page's section.
+    ///
+    /// Consumers must use this value rather than a document-global page size:
+    /// DOCX sections can switch paper size or orientation mid-document.
+    pub page_size: Size,
     /// The content area (page box minus margins, header/footer, and any
     /// footnote reservation), in page-local twips.
     pub content_area: Rect,

@@ -22,13 +22,13 @@ use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     Alignment, BlockNode, BorderEdge, BreakKind, Color, ColorScheme, DefinitionMap, Definitions,
     Document, Drawing, DrawingAnchor, Extent, FontRef, FontScheme, HeightRule, HighlightColor,
-    HorizontalRule as ModelHorizontalRule, HorizontalRuleAlign, Indentation, InlineNode,
-    LevelSuffix, LineRule, MediaId, MediaReference, ParagraphProperties, Rgba, RunProperties,
-    SchemeColor, SectionBoundary, SectionId, SectionType, ShapeStroke, StyleId, Symbol,
-    TabAlignment, TabLeader, TabStop, Table, TableBorders, TableCell, TableLayout, TableRow,
-    TableRowProperties, TextBox, TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow,
-    TextBoxVerticalAnchor, TextBoxVerticalOverflow, ThemeColorRef, ThemeFontRef, VerticalAlignment,
-    VerticalAnchor, VerticalMerge, VerticalPosition, WrapMode,
+    HorizontalAlign, HorizontalAnchor, HorizontalPosition, HorizontalRule as ModelHorizontalRule,
+    HorizontalRuleAlign, Indentation, InlineNode, LevelSuffix, LineRule, MediaId, MediaReference,
+    ParagraphProperties, Rgba, RunProperties, SchemeColor, SectionBoundary, SectionId, SectionType,
+    ShapeStroke, StyleId, Symbol, TabAlignment, TabLeader, TabStop, Table, TableBorders, TableCell,
+    TableLayout, TableRow, TableRowProperties, TextBox, TextBoxAutoFit, TextBoxBodyProperties,
+    TextBoxHorizontalOverflow, TextBoxVerticalAnchor, TextBoxVerticalOverflow, ThemeColorRef,
+    ThemeFontRef, VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition, WrapMode,
 };
 
 use crate::block::{
@@ -43,9 +43,10 @@ use crate::numbering::{self, NumberingState, PreparedMarker};
 use crate::resolve::{FaceRequest, FontResolutionReport, FontResolver};
 use crate::tabs::{self, FlowItem};
 use crate::text::{
-    Decoration, FieldKind, FieldMarker, FieldStyle, FontId, Glyph, GlyphRun, InlineImage,
-    InlineRule, InlineTextBox, Line, LineBreak, LineConstraints, LineLayout, LineShaper, StyledRun,
-    TextAlignment, TextBoxContentLayout, TextBoxStroke,
+    Decoration, FieldKind, FieldMarker, FieldStyle, FontId, Glyph, GlyphRun, InlineFloatSide,
+    InlineFloatSpec, InlineImage, InlineImageSpec, InlineRule, InlineTextBox, Line, LineBreak,
+    LineConstraints, LineLayout, LineShaper, StyledRun, TextAlignment, TextBoxContentLayout,
+    TextBoxStroke,
 };
 use crate::units::{Point, Size, Twip};
 
@@ -503,6 +504,7 @@ fn paragraph_hash(
                 run.requested_family.hash(&mut hasher);
                 run.font.0.hash(&mut hasher);
                 run.size.0.hash(&mut hasher);
+                run.character_scale_percent.hash(&mut hasher);
                 run.bold.hash(&mut hasher);
                 run.italic.hash(&mut hasher);
                 run.letter_spacing.0.hash(&mut hasher);
@@ -513,6 +515,16 @@ fn paragraph_hash(
                 run.baseline_shift.0.hash(&mut hasher);
             }
             FlowItem::Tab => 1u8.hash(&mut hasher),
+            FlowItem::PositionalTab {
+                alignment,
+                relative_to,
+                leader,
+            } => {
+                8u8.hash(&mut hasher);
+                (*alignment as u8).hash(&mut hasher);
+                (*relative_to as u8).hash(&mut hasher);
+                (*leader as u8).hash(&mut hasher);
+            }
             FlowItem::Break(kind) => {
                 2u8.hash(&mut hasher);
                 break_kind_key(*kind).hash(&mut hasher);
@@ -529,6 +541,7 @@ fn paragraph_hash(
                 value.hash(&mut hasher);
                 style.font.0.hash(&mut hasher);
                 style.size.0.hash(&mut hasher);
+                style.character_scale_percent.hash(&mut hasher);
                 style.color.hash(&mut hasher);
                 style.bold.hash(&mut hasher);
                 style.italic.hash(&mut hasher);
@@ -559,6 +572,16 @@ fn paragraph_hash(
                 7u8.hash(&mut hasher);
                 height.0.hash(&mut hasher);
             }
+            FlowItem::FloatExclusion {
+                side,
+                width,
+                height,
+            } => {
+                9u8.hash(&mut hasher);
+                (*side as u8).hash(&mut hasher);
+                width.0.hash(&mut hasher);
+                height.0.hash(&mut hasher);
+            }
         }
     }
     for stop in shape.tab_stops {
@@ -569,6 +592,8 @@ fn paragraph_hash(
     shape.default_tab.0.hash(&mut hasher);
     let constraints = &shape.constraints;
     constraints.max_width.0.hash(&mut hasher);
+    constraints.margin_width.0.hash(&mut hasher);
+    constraints.indent_start.0.hash(&mut hasher);
     constraints.rtl.hash(&mut hasher);
     (constraints.alignment as u8).hash(&mut hasher);
     constraints.line_height_percent.hash(&mut hasher);
@@ -1699,6 +1724,9 @@ fn collect_runs<'a>(inlines: &'a [InlineNode], out: &mut Vec<StyledRun<'a>>, ctx
         match inline {
             InlineNode::Run(run) => push_styled_runs(&run.text, &run.properties, ctx, out),
             InlineNode::Tab(_) => out.push(styled_run("\t", &RunProperties::default(), ctx)),
+            InlineNode::PositionalTab(_) => {
+                out.push(styled_run("\t", &RunProperties::default(), ctx))
+            }
             InlineNode::Symbol(symbol) => out.push(symbol_glyph_run(symbol, ctx)),
             InlineNode::Hyperlink(hyperlink) => collect_runs(&hyperlink.inlines, out, ctx),
             InlineNode::Revision(revision) => collect_runs(&revision.inlines, out, ctx),
@@ -1728,6 +1756,11 @@ fn collect_items<'a>(
                 out.extend(styled.into_iter().map(FlowItem::Run));
             }
             InlineNode::Tab(_) => out.push(FlowItem::Tab),
+            InlineNode::PositionalTab(tab) => out.push(FlowItem::PositionalTab {
+                alignment: tab.alignment,
+                relative_to: tab.relative_to,
+                leader: tab.leader,
+            }),
             InlineNode::Symbol(symbol) => out.push(FlowItem::Run(symbol_glyph_run(symbol, ctx))),
             InlineNode::Break(node) => out.push(FlowItem::Break(node.kind)),
             InlineNode::Drawing(drawing) => {
@@ -1736,7 +1769,7 @@ fn collect_items<'a>(
                 }
             }
             InlineNode::AnchoredDrawing(drawing) => {
-                if let Some(item) = float_barrier_item(&drawing.anchor, &drawing.extent) {
+                if let Some(item) = float_flow_item(&drawing.anchor, &drawing.extent) {
                     out.push(item);
                 }
             }
@@ -1750,14 +1783,14 @@ fn collect_items<'a>(
             }
             InlineNode::TextBox(text_box) => {
                 if let (Some(anchor), Some(extent)) = (&text_box.anchor, &text_box.extent)
-                    && let Some(item) = float_barrier_item(anchor, extent)
+                    && let Some(item) = float_flow_item(anchor, extent)
                 {
                     out.push(item);
                 }
             }
             InlineNode::Group(group) => {
                 if let Some(anchor) = &group.anchor
-                    && let Some(item) = float_barrier_item(anchor, &group.extent)
+                    && let Some(item) = float_flow_item(anchor, &group.extent)
                 {
                     out.push(item);
                 }
@@ -1774,28 +1807,59 @@ fn collect_items<'a>(
     }
 }
 
-/// Converts the supported local `wrapTopAndBottom` anchor form into a vertical
-/// paragraph exclusion. Page/margin-relative and alignment-based anchors can
-/// affect paragraphs other than their anchor paragraph and therefore remain in
-/// the explicitly unsupported cross-paragraph reflow slice.
-fn float_barrier_item(anchor: &DrawingAnchor, extent: &Extent) -> Option<FlowItem<'static>> {
-    if anchor.wrap != WrapMode::TopAndBottom
-        || !matches!(
-            anchor.vertical.relative_from,
-            VerticalAnchor::Paragraph | VerticalAnchor::Line
-        )
-    {
+/// Converts a paragraph-local anchored object into its non-painting flow marker.
+/// Top-and-bottom wrapping reserves vertical space; left/right square-family
+/// wrapping narrows only lines that intersect the object's vertical clearance.
+/// Page-relative and cross-paragraph exclusions remain outside this local slice.
+fn float_flow_item(anchor: &DrawingAnchor, extent: &Extent) -> Option<FlowItem<'static>> {
+    if !matches!(
+        anchor.vertical.relative_from,
+        VerticalAnchor::Paragraph | VerticalAnchor::Line
+    ) {
         return None;
     }
-    let VerticalPosition::Offset(offset_emu) = anchor.vertical.position else {
-        return None;
+    let offset_emu = match anchor.vertical.position {
+        VerticalPosition::Offset(offset) => offset,
+        VerticalPosition::Align(casual_doc_model::v1::VerticalAlign::Top) => 0,
+        _ => return None,
     };
     let clearance_emu = offset_emu
         .saturating_add(extent.height_emu)
         .saturating_add(anchor.wrap_distances.bottom_emu)
         .max(0);
     let height = emu_to_twip(clearance_emu);
-    (height.raw() > 0).then_some(FlowItem::FloatBarrier { height })
+    if height.raw() <= 0 {
+        return None;
+    }
+    if anchor.wrap == WrapMode::TopAndBottom {
+        return Some(FlowItem::FloatBarrier { height });
+    }
+    if !matches!(
+        anchor.wrap,
+        WrapMode::Square | WrapMode::Tight | WrapMode::Through
+    ) || !matches!(
+        anchor.horizontal.relative_from,
+        HorizontalAnchor::Margin | HorizontalAnchor::Column
+    ) {
+        return None;
+    }
+    let side = match anchor.horizontal.position {
+        HorizontalPosition::Align(HorizontalAlign::Left) => InlineFloatSide::Left,
+        HorizontalPosition::Align(HorizontalAlign::Right) => InlineFloatSide::Right,
+        _ => return None,
+    };
+    let exclusion_emu = anchor
+        .wrap_distances
+        .start_emu
+        .saturating_add(extent.width_emu)
+        .saturating_add(anchor.wrap_distances.end_emu)
+        .max(0);
+    let width = emu_to_twip(exclusion_emu);
+    (width.raw() > 0).then_some(FlowItem::FloatExclusion {
+        side,
+        width,
+        height,
+    })
 }
 
 /// Moves paragraph-local float exclusions to the paragraph start and coalesces
@@ -2092,6 +2156,7 @@ fn field_style(inlines: &[InlineNode], value: &str, ctx: &mut FlowCtx) -> FieldS
     FieldStyle {
         font: styled.font,
         size: styled.size,
+        character_scale_percent: styled.character_scale_percent,
         color: styled.color,
         bold: styled.bold,
         italic: styled.italic,
@@ -2151,11 +2216,9 @@ fn emu_to_twip(emu: i64) -> Twip {
     Twip((emu / 635).clamp(0, i64::from(i32::MAX)) as i32)
 }
 
-/// Shapes a paragraph's [`FlowItem`] stream into lines. A stream with no inline
-/// box or float barrier takes the text path directly ([`shape_text_items`]); a
-/// stream carrying one splits at each box/barrier, shaping the intervening text
-/// with the same path and placing each box or non-painting exclusion on its own
-/// line, so reading order and vertical stacking are preserved.
+/// Shapes a paragraph's [`FlowItem`] stream into lines. Images are handed to the
+/// shaper as true in-flow boxes interleaved with text. Text boxes, horizontal
+/// rules, and float barriers remain block-like standalone lines.
 fn shape_paragraph_items(
     shaper: &dyn LineShaper,
     items: &[FlowItem<'_>],
@@ -2164,16 +2227,13 @@ fn shape_paragraph_items(
     constraints: LineConstraints,
     range: ModelRange,
 ) -> LineLayout {
-    let is_box = |item: &FlowItem<'_>| {
+    let is_standalone = |item: &FlowItem<'_>| {
         matches!(
             item,
-            FlowItem::Image { .. }
-                | FlowItem::TextBox { .. }
-                | FlowItem::HorizontalRule(_)
-                | FlowItem::FloatBarrier { .. }
+            FlowItem::TextBox { .. } | FlowItem::HorizontalRule(_) | FlowItem::FloatBarrier { .. }
         )
     };
-    if !items.iter().any(is_box) {
+    if !items.iter().any(is_standalone) {
         return shape_inline_chunk(shaper, items, tab_stops, default_tab, constraints, range);
     }
 
@@ -2182,11 +2242,6 @@ fn shape_paragraph_items(
     let mut i = 0usize;
     while i < items.len() {
         match &items[i] {
-            FlowItem::Image { media, size } => {
-                let line = image_line(media.clone(), *size, range);
-                stack_lines(&mut out, vec![line], &mut cursor_y);
-                i += 1;
-            }
             FlowItem::TextBox {
                 blocks,
                 size,
@@ -2217,7 +2272,7 @@ fn shape_paragraph_items(
             }
             _ => {
                 let start = i;
-                while i < items.len() && !is_box(&items[i]) {
+                while i < items.len() && !is_standalone(&items[i]) {
                     i += 1;
                 }
                 let chunk = shape_inline_chunk(
@@ -2235,8 +2290,8 @@ fn shape_paragraph_items(
     LineLayout { lines: out }
 }
 
-/// Shapes one box-free paragraph chunk, retaining the specialized field path
-/// when that chunk contains PAGE/NUMPAGES or passthrough fields.
+/// Shapes one standalone-box-free paragraph chunk, retaining the specialized
+/// field path when that chunk contains PAGE/NUMPAGES or passthrough fields.
 fn shape_inline_chunk(
     shaper: &dyn LineShaper,
     items: &[FlowItem<'_>],
@@ -2245,6 +2300,30 @@ fn shape_inline_chunk(
     constraints: LineConstraints,
     range: ModelRange,
 ) -> LineLayout {
+    if items.iter().any(|item| {
+        matches!(
+            item,
+            FlowItem::Image { .. } | FlowItem::FloatExclusion { .. }
+        )
+    }) {
+        let has_fields = items
+            .iter()
+            .any(|item| matches!(item, FlowItem::Field { .. }));
+        if !has_fields && !tabs::needs_flow_layout(items, tab_stops) {
+            return shape_text_with_objects(shaper, items, constraints, range);
+        }
+        // Fields and explicit tab/break assembly still own specialized marker and
+        // positioning paths. Preserve their ordering safely until those paths can
+        // carry boxes natively.
+        return shape_complex_inline_with_objects(
+            shaper,
+            items,
+            tab_stops,
+            default_tab,
+            constraints,
+            range,
+        );
+    }
     if items
         .iter()
         .any(|item| matches!(item, FlowItem::Field { .. }))
@@ -2253,6 +2332,100 @@ fn shape_inline_chunk(
     } else {
         shape_text_items(shaper, items, tab_stops, default_tab, constraints, range)
     }
+}
+
+/// Shapes ordinary runs, inline images, and paragraph-local floating exclusions
+/// through the shaper's inline-object seam. Object byte indices are measured in
+/// the same concatenated text string as the run ranges.
+fn shape_text_with_objects(
+    shaper: &dyn LineShaper,
+    items: &[FlowItem<'_>],
+    constraints: LineConstraints,
+    range: ModelRange,
+) -> LineLayout {
+    let mut runs = Vec::new();
+    let mut images = Vec::new();
+    let mut floats = Vec::new();
+    let mut byte = 0u32;
+    for item in items {
+        match item {
+            FlowItem::Run(run) => {
+                byte = byte.saturating_add(run.text.len() as u32);
+                runs.push(run.clone());
+            }
+            FlowItem::Image { media, size } => images.push(InlineImageSpec {
+                media: media.clone(),
+                index: byte,
+                size: *size,
+            }),
+            FlowItem::FloatExclusion {
+                side,
+                width,
+                height,
+            } => floats.push(InlineFloatSpec {
+                index: byte,
+                side: *side,
+                width: *width,
+                height: *height,
+            }),
+            _ => {}
+        }
+    }
+    shaper.shape_paragraph_with_inline_objects(&runs, &images, &floats, constraints, range)
+}
+
+/// Compatibility path for uncommon field/tab + inline-object combinations:
+/// specialized text chunks keep their semantics, images occupy an ordered line,
+/// and floats conservatively become vertical barriers so content cannot collide.
+fn shape_complex_inline_with_objects(
+    shaper: &dyn LineShaper,
+    items: &[FlowItem<'_>],
+    tab_stops: &[TabStop],
+    default_tab: Twip,
+    constraints: LineConstraints,
+    range: ModelRange,
+) -> LineLayout {
+    let mut out = Vec::new();
+    let mut cursor_y = Twip::ZERO;
+    let mut start = 0usize;
+    for (index, item) in items.iter().enumerate() {
+        if !matches!(
+            item,
+            FlowItem::Image { .. } | FlowItem::FloatExclusion { .. }
+        ) {
+            continue;
+        }
+        if start < index {
+            let chunk = shape_inline_chunk(
+                shaper,
+                &items[start..index],
+                tab_stops,
+                default_tab,
+                constraints,
+                range,
+            );
+            stack_lines(&mut out, chunk.lines, &mut cursor_y);
+        }
+        let object_line = match item {
+            FlowItem::Image { media, size } => image_line(media.clone(), *size, range),
+            FlowItem::FloatExclusion { height, .. } => float_barrier_line(*height, range),
+            _ => unreachable!(),
+        };
+        stack_lines(&mut out, vec![object_line], &mut cursor_y);
+        start = index + 1;
+    }
+    if start < items.len() {
+        let chunk = shape_inline_chunk(
+            shaper,
+            &items[start..],
+            tab_stops,
+            default_tab,
+            constraints,
+            range,
+        );
+        stack_lines(&mut out, chunk.lines, &mut cursor_y);
+    }
+    LineLayout { lines: out }
 }
 
 /// Shapes an image-free [`FlowItem`] slice. Ordinary text (no tab, no break, no
@@ -2288,6 +2461,7 @@ fn image_line(media: String, size: Size, range: ModelRange) -> Line {
         ascent: size.height,
         descent: Twip::ZERO,
         height: size.height,
+        clip: false,
         range,
         line_break: LineBreak::Wrap,
         page_break_after: false,
@@ -2312,6 +2486,7 @@ fn float_barrier_line(height: Twip, range: ModelRange) -> Line {
         ascent: height,
         descent: Twip::ZERO,
         height,
+        clip: false,
         range,
         line_break: LineBreak::Wrap,
         page_break_after: false,
@@ -2340,6 +2515,7 @@ fn textbox_line(
         ascent: size.height,
         descent: Twip::ZERO,
         height: size.height,
+        clip: false,
         range,
         line_break: LineBreak::Wrap,
         page_break_after: false,
@@ -2369,6 +2545,7 @@ fn hr_line(rule: InlineRule, range: ModelRange) -> Line {
         ascent: rule.size.height,
         descent: Twip::ZERO,
         height: rule.size.height,
+        clip: false,
         range,
         line_break: LineBreak::Wrap,
         page_break_after: false,
@@ -2425,6 +2602,7 @@ pub(crate) fn shape_field_run(
         requested_family: None,
         font: style.font,
         size: style.size,
+        character_scale_percent: style.character_scale_percent,
         bold: style.bold,
         italic: style.italic,
         letter_spacing: style.letter_spacing,
@@ -2456,6 +2634,7 @@ pub(crate) fn shape_field_run(
         run: GlyphRun {
             font: style.font,
             size: style.size,
+            character_scale_percent: style.character_scale_percent,
             color: style.color,
             origin,
             bidi_level: 0,
@@ -2604,11 +2783,26 @@ fn layout_fielded_line(
     let constraints = ctx.constraints;
     // Split at tabs into segments.
     let mut segments: Vec<Vec<&FlowItem<'_>>> = vec![Vec::new()];
+    let mut tabs = Vec::new();
     for item in items {
-        if matches!(item, FlowItem::Tab) {
-            segments.push(Vec::new());
-        } else {
-            segments.last_mut().expect("non-empty").push(item);
+        match item {
+            FlowItem::Tab => {
+                tabs.push(tabs::TabKind::Ordinary);
+                segments.push(Vec::new());
+            }
+            FlowItem::PositionalTab {
+                alignment,
+                relative_to,
+                leader,
+            } => {
+                tabs.push(tabs::TabKind::Positional {
+                    alignment: *alignment,
+                    relative_to: *relative_to,
+                    leader: *leader,
+                });
+                segments.push(Vec::new());
+            }
+            _ => segments.last_mut().expect("non-empty").push(item),
         }
     }
     let has_tab = segments.len() > 1;
@@ -2637,7 +2831,7 @@ fn layout_fielded_line(
         let left = if i == 0 {
             pen
         } else {
-            let stop = tabs::resolve_next_stop(pen, tab_stops, default_tab);
+            let stop = tabs::resolve_stop(tabs[i - 1], pen, tab_stops, default_tab, constraints);
             let mut l = match stop.alignment {
                 TabAlignment::Start | TabAlignment::Bar => stop.position,
                 TabAlignment::End | TabAlignment::Decimal => stop.position - seg.width.raw(),
@@ -2672,11 +2866,21 @@ fn layout_fielded_line(
         }
     }
 
+    let natural = ascent + descent;
+    let (ascent, descent, height) =
+        crate::shape::apply_line_rule(ascent, descent, natural, &constraints);
+    let baseline_delta = ascent - baseline;
+    if baseline_delta != Twip::ZERO {
+        for run in &mut runs {
+            run.origin.y = run.origin.y + baseline_delta;
+        }
+    }
     Line {
         runs,
         ascent,
         descent,
-        height: ascent + descent,
+        height,
+        clip: constraints.line_exact.is_some(),
         range: ModelRange::new(ModelPos::new(node, base), ModelPos::new(node, base)),
         line_break: LineBreak::ParagraphEnd,
         page_break_after: false,
@@ -2829,6 +3033,7 @@ fn build_styled_run<'a>(
         requested_family: requested_family(properties, ctx.scheme).map(Cow::Owned),
         text,
         size,
+        character_scale_percent: properties.character_scale_percent.unwrap_or(100),
         bold,
         italic,
         letter_spacing: scale_twip(
@@ -2850,16 +3055,14 @@ fn build_styled_run<'a>(
 /// draw (see [`crate::symbol_map`]); an unmapped glyph falls back to a visible
 /// placeholder so it is never silently dropped.
 ///
-/// The model's [`Symbol`] node carries no run properties (the surrounding run's
-/// `w:rPr` is not attached to it in schema v1), so the glyph shapes at the
-/// document default size/color through the same font cascade as ordinary text.
-/// The declared symbol face (Wingdings/Symbol/…) is intentionally **not**
+/// The symbol retains the owning run's properties, so form glyphs preserve their
+/// authored size/color through the normal cascade. The declared symbol face
+/// (Wingdings/Symbol/…) is intentionally **not**
 /// requested — the mapped Unicode char must resolve against a covering text face,
 /// not the (unbundled, glyph-incompatible) symbol font.
 fn symbol_glyph_run(symbol: &Symbol, ctx: &mut FlowCtx) -> StyledRun<'static> {
     let glyph = crate::symbol_map::resolve_symbol(&symbol.font, symbol.char);
-    let properties = RunProperties::default();
-    let effective = ctx.cascade.resolve_run(ctx.para_style, &properties);
+    let effective = ctx.cascade.resolve_run(ctx.para_style, &symbol.properties);
     let (size, baseline_shift) = scaled_run_metrics(&effective, ctx.text_scale);
     let bold = effective.bold.unwrap_or(false);
     let italic = effective.italic.unwrap_or(false);
@@ -2870,6 +3073,7 @@ fn symbol_glyph_run(symbol: &Symbol, ctx: &mut FlowCtx) -> StyledRun<'static> {
         requested_family: requested_family(&effective, ctx.scheme).map(Cow::Owned),
         text: Cow::Owned(text),
         size,
+        character_scale_percent: effective.character_scale_percent.unwrap_or(100),
         bold,
         italic,
         letter_spacing: scale_twip(
@@ -3041,6 +3245,7 @@ fn push_small_caps_runs<'a>(
             requested_family: family.clone().map(Cow::Owned),
             font,
             size,
+            character_scale_percent: properties.character_scale_percent.unwrap_or(100),
             bold,
             italic,
             letter_spacing,
@@ -3469,19 +3674,15 @@ fn line_constraints(
         Some(s) => match s.line_rule {
             Some(LineRule::Exact) => (None, None, s.line_twips.map(Twip)),
             Some(LineRule::AtLeast) => (None, s.line_twips.map(Twip), None),
-            // An explicit `auto` rule (or none) uses the percent multiple. A
-            // multiple below 1.0 (100%) is floored to single spacing: sub-single
-            // `auto` spacing (e.g. a machine-produced SDS with `w:line="168"`,
-            // 0.70x) otherwise scales the line box under the glyph line, piling
-            // consecutive lines on top of each other. LibreOffice (the oracle) also
-            // does not compress `auto` spacing below the single line, so flooring
-            // here matches its page layout; a genuine multiple >= 1.0 is untouched.
+            // An explicit `auto` rule (or none) uses the authored multiple,
+            // including values below single spacing. OOXML stores this in 240ths
+            // (`w:line="168"` = 0.70×); flooring it to 1.0 silently expands dense
+            // forms/SDS paragraphs and changes pagination.
             Some(LineRule::Auto) | None => (
                 s.line_percent.map(|p| {
-                    let base = p.max(100);
                     let reduction =
                         ((line_spacing_reduction.saturating_add(500)) / 1_000).min(99) as u16;
-                    base.saturating_sub(reduction).max(1)
+                    p.saturating_sub(reduction).max(1)
                 }),
                 None,
                 None,
@@ -3491,6 +3692,8 @@ fn line_constraints(
     };
     LineConstraints {
         max_width,
+        margin_width: width,
+        indent_start: metrics.indent_start,
         rtl: false,
         alignment: alignment(properties),
         line_height_percent,
@@ -4503,6 +4706,15 @@ mod tests {
             id: NodeId::from_parts(9, 1).unwrap(),
             font: "Wingdings 2".to_owned(),
             char: 0xF0A3,
+            properties: RunProperties {
+                size_half_points: Some(32),
+                color: Some(Color::Rgb(casual_doc_model::v1::RgbColor {
+                    r: 31,
+                    g: 78,
+                    b: 121,
+                })),
+                ..RunProperties::default()
+            },
         });
         // An unmapped glyph in a non-bundled face still yields a visible placeholder
         // run rather than nothing.
@@ -4511,6 +4723,7 @@ mod tests {
             // A byte with no table entry (Wingdings 3 stops at 0xF0) → placeholder.
             font: "Wingdings 3".to_owned(),
             char: 0xF0FE,
+            properties: RunProperties::default(),
         });
         let inlines = vec![checkbox, unknown];
         let resolver = FontResolver::new();
@@ -4535,6 +4748,12 @@ mod tests {
         let mut runs = Vec::new();
         collect_runs(&inlines, &mut runs, &mut ctx);
         assert_eq!(runs.len(), 2, "both symbols emit a glyph run");
+        assert_eq!(
+            runs[0].size,
+            Twip::from_points(16),
+            "the symbol keeps its owning run's authored size"
+        );
+        assert_eq!(runs[0].color, [31, 78, 121, 255]);
         let first = runs[0].text.chars().next().unwrap();
         assert!(
             matches!(first, '\u{25A1}' | '\u{2610}'),
@@ -6182,15 +6401,19 @@ mod tests {
         let para = BlockNode::Paragraph(Paragraph {
             id: NodeId::from_parts(10, 1).unwrap(),
             properties: ParagraphProperties::default(),
-            inlines: vec![InlineNode::Drawing(Drawing {
-                id: NodeId::from_parts(11, 1).unwrap(),
-                media: media_id,
-                // 190500 × 127000 EMU (635 EMU/twip) → 300 × 200 twips.
-                extent: Some(Extent {
-                    width_emu: 190_500,
-                    height_emu: 127_000,
+            inlines: vec![
+                run_node(12, "before ", RunProperties::default()),
+                InlineNode::Drawing(Drawing {
+                    id: NodeId::from_parts(11, 1).unwrap(),
+                    media: media_id,
+                    // 190500 × 127000 EMU (635 EMU/twip) → 300 × 200 twips.
+                    extent: Some(Extent {
+                        width_emu: 190_500,
+                        height_emu: 127_000,
+                    }),
                 }),
-            })],
+                run_node(13, " after", RunProperties::default()),
+            ],
         });
         let doc =
             Document::new(NodeId::from_parts(1, 1).unwrap(), vec![para], definitions).unwrap();
@@ -6202,17 +6425,37 @@ mod tests {
         };
         // The drawing became an inline image box, sized from the EMU extent and
         // keyed by its package part name.
-        let image = lines
+        let image_line = lines
             .lines
             .iter()
-            .flat_map(|l| &l.images)
-            .next()
+            .find(|line| !line.images.is_empty())
             .expect("an inline image was placed");
+        let image = &image_line.images[0];
         assert_eq!(image.media, "word/media/image1.png");
         assert_eq!(
             image.size,
             Size::new(Twip(300), Twip(200)),
             "190500×127000 EMU resolves to 300×200 twips"
+        );
+        assert!(
+            image.origin.x > Twip::ZERO,
+            "the image follows the leading text on the same line"
+        );
+        assert!(
+            image_line.runs.iter().any(|run| {
+                let right = run.origin.x
+                    + run
+                        .glyphs
+                        .iter()
+                        .fold(Twip::ZERO, |advance, glyph| advance + glyph.advance);
+                run.origin.x >= image.origin.x + image.size.width
+                    || right > image.origin.x + image.size.width
+            }),
+            "the trailing text continues after the image instead of moving to a standalone line"
+        );
+        assert!(
+            image_line.height >= image.size.height,
+            "the image contributes to the shared line box height"
         );
 
         // And it composes to a `PaintItem::Image` carrying that extent-derived rect.
@@ -6756,6 +6999,7 @@ mod tests {
                         ascent: Twip(100),
                         descent: Twip::ZERO,
                         height: Twip(100),
+                        clip: false,
                         range: ModelRange::new(
                             ModelPos::new(NodeId::from_parts(10, 1).unwrap(), 0),
                             ModelPos::new(NodeId::from_parts(10, 1).unwrap(), 0),
@@ -6992,6 +7236,44 @@ mod tests {
         assert_eq!(center.origin.x, Twip(2000));
         let right = make(HorizontalRuleAlign::Right);
         assert_eq!(right.origin.x, Twip(4000));
+    }
+
+    #[test]
+    fn a_margin_right_square_anchor_becomes_a_local_line_exclusion() {
+        use casual_doc_model::v1::{AnchorHorizontal, AnchorVertical, WrapDistances};
+
+        let anchor = DrawingAnchor {
+            horizontal: AnchorHorizontal {
+                relative_from: HorizontalAnchor::Margin,
+                position: HorizontalPosition::Align(HorizontalAlign::Right),
+            },
+            vertical: AnchorVertical {
+                relative_from: VerticalAnchor::Paragraph,
+                position: VerticalPosition::Offset(0),
+            },
+            wrap: WrapMode::Square,
+            wrap_distances: WrapDistances {
+                start_emu: 180 * 635,
+                ..WrapDistances::default()
+            },
+            behind_doc: false,
+        };
+        let item = float_flow_item(
+            &anchor,
+            &Extent {
+                width_emu: 1500 * 635,
+                height_emu: 1500 * 635,
+            },
+        )
+        .expect("supported paragraph-local square wrap");
+        assert!(matches!(
+            item,
+            FlowItem::FloatExclusion {
+                side: InlineFloatSide::Right,
+                width: Twip(1680),
+                height: Twip(1500),
+            }
+        ));
     }
 
     fn hr_model(align: HorizontalRuleAlign, width_permille: u16) -> ModelHorizontalRule {

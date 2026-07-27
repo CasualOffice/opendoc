@@ -18,16 +18,18 @@ use std::sync::Arc;
 use fontique::{Blob, Script};
 use parley::{
     Alignment, AlignmentOptions, FontContext, FontFamily, FontStyle, FontWeight, IndentOptions,
-    LayoutContext, LineHeight, PositionedLayoutItem, StyleProperty,
+    InlineBox, InlineBoxKind, LayoutContext, LineHeight, PositionedLayoutItem, StyleProperty,
+    YieldData,
 };
 
 use crate::font_registry::FontRegistry;
 use crate::model::{ModelPos, ModelRange};
 use crate::text::{
-    Decoration, FontId, Glyph, GlyphRun, Line, LineBreak, LineConstraints, LineLayout, LineShaper,
-    StyledRun, TextAlignment,
+    Decoration, FontId, Glyph, GlyphRun, InlineFloatSide, InlineFloatSpec, InlineImage,
+    InlineImageSpec, Line, LineBreak, LineConstraints, LineLayout, LineShaper, StyledRun,
+    TextAlignment,
 };
-use crate::units::{Point, Twip};
+use crate::units::{Point, Size, Twip};
 
 /// Per-run data carried through `parley` and recovered from the shaped layout.
 /// `Brush` is blanket-implemented for any `Clone + PartialEq + Default + Debug`,
@@ -37,6 +39,10 @@ use crate::units::{Point, Twip};
 struct RunBrush {
     color: [u8; 4],
     font: u32,
+    /// Original (vertically unscaled) font size in twips.
+    size: i32,
+    /// OOXML horizontal character scale (`w:w`).
+    character_scale_percent: u16,
     /// The run's resolved highlight fill (RGBA); alpha `0` means no highlight.
     highlight: [u8; 4],
     /// Baseline shift in twips (positive = raised); subtracted from the run's
@@ -339,6 +345,93 @@ fn alignment(alignment: TextAlignment) -> Alignment {
     }
 }
 
+/// Runs Parley's resumable line breaker around paragraph-local floating
+/// exclusions. Custom out-of-flow boxes are zero-sized markers; when one is
+/// reached, the line's inline origin/width is reduced until the authored object
+/// height has cleared. The anchored object itself remains owned by the page float
+/// layer, so no duplicate paint item is emitted here.
+fn break_lines_around_floats(
+    layout: &mut parley::Layout<RunBrush>,
+    image_count: usize,
+    floats: &[InlineFloatSpec],
+    max_width: Twip,
+) {
+    #[derive(Clone, Copy)]
+    struct ActiveFloat {
+        side: InlineFloatSide,
+        width: f32,
+        end_y: f64,
+    }
+
+    fn apply_geometry(
+        breaker: &mut parley::BreakLines<'_, RunBrush>,
+        active: &mut Vec<ActiveFloat>,
+        y: f64,
+        full_width: f32,
+    ) {
+        active.retain(|float| float.end_y > y);
+        let left = active
+            .iter()
+            .filter(|float| float.side == InlineFloatSide::Left)
+            .map(|float| float.width)
+            .fold(0.0_f32, f32::max);
+        let right = active
+            .iter()
+            .filter(|float| float.side == InlineFloatSide::Right)
+            .map(|float| float.width)
+            .fold(0.0_f32, f32::max);
+        let available = (full_width - left - right).max(1.0);
+        breaker.state_mut().set_line_x(left);
+        breaker.state_mut().set_line_max_advance(available);
+    }
+
+    let full_width = max_width.raw().max(1) as f32;
+    let mut breaker = layout.break_lines();
+    breaker.state_mut().set_layout_max_advance(full_width);
+    breaker.state_mut().set_line_max_advance(full_width);
+    let mut active = Vec::new();
+
+    while let Some(event) = breaker.break_next() {
+        match event {
+            YieldData::InlineBoxBreak(data) => {
+                let Some(index) = (data.inline_box_id as usize).checked_sub(image_count) else {
+                    // Only custom boxes yield, but consume an unknown marker
+                    // defensively so a malformed id cannot stall line breaking.
+                    breaker
+                        .state_mut()
+                        .append_inline_box_to_line(data.advance, 0.0);
+                    continue;
+                };
+                let Some(float) = floats.get(index) else {
+                    breaker
+                        .state_mut()
+                        .append_inline_box_to_line(data.advance, 0.0);
+                    continue;
+                };
+                let y = breaker.committed_y();
+                active.push(ActiveFloat {
+                    side: float.side,
+                    width: float.width.raw().max(0) as f32,
+                    end_y: y + f64::from(float.height.raw().max(0)),
+                });
+                breaker
+                    .state_mut()
+                    .append_inline_box_to_line(data.advance, 0.0);
+                apply_geometry(&mut breaker, &mut active, y, full_width);
+            }
+            YieldData::LineBreak(data) => {
+                apply_geometry(&mut breaker, &mut active, data.line_y_end, full_width);
+            }
+            YieldData::MaxHeightExceeded(_) => {
+                // No line-height bound is installed by this paragraph layout, so
+                // this is unreachable. Remove any accidental bound defensively.
+                breaker.state_mut().set_line_max_height(f32::INFINITY);
+            }
+        }
+    }
+    breaker.finish();
+}
+
 impl core::fmt::Debug for ParleyShaper {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // `parley`'s font/layout contexts are opaque caches and not `Debug`.
@@ -355,13 +448,50 @@ impl LineShaper for ParleyShaper {
         constraints: LineConstraints,
         range: ModelRange,
     ) -> LineLayout {
+        self.shape_with_objects(runs, &[], &[], constraints, range)
+    }
+
+    fn shape_paragraph_with_inline_images(
+        &self,
+        runs: &[StyledRun<'_>],
+        images: &[InlineImageSpec],
+        constraints: LineConstraints,
+        range: ModelRange,
+    ) -> LineLayout {
+        self.shape_with_objects(runs, images, &[], constraints, range)
+    }
+
+    fn shape_paragraph_with_inline_objects(
+        &self,
+        runs: &[StyledRun<'_>],
+        images: &[InlineImageSpec],
+        floats: &[InlineFloatSpec],
+        constraints: LineConstraints,
+        range: ModelRange,
+    ) -> LineLayout {
+        self.shape_with_objects(runs, images, floats, constraints, range)
+    }
+}
+
+impl ParleyShaper {
+    /// Shared text/inline-box entry point, including the two-pass CJK metric
+    /// normalization used by ordinary text shaping.
+    fn shape_with_objects(
+        &self,
+        runs: &[StyledRun<'_>],
+        images: &[InlineImageSpec],
+        floats: &[InlineFloatSpec],
+        constraints: LineConstraints,
+        range: ModelRange,
+    ) -> LineLayout {
         // Shape once with the natural (face-metric) line heights. This pass is
         // byte-for-byte identical to the pre-normalization shaper, so Latin-only
         // paragraphs, the bundled/deterministic path, and every golden are
         // unchanged. It also reports whether the paragraph contains a CJK run that
         // shaped with a dynamic (non-bundled) OS/host *fallback* face, whose native
         // line height does not represent the run font's size.
-        let (layout, cjk_fallback) = self.shape_inner(runs, constraints, range, false);
+        let (layout, cjk_fallback) =
+            self.shape_inner(runs, images, floats, constraints, range, false);
         if !cjk_fallback {
             return layout;
         }
@@ -371,11 +501,10 @@ impl LineShaper for ParleyShaper {
         // `parley` (rather than rewriting the box afterwards) keeps the glyph
         // baselines and the line box consistent on every downstream path, including
         // paragraphs that never go through the flow layer's line restacking.
-        self.shape_inner(runs, constraints, range, true).0
+        self.shape_inner(runs, images, floats, constraints, range, true)
+            .0
     }
-}
 
-impl ParleyShaper {
     /// Shapes a paragraph once. When `normalize_cjk` is set, the line box is driven
     /// by the run font size (`LineHeight::FontSizeRelative`, [`CJK_SINGLE_LINE_FACTOR`]
     /// scaled by any `w:spacing@line` percent) rather than the shaped face's native
@@ -385,6 +514,8 @@ impl ParleyShaper {
     fn shape_inner(
         &self,
         runs: &[StyledRun<'_>],
+        images: &[InlineImageSpec],
+        floats: &[InlineFloatSpec],
         constraints: LineConstraints,
         range: ModelRange,
         normalize_cjk: bool,
@@ -397,7 +528,7 @@ impl ParleyShaper {
         // paragraph mark's own font metrics, which is what Word does. Fabricating a
         // default-size line here silently discards the mark metrics and mis-sizes
         // the empty line, shifting pagination.
-        if runs.is_empty() {
+        if runs.is_empty() && images.is_empty() && floats.is_empty() {
             return (LineLayout { lines: Vec::new() }, false);
         }
 
@@ -443,6 +574,11 @@ impl ParleyShaper {
         let percent = constraints
             .line_height_percent
             .map_or(1.0, |p| f32::from(p) / 100.0);
+        // A sub-single `auto` multiple may tighten leading, but must not make the
+        // CJK em cell itself shorter than the glyph em: that would make adjacent
+        // rows overprint. This still honors dense authored spacing (1.0em instead
+        // of the normal 1.2em) without the old blanket floor to single spacing.
+        let cjk_line_factor = (CJK_SINGLE_LINE_FACTOR * percent).max(1.0);
         if normalize_cjk {
             // Drive the line box from the run font size (Word's single-line height),
             // not the fallback face's native metrics: every run's line height becomes
@@ -451,7 +587,7 @@ impl ParleyShaper {
             // substitute face's ascent+descent. `parley` positions the baseline
             // within this box, leaving room for the glyph ink so CJK is not clipped.
             builder.push_default(StyleProperty::LineHeight(LineHeight::FontSizeRelative(
-                CJK_SINGLE_LINE_FACTOR * percent,
+                cjk_line_factor,
             )));
         } else if constraints.line_height_percent.is_some() {
             // Line height as a percent of the metrics line height (`w:spacing@line`).
@@ -460,7 +596,9 @@ impl ParleyShaper {
             )));
         }
         for (i, (start, end, run)) in spans.iter().enumerate() {
-            builder.push(StyleProperty::FontSize(run.size.raw() as f32), *start..*end);
+            let scale = run.character_scale_percent.clamp(1, 600);
+            let shaped_size = (run.size.raw() as f32 * f32::from(scale) / 100.0).max(1.0);
+            builder.push(StyleProperty::FontSize(shaped_size), *start..*end);
             // Push the run's chosen family (system-preferred or bundled; see
             // `families` above) so `parley` shapes with the exact face the renderer
             // will outline for it.
@@ -472,11 +610,24 @@ impl ParleyShaper {
                 StyleProperty::Brush(RunBrush {
                     color: run.color,
                     font: run.font.0,
+                    size: run.size.raw(),
+                    character_scale_percent: scale,
                     highlight: run.highlight.unwrap_or([0, 0, 0, 0]),
                     baseline_shift: run.baseline_shift.raw(),
                 }),
                 *start..*end,
             );
+            if scale != 100 {
+                // Shape at the scaled size so advances and line breaks see the
+                // true horizontal width, then counteract that size in line-height
+                // calculation so vertical metrics remain authored-size metrics.
+                builder.push(
+                    StyleProperty::LineHeight(LineHeight::FontSizeRelative(
+                        cjk_line_factor * 100.0 / f32::from(scale),
+                    )),
+                    *start..*end,
+                );
+            }
             if run.bold {
                 builder.push(
                     StyleProperty::FontWeight(FontWeight::new(700.0)),
@@ -499,6 +650,24 @@ impl ParleyShaper {
                 builder.push(StyleProperty::Strikethrough(true), *start..*end);
             }
         }
+        for (id, image) in images.iter().enumerate() {
+            builder.push_inline_box(InlineBox {
+                id: id as u64,
+                kind: InlineBoxKind::InFlow,
+                index: image.index as usize,
+                width: image.size.width.raw() as f32,
+                height: image.size.height.raw() as f32,
+            });
+        }
+        for (id, float) in floats.iter().enumerate() {
+            builder.push_inline_box(InlineBox {
+                id: (images.len() + id) as u64,
+                kind: InlineBoxKind::CustomOutOfFlow,
+                index: float.index as usize,
+                width: 0.0,
+                height: 0.0,
+            });
+        }
 
         let mut layout = builder.build(&text);
         // First-line indent (`w:ind@firstLine`/`@hanging`): parley applies the
@@ -512,7 +681,11 @@ impl ParleyShaper {
                 IndentOptions::default(),
             );
         }
-        layout.break_all_lines(Some(constraints.max_width.raw() as f32));
+        if floats.is_empty() {
+            layout.break_all_lines(Some(constraints.max_width.raw() as f32));
+        } else {
+            break_lines_around_floats(&mut layout, images.len(), floats, constraints.max_width);
+        }
         layout.align(
             alignment(constraints.alignment),
             AlignmentOptions::default(),
@@ -520,6 +693,11 @@ impl ParleyShaper {
 
         let line_count = layout.lines().count();
         let mut lines = Vec::with_capacity(line_count);
+        // Output line boxes can differ from Parley's natural boxes for OOXML
+        // `exact`/`atLeast` rules. Track their authored stack independently so
+        // baselines are re-anchored into the box that pagination/composition use.
+        let mut output_y = Twip::ZERO;
+        let mut source_y = Twip::ZERO;
         // Whether any line carries a CJK run shaped with a dynamic (non-bundled)
         // coverage-fallback face — the signal that this paragraph should be re-shaped
         // with the run-font-driven line box (see `shape_paragraph`).
@@ -527,6 +705,7 @@ impl ParleyShaper {
         for (index, line) in layout.lines().enumerate() {
             let metrics = line.metrics();
             let mut out_runs = Vec::new();
+            let mut out_images = Vec::new();
             // A single `parley` shaping run is split into one `GlyphRun` per
             // contiguous style span — a brush (color/highlight) or decoration
             // change splits the run *without* re-shaping, so the spans keep their
@@ -551,12 +730,29 @@ impl ParleyShaper {
             // run closes up against the tightened CJK instead of leaving a gap.
             let mut cjk_trim_before = 0i32;
             for item in line.items() {
-                let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
-                    continue;
+                let glyph_run = match item {
+                    PositionedLayoutItem::InlineBox(inline_box) => {
+                        if let Some(image) = images.get(inline_box.id as usize) {
+                            out_images.push(InlineImage {
+                                media: image.media.clone(),
+                                origin: Point::new(
+                                    Twip(inline_box.x.round() as i32),
+                                    Twip(inline_box.y.round() as i32),
+                                ),
+                                size: Size::new(
+                                    Twip(inline_box.width.round() as i32),
+                                    Twip(inline_box.height.round() as i32),
+                                ),
+                            });
+                        }
+                        continue;
+                    }
+                    PositionedLayoutItem::GlyphRun(glyph_run) => glyph_run,
                 };
                 let style = glyph_run.style();
                 let run = glyph_run.run();
-                let size = Twip(run.font_size().round() as i32);
+                let shaped_size = Twip(run.font_size().round() as i32);
+                let size = Twip(style.brush.size);
                 // The face `parley` actually shaped this run with. When it is a
                 // bundled face (always true with `system-fonts` off and no host
                 // font registered) it equals the resolver's choice, carried on the
@@ -639,7 +835,7 @@ impl ParleyShaper {
                 // cell); the shaved excess accrues into `this_run_trim` so following
                 // LTR runs can close up. Latin/proportional glyphs and any advance
                 // already at or under the em pass through unchanged.
-                let em = size.raw();
+                let em = shaped_size.raw();
                 let mut this_run_trim = 0i32;
                 let mut glyphs: Vec<Glyph> = Vec::new();
                 for glyph in glyph_run.glyphs() {
@@ -675,6 +871,7 @@ impl ParleyShaper {
                 out_runs.push(GlyphRun {
                     font,
                     size,
+                    character_scale_percent: style.brush.character_scale_percent,
                     color: style.brush.color,
                     origin,
                     bidi_level,
@@ -712,20 +909,42 @@ impl ParleyShaper {
             // reshape it further below.
             let natural = Twip(metrics.line_height.round() as i32);
             let (ascent, descent, height) = apply_line_rule(ascent, descent, natural, &constraints);
+            let source_baseline = Twip(metrics.baseline.round() as i32);
+            let baseline_in_line = if constraints.line_exact.is_some() {
+                ascent
+            } else {
+                source_baseline - source_y
+            };
+            let target_baseline = output_y + baseline_in_line;
+            let baseline_delta = target_baseline - source_baseline;
+            let box_delta = output_y - source_y;
+            for run in &mut out_runs {
+                run.origin.y = run.origin.y + baseline_delta;
+            }
+            // Atomic boxes are top-aligned to the line stack. Glyphs need
+            // baseline anchoring, but applying that delta to images would move
+            // them incorrectly when an exact-height line clips and reanchors
+            // its text.
+            for image in &mut out_images {
+                image.origin.y = image.origin.y + box_delta;
+            }
             lines.push(Line {
                 runs: out_runs,
                 ascent,
                 descent,
                 height,
+                clip: constraints.line_exact.is_some(),
                 range: line_range,
                 line_break,
                 page_break_after: false,
                 bars: Vec::new(),
-                images: Vec::new(),
+                images: out_images,
                 fields: Vec::new(),
                 text_boxes: Vec::new(),
                 rules: Vec::new(),
             });
+            output_y = output_y + height;
+            source_y = source_y + natural;
         }
         (LineLayout { lines }, cjk_fallback)
     }
@@ -748,6 +967,7 @@ mod tests {
             requested_family: None,
             font: FontId(0),
             size: Twip::from_points(11),
+            character_scale_percent: 100,
             bold: false,
             italic: false,
             letter_spacing: Twip::ZERO,
@@ -851,6 +1071,119 @@ mod tests {
     }
 
     #[test]
+    fn a_right_float_narrows_only_the_lines_that_intersect_it() {
+        let shaper = ParleyShaper::new();
+        let text = "aaaa aaaa aaaa aaaa aaaa ".repeat(24);
+        let styled = run(&text);
+        let max_width = Twip(3000);
+        let exclusion = Twip(1200);
+        let float_height = Twip(700);
+        let layout = shaper.shape_paragraph_with_inline_objects(
+            &[styled],
+            &[],
+            &[InlineFloatSpec {
+                index: 0,
+                side: InlineFloatSide::Right,
+                width: exclusion,
+                height: float_height,
+            }],
+            LineConstraints {
+                max_width,
+                ..LineConstraints::default()
+            },
+            para_range(),
+        );
+
+        let line_end = |line: &Line| {
+            line.runs
+                .iter()
+                .map(|run| {
+                    run.origin.x.raw()
+                        + run
+                            .glyphs
+                            .iter()
+                            .map(|glyph| glyph.advance.raw())
+                            .sum::<i32>()
+                })
+                .max()
+                .unwrap_or(0)
+        };
+        let reduced_width = max_width.raw() - exclusion.raw();
+        let mut y = 0;
+        let mut saw_cleared_line = false;
+        for line in &layout.lines {
+            let end = line_end(line);
+            if y < float_height.raw() {
+                assert!(
+                    end <= reduced_width + 2,
+                    "an intersecting line ended at {end}, past {reduced_width}"
+                );
+            } else if end > reduced_width {
+                saw_cleared_line = true;
+            }
+            y += line.height.raw();
+        }
+        assert!(
+            saw_cleared_line,
+            "a line below the float should recover the full paragraph width"
+        );
+    }
+
+    #[test]
+    fn dense_auto_spacing_keeps_a_horizontally_scaled_em_from_overprinting() {
+        let shaper = ParleyShaper::new();
+        let scaled = StyledRun {
+            character_scale_percent: 95,
+            ..run("scaled words scaled words scaled words scaled words")
+        };
+        let authored_size = scaled.size;
+        let layout = shaper.shape_paragraph(
+            &[scaled],
+            LineConstraints {
+                max_width: Twip(1200),
+                line_height_percent: Some(70),
+                ..LineConstraints::default()
+            },
+            para_range(),
+        );
+        assert!(layout.lines.len() > 1);
+        assert!(
+            layout.lines.iter().all(|line| line.height >= authored_size),
+            "sub-single spacing may trim leading, not collapse the glyph em"
+        );
+    }
+
+    #[test]
+    fn exact_lines_reanchor_each_baseline_inside_its_authored_box() {
+        let shaper = ParleyShaper::new();
+        let large = StyledRun {
+            size: Twip::from_points(24),
+            ..run("large words large words large words")
+        };
+        let exact = Twip(180);
+        let layout = shaper.shape_paragraph(
+            &[large],
+            LineConstraints {
+                max_width: Twip(1600),
+                line_exact: Some(exact),
+                ..LineConstraints::default()
+            },
+            para_range(),
+        );
+        assert!(layout.lines.len() > 1);
+        for (index, line) in layout.lines.iter().enumerate() {
+            let top = exact.raw() * index as i32;
+            let bottom = top + exact.raw();
+            assert_eq!(line.height, exact);
+            assert!(line.clip);
+            assert!(line.runs.iter().all(|run| {
+                let baseline = run.origin.y.raw();
+                (top..=bottom).contains(&baseline)
+            }));
+        }
+    }
+
+    #[test]
     fn preserves_run_color_and_decoration() {
         let shaper = ParleyShaper::new();
         let styled = StyledRun {
@@ -858,6 +1191,7 @@ mod tests {
             requested_family: None,
             font: FontId(0),
             size: Twip::from_points(11),
+            character_scale_percent: 100,
             bold: false,
             italic: false,
             letter_spacing: Twip::ZERO,
@@ -877,6 +1211,43 @@ mod tests {
             "run color round-trips through parley"
         );
         assert!(run.decoration.underline, "underline round-trips");
+    }
+
+    #[test]
+    fn character_scale_changes_horizontal_advance_without_scaling_line_height() {
+        let shaper = ParleyShaper::new();
+        let shape = |scale| {
+            let mut styled = run("MMMMMMMM");
+            styled.character_scale_percent = scale;
+            shaper.shape_paragraph(&[styled], constraints(500), para_range())
+        };
+        let width = |layout: &LineLayout| {
+            layout.lines[0]
+                .runs
+                .iter()
+                .map(|run| {
+                    run.origin.x
+                        + run
+                            .glyphs
+                            .iter()
+                            .fold(Twip::ZERO, |advance, glyph| advance + glyph.advance)
+                })
+                .max()
+                .unwrap_or(Twip::ZERO)
+                .raw()
+        };
+
+        let narrow = shape(50);
+        let normal = shape(100);
+        let wide = shape(180);
+        assert!(width(&narrow) < width(&normal));
+        assert!(width(&wide) > width(&normal));
+        assert_eq!(narrow.lines[0].runs[0].character_scale_percent, 50);
+        assert_eq!(wide.lines[0].runs[0].character_scale_percent, 180);
+        assert!(
+            (narrow.lines[0].height.raw() - wide.lines[0].height.raw()).abs() <= 2,
+            "horizontal character scaling must not change vertical line pitch"
+        );
     }
 
     /// A styled run addressing a specific bundled face (for multi-font lines).

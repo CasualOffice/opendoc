@@ -3,7 +3,7 @@
 #![allow(clippy::print_stderr, clippy::print_stdout)] // a manual harness
 use casual_doc_import::{ImportConfig, ImportMode, import_package};
 use casual_doc_layout::compose::compose_page;
-use casual_doc_layout::document_layout::{document_page_config, paginate_document};
+use casual_doc_layout::document_layout::paginate_document;
 use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
 use casual_doc_render::{MapMediaSource, RegistryFontSource, Surface, render};
@@ -147,7 +147,6 @@ fn main() {
     // One call: real per-section geometry, flowed headers/footers, anchored
     // drawings, and page-number fields.
     let pages = paginate_document(&document, &shaper);
-    let config = document_page_config(&document);
     let page = match pages.pages.get(page_idx) {
         Some(p) => p,
         None => {
@@ -160,8 +159,8 @@ fn main() {
     };
 
     let dpi = 96.0;
-    let w = config.page_size.width.to_device_px(dpi).ceil() as u32;
-    let h = config.page_size.height.to_device_px(dpi).ceil() as u32;
+    let w = page.page_size.width.to_device_px(dpi).ceil() as u32;
+    let h = page.page_size.height.to_device_px(dpi).ceil() as u32;
     // The page background (`w:background`) fills the page behind everything.
     let mut surface = match document.background() {
         Some(c) => Surface::with_background(w, h, [c.r, c.g, c.b]).unwrap(),

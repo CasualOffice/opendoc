@@ -342,6 +342,7 @@ fn render_glyph_run(
     };
     let outlines = font.outline_glyphs();
     let size_px = run.size.to_device_px(dpi);
+    let scale_x = f32::from(run.character_scale_percent) / 100.0;
     let start_x = run.origin.x.to_device_px(dpi);
     let mut pen_x = start_x;
     let baseline_y = run.origin.y.to_device_px(dpi);
@@ -354,6 +355,7 @@ fn render_glyph_run(
                 builder: &mut builder,
                 origin_x: pen_x,
                 baseline_y,
+                scale_x,
             };
             let settings = DrawSettings::unhinted(Size::new(size_px), LocationRef::default());
             if outline.draw(settings, &mut pen).is_ok() {
@@ -460,11 +462,12 @@ struct GlyphPen<'a> {
     builder: &'a mut PathBuilder,
     origin_x: f32,
     baseline_y: f32,
+    scale_x: f32,
 }
 
 impl GlyphPen<'_> {
     fn map(&self, x: f32, y: f32) -> (f32, f32) {
-        (self.origin_x + x, self.baseline_y - y)
+        (self.origin_x + x * self.scale_x, self.baseline_y - y)
     }
 }
 
@@ -655,6 +658,7 @@ mod tests {
                 requested_family: None,
                 font: FontId(0),
                 size: Twip::from_points(24),
+                character_scale_percent: 100,
                 bold: false,
                 italic: false,
                 letter_spacing: Twip::ZERO,
@@ -693,6 +697,7 @@ mod tests {
         let run = GlyphRun {
             font: FontId(9),
             size: Twip::from_points(12),
+            character_scale_percent: 100,
             color: [0, 0, 0, 255],
             origin: Point::new(Twip::ZERO, Twip::from_points(12)),
             bidi_level: 0,
@@ -812,6 +817,7 @@ mod tests {
                 requested_family: None,
                 font: FontId(0),
                 size: Twip::from_points(24),
+                character_scale_percent: 100,
                 bold: false,
                 italic: false,
                 letter_spacing: Twip::ZERO,
@@ -1083,6 +1089,7 @@ mod tests {
                 requested_family: None,
                 font: FontId(0),
                 size: Twip::from_points(28),
+                character_scale_percent: 100,
                 bold: false,
                 italic: false,
                 letter_spacing: Twip::ZERO,
@@ -1133,6 +1140,7 @@ mod tests {
                 requested_family: None,
                 font: FontId(0),
                 size: Twip::from_points(32),
+                character_scale_percent: 100,
                 bold: false,
                 italic: false,
                 letter_spacing: Twip::ZERO,

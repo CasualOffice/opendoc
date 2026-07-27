@@ -34,6 +34,17 @@ pub fn compose_paragraph(layout: &LineLayout, origin: Point) -> DisplayList {
     // `bar` tab stops can be drawn as vertical rules spanning the line's box.
     let mut line_top = Twip::ZERO;
     for line in &layout.lines {
+        let current_top = line_top;
+        if line.clip {
+            // Exact line spacing clips only the block axis. Use a deliberately
+            // huge horizontal span so hanging indents and positioned tabs remain
+            // visible while glyph ink cannot escape into the next line.
+            const HORIZONTAL_CLIP_EXTENT: Twip = Twip(1 << 27);
+            list.push(PaintItem::PushClip(Rect::new(
+                Point::new(origin.x - HORIZONTAL_CLIP_EXTENT, origin.y + current_top),
+                Size::new(HORIZONTAL_CLIP_EXTENT + HORIZONTAL_CLIP_EXTENT, line.height),
+            )));
+        }
         // Bar tab stops (`w:tab@val="bar"`): a thin vertical rule at each stop's x,
         // spanning the full line height, painted behind the glyphs.
         for &bar_x in &line.bars {
@@ -128,6 +139,9 @@ pub fn compose_paragraph(layout: &LineLayout, origin: Point) -> DisplayList {
                 fill: Some(rgba(rule.color)),
                 stroke: None,
             });
+        }
+        if line.clip {
+            list.push(PaintItem::PopClip);
         }
     }
     list
@@ -659,6 +673,7 @@ mod tests {
                 requested_family: None,
                 font: FontId(0),
                 size: Twip::from_points(11),
+                character_scale_percent: 100,
                 bold: false,
                 italic: false,
                 letter_spacing: Twip::ZERO,
@@ -685,6 +700,45 @@ mod tests {
         // The run is translated by the paragraph origin (x at least the left margin).
         assert!(run.origin.x.raw() >= origin.x.raw());
         assert!(run.origin.y.raw() >= origin.y.raw());
+    }
+
+    #[test]
+    fn an_exact_height_line_clips_oversized_glyph_ink_to_its_line_box() {
+        let shaper = ParleyShaper::new();
+        let node = NodeId::from_parts(2, 1).unwrap();
+        let layout = shaper.shape_paragraph(
+            &[StyledRun {
+                text: "Oversized".into(),
+                requested_family: None,
+                font: FontId(0),
+                size: Twip::from_points(24),
+                character_scale_percent: 100,
+                bold: false,
+                italic: false,
+                letter_spacing: Twip::ZERO,
+                color: [0, 0, 0, 255],
+                decoration: Decoration::default(),
+                highlight: None,
+                baseline_shift: Twip::ZERO,
+            }],
+            LineConstraints {
+                max_width: Twip::from_points(500),
+                line_exact: Some(Twip(120)),
+                ..LineConstraints::default()
+            },
+            ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, 9)),
+        );
+        assert_eq!(layout.lines[0].height, Twip(120));
+        assert!(layout.lines[0].clip);
+
+        let origin = Point::new(Twip(50), Twip(75));
+        let list = compose_paragraph(&layout, origin);
+        let PaintItem::PushClip(clip) = &list.items[0] else {
+            panic!("an exact line starts a vertical clip");
+        };
+        assert_eq!(clip.origin.y, origin.y);
+        assert_eq!(clip.size.height, Twip(120));
+        assert!(matches!(list.items.last(), Some(PaintItem::PopClip)));
     }
 
     #[test]
@@ -976,6 +1030,7 @@ mod tests {
         let run = GlyphRun {
             font: FontId(0),
             size: Twip(200),
+            character_scale_percent: 100,
             color: [0, 0, 0, 255],
             origin: Point::new(Twip::ZERO, Twip(200)),
             bidi_level: 0,
@@ -993,6 +1048,7 @@ mod tests {
                 ascent: Twip(200),
                 descent: Twip(50),
                 height: Twip(250),
+                clip: false,
                 range: ModelRange::new(ModelPos::new(node(1), 0), ModelPos::new(node(1), 0)),
                 line_break: LineBreak::ParagraphEnd,
                 page_break_after: false,
