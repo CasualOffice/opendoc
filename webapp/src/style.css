@@ -514,6 +514,78 @@ input {
   border-color: var(--accent);
 }
 
+/* Border presets: a row of buttons each showing a mini box with the relevant
+   edge(s) emphasized (CSS-drawn — no icon assets). */
+.border-row {
+  justify-content: space-between;
+}
+
+.border-presets {
+  display: flex;
+  gap: 2px;
+}
+
+.border-btn {
+  display: grid;
+  place-items: center;
+  width: 27px;
+  height: 27px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.border-btn:hover {
+  background: var(--bg-2);
+}
+
+.border-btn[aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+}
+
+.border-btn .bx {
+  width: 15px;
+  height: 15px;
+  border: 1px solid var(--faint);
+}
+
+.border-btn[data-border="none"] .bx {
+  border-style: dashed;
+}
+
+.border-btn[data-border="box"] .bx {
+  border: 1.5px solid var(--ink);
+}
+
+.border-btn[data-border="top"] .bx {
+  border-top: 2px solid var(--ink);
+}
+
+.border-btn[data-border="bottom"] .bx {
+  border-bottom: 2px solid var(--ink);
+}
+
+.border-btn[data-border="left"] .bx {
+  border-left: 2px solid var(--ink);
+}
+
+.border-btn[data-border="right"] .bx {
+  border-right: 2px solid var(--ink);
+}
+
+.border-color input[type="color"] {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+}
+
 /* ---- Toolbar --------------------------------------------------------------- */
 .toolbar {
   display: flex;

@@ -78,6 +78,7 @@ const indentLeftInput = document.getElementById("indentLeft");
 const indentRightInput = document.getElementById("indentRight");
 const indentSpecialSel = document.getElementById("indentSpecial");
 const indentSpecialByInput = document.getElementById("indentSpecialBy");
+const borderColorInput = document.getElementById("borderColor");
 const indentDecBtn = document.getElementById("indentDec");
 const indentIncBtn = document.getElementById("indentInc");
 const bulletListBtn = document.getElementById("bulletList");
@@ -1141,8 +1142,26 @@ function reflectParaOptsMenu() {
   if (rgb >= 0 && document.activeElement !== paraShade) {
     paraShade.value = `#${rgb.toString(16).padStart(6, "0")}`;
   }
+  // Borders: light the preset(s) matching the active edges (top=1,bottom=2,left=4,right=8).
+  const edges = doc.paragraphBorderEdges(node);
+  const bit = { top: 1, bottom: 2, left: 4, right: 8 };
+  for (const b of paraOptsMenu.querySelectorAll(".border-btn")) {
+    const k = b.dataset.border;
+    const on = k === "box" ? edges === 0b1111 : k === "none" ? edges === 0 : (edges & bit[k]) !== 0;
+    b.setAttribute("aria-pressed", String(on));
+  }
 }
 registerPopover(paraOptsBtn, paraOptsMenu, reflectParaOptsMenu);
+
+// Borders: presets toggle edges (box = all, none = clear) in the chosen color at a
+// 1 pt single line (8 eighth-points).
+for (const b of paraOptsMenu.querySelectorAll(".border-btn")) {
+  onButton(b, () => {
+    const [r, g, bl] = hexToRgb(borderColorInput.value);
+    runToolbarEdit((a, x, c, d) => doc.setParagraphBorder(a, x, c, d, b.dataset.border, r, g, bl, 8));
+    reflectParaOptsMenu();
+  });
+}
 
 // Indentation: left/right absolute, and a first-line/hanging "special" indent
 // (setFirstLineIndent encodes hanging as a negative value, 0 clears both).

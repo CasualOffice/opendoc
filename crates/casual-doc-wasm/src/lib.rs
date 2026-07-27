@@ -33,8 +33,8 @@ use casual_doc_layout::paginate::PageConfig;
 use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_layout::units::{Point, Rect, Size, Twip};
 use casual_doc_model::v1::{
-    AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, Document, HighlightColor,
-    Indentation, LevelJustification, LevelSuffix, NumberFormat, NumberingInstance,
+    AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, BorderEdge, Document,
+    HighlightColor, Indentation, LevelJustification, LevelSuffix, NumberFormat, NumberingInstance,
     NumberingInstanceId, NumberingLevel, NumberingRef, Paragraph, ParagraphProperties, RgbColor,
     StyleId, StyleKind, TableCell, TableCellProperties, TableRow, VerticalAlignment,
 };
@@ -1424,6 +1424,76 @@ impl WasmDocument {
                 keep_next: p.keep_next,
                 keep_lines: p.keep_lines,
                 page_break_before: p.page_break_before,
+            })
+    }
+
+    /// Applies a paragraph border `edges` preset over the selection: `"none"` clears
+    /// all four edges; `"box"` sets all four; `"top"`/`"bottom"`/`"left"`/`"right"`
+    /// toggle that single edge (start = left, end = right). Set edges use a single
+    /// line of `size_eighth_points` (eighth-points) in the given RGB.
+    #[wasm_bindgen(js_name = setParagraphBorder)]
+    #[allow(clippy::too_many_arguments)] // flat JS signature (node/offsets + preset + rgb + size)
+    pub fn set_paragraph_border(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        edges: &str,
+        r: u8,
+        g: u8,
+        b: u8,
+        size_eighth_points: u32,
+    ) -> Result<EditResult, JsValue> {
+        let edge = || BorderEdge {
+            style: "single".to_string(),
+            size_eighth_points: Some(size_eighth_points.clamp(2, 96)),
+            color: Some(RgbColor { r, g, b }),
+            space_points: None,
+        };
+        let edges = edges.to_string();
+        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
+            let bd = &mut p.borders;
+            // Toggle a single edge: on if currently absent, else cleared.
+            let toggle = |slot: &mut Option<BorderEdge>| {
+                *slot = if slot.is_none() { Some(edge()) } else { None };
+            };
+            match edges.as_str() {
+                "none" => {
+                    bd.top = None;
+                    bd.bottom = None;
+                    bd.start = None;
+                    bd.end = None;
+                }
+                "box" => {
+                    bd.top = Some(edge());
+                    bd.bottom = Some(edge());
+                    bd.start = Some(edge());
+                    bd.end = Some(edge());
+                }
+                "top" => toggle(&mut bd.top),
+                "bottom" => toggle(&mut bd.bottom),
+                "left" => toggle(&mut bd.start),
+                "right" => toggle(&mut bd.end),
+                _ => {}
+            }
+        })
+    }
+
+    /// The paragraph's border edges as a bitmask — top=1, bottom=2, left=4, right=8 —
+    /// for reflecting which edge presets are active in the paragraph menu.
+    #[wasm_bindgen(js_name = paragraphBorderEdges)]
+    #[must_use]
+    pub fn paragraph_border_edges(&self, node: &str) -> u8 {
+        NodeId::from_str(node)
+            .ok()
+            .and_then(|nid| paragraph_properties(&self.document, nid))
+            .map_or(0, |p| {
+                let bd = &p.borders;
+                u8::from(bd.top.is_some())
+                    | (u8::from(bd.bottom.is_some()) << 1)
+                    | (u8::from(bd.start.is_some()) << 2)
+                    | (u8::from(bd.end.is_some()) << 3)
             })
     }
 
@@ -3754,6 +3824,36 @@ mod tests {
         // Undo the clear → the fill returns.
         d.undo().expect("undo");
         assert_eq!(d.paragraph_shading_at(&node), 0x00FF_E080);
+    }
+
+    /// Paragraph borders: box sets all four edges, single-edge presets toggle, none
+    /// clears, and the bitmask getter reflects it — all undoable.
+    #[test]
+    fn paragraph_borders_apply_reflect_and_undo() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, t)| t.len() >= 3)
+            .map(|(id, _)| id.to_string())
+            .expect("a paragraph with >=3 chars");
+
+        assert_eq!(d.paragraph_border_edges(&node), 0);
+        d.set_paragraph_border(&node, 0, &node, 0, "box", 0, 0, 0, 8)
+            .expect("box");
+        assert_eq!(d.paragraph_border_edges(&node), 0b1111);
+        // Toggling the top edge off leaves bottom+left+right (0b1110).
+        d.set_paragraph_border(&node, 0, &node, 0, "top", 0, 0, 0, 8)
+            .expect("toggle top");
+        assert_eq!(d.paragraph_border_edges(&node), 0b1110);
+        d.set_paragraph_border(&node, 0, &node, 0, "none", 0, 0, 0, 8)
+            .expect("none");
+        assert_eq!(d.paragraph_border_edges(&node), 0);
+
+        // Undo the clear → back to bottom+left+right.
+        d.undo().expect("undo");
+        assert_eq!(d.paragraph_border_edges(&node), 0b1110);
     }
 
     /// A `pageBreakBefore` set through the live edit path must re-paginate and add a
