@@ -836,6 +836,17 @@ document.addEventListener("keydown", async (e) => {
     return;
   }
 
+  // Tab / Shift+Tab indent / outdent the paragraph(s) the selection touches — the
+  // word-processor convention (and how lists are demoted/promoted). Caught before
+  // `if (mod) return` is irrelevant (Tab carries no ⌘), but before the browser can
+  // move focus off the page.
+  if (key === "Tab") {
+    e.preventDefault();
+    pendingFormat = null;
+    await runToolbarEdit((a, b, c, d) => doc.adjustIndent(a, b, c, d, e.shiftKey ? -360 : 360));
+    return;
+  }
+
   if (mod) return; // leave other ⌘ shortcuts to the browser
 
   const { anchor, focus } = selection;
