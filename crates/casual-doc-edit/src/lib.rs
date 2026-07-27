@@ -393,6 +393,76 @@ pub fn format_state(document: &Document, range: Range) -> FormatState {
     }
 }
 
+/// The uniform run styling across a range — each field is `Some`/`true` only when
+/// **every** covered run shares that value, so a toolbar can show the current
+/// size/color/font (or blank for a mixed selection).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RunStyleState {
+    /// Common font size in half-points, if uniform.
+    pub size_half_points: Option<u32>,
+    /// Common RGB text color, if uniform (theme colors count as mixed).
+    pub color_rgb: Option<RgbColor>,
+    /// Common font family, if uniform.
+    pub font: Option<String>,
+    /// Every covered run is superscript.
+    pub superscript: bool,
+    /// Every covered run is subscript.
+    pub subscript: bool,
+}
+
+/// The [`RunStyleState`] of the runs a `range` covers within one paragraph.
+#[must_use]
+pub fn run_style_state(document: &Document, range: Range) -> RunStyleState {
+    if range.start.node != range.end.node || range.end.offset <= range.start.offset {
+        return RunStyleState::default();
+    }
+    let Some(para) = find_paragraph(document.body(), range.start.node) else {
+        return RunStyleState::default();
+    };
+    let covered: Vec<&RunProperties> = run_segments(&para.inlines)
+        .into_iter()
+        .filter(|s| s.end > range.start.offset && s.start < range.end.offset && s.start < s.end)
+        .filter_map(|s| match &para.inlines[s.idx] {
+            InlineNode::Run(run) => Some(&run.properties),
+            _ => None,
+        })
+        .collect();
+    if covered.is_empty() {
+        return RunStyleState::default();
+    }
+    RunStyleState {
+        size_half_points: uniform(&covered, |p| p.size_half_points),
+        color_rgb: uniform(&covered, |p| match p.color {
+            Some(Color::Rgb(c)) => Some(c),
+            _ => None,
+        }),
+        font: uniform(&covered, |p| match &p.font_ref {
+            Some(FontRef::Named(name)) => Some(name.name.clone()),
+            _ => None,
+        }),
+        superscript: covered
+            .iter()
+            .all(|p| p.vertical_alignment == Some(VerticalAlignment::Superscript)),
+        subscript: covered
+            .iter()
+            .all(|p| p.vertical_alignment == Some(VerticalAlignment::Subscript)),
+    }
+}
+
+/// The common value of `f` across all covered runs, or `None` if any run differs
+/// or leaves it unset.
+fn uniform<T: PartialEq>(
+    covered: &[&RunProperties],
+    f: impl Fn(&RunProperties) -> Option<T>,
+) -> Option<T> {
+    let first = f(covered[0])?;
+    covered
+        .iter()
+        .skip(1)
+        .all(|p| f(p).as_ref() == Some(&first))
+        .then_some(first)
+}
+
 /// Finds the paragraph with `id` (immutable), recursing into tables and content
 /// controls.
 fn find_paragraph(blocks: &[BlockNode], id: NodeId) -> Option<&Paragraph> {
