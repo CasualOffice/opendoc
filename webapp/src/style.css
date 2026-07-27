@@ -514,7 +514,7 @@ input {
   flex: 1;
   overflow: auto;
   position: relative;
-  padding: 28px 0 56px;
+  padding: 12px 0 48px;
   background: var(--bg);
 }
 
@@ -538,6 +538,102 @@ input {
   flex-direction: column;
   align-items: center;
   gap: 22px;
+}
+
+/* ---- Horizontal ruler (Word/Docs style: a subtle strip with a lighter content
+   span between the page margins, hairline ticks, and pentagon indent markers) - */
+.ruler {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  height: 24px;
+  /* Cancel most of the .pages flex gap (22px) so the ruler hugs the page top. */
+  margin-bottom: -16px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  user-select: none;
+  /* Display-only: the ruler must never intercept a click meant for the page. */
+  pointer-events: none;
+}
+
+.ruler[hidden] {
+  display: none;
+}
+
+.ruler-track {
+  position: relative;
+  height: 100%;
+}
+
+/* The content span between the page margins reads a shade lighter than the
+   margin zones — the same relationship in light and dark. */
+.ruler-content {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  background: var(--surface);
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.ruler-tick {
+  position: absolute;
+  top: 4px;
+  width: 1px;
+  background: var(--muted);
+}
+
+.ruler-tick.major {
+  height: 6px;
+  opacity: 0.7;
+}
+
+.ruler-tick.minor {
+  height: 3px;
+  opacity: 0.4;
+}
+
+.ruler-num {
+  position: absolute;
+  top: 12px;
+  font-size: 9px;
+  line-height: 1;
+  color: var(--muted);
+  transform: translateX(-50%);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Pentagon indent markers (a rectangle body + a pointed tip, like Word/Docs).
+   First-line points down from the top; left/right point up from the bottom. */
+.ruler-marker {
+  position: absolute;
+  width: 11px;
+  height: 13px;
+  transform: translateX(-50%);
+  background: var(--accent);
+  cursor: ew-resize;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.28));
+}
+
+.ruler-marker::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+}
+
+.ruler-marker.down {
+  top: 2px;
+  clip-path: polygon(0 0, 100% 0, 100% 52%, 50% 100%, 0 52%);
+}
+
+.ruler-marker.up {
+  bottom: 2px;
+  clip-path: polygon(50% 0, 100% 48%, 100% 100%, 0 100%, 0 48%);
+}
+
+.ruler-marker:hover {
+  filter: brightness(1.12) drop-shadow(0 1px 1px rgba(0, 0, 0, 0.28));
 }
 
 .page-wrap {

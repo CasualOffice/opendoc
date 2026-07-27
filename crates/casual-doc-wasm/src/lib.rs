@@ -901,6 +901,70 @@ impl WasmDocument {
         })
     }
 
+    /// Sets the left (start) indent to an absolute `twips` (clamped ≥ 0) — the
+    /// ruler's left-indent marker drag.
+    #[wasm_bindgen(js_name = setLeftIndent)]
+    pub fn set_left_indent(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        twips: i32,
+    ) -> Result<EditResult, JsValue> {
+        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
+            let mut indent = p.indentation.unwrap_or(EMPTY_INDENT);
+            indent.start_twips = Some(twips.max(0));
+            p.indentation = Some(indent);
+        })
+    }
+
+    /// Sets the right (end) indent to an absolute `twips` (clamped ≥ 0) — the ruler's
+    /// right-indent marker drag.
+    #[wasm_bindgen(js_name = setRightIndent)]
+    pub fn set_right_indent(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        twips: i32,
+    ) -> Result<EditResult, JsValue> {
+        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
+            let mut indent = p.indentation.unwrap_or(EMPTY_INDENT);
+            indent.end_twips = Some(twips.max(0));
+            p.indentation = Some(indent);
+        })
+    }
+
+    /// Sets the first-line indent (relative to the left indent) to `twips` — the
+    /// ruler's top marker drag. Positive is a first-line indent; negative becomes a
+    /// hanging indent (mutually exclusive, as in Word); zero clears both.
+    #[wasm_bindgen(js_name = setFirstLineIndent)]
+    pub fn set_first_line_indent(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        twips: i32,
+    ) -> Result<EditResult, JsValue> {
+        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
+            let mut indent = p.indentation.unwrap_or(EMPTY_INDENT);
+            if twips > 0 {
+                indent.first_line_twips = Some(twips);
+                indent.hanging_twips = None;
+            } else if twips < 0 {
+                indent.hanging_twips = Some(-twips);
+                indent.first_line_twips = None;
+            } else {
+                indent.first_line_twips = None;
+                indent.hanging_twips = None;
+            }
+            p.indentation = Some(indent);
+        })
+    }
+
     /// Toggles a `"bullet"` or `"numbered"` list over the selection's paragraphs, as
     /// one undoable action. The shared list definition is created on first use and
     /// reused after; the toggle direction (on vs off) is decided by the first
@@ -1106,6 +1170,39 @@ impl WasmDocument {
             .cell_rect(nid)
             .map(|(page, rect)| flat_rect(page, rect).to_vec())
             .unwrap_or_default()
+    }
+
+    /// The first section's page geometry (width + side margins, in twips) — what the
+    /// horizontal ruler draws its scale and margin zones from.
+    #[wasm_bindgen(js_name = pageGeometry)]
+    #[must_use]
+    pub fn page_geometry(&self) -> RulerGeometry {
+        let c = &self.default_config;
+        RulerGeometry {
+            width_twip: c.page_size.width.raw(),
+            margin_start_twip: c.margin_start.raw(),
+            margin_end_twip: c.margin_end.raw(),
+        }
+    }
+
+    /// The paragraph's indentation (left/right/first-line/hanging, in twips; 0 when
+    /// unset) — for positioning the ruler's indent markers.
+    #[wasm_bindgen(js_name = paragraphIndent)]
+    #[must_use]
+    pub fn paragraph_indent(&self, node: &str) -> Indents {
+        let ind = NodeId::from_str(node)
+            .ok()
+            .and_then(|nid| paragraph_properties(&self.document, nid))
+            .and_then(|p| p.indentation);
+        match ind {
+            Some(i) => Indents {
+                start_twip: i.start_twips.unwrap_or(0),
+                end_twip: i.end_twips.unwrap_or(0),
+                first_line_twip: i.first_line_twips.unwrap_or(0),
+                hanging_twip: i.hanging_twips.unwrap_or(0),
+            },
+            None => Indents::default(),
+        }
     }
 
     /// Document statistics for the status footer: word count (whitespace-delimited
@@ -2489,6 +2586,88 @@ impl Format {
     #[must_use]
     pub fn strike(&self) -> bool {
         self.strike
+    }
+}
+
+/// An all-unset indentation, the base a ruler drag mutates.
+const EMPTY_INDENT: Indentation = Indentation {
+    start_twips: None,
+    end_twips: None,
+    first_line_twips: None,
+    hanging_twips: None,
+};
+
+/// A page's ruler geometry (twips).
+#[wasm_bindgen]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RulerGeometry {
+    width_twip: i32,
+    margin_start_twip: i32,
+    margin_end_twip: i32,
+}
+
+#[wasm_bindgen]
+impl RulerGeometry {
+    /// Page width in twips.
+    #[wasm_bindgen(getter, js_name = widthTwip)]
+    #[must_use]
+    pub fn width_twip(&self) -> i32 {
+        self.width_twip
+    }
+
+    /// Left (start) margin in twips.
+    #[wasm_bindgen(getter, js_name = marginStartTwip)]
+    #[must_use]
+    pub fn margin_start_twip(&self) -> i32 {
+        self.margin_start_twip
+    }
+
+    /// Right (end) margin in twips.
+    #[wasm_bindgen(getter, js_name = marginEndTwip)]
+    #[must_use]
+    pub fn margin_end_twip(&self) -> i32 {
+        self.margin_end_twip
+    }
+}
+
+/// A paragraph's indentation (twips), for the ruler markers.
+#[wasm_bindgen]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Indents {
+    start_twip: i32,
+    end_twip: i32,
+    first_line_twip: i32,
+    hanging_twip: i32,
+}
+
+#[wasm_bindgen]
+impl Indents {
+    /// Left (start) indent in twips.
+    #[wasm_bindgen(getter, js_name = startTwip)]
+    #[must_use]
+    pub fn start_twip(&self) -> i32 {
+        self.start_twip
+    }
+
+    /// Right (end) indent in twips.
+    #[wasm_bindgen(getter, js_name = endTwip)]
+    #[must_use]
+    pub fn end_twip(&self) -> i32 {
+        self.end_twip
+    }
+
+    /// First-line indent in twips (relative to the left indent).
+    #[wasm_bindgen(getter, js_name = firstLineTwip)]
+    #[must_use]
+    pub fn first_line_twip(&self) -> i32 {
+        self.first_line_twip
+    }
+
+    /// Hanging indent in twips (mutually exclusive with first-line).
+    #[wasm_bindgen(getter, js_name = hangingTwip)]
+    #[must_use]
+    pub fn hanging_twip(&self) -> i32 {
+        self.hanging_twip
     }
 }
 

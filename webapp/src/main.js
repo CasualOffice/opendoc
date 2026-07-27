@@ -268,6 +268,8 @@ async function renderAll() {
     pages.push({ pageNumber: i + 1, canvas, overlay, wTwip, hTwip });
   }
 
+  pagesEl.prepend(ruler); // the ruler sits above the pages, same width
+  buildRuler();
   drawSelection(); // re-place any existing selection at the new zoom
   if (token === renderToken) {
     setStatus("");
@@ -320,6 +322,7 @@ function drawSelection() {
   }
   updateToolbar();
   updatePageNumber();
+  updateRulerMarkers();
 }
 
 /** Outlines the table cell the caret is in (nothing when not in a table), so the
@@ -517,6 +520,108 @@ document.addEventListener("keydown", (e) => {
 });
 viewportEl.addEventListener("scroll", hideTableMenu, { passive: true });
 window.addEventListener("resize", hideTableMenu);
+
+// ---- Horizontal ruler (margins + the caret paragraph's indent markers) -------
+const ruler = document.createElement("div");
+ruler.className = "ruler";
+ruler.hidden = true;
+const rulerTrack = document.createElement("div");
+rulerTrack.className = "ruler-track";
+ruler.appendChild(rulerTrack);
+
+let rulerGeom = null; // { widthTwip, marginStartTwip, marginEndTwip }
+let rulerScale = 0; // px per twip at the current zoom
+const markers = {}; // key -> element
+const TWIPS_PER_INCH = 1440;
+
+/** Rebuilds the ruler scale, margin zones, and ticks for the current page/zoom. */
+function buildRuler() {
+  if (!doc || !pages.length) {
+    ruler.hidden = true;
+    return;
+  }
+  const g = doc.pageGeometry();
+  rulerGeom = {
+    width: g.widthTwip,
+    marginStart: g.marginStartTwip,
+    marginEnd: g.marginEndTwip,
+  };
+  const pageWidthPx = pages[0].canvas.getBoundingClientRect().width;
+  rulerScale = pageWidthPx / rulerGeom.width;
+  ruler.style.width = `${pageWidthPx}px`;
+  const px = (t) => t * rulerScale;
+
+  rulerTrack.replaceChildren();
+  const contentStart = rulerGeom.marginStart;
+
+  // The white content span between the (shaded) page margins.
+  const content = document.createElement("div");
+  content.className = "ruler-content";
+  content.style.left = `${px(rulerGeom.marginStart)}px`;
+  content.style.width = `${px(rulerGeom.width - rulerGeom.marginStart - rulerGeom.marginEnd)}px`;
+  rulerTrack.appendChild(content);
+
+  // Minor ticks every 1/8", plus a numbered major tick at each inch measured from
+  // the left margin (0 at the content edge).
+  for (let t = 0; t <= rulerGeom.width; t += TWIPS_PER_INCH / 8) {
+    const tick = document.createElement("div");
+    tick.className = "ruler-tick minor";
+    tick.style.left = `${px(t)}px`;
+    rulerTrack.appendChild(tick);
+  }
+  for (let i = 0, t = contentStart; t <= rulerGeom.width + 1; i++, t = contentStart + i * TWIPS_PER_INCH) {
+    const tick = document.createElement("div");
+    tick.className = "ruler-tick major";
+    tick.style.left = `${px(t)}px`;
+    rulerTrack.appendChild(tick);
+    if (i > 0) {
+      const num = document.createElement("div");
+      num.className = "ruler-num";
+      num.textContent = String(i);
+      num.style.left = `${px(t)}px`;
+      rulerTrack.appendChild(num);
+    }
+  }
+
+  // Indent markers (recreated each build; positioned by the selection). Purely
+  // visual for now — the whole ruler is pointer-events:none so it can never
+  // intercept a page click; draggable indents are a follow-up.
+  for (const [key, cls] of [
+    ["firstLine", "down"],
+    ["left", "up"],
+    ["right", "up"],
+  ]) {
+    const m = document.createElement("div");
+    m.className = `ruler-marker ${cls}`;
+    m.dataset.marker = key;
+    rulerTrack.appendChild(m);
+    markers[key] = m;
+  }
+
+  ruler.hidden = false;
+  updateRulerMarkers();
+}
+
+/** Positions the three indent markers from the caret paragraph's indentation. */
+function updateRulerMarkers() {
+  if (!rulerGeom || !markers.left) return;
+  const px = (t) => t * rulerScale;
+  let start = 0;
+  let end = 0;
+  let firstLine = 0;
+  if (doc && selection) {
+    const ind = doc.paragraphIndent(selection.focus.node);
+    start = ind.startTwip;
+    end = ind.endTwip;
+    firstLine = ind.firstLineTwip - ind.hangingTwip;
+    ind.free();
+  }
+  const contentStart = rulerGeom.marginStart;
+  const contentEnd = rulerGeom.width - rulerGeom.marginEnd;
+  markers.left.style.left = `${px(contentStart + start)}px`;
+  markers.firstLine.style.left = `${px(contentStart + start + firstLine)}px`;
+  markers.right.style.left = `${px(contentEnd - end)}px`;
+}
 
 // ---- Editing (keys → semantic edits through the WASM choke point) ------------
 
