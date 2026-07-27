@@ -75,16 +75,25 @@ The runtime is not a UI toolkit and is not a DOCX-only editor. It is a determini
 44. `44-COVERAGE-GAP-AUDIT.md` — evidence-backed inventory of unhandled/partial/lossy constructs (WML content, package parts, layout/render), tiered by severity; source of the P1F-* tracker rows.
 45. `45-EXTENSIBILITY-AND-COLLABORATION-SEAMS.md` — the four invariants that keep collaboration (OT/CRDT), MCP/agentic, and RAG/vector layers additive (ADR-030); review checklist for model/mutation PRs.
 46. `46-RENDERING-FIDELITY-GAP-ANALYSIS.md` — evidence-based diagnosis of the layout/render fidelity gaps (measured against LibreOffice as the layout oracle) and the prioritized fix roadmap (F1 style cascade through F7 appearance details).
+47. `47-TEXT-BOX-APPEARANCE-DESIGN.md` — text-box extent, appearance, anchor, and semantic fixed-point design.
+48. `48-NESTED-FLOAT-ANCHOR-DESIGN.md` — recursive float discovery and placement through body and running-content tables.
+49. `49-TABLE-VERTICAL-MERGE-DESIGN.md` — vertical-merge layout, pagination, paint, and malformed fallback rules.
+50. `50-STYLED-SEGMENTED-TABLE-BORDER-DESIGN.md` — common styled border paint, segmented span topology, and bounded fallbacks.
+51. `51-FLOAT-TEXT-REFLOW-DESIGN.md` — local `topAndBottom` float exclusion across body, running content, and nested cells.
+52. `52-TEXT-BOX-BODY-PROPERTIES-DESIGN.md` — DrawingML insets, vertical anchoring, overflow, and autofit behavior.
+53. `53-PER-SECTION-ANCHOR-GEOMETRY-DESIGN.md` — section-aware page/margin/column reference boxes for floating objects.
+54. `54-VML-TEXT-BOX-POSITIONING-DESIGN.md` — bounded VML position, wrap-distance, text-body, and safe body-float bridge.
+55. `55-CURRENT-DOCX-FIDELITY-GAP-AUDIT.md` — current-main reconciliation of remaining render, layout, nested-content, running-content, and semantic fidelity gaps, with PR order and acceptance gates.
 
 Also present (not in the numbered sequence): `PHASE-1A-SEMANTIC-MODELING-TRACKER.md`.
 
 ### Consolidation note
 
-The former per-construct schema-v1 design docs (32 and 38–53, sixteen files) were
+The former per-construct schema-v1 design docs (32 and the earlier 38–53 set, sixteen files) were
 consolidated into the single `38-SCHEMA-V1-DESIGN-REFERENCE.md`; the originals were
 deleted with no information loss. Number 32 is intentionally retired (its content
-lives in the "Import architecture" section of doc 38). Numbers 44, 45, and 46 are
-now in use (see the list above); 47–53 remain free.
+lives in the "Import architecture" section of doc 38). Numbers 44–55 are now in
+use by the later architecture, audit, and rendering-fidelity series listed above.
 
 ## Recommended project names
 
