@@ -119,16 +119,29 @@ Enter → `splitParagraph` (slice 2); ⌘Z/⌘⇧Z → undo/redo. After each edi
 advances, the affected page(s) re-render, and the caret rect is redrawn. IME
 composition is a later slice (doc 57 §12).
 
-## Staging
+## Staging (prioritized pipeline)
 
-1. **Slice 1 (this doc's first implementation):** `InsertText` + `DeleteText` on
-   top-level runs, `EditSession` with undo/redo, WASM `insertText`/`deleteRange`/
-   `undo`/`redo`, keyboard typing + backspace + undo in the webapp, whole-document
-   re-pagination.
-2. **Slice 2:** `SplitParagraph`/`JoinParagraphs` (Enter / Backspace-at-start),
-   nested-wrapper offset resolution, dirty-page repaint.
-3. **Later:** run-property edits (bold/italic…), object/table structural ops —
-   additive `Operation` variants, same choke point and undo model (doc 58).
+- **Slice 1 — DONE:** `InsertText` + `DeleteText` on top-level runs, undo/redo,
+  WASM `insertText`/`deleteRange`/`deleteBackward`/`deleteForward`/`undo`/`redo`,
+  keyboard typing + backspace + undo, whole-document re-pagination.
+
+- **Slice 2 — structural edits + navigation/selection (in progress).** The batch
+  that makes editing feel complete, in priority order:
+  1. `SplitParagraph` (Enter) + `JoinParagraphs` (Backspace at ¶ start) — includes
+     content **reflowing across page boundaries**; the caret follows via
+     `caret_rect` (already multi-page).
+  2. **Cross-paragraph delete** — a selection that spans paragraphs deletes as
+     `DeleteText` on the ends + `JoinParagraphs` (and type-over = delete + insert).
+  3. **Caret navigation** — arrow keys: left/right by char (crossing ¶
+     boundaries), up/down via `LayoutSnapshot::move_vertical` (crossing lines/
+     pages). WASM `moveCaret(node, offset, dir)`.
+  4. **Keyboard selection** — Shift+Arrow extends by moving the focus only.
+  5. **Pointer selection** — Shift+Click extends to the clicked anchor;
+     double-click selects the word (`wordAt` via Unicode word segmentation).
+
+- **Slice 3 — later:** run-property edits (bold/italic…), object/table structural
+  ops, **dirty-page repaint** (repaint only changed pages), IME composition —
+  additive `Operation` variants / methods, same choke point and undo model.
 
 ## Non-goals
 

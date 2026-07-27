@@ -61,6 +61,23 @@ pub enum Operation {
         /// The range removed.
         range: Range,
     },
+    /// Split a paragraph at `at`, moving the trailing content into a new
+    /// paragraph with id `new_id` inserted immediately after (Enter).
+    SplitParagraph {
+        /// The split boundary in the original paragraph.
+        at: Pos,
+        /// The id of the new trailing paragraph.
+        new_id: NodeId,
+    },
+    /// Join `second` (which must immediately follow `first` in the same
+    /// container) into the end of `first`, removing `second` (Backspace at a
+    /// paragraph start). `first` keeps its own paragraph properties.
+    JoinParagraphs {
+        /// The paragraph that receives the content.
+        first: NodeId,
+        /// The paragraph appended and removed.
+        second: NodeId,
+    },
 }
 
 /// Why an edit could not be applied. No partial mutation ever occurs: an op
@@ -122,6 +139,24 @@ pub fn apply(
                 at: range.start,
                 text: removed,
             })
+        }
+        Operation::SplitParagraph { at, new_id } => {
+            if !split_paragraph(doc.body_mut(), at.node, at.offset, *new_id, ids)? {
+                return Err(EditError::NodeNotFound);
+            }
+            Ok(Operation::JoinParagraphs {
+                first: at.node,
+                second: *new_id,
+            })
+        }
+        Operation::JoinParagraphs { first, second } => {
+            match join_paragraphs(doc.body_mut(), *first, *second)? {
+                Some(split_at) => Ok(Operation::SplitParagraph {
+                    at: Pos::new(*first, split_at),
+                    new_id: *second,
+                }),
+                None => Err(EditError::NodeNotFound),
+            }
         }
     }
 }
@@ -266,6 +301,154 @@ fn delete_text(inlines: &mut Vec<InlineNode>, start: u32, end: u32) -> Result<St
         inlines.remove(idx);
     }
     Ok(removed)
+}
+
+/// Splits the paragraph `id` at byte `offset` into two, inserting the trailing
+/// half as a new paragraph `new_id` immediately after. Recurses into tables and
+/// content controls to find the paragraph's container. Returns whether it was
+/// found and split.
+fn split_paragraph(
+    blocks: &mut Vec<BlockNode>,
+    id: NodeId,
+    offset: u32,
+    new_id: NodeId,
+    ids: &mut dyn RunIds,
+) -> Result<bool, EditError> {
+    if let Some(index) = blocks
+        .iter()
+        .position(|b| matches!(b, BlockNode::Paragraph(p) if p.id == id))
+    {
+        let BlockNode::Paragraph(para) = &mut blocks[index] else {
+            unreachable!("index selected a paragraph");
+        };
+        if offset > paragraph_text_len(para) {
+            return Err(EditError::OffsetOutOfRange);
+        }
+        let inlines = std::mem::take(&mut para.inlines);
+        let (left, right) = split_inlines(inlines, offset, ids)?;
+        let properties = para.properties.clone();
+        para.inlines = left;
+        blocks.insert(
+            index + 1,
+            BlockNode::Paragraph(Paragraph {
+                id: new_id,
+                properties,
+                inlines: right,
+            }),
+        );
+        return Ok(true);
+    }
+    for block in blocks.iter_mut() {
+        match block {
+            BlockNode::Table(table) => {
+                for row in &mut table.rows {
+                    for cell in &mut row.cells {
+                        if split_paragraph(&mut cell.blocks, id, offset, new_id, ids)? {
+                            return Ok(true);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if split_paragraph(&mut sdt.blocks, id, offset, new_id, ids)? {
+                    return Ok(true);
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(false)
+}
+
+/// Joins `second` (which must immediately follow `first`) into `first`, removing
+/// `second`. Returns the byte offset at which `first` ended before the join (the
+/// inverse split point), or `None` if `first` was not found. `Err(Unsupported)`
+/// if `second` is not the adjacent next paragraph.
+fn join_paragraphs(
+    blocks: &mut Vec<BlockNode>,
+    first: NodeId,
+    second: NodeId,
+) -> Result<Option<u32>, EditError> {
+    if let Some(i) = blocks
+        .iter()
+        .position(|b| matches!(b, BlockNode::Paragraph(p) if p.id == first))
+    {
+        if !matches!(blocks.get(i + 1), Some(BlockNode::Paragraph(p)) if p.id == second) {
+            return Err(EditError::Unsupported);
+        }
+        let BlockNode::Paragraph(second_para) = blocks.remove(i + 1) else {
+            unreachable!("checked it is a paragraph");
+        };
+        let BlockNode::Paragraph(first_para) = &mut blocks[i] else {
+            unreachable!("position found a paragraph");
+        };
+        let split_at = paragraph_text_len(first_para);
+        first_para.inlines.extend(second_para.inlines);
+        return Ok(Some(split_at));
+    }
+    for block in blocks.iter_mut() {
+        match block {
+            BlockNode::Table(table) => {
+                for row in &mut table.rows {
+                    for cell in &mut row.cells {
+                        if let Some(at) = join_paragraphs(&mut cell.blocks, first, second)? {
+                            return Ok(Some(at));
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(at) = join_paragraphs(&mut sdt.blocks, first, second)? {
+                    return Ok(Some(at));
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(None)
+}
+
+/// Splits a paragraph's inline content at byte `offset` into (left, right). A run
+/// straddling the offset is split (the right half gets a fresh id). A non-run
+/// inline straddling the offset (a wrapper) is a slice-2 limit → `Unsupported`;
+/// at a boundary it goes wholly to one side.
+fn split_inlines(
+    inlines: Vec<InlineNode>,
+    offset: u32,
+    ids: &mut dyn RunIds,
+) -> Result<(Vec<InlineNode>, Vec<InlineNode>), EditError> {
+    let mut left = Vec::new();
+    let mut right = Vec::new();
+    let mut cum = 0u32;
+    for inline in inlines {
+        let len = inline_text_len(&inline);
+        if cum >= offset {
+            right.push(inline);
+        } else if cum + len <= offset {
+            left.push(inline);
+        } else if let InlineNode::Run(run) = inline {
+            let local = (offset - cum) as usize;
+            if !run.text.is_char_boundary(local) {
+                return Err(EditError::NotCharBoundary);
+            }
+            let (head, tail) = run.text.split_at(local);
+            left.push(InlineNode::Run(Run {
+                id: run.id,
+                properties: run.properties.clone(),
+                text: head.to_string(),
+            }));
+            let tail_id = ids.next().ok_or(EditError::IdExhausted)?;
+            right.push(InlineNode::Run(Run {
+                id: tail_id,
+                properties: run.properties,
+                text: tail.to_string(),
+            }));
+        } else {
+            return Err(EditError::Unsupported);
+        }
+        cum += len;
+    }
+    Ok((left, right))
 }
 
 /// Finds the paragraph with `id`, recursing into table cells and block content
@@ -416,6 +599,80 @@ mod tests {
         );
         apply(&mut d, &mut ids, &inverse).unwrap();
         assert_eq!(text_of(&d, p), "Hello world");
+    }
+
+    #[test]
+    fn split_and_join_are_inverses() {
+        let p = n(2);
+        let new = n(50);
+        let mut d = doc(vec![para(2, vec![run(3, "HelloWorld")])]);
+        let mut ids = IdGenerator::new(9);
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SplitParagraph {
+                at: Pos::new(p, 5),
+                new_id: new,
+            },
+        )
+        .unwrap();
+        assert_eq!(d.body().len(), 2, "one paragraph became two");
+        assert_eq!(text_of(&d, p), "Hello");
+        assert_eq!(text_of(&d, new), "World");
+        assert_eq!(
+            inverse,
+            Operation::JoinParagraphs {
+                first: p,
+                second: new
+            }
+        );
+
+        // The inverse join restores a single paragraph with the joined text.
+        apply(&mut d, &mut ids, &inverse).unwrap();
+        assert_eq!(d.body().len(), 1);
+        assert_eq!(text_of(&d, p), "HelloWorld");
+    }
+
+    #[test]
+    fn split_at_start_leaves_an_empty_leading_paragraph() {
+        let p = n(2);
+        let new = n(50);
+        let mut d = doc(vec![para(2, vec![run(3, "abc")])]);
+        let mut ids = IdGenerator::new(9);
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::SplitParagraph {
+                at: Pos::new(p, 0),
+                new_id: new,
+            },
+        )
+        .unwrap();
+        assert_eq!(text_of(&d, p), "");
+        assert_eq!(text_of(&d, new), "abc");
+    }
+
+    #[test]
+    fn join_requires_the_second_to_be_adjacent() {
+        let mut d = doc(vec![
+            para(2, vec![run(3, "a")]),
+            para(4, vec![run(5, "b")]),
+            para(6, vec![run(7, "c")]),
+        ]);
+        let mut ids = IdGenerator::new(9);
+        assert_eq!(
+            apply(
+                &mut d,
+                &mut ids,
+                &Operation::JoinParagraphs {
+                    first: n(2),
+                    second: n(6), // not adjacent to 2
+                }
+            ),
+            Err(EditError::Unsupported)
+        );
+        assert_eq!(d.body().len(), 3, "no mutation on error");
     }
 
     #[test]
