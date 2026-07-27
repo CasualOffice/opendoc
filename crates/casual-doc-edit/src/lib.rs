@@ -303,6 +303,10 @@ pub fn apply(
                     delta.apply_to(&mut run.properties);
                 }
             }
+            // Formatting a sub-range to match a neighbour (or the boundary split
+            // above) can leave adjacent equal-property runs, which the model forbids;
+            // merge them so the document stays re-validatable and export-clean.
+            coalesce_adjacent_runs(&mut para.inlines);
             Ok(Operation::SetInlines { node, inlines: old })
         }
         Operation::SetInlines { node, inlines } => {
@@ -1321,6 +1325,65 @@ mod tests {
         )
         .expect("full delete");
         assert_eq!(text_of(&d, p), "");
+    }
+
+    #[test]
+    fn format_to_match_neighbour_coalesces_to_stay_valid() {
+        // "abc"(bold) + "def"(normal): bolding [3,6) makes the second run match the
+        // first — which the model forbids as two adjacent equal-property runs. The
+        // format must coalesce them into one bold run, and the document stay valid.
+        let bold = RunProperties {
+            bold: Some(true),
+            ..RunProperties::default()
+        };
+        let p = n(2);
+        let mut d = doc(vec![BlockNode::Paragraph(Paragraph {
+            id: p,
+            properties: ParagraphProperties::default(),
+            inlines: vec![
+                InlineNode::Run(Run {
+                    id: n(3),
+                    properties: bold,
+                    text: "abc".into(),
+                }),
+                run(4, "def"),
+            ],
+        })]);
+        let mut ids = IdGenerator::new(9);
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::FormatText {
+                range: Range {
+                    start: Pos::new(p, 3),
+                    end: Pos::new(p, 6),
+                },
+                delta: FormatDelta {
+                    bold: Some(true),
+                    ..FormatDelta::default()
+                },
+            },
+        )
+        .expect("bold the second run");
+        let BlockNode::Paragraph(para) = &d.body()[0] else {
+            panic!("paragraph");
+        };
+        assert_eq!(para.inlines.len(), 1, "the two bold runs must coalesce");
+        assert_eq!(text_of(&d, p), "abcdef");
+        Document::new(
+            n(1001),
+            d.body().to_vec(),
+            casual_doc_model::v1::Definitions::default(),
+        )
+        .expect("stays valid after formatting");
+
+        // Undo restores the original two-run structure exactly.
+        apply(&mut d, &mut ids, &inverse).expect("undo");
+        let BlockNode::Paragraph(para) = &d.body()[0] else {
+            panic!("paragraph");
+        };
+        assert_eq!(para.inlines.len(), 2, "undo restores the split");
     }
 
     #[test]
