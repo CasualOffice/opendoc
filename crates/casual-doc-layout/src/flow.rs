@@ -1653,6 +1653,38 @@ fn border_rank(edge: &BorderEdge) -> (u32, u32, u32) {
     (width, style, 765 - luminance)
 }
 
+/// The plain text a paragraph's inline nodes contribute, in the **same byte
+/// layout** the shaper indexes — so a UTF-8 byte offset from hit-testing
+/// (`crate::hittest`, `ModelPos::offset`) slices this string at the caret the
+/// user clicked. This is the authoritative source for copy-in-view: it mirrors
+/// `collect_runs`'s text contributions exactly (`Run` text, `Tab` → `\t`,
+/// `Symbol` → its code point, and recursion through `Hyperlink`/`Revision`/`Sdt`
+/// wrappers); every other inline kind contributes no shaped text bytes.
+#[must_use]
+pub fn node_plain_text(inlines: &[InlineNode]) -> String {
+    let mut out = String::new();
+    append_node_plain_text(inlines, &mut out);
+    out
+}
+
+fn append_node_plain_text(inlines: &[InlineNode], out: &mut String) {
+    for inline in inlines {
+        match inline {
+            InlineNode::Run(run) => out.push_str(&run.text),
+            InlineNode::Tab(_) => out.push('\t'),
+            InlineNode::Symbol(symbol) => {
+                if let Some(ch) = char::from_u32(symbol.char) {
+                    out.push(ch);
+                }
+            }
+            InlineNode::Hyperlink(hyperlink) => append_node_plain_text(&hyperlink.inlines, out),
+            InlineNode::Revision(revision) => append_node_plain_text(&revision.inlines, out),
+            InlineNode::Sdt(sdt) => append_node_plain_text(&sdt.inlines, out),
+            _ => {}
+        }
+    }
+}
+
 /// Flattens a paragraph's inline nodes into styled text runs, recursing through
 /// the wrappers that carry inline content (hyperlinks, revisions, content
 /// controls). Text-bearing runs and explicit tabs contribute text; other inline
