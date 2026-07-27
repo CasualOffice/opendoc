@@ -70,6 +70,8 @@ const bulletListBtn = document.getElementById("bulletList");
 const numberedListBtn = document.getElementById("numberedList");
 const insertRowBtn = document.getElementById("insertRow");
 const deleteRowBtn = document.getElementById("deleteRow");
+const insertColumnBtn = document.getElementById("insertColumn");
+const deleteColumnBtn = document.getElementById("deleteColumn");
 const fontFamilySel = document.getElementById("fontFamily");
 const paragraphStyleSel = document.getElementById("paragraphStyle");
 const runControls = [superBtn, subBtn, fontSizeSel, textColorInput, highlightSel, fontFamilySel];
@@ -620,10 +622,12 @@ function updateToolbar() {
   bulletListBtn.setAttribute("aria-pressed", String(listKind === "bullet"));
   numberedListBtn.setAttribute("aria-pressed", String(listKind === "numbered"));
 
-  // Table row controls: enabled only when the caret is inside a table cell.
+  // Table row/column controls: enabled only when the caret is inside a table cell.
   const inTable = hasSel && doc ? doc.inTable(selection.focus.node) : false;
   insertRowBtn.disabled = !inTable;
   deleteRowBtn.disabled = !inTable;
+  insertColumnBtn.disabled = !inTable;
+  deleteColumnBtn.disabled = !inTable;
 }
 
 /** Fills the paragraph-style dropdown from the open document's styles. */
@@ -665,6 +669,12 @@ onButton(insertRowBtn, () => {
 });
 onButton(deleteRowBtn, () => {
   if (selection) runEdit(() => doc.deleteRow(selection.focus.node));
+});
+onButton(insertColumnBtn, () => {
+  if (selection) runEdit(() => doc.insertColumn(selection.focus.node, true));
+});
+onButton(deleteColumnBtn, () => {
+  if (selection) runEdit(() => doc.deleteColumn(selection.focus.node));
 });
 
 fontSizeSel.addEventListener("change", () => {
