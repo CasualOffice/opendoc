@@ -1,5 +1,6 @@
 # OpenDoc
 
+[![Live demo](https://img.shields.io/badge/demo-opendoc.casualoffice.org-e2622a.svg)](https://opendoc.casualoffice.org)
 [![Status: Pre-release](https://img.shields.io/badge/status-pre--release-orange.svg)](docs/06-ROADMAP-AND-DELIVERY.md)
 [![Rust: 1.88+](https://img.shields.io/badge/rust-1.88%2B-black.svg?logo=rust)](rust-toolchain.toml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
@@ -97,11 +98,15 @@ separate locked all-target check on the MSRV.
 
 ## Try it in your browser
 
+**Live demo: [opendoc.casualoffice.org](https://opendoc.casualoffice.org)** — open
+a `.docx` and edit it right now, no install.
+
 `webapp/` is a zero-server harness that runs the engine as WebAssembly: open a
 `.docx`, see it rendered exactly as the engine lays it out, and **edit it live** —
 type with formatting, apply styles / fonts / sizes / colors, bulleted and numbered
 lists, and tables (right-click a cell for row/column operations), with undo/redo
-and save back to `.docx`. Nothing is uploaded; everything runs client-side.
+and save back to `.docx`. Nothing is uploaded; everything runs client-side. To run
+it locally:
 
 ```sh
 # Requires wasm-pack (https://drager.github.io/wasm-pack) and the pinned toolchain.
