@@ -67,6 +67,18 @@ const spacingBtn = document.getElementById("spacingBtn");
 const spacingMenu = document.getElementById("spacingMenu");
 const spaceBeforeInput = document.getElementById("spaceBefore");
 const spaceAfterInput = document.getElementById("spaceAfter");
+const paraOptsBtn = document.getElementById("paraOptsBtn");
+const paraOptsMenu = document.getElementById("paraOptsMenu");
+const paraShade = document.getElementById("paraShade");
+const paraShadeNone = document.getElementById("paraShadeNone");
+const pgKeepNext = document.getElementById("pgKeepNext");
+const pgKeepLines = document.getElementById("pgKeepLines");
+const pgBreakBefore = document.getElementById("pgBreakBefore");
+const indentLeftInput = document.getElementById("indentLeft");
+const indentRightInput = document.getElementById("indentRight");
+const indentSpecialSel = document.getElementById("indentSpecial");
+const indentSpecialByInput = document.getElementById("indentSpecialBy");
+const borderColorInput = document.getElementById("borderColor");
 const indentDecBtn = document.getElementById("indentDec");
 const indentIncBtn = document.getElementById("indentInc");
 const bulletListBtn = document.getElementById("bulletList");
@@ -77,6 +89,7 @@ const runControls = [superBtn, subBtn, fontSizeSel, textColorInput, highlightSel
 const paraControls = [
   ...Object.values(alignBtns),
   spacingBtn,
+  paraOptsBtn,
   indentDecBtn,
   indentIncBtn,
   bulletListBtn,
@@ -538,6 +551,8 @@ let rulerGeom = null; // { widthTwip, marginStartTwip, marginEndTwip }
 let rulerScale = 0; // px per twip at the current zoom
 const markers = {}; // key -> element
 const TWIPS_PER_INCH = 1440;
+let tabInsertCode = 0; // the type new ruler tabs get: 0 L, 1 C, 2 R, 3 decimal
+const TAB_LETTER = ["L", "C", "R", "."];
 
 /** Rebuilds the ruler scale, margin zones, and ticks for the current page/zoom. */
 function buildRuler() {
@@ -559,12 +574,33 @@ function buildRuler() {
   rulerTrack.replaceChildren();
   const contentStart = rulerGeom.marginStart;
 
-  // The white content span between the (shaded) page margins.
+  // The white content span between the (shaded) page margins. Clicking it adds a
+  // tab stop at that position (in the current tab type) on the caret paragraph.
   const content = document.createElement("div");
   content.className = "ruler-content";
   content.style.left = `${px(rulerGeom.marginStart)}px`;
   content.style.width = `${px(rulerGeom.width - rulerGeom.marginStart - rulerGeom.marginEnd)}px`;
+  content.addEventListener("pointerdown", (e) => {
+    if (!doc || !selection || e.button !== 0) return;
+    const pos = Math.max(0, Math.round(e.offsetX / rulerScale));
+    e.preventDefault();
+    e.stopPropagation();
+    runToolbarEdit((a, b, c, d) => doc.setTabStop(a, b, c, d, pos, tabInsertCode));
+    updateRulerMarkers();
+  });
   rulerTrack.appendChild(content);
+
+  // Word-style tab-type selector at the ruler's left edge; click to cycle L/C/R/dot.
+  const corner = document.createElement("button");
+  corner.type = "button";
+  corner.className = "tab-corner";
+  corner.title = "Tab stop type — click to change";
+  corner.textContent = TAB_LETTER[tabInsertCode];
+  corner.addEventListener("click", () => {
+    tabInsertCode = (tabInsertCode + 1) % TAB_LETTER.length;
+    corner.textContent = TAB_LETTER[tabInsertCode];
+  });
+  rulerTrack.appendChild(corner);
 
   // Minor ticks every 1/8", plus a numbered major tick at each inch measured from
   // the left margin (0 at the content edge).
@@ -629,6 +665,59 @@ function updateRulerMarkers() {
   markers.left.style.left = `${px(contentStart + start)}px`;
   markers.firstLine.style.left = `${px(contentStart + start + firstLine)}px`;
   markers.right.style.left = `${px(contentEnd - end)}px`;
+  renderTabStops();
+}
+
+/** Draws the caret paragraph's tab stops as glyphs on the ruler (recreated each
+ *  update). Each glyph: click cycles its type, drag moves it, drag off removes it. */
+function renderTabStops() {
+  for (const g of rulerTrack.querySelectorAll(".tab-glyph")) g.remove();
+  if (!doc || !selection || !rulerGeom) return;
+  const px = (t) => t * rulerScale;
+  const tabs = doc.paragraphTabs(selection.focus.node); // flat [pos, code, …]
+  for (let k = 0; k < tabs.length; k += 2) {
+    const pos = tabs[k];
+    const code = tabs[k + 1];
+    const g = document.createElement("div");
+    g.className = `tab-glyph tab-${code}`;
+    g.textContent = TAB_LETTER[code] ?? "L";
+    g.style.left = `${px(rulerGeom.marginStart + pos)}px`;
+    g.title = "Tab stop — click to change type, drag to move, drag off to remove";
+    g.addEventListener("pointerdown", (e) => startTabDrag(pos, code, g, e));
+    rulerTrack.appendChild(g);
+  }
+}
+
+/** A tab-glyph pointer interaction: no move → cycle type; horizontal move →
+ *  reposition; released off the ruler → delete (Word's drag-off-to-remove). */
+function startTabDrag(pos, code, glyph, ev) {
+  if (!doc || !selection || ev.button !== 0) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  const trackRect = rulerTrack.getBoundingClientRect();
+  const px = (t) => t * rulerScale;
+  let moved = false;
+  let curPos = pos;
+  const onMove = (e) => {
+    if (Math.abs(e.clientX - ev.clientX) > 3 || Math.abs(e.clientY - ev.clientY) > 3) moved = true;
+    curPos = Math.max(0, Math.round((e.clientX - trackRect.left) / rulerScale - rulerGeom.marginStart));
+    glyph.style.left = `${px(rulerGeom.marginStart + curPos)}px`; // live
+  };
+  const onUp = (e) => {
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    const offRuler = e.clientY > trackRect.bottom + 14 || e.clientY < trackRect.top - 14;
+    if (offRuler) {
+      runToolbarEdit((a, b, c, d) => doc.removeTabStop(a, b, c, d, pos));
+    } else if (moved && curPos !== pos) {
+      runToolbarEdit((a, b, c, d) => doc.moveTabStop(a, b, c, d, pos, curPos));
+    } else {
+      runToolbarEdit((a, b, c, d) => doc.setTabStop(a, b, c, d, pos, (code + 1) % TAB_LETTER.length));
+    }
+    updateRulerMarkers();
+  };
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
 }
 
 /** Drag an indent marker. Uses window-level move/up listeners (never
@@ -927,7 +1016,7 @@ function updateToolbar() {
 
   // Reflect the current paragraph style + spacing + list kind.
   paragraphStyleSel.value = hasSel && doc ? doc.paragraphStyleAt(selection.focus.node) : "";
-  if (hasSel && doc && !spacingMenu.hidden) reflectSpacingMenu();
+  if (hasSel && doc) for (const p of popovers) if (!p.menu.hidden) p.reflect();
   const listKind = hasSel && doc ? doc.listStyleAt(selection.focus.node) : "";
   bulletListBtn.setAttribute("aria-pressed", String(listKind === "bullet"));
   numberedListBtn.setAttribute("aria-pressed", String(listKind === "numbered"));
@@ -992,9 +1081,58 @@ fontSizeSel.addEventListener("change", () => {
     );
   }
 });
-// ---- Line & paragraph spacing menu -----------------------------------------
+// ---- Toolbar popovers (spacing, paragraph options) -------------------------
+// One lightweight manager: anchor a menu under its button, only one open at a
+// time, dismiss on outside-pointerdown / Escape. Each popover registers a
+// `reflect()` that syncs its controls to the caret paragraph.
 const TWIPS_PER_POINT = 20;
+const popovers = [];
 
+function openPopover(p) {
+  if (!selection) return;
+  for (const q of popovers) if (q !== p) closePopover(q);
+  const r = p.btn.getBoundingClientRect();
+  p.menu.hidden = false;
+  p.menu.style.left = `${Math.round(r.left)}px`;
+  p.menu.style.top = `${Math.round(r.bottom + 4)}px`;
+  p.btn.setAttribute("aria-expanded", "true");
+  p.reflect();
+}
+
+function closePopover(p) {
+  p.menu.hidden = true;
+  p.btn.setAttribute("aria-expanded", "false");
+}
+
+function registerPopover(btn, menu, reflect) {
+  const p = { btn, menu, reflect };
+  popovers.push(p);
+  onButton(btn, () => (menu.hidden ? openPopover(p) : closePopover(p)));
+  // Keep clicks inside the menu from stealing the selection focus, but let form
+  // controls (inputs, selects) focus, toggle, and open normally.
+  menu.addEventListener("mousedown", (e) => {
+    if (!["INPUT", "SELECT", "OPTION"].includes(e.target.tagName)) e.preventDefault();
+  });
+  return p;
+}
+
+document.addEventListener("mousedown", (e) => {
+  for (const p of popovers) {
+    if (
+      !p.menu.hidden &&
+      !p.menu.contains(e.target) &&
+      e.target !== p.btn &&
+      !p.btn.contains(e.target)
+    ) {
+      closePopover(p);
+    }
+  }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") for (const p of popovers) if (!p.menu.hidden) closePopover(p);
+});
+
+// -- Line & paragraph spacing --------------------------------------------------
 /** Reflect the caret paragraph's spacing into the menu (line-preset check +
  *  space before/after fields). */
 function reflectSpacingMenu() {
@@ -1012,23 +1150,7 @@ function reflectSpacingMenu() {
     spaceAfterInput.value = s.afterTwip >= 0 ? String(Math.round(s.afterTwip / TWIPS_PER_POINT)) : "";
   }
 }
-
-function openSpacingMenu() {
-  if (!selection) return;
-  const r = spacingBtn.getBoundingClientRect();
-  spacingMenu.hidden = false;
-  spacingMenu.style.left = `${Math.round(r.left)}px`;
-  spacingMenu.style.top = `${Math.round(r.bottom + 4)}px`;
-  spacingBtn.setAttribute("aria-expanded", "true");
-  reflectSpacingMenu();
-}
-
-function closeSpacingMenu() {
-  spacingMenu.hidden = true;
-  spacingBtn.setAttribute("aria-expanded", "false");
-}
-
-onButton(spacingBtn, () => (spacingMenu.hidden ? openSpacingMenu() : closeSpacingMenu()));
+registerPopover(spacingBtn, spacingMenu, reflectSpacingMenu);
 
 for (const b of spacingMenu.querySelectorAll(".spacing-line")) {
   onButton(b, () => {
@@ -1052,23 +1174,104 @@ spaceAfterInput.addEventListener("change", () =>
   applySpace(spaceAfterInput, (a, b, c, d, t) => doc.setSpaceAfter(a, b, c, d, t)),
 );
 
-// Keep clicks inside the menu from stealing selection focus (but let inputs focus).
-spacingMenu.addEventListener("mousedown", (e) => {
-  if (e.target.tagName !== "INPUT") e.preventDefault();
-});
-document.addEventListener("mousedown", (e) => {
-  if (
-    !spacingMenu.hidden &&
-    !spacingMenu.contains(e.target) &&
-    e.target !== spacingBtn &&
-    !spacingBtn.contains(e.target)
-  ) {
-    closeSpacingMenu();
+// -- Paragraph options (indentation + shading + line/page-break flags) --------
+/** Twips → inches string, trimming trailing zeros; "" for zero. */
+function inchStr(twip) {
+  if (!twip) return "";
+  return (twip / TWIPS_PER_INCH).toFixed(2).replace(/\.?0+$/, "");
+}
+/** An inches field's value → twips (≥ 0); "" or non-numeric → 0. */
+function inchTwips(input) {
+  const raw = input.value.trim();
+  if (raw === "" || !Number.isFinite(Number(raw))) return 0;
+  return Math.max(0, Math.round(Number(raw) * TWIPS_PER_INCH));
+}
+
+function reflectParaOptsMenu() {
+  if (!doc || !selection) return;
+  const node = selection.focus.node;
+  // Indentation (inches).
+  const ind = doc.paragraphIndent(node);
+  const editingIndent = [indentLeftInput, indentRightInput, indentSpecialByInput, indentSpecialSel].includes(
+    document.activeElement,
+  );
+  if (!editingIndent) {
+    indentLeftInput.value = inchStr(ind.startTwip);
+    indentRightInput.value = inchStr(ind.endTwip);
+    if (ind.firstLineTwip > 0) {
+      indentSpecialSel.value = "first";
+      indentSpecialByInput.value = inchStr(ind.firstLineTwip);
+    } else if (ind.hangingTwip > 0) {
+      indentSpecialSel.value = "hanging";
+      indentSpecialByInput.value = inchStr(ind.hangingTwip);
+    } else {
+      indentSpecialSel.value = "none";
+    }
   }
+  ind.free();
+  // Line/page-break flags.
+  const f = doc.paragraphFlags(node);
+  pgKeepNext.checked = f.keepNext;
+  pgKeepLines.checked = f.keepLines;
+  pgBreakBefore.checked = f.pageBreakBefore;
+  const rgb = doc.paragraphShadingAt(node);
+  if (rgb >= 0 && document.activeElement !== paraShade) {
+    paraShade.value = `#${rgb.toString(16).padStart(6, "0")}`;
+  }
+  // Borders: light the preset(s) matching the active edges (top=1,bottom=2,left=4,right=8).
+  const edges = doc.paragraphBorderEdges(node);
+  const bit = { top: 1, bottom: 2, left: 4, right: 8 };
+  for (const b of paraOptsMenu.querySelectorAll(".border-btn")) {
+    const k = b.dataset.border;
+    const on = k === "box" ? edges === 0b1111 : k === "none" ? edges === 0 : (edges & bit[k]) !== 0;
+    b.setAttribute("aria-pressed", String(on));
+  }
+}
+registerPopover(paraOptsBtn, paraOptsMenu, reflectParaOptsMenu);
+
+// Borders: presets toggle edges (box = all, none = clear) in the chosen color at a
+// 1 pt single line (8 eighth-points).
+for (const b of paraOptsMenu.querySelectorAll(".border-btn")) {
+  onButton(b, () => {
+    const [r, g, bl] = hexToRgb(borderColorInput.value);
+    runToolbarEdit((a, x, c, d) => doc.setParagraphBorder(a, x, c, d, b.dataset.border, r, g, bl, 8));
+    reflectParaOptsMenu();
+  });
+}
+
+// Indentation: left/right absolute, and a first-line/hanging "special" indent
+// (setFirstLineIndent encodes hanging as a negative value, 0 clears both).
+indentLeftInput.addEventListener("change", () =>
+  runToolbarEdit((a, b, c, d) => doc.setLeftIndent(a, b, c, d, inchTwips(indentLeftInput))),
+);
+indentRightInput.addEventListener("change", () =>
+  runToolbarEdit((a, b, c, d) => doc.setRightIndent(a, b, c, d, inchTwips(indentRightInput))),
+);
+function applyIndentSpecial() {
+  const by = inchTwips(indentSpecialByInput);
+  const kind = indentSpecialSel.value;
+  const twips = kind === "first" ? by : kind === "hanging" ? -by : 0;
+  runToolbarEdit((a, b, c, d) => doc.setFirstLineIndent(a, b, c, d, twips));
+}
+indentSpecialSel.addEventListener("change", applyIndentSpecial);
+indentSpecialByInput.addEventListener("change", applyIndentSpecial);
+
+paraShade.addEventListener("input", () => {
+  const [r, g, b] = hexToRgb(paraShade.value);
+  runToolbarEdit((a, x, c, d) => doc.setParagraphShading(a, x, c, d, r, g, b, false));
 });
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !spacingMenu.hidden) closeSpacingMenu();
-});
+onButton(paraShadeNone, () =>
+  runToolbarEdit((a, x, c, d) => doc.setParagraphShading(a, x, c, d, 0, 0, 0, true)),
+);
+for (const [box, setter] of [
+  [pgKeepNext, (a, b, c, d, on) => doc.setKeepWithNext(a, b, c, d, on)],
+  [pgKeepLines, (a, b, c, d, on) => doc.setKeepLinesTogether(a, b, c, d, on)],
+  [pgBreakBefore, (a, b, c, d, on) => doc.setPageBreakBefore(a, b, c, d, on)],
+]) {
+  box.addEventListener("change", () =>
+    runToolbarEdit((a, b, c, d) => setter(a, b, c, d, box.checked)),
+  );
+}
 highlightSel.addEventListener("change", () => {
   const name = highlightSel.value;
   armOrApplyRun({ highlight: name }, () =>

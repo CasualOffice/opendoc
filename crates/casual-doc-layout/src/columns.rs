@@ -379,6 +379,19 @@ impl ColPaginator {
                 j += 1;
             }
             j = (j + 1).min(frags.len());
+            // A forced page break (`pageBreakBefore`) inside a keep-next chain wins
+            // over keep-with-next (as in Word): end the group right before the first
+            // later member that forces a new page, so its break is honored on the
+            // next iteration as that group's head (`group[0]`, checked below).
+            if let Some(k) = frags[i..j]
+                .iter()
+                .enumerate()
+                .skip(1)
+                .find(|(_, f)| f.break_control().page_break_before)
+                .map(|(k, _)| k)
+            {
+                j = i + k;
+            }
             let group = &frags[i..j];
             let group_h: i32 = group.iter().map(|f| f.height().raw()).sum();
             let col_full = self.content.size.height.raw();

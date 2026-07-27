@@ -107,6 +107,7 @@
         <button id="spacingBtn" type="button" class="fmt" title="Line &amp; paragraph spacing" aria-label="Line and paragraph spacing" aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 24 24"><path d="M6 7h2.5L5 3.5 1.5 7H4v10H1.5L5 20.5 8.5 17H6V7zm4-2v2h12V5H10zm0 14h12v-2H10v2zm0-6h12v-2H10v2z"/></svg></button>
         <button id="indentDec" type="button" class="fmt" title="Decrease indent (⇧Tab)" aria-label="Decrease indent"><svg viewBox="0 0 24 24"><path d="M11 17h10v-2H11v2zm-8-5l4 4V8l-4 4zm0 9h18v-2H3v2zM3 3v2h18V3H3zm8 6h10V7H11v2zm0 4h10v-2H11v2z"/></svg></button>
         <button id="indentInc" type="button" class="fmt" title="Increase indent (Tab)" aria-label="Increase indent"><svg viewBox="0 0 24 24"><path d="M3 21h18v-2H3v2zM3 8v8l4-4-4-4zm8 9h10v-2H11v2zM3 3v2h18V3H3zm8 6h10V7H11v2zm0 4h10v-2H11v2z"/></svg></button>
+        <button id="paraOptsBtn" type="button" class="fmt" title="Paragraph options (shading, page breaks)" aria-label="Paragraph options" aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 24 24"><path d="M13 4v12h-2v-4c-2.21 0-4-1.79-4-4s1.79-4 4-4h7v2h-2v12h-2V6h-1V4h1z"/></svg></button>
       </div>
       <div class="group">
         <button id="bulletList" type="button" class="fmt" title="Bulleted list" aria-label="Bulleted list" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M4 10.5c-.83 0-1.5.67-1.5 1.5s.67 1.5 1.5 1.5 1.5-.67 1.5-1.5-.67-1.5-1.5-1.5zm0-6c-.83 0-1.5.67-1.5 1.5S3.17 7.5 4 7.5 5.5 6.83 5.5 6 4.83 4.5 4 4.5zm0 12c-.83 0-1.5.68-1.5 1.5s.68 1.5 1.5 1.5 1.5-.68 1.5-1.5-.67-1.5-1.5-1.5zM7 19h14v-2H7v2zm0-6h14v-2H7v2zm0-8v2h14V5H7z"/></svg></button>
@@ -123,6 +124,44 @@
       <div class="menu-divider"></div>
       <label class="menu-row">Space before<input id="spaceBefore" type="number" min="0" max="720" step="1" inputmode="numeric" /><span class="menu-unit">pt</span></label>
       <label class="menu-row">Space after<input id="spaceAfter" type="number" min="0" max="720" step="1" inputmode="numeric" /><span class="menu-unit">pt</span></label>
+    </div>
+
+    <div id="paraOptsMenu" class="context-menu spacing-menu" hidden role="menu" aria-label="Paragraph options">
+      <div class="menu-heading">Indentation</div>
+      <label class="menu-row">Left<input id="indentLeft" type="number" min="0" max="12" step="0.1" inputmode="decimal" /><span class="menu-unit">in</span></label>
+      <label class="menu-row">Right<input id="indentRight" type="number" min="0" max="12" step="0.1" inputmode="decimal" /><span class="menu-unit">in</span></label>
+      <div class="menu-row">
+        <select id="indentSpecial" class="menu-select" aria-label="Special indent">
+          <option value="none">None</option>
+          <option value="first">First line</option>
+          <option value="hanging">Hanging</option>
+        </select>
+        <input id="indentSpecialBy" type="number" min="0" max="12" step="0.1" inputmode="decimal" value="0.5" aria-label="Special indent amount" /><span class="menu-unit">in</span>
+      </div>
+      <div class="menu-divider"></div>
+      <div class="menu-heading">Shading</div>
+      <div class="menu-row shade-row">
+        <label class="shade-pick"><input id="paraShade" type="color" value="#ffe08a" /><span>Fill</span></label>
+        <button type="button" id="paraShadeNone" class="chip-btn">None</button>
+      </div>
+      <div class="menu-divider"></div>
+      <div class="menu-heading">Borders</div>
+      <div class="menu-row border-row">
+        <div class="border-presets" role="group" aria-label="Paragraph borders">
+          <button type="button" class="border-btn" data-border="none" title="No border" aria-pressed="false"><span class="bx"></span></button>
+          <button type="button" class="border-btn" data-border="box" title="All borders" aria-pressed="false"><span class="bx"></span></button>
+          <button type="button" class="border-btn" data-border="top" title="Top border" aria-pressed="false"><span class="bx"></span></button>
+          <button type="button" class="border-btn" data-border="bottom" title="Bottom border" aria-pressed="false"><span class="bx"></span></button>
+          <button type="button" class="border-btn" data-border="left" title="Left border" aria-pressed="false"><span class="bx"></span></button>
+          <button type="button" class="border-btn" data-border="right" title="Right border" aria-pressed="false"><span class="bx"></span></button>
+        </div>
+        <label class="border-color" title="Border color"><input id="borderColor" type="color" value="#000000" /></label>
+      </div>
+      <div class="menu-divider"></div>
+      <div class="menu-heading">Line &amp; page breaks</div>
+      <label class="menu-check-row"><input id="pgKeepNext" type="checkbox" />Keep with next</label>
+      <label class="menu-check-row"><input id="pgKeepLines" type="checkbox" />Keep lines together</label>
+      <label class="menu-check-row"><input id="pgBreakBefore" type="checkbox" />Page break before</label>
     </div>
 
     <main id="viewport" class="viewport">

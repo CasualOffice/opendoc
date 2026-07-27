@@ -33,10 +33,11 @@ use casual_doc_layout::paginate::PageConfig;
 use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_layout::units::{Point, Rect, Size, Twip};
 use casual_doc_model::v1::{
-    AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, Document, HighlightColor,
-    Indentation, LevelJustification, LevelSuffix, NumberFormat, NumberingInstance,
+    AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, BorderEdge, Document,
+    HighlightColor, Indentation, LevelJustification, LevelSuffix, NumberFormat, NumberingInstance,
     NumberingInstanceId, NumberingLevel, NumberingRef, Paragraph, ParagraphProperties, RgbColor,
-    StyleId, StyleKind, TableCell, TableCellProperties, TableRow, VerticalAlignment,
+    StyleId, StyleKind, TabAlignment, TabStop, TableCell, TableCellProperties, TableRow,
+    VerticalAlignment,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
@@ -1353,6 +1354,244 @@ impl WasmDocument {
         })
     }
 
+    /// The paragraph's shading fill as a packed `0xRRGGBB` int, or `-1` when unset —
+    /// for the paragraph-options menu's shading swatch.
+    #[wasm_bindgen(js_name = paragraphShadingAt)]
+    #[must_use]
+    pub fn paragraph_shading_at(&self, node: &str) -> i32 {
+        NodeId::from_str(node)
+            .ok()
+            .and_then(|nid| paragraph_properties(&self.document, nid))
+            .and_then(|p| p.shading.fill)
+            .map_or(-1, |c| {
+                (i32::from(c.r) << 16) | (i32::from(c.g) << 8) | i32::from(c.b)
+            })
+    }
+
+    /// Sets "keep with next" (`w:keepNext`) over the selection's paragraphs.
+    #[wasm_bindgen(js_name = setKeepWithNext)]
+    pub fn set_keep_with_next(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        on: bool,
+    ) -> Result<EditResult, JsValue> {
+        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
+            p.keep_next = on;
+        })
+    }
+
+    /// Sets "keep lines together" (`w:keepLines`) over the selection's paragraphs.
+    #[wasm_bindgen(js_name = setKeepLinesTogether)]
+    pub fn set_keep_lines_together(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        on: bool,
+    ) -> Result<EditResult, JsValue> {
+        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
+            p.keep_lines = on;
+        })
+    }
+
+    /// Sets "page break before" (`w:pageBreakBefore`) over the selection's paragraphs.
+    #[wasm_bindgen(js_name = setPageBreakBefore)]
+    pub fn set_page_break_before(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        on: bool,
+    ) -> Result<EditResult, JsValue> {
+        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
+            p.page_break_before = on;
+        })
+    }
+
+    /// The paragraph's line-and-page-break flags (keep-with-next, keep-lines,
+    /// page-break-before) for reflecting the paragraph-options menu's checkboxes.
+    #[wasm_bindgen(js_name = paragraphFlags)]
+    #[must_use]
+    pub fn paragraph_flags(&self, node: &str) -> ParagraphFlags {
+        NodeId::from_str(node)
+            .ok()
+            .and_then(|nid| paragraph_properties(&self.document, nid))
+            .map_or(ParagraphFlags::default(), |p| ParagraphFlags {
+                keep_next: p.keep_next,
+                keep_lines: p.keep_lines,
+                page_break_before: p.page_break_before,
+            })
+    }
+
+    /// Applies a paragraph border `edges` preset over the selection: `"none"` clears
+    /// all four edges; `"box"` sets all four; `"top"`/`"bottom"`/`"left"`/`"right"`
+    /// toggle that single edge (start = left, end = right). Set edges use a single
+    /// line of `size_eighth_points` (eighth-points) in the given RGB.
+    #[wasm_bindgen(js_name = setParagraphBorder)]
+    #[allow(clippy::too_many_arguments)] // flat JS signature (node/offsets + preset + rgb + size)
+    pub fn set_paragraph_border(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        edges: &str,
+        r: u8,
+        g: u8,
+        b: u8,
+        size_eighth_points: u32,
+    ) -> Result<EditResult, JsValue> {
+        let edge = || BorderEdge {
+            style: "single".to_string(),
+            size_eighth_points: Some(size_eighth_points.clamp(2, 96)),
+            color: Some(RgbColor { r, g, b }),
+            space_points: None,
+        };
+        let edges = edges.to_string();
+        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
+            let bd = &mut p.borders;
+            // Toggle a single edge: on if currently absent, else cleared.
+            let toggle = |slot: &mut Option<BorderEdge>| {
+                *slot = if slot.is_none() { Some(edge()) } else { None };
+            };
+            match edges.as_str() {
+                "none" => {
+                    bd.top = None;
+                    bd.bottom = None;
+                    bd.start = None;
+                    bd.end = None;
+                }
+                "box" => {
+                    bd.top = Some(edge());
+                    bd.bottom = Some(edge());
+                    bd.start = Some(edge());
+                    bd.end = Some(edge());
+                }
+                "top" => toggle(&mut bd.top),
+                "bottom" => toggle(&mut bd.bottom),
+                "left" => toggle(&mut bd.start),
+                "right" => toggle(&mut bd.end),
+                _ => {}
+            }
+        })
+    }
+
+    /// The paragraph's border edges as a bitmask — top=1, bottom=2, left=4, right=8 —
+    /// for reflecting which edge presets are active in the paragraph menu.
+    #[wasm_bindgen(js_name = paragraphBorderEdges)]
+    #[must_use]
+    pub fn paragraph_border_edges(&self, node: &str) -> u8 {
+        NodeId::from_str(node)
+            .ok()
+            .and_then(|nid| paragraph_properties(&self.document, nid))
+            .map_or(0, |p| {
+                let bd = &p.borders;
+                u8::from(bd.top.is_some())
+                    | (u8::from(bd.bottom.is_some()) << 1)
+                    | (u8::from(bd.start.is_some()) << 2)
+                    | (u8::from(bd.end.is_some()) << 3)
+            })
+    }
+
+    /// Adds or replaces a tab stop at `position_twips` (from the leading margin) with
+    /// alignment `align_code` (0 start, 1 center, 2 end, 3 decimal) over the
+    /// selection's paragraphs. Any existing stop at the same position is replaced;
+    /// stops stay sorted by position.
+    #[wasm_bindgen(js_name = setTabStop)]
+    pub fn set_tab_stop(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        position_twips: i32,
+        align_code: u8,
+    ) -> Result<EditResult, JsValue> {
+        let alignment = tab_alignment_from_code(align_code);
+        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
+            p.tabs.retain(|t| t.position_twips != position_twips);
+            p.tabs.push(TabStop {
+                position_twips,
+                alignment,
+                leader: None,
+            });
+            p.tabs.sort_by_key(|t| t.position_twips);
+        })
+    }
+
+    /// Removes the tab stop at exactly `position_twips` over the selection.
+    #[wasm_bindgen(js_name = removeTabStop)]
+    pub fn remove_tab_stop(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        position_twips: i32,
+    ) -> Result<EditResult, JsValue> {
+        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
+            p.tabs.retain(|t| t.position_twips != position_twips);
+        })
+    }
+
+    /// Moves the tab stop at `from_twips` to `to_twips` (keeping its alignment) over
+    /// the selection — one undoable action, for a ruler drag.
+    #[wasm_bindgen(js_name = moveTabStop)]
+    pub fn move_tab_stop(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        from_twips: i32,
+        to_twips: i32,
+    ) -> Result<EditResult, JsValue> {
+        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
+            if let Some(t) = p.tabs.iter_mut().find(|t| t.position_twips == from_twips) {
+                t.position_twips = to_twips;
+            }
+            p.tabs.retain(|t| t.position_twips >= 0);
+            p.tabs.sort_by_key(|t| t.position_twips);
+        })
+    }
+
+    /// Clears every explicit tab stop over the selection.
+    #[wasm_bindgen(js_name = clearTabStops)]
+    pub fn clear_tab_stops(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+    ) -> Result<EditResult, JsValue> {
+        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, |p| {
+            p.tabs.clear();
+        })
+    }
+
+    /// The paragraph's explicit tab stops as a flat `[pos0, code0, pos1, code1, …]`
+    /// (position in twips, alignment code 0 start / 1 center / 2 end / 3 decimal /
+    /// 4 bar) — what the ruler renders its tab glyphs from.
+    #[wasm_bindgen(js_name = paragraphTabs)]
+    #[must_use]
+    pub fn paragraph_tabs(&self, node: &str) -> Vec<i32> {
+        NodeId::from_str(node)
+            .ok()
+            .and_then(|nid| paragraph_properties(&self.document, nid))
+            .map(|p| {
+                p.tabs
+                    .iter()
+                    .flat_map(|t| [t.position_twips, tab_alignment_code(t.alignment)])
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// The uniform run styling of the selection (size/color/font/vert-align) for
     /// reflecting the current values in the toolbar. Blank/zero for a mixed or
     /// cross-paragraph selection.
@@ -2324,6 +2563,28 @@ fn flat_rect(page: u32, rect: Rect) -> [i32; 5] {
     ]
 }
 
+/// Ruler tab-alignment code (0 start / 1 center / 2 end / 3 decimal / 4 bar) → model.
+fn tab_alignment_from_code(code: u8) -> TabAlignment {
+    match code {
+        1 => TabAlignment::Center,
+        2 => TabAlignment::End,
+        3 => TabAlignment::Decimal,
+        4 => TabAlignment::Bar,
+        _ => TabAlignment::Start,
+    }
+}
+
+/// Model tab alignment → ruler code (inverse of [`tab_alignment_from_code`]).
+fn tab_alignment_code(alignment: TabAlignment) -> i32 {
+    match alignment {
+        TabAlignment::Start => 0,
+        TabAlignment::Center => 1,
+        TabAlignment::End => 2,
+        TabAlignment::Decimal => 3,
+        TabAlignment::Bar => 4,
+    }
+}
+
 /// `text[from..to]` clamped to the string's byte length and snapped to char
 /// boundaries — never panics on a stale or off-boundary offset.
 fn slice_bytes(text: &str, from: usize, to: usize) -> String {
@@ -2859,6 +3120,39 @@ impl ParagraphSpacing {
     #[must_use]
     pub fn line_twip(&self) -> i32 {
         self.line_twip
+    }
+}
+
+/// A paragraph's line-and-page-break flags, for the paragraph-options menu.
+#[wasm_bindgen]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ParagraphFlags {
+    keep_next: bool,
+    keep_lines: bool,
+    page_break_before: bool,
+}
+
+#[wasm_bindgen]
+impl ParagraphFlags {
+    /// Keep this paragraph on the same page as the next (`w:keepNext`).
+    #[wasm_bindgen(getter, js_name = keepNext)]
+    #[must_use]
+    pub fn keep_next(&self) -> bool {
+        self.keep_next
+    }
+
+    /// Keep all lines of this paragraph on one page (`w:keepLines`).
+    #[wasm_bindgen(getter, js_name = keepLines)]
+    #[must_use]
+    pub fn keep_lines(&self) -> bool {
+        self.keep_lines
+    }
+
+    /// Force a page break before this paragraph (`w:pageBreakBefore`).
+    #[wasm_bindgen(getter, js_name = pageBreakBefore)]
+    #[must_use]
+    pub fn page_break_before(&self) -> bool {
+        self.page_break_before
     }
 }
 
@@ -3612,6 +3906,140 @@ mod tests {
         // Undo the clear → space-before returns to 240.
         d.undo().expect("undo");
         assert_eq!(d.paragraph_spacing(&node).before_twip(), 240);
+    }
+
+    /// Line-and-page-break flags and paragraph shading apply, reflect, and undo.
+    #[test]
+    fn paragraph_flags_and_shading_apply_reflect_and_undo() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, t)| t.len() >= 3)
+            .map(|(id, _)| id.to_string())
+            .expect("a paragraph with >=3 chars");
+
+        let f = d.paragraph_flags(&node);
+        assert!(!f.keep_next() && !f.keep_lines() && !f.page_break_before());
+
+        d.set_keep_with_next(&node, 0, &node, 0, true)
+            .expect("keep");
+        d.set_page_break_before(&node, 0, &node, 0, true)
+            .expect("pbb");
+        let f = d.paragraph_flags(&node);
+        assert!(f.keep_next() && f.page_break_before() && !f.keep_lines());
+
+        assert_eq!(d.paragraph_shading_at(&node), -1);
+        d.set_paragraph_shading(&node, 0, &node, 0, 0xFF, 0xE0, 0x80, false)
+            .expect("shade");
+        assert_eq!(d.paragraph_shading_at(&node), 0x00FF_E080);
+        d.set_paragraph_shading(&node, 0, &node, 0, 0, 0, 0, true)
+            .expect("clear shade");
+        assert_eq!(d.paragraph_shading_at(&node), -1);
+
+        // Undo the clear → the fill returns.
+        d.undo().expect("undo");
+        assert_eq!(d.paragraph_shading_at(&node), 0x00FF_E080);
+    }
+
+    /// Paragraph borders: box sets all four edges, single-edge presets toggle, none
+    /// clears, and the bitmask getter reflects it — all undoable.
+    #[test]
+    fn paragraph_borders_apply_reflect_and_undo() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, t)| t.len() >= 3)
+            .map(|(id, _)| id.to_string())
+            .expect("a paragraph with >=3 chars");
+
+        assert_eq!(d.paragraph_border_edges(&node), 0);
+        d.set_paragraph_border(&node, 0, &node, 0, "box", 0, 0, 0, 8)
+            .expect("box");
+        assert_eq!(d.paragraph_border_edges(&node), 0b1111);
+        // Toggling the top edge off leaves bottom+left+right (0b1110).
+        d.set_paragraph_border(&node, 0, &node, 0, "top", 0, 0, 0, 8)
+            .expect("toggle top");
+        assert_eq!(d.paragraph_border_edges(&node), 0b1110);
+        d.set_paragraph_border(&node, 0, &node, 0, "none", 0, 0, 0, 8)
+            .expect("none");
+        assert_eq!(d.paragraph_border_edges(&node), 0);
+
+        // Undo the clear → back to bottom+left+right.
+        d.undo().expect("undo");
+        assert_eq!(d.paragraph_border_edges(&node), 0b1110);
+    }
+
+    /// Tab stops: add (sorted, with alignment), move, cycle-by-replace, remove, and
+    /// clear — reflected by `paragraphTabs` and undoable.
+    #[test]
+    fn tab_stops_apply_reflect_and_undo() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, t)| t.len() >= 3)
+            .map(|(id, _)| id.to_string())
+            .expect("a paragraph with >=3 chars");
+
+        assert!(d.paragraph_tabs(&node).is_empty());
+        d.set_tab_stop(&node, 0, &node, 0, 1440, 0)
+            .expect("tab 1in L");
+        d.set_tab_stop(&node, 0, &node, 0, 720, 2)
+            .expect("tab .5in R");
+        // Sorted by position: [720, End(2), 1440, Start(0)].
+        assert_eq!(d.paragraph_tabs(&node), vec![720, 2, 1440, 0]);
+        // Replace at 1440 with center (a "cycle").
+        d.set_tab_stop(&node, 0, &node, 0, 1440, 1).expect("cycle");
+        assert_eq!(d.paragraph_tabs(&node), vec![720, 2, 1440, 1]);
+        // Move 720 -> 2160.
+        d.move_tab_stop(&node, 0, &node, 0, 720, 2160)
+            .expect("move");
+        assert_eq!(d.paragraph_tabs(&node), vec![1440, 1, 2160, 2]);
+        // Remove 1440.
+        d.remove_tab_stop(&node, 0, &node, 0, 1440).expect("remove");
+        assert_eq!(d.paragraph_tabs(&node), vec![2160, 2]);
+        d.clear_tab_stops(&node, 0, &node, 0).expect("clear");
+        assert!(d.paragraph_tabs(&node).is_empty());
+
+        // Undo the clear → the single remaining stop returns.
+        d.undo().expect("undo");
+        assert_eq!(d.paragraph_tabs(&node), vec![2160, 2]);
+    }
+
+    /// A `pageBreakBefore` set through the live edit path must re-paginate and add a
+    /// page (guards the incremental pagination honoring break control, not just the
+    /// from-scratch paginator).
+    #[test]
+    fn page_break_before_repaginates_through_the_edit_path() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        // Second top-level (non-table) paragraph — forcing a break before it must
+        // push it (and everything after) to a new page.
+        let target = nodes
+            .iter()
+            .filter(|(id, _)| locate_table_row(&d.document, *id).is_none())
+            .nth(1)
+            .map(|(id, _)| id.to_string())
+            .expect("a second body paragraph");
+
+        let before = d.page_count();
+        d.set_page_break_before(&target, 0, &target, 0, true)
+            .expect("page break before");
+        assert!(
+            d.page_count() > before,
+            "pageBreakBefore must force a new page through the edit path (before={before}, after={})",
+            d.page_count()
+        );
+
+        // Undo restores the single page.
+        d.undo().expect("undo");
+        assert_eq!(d.page_count(), before);
     }
 
     /// Font family applies over a range; paragraph style applies, reads back, and
