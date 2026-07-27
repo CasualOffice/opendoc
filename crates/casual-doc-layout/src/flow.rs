@@ -2742,7 +2742,11 @@ fn shape_fielded_paragraph(
         line.bars = bars.clone();
         match trailing {
             Some(kind) => {
-                line.line_break = LineBreak::Hard;
+                line.line_break = match kind {
+                    BreakKind::Line => LineBreak::Hard,
+                    BreakKind::Page => LineBreak::Page,
+                    BreakKind::Column => LineBreak::Column,
+                };
                 line.page_break_after = matches!(kind, BreakKind::Page | BreakKind::Column);
             }
             None if bi == last => line.line_break = LineBreak::ParagraphEnd,
@@ -3747,6 +3751,7 @@ fn apply_section_break(lines: &mut LineLayout, properties: &ParagraphProperties,
         && section_break_forces_page(ctx.sections, ended)
         && let Some(last) = lines.lines.last_mut()
     {
+        last.line_break = LineBreak::Page;
         last.page_break_after = true;
     }
 }

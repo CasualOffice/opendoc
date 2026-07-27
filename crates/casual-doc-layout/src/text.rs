@@ -83,6 +83,10 @@ pub enum LineBreak {
     Wrap,
     /// A hard line break within the paragraph (`w:br`).
     Hard,
+    /// A forced page break (`w:br w:type="page"` or a page-starting section).
+    Page,
+    /// A forced column break (`w:br w:type="column"`).
+    Column,
     /// The last line of the paragraph.
     ParagraphEnd,
 }
@@ -299,10 +303,10 @@ pub struct Line {
     /// How the line ends.
     pub line_break: LineBreak,
     /// A forced page/column break follows this line (`w:br` type `page`/`column`).
-    /// The paginator ends the page after this line and starts the paragraph's
-    /// remainder on the next page (a column break collapses to a page break while
-    /// the engine is single-column). Default `false`; serialized only when set so a
-    /// plain line's galley stays byte-identical.
+    /// [`line_break`](Self::line_break) retains which kind. The single-column
+    /// paginator treats either as a page transition; the column paginator advances
+    /// a column break to the next physical column. Default `false`; serialized only
+    /// when set so a plain line's galley stays byte-identical.
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
     pub page_break_after: bool,
     /// X positions (twips, from the paragraph content box's leading edge) of `bar`

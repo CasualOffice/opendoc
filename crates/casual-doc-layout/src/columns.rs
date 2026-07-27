@@ -25,23 +25,18 @@
 //!
 //! ## Documented approximations (deferred fidelity)
 //!
-//! - **Unequal columns share one flow width.** A section's galley is flowed once, at
-//!   a single width, then placed column by column. When the section declares unequal
-//!   per-column widths (`w:cols/@w:equalWidth="0"` with explicit `w:col` widths),
-//!   the columns are *placed* at their true widths and x-positions (so the layout
-//!   shows the correct narrow/wide proportions and the separator sits in the real
-//!   gap), but the galley is flowed at the **widest** column's width — the common
-//!   "narrow label + wide content" case, where the wide column carries the bulk of
-//!   the text and the narrow column holds short labels that do not wrap either way.
-//!   Content in a narrow column that is wider than that column can overrun it; true
-//!   per-column reflow (a distinct galley per column width) is deferred.
+//! - **Ordinary soft-split continuation across unequal widths.** Unequal physical
+//!   columns receive width-specific galleys, and block/forced-break boundaries
+//!   select the matching layout. A paragraph split only because the current column
+//!   runs out of vertical space is moved whole when its alternate-width layout fits
+//!   the next column; an oversized paragraph may still retain its starting-width
+//!   line layout across that soft split until the shaper exposes a resumable cursor.
 //! - **No last-page balancing.** Columns fill in order; the final page of a section
 //!   is left unbalanced (Word balances the last page of a non-final column section).
 //!   Because a following `continuous` section must begin below *all* of the previous
 //!   section's columns to avoid overlap, an unbalanced last page can push the next
 //!   section onto a new page where balancing would have kept it.
-//! - **Column breaks collapse to page breaks** (as in single-column flow), and a
-//!   table inside a multi-column section flows within the current column but does
+//! - A table inside a multi-column section flows within the current column but does
 //!   not repeat its header rows across columns.
 
 use casual_doc_model::NodeId;
@@ -96,11 +91,9 @@ impl ColumnLayout {
         }
     }
 
-    /// The width the section's galley is flowed (line-broken) at. Equal columns all
-    /// share one width; unequal columns are flowed at the **widest** column's width
-    /// (see the module-level "unequal columns share one flow width" note), so the
-    /// wide content column wraps at its true width and short labels in a narrow
-    /// column are unaffected.
+    /// The canonical galley width. Equal columns share it; unequal-column sections
+    /// also build per-column galleys via `flow_widths`, while retaining the
+    /// widest galley as the deterministic canonical topology.
     #[must_use]
     pub fn flow_width(&self) -> Twip {
         self.columns
@@ -108,6 +101,26 @@ impl ColumnLayout {
             .map(|c| c.width)
             .max_by_key(|w| w.raw())
             .unwrap_or(Twip::ZERO)
+    }
+
+    /// The physical flow width of every column, in placement order.
+    ///
+    /// Equal-width sections can share one galley. Unequal sections need one
+    /// width-specific galley per entry so a fragment placed in a narrow column was
+    /// actually line-broken at that narrow measure.
+    #[must_use]
+    pub(crate) fn flow_widths(&self) -> Vec<Twip> {
+        self.columns.iter().map(|column| column.width).collect()
+    }
+
+    /// Whether every physical column has the same line-breaking measure.
+    #[must_use]
+    pub(crate) fn has_unequal_widths(&self) -> bool {
+        self.columns.first().is_some_and(|first| {
+            self.columns
+                .iter()
+                .any(|column| column.width != first.width)
+        })
     }
 }
 
@@ -190,9 +203,29 @@ pub struct SectionRun {
     pub layout: ColumnLayout,
     /// The section's body galley, flowed at [`ColumnLayout::flow_width`].
     pub galley: Vec<BlockFragment>,
+    /// Width-specific galleys for unequal physical columns, indexed in the same
+    /// order as the layout's physical columns. Empty for equal-width sections. Every
+    /// entry must have the same block-fragment topology as [`Self::galley`].
+    pub column_galleys: Vec<Vec<BlockFragment>>,
     /// `true` when the section starts on a fresh page (`nextPage`/`evenPage`/
     /// `oddPage`/default); `false` for `continuous`/`nextColumn`.
     pub starts_new_page: bool,
+}
+
+impl SectionRun {
+    /// The galley whose line-breaking measure matches `column`. A malformed or
+    /// topology-mismatched width-specific entry falls back to the canonical galley
+    /// instead of risking an out-of-bounds fragment lookup.
+    fn galley_for_column(&self, column: usize) -> &[BlockFragment] {
+        self.column_galleys
+            .get(column)
+            .filter(|galley| galley.len() == self.galley.len())
+            .map_or(self.galley.as_slice(), Vec::as_slice)
+    }
+
+    fn fragment_for_column(&self, column: usize, index: usize) -> &BlockFragment {
+        &self.galley_for_column(column)[index]
+    }
 }
 
 /// Whether a [`SectionBoundary`]'s start type begins a new page (as opposed to
@@ -335,9 +368,12 @@ impl ColPaginator {
 
         // Walk keep-with-next groups, exactly like the single-column paginator, but
         // "advance" moves to the next column (then the next page).
-        let frags = &run.galley;
         let mut i = 0;
-        while i < frags.len() {
+        while i < run.galley.len() {
+            // Keep grouping is structural and therefore identical across the
+            // width-specific galleys. Heights come from the currently active
+            // column's galley.
+            let frags = run.galley_for_column(self.col);
             let mut j = i;
             while j < frags.len() && frags[j].break_control().keep_next {
                 j += 1;
@@ -360,8 +396,8 @@ impl ColPaginator {
             }
 
             let allow_split = !is_keep_group || !group_fits_col;
-            for (offset, fragment) in group.iter().enumerate() {
-                self.place(i + offset, fragment, allow_split);
+            for offset in 0..group.len() {
+                self.place(run, i + offset, allow_split);
             }
             i = j;
         }
@@ -408,10 +444,48 @@ impl ColPaginator {
 
     /// Places fragment `idx`, splitting a paragraph or table row across columns
     /// when `allow_split` and it does not fit whole.
-    fn place(&mut self, idx: usize, fragment: &BlockFragment, allow_split: bool) {
+    fn place(&mut self, run: &SectionRun, idx: usize, allow_split: bool) {
         let gidx = self.base + idx as u32;
         self.at = FlowPos::at(gidx);
-        match fragment {
+        let mut fragment = run.fragment_for_column(self.col, idx).clone();
+
+        // A soft split can otherwise carry lines shaped for a wide column into the
+        // following narrow column. Until ordinary split continuations have a
+        // resumable shaping cursor, keep a paragraph whole when the next
+        // different-width column can contain its width-specific layout. This
+        // preserves every model byte while keeping placement and shaping widths
+        // identical.
+        let next_col = if self.col + 1 < self.columns.len() {
+            self.col + 1
+        } else {
+            0
+        };
+        let next_capacity = if self.col + 1 < self.columns.len() {
+            self.content.bottom() - self.band_top
+        } else {
+            self.content.size.height
+        };
+        let advance_whole = matches!(
+            &fragment,
+            BlockFragment::Paragraph {
+                lines,
+                break_control,
+                ..
+            } if !self.at_column_start()
+                && allow_split
+                && !break_control.keep_lines
+                && lines.lines.len() > 1
+                && !lines.lines.iter().any(|line| line.page_break_after)
+                && fragment.height().raw() > self.remaining()
+                && self.columns[next_col].width != self.column().width
+                && run.fragment_for_column(next_col, idx).height() <= next_capacity
+        );
+        if advance_whole {
+            self.advance();
+            fragment = run.fragment_for_column(self.col, idx).clone();
+        }
+
+        match &fragment {
             BlockFragment::Paragraph {
                 id,
                 lines,
@@ -421,19 +495,31 @@ impl ColPaginator {
             } if lines.lines.iter().any(|l| l.page_break_after)
                 || (lines.lines.len() > 1 && allow_split && !break_control.keep_lines) =>
             {
-                self.place_paragraph(gidx, *id, lines, *box_metrics, *break_control, *decor);
+                self.place_paragraph(
+                    run,
+                    idx,
+                    gidx,
+                    *id,
+                    lines,
+                    *box_metrics,
+                    *break_control,
+                    *decor,
+                );
             }
             BlockFragment::TableRow {
                 table, can_split, ..
             } => {
-                self.place_table_row(gidx, fragment, *table, *can_split);
+                self.place_table_row(run, idx, gidx, &fragment, *table, *can_split);
             }
             _ => {
-                let height = fragment.height();
+                let mut selected = fragment;
+                let mut height = selected.height();
                 if !self.at_column_start() && height.raw() > self.remaining() {
                     self.advance();
+                    selected = run.fragment_for_column(self.col, idx).clone();
+                    height = selected.height();
                 }
-                self.push(fragment.clone(), height, self.column().width);
+                self.push(selected, height, self.column().width);
                 self.at = FlowPos::at(gidx + 1);
             }
         }
@@ -454,9 +540,15 @@ impl ColPaginator {
 
     /// Places a paragraph's lines, breaking across columns at line boundaries with
     /// widow/orphan control (mirrors `paginate::Paginator::place_paragraph`, with
-    /// column advance instead of page flush and a forced break to a new page).
+    /// column advance instead of page flush). A forced column break advances to the
+    /// next physical column; a forced page break starts a fresh page. When that
+    /// transition changes an unequal column's width, the paragraph resumes from the
+    /// same model offset in the new column's width-specific galley.
+    #[allow(clippy::too_many_arguments)]
     fn place_paragraph(
         &mut self,
+        run: &SectionRun,
+        index: usize,
         gidx: u32,
         id: NodeId,
         lines: &LineLayout,
@@ -464,9 +556,9 @@ impl ColPaginator {
         break_control: BreakControl,
         decor: ParagraphDecor,
     ) {
-        let n = lines.lines.len();
+        let mut active = lines.clone();
+        let mut n = active.lines.len();
         let widow = break_control.widow_control;
-        let width = self.column().width;
         let mut start = 0;
         let mut is_head = true;
         while start < n {
@@ -484,7 +576,7 @@ impl ColPaginator {
             let mut take = 0;
             let mut used = 0;
             while start + take < n {
-                let h = lines.lines[start + take].height.raw();
+                let h = active.lines[start + take].height.raw();
                 if used + h > avail {
                     break;
                 }
@@ -495,7 +587,7 @@ impl ColPaginator {
             if take == 0 {
                 if self.at_column_start() {
                     take = 1;
-                    used = lines.lines[start].height.raw();
+                    used = active.lines[start].height.raw();
                 } else {
                     self.advance();
                     continue;
@@ -503,18 +595,26 @@ impl ColPaginator {
             }
 
             // A forced page/column break caps this chunk at the break line.
-            let forced = lines.lines[start..start + take]
+            let forced = active.lines[start..start + take]
                 .iter()
                 .position(|l| l.page_break_after);
             if let Some(k) = forced {
                 let new_take = k + 1;
-                used -= lines.lines[start + new_take..start + take]
+                used -= active.lines[start + new_take..start + take]
                     .iter()
                     .map(|l| l.height.raw())
                     .sum::<i32>();
                 take = new_take;
             }
-            let forced = forced.is_some();
+            let forced_line = forced.map(|relative| &active.lines[start + relative]);
+            // Old serialized galleys carried only the boolean. Treat their hard
+            // forced break as a page break; newly shaped lines retain the exact kind.
+            let forced_kind = forced_line.map(|line| match line.line_break {
+                crate::text::LineBreak::Column => crate::text::LineBreak::Column,
+                _ => crate::text::LineBreak::Page,
+            });
+            let forced_offset = forced_line.map(|line| line.range.end.offset);
+            let forced = forced_kind.is_some();
 
             // Orphan control: don't strand fewer than the minimum head lines.
             if !forced
@@ -536,7 +636,7 @@ impl ColPaginator {
                 && take > 1
             {
                 take -= 1;
-                used -= lines.lines[start + take].height.raw();
+                used -= active.lines[start + take].height.raw();
             }
 
             let is_tail = start + take == n;
@@ -547,12 +647,13 @@ impl ColPaginator {
             };
             let chunk = slice_paragraph(
                 id,
-                lines,
+                &active,
                 box_metrics,
                 break_control,
                 decor,
                 start..start + take,
             );
+            let width = self.column().width;
             self.push(chunk, Twip(used + space_before + space_after), width);
             start += take;
             is_head = false;
@@ -564,10 +665,42 @@ impl ColPaginator {
                     line: start as u32,
                 }
             };
-            if start < n {
+
+            if let Some(kind) = forced_kind {
+                match kind {
+                    crate::text::LineBreak::Column => self.advance(),
+                    crate::text::LineBreak::Page => self.new_page(),
+                    _ => unreachable!("forced kind is page or column"),
+                }
+
+                // The alternate-width layout contains the same explicit break at
+                // the same model byte boundary. Resume immediately after it so the
+                // tail is line-broken at the new physical column width.
+                if start < n
+                    && let BlockFragment::Paragraph {
+                        lines: alternate, ..
+                    } = run.fragment_for_column(self.col, index)
+                    && let Some(offset) = forced_offset
+                    && let Some(position) = alternate.lines.iter().position(|line| {
+                        line.page_break_after
+                            && line.range.end.offset == offset
+                            && match kind {
+                                crate::text::LineBreak::Column => {
+                                    line.line_break == crate::text::LineBreak::Column
+                                }
+                                crate::text::LineBreak::Page => {
+                                    line.line_break != crate::text::LineBreak::Column
+                                }
+                                _ => false,
+                            }
+                    })
+                {
+                    active = alternate.clone();
+                    n = active.lines.len();
+                    start = position + 1;
+                }
+            } else if start < n {
                 self.advance();
-            } else if forced {
-                self.new_page();
             }
         }
     }
@@ -577,22 +710,27 @@ impl ColPaginator {
     /// moved whole to the next column.
     fn place_table_row(
         &mut self,
+        run: &SectionRun,
+        index: usize,
         gidx: u32,
         fragment: &BlockFragment,
         table: NodeId,
         can_split: bool,
     ) {
         let _ = table;
-        let height = fragment.height();
+        let mut selected = fragment.clone();
+        let mut height = selected.height();
         let fits = height.raw() <= self.remaining();
         if !fits && can_split && !self.remaining_too_small() {
-            self.split_table_row(gidx, fragment);
+            self.split_table_row(gidx, &selected);
             return;
         }
         if !fits && !self.at_column_start() {
             self.advance();
+            selected = run.fragment_for_column(self.col, index).clone();
+            height = selected.height();
         }
-        self.push(fragment.clone(), height, self.column().width);
+        self.push(selected, height, self.column().width);
         self.at = FlowPos::at(gidx + 1);
     }
 
@@ -754,6 +892,64 @@ mod tests {
         }
     }
 
+    fn paragraph_with_forced_break(
+        id: u64,
+        first_height: Twip,
+        tail_height: Twip,
+        break_kind: LineBreak,
+    ) -> BlockFragment {
+        let node = NodeId::from_parts(id, 1).unwrap();
+        let line = |start, end, height, line_break, page_break_after| Line {
+            runs: Vec::new(),
+            ascent: height,
+            descent: Twip::ZERO,
+            height,
+            clip: false,
+            range: ModelRange::new(ModelPos::new(node, start), ModelPos::new(node, end)),
+            line_break,
+            page_break_after,
+            bars: Vec::new(),
+            images: Vec::new(),
+            fields: Vec::new(),
+            text_boxes: Vec::new(),
+            rules: Vec::new(),
+        };
+        BlockFragment::Paragraph {
+            id: node,
+            lines: LineLayout {
+                lines: vec![
+                    line(0, 5, first_height, break_kind, true),
+                    line(5, 10, tail_height, LineBreak::ParagraphEnd, false),
+                ],
+            },
+            box_metrics: BoxMetrics::default(),
+            break_control: BreakControl::default(),
+            decor: ParagraphDecor::default(),
+        }
+    }
+
+    fn unequal_columns(config: PageConfig) -> ColumnLayout {
+        column_layout(
+            &SectionColumns {
+                count: 2,
+                space_twips: None,
+                separator: None,
+                equal_width: Some(false),
+                columns: vec![
+                    ColumnDef {
+                        width_twips: 3_163,
+                        space_twips: Some(40),
+                    },
+                    ColumnDef {
+                        width_twips: 6_447,
+                        space_twips: None,
+                    },
+                ],
+            },
+            config.content_area(),
+        )
+    }
+
     fn two_column_run(config: PageConfig, galley: Vec<BlockFragment>) -> SectionRun {
         let cols = SectionColumns {
             count: 2,
@@ -766,6 +962,7 @@ mod tests {
             config,
             layout: column_layout(&cols, config.content_area()),
             galley,
+            column_galleys: Vec::new(),
             starts_new_page: true,
         }
     }
@@ -837,12 +1034,14 @@ mod tests {
             config,
             layout: ColumnLayout::single(config.content_area()),
             galley: vec![paragraph(1, Twip(1_000))],
+            column_galleys: Vec::new(),
             starts_new_page: true,
         };
         let second = SectionRun {
             config,
             layout: ColumnLayout::single(config.content_area()),
             galley: vec![paragraph(2, Twip(1_000))],
+            column_galleys: Vec::new(),
             starts_new_page: false,
         };
         let layout = paginate_columns(&[first, second]);
@@ -899,6 +1098,60 @@ mod tests {
     }
 
     #[test]
+    fn forced_column_break_resumes_from_the_matching_wide_galley_offset() {
+        let config = letter_config();
+        let layout = unequal_columns(config);
+        let canonical = paragraph_with_forced_break(1, Twip(640), Twip(740), LineBreak::Column);
+        let narrow = paragraph_with_forced_break(1, Twip(310), Twip(410), LineBreak::Column);
+        let wide = paragraph_with_forced_break(1, Twip(320), Twip(220), LineBreak::Column);
+        let pages = paginate_columns(&[SectionRun {
+            config,
+            layout,
+            galley: vec![canonical],
+            column_galleys: vec![vec![narrow], vec![wide]],
+            starts_new_page: true,
+        }])
+        .pages;
+
+        assert_eq!(pages.len(), 1, "a column break remains on the same page");
+        assert_eq!(pages[0].placed.len(), 2);
+        let head = &pages[0].placed[0];
+        let tail = &pages[0].placed[1];
+        assert_eq!(head.rect.size.width, Twip(3_163));
+        assert_eq!(head.rect.size.height, Twip(310));
+        assert_eq!(tail.rect.size.width, Twip(6_447));
+        assert_eq!(
+            tail.rect.size.height,
+            Twip(220),
+            "the tail comes from the wide galley at the matching model offset"
+        );
+        assert!(tail.rect.origin.x > head.rect.origin.x);
+    }
+
+    #[test]
+    fn forced_page_break_starts_a_new_page_instead_of_the_next_column() {
+        let config = letter_config();
+        let run = two_column_run(
+            config,
+            vec![paragraph_with_forced_break(
+                1,
+                Twip(300),
+                Twip(200),
+                LineBreak::Page,
+            )],
+        );
+        let pages = paginate_columns(&[run]).pages;
+
+        assert_eq!(pages.len(), 2);
+        assert_eq!(pages[0].placed.len(), 1);
+        assert_eq!(pages[1].placed.len(), 1);
+        assert_eq!(
+            pages[0].placed[0].rect.origin.x, pages[1].placed[0].rect.origin.x,
+            "a page break restarts in the first physical column"
+        );
+    }
+
+    #[test]
     fn equal_width_true_ignores_explicit_column_widths() {
         // A stray `w:equalWidth="1"` alongside `w:col` widths → equal division.
         let config = letter_config();
@@ -944,6 +1197,7 @@ mod tests {
             config,
             layout: column_layout(&cols, config.content_area()),
             galley,
+            column_galleys: Vec::new(),
             starts_new_page: true,
         };
         let layout = paginate_columns(&[run]);
