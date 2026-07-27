@@ -361,6 +361,81 @@ input {
   background: var(--line);
 }
 
+/* ---- Line & paragraph spacing menu ----------------------------------------- */
+.spacing-menu {
+  min-width: 210px;
+}
+
+.menu-heading {
+  padding: 4px 10px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--faint);
+}
+
+/* Line-spacing rows carry a leading check column; the check shows on the
+   currently-applied value. */
+.spacing-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.menu-check {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  opacity: 0;
+  background: currentcolor;
+  -webkit-mask: var(--check-svg) center / contain no-repeat;
+  mask: var(--check-svg) center / contain no-repeat;
+  --check-svg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z'/%3E%3C/svg%3E");
+}
+
+.spacing-line[aria-checked="true"] .menu-check {
+  opacity: 1;
+}
+
+.spacing-line[aria-checked="true"] {
+  color: var(--accent);
+}
+
+.menu-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.menu-row input {
+  margin-left: auto;
+  width: 56px;
+  height: 26px;
+  padding: 0 8px;
+  text-align: right;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.menu-row input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.menu-unit {
+  color: var(--muted);
+  font-size: 12px;
+  width: 14px;
+}
+
 /* ---- Toolbar --------------------------------------------------------------- */
 .toolbar {
   display: flex;

@@ -63,7 +63,10 @@ const subBtn = document.getElementById("subscript");
 const fontSizeSel = document.getElementById("fontSize");
 const textColorInput = document.getElementById("textColor");
 const highlightSel = document.getElementById("highlight");
-const lineSpacingSel = document.getElementById("lineSpacing");
+const spacingBtn = document.getElementById("spacingBtn");
+const spacingMenu = document.getElementById("spacingMenu");
+const spaceBeforeInput = document.getElementById("spaceBefore");
+const spaceAfterInput = document.getElementById("spaceAfter");
 const indentDecBtn = document.getElementById("indentDec");
 const indentIncBtn = document.getElementById("indentInc");
 const bulletListBtn = document.getElementById("bulletList");
@@ -73,7 +76,7 @@ const paragraphStyleSel = document.getElementById("paragraphStyle");
 const runControls = [superBtn, subBtn, fontSizeSel, textColorInput, highlightSel, fontFamilySel];
 const paraControls = [
   ...Object.values(alignBtns),
-  lineSpacingSel,
+  spacingBtn,
   indentDecBtn,
   indentIncBtn,
   bulletListBtn,
@@ -922,9 +925,9 @@ function updateToolbar() {
   superBtn.setAttribute("aria-pressed", String(sup));
   subBtn.setAttribute("aria-pressed", String(sub));
 
-  // Reflect the current paragraph style + line spacing + list kind.
+  // Reflect the current paragraph style + spacing + list kind.
   paragraphStyleSel.value = hasSel && doc ? doc.paragraphStyleAt(selection.focus.node) : "";
-  lineSpacingSel.value = hasSel && doc ? String(doc.lineSpacingAt(selection.focus.node) || "") : "";
+  if (hasSel && doc && !spacingMenu.hidden) reflectSpacingMenu();
   const listKind = hasSel && doc ? doc.listStyleAt(selection.focus.node) : "";
   bulletListBtn.setAttribute("aria-pressed", String(listKind === "bullet"));
   numberedListBtn.setAttribute("aria-pressed", String(listKind === "numbered"));
@@ -989,9 +992,82 @@ fontSizeSel.addEventListener("change", () => {
     );
   }
 });
-lineSpacingSel.addEventListener("change", () => {
-  const percent = Number(lineSpacingSel.value);
-  if (percent) runToolbarEdit((a, b, c, d) => doc.setLineSpacing(a, b, c, d, percent));
+// ---- Line & paragraph spacing menu -----------------------------------------
+const TWIPS_PER_POINT = 20;
+
+/** Reflect the caret paragraph's spacing into the menu (line-preset check +
+ *  space before/after fields). */
+function reflectSpacingMenu() {
+  if (!doc || !selection) return;
+  const s = doc.paragraphSpacing(selection.focus.node);
+  const percent = s.lineRule === 0 ? s.linePercent : 0; // presets are `auto` multiples
+  for (const b of spacingMenu.querySelectorAll(".spacing-line")) {
+    b.setAttribute("aria-checked", String(Number(b.dataset.percent) === percent));
+  }
+  // Don't overwrite a field the user is mid-edit in.
+  if (document.activeElement !== spaceBeforeInput) {
+    spaceBeforeInput.value = s.beforeTwip >= 0 ? String(Math.round(s.beforeTwip / TWIPS_PER_POINT)) : "";
+  }
+  if (document.activeElement !== spaceAfterInput) {
+    spaceAfterInput.value = s.afterTwip >= 0 ? String(Math.round(s.afterTwip / TWIPS_PER_POINT)) : "";
+  }
+}
+
+function openSpacingMenu() {
+  if (!selection) return;
+  const r = spacingBtn.getBoundingClientRect();
+  spacingMenu.hidden = false;
+  spacingMenu.style.left = `${Math.round(r.left)}px`;
+  spacingMenu.style.top = `${Math.round(r.bottom + 4)}px`;
+  spacingBtn.setAttribute("aria-expanded", "true");
+  reflectSpacingMenu();
+}
+
+function closeSpacingMenu() {
+  spacingMenu.hidden = true;
+  spacingBtn.setAttribute("aria-expanded", "false");
+}
+
+onButton(spacingBtn, () => (spacingMenu.hidden ? openSpacingMenu() : closeSpacingMenu()));
+
+for (const b of spacingMenu.querySelectorAll(".spacing-line")) {
+  onButton(b, () => {
+    runToolbarEdit((a, x, c, d) => doc.setLineSpacing(a, x, c, d, Number(b.dataset.percent)));
+    reflectSpacingMenu();
+  });
+}
+
+/** Commit a space-before/after field: blank clears (back to style default),
+ *  otherwise points → twips (clamped ≥ 0). Ignores non-numeric input. */
+function applySpace(input, setter) {
+  const raw = input.value.trim();
+  if (raw !== "" && !Number.isFinite(Number(raw))) return;
+  const twips = raw === "" ? -1 : Math.max(0, Math.round(Number(raw) * TWIPS_PER_POINT));
+  runToolbarEdit((a, x, c, d) => setter(a, x, c, d, twips));
+}
+spaceBeforeInput.addEventListener("change", () =>
+  applySpace(spaceBeforeInput, (a, b, c, d, t) => doc.setSpaceBefore(a, b, c, d, t)),
+);
+spaceAfterInput.addEventListener("change", () =>
+  applySpace(spaceAfterInput, (a, b, c, d, t) => doc.setSpaceAfter(a, b, c, d, t)),
+);
+
+// Keep clicks inside the menu from stealing selection focus (but let inputs focus).
+spacingMenu.addEventListener("mousedown", (e) => {
+  if (e.target.tagName !== "INPUT") e.preventDefault();
+});
+document.addEventListener("mousedown", (e) => {
+  if (
+    !spacingMenu.hidden &&
+    !spacingMenu.contains(e.target) &&
+    e.target !== spacingBtn &&
+    !spacingBtn.contains(e.target)
+  ) {
+    closeSpacingMenu();
+  }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !spacingMenu.hidden) closeSpacingMenu();
 });
 highlightSel.addEventListener("change", () => {
   const name = highlightSel.value;
