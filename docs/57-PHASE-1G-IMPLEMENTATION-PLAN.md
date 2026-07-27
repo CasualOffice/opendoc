@@ -38,24 +38,43 @@ rebuild them.
 crates/
   casual-doc-wasm/         # NEW: wasm-bindgen façade over sdk + layout + render
     src/lib.rs             #   the exported surface (§4)
-    src/convert.rs         #   Rust types ↔ serde/JS payloads (§5)
+    src/convert.rs         #   Rust types ↔ serde/JS payloads (§5) — later milestone
     Cargo.toml             #   crate-type = ["cdylib", "rlib"]; wasm-bindgen dep
-app/
-  frontend/                # NEW: framework-agnostic TS surface (Vite)
-    src/core/              #   WASM transport, session facade
-    src/render/            #   canvas content layer + virtualization
-    src/overlay/           #   transparent text layer + selection/caret overlay
-    src/input/             #   keyboard/pointer/IME (editor phase)
-    src/chrome/            #   toolbar, dialogs
-  desktop/                 # NEW: Tauri shell (native host services)
+webapp/                    # NEW: browser-first surface (no framework; static)
+    index.html             #   upload/drop a .docx → canvas viewer
+    src/                   #   core (WASM transport), render, overlay, input, chrome
+    build.sh               #   wasm-pack build --target web → webapp/pkg
+    pkg/                   #   generated wasm-pack output (git-ignored)
+  desktop/                 # LATER (P1G-004): Tauri shell (native host services)
     src-tauri/             #   commands: open/save file, enumerate OS fonts
 packages/
-  sdk/                     # NEW (built artifact): self-hostable embed bundle
+  sdk/                     # LATER (built artifact): self-hostable embed bundle
 ```
+
+> **Direction (decided during P1G-001).** The interactive layer is **web-first**:
+> the whole viewer→editor is built and fine-tuned in the browser (`webapp/`),
+> deployable as static files to **GitHub Pages** as a developer **test harness**
+> (`webapp/README.md`). The engine ships **OSS-first**, ahead of any product. The
+> **Tauri desktop shell is deferred** (P1G-004) — it exists only for what a browser
+> tab cannot do (direct local-file open, OS-font enumeration); the browser gets
+> file upload + network-fetched fonts instead. This replaces the earlier
+> `app/frontend` (Vite) sketch above with a dependency-light `webapp/` — reflowed
+> here rather than left to drift.
 
 Naming follows doc 00 (`casual_doc_*`). `casual-doc-wasm` builds `cdylib` for the
 web/webview target and `rlib` so a native desktop backend can link the same façade
 (the doc 56 native escape hatch) without WASM.
+
+> **P1G-001 as built.** The façade exposes `open(bytes)`, the `pageCount` getter,
+> `pageSize(i)` (per-section page box), and `renderPage(i, dpi) -> PageBitmap`
+> (`{ widthPx, heightPx, rgba: Uint8ClampedArray }`) — the §4.1–4.3 subset — over
+> the same `import_package → paginate_document → compose_page → render` path the
+> native renderer uses. Fallible engine work lives in `_inner` methods returning
+> `Result<_, String>`; the `#[wasm_bindgen]` wrappers convert to a thrown JS
+> `Error` at the boundary (so native `cargo test` runs the engine without a JS
+> host). `webapp/` is the harness; CI is `.github/workflows/pages.yml`. Deferred:
+> structured `SdkError` code/severity on errors (§5.5) and §4.4+ (text layer,
+> hit-testing, editing).
 
 ## 3. Units and coordinate model (normative)
 

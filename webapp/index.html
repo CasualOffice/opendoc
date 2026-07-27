@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenDoc — WASM viewer</title>
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <div class="brand">
+        OpenDoc <span class="tag">WASM viewer</span>
+        <span class="testing" title="Developer test harness — not a product or supported viewer.">testing only</span>
+      </div>
+      <div class="controls">
+        <label class="file">
+          <input id="file" type="file" accept=".docx" hidden />
+          Open .docx
+        </label>
+        <label class="zoom">
+          Zoom
+          <select id="zoom">
+            <option value="0.75">75%</option>
+            <option value="1" selected>100%</option>
+            <option value="1.25">125%</option>
+            <option value="1.5">150%</option>
+            <option value="2">200%</option>
+          </select>
+        </label>
+        <span id="status" class="status">Loading engine…</span>
+      </div>
+    </header>
+
+    <main id="viewport" class="viewport">
+      <div id="drop" class="drop">
+        <p><strong>Drop a .docx here</strong> or use <em>Open .docx</em>.</p>
+        <p class="muted">
+          Rendered entirely in your browser by the OpenDoc engine compiled to
+          WebAssembly. Nothing is uploaded to a server.
+        </p>
+      </div>
+      <div id="pages" class="pages"></div>
+    </main>
+
+    <footer class="footer">
+      Developer test harness — renders in-browser via the OpenDoc engine (WASM).
+      Not a product or supported viewer; no files leave your browser.
+    </footer>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>

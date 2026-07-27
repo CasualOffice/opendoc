@@ -1,0 +1,77 @@
+# Builds the WASM test viewer and deploys it to GitHub Pages.
+#
+# NOTE: the published site is a DEVELOPER TEST HARNESS ONLY (see webapp/README.md)
+# — a fast in-browser way to eyeball the engine's rendering/pagination on real
+# .docx files. It is not a product or a supported viewer.
+name: Deploy WASM test viewer (Pages)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "webapp/**"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time; a newer push supersedes an in-flight run.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # rust-toolchain.toml pins Rust 1.96.0 + the wasm32-unknown-unknown target;
+      # rustup honors it on the first cargo invocation. Warm it explicitly.
+      - name: Set up Rust toolchain
+        run: rustup show
+
+      - name: Cache cargo + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: pages-wasm-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: pages-wasm-${{ runner.os }}-
+
+      - name: Install wasm-pack
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+
+      - name: Build the WASM bridge
+        run: |
+          wasm-pack build crates/casual-doc-wasm \
+            --target web \
+            --out-dir "$GITHUB_WORKSPACE/webapp/pkg" \
+            --out-name casual_doc_wasm
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: webapp
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
