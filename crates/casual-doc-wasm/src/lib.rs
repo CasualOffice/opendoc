@@ -1053,6 +1053,39 @@ impl WasmDocument {
             .is_some_and(|nid| locate_table_row(&self.document, nid).is_some())
     }
 
+    /// The active cell's border box as a flat `[page, x, y, w, h]` in page-local
+    /// twips (empty when the caret is not in a table) — the geometry the frontend
+    /// draws the active-cell highlight from.
+    #[wasm_bindgen(js_name = cellRect)]
+    #[must_use]
+    pub fn cell_rect(&self, node: &str) -> Vec<i32> {
+        let Ok(nid) = NodeId::from_str(node) else {
+            return Vec::new();
+        };
+        LayoutSnapshot::new(&self.layout)
+            .cell_rect(nid)
+            .map(|(page, rect)| flat_rect(page, rect).to_vec())
+            .unwrap_or_default()
+    }
+
+    /// Document statistics for the status footer: word count (whitespace-delimited
+    /// tokens across every paragraph, body + table cells + content controls),
+    /// paragraph count, and page count.
+    #[wasm_bindgen(js_name = documentStats)]
+    #[must_use]
+    pub fn document_stats(&self) -> DocStats {
+        let mut nodes = Vec::new();
+        collect_block_text(self.document.body(), &mut nodes);
+        DocStats {
+            words: nodes
+                .iter()
+                .map(|(_, t)| t.split_whitespace().count() as u32)
+                .sum(),
+            paragraphs: nodes.len() as u32,
+            pages: self.layout.page_count() as u32,
+        }
+    }
+
     /// Sets the paragraph background shading (`w:shd` fill) over the selection to
     /// an RGB, or clears it when `clear` is true.
     #[wasm_bindgen(js_name = setParagraphShading)]
@@ -2378,6 +2411,39 @@ impl Format {
     #[must_use]
     pub fn strike(&self) -> bool {
         self.strike
+    }
+}
+
+/// Document statistics for the status footer.
+#[wasm_bindgen]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DocStats {
+    words: u32,
+    paragraphs: u32,
+    pages: u32,
+}
+
+#[wasm_bindgen]
+impl DocStats {
+    /// Whitespace-delimited word count across every paragraph.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn words(&self) -> u32 {
+        self.words
+    }
+
+    /// Paragraph count (body + table cells + content controls).
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn paragraphs(&self) -> u32 {
+        self.paragraphs
+    }
+
+    /// Page count.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn pages(&self) -> u32 {
+        self.pages
     }
 }
 

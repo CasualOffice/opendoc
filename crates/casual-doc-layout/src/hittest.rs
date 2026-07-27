@@ -23,6 +23,8 @@
 //!
 //! From those three facts every position mapping below follows.
 
+use casual_doc_model::NodeId;
+
 use crate::block::BlockFragment;
 use crate::model::{ModelPos, ModelRange};
 use crate::page::PaginatedLayout;
@@ -232,6 +234,27 @@ impl<'a> LayoutSnapshot<'a> {
         Some((lb.page, rect))
     }
 
+    /// The page-local border box of the table cell that (recursively) contains
+    /// paragraph `node` — the innermost cell for a nested table — plus its 1-based
+    /// page. `None` when the node is not inside a table cell. Drives the editor's
+    /// active-cell highlight ("you are editing this cell").
+    #[must_use]
+    pub fn cell_rect(&self, node: NodeId) -> Option<(u32, Rect)> {
+        for page in &self.layout.pages {
+            for placed in &page.placed {
+                if let Some(rect) = find_cell_rect(
+                    &placed.fragment,
+                    placed.rect.origin.x,
+                    placed.rect.origin.y,
+                    node,
+                ) {
+                    return Some((page.number, rect));
+                }
+            }
+        }
+        None
+    }
+
     /// One rectangle per line-fragment the `range` covers, in page-local twips,
     /// paired with the 1-based page each sits on.
     ///
@@ -340,6 +363,43 @@ impl<'a> LayoutSnapshot<'a> {
         }
         out
     }
+}
+
+/// The page-local border box of the innermost table cell containing paragraph
+/// `node`, if `fragment` (placed at `left`, `top`) is or holds the table row that
+/// owns it. Mirrors `collect_fragment`'s cell geometry (cell x-box = `cell.x` +
+/// `cell.width`, spanning the row/merge height); nested tables recurse first so the
+/// innermost cell wins.
+fn find_cell_rect(fragment: &BlockFragment, left: Twip, top: Twip, node: NodeId) -> Option<Rect> {
+    let BlockFragment::TableRow { cells, .. } = fragment else {
+        return None;
+    };
+    let row_height = fragment.height();
+    for cell in cells {
+        let cell_x = left + cell.x;
+        // Recurse into this cell's content (a nested table) first — a hit there
+        // belongs to the inner cell, not this outer one.
+        let content_left = cell_x + cell.margins.start;
+        let mut content_top = top + cell.content_y_offset(cell.box_height(row_height));
+        for block in &cell.blocks {
+            if let Some(rect) = find_cell_rect(block, content_left, content_top, node) {
+                return Some(rect);
+            }
+            content_top = content_top + block.height();
+        }
+        // Else, a paragraph directly in this cell → this cell's box.
+        if cell
+            .blocks
+            .iter()
+            .any(|b| matches!(b, BlockFragment::Paragraph { id, .. } if *id == node))
+        {
+            return Some(Rect::new(
+                Point::new(cell_x, top),
+                Size::new(cell.width, cell.box_height(row_height)),
+            ));
+        }
+    }
+    None
 }
 
 /// Appends `fragment`'s lines (recursing into table cells) to `out`, located at
