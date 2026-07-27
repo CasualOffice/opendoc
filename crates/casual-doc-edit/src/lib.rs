@@ -19,8 +19,8 @@
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     BlockNode, Color, Document, FontName, FontRef, GridColumn, HighlightColor, InlineNode,
-    Paragraph, ParagraphProperties, RgbColor, Run, RunProperties, Table, TableCell, TableRow,
-    VerticalAlignment,
+    Paragraph, ParagraphProperties, RgbColor, Run, RunProperties, Table, TableCell,
+    TableCellProperties, TableProperties, TableRow, VerticalAlignment,
 };
 
 /// A run-property change to apply over a range: each `Some(_)` field sets that
@@ -230,6 +230,23 @@ pub enum Operation {
         index: u32,
         /// The table to insert (its ids must be those the inverse recorded).
         table: Box<Table>,
+    },
+    /// Replace a table cell's properties (shading, borders, vertical alignment,
+    /// margins, span/merge, …). Its own inverse (carrying the previous properties).
+    /// Boxed to keep the enum small.
+    SetTableCellProperties {
+        /// The cell whose properties are replaced.
+        cell: NodeId,
+        /// The properties to install.
+        properties: Box<TableCellProperties>,
+    },
+    /// Replace a table's properties (borders, shading, alignment, indent, …). Its own
+    /// inverse. Boxed to keep the enum small.
+    SetTableProperties {
+        /// The table whose properties are replaced.
+        table: NodeId,
+        /// The properties to install.
+        properties: Box<TableProperties>,
     },
 }
 
@@ -493,6 +510,22 @@ pub fn apply(
             blocks.insert(idx, BlockNode::Table((**table).clone()));
             Ok(Operation::DeleteTable { table: table.id })
         }
+        Operation::SetTableCellProperties { cell, properties } => {
+            let c = find_cell_mut(doc.body_mut(), *cell).ok_or(EditError::NodeNotFound)?;
+            let previous = std::mem::replace(&mut c.properties, (**properties).clone());
+            Ok(Operation::SetTableCellProperties {
+                cell: *cell,
+                properties: Box::new(previous),
+            })
+        }
+        Operation::SetTableProperties { table, properties } => {
+            let t = find_table_mut(doc.body_mut(), *table).ok_or(EditError::NodeNotFound)?;
+            let previous = std::mem::replace(&mut t.properties, (**properties).clone());
+            Ok(Operation::SetTableProperties {
+                table: *table,
+                properties: Box::new(previous),
+            })
+        }
     }
 }
 
@@ -635,6 +668,114 @@ fn find_table_mut(blocks: &mut [BlockNode], table: NodeId) -> Option<&mut Table>
         }
     }
     None
+}
+
+/// The cell with id `cell` (mutable), searching the body recursively (including
+/// nested tables). Two passes so a returned borrow never collides with the
+/// recursion, matching [`find_table_mut`].
+fn find_cell_mut(blocks: &mut [BlockNode], cell: NodeId) -> Option<&mut TableCell> {
+    // First pass: a direct cell match at any table in these blocks.
+    let direct = blocks.iter().any(|b| match b {
+        BlockNode::Table(t) => t.rows.iter().any(|r| r.cells.iter().any(|c| c.id == cell)),
+        _ => false,
+    });
+    if direct {
+        return blocks.iter_mut().find_map(|b| match b {
+            BlockNode::Table(t) => t
+                .rows
+                .iter_mut()
+                .find_map(|r| r.cells.iter_mut().find(|c| c.id == cell)),
+            _ => None,
+        });
+    }
+    // Second pass: recurse into nested cells / content controls.
+    for block in blocks.iter_mut() {
+        match block {
+            BlockNode::Table(t) => {
+                for row in &mut t.rows {
+                    for c in &mut row.cells {
+                        if let Some(found) = find_cell_mut(&mut c.blocks, cell) {
+                            return Some(found);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(found) = find_cell_mut(&mut sdt.blocks, cell) {
+                    return Some(found);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The id of the table cell that (recursively) contains paragraph `node`, and the id
+/// of the innermost table it belongs to — what a host passes to
+/// [`Operation::SetTableCellProperties`] / [`Operation::SetTableProperties`]. `None`
+/// if the node is not inside a table cell.
+#[must_use]
+pub fn locate_cell(document: &Document, node: NodeId) -> Option<(NodeId, NodeId)> {
+    fn walk(blocks: &[BlockNode], node: NodeId) -> Option<(NodeId, NodeId)> {
+        for block in blocks {
+            match block {
+                BlockNode::Table(table) => {
+                    for row in &table.rows {
+                        for cell in &row.cells {
+                            if block_contains(&cell.blocks, node) {
+                                return Some((table.id, cell.id));
+                            }
+                            if let Some(found) = walk(&cell.blocks, node) {
+                                return Some(found);
+                            }
+                        }
+                    }
+                }
+                BlockNode::Sdt(sdt) => {
+                    if let Some(found) = walk(&sdt.blocks, node) {
+                        return Some(found);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+    walk(document.body(), node)
+}
+
+/// A clone of the cell `cell`'s current properties (read-only), searching the body
+/// recursively — what a host reads before a modify-and-`SetTableCellProperties`
+/// round-trip. `None` if no such cell exists.
+#[must_use]
+pub fn cell_properties(document: &Document, cell: NodeId) -> Option<TableCellProperties> {
+    fn walk(blocks: &[BlockNode], cell: NodeId) -> Option<TableCellProperties> {
+        for block in blocks {
+            match block {
+                BlockNode::Table(table) => {
+                    for row in &table.rows {
+                        for c in &row.cells {
+                            if c.id == cell {
+                                return Some(c.properties.clone());
+                            }
+                            if let Some(found) = walk(&c.blocks, cell) {
+                                return Some(found);
+                            }
+                        }
+                    }
+                }
+                BlockNode::Sdt(sdt) => {
+                    if let Some(found) = walk(&sdt.blocks, cell) {
+                        return Some(found);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+    walk(document.body(), cell)
 }
 
 /// The table with id `table` (read-only), searching the body recursively — a host

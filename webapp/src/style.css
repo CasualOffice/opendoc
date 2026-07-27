@@ -514,6 +514,11 @@ input {
   border-color: var(--accent);
 }
 
+.chip-row {
+  display: flex;
+  gap: 4px;
+}
+
 /* Border presets: a row of buttons each showing a mini box with the relevant
    edge(s) emphasized (CSS-drawn — no icon assets). */
 .border-row {
@@ -881,8 +886,8 @@ input {
    First-line points down from the top; left/right point up from the bottom. */
 .ruler-marker {
   position: absolute;
-  width: 11px;
-  height: 13px;
+  width: 9px;
+  height: 12px;
   transform: translateX(-50%);
   background: var(--accent);
   cursor: ew-resize;
