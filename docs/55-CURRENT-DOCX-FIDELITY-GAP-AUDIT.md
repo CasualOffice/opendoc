@@ -2,7 +2,12 @@
 
 **Status:** Current-state audit; implementation designs remain separate.
 **Audit date:** 2026-07-27
-**Code baseline:** `main@a5bfae7` (through merged PR #161)
+**Code baseline:** `main@cde11ff` (through merged PR #169)
+
+The exact real-document validation and updated core-engine ordering are recorded
+in `60-FIDELITY-CORPUS-RENDERING-AUDIT.md`. That pass adds mixed page-surface
+geometry, true inline boxes, run character scale, and collision containment to
+the register below.
 
 ## Purpose
 
@@ -62,17 +67,19 @@ The following are materially implemented and should not be listed as open gaps:
   visibility, caps, super/subscript, highlight, and common decorations;
 - line shaping, pagination, keep/widow/orphan controls, incremental page reuse,
   hit testing, and CPU glyph paint;
-- inline and floating PNG/JPEG pictures with z-order, alt text on floats, group
-  transforms, and nested float discovery;
+- PNG/JPEG picture paint, floating-object z-order, alt text on floats, group
+  transforms, nested float discovery, and true same-line inline-picture boxes;
 - body, table-cell, header, footer, text-box, and content-control block flow
   through shared recursive paths;
 - local paragraph/line-relative `topAndBottom` float barriers, including nested
-  table cells and repeated running bands;
+  table cells and repeated running bands, plus bounded left/right square-family
+  line exclusion for explicit paragraph/line-relative floats;
 - table grid/width solving, spans, common cell margins, vertical alignment,
   shading, common segmented borders, row splitting, repeated page headers,
   vertical merges, and exact-height clipping;
 - multi-section and multi-column first-cut pagination, explicit unequal column
-  geometry, and separator rules;
+  geometry, separator rules, page-local physical size, and per-section running
+  content selection/reservation;
 - DrawingML text-box extent, fill, outline, insets, vertical anchor, overflow
   policy, shape autofit, and normal-autofit scaling;
 - VML pictures, common shapes, lines, groups, horizontal rules, positioning
@@ -80,24 +87,25 @@ The following are materially implemented and should not be listed as open gaps:
   bounded safe body-float policy from doc 54;
 - `PAGE` and `NUMPAGES` recomputation in body content, headers/footers, inline
   text boxes, and anchored text boxes;
+- positional tabs (including TOC dot leaders), literal tabs in `w:t`, formatted
+  symbols, run character scale, and exact-line paint containment;
 - theme color resolution, system/host font fallback, and CJK metric/advance
   corrections on the supported host path;
 - page background paint when the host creates the surface with the document
   background.
 
 These capabilities are a strong base, but several remaining gaps are structural:
-the model is broader than layout consumption, and some document-wide facilities
-are still implemented from the first section only.
+the model is broader than layout consumption, and some pagination facilities
+still use bounded approximations.
 
 ## Priority summary
 
 | Priority | Gap | User-visible consequence | Primary evidence |
 | --- | --- | --- | --- |
-| P0 | Modeled inline leaves are omitted by layout | Notes, object previews, math fallback, special hyphens, and positional tabs can be invisible | `flow.rs::collect_items` catch-all |
+| P0 | Modeled inline leaves are omitted by layout | Notes, object previews, math fallback, and special hyphens can be invisible | `flow.rs::collect_items` catch-all |
 | P0 | `altChunk` occupies no layout space | Referenced HTML/RTF/text/sub-document content is preserved but absent from render | `flow.rs` `BlockNode::AltChunk(_) => {}` |
-| P0 | Running content is built from the first section only | Later-section headers/footers, variants, widths, and band heights are wrong | `document_layout.rs::build_running_content` |
 | P0 | Footnote/endnote placement is absent | Reference marks and note bodies do not render or reserve page space | `paginate.rs::build_page`; `Page::footnotes` |
-| P1 | Square/tight/through float exclusion is absent | Body and running text overprints or ignores side-wrapped objects | `flow.rs::float_barrier_item` |
+| P1 | Square-family exclusion is only local/bounded | Cross-paragraph, page-relative, contour, and overlapping-float cases can still diverge | `flow.rs::shape_with_float_exclusions` |
 | P1 | Table style cascade and advanced table geometry are not consumed | Styled tables lose conditional fills/borders/fonts; floating/bidi/spaced tables become inline approximations | `cascade.rs`; `flow.rs::flow_table` |
 | P1 | Paragraph base direction and per-script run slots are not selected | Arabic/Hebrew/mixed-script layout and East Asian/complex-script typography can use wrong direction, face, weight, or size | `flow.rs::line_constraints`, `requested_family` |
 | P1 | Inline VML images discard their CSS size | A valid inline VML image can disappear because its model extent is `None` | `body.rs::vml_segment`; `flow.rs::image_item` |
@@ -122,7 +130,6 @@ catch-all silently ignores several valid `InlineNode` variants:
 - `NoteReference` — the reference glyph is absent, before considering note-body
   pagination;
 - `NoBreakHyphen` and `SoftHyphen` — visible/break semantics are absent;
-- `PositionalTab` — the explicitly modeled absolute tab is absent;
 - comment, bookmark, move, and range markers — zero-width markers may correctly
   remain non-painting, but comments additionally lack any visible review
   affordance.
@@ -139,7 +146,7 @@ relinked, but it contributes zero height and no fallback representation.
 **Required direction:** add small leaf-specific slices, never a generic
 “stringify every unknown node” fallback. At minimum:
 
-1. special hyphens and positional tabs;
+1. special hyphens;
 2. math text fallback with a compatibility marker;
 3. embedded-object preview through the existing image pipeline, with a visible
    bounded placeholder when no preview is available;
@@ -170,21 +177,20 @@ must:
 This is a fixed-point pagination feature and should not be mixed into the small
 inline-leaf PR.
 
-### 3. Float wrapping remains vertically local
+### 3. Float wrapping remains bounded and paragraph-local
 
 The model carries `None`, `Square`, `Tight`, `Through`, and `TopAndBottom` plus
-four wrap distances. The implemented exclusion path,
-`flow.rs::float_barrier_item`, accepts only `TopAndBottom`, only
-paragraph/line-relative vertical anchors, and only explicit offsets. It inserts
-one vertical barrier into the anchor paragraph.
+four wrap distances. `TopAndBottom` inserts a local vertical barrier.
+Paragraph/line-relative left/right `Square`, `Tight`, and `Through` floats with
+explicit geometry use a resumable line breaker that narrows only intersecting
+lines and restores the full measure below the object. Tight/through currently
+use the square bounding box rather than a contour.
 
 Consequences:
 
-- square wrapping does not shorten individual lines around the object's
-  bounding box;
-- tight/through wrapping does not use a contour;
+- exclusions do not continue into later paragraphs;
+- tight/through wrapping does not use an authored contour;
 - page/margin/alignment-relative objects do not push later paragraphs;
-- horizontal wrap distances do not affect side exclusion;
 - multiple overlapping side floats have no exclusion union;
 - the current VML body safety policy must keep unsupported side/page cases
   inline to avoid overprint.
@@ -193,42 +199,25 @@ This affects body content, nested table cells, text boxes, headers, and footers;
 the shared flow path propagates both the existing local support and the
 remaining limitation.
 
-**Next bounded design:** implement square-wrap bounding-box exclusion first.
-Represent per-line available intervals, apply left/right distances, and prove a
-bounded page-coupled convergence rule before enabling page-relative body VML
-floats. Tight/through contours are a later extension of the same interval API.
+**Next bounded design:** extend the existing line-interval seam with
+cross-paragraph lifetime and a deterministic page-coupled convergence rule
+before enabling page-relative body VML floats. Multiple-float interval unions
+and tight/through contours follow.
 
-### 4. Headers and footers are not truly per-section
+### 4. Headers and footers are section-scoped
 
-The running-content implementation is complete for one section's default,
-first, and even variants, including nested tables/images/text boxes, final page
-number selection, and repeated floats. The document driver, however, calls
-`build_running_content` with `defs.sections.first()`, measures those variants
-once, and applies the resulting band heights to every section.
+The document driver now builds a section-keyed running-content plan. Default,
+first, and even references inherit across sections as WordprocessingML
+specifies; each section is measured at its own content width, reserves its own
+header/footer bands, and selects `titlePg` from section-local first-page state
+while retaining global page parity.
 
-Confirmed consequences:
+Remaining approximations:
 
-- later-section header/footer references are not selected;
-- later-section `titlePg` is not independently applied;
-- “first page” is tested as document page number `1`, not the first page of each
-  section;
-- later sections with different page widths flow running content at the first
-  section's content width;
-- later sections reuse the first section's header/footer reservation;
 - a selected band taller than its reservation overflows; Word grows/reserves the
   band;
-- a positioned later-section header/footer float can use correct section
-  geometry while its source running-content definition is still the wrong one.
-
-The last point is important: doc 53 fixed the frame geometry of a float once its
-source is selected; it did not implement per-section source selection or
-measurement.
-
-**Required direction:** create a section-keyed running-content plan containing
-flowed variants, band measurements, title-page state, and section-local page
-index. Pagination must consume the correct reservation for each section, and
-the post-pass must select with both global page parity and section-first-page
-state. Continuous sections sharing a page need a documented ownership rule.
+- continuous sections sharing a physical page use one page owner for running
+  furniture; more exact mid-page ownership is still a compatibility choice.
 
 ### 5. Sections and columns retain known approximations
 
@@ -247,7 +236,8 @@ Additional section gaps:
 - `nextColumn` is treated like a continuous section rather than advancing to the
   next available column;
 - incremental repagination remains the single-column path;
-- per-section headers/footers are the separate gap above.
+- per-section header/footer band growth remains the separate approximation
+  above.
 
 ### 6. Table layout consumes only a direct-property subset
 
@@ -300,6 +290,14 @@ Likewise, shaped weight/style/size use the Latin `bold`, `italic`, and
 `size_half_points`, not `bold_complex`, `italic_complex`, and
 `size_complex_half_points`.
 
+Run character scaling (`w:w`) is modeled, round-tripped, and consumed by shaping
+and paint. Exact-height lines clip escaped ink and re-anchor each glyph baseline
+inside the authored box. For CJK/scaled runs, sub-single `auto` spacing retains
+at least a one-em pitch to prevent the observed line-on-line overprint. These
+are containment rules, not a claim that every producer's CJK grid and line
+metrics are reproduced exactly; doc 60 records the remaining SDS pagination
+delta.
+
 This means system fallback may find a glyph-covering face while still ignoring
 the producer's intended per-script face and complex-script metrics.
 
@@ -313,6 +311,13 @@ punctuation overflow, grid snapping, and vertical/text alignment require
 separate model-or-consumption review before Word-grade CJK/RTL can be claimed.
 
 ### 8. Images have size, format, and transform gaps
+
+The normal DrawingML inline-image path paints positive-extent PNG/JPEG content
+as a true in-flow box in the Parley stream. Text and images share advance,
+wrapping, ascent/descent, line height, paint position, and hit-test geometry,
+including table-row height. A conservative split path remains for unsupported
+mixed field/tab/object combinations, and intrinsic table sizing still needs to
+account for all atomic boxes.
 
 The normal inline-image path requires a media entry and a positive `Extent`.
 `image_item` returns `None` otherwise. The VML importer currently maps a genuinely
@@ -364,9 +369,11 @@ is a passthrough that displays the producer's cached result; a missing cache
 therefore displays nothing. This is safe as a rendering fallback but is not a
 field engine.
 
-Fielded and tabbed paragraphs are laid out as one line per hard-break block and
-are not soft-wrapped. A long field result, TOC-like row, or mixed field/text
-paragraph can overrun the available width.
+Fielded paragraphs are still laid out as one line per hard-break block. Tabbed
+rows remain single-line when they fit, while an overflowing trailing value now
+soft-wraps at its resolved tab column with the continuation held to that hanging
+column. Long field results and mixed field/text paragraphs can still overrun the
+available width.
 
 Future evaluation must be policy-driven and deterministic. Dates, links,
 references, formulas, document properties, and sequence fields should not read
@@ -452,16 +459,16 @@ support.
 | --- | --- | --- | --- | --- |
 | Paragraph/run core flow | Yes | Yes | Yes | Same shared block/inline paths |
 | Direct table layout | Yes | Yes | Yes | Table-style cascade and advanced table props absent |
-| PNG/JPEG inline picture with extent | Yes | Yes | Yes | Other formats and extent-less inline VML omitted |
-| Positioned float paint/z-order | Yes | Yes | Yes | Source selection is still first-section-only for running content |
+| PNG/JPEG inline picture with extent | Yes | Yes | Yes | True in-flow box; other formats and extent-less inline VML omitted |
+| Positioned float paint/z-order | Yes | Yes | Yes | Running-content source and geometry are section-scoped |
 | `topAndBottom` local reflow | Yes | Yes | Yes | Paragraph/line-relative explicit-offset envelope only |
-| Square/tight/through reflow | No | No | No | Metadata preserved, no exclusion geometry |
+| Square/tight/through reflow | Safe subset | Safe subset | Safe subset | Local explicit paragraph/line-relative side exclusion; square bounds only |
 | DrawingML text-box body properties | Yes | Yes | Yes | Rotation/vertical writing/ellipsis/anchorCtr absent |
 | VML text-box position/body properties | Safe subset | Yes | Safe subset | Unsafe side/page body cases remain inline |
 | `PAGE`/`NUMPAGES` | Yes | Yes | Yes, including anchored boxes | Other fields use cached result |
-| Per-section running-content selection | N/A | No | N/A | First section measured/selected globally |
+| Per-section running-content selection | N/A | Yes | N/A | Continuous-page ownership and band growth remain approximate |
 | Notes | No | No | No | References and bodies not laid out |
-| Embedded objects/math/ptab/special hyphens | No | No | No | Modeled/preserved but omitted by shared inline flow |
+| Embedded objects/math/special hyphens | No | No | No | Modeled/preserved but omitted by shared inline flow |
 | Review markup presentation | No | No | No | Wrappers transparent; no view policy |
 
 ## Recommended implementation sequence
@@ -469,38 +476,40 @@ support.
 Each item is intentionally a separate reviewable design/PR unless its design
 proves a smaller safe combination.
 
-1. **Inline visibility floor**
-   - render no-break/soft hyphens and positional tabs;
-   - render OMML text fallback;
-   - render embedded-object previews/placeholders;
+1. **Corpus pagination convergence**
+   - implement deterministic final-page column balancing and true per-column
+     reflow before tuning line metrics;
+   - close table style/row-height gaps that account for the Medical form's
+     remaining page-distribution delta;
+   - keep per-document visual/page-placement evidence so a matching total alone
+     is never accepted as proof.
+2. **Inline visibility floor**
+   - render no-break/soft hyphens;
+   - render OMML text fallback and embedded-object previews/placeholders;
    - add explicit compatibility output for display fallbacks.
-2. **Inline VML image extent**
+3. **Inline VML image extent**
    - bridge parsed CSS width/height into `Drawing::extent`;
    - cover body, header, footer, and nested-cell inline images.
-3. **Per-section headers and footers**
-   - section-keyed definitions, widths, band measurements, first-page state,
-     parity selection, and continuous-section ownership.
-4. **Square float exclusion**
-   - bounding-box line intervals first;
-   - page-coupled convergence and cross-paragraph exclusion;
+4. **Extend square float exclusion**
+   - add cross-paragraph lifetime, multiple-float interval union, and
+     page-coupled convergence;
    - only then enable currently unsafe VML side/page body floats.
 5. **Table style cascade**
    - table `basedOn`, look flags, conditional regions, and cell/paragraph/run
      overlays;
-   - then intrinsic inline-box sizing;
-   - then spacing/bidi/alignment; floating tables last.
+   - then cell spacing/bidi/alignment; floating tables last.
 6. **Footnote/endnote pagination**
    - reference marks, note band, fixed point, continuation, endnote placement,
      and per-section policy.
 7. **RTL/per-script typography**
-   - paragraph base direction, per-script font slots, complex-script
-     bold/italic/size, then language-specific line rules.
+    - paragraph base direction, per-script font slots, complex-script
+      bold/italic/size, then language-specific line rules.
 8. **Geometry and media**
-   - ellipse/round-rect paint, picture crop/transform, safe additional raster
-     formats, then vector metafile/SVG policy and generic VML paths.
+    - ellipse/round-rect paint, picture crop/transform, safe additional raster
+      formats, then vector metafile/SVG policy and generic VML paths.
 9. **Review and field view policies**
-   - immutable revision/comment view;
-   - deterministic host-provided field evaluation.
+    - immutable revision/comment view;
+    - deterministic host-provided field evaluation.
 10. **Page furniture and long tail**
     - parity section breaks, next-column semantics, balancing, page borders,
       line numbers, vertical page alignment, and remaining numbering rules.
