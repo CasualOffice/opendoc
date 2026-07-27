@@ -30,7 +30,7 @@ use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_layout::units::{Point, Rect, Size, Twip};
 use casual_doc_model::v1::{
     Alignment, BlockNode, Document, HighlightColor, Indentation, ParagraphProperties, RgbColor,
-    VerticalAlignment,
+    StyleId, StyleKind, VerticalAlignment,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
@@ -541,7 +541,7 @@ impl WasmDocument {
                     start: Pos::new(node, s),
                     end: Pos::new(node, e),
                 },
-                delta,
+                delta: delta.clone(),
             })
             .collect();
         if ops.is_empty() {
@@ -802,6 +802,86 @@ impl WasmDocument {
             _ => "start",
         }
         .into()
+    }
+
+    /// Sets the font family over the selection (`w:rFonts`).
+    #[wasm_bindgen(js_name = setFont)]
+    pub fn set_font(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        family: String,
+    ) -> Result<EditResult, JsValue> {
+        if family.is_empty() {
+            return Err(to_js("empty font family".into()));
+        }
+        self.apply_run_format(
+            start_node,
+            start_offset,
+            end_node,
+            end_offset,
+            FormatDelta {
+                font: Some(family),
+                ..FormatDelta::default()
+            },
+        )
+    }
+
+    /// Sets the paragraph style (`w:pStyle`) over the selection's paragraphs to the
+    /// style with the given name (e.g. `"Heading 1"`, `"Title"`, `"Normal"`), or
+    /// clears it when `style_name` is empty. Throws if no such paragraph style
+    /// exists in the document.
+    #[wasm_bindgen(js_name = setParagraphStyle)]
+    pub fn set_paragraph_style(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        style_name: &str,
+    ) -> Result<EditResult, JsValue> {
+        let style_ref = self.style_id_by_name(style_name);
+        if !style_name.is_empty() && style_ref.is_none() {
+            return Err(to_js(format!("no paragraph style named {style_name:?}")));
+        }
+        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
+            p.style_ref = style_ref;
+        })
+    }
+
+    /// The paragraph style names defined in the document (for a style dropdown),
+    /// sorted and de-duplicated.
+    #[wasm_bindgen(js_name = listStyles)]
+    #[must_use]
+    pub fn list_styles(&self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .document
+            .definitions()
+            .styles
+            .iter()
+            .filter(|(_, style)| style.kind == StyleKind::Paragraph)
+            .filter_map(|(_, style)| style.name.clone())
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    /// The name of the paragraph style applied at `node` (empty if none) — for
+    /// reflecting the current style in a dropdown.
+    #[wasm_bindgen(js_name = paragraphStyleAt)]
+    #[must_use]
+    pub fn paragraph_style_at(&self, node: &str) -> String {
+        let Ok(nid) = NodeId::from_str(node) else {
+            return String::new();
+        };
+        paragraph_properties(&self.document, nid)
+            .and_then(|p| p.style_ref)
+            .and_then(|id| self.document.definitions().styles.get(&id).cloned())
+            .and_then(|style| style.name)
+            .unwrap_or_default()
     }
 
     /// Undoes the last user action (one or many ops), returning the restored
@@ -1153,7 +1233,7 @@ impl WasmDocument {
                     start: Pos::new(node, s),
                     end: Pos::new(node, e),
                 },
-                delta,
+                delta: delta.clone(),
             })
             .collect();
         if ops.is_empty() {
@@ -1189,6 +1269,21 @@ impl WasmDocument {
             return Err(to_js("no paragraph in selection".into()));
         }
         self.apply_action(ops).map_err(to_js)
+    }
+
+    /// The id of the paragraph style with `name`, if one exists.
+    fn style_id_by_name(&self, name: &str) -> Option<StyleId> {
+        if name.is_empty() {
+            return None;
+        }
+        self.document
+            .definitions()
+            .styles
+            .iter()
+            .find(|(_, style)| {
+                style.kind == StyleKind::Paragraph && style.name.as_deref() == Some(name)
+            })
+            .map(|(id, _)| *id)
     }
 
     /// The paragraph node ids the selection touches, in document order.
@@ -1978,6 +2073,34 @@ mod tests {
         }
         assert_eq!(d.alignment_at(&node, 0), "start");
         assert_eq!(d.copy_text(&node, 0, &node, text.len() as u32), text);
+    }
+
+    /// Font family applies over a range; paragraph style applies, reads back, and
+    /// undoes (when the document defines paragraph styles).
+    #[test]
+    fn font_family_and_paragraph_style() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, t)| t.len() >= 3)
+            .map(|(id, _)| id.to_string())
+            .expect("a paragraph with >=3 chars");
+
+        d.set_font(&node, 0, &node, 3, "Arial".to_string())
+            .expect("set font");
+
+        let styles = d.list_styles();
+        if let Some(name) = styles.first().cloned() {
+            d.set_paragraph_style(&node, 0, &node, 0, &name)
+                .expect("set style");
+            assert_eq!(d.paragraph_style_at(&node), name);
+            d.undo().expect("undo style");
+            assert_ne!(d.paragraph_style_at(&node), name, "undo cleared the style");
+        }
+        // (A non-existent style name is rejected — verified in-browser, since the
+        // error path constructs a JsValue which panics off-wasm.)
     }
 
     /// Formatting spans paragraphs: bold a selection across two paragraphs, and

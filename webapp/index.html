@@ -34,6 +34,19 @@
 
     <div class="toolbar" role="toolbar" aria-label="Formatting">
       <div class="group">
+        <label class="ctl" title="Paragraph style">
+          <select id="paragraphStyle"><option value="">Style</option></select>
+        </label>
+        <label class="ctl" title="Font">
+          <select id="fontFamily">
+            <option value="">Font</option>
+            <option>Arial</option><option>Calibri</option><option>Cambria</option>
+            <option>Courier New</option><option>Georgia</option><option>Helvetica</option>
+            <option>Roboto</option><option>Times New Roman</option><option>Verdana</option>
+          </select>
+        </label>
+      </div>
+      <div class="group">
         <button id="bold" type="button" class="fmt" title="Bold (⌘B)" aria-pressed="false"><b>B</b></button>
         <button id="italic" type="button" class="fmt" title="Italic (⌘I)" aria-pressed="false"><i>I</i></button>
         <button id="underline" type="button" class="fmt" title="Underline (⌘U)" aria-pressed="false"><u>U</u></button>

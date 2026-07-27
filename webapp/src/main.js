@@ -66,8 +66,16 @@ const highlightSel = document.getElementById("highlight");
 const lineSpacingSel = document.getElementById("lineSpacing");
 const indentDecBtn = document.getElementById("indentDec");
 const indentIncBtn = document.getElementById("indentInc");
-const runControls = [superBtn, subBtn, fontSizeSel, textColorInput, highlightSel];
-const paraControls = [...Object.values(alignBtns), lineSpacingSel, indentDecBtn, indentIncBtn];
+const fontFamilySel = document.getElementById("fontFamily");
+const paragraphStyleSel = document.getElementById("paragraphStyle");
+const runControls = [superBtn, subBtn, fontSizeSel, textColorInput, highlightSel, fontFamilySel];
+const paraControls = [
+  ...Object.values(alignBtns),
+  lineSpacingSel,
+  indentDecBtn,
+  indentIncBtn,
+  paragraphStyleSel,
+];
 const saveBtn = document.getElementById("save");
 
 // The engine `render_page(i, dpi)` rasterizes at `dpi` device px per inch
@@ -112,6 +120,7 @@ async function openBytes(bytes, name) {
     selection = null;
     currentName = name;
     saveBtn.disabled = false;
+    populateStyles();
     dropEl.hidden = true;
     await provisionFonts(name);
     await renderAll();
@@ -526,6 +535,20 @@ function updateToolbar() {
   for (const [key, btn] of Object.entries(alignBtns)) {
     btn.setAttribute("aria-pressed", String(key === align));
   }
+  // Reflect the current paragraph style in the dropdown.
+  paragraphStyleSel.value = hasSel && doc ? doc.paragraphStyleAt(selection.focus.node) : "";
+}
+
+/** Fills the paragraph-style dropdown from the open document's styles. */
+function populateStyles() {
+  const styles = doc ? doc.listStyles() : [];
+  paragraphStyleSel.replaceChildren();
+  for (const [value, label] of [["", "Style"], ...styles.map((s) => [s, s])]) {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = label;
+    paragraphStyleSel.appendChild(opt);
+  }
 }
 
 // mousedown (not click) so a button never steals the selection focus mid-edit.
@@ -565,6 +588,15 @@ highlightSel.addEventListener("change", () => {
 textColorInput.addEventListener("input", () => {
   const [r, g, b] = hexToRgb(textColorInput.value);
   runToolbarEdit((a, bo, c, d) => doc.setTextColor(a, bo, c, d, r, g, b));
+});
+fontFamilySel.addEventListener("change", () => {
+  const family = fontFamilySel.value;
+  if (family) runToolbarEdit((a, b, c, d) => doc.setFont(a, b, c, d, family));
+  fontFamilySel.value = "";
+});
+paragraphStyleSel.addEventListener("change", () => {
+  const name = paragraphStyleSel.value;
+  runToolbarEdit((a, b, c, d) => doc.setParagraphStyle(a, b, c, d, name));
 });
 
 /** Serializes the edited document and downloads it as a .docx (user-initiated). */
