@@ -13,7 +13,9 @@
 //! boundary (doc 57 §3): `render_page(i, dpi)` rasterizes at `dpi`, where
 //! `device_px = twip / 1440 * dpi`.
 
-use casual_doc_edit::{Operation, Pos, Range as EditRange, apply as apply_edit};
+use casual_doc_edit::{
+    FormatDelta, Operation, Pos, Range as EditRange, apply as apply_edit, format_state,
+};
 use casual_doc_import::{ImportConfig, ImportMode, import_package};
 use casual_doc_layout::compose::compose_page;
 use casual_doc_layout::document_layout::{document_page_config, paginate_document};
@@ -438,6 +440,62 @@ impl WasmDocument {
         word_bounds(&text, offset as usize)
             .map(|(s, e)| vec![s as u32, e as u32])
             .unwrap_or_default()
+    }
+
+    /// Applies a run-property change (bold/italic/underline/strike) over a range
+    /// within one paragraph. Each argument is a tri-state: `true`/`false` sets the
+    /// toggle, `undefined` leaves it unchanged. Runs straddling the range split so
+    /// the change lands exactly on the selection. The selection is preserved by
+    /// the frontend (formatting does not collapse it).
+    #[wasm_bindgen(js_name = formatText)]
+    #[allow(clippy::too_many_arguments)] // a flat JS signature is clearer than a bag struct
+    pub fn format_text(
+        &mut self,
+        node: &str,
+        start: u32,
+        end: u32,
+        bold: Option<bool>,
+        italic: Option<bool>,
+        underline: Option<bool>,
+        strike: Option<bool>,
+    ) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        self.apply(Operation::FormatText {
+            range: EditRange {
+                start: Pos::new(nid, start),
+                end: Pos::new(nid, end),
+            },
+            delta: FormatDelta {
+                bold,
+                italic,
+                underline,
+                strike,
+            },
+        })
+        .map_err(to_js)
+    }
+
+    /// The uniform format state of a range (each toggle `true` only when every
+    /// covered run sets it) — drives a toolbar's active state and toggle direction.
+    #[wasm_bindgen(js_name = formatAt)]
+    #[must_use]
+    pub fn format_at(&self, node: &str, start: u32, end: u32) -> Format {
+        let Ok(nid) = NodeId::from_str(node) else {
+            return Format::default();
+        };
+        let state = format_state(
+            &self.document,
+            EditRange {
+                start: Pos::new(nid, start),
+                end: Pos::new(nid, end),
+            },
+        );
+        Format {
+            bold: state.bold,
+            italic: state.italic,
+            underline: state.underline,
+            strike: state.strike,
+        }
     }
 
     /// Undoes the last user action (one or many ops), returning the restored
@@ -1042,6 +1100,9 @@ fn caret_after(op: &Operation, inverse: &Operation) -> Pos {
             Operation::SplitParagraph { at, .. } => *at,
             _ => Pos::new(*first, 0),
         },
+        // Formatting keeps the selection; the frontend does not collapse to this.
+        Operation::FormatText { range, .. } => range.start,
+        Operation::SetInlines { node, .. } => Pos::new(*node, 0),
     }
 }
 
@@ -1113,6 +1174,48 @@ impl EditResult {
     #[must_use]
     pub fn dirty_pages(&self) -> Vec<u32> {
         self.dirty.clone()
+    }
+}
+
+/// The uniform run-format state of a selection (each `true` only when every
+/// covered run sets that toggle) — for a formatting toolbar.
+#[wasm_bindgen]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Format {
+    bold: bool,
+    italic: bool,
+    underline: bool,
+    strike: bool,
+}
+
+#[wasm_bindgen]
+impl Format {
+    /// Every covered run is bold.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn bold(&self) -> bool {
+        self.bold
+    }
+
+    /// Every covered run is italic.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn italic(&self) -> bool {
+        self.italic
+    }
+
+    /// Every covered run is underlined.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn underline(&self) -> bool {
+        self.underline
+    }
+
+    /// Every covered run is struck through.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn strike(&self) -> bool {
+        self.strike
     }
 }
 
@@ -1327,6 +1430,27 @@ mod tests {
             d.copy_text(&node, 0, &node, end + 1),
             format!("Z{original}")
         );
+    }
+
+    /// Bold a range, confirm the format query reflects it, and undo restores it.
+    #[test]
+    fn format_bold_and_query_and_undo() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, t)| t.len() >= 3)
+            .map(|(id, _)| id.to_string())
+            .expect("a paragraph with >=3 chars");
+
+        assert!(!d.format_at(&node, 0, 3).bold(), "not bold initially");
+        d.format_text(&node, 0, 3, Some(true), None, None, None)
+            .expect("bold");
+        assert!(d.format_at(&node, 0, 3).bold(), "now bold over [0,3)");
+
+        d.undo().expect("undo");
+        assert!(!d.format_at(&node, 0, 3).bold(), "undo cleared bold");
     }
 
     /// Split (Enter) divides a paragraph and undo rejoins it; word selection and

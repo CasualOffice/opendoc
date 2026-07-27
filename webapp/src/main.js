@@ -46,6 +46,11 @@ const zoomEl = document.getElementById("zoom");
 const pagesEl = document.getElementById("pages");
 const dropEl = document.getElementById("drop");
 const viewportEl = document.getElementById("viewport");
+const fmtButtons = {
+  bold: document.getElementById("bold"),
+  italic: document.getElementById("italic"),
+  underline: document.getElementById("underline"),
+};
 
 // The engine `render_page(i, dpi)` rasterizes at `dpi` device px per inch
 // (device_px = twip / 1440 * dpi). We render at 96·zoom·devicePixelRatio for a
@@ -227,9 +232,12 @@ function clearOverlays() {
 function drawSelection() {
   if (!doc) return;
   clearOverlays();
-  if (!selection) return;
-  const { anchor, focus } = selection;
+  if (selection) paintSelection(selection);
+  updateToolbar();
+}
 
+/** Paints the caret or highlight for `sel` from engine geometry. */
+function paintSelection({ anchor, focus }) {
   const collapsed = anchor.node === focus.node && anchor.offset === focus.offset;
   if (!collapsed) {
     const rects = doc.selectionRects(anchor.node, anchor.offset, focus.node, focus.offset);
@@ -413,7 +421,79 @@ function navCaret(dir, extend) {
   scrollCaretIntoView();
 }
 
+// ---- Formatting (bold / italic / underline over the selection) ---------------
+
+/** The selection as a same-paragraph ordered range `{node,start,end}`, or null.
+ *  (Cross-paragraph formatting is a later slice.) */
+function orderedSel() {
+  if (!hasRange()) return null;
+  const { anchor, focus } = selection;
+  if (anchor.node !== focus.node) return null;
+  const [start, end] =
+    anchor.offset < focus.offset ? [anchor.offset, focus.offset] : [focus.offset, anchor.offset];
+  return { node: anchor.node, start, end };
+}
+
+/** Applies a run-property delta to the selection, keeping the selection (format
+ *  does not collapse it) and repainting only the dirty pages. */
+async function formatSelection(delta) {
+  const s = orderedSel();
+  if (!s) return;
+  let res;
+  try {
+    res = doc.formatText(s.node, s.start, s.end, delta.bold, delta.italic, delta.underline, delta.strike);
+  } catch (err) {
+    console.warn("format ignored:", err?.message ?? err);
+    return;
+  }
+  const dirty = res.dirtyPages;
+  const newCount = res.pageCount;
+  res.free();
+  if (newCount !== pages.length) await renderAll();
+  else {
+    for (const i of dirty) repaintPage(i);
+    drawSelection();
+  }
+}
+
+/** Toggles one toggle (`"bold"`|`"italic"`|`"underline"`) over the selection. */
+function toggleFormat(prop) {
+  const s = orderedSel();
+  if (!s) return;
+  const f = doc.formatAt(s.node, s.start, s.end);
+  const target = !f[prop];
+  f.free();
+  formatSelection({ [prop]: target });
+}
+
+/** Reflects the selection's format in the toolbar (active + enabled state). */
+function updateToolbar() {
+  const s = doc ? orderedSel() : null;
+  const state = { bold: false, italic: false, underline: false };
+  if (s) {
+    const f = doc.formatAt(s.node, s.start, s.end);
+    state.bold = f.bold;
+    state.italic = f.italic;
+    state.underline = f.underline;
+    f.free();
+  }
+  for (const key of ["bold", "italic", "underline"]) {
+    const btn = fmtButtons[key];
+    btn.disabled = !s;
+    btn.setAttribute("aria-pressed", String(state[key]));
+  }
+}
+
+for (const key of ["bold", "italic", "underline"]) {
+  // mousedown (not click) so the button never steals focus mid-selection.
+  fmtButtons[key].addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    toggleFormat(key);
+  });
+}
+
 const ARROWS = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down" };
+const FORMAT_KEYS = { b: "bold", i: "italic", u: "underline" };
 
 document.addEventListener("keydown", async (e) => {
   if (!doc) return;
@@ -436,6 +516,11 @@ document.addEventListener("keydown", async (e) => {
   if (mod && key.toLowerCase() === "y") {
     e.preventDefault();
     await runEdit(() => doc.redo());
+    return;
+  }
+  if (mod && FORMAT_KEYS[key.toLowerCase()]) {
+    e.preventDefault();
+    toggleFormat(FORMAT_KEYS[key.toLowerCase()]);
     return;
   }
   if (mod) return; // leave other shortcuts to the browser
