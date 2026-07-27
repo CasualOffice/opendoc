@@ -92,6 +92,11 @@ let pages = [];
 /** Current selection as model anchors, or null. `focus` trails the pointer. */
 let selection = null; // { anchor: {node, offset}, focus: {node, offset} }
 let dragging = false;
+/** Armed run formatting for typing at a collapsed caret (e.g. click Bold with no
+ *  selection → next typed characters are bold). `null` when nothing is armed; else
+ *  a subset of { bold, italic, underline, strike } → boolean. Cleared whenever the
+ *  caret moves for any reason other than the typing that consumes it. */
+let pendingFormat = null;
 /** The open document's filename, for the Save download. */
 let currentName = "document.docx";
 
@@ -302,6 +307,7 @@ function onPointerDown(page, event) {
   if (event.button !== 0) return;
   const anchor = anchorAt(page, event);
   if (!anchor) return;
+  pendingFormat = null; // a click moves the caret → disarm typing format
   dragging = true;
   // Shift+Click extends the current selection to the click (keeps the anchor).
   selection =
@@ -456,6 +462,7 @@ async function runEdit(thunk) {
 /** Move the caret by arrow key. Shift extends (moves the focus); plain collapses. */
 function navCaret(dir, extend) {
   if (!selection) return;
+  pendingFormat = null; // caret moved → disarm typing format
   const f = selection.focus;
   const c = doc.moveCaret(f.node, f.offset, dir);
   const to = { node: c.node, offset: c.offset };
@@ -507,8 +514,27 @@ function selectionFormat() {
   return state;
 }
 
-/** Toggles a run toggle (`bold`/`italic`/`underline`/`strike`) over the range. */
+/** The run format the collapsed caret inherits (what new typing would carry). */
+function caretFormatState() {
+  if (!doc || !selection) return { bold: false, italic: false, underline: false, strike: false };
+  const f = doc.caretFormat(selection.focus.node, selection.focus.offset);
+  const state = { bold: f.bold, italic: f.italic, underline: f.underline, strike: f.strike };
+  f.free();
+  return state;
+}
+
+/** Toggles a run toggle (`bold`/`italic`/`underline`/`strike`). With a range it
+ *  formats the selection; at a collapsed caret it arms the format for typing
+ *  (premium editors: press Bold, then type — the text comes out bold). */
 function toggleFormat(prop) {
+  if (!hasRange()) {
+    // Arm/disarm at the caret: flip the effective current value (pending overrides
+    // the caret's inherited format), and reflect it in the toolbar.
+    const current = pendingFormat?.[prop] ?? caretFormatState()[prop];
+    pendingFormat = { ...(pendingFormat || {}), [prop]: !current };
+    updateToolbar();
+    return;
+  }
   const state = selectionFormat();
   if (!state) return;
   runToolbarEdit((sn, so, en, eo) =>
@@ -537,9 +563,17 @@ function updateToolbar() {
   const range = hasRange();
   const runState = selectionFormat();
 
+  // B/I/U/S work with a range (format it) or a collapsed caret (arm it for typing),
+  // so they are enabled whenever there is any selection. Pressed state: a range
+  // reflects its uniform run format; a caret reflects the armed format (if any) over
+  // the format new typing would inherit.
+  const caretFmt = !range && hasSel ? caretFormatState() : null;
   for (const key of ["bold", "italic", "underline", "strike"]) {
-    fmtButtons[key].disabled = !range;
-    fmtButtons[key].setAttribute("aria-pressed", String(runState ? runState[key] : false));
+    fmtButtons[key].disabled = !hasSel;
+    const pressed = range
+      ? runState && runState[key]
+      : (pendingFormat?.[key] ?? (caretFmt ? caretFmt[key] : false));
+    fmtButtons[key].setAttribute("aria-pressed", String(!!pressed));
   }
   for (const el of runControls) el.disabled = !range;
   for (const el of paraControls) el.disabled = !hasSel;
@@ -684,6 +718,7 @@ function navDirection(e) {
 
 /** Moves the caret to an engine Caret result (⌘↑/↓, doc bounds). Shift extends. */
 function navToPosition(caret, extend) {
+  pendingFormat = null; // caret moved → disarm typing format
   const to = { node: caret.node, offset: caret.offset };
   caret.free();
   selection = extend ? { anchor: selection.anchor, focus: to } : { anchor: to, focus: to };
@@ -836,11 +871,19 @@ document.addEventListener("keydown", async (e) => {
   // A printable character (single key, no modifiers).
   if (key.length === 1) {
     e.preventDefault();
-    await runEdit(() =>
-      range
-        ? doc.replaceSelection(anchor.node, anchor.offset, focus.node, focus.offset, key)
-        : doc.insertText(focus.node, focus.offset, key),
-    );
+    if (range) {
+      pendingFormat = null; // typing over a selection uses the selection's own runs
+      await runEdit(() =>
+        doc.replaceSelection(anchor.node, anchor.offset, focus.node, focus.offset, key),
+      );
+    } else if (pendingFormat) {
+      const pf = pendingFormat; // armed format persists across consecutive typing
+      await runEdit(() =>
+        doc.insertStyledText(focus.node, focus.offset, key, pf.bold, pf.italic, pf.underline, pf.strike),
+      );
+    } else {
+      await runEdit(() => doc.insertText(focus.node, focus.offset, key));
+    }
   }
 });
 
