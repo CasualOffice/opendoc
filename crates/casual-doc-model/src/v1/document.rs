@@ -98,6 +98,14 @@ impl Document {
         &self.body
     }
 
+    /// Returns the body blocks for in-place editing. The editing op set
+    /// (`casual-doc-edit`, doc 59) mutates the document through this; callers are
+    /// responsible for preserving model invariants (validated on save/export).
+    #[must_use]
+    pub fn body_mut(&mut self) -> &mut Vec<BlockNode> {
+        &mut self.body
+    }
+
     /// Returns the definition tables.
     #[must_use]
     pub const fn definitions(&self) -> &Definitions {

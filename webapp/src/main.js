@@ -311,9 +311,101 @@ pagesEl.addEventListener("pointermove", (e) => {
   if (page) onPointerMove(page, e);
 });
 window.addEventListener("pointerup", onPointerUp);
-document.addEventListener("keydown", (e) => {
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "c") {
+
+// ---- Editing (P1G-006): keys → semantic edits through the WASM choke point ----
+
+/** The selection as a single-paragraph, ordered, deletable range — or null when
+ *  it is collapsed or spans paragraphs (cross-paragraph edits are a later slice). */
+function deletableRange() {
+  if (!selection) return null;
+  const { anchor, focus } = selection;
+  if (anchor.node !== focus.node || anchor.offset === focus.offset) return null;
+  const [start, end] = anchor.offset < focus.offset ? [anchor.offset, focus.offset] : [focus.offset, anchor.offset];
+  return { node: anchor.node, start, end };
+}
+
+/** Runs an edit thunk, moves the caret to the result, and re-renders. Edits that
+ *  the engine can't place (e.g. backspace at a paragraph start) are ignored. */
+async function runEdit(thunk) {
+  let res;
+  try {
+    res = thunk();
+  } catch (err) {
+    console.warn("edit ignored:", err?.message ?? err);
+    return;
+  }
+  const node = res.node;
+  const offset = res.offset;
+  res.free();
+  selection = { anchor: { node, offset }, focus: { node, offset } };
+  await renderAll(); // re-paginated in WASM; re-raster + redraw caret
+}
+
+/** Insert a character, first deleting the selection if there is one (type-over). */
+async function typeChar(ch) {
+  const range = deletableRange();
+  await runEdit(() => {
+    let at = selection.focus;
+    if (range) {
+      doc.deleteRange(range.node, range.start, range.end).free();
+      at = { node: range.node, offset: range.start };
+    }
+    return doc.insertText(at.node, at.offset, ch);
+  });
+}
+
+document.addEventListener("keydown", async (e) => {
+  if (!doc) return;
+  // Don't hijack keys aimed at the chrome (file picker, zoom select).
+  const tag = e.target?.tagName;
+  if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+
+  const mod = e.metaKey || e.ctrlKey;
+  const key = e.key;
+
+  if (mod && key.toLowerCase() === "c") {
     copySelection();
+    return;
+  }
+  if (mod && key.toLowerCase() === "z") {
+    e.preventDefault();
+    await runEdit(() => (e.shiftKey ? doc.redo() : doc.undo()));
+    return;
+  }
+  if (mod && key.toLowerCase() === "y") {
+    e.preventDefault();
+    await runEdit(() => doc.redo());
+    return;
+  }
+  if (mod) return; // leave other shortcuts to the browser
+
+  if (!selection) return;
+  const focus = selection.focus;
+  const range = deletableRange();
+
+  if (key === "Backspace") {
+    e.preventDefault();
+    await runEdit(() =>
+      range ? doc.deleteRange(range.node, range.start, range.end) : doc.deleteBackward(focus.node, focus.offset),
+    );
+    return;
+  }
+  if (key === "Delete") {
+    e.preventDefault();
+    await runEdit(() =>
+      range ? doc.deleteRange(range.node, range.start, range.end) : doc.deleteForward(focus.node, focus.offset),
+    );
+    return;
+  }
+  if (key === "Enter") {
+    e.preventDefault();
+    setStatus("Enter (paragraph split) is a later slice", "error");
+    return;
+  }
+  // A printable character (single-key, no modifiers).
+  if (key.length === 1) {
+    e.preventDefault();
+    await typeChar(key);
   }
 });
 
