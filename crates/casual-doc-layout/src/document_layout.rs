@@ -45,7 +45,8 @@ use crate::anchor::{header_float_reserve_for_section, place_floats};
 use crate::columns::{
     ColumnLayout, SectionRun, column_layout, paginate_columns, section_starts_new_page,
 };
-use crate::flow::{build_galley_for_blocks, flow_header_footer};
+use crate::flow::{build_galley_cached, build_galley_for_blocks, flow_header_footer};
+use crate::incremental::{DirtySet, GalleyCache};
 use crate::paginate::{PageConfig, resolve_anchored_fields, resolve_fields};
 use crate::running::{HeaderFooter, RunningContent, place_running_content_on_page};
 use crate::units::{Size, Twip};
@@ -392,13 +393,52 @@ pub fn paginate_document(
     shaper: &dyn crate::text::LineShaper,
 ) -> crate::page::PaginatedLayout {
     let plans = build_section_plans(document, shaper);
-    let fallback_config = plans[0].config;
-
     // Build one paginated run per section, each flowed at its own column width,
     // then paginate them into shared pages (column-aware, section boundaries
     // carried across pages).
     let runs = build_section_runs(document, shaper, &plans);
-    let mut layout = paginate_columns(&runs);
+    finish_pagination(document, shaper, &plans, &runs)
+}
+
+/// The incremental counterpart to [`paginate_document`]: identical output, but the
+/// single-section body galley is built through `cache` so unchanged paragraphs are
+/// **not re-shaped** — an edit is `O(edit)` instead of `O(document)`.
+///
+/// Shaping is ~99% of the layout cost on a large prose document, so reusing the
+/// shaped lines of the untouched paragraphs is what keeps a keystroke's per-page
+/// repaint under budget. `dirty` force-reshapes the listed nodes even if their
+/// content hash is unchanged (a belt-and-suspenders over the hash); pass an empty
+/// set to rely on hash invalidation alone, which is already correct.
+///
+/// Documents with explicit section breaks or multi-column sections fall back to a
+/// full re-shape (each section's block slice would need its own cache); numbered
+/// and text-box paragraphs always re-shape (see [`build_galley_cached`]). Every
+/// post-pagination pass runs identically to [`paginate_document`], so the result is
+/// byte-for-byte the same.
+#[must_use]
+pub fn paginate_document_cached(
+    document: &Document,
+    shaper: &dyn crate::text::LineShaper,
+    cache: &mut GalleyCache,
+    dirty: &DirtySet,
+) -> crate::page::PaginatedLayout {
+    let plans = build_section_plans(document, shaper);
+    let runs = build_section_runs_cached(document, shaper, &plans, cache, dirty);
+    finish_pagination(document, shaper, &plans, &runs)
+}
+
+/// The shared pagination tail: paginate the section runs into pages, then run the
+/// post-pagination passes in the required order. Both [`paginate_document`] and
+/// [`paginate_document_cached`] funnel through here so the only difference between
+/// them is how the section-run galleys were built.
+fn finish_pagination(
+    document: &Document,
+    shaper: &dyn crate::text::LineShaper,
+    plans: &[SectionPlan],
+    runs: &[SectionRun],
+) -> crate::page::PaginatedLayout {
+    let fallback_config = plans[0].config;
+    let mut layout = paginate_columns(runs);
 
     // Post-pagination passes, in the required order: running content is placed
     // first so its fields exist to stamp, then the field pass resolves every
@@ -408,7 +448,7 @@ pub fn paginate_document(
     for page in &mut layout.pages {
         let section_page_number = section_page_numbers.entry(page.section).or_default();
         *section_page_number = section_page_number.saturating_add(1);
-        let plan = plan_for_section(&plans, page.section);
+        let plan = plan_for_section(plans, page.section);
         place_running_content_on_page(page, &plan.running, &plan.config, *section_page_number);
     }
     resolve_fields(&mut layout, shaper);
@@ -422,4 +462,151 @@ pub fn paginate_document(
     resolve_anchored_fields(&mut layout, shaper);
 
     layout
+}
+
+/// [`build_section_runs`], but the common **single-section** body is flowed through
+/// the galley `cache` so unchanged paragraphs are reused rather than re-shaped.
+/// Documents that carry explicit section breaks re-shape fully (each section's
+/// slice would need its own cache, and multi-section editing is the rarer case).
+fn build_section_runs_cached(
+    document: &Document,
+    shaper: &dyn crate::text::LineShaper,
+    plans: &[SectionPlan],
+    cache: &mut GalleyCache,
+    dirty: &DirtySet,
+) -> Vec<SectionRun> {
+    if !document.definitions().sections.is_empty() {
+        return build_section_runs(document, shaper, plans);
+    }
+    // Single-section fast path: one full-width run over the whole body, built
+    // incrementally. Mirrors the `sections.is_empty()` arm of `build_section_runs`,
+    // swapping `build_galley_for_blocks` for the cached builder.
+    let config = plans[0].config;
+    let layout = ColumnLayout::single(config.content_area());
+    let galley = build_galley_cached(document, shaper, layout.flow_width(), cache, dirty);
+    vec![SectionRun {
+        config,
+        layout,
+        galley,
+        column_galleys: Vec::new(),
+        starts_new_page: true,
+    }]
+}
+
+#[cfg(test)]
+mod cached_pagination_tests {
+    use super::*;
+    use crate::shape::ParleyShaper;
+    use casual_doc_model::NodeId;
+    use casual_doc_model::v1::{
+        BlockNode, Definitions, InlineNode, Paragraph, ParagraphProperties, Run, RunProperties,
+    };
+
+    fn node(id: u64) -> NodeId {
+        NodeId::from_parts(id, 1).unwrap()
+    }
+
+    /// A body of paragraphs, each `texts[i]` as one run — the i-th paragraph keeps a
+    /// stable node id across edits so the galley cache can key on it.
+    fn doc(texts: &[&str]) -> Document {
+        let body = texts
+            .iter()
+            .enumerate()
+            .map(|(i, text)| {
+                let id = i as u64 + 1;
+                BlockNode::Paragraph(Paragraph {
+                    id: node(id),
+                    properties: ParagraphProperties::default(),
+                    inlines: vec![InlineNode::Run(Run {
+                        id: node(id + 1_000),
+                        properties: RunProperties::default(),
+                        text: (*text).to_owned(),
+                    })],
+                })
+            })
+            .collect();
+        Document::new(node(9_000), body, Definitions::default()).unwrap()
+    }
+
+    // Enough prose to span several pages, so an edit that reuses cached paragraphs
+    // genuinely skips work the full path would redo.
+    fn prose(n: usize) -> Vec<String> {
+        (0..n)
+            .map(|i| format!("Paragraph {i}. The quick brown fox jumps over the lazy dog."))
+            .collect()
+    }
+
+    /// The whole point: after a realistic single-paragraph edit, the incremental
+    /// path must produce the byte-for-byte same pagination as a full re-shape —
+    /// while re-shaping only the one paragraph that changed.
+    #[test]
+    fn cached_matches_full_after_a_paragraph_edit() {
+        let shaper = ParleyShaper::new();
+        let before: Vec<String> = prose(60);
+        let doc_before = doc(&before.iter().map(String::as_str).collect::<Vec<_>>());
+
+        // Warm the cache on the pre-edit document (mirrors an open + first paint).
+        let mut cache = GalleyCache::new();
+        let warm =
+            paginate_document_cached(&doc_before, &shaper, &mut cache, &DirtySet::everything());
+        assert_eq!(
+            warm,
+            paginate_document(&doc_before, &shaper),
+            "a full-dirty cached build must equal the fresh build"
+        );
+
+        // Edit one paragraph's text (its node id is unchanged, its content hash is not).
+        let mut after = before.clone();
+        after[30] = "Paragraph 30. EDITED — a longer line that rewraps this paragraph.".to_owned();
+        let doc_after = doc(&after.iter().map(String::as_str).collect::<Vec<_>>());
+
+        let cached = paginate_document_cached(&doc_after, &shaper, &mut cache, &DirtySet::new());
+        let full = paginate_document(&doc_after, &shaper);
+        assert_eq!(
+            cached, full,
+            "incremental re-pagination diverged from a full re-shape"
+        );
+        assert_eq!(
+            cache.shaped_last_build(),
+            1,
+            "only the edited paragraph should have been re-shaped"
+        );
+    }
+
+    /// Inserting a paragraph (a new node id) reuses the cached fragments of the
+    /// paragraphs that did not move and shapes only the newcomer — and still equals
+    /// a full re-shape, so a structural edit is incremental and correct.
+    #[test]
+    fn cached_matches_full_after_a_paragraph_insert() {
+        let shaper = ParleyShaper::new();
+        let before = prose(40);
+        let doc_before = doc(&before.iter().map(String::as_str).collect::<Vec<_>>());
+        let mut cache = GalleyCache::new();
+        let _ = paginate_document_cached(&doc_before, &shaper, &mut cache, &DirtySet::everything());
+
+        // Splice a brand-new paragraph in the middle. Its node id (900) is not in
+        // the cache, so it shapes; every original paragraph keeps its id and hits.
+        let mut blocks = doc_before.body().to_vec();
+        blocks.insert(
+            20,
+            BlockNode::Paragraph(Paragraph {
+                id: node(900),
+                properties: ParagraphProperties::default(),
+                inlines: vec![InlineNode::Run(Run {
+                    id: node(1_900),
+                    properties: RunProperties::default(),
+                    text: "A newly inserted paragraph of prose.".to_owned(),
+                })],
+            }),
+        );
+        let doc_after = Document::new(node(9_000), blocks, Definitions::default()).unwrap();
+
+        let cached = paginate_document_cached(&doc_after, &shaper, &mut cache, &DirtySet::new());
+        assert_eq!(cached, paginate_document(&doc_after, &shaper));
+        assert_eq!(
+            cache.shaped_last_build(),
+            1,
+            "only the inserted paragraph should have been shaped"
+        );
+    }
 }
