@@ -79,6 +79,36 @@ body {
   gap: 14px;
 }
 
+.save {
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.save:hover:not(:disabled) {
+  border-color: var(--muted);
+}
+
+.save:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Dedicated formatting toolbar, below the header. */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 18px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
 .format {
   display: inline-flex;
   gap: 2px;

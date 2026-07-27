@@ -51,6 +51,7 @@ const fmtButtons = {
   italic: document.getElementById("italic"),
   underline: document.getElementById("underline"),
 };
+const saveBtn = document.getElementById("save");
 
 // The engine `render_page(i, dpi)` rasterizes at `dpi` device px per inch
 // (device_px = twip / 1440 * dpi). We render at 96·zoom·devicePixelRatio for a
@@ -66,6 +67,8 @@ let pages = [];
 /** Current selection as model anchors, or null. `focus` trails the pointer. */
 let selection = null; // { anchor: {node, offset}, focus: {node, offset} }
 let dragging = false;
+/** The open document's filename, for the Save download. */
+let currentName = "document.docx";
 
 function setStatus(text, kind = "") {
   statusEl.textContent = text;
@@ -90,6 +93,8 @@ async function openBytes(bytes, name) {
     if (doc) doc.free();
     doc = open(bytes);
     selection = null;
+    currentName = name;
+    saveBtn.disabled = false;
     dropEl.hidden = true;
     await provisionFonts(name);
     await renderAll();
@@ -423,25 +428,24 @@ function navCaret(dir, extend) {
 
 // ---- Formatting (bold / italic / underline over the selection) ---------------
 
-/** The selection as a same-paragraph ordered range `{node,start,end}`, or null.
- *  (Cross-paragraph formatting is a later slice.) */
-function orderedSel() {
-  if (!hasRange()) return null;
+/** Applies a run-property delta over the selection — across paragraphs when it
+ *  spans them — keeping the selection (format does not collapse it) and
+ *  repainting only the dirty pages. */
+async function applyFormat(delta) {
+  if (!hasRange()) return;
   const { anchor, focus } = selection;
-  if (anchor.node !== focus.node) return null;
-  const [start, end] =
-    anchor.offset < focus.offset ? [anchor.offset, focus.offset] : [focus.offset, anchor.offset];
-  return { node: anchor.node, start, end };
-}
-
-/** Applies a run-property delta to the selection, keeping the selection (format
- *  does not collapse it) and repainting only the dirty pages. */
-async function formatSelection(delta) {
-  const s = orderedSel();
-  if (!s) return;
   let res;
   try {
-    res = doc.formatText(s.node, s.start, s.end, delta.bold, delta.italic, delta.underline, delta.strike);
+    res = doc.formatSelection(
+      anchor.node,
+      anchor.offset,
+      focus.node,
+      focus.offset,
+      delta.bold,
+      delta.italic,
+      delta.underline,
+      delta.strike,
+    );
   } catch (err) {
     console.warn("format ignored:", err?.message ?? err);
     return;
@@ -456,31 +460,30 @@ async function formatSelection(delta) {
   }
 }
 
+/** The uniform format state over the current selection, or null if not a range. */
+function selectionFormat() {
+  if (!doc || !hasRange()) return null;
+  const { anchor, focus } = selection;
+  const f = doc.selectionFormat(anchor.node, anchor.offset, focus.node, focus.offset);
+  const state = { bold: f.bold, italic: f.italic, underline: f.underline };
+  f.free();
+  return state;
+}
+
 /** Toggles one toggle (`"bold"`|`"italic"`|`"underline"`) over the selection. */
 function toggleFormat(prop) {
-  const s = orderedSel();
-  if (!s) return;
-  const f = doc.formatAt(s.node, s.start, s.end);
-  const target = !f[prop];
-  f.free();
-  formatSelection({ [prop]: target });
+  const state = selectionFormat();
+  if (!state) return;
+  applyFormat({ [prop]: !state[prop] });
 }
 
 /** Reflects the selection's format in the toolbar (active + enabled state). */
 function updateToolbar() {
-  const s = doc ? orderedSel() : null;
-  const state = { bold: false, italic: false, underline: false };
-  if (s) {
-    const f = doc.formatAt(s.node, s.start, s.end);
-    state.bold = f.bold;
-    state.italic = f.italic;
-    state.underline = f.underline;
-    f.free();
-  }
+  const state = selectionFormat();
   for (const key of ["bold", "italic", "underline"]) {
     const btn = fmtButtons[key];
-    btn.disabled = !s;
-    btn.setAttribute("aria-pressed", String(state[key]));
+    btn.disabled = !state;
+    btn.setAttribute("aria-pressed", String(state ? state[key] : false));
   }
 }
 
@@ -491,6 +494,28 @@ for (const key of ["bold", "italic", "underline"]) {
     toggleFormat(key);
   });
 }
+
+/** Serializes the edited document and downloads it as a .docx (user-initiated). */
+function saveDocx() {
+  if (!doc) return;
+  try {
+    const bytes = doc.exportDocx();
+    const blob = new Blob([bytes], {
+      type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = currentName.toLowerCase().endsWith(".docx") ? currentName : `${currentName}.docx`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setStatus(`Saved ${a.download}`);
+  } catch (err) {
+    console.error(err);
+    setStatus(`Save failed: ${err?.message ?? err}`, "error");
+  }
+}
+saveBtn.addEventListener("click", saveDocx);
 
 const ARROWS = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down" };
 const FORMAT_KEYS = { b: "bold", i: "italic", u: "underline" };
