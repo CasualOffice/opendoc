@@ -723,29 +723,54 @@ pub fn format_state(document: &Document, range: Range) -> FormatState {
 /// all-false.
 #[must_use]
 pub fn caret_format(document: &Document, node: NodeId, offset: u32) -> FormatState {
-    let Some(para) = find_paragraph(document.body(), node) else {
-        return FormatState::default();
+    let props = caret_run_props(document, node, offset).unwrap_or_default();
+    let on = |v: Option<bool>| v == Some(true);
+    FormatState {
+        bold: on(props.bold),
+        italic: on(props.italic),
+        underline: on(props.underline),
+        strike: on(props.strike),
+    }
+}
+
+/// The size / color / font / super-sub a caret at `(node, offset)` inherits — the
+/// caret counterpart to [`run_style_state`], so a collapsed caret reflects (and can
+/// arm) the same run styling a selection does. Defaults when the paragraph is empty.
+#[must_use]
+pub fn caret_run_style(document: &Document, node: NodeId, offset: u32) -> RunStyleState {
+    let Some(props) = caret_run_props(document, node, offset) else {
+        return RunStyleState::default();
     };
+    RunStyleState {
+        size_half_points: props.size_half_points,
+        color_rgb: match props.color {
+            Some(Color::Rgb(c)) => Some(c),
+            _ => None,
+        },
+        font: match &props.font_ref {
+            Some(FontRef::Named(name)) => Some(name.name.clone()),
+            _ => None,
+        },
+        superscript: props.vertical_alignment == Some(VerticalAlignment::Superscript),
+        subscript: props.vertical_alignment == Some(VerticalAlignment::Subscript),
+    }
+}
+
+/// The run properties a caret at `(node, offset)` inherits — the run to its left
+/// (Word's rule), else the run to its right at a paragraph start, else the first
+/// run; `None` for an empty paragraph. The shared basis of the caret-format and
+/// caret-style queries (what new typing there would carry).
+fn caret_run_props(document: &Document, node: NodeId, offset: u32) -> Option<RunProperties> {
+    let para = find_paragraph(document.body(), node)?;
     let segs = run_segments(&para.inlines);
-    // The run ending at / containing the caret (the character to its left); at
-    // offset 0 fall to the run starting there (the character to its right).
-    let pick = segs
+    let seg = segs
         .iter()
         .find(|s| offset > s.start && offset <= s.end)
         .or_else(|| segs.iter().find(|s| offset >= s.start && offset < s.end))
-        .or_else(|| segs.first());
-    let Some(seg) = pick else {
-        return FormatState::default();
-    };
-    let InlineNode::Run(run) = &para.inlines[seg.idx] else {
-        return FormatState::default();
-    };
-    let on = |v: Option<bool>| v == Some(true);
-    FormatState {
-        bold: on(run.properties.bold),
-        italic: on(run.properties.italic),
-        underline: on(run.properties.underline),
-        strike: on(run.properties.strike),
+        .or_else(|| segs.first())?;
+    match &para.inlines[seg.idx] {
+        InlineNode::Run(run) => Some(run.properties.clone()),
+        _ => None,
     }
 }
 
