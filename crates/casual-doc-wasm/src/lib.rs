@@ -20,9 +20,12 @@ use casual_doc_edit::{
 use casual_doc_export::write_document;
 use casual_doc_import::{ImportConfig, ImportMode, import_package};
 use casual_doc_layout::compose::compose_page;
-use casual_doc_layout::document_layout::{document_page_config, paginate_document};
+use casual_doc_layout::document_layout::{
+    document_page_config, paginate_document, paginate_document_cached,
+};
 use casual_doc_layout::flow::node_plain_text;
 use casual_doc_layout::hittest::{Direction, HitZone, LayoutSnapshot};
+use casual_doc_layout::incremental::{DirtySet, GalleyCache};
 use casual_doc_layout::model::{ModelPos, ModelRange};
 use casual_doc_layout::page::{Page, PaginatedLayout};
 use casual_doc_layout::paginate::PageConfig;
@@ -83,6 +86,11 @@ pub struct WasmDocument {
     redo: Vec<Vec<Operation>>,
     /// Monotonic model revision, bumped on every applied edit.
     revision: u32,
+    /// Shaped-paragraph cache for the incremental edit path: an edit re-shapes only
+    /// the paragraph(s) it touched (hash-based invalidation) and reuses the rest, so
+    /// re-pagination is `O(edit)` rather than `O(document)`. Cleared whenever a font
+    /// registration changes face resolution (see [`WasmDocument::repaginate`]).
+    galley_cache: GalleyCache,
 }
 
 impl core::fmt::Debug for WasmDocument {
@@ -1079,6 +1087,9 @@ impl WasmDocument {
     /// font registration so the new face participates in shaping + coverage. The
     /// page geometry (`default_config`) is font-independent and unchanged.
     fn repaginate(&mut self) {
+        // A newly registered face can change how existing runs resolve, so every
+        // cached fragment is potentially stale — drop the whole cache and re-shape.
+        self.galley_cache = GalleyCache::new();
         self.layout = paginate_document(&self.document, &self.shaper);
     }
 
@@ -1135,7 +1146,18 @@ impl WasmDocument {
     /// succeeded.
     fn finish_edit(&mut self, caret: Pos) -> EditResult {
         self.revision += 1;
-        let new_layout = paginate_document(&self.document, &self.shaper);
+        // Incremental re-pagination: reuse the shaped lines of every paragraph the
+        // edit did not touch (hash-based invalidation inside the cache re-shapes any
+        // paragraph whose content changed), turning a keystroke from `O(document)`
+        // into `O(edit)`. An empty dirty set is correct — the cache's content hash
+        // already forces a re-shape of the edited paragraph(s); it is only the
+        // belt-and-suspenders override, unnecessary here.
+        let new_layout = paginate_document_cached(
+            &self.document,
+            &self.shaper,
+            &mut self.galley_cache,
+            &DirtySet::new(),
+        );
         let dirty = dirty_pages(&self.layout, &new_layout);
         self.layout = new_layout;
         EditResult {
@@ -1730,6 +1752,9 @@ fn open_document(bytes: &[u8]) -> Result<WasmDocument, String> {
         undo: Vec::new(),
         redo: Vec::new(),
         revision: 0,
+        // Populated lazily on the first edit's incremental re-pagination; the open
+        // above uses the full path since there is nothing yet to reuse.
+        galley_cache: GalleyCache::new(),
     })
 }
 
