@@ -912,7 +912,7 @@ impl WasmDocument {
         end_offset: u32,
         twips: i32,
     ) -> Result<EditResult, JsValue> {
-        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
+        self.apply_indent_props(start_node, start_offset, end_node, end_offset, move |p| {
             let mut indent = p.indentation.unwrap_or(EMPTY_INDENT);
             indent.start_twips = Some(twips.max(0));
             p.indentation = Some(indent);
@@ -930,7 +930,7 @@ impl WasmDocument {
         end_offset: u32,
         twips: i32,
     ) -> Result<EditResult, JsValue> {
-        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
+        self.apply_indent_props(start_node, start_offset, end_node, end_offset, move |p| {
             let mut indent = p.indentation.unwrap_or(EMPTY_INDENT);
             indent.end_twips = Some(twips.max(0));
             p.indentation = Some(indent);
@@ -949,7 +949,7 @@ impl WasmDocument {
         end_offset: u32,
         twips: i32,
     ) -> Result<EditResult, JsValue> {
-        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
+        self.apply_indent_props(start_node, start_offset, end_node, end_offset, move |p| {
             let mut indent = p.indentation.unwrap_or(EMPTY_INDENT);
             if twips > 0 {
                 indent.first_line_twips = Some(twips);
@@ -1819,6 +1819,42 @@ impl WasmDocument {
         }
         if ops.is_empty() {
             return Err(to_js("no paragraph in selection".into()));
+        }
+        self.apply_action(ops).map_err(to_js)
+    }
+
+    /// Ruler-indent applier: like [`apply_paragraph_props`](Self::apply_paragraph_props)
+    /// but skips paragraphs inside table cells. A body-scale indent applied to a
+    /// narrow cell paragraph overflows the cell and mangles the table, so the ruler
+    /// never touches them (a cell-relative ruler is a follow-up). If the selection
+    /// covers only table paragraphs the drag is a no-op (reported as an error the
+    /// caller ignores), leaving the table intact.
+    fn apply_indent_props(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        f: impl Fn(&mut ParagraphProperties),
+    ) -> Result<EditResult, JsValue> {
+        let (start, end) = self
+            .order_endpoints(start_node, start_offset, end_node, end_offset)
+            .map_err(to_js)?;
+        let mut ops = Vec::new();
+        for node in self.paragraphs_in_selection(start, end) {
+            if locate_table_row(&self.document, node).is_some() {
+                continue; // never indent a table-cell paragraph from the ruler
+            }
+            if let Some(mut props) = paragraph_properties(&self.document, node) {
+                f(&mut props);
+                ops.push(Operation::SetParagraphProperties {
+                    node,
+                    properties: Box::new(props),
+                });
+            }
+        }
+        if ops.is_empty() {
+            return Err(to_js("no body paragraph in selection".into()));
         }
         self.apply_action(ops).map_err(to_js)
     }
