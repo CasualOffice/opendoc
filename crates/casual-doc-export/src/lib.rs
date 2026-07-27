@@ -167,6 +167,38 @@ mod semantic_tests {
     }
 
     #[test]
+    fn pgmar_uses_physical_left_right_not_logical_start_end() {
+        // `w:pgMar` (ECMA-376 CT_PageMar) has physical `w:left`/`w:right`, not
+        // `w:start`/`w:end` — Word/Pages silently drop the latter and use default
+        // margins. Regression for edited-doc exports opening with wrong margins.
+        use std::io::Read;
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body><w:p/><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="100" w:bottom="200" w:left="300" w:right="400"/></w:sectPr></w:body></w:document>"#;
+        let document = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        let bytes = write_document(&document, &BTreeMap::new()).unwrap();
+
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
+        let mut xml = String::new();
+        zip.by_name("word/document.xml")
+            .unwrap()
+            .read_to_string(&mut xml)
+            .unwrap();
+        let after = &xml[xml.find("<w:pgMar").expect("a pgMar element")..];
+        let pg_mar = &after[..after.find("/>").unwrap()];
+        assert!(
+            pg_mar.contains(r#"w:left="300""#),
+            "physical left: {pg_mar}"
+        );
+        assert!(
+            pg_mar.contains(r#"w:right="400""#),
+            "physical right: {pg_mar}"
+        );
+        assert!(!pg_mar.contains("w:start="), "no logical start on pgMar");
+        assert!(!pg_mar.contains("w:end="), "no logical end on pgMar");
+    }
+
+    #[test]
     fn real_producer_corpus_survives_the_semantic_round_trip() {
         // The writer must round-trip real Word/LibreOffice documents, not just
         // hand-crafted fixtures. Each is imported semantically, written, and

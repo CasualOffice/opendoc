@@ -2224,11 +2224,19 @@ fn write_section_properties(
         "w:bottom",
         section.page_margins.bottom_twips.to_string().as_str(),
     ));
+    // `w:pgMar` uses the PHYSICAL `w:left`/`w:right` attributes (ECMA-376
+    // `CT_PageMar`), not the logical `w:start`/`w:end` — Word/Pages ignore the
+    // latter and fall back to default margins. Our model stores logical
+    // start/end; for the LTR common case start=left, end=right. (RTL section
+    // mirroring is a separate follow-up.)
     pg_mar.push_attribute((
-        "w:start",
+        "w:left",
         section.page_margins.start_twips.to_string().as_str(),
     ));
-    pg_mar.push_attribute(("w:end", section.page_margins.end_twips.to_string().as_str()));
+    pg_mar.push_attribute((
+        "w:right",
+        section.page_margins.end_twips.to_string().as_str(),
+    ));
     if let Some(header) = section.page_margins.header_twips {
         pg_mar.push_attribute(("w:header", header.to_string().as_str()));
     }
