@@ -112,6 +112,15 @@ impl Document {
         &self.definitions
     }
 
+    /// Mutable access to the definition tables — the additive seam an editor uses
+    /// to register document-level infrastructure an edit needs (e.g. the numbering
+    /// definition a new bullet/numbered list references). Body edits go through the
+    /// closed op set; this is for the definition side-tables those edits reference.
+    #[must_use]
+    pub fn definitions_mut(&mut self) -> &mut Definitions {
+        &mut self.definitions
+    }
+
     /// Parses one strict, bounded schema v1 JSON document.
     pub fn from_json(bytes: &[u8], limits: SnapshotLimits) -> Result<Self, SnapshotError> {
         limits.validate()?;

@@ -66,6 +66,8 @@ const highlightSel = document.getElementById("highlight");
 const lineSpacingSel = document.getElementById("lineSpacing");
 const indentDecBtn = document.getElementById("indentDec");
 const indentIncBtn = document.getElementById("indentInc");
+const bulletListBtn = document.getElementById("bulletList");
+const numberedListBtn = document.getElementById("numberedList");
 const fontFamilySel = document.getElementById("fontFamily");
 const paragraphStyleSel = document.getElementById("paragraphStyle");
 const runControls = [superBtn, subBtn, fontSizeSel, textColorInput, highlightSel, fontFamilySel];
@@ -74,6 +76,8 @@ const paraControls = [
   lineSpacingSel,
   indentDecBtn,
   indentIncBtn,
+  bulletListBtn,
+  numberedListBtn,
   paragraphStyleSel,
 ];
 const saveBtn = document.getElementById("save");
@@ -607,9 +611,12 @@ function updateToolbar() {
   superBtn.setAttribute("aria-pressed", String(sup));
   subBtn.setAttribute("aria-pressed", String(sub));
 
-  // Reflect the current paragraph style + line spacing.
+  // Reflect the current paragraph style + line spacing + list kind.
   paragraphStyleSel.value = hasSel && doc ? doc.paragraphStyleAt(selection.focus.node) : "";
   lineSpacingSel.value = hasSel && doc ? String(doc.lineSpacingAt(selection.focus.node) || "") : "";
+  const listKind = hasSel && doc ? doc.listStyleAt(selection.focus.node) : "";
+  bulletListBtn.setAttribute("aria-pressed", String(listKind === "bullet"));
+  numberedListBtn.setAttribute("aria-pressed", String(listKind === "numbered"));
 }
 
 /** Fills the paragraph-style dropdown from the open document's styles. */
@@ -642,6 +649,8 @@ for (const [key, btn] of Object.entries(alignBtns)) {
 }
 onButton(indentDecBtn, () => runToolbarEdit((a, b, c, d) => doc.adjustIndent(a, b, c, d, -360)));
 onButton(indentIncBtn, () => runToolbarEdit((a, b, c, d) => doc.adjustIndent(a, b, c, d, 360)));
+onButton(bulletListBtn, () => runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "bullet")));
+onButton(numberedListBtn, () => runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "numbered")));
 
 fontSizeSel.addEventListener("change", () => {
   const pt = Number(fontSizeSel.value);
