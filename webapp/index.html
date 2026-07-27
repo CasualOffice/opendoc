@@ -104,12 +104,7 @@
         <button id="alignCenter" type="button" class="fmt" title="Center" aria-label="Center" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M7 15v2h10v-2H7zm-4 6h18v-2H3v2zm0-8h18v-2H3v2zm4-6v2h10V7H7zM3 3v2h18V3H3z"/></svg></button>
         <button id="alignEnd" type="button" class="fmt" title="Align right" aria-label="Align right" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M3 21h18v-2H3v2zm6-4h12v-2H9v2zm-6-4h18v-2H3v2zm6-4h12V7H9v2zM3 3v2h18V3H3z"/></svg></button>
         <button id="alignJustify" type="button" class="fmt" title="Justify" aria-label="Justify" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M3 21h18v-2H3v2zm0-4h18v-2H3v2zm0-4h18v-2H3v2zm0-4h18V7H3v2zm0-6v2h18V3H3z"/></svg></button>
-        <label class="ctl" title="Line spacing">
-          <select id="lineSpacing">
-            <option value="">Spacing</option>
-            <option value="100">1.0</option><option value="150">1.5</option><option value="200">2.0</option>
-          </select>
-        </label>
+        <button id="spacingBtn" type="button" class="fmt" title="Line &amp; paragraph spacing" aria-label="Line and paragraph spacing" aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 24 24"><path d="M6 7h2.5L5 3.5 1.5 7H4v10H1.5L5 20.5 8.5 17H6V7zm4-2v2h12V5H10zm0 14h12v-2H10v2zm0-6h12v-2H10v2z"/></svg></button>
         <button id="indentDec" type="button" class="fmt" title="Decrease indent (⇧Tab)" aria-label="Decrease indent"><svg viewBox="0 0 24 24"><path d="M11 17h10v-2H11v2zm-8-5l4 4V8l-4 4zm0 9h18v-2H3v2zM3 3v2h18V3H3zm8 6h10V7H11v2zm0 4h10v-2H11v2z"/></svg></button>
         <button id="indentInc" type="button" class="fmt" title="Increase indent (Tab)" aria-label="Increase indent"><svg viewBox="0 0 24 24"><path d="M3 21h18v-2H3v2zM3 8v8l4-4-4-4zm8 9h10v-2H11v2zM3 3v2h18V3H3zm8 6h10V7H11v2zm0 4h10v-2H11v2z"/></svg></button>
       </div>
@@ -117,6 +112,17 @@
         <button id="bulletList" type="button" class="fmt" title="Bulleted list" aria-label="Bulleted list" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M4 10.5c-.83 0-1.5.67-1.5 1.5s.67 1.5 1.5 1.5 1.5-.67 1.5-1.5-.67-1.5-1.5-1.5zm0-6c-.83 0-1.5.67-1.5 1.5S3.17 7.5 4 7.5 5.5 6.83 5.5 6 4.83 4.5 4 4.5zm0 12c-.83 0-1.5.68-1.5 1.5s.68 1.5 1.5 1.5 1.5-.68 1.5-1.5-.67-1.5-1.5-1.5zM7 19h14v-2H7v2zm0-6h14v-2H7v2zm0-8v2h14V5H7z"/></svg></button>
         <button id="numberedList" type="button" class="fmt" title="Numbered list" aria-label="Numbered list" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M2 17h2v.5H3v1h1v.5H2v1h3v-4H2v1zm1-9h1V4H2v1h1v3zm-1 3h1.8L2 13.1v.9h3v-1H3.2L5 10.9V10H2v1zm5-6v2h14V5H7zm0 14h14v-2H7v2zm0-6h14v-2H7v2z"/></svg></button>
       </div>
+    </div>
+
+    <div id="spacingMenu" class="context-menu spacing-menu" hidden role="menu" aria-label="Line and paragraph spacing">
+      <div class="menu-heading">Line spacing</div>
+      <button type="button" class="menu-item spacing-line" data-percent="100" role="menuitemradio"><span class="menu-check" aria-hidden="true"></span>Single</button>
+      <button type="button" class="menu-item spacing-line" data-percent="115" role="menuitemradio"><span class="menu-check" aria-hidden="true"></span>1.15</button>
+      <button type="button" class="menu-item spacing-line" data-percent="150" role="menuitemradio"><span class="menu-check" aria-hidden="true"></span>1.5</button>
+      <button type="button" class="menu-item spacing-line" data-percent="200" role="menuitemradio"><span class="menu-check" aria-hidden="true"></span>Double</button>
+      <div class="menu-divider"></div>
+      <label class="menu-row">Space before<input id="spaceBefore" type="number" min="0" max="720" step="1" inputmode="numeric" /><span class="menu-unit">pt</span></label>
+      <label class="menu-row">Space after<input id="spaceAfter" type="number" min="0" max="720" step="1" inputmode="numeric" /><span class="menu-unit">pt</span></label>
     </div>
 
     <main id="viewport" class="viewport">

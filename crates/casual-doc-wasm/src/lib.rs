@@ -857,8 +857,10 @@ impl WasmDocument {
         })
     }
 
-    /// Sets line spacing (as a percentage of single: 100/150/200) over the
-    /// selection's paragraphs.
+    /// Sets multiple line spacing (`w:lineRule="auto"`) as a percentage of single
+    /// (100 = single, 150 = 1.5×, 200 = double) over the selection's paragraphs. Per
+    /// the model, the `auto` rule leaves `line_rule` `None` and rides `line_percent`,
+    /// so exact/atLeast values are cleared.
     #[wasm_bindgen(js_name = setLineSpacing)]
     pub fn set_line_spacing(
         &mut self,
@@ -871,8 +873,85 @@ impl WasmDocument {
         self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
             let mut spacing = p.spacing.unwrap_or_default();
             spacing.line_percent = Some(percent);
-            spacing.line_rule = Some(casual_doc_model::v1::LineRule::Auto);
+            spacing.line_rule = None; // `auto` is the implicit-default rule
             spacing.line_twips = None;
+            p.spacing = Some(spacing);
+        })
+    }
+
+    /// Sets a fixed line height in twips over the selection's paragraphs: `at_least`
+    /// true → `w:lineRule="atLeast"` (grows for tall content), false → `"exact"`
+    /// (clipped). Clears the `auto` percentage.
+    #[wasm_bindgen(js_name = setLineSpacingExact)]
+    pub fn set_line_spacing_exact(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        twips: i32,
+        at_least: bool,
+    ) -> Result<EditResult, JsValue> {
+        let rule = if at_least {
+            casual_doc_model::v1::LineRule::AtLeast
+        } else {
+            casual_doc_model::v1::LineRule::Exact
+        };
+        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
+            let mut spacing = p.spacing.unwrap_or_default();
+            spacing.line_rule = Some(rule);
+            spacing.line_twips = Some(twips.max(0));
+            spacing.line_percent = None;
+            p.spacing = Some(spacing);
+        })
+    }
+
+    /// Sets space before the paragraph (`w:spacing w:before`) in twips over the
+    /// selection; a negative value clears it (back to the style default). Setting an
+    /// explicit value also turns off `beforeAutospacing`.
+    #[wasm_bindgen(js_name = setSpaceBefore)]
+    pub fn set_space_before(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        twips: i32,
+    ) -> Result<EditResult, JsValue> {
+        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
+            let mut spacing = p.spacing.unwrap_or_default();
+            if twips < 0 {
+                spacing.before_twips = None;
+                spacing.before_auto = None;
+            } else {
+                spacing.before_twips = Some(twips);
+                spacing.before_auto = Some(false);
+            }
+            p.spacing = Some(spacing);
+        })
+    }
+
+    /// Sets space after the paragraph (`w:spacing w:after`) in twips over the
+    /// selection; a negative value clears it. Setting an explicit value also turns
+    /// off `afterAutospacing`.
+    #[wasm_bindgen(js_name = setSpaceAfter)]
+    pub fn set_space_after(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        twips: i32,
+    ) -> Result<EditResult, JsValue> {
+        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
+            let mut spacing = p.spacing.unwrap_or_default();
+            if twips < 0 {
+                spacing.after_twips = None;
+                spacing.after_auto = None;
+            } else {
+                spacing.after_twips = Some(twips);
+                spacing.after_auto = Some(false);
+            }
             p.spacing = Some(spacing);
         })
     }
@@ -1202,6 +1281,33 @@ impl WasmDocument {
                 hanging_twip: i.hanging_twips.unwrap_or(0),
             },
             None => Indents::default(),
+        }
+    }
+
+    /// The paragraph's spacing (space before/after in twips, and line spacing) — for
+    /// the toolbar's line-&-paragraph-spacing menu to reflect current state. `-1`
+    /// means unset for before/after; `line_rule` is `0` auto (percent), `1` atLeast,
+    /// `2` exact (twips).
+    #[wasm_bindgen(js_name = paragraphSpacing)]
+    #[must_use]
+    pub fn paragraph_spacing(&self, node: &str) -> ParagraphSpacing {
+        let spacing = NodeId::from_str(node)
+            .ok()
+            .and_then(|nid| paragraph_properties(&self.document, nid))
+            .and_then(|p| p.spacing);
+        match spacing {
+            Some(s) => ParagraphSpacing {
+                before_twip: s.before_twips.unwrap_or(-1),
+                after_twip: s.after_twips.unwrap_or(-1),
+                line_percent: s.line_percent.map_or(0, u32::from),
+                line_rule: match s.line_rule {
+                    Some(casual_doc_model::v1::LineRule::AtLeast) => 1,
+                    Some(casual_doc_model::v1::LineRule::Exact) => 2,
+                    _ => 0,
+                },
+                line_twip: s.line_twips.unwrap_or(0),
+            },
+            None => ParagraphSpacing::default(),
         }
     }
 
@@ -2707,6 +2813,55 @@ impl Indents {
     }
 }
 
+/// A paragraph's spacing, for the toolbar's line-&-paragraph-spacing menu.
+#[wasm_bindgen]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ParagraphSpacing {
+    before_twip: i32,
+    after_twip: i32,
+    line_percent: u32,
+    line_rule: u8,
+    line_twip: i32,
+}
+
+#[wasm_bindgen]
+impl ParagraphSpacing {
+    /// Space before the paragraph in twips, or `-1` when unset.
+    #[wasm_bindgen(getter, js_name = beforeTwip)]
+    #[must_use]
+    pub fn before_twip(&self) -> i32 {
+        self.before_twip
+    }
+
+    /// Space after the paragraph in twips, or `-1` when unset.
+    #[wasm_bindgen(getter, js_name = afterTwip)]
+    #[must_use]
+    pub fn after_twip(&self) -> i32 {
+        self.after_twip
+    }
+
+    /// Line-spacing percentage for the `auto` rule (0 when unset or a fixed rule).
+    #[wasm_bindgen(getter, js_name = linePercent)]
+    #[must_use]
+    pub fn line_percent(&self) -> u32 {
+        self.line_percent
+    }
+
+    /// Line rule: `0` auto (percent), `1` atLeast, `2` exact (twips).
+    #[wasm_bindgen(getter, js_name = lineRule)]
+    #[must_use]
+    pub fn line_rule(&self) -> u8 {
+        self.line_rule
+    }
+
+    /// Fixed line height in twips for the atLeast/exact rules (0 for auto).
+    #[wasm_bindgen(getter, js_name = lineTwip)]
+    #[must_use]
+    pub fn line_twip(&self) -> i32 {
+        self.line_twip
+    }
+}
+
 /// Document statistics for the status footer.
 #[wasm_bindgen]
 #[derive(Clone, Copy, Debug, Default)]
@@ -3412,6 +3567,51 @@ mod tests {
         }
         assert_eq!(d.alignment_at(&node, 0), "start");
         assert_eq!(d.copy_text(&node, 0, &node, text.len() as u32), text);
+    }
+
+    /// Line spacing (auto multiple vs exact/atLeast) and space before/after apply,
+    /// reflect through `paragraphSpacing`, and undo. Guards the line-rule fidelity:
+    /// the `auto` path must leave `line_rule` unset (0), not force it.
+    #[test]
+    fn paragraph_spacing_applies_reflects_and_undoes() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, t)| t.len() >= 3)
+            .map(|(id, _)| id.to_string())
+            .expect("a paragraph with >=3 chars");
+
+        // Auto multiple: percent set, rule stays 0 (auto), no fixed twips.
+        d.set_line_spacing(&node, 0, &node, 0, 150).expect("line %");
+        let s = d.paragraph_spacing(&node);
+        assert_eq!(
+            (s.line_percent(), s.line_rule(), s.line_twip()),
+            (150, 0, 0)
+        );
+
+        // Exact/atLeast: rule flips to atLeast(1), twips carried, percent cleared.
+        d.set_line_spacing_exact(&node, 0, &node, 0, 360, true)
+            .expect("line exact");
+        let s = d.paragraph_spacing(&node);
+        assert_eq!(
+            (s.line_percent(), s.line_rule(), s.line_twip()),
+            (0, 1, 360)
+        );
+
+        // Space before/after in twips; a negative value clears back to unset (-1).
+        d.set_space_before(&node, 0, &node, 0, 240).expect("before");
+        d.set_space_after(&node, 0, &node, 0, 160).expect("after");
+        let s = d.paragraph_spacing(&node);
+        assert_eq!((s.before_twip(), s.after_twip()), (240, 160));
+        d.set_space_before(&node, 0, &node, 0, -1)
+            .expect("clear before");
+        assert_eq!(d.paragraph_spacing(&node).before_twip(), -1);
+
+        // Undo the clear → space-before returns to 240.
+        d.undo().expect("undo");
+        assert_eq!(d.paragraph_spacing(&node).before_twip(), 240);
     }
 
     /// Font family applies over a range; paragraph style applies, reads back, and
