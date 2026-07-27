@@ -33,10 +33,51 @@
     </header>
 
     <div class="toolbar" role="toolbar" aria-label="Formatting">
-      <div class="format" role="group" aria-label="Text formatting">
+      <div class="group">
         <button id="bold" type="button" class="fmt" title="Bold (⌘B)" aria-pressed="false"><b>B</b></button>
         <button id="italic" type="button" class="fmt" title="Italic (⌘I)" aria-pressed="false"><i>I</i></button>
         <button id="underline" type="button" class="fmt" title="Underline (⌘U)" aria-pressed="false"><u>U</u></button>
+        <button id="strike" type="button" class="fmt" title="Strikethrough" aria-pressed="false"><s>S</s></button>
+      </div>
+      <div class="group">
+        <button id="superscript" type="button" class="fmt" title="Superscript">x²</button>
+        <button id="subscript" type="button" class="fmt" title="Subscript">x₂</button>
+      </div>
+      <div class="group">
+        <label class="ctl" title="Font size (pt)">
+          <select id="fontSize">
+            <option value="">Size</option>
+            <option>8</option><option>9</option><option>10</option><option>11</option>
+            <option>12</option><option>14</option><option>16</option><option>18</option>
+            <option>20</option><option>24</option><option>28</option><option>32</option>
+            <option>36</option><option>48</option><option>72</option>
+          </select>
+        </label>
+        <label class="ctl swatch" title="Text color"><span>A</span><input id="textColor" type="color" value="#000000" /></label>
+        <label class="ctl" title="Highlight">
+          <select id="highlight">
+            <option value="none">Highlight</option>
+            <option value="yellow">Yellow</option><option value="green">Green</option>
+            <option value="cyan">Cyan</option><option value="magenta">Magenta</option>
+            <option value="red">Red</option><option value="none">None</option>
+          </select>
+        </label>
+      </div>
+      <div class="group">
+        <button id="alignStart" type="button" class="fmt" title="Align left" aria-pressed="false">L</button>
+        <button id="alignCenter" type="button" class="fmt" title="Center" aria-pressed="false">C</button>
+        <button id="alignEnd" type="button" class="fmt" title="Align right" aria-pressed="false">R</button>
+        <button id="alignJustify" type="button" class="fmt" title="Justify" aria-pressed="false">J</button>
+      </div>
+      <div class="group">
+        <label class="ctl" title="Line spacing">
+          <select id="lineSpacing">
+            <option value="">Spacing</option>
+            <option value="100">1.0</option><option value="150">1.5</option><option value="200">2.0</option>
+          </select>
+        </label>
+        <button id="indentDec" type="button" class="fmt" title="Decrease indent">⇤</button>
+        <button id="indentInc" type="button" class="fmt" title="Increase indent">⇥</button>
       </div>
     </div>
 

@@ -50,7 +50,24 @@ const fmtButtons = {
   bold: document.getElementById("bold"),
   italic: document.getElementById("italic"),
   underline: document.getElementById("underline"),
+  strike: document.getElementById("strike"),
 };
+const alignBtns = {
+  start: document.getElementById("alignStart"),
+  center: document.getElementById("alignCenter"),
+  end: document.getElementById("alignEnd"),
+  justify: document.getElementById("alignJustify"),
+};
+const superBtn = document.getElementById("superscript");
+const subBtn = document.getElementById("subscript");
+const fontSizeSel = document.getElementById("fontSize");
+const textColorInput = document.getElementById("textColor");
+const highlightSel = document.getElementById("highlight");
+const lineSpacingSel = document.getElementById("lineSpacing");
+const indentDecBtn = document.getElementById("indentDec");
+const indentIncBtn = document.getElementById("indentInc");
+const runControls = [superBtn, subBtn, fontSizeSel, textColorInput, highlightSel];
+const paraControls = [...Object.values(alignBtns), lineSpacingSel, indentDecBtn, indentIncBtn];
 const saveBtn = document.getElementById("save");
 
 // The engine `render_page(i, dpi)` rasterizes at `dpi` device px per inch
@@ -426,28 +443,26 @@ function navCaret(dir, extend) {
   scrollCaretIntoView();
 }
 
-// ---- Formatting (bold / italic / underline over the selection) ---------------
+// ---- Formatting toolbar (run + paragraph properties) -------------------------
 
-/** Applies a run-property delta over the selection — across paragraphs when it
- *  spans them — keeping the selection (format does not collapse it) and
- *  repainting only the dirty pages. */
-async function applyFormat(delta) {
-  if (!hasRange()) return;
+/** The current selection endpoints as `[sNode, sOff, eNode, eOff]`, or null. */
+function selEndpoints() {
+  if (!selection) return null;
   const { anchor, focus } = selection;
+  return [anchor.node, anchor.offset, focus.node, focus.offset];
+}
+
+/** Runs a toolbar edit thunk `(sNode, sOff, eNode, eOff) => EditResult`,
+ *  preserving the selection (formatting does not collapse it) and repainting
+ *  only the dirty pages. */
+async function runToolbarEdit(thunk) {
+  const ends = selEndpoints();
+  if (!ends) return;
   let res;
   try {
-    res = doc.formatSelection(
-      anchor.node,
-      anchor.offset,
-      focus.node,
-      focus.offset,
-      delta.bold,
-      delta.italic,
-      delta.underline,
-      delta.strike,
-    );
+    res = thunk(...ends);
   } catch (err) {
-    console.warn("format ignored:", err?.message ?? err);
+    console.warn("edit ignored:", err?.message ?? err);
     return;
   }
   const dirty = res.dirtyPages;
@@ -460,40 +475,97 @@ async function applyFormat(delta) {
   }
 }
 
-/** The uniform format state over the current selection, or null if not a range. */
+/** The uniform run-format state over the selection, or null if not a range. */
 function selectionFormat() {
   if (!doc || !hasRange()) return null;
-  const { anchor, focus } = selection;
-  const f = doc.selectionFormat(anchor.node, anchor.offset, focus.node, focus.offset);
-  const state = { bold: f.bold, italic: f.italic, underline: f.underline };
+  const [sn, so, en, eo] = selEndpoints();
+  const f = doc.selectionFormat(sn, so, en, eo);
+  const state = { bold: f.bold, italic: f.italic, underline: f.underline, strike: f.strike };
   f.free();
   return state;
 }
 
-/** Toggles one toggle (`"bold"`|`"italic"`|`"underline"`) over the selection. */
+/** Toggles a run toggle (`bold`/`italic`/`underline`/`strike`) over the range. */
 function toggleFormat(prop) {
   const state = selectionFormat();
   if (!state) return;
-  applyFormat({ [prop]: !state[prop] });
+  runToolbarEdit((sn, so, en, eo) =>
+    doc.formatSelection(
+      sn,
+      so,
+      en,
+      eo,
+      prop === "bold" ? !state.bold : undefined,
+      prop === "italic" ? !state.italic : undefined,
+      prop === "underline" ? !state.underline : undefined,
+      prop === "strike" ? !state.strike : undefined,
+    ),
+  );
 }
 
-/** Reflects the selection's format in the toolbar (active + enabled state). */
+/** "#rrggbb" → [r, g, b]. */
+function hexToRgb(hex) {
+  return [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+}
+
+/** Reflects the selection in the toolbar: active states + which controls are
+ *  enabled (run controls need a text range; paragraph controls need a caret). */
 function updateToolbar() {
-  const state = selectionFormat();
-  for (const key of ["bold", "italic", "underline"]) {
-    const btn = fmtButtons[key];
-    btn.disabled = !state;
-    btn.setAttribute("aria-pressed", String(state ? state[key] : false));
+  const hasSel = !!selection;
+  const range = hasRange();
+  const runState = selectionFormat();
+
+  for (const key of ["bold", "italic", "underline", "strike"]) {
+    fmtButtons[key].disabled = !range;
+    fmtButtons[key].setAttribute("aria-pressed", String(runState ? runState[key] : false));
+  }
+  for (const el of runControls) el.disabled = !range;
+  for (const el of paraControls) el.disabled = !hasSel;
+
+  const align = hasSel && doc ? doc.alignmentAt(selection.focus.node, selection.focus.offset) : "start";
+  for (const [key, btn] of Object.entries(alignBtns)) {
+    btn.setAttribute("aria-pressed", String(key === align));
   }
 }
 
-for (const key of ["bold", "italic", "underline"]) {
-  // mousedown (not click) so the button never steals focus mid-selection.
-  fmtButtons[key].addEventListener("mousedown", (e) => {
+// mousedown (not click) so a button never steals the selection focus mid-edit.
+function onButton(el, handler) {
+  el.addEventListener("mousedown", (e) => {
     e.preventDefault();
-    toggleFormat(key);
+    handler();
   });
 }
+
+for (const key of ["bold", "italic", "underline", "strike"]) {
+  onButton(fmtButtons[key], () => toggleFormat(key));
+}
+onButton(superBtn, () => runToolbarEdit((a, b, c, d) => doc.setVertAlign(a, b, c, d, "super")));
+onButton(subBtn, () => runToolbarEdit((a, b, c, d) => doc.setVertAlign(a, b, c, d, "sub")));
+for (const [key, btn] of Object.entries(alignBtns)) {
+  onButton(btn, () => runToolbarEdit((a, b, c, d) => doc.setAlignment(a, b, c, d, key)));
+}
+onButton(indentDecBtn, () => runToolbarEdit((a, b, c, d) => doc.adjustIndent(a, b, c, d, -360)));
+onButton(indentIncBtn, () => runToolbarEdit((a, b, c, d) => doc.adjustIndent(a, b, c, d, 360)));
+
+fontSizeSel.addEventListener("change", () => {
+  const pt = Number(fontSizeSel.value);
+  if (pt) runToolbarEdit((a, b, c, d) => doc.setFontSize(a, b, c, d, pt));
+  fontSizeSel.value = "";
+});
+lineSpacingSel.addEventListener("change", () => {
+  const percent = Number(lineSpacingSel.value);
+  if (percent) runToolbarEdit((a, b, c, d) => doc.setLineSpacing(a, b, c, d, percent));
+  lineSpacingSel.value = "";
+});
+highlightSel.addEventListener("change", () => {
+  const name = highlightSel.value;
+  runToolbarEdit((a, b, c, d) => doc.setHighlight(a, b, c, d, name));
+  highlightSel.value = "none";
+});
+textColorInput.addEventListener("input", () => {
+  const [r, g, b] = hexToRgb(textColorInput.value);
+  runToolbarEdit((a, bo, c, d) => doc.setTextColor(a, bo, c, d, r, g, b));
+});
 
 /** Serializes the edited document and downloads it as a .docx (user-initiated). */
 function saveDocx() {
@@ -623,4 +695,5 @@ viewportEl.addEventListener("drop", (e) => {
 });
 
 fileEl.disabled = true;
+updateToolbar(); // start with the toolbar controls disabled (no selection yet)
 boot();

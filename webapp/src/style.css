@@ -107,11 +107,55 @@ body {
   padding: 6px 18px;
   background: var(--surface);
   border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
 }
 
-.format {
+.toolbar .group {
   display: inline-flex;
+  align-items: center;
   gap: 2px;
+  padding-right: 10px;
+  border-right: 1px solid var(--line);
+}
+
+.toolbar .group:last-child {
+  border-right: none;
+}
+
+.ctl {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ctl select {
+  font: inherit;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.ctl select:disabled {
+  opacity: 0.4;
+}
+
+.ctl.swatch span {
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.ctl input[type="color"] {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  cursor: pointer;
 }
 
 .fmt {
