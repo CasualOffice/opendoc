@@ -177,6 +177,7 @@ dependencies = [
  "casual-doc-model",
  "casual-doc-ooxml",
  "casual-doc-render",
+ "unicode-segmentation",
  "wasm-bindgen",
 ]
 

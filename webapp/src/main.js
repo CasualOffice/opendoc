@@ -264,7 +264,11 @@ function onPointerDown(page, event) {
   const anchor = anchorAt(page, event);
   if (!anchor) return;
   dragging = true;
-  selection = { anchor, focus: anchor };
+  // Shift+Click extends the current selection to the click (keeps the anchor).
+  selection =
+    event.shiftKey && selection
+      ? { anchor: selection.anchor, focus: anchor }
+      : { anchor, focus: anchor };
   drawSelection();
   event.preventDefault();
 }
@@ -279,6 +283,20 @@ function onPointerMove(page, event) {
 
 function onPointerUp() {
   dragging = false;
+}
+
+/** Double-click selects the word under the pointer. */
+function selectWord(page, event) {
+  const a = anchorAt(page, event);
+  if (!a) return;
+  const bounds = doc.wordAt(a.node, a.offset); // [start, end] or []
+  if (bounds.length === 2) {
+    selection = {
+      anchor: { node: a.node, offset: bounds[0] },
+      focus: { node: a.node, offset: bounds[1] },
+    };
+    drawSelection();
+  }
 }
 
 async function copySelection() {
@@ -310,22 +328,68 @@ pagesEl.addEventListener("pointermove", (e) => {
   const page = pageFromEvent(e);
   if (page) onPointerMove(page, e);
 });
+pagesEl.addEventListener("dblclick", (e) => {
+  const page = pageFromEvent(e);
+  if (page) selectWord(page, e);
+});
 window.addEventListener("pointerup", onPointerUp);
 
-// ---- Editing (P1G-006): keys → semantic edits through the WASM choke point ----
+// ---- Editing (keys → semantic edits through the WASM choke point) ------------
 
-/** The selection as a single-paragraph, ordered, deletable range — or null when
- *  it is collapsed or spans paragraphs (cross-paragraph edits are a later slice). */
-function deletableRange() {
-  if (!selection) return null;
-  const { anchor, focus } = selection;
-  if (anchor.node !== focus.node || anchor.offset === focus.offset) return null;
-  const [start, end] = anchor.offset < focus.offset ? [anchor.offset, focus.offset] : [focus.offset, anchor.offset];
-  return { node: anchor.node, start, end };
+/** Device DPI the pages are rastered at (HiDPI-crisp). */
+function currentDpi() {
+  const dpr = window.devicePixelRatio || 1;
+  return BASE_DPI * Number(zoomEl.value) * dpr;
 }
 
-/** Runs an edit thunk, moves the caret to the result, and re-renders. Edits that
- *  the engine can't place (e.g. backspace at a paragraph start) are ignored. */
+/** Whether the selection currently spans any text (a real range vs a caret). */
+function hasRange() {
+  return (
+    selection &&
+    (selection.anchor.node !== selection.focus.node || selection.anchor.offset !== selection.focus.offset)
+  );
+}
+
+/** Re-raster a single page in place, reusing its canvas — the incremental repaint
+ *  that keeps editing latency to one page, not the whole document. */
+function repaintPage(i) {
+  const page = pages[i];
+  if (!page) return;
+  const dpr = window.devicePixelRatio || 1;
+  const bmp = doc.renderPage(i, currentDpi());
+  const canvas = page.canvas;
+  canvas.width = bmp.widthPx;
+  canvas.height = bmp.heightPx;
+  canvas.style.width = `${bmp.widthPx / dpr}px`;
+  canvas.style.height = `${bmp.heightPx / dpr}px`;
+  canvas.getContext("2d").putImageData(new ImageData(bmp.rgba, bmp.widthPx, bmp.heightPx), 0, 0);
+}
+
+/** Scroll the caret into view only if it is off-screen (no jitter while typing). */
+function scrollCaretIntoView() {
+  const caret = pagesEl.querySelector(".overlay .caret");
+  if (caret) caret.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+
+/** Apply an EditResult: place the caret, repaint only the dirty pages (or rebuild
+ *  on a page-count change), redraw the caret, and keep it in view. */
+async function applyEditResult(res) {
+  const node = res.node;
+  const offset = res.offset;
+  const dirty = res.dirtyPages;
+  const newCount = res.pageCount;
+  res.free();
+  selection = { anchor: { node, offset }, focus: { node, offset } };
+  if (newCount !== pages.length) {
+    await renderAll(); // structural change (page added/removed): rebuild the list
+  } else {
+    for (const i of dirty) repaintPage(i);
+    drawSelection();
+  }
+  scrollCaretIntoView();
+}
+
+/** Runs an edit thunk and applies its result; unsupported edits are ignored. */
 async function runEdit(thunk) {
   let res;
   try {
@@ -334,25 +398,22 @@ async function runEdit(thunk) {
     console.warn("edit ignored:", err?.message ?? err);
     return;
   }
-  const node = res.node;
-  const offset = res.offset;
-  res.free();
-  selection = { anchor: { node, offset }, focus: { node, offset } };
-  await renderAll(); // re-paginated in WASM; re-raster + redraw caret
+  await applyEditResult(res);
 }
 
-/** Insert a character, first deleting the selection if there is one (type-over). */
-async function typeChar(ch) {
-  const range = deletableRange();
-  await runEdit(() => {
-    let at = selection.focus;
-    if (range) {
-      doc.deleteRange(range.node, range.start, range.end).free();
-      at = { node: range.node, offset: range.start };
-    }
-    return doc.insertText(at.node, at.offset, ch);
-  });
+/** Move the caret by arrow key. Shift extends (moves the focus); plain collapses. */
+function navCaret(dir, extend) {
+  if (!selection) return;
+  const f = selection.focus;
+  const c = doc.moveCaret(f.node, f.offset, dir);
+  const to = { node: c.node, offset: c.offset };
+  c.free();
+  selection = extend ? { anchor: selection.anchor, focus: to } : { anchor: to, focus: to };
+  drawSelection();
+  scrollCaretIntoView();
 }
+
+const ARROWS = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down" };
 
 document.addEventListener("keydown", async (e) => {
   if (!doc) return;
@@ -380,32 +441,50 @@ document.addEventListener("keydown", async (e) => {
   if (mod) return; // leave other shortcuts to the browser
 
   if (!selection) return;
-  const focus = selection.focus;
-  const range = deletableRange();
+  const { anchor, focus } = selection;
+  const range = hasRange();
 
+  // Arrow navigation — always preventDefault so the page doesn't also scroll.
+  if (ARROWS[key]) {
+    e.preventDefault();
+    navCaret(ARROWS[key], e.shiftKey);
+    return;
+  }
   if (key === "Backspace") {
     e.preventDefault();
     await runEdit(() =>
-      range ? doc.deleteRange(range.node, range.start, range.end) : doc.deleteBackward(focus.node, focus.offset),
+      range
+        ? doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset)
+        : doc.deleteBackward(focus.node, focus.offset),
     );
     return;
   }
   if (key === "Delete") {
     e.preventDefault();
     await runEdit(() =>
-      range ? doc.deleteRange(range.node, range.start, range.end) : doc.deleteForward(focus.node, focus.offset),
+      range
+        ? doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset)
+        : doc.deleteForward(focus.node, focus.offset),
     );
     return;
   }
   if (key === "Enter") {
     e.preventDefault();
-    setStatus("Enter (paragraph split) is a later slice", "error");
+    if (range) {
+      // Replace the selection with a break: delete it, then split at the caret.
+      await runEdit(() => doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset));
+    }
+    await runEdit(() => doc.splitParagraph(selection.focus.node, selection.focus.offset));
     return;
   }
-  // A printable character (single-key, no modifiers).
+  // A printable character (single key, no modifiers).
   if (key.length === 1) {
     e.preventDefault();
-    await typeChar(key);
+    await runEdit(() =>
+      range
+        ? doc.replaceSelection(anchor.node, anchor.offset, focus.node, focus.offset, key)
+        : doc.insertText(focus.node, focus.offset, key),
+    );
   }
 });
 

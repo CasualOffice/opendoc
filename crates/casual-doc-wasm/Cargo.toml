@@ -28,6 +28,8 @@ casual-doc-layout.workspace = true
 casual-doc-model.workspace = true
 casual-doc-ooxml.workspace = true
 casual-doc-render.workspace = true
+# Unicode word segmentation for double-click word selection.
+unicode-segmentation.workspace = true
 # The JS↔WASM boundary. MIT-or-Apache-2.0, pure-Rust glue; compiles on native
 # too (the annotations are inert without a JS host), so the parity tests run
 # under `cargo test`.

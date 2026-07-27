@@ -18,7 +18,7 @@ use casual_doc_import::{ImportConfig, ImportMode, import_package};
 use casual_doc_layout::compose::compose_page;
 use casual_doc_layout::document_layout::{document_page_config, paginate_document};
 use casual_doc_layout::flow::node_plain_text;
-use casual_doc_layout::hittest::{HitZone, LayoutSnapshot};
+use casual_doc_layout::hittest::{Direction, HitZone, LayoutSnapshot};
 use casual_doc_layout::model::{ModelPos, ModelRange};
 use casual_doc_layout::page::{Page, PaginatedLayout};
 use casual_doc_layout::paginate::PageConfig;
@@ -64,10 +64,13 @@ pub struct WasmDocument {
     /// Mints run identities for edits, in a namespace distinct from the imported
     /// ids so new runs never collide with existing nodes.
     edit_ids: IdGenerator,
-    /// Inverse ops of applied edits (most recent last) — the undo stack.
-    undo: Vec<Operation>,
-    /// Inverse ops of undone edits — the redo stack; cleared on a fresh edit.
-    redo: Vec<Operation>,
+    /// Undo stack: each entry is one user action's inverse ops, stored in the
+    /// order they must be re-applied to undo the action (reverse of how the
+    /// forward ops ran), so a multi-op action (cross-paragraph delete, type-over)
+    /// undoes in a single step.
+    undo: Vec<Vec<Operation>>,
+    /// Redo stack — forward-op groups of undone actions; cleared on a fresh edit.
+    redo: Vec<Vec<Operation>>,
     /// Monotonic model revision, bumped on every applied edit.
     revision: u32,
 }
@@ -292,16 +295,39 @@ impl WasmDocument {
         .map_err(to_js)
     }
 
-    /// Backspace at a collapsed caret: deletes the character before `offset`
-    /// (resolving the previous UTF-8 boundary so multi-byte text is safe).
-    /// Deleting across a paragraph start (join) is a later slice.
+    /// Splits the paragraph at the caret into two (Enter). The caret lands at the
+    /// start of the new trailing paragraph.
+    #[wasm_bindgen(js_name = splitParagraph)]
+    pub fn split_paragraph(&mut self, node: &str, offset: u32) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let new_id = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".into()))?;
+        self.apply(Operation::SplitParagraph {
+            at: Pos::new(nid, offset),
+            new_id,
+        })
+        .map_err(to_js)
+    }
+
+    /// Backspace at a collapsed caret: deletes the character before `offset`, or —
+    /// at a paragraph start — joins this paragraph into the previous one.
     #[wasm_bindgen(js_name = deleteBackward)]
     pub fn delete_backward(&mut self, node: &str, offset: u32) -> Result<EditResult, JsValue> {
         let nid = node_id(node)?;
         if offset == 0 {
-            return Err(to_js(
-                "nothing before the caret (paragraph join is a later slice)".into(),
-            ));
+            let paras = self.ordered_paragraphs();
+            let idx = paras.iter().position(|(id, _)| *id == nid);
+            return match idx {
+                Some(i) if i > 0 => self
+                    .apply(Operation::JoinParagraphs {
+                        first: paras[i - 1].0,
+                        second: nid,
+                    })
+                    .map_err(to_js),
+                _ => Err(to_js("at document start".into())),
+            };
         }
         let text = self.paragraph_text(nid);
         let prev = prev_char_boundary(&text, offset as usize) as u32;
@@ -314,13 +340,24 @@ impl WasmDocument {
         .map_err(to_js)
     }
 
-    /// Forward-delete at a collapsed caret: deletes the character at `offset`.
+    /// Forward-delete at a collapsed caret: deletes the character at `offset`, or —
+    /// at a paragraph end — joins the next paragraph into this one.
     #[wasm_bindgen(js_name = deleteForward)]
     pub fn delete_forward(&mut self, node: &str, offset: u32) -> Result<EditResult, JsValue> {
         let nid = node_id(node)?;
         let text = self.paragraph_text(nid);
         if offset as usize >= text.len() {
-            return Err(to_js("nothing after the caret".into()));
+            let paras = self.ordered_paragraphs();
+            let idx = paras.iter().position(|(id, _)| *id == nid);
+            return match idx {
+                Some(i) if i + 1 < paras.len() => self
+                    .apply(Operation::JoinParagraphs {
+                        first: nid,
+                        second: paras[i + 1].0,
+                    })
+                    .map_err(to_js),
+                _ => Err(to_js("at document end".into())),
+            };
         }
         let next = next_char_boundary(&text, offset as usize) as u32;
         self.apply(Operation::DeleteText {
@@ -332,30 +369,105 @@ impl WasmDocument {
         .map_err(to_js)
     }
 
-    /// Undoes the last edit, returning the restored caret + revision.
+    /// Deletes a selection that may span paragraphs (a selection + Backspace/
+    /// Delete). Same-paragraph → one delete; cross-paragraph → delete the end
+    /// pieces + join, as one undoable action. Caret lands at the selection start.
+    #[wasm_bindgen(js_name = deleteSelection)]
+    pub fn delete_selection(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+    ) -> Result<EditResult, JsValue> {
+        let ops = self
+            .selection_delete_ops(start_node, start_offset, end_node, end_offset)
+            .map_err(to_js)?;
+        if ops.is_empty() {
+            return Err(to_js("empty selection".into()));
+        }
+        self.apply_action(ops).map_err(to_js)
+    }
+
+    /// Replaces a selection with `text` (type-over) as one undoable action.
+    #[wasm_bindgen(js_name = replaceSelection)]
+    pub fn replace_selection(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        text: String,
+    ) -> Result<EditResult, JsValue> {
+        let (start, _end) = self
+            .order_endpoints(start_node, start_offset, end_node, end_offset)
+            .map_err(to_js)?;
+        let mut ops = self
+            .selection_delete_ops(start_node, start_offset, end_node, end_offset)
+            .map_err(to_js)?;
+        if !text.is_empty() {
+            ops.push(Operation::InsertText { at: start, text });
+        }
+        if ops.is_empty() {
+            return Err(to_js("nothing to do".into()));
+        }
+        self.apply_action(ops).map_err(to_js)
+    }
+
+    /// Moves a caret by one step in `dir` (`"left"`, `"right"`, `"up"`, `"down"`),
+    /// crossing line, paragraph, and page boundaries. Pure navigation — no edit.
+    #[wasm_bindgen(js_name = moveCaret)]
+    pub fn move_caret(&self, node: &str, offset: u32, dir: &str) -> Result<Caret, JsValue> {
+        let nid = node_id(node)?;
+        let pos = self.moved_caret(nid, offset, dir);
+        Ok(Caret {
+            node: pos.0.to_string(),
+            offset: pos.1,
+        })
+    }
+
+    /// The byte range `[start, end]` of the word at `offset` (double-click select),
+    /// as `[start, end]`; empty if the offset is not within a word.
+    #[wasm_bindgen(js_name = wordAt)]
+    #[must_use]
+    pub fn word_at(&self, node: &str, offset: u32) -> Vec<u32> {
+        let Ok(nid) = NodeId::from_str(node) else {
+            return Vec::new();
+        };
+        let text = self.paragraph_text(nid);
+        word_bounds(&text, offset as usize)
+            .map(|(s, e)| vec![s as u32, e as u32])
+            .unwrap_or_default()
+    }
+
+    /// Undoes the last user action (one or many ops), returning the restored
+    /// caret + revision.
     #[wasm_bindgen(js_name = undo)]
     pub fn undo(&mut self) -> Result<EditResult, JsValue> {
-        let op = self
+        let group = self
             .undo
             .pop()
             .ok_or_else(|| to_js("nothing to undo".into()))?;
-        let inverse = apply_edit(&mut self.document, &mut self.edit_ids, &op)
-            .map_err(|e| to_js(format!("undo failed: {e:?}")))?;
-        self.redo.push(inverse);
-        Ok(self.after_edit(&op))
+        // `group` is stored in the order it must be re-applied to undo the action.
+        let (caret, redo_group) = self
+            .apply_group(group)
+            .map_err(|e| to_js(format!("undo failed: {e}")))?;
+        self.redo.push(redo_group);
+        Ok(self.finish_edit(caret))
     }
 
-    /// Redoes the last undone edit.
+    /// Redoes the last undone action.
     #[wasm_bindgen(js_name = redo)]
     pub fn redo(&mut self) -> Result<EditResult, JsValue> {
-        let op = self
+        let group = self
             .redo
             .pop()
             .ok_or_else(|| to_js("nothing to redo".into()))?;
-        let inverse = apply_edit(&mut self.document, &mut self.edit_ids, &op)
-            .map_err(|e| to_js(format!("redo failed: {e:?}")))?;
-        self.undo.push(inverse);
-        Ok(self.after_edit(&op))
+        let (caret, undo_group) = self
+            .apply_group(group)
+            .map_err(|e| to_js(format!("redo failed: {e}")))?;
+        self.undo.push(undo_group);
+        Ok(self.finish_edit(caret))
     }
 }
 
@@ -410,29 +522,68 @@ impl WasmDocument {
         self.layout = paginate_document(&self.document, &self.shaper);
     }
 
-    /// Applies a forward edit: mutate through the choke point, record the inverse
-    /// for undo, drop the redo stack, and re-lay out.
+    /// Applies one forward op as a single undoable action, with the caret at that
+    /// op's natural resting place.
     fn apply(&mut self, op: Operation) -> Result<EditResult, String> {
-        let inverse = apply_edit(&mut self.document, &mut self.edit_ids, &op)
-            .map_err(|e| format!("{e:?}"))?;
-        self.undo.push(inverse);
-        self.redo.clear();
-        Ok(self.after_edit(&op))
+        self.apply_action(vec![op])
     }
 
-    /// Bumps the revision, re-paginates, and reports where the caret should land
-    /// after `applied`. Infallible — the mutation already succeeded.
-    ///
-    // TODO(P1G-007): repaint only the dirty page set rather than re-laying out the
-    // whole document (the incremental paginator already computes the reused span).
-    fn after_edit(&mut self, applied: &Operation) -> EditResult {
+    /// Applies a batch of forward ops as one undoable action. The caret rests at
+    /// the last op's natural place. A multi-op batch is atomic: if any op fails the
+    /// document is rolled back, so a partially-applied cross-paragraph edit never
+    /// corrupts. A single op needs no snapshot (it validates before mutating), so
+    /// typing stays clone-free.
+    fn apply_action(&mut self, ops: Vec<Operation>) -> Result<EditResult, String> {
+        if ops.is_empty() {
+            return Err("empty edit".into());
+        }
+        let snapshot = (ops.len() > 1).then(|| self.document.clone());
+        match self.apply_group(ops) {
+            Ok((caret, inverses)) => {
+                self.undo.push(inverses);
+                self.redo.clear();
+                Ok(self.finish_edit(caret))
+            }
+            Err(e) => {
+                if let Some(snapshot) = snapshot {
+                    self.document = snapshot;
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// Applies each op in `ops`, returning the caret (from the last op) and the
+    /// inverse group ordered so that applying it in turn undoes the whole action.
+    fn apply_group(&mut self, ops: Vec<Operation>) -> Result<(Pos, Vec<Operation>), String> {
+        let mut inverses = Vec::with_capacity(ops.len());
+        let mut caret = Pos::new(self.document.id(), 0);
+        for op in &ops {
+            let inverse = apply_edit(&mut self.document, &mut self.edit_ids, op)
+                .map_err(|e| format!("{e:?}"))?;
+            caret = caret_after(op, &inverse);
+            inverses.push(inverse);
+        }
+        // To undo, apply the inverses in reverse order of the forward ops.
+        inverses.reverse();
+        Ok((caret, inverses))
+    }
+
+    /// Bumps the revision, re-paginates, and reports the caret + revision + the
+    /// **dirty page set** (indices whose layout changed) so the frontend re-rasters
+    /// only those pages, not the whole document. Infallible — the mutation already
+    /// succeeded.
+    fn finish_edit(&mut self, caret: Pos) -> EditResult {
         self.revision += 1;
-        self.repaginate();
-        let caret = caret_after(applied);
+        let new_layout = paginate_document(&self.document, &self.shaper);
+        let dirty = dirty_pages(&self.layout, &new_layout);
+        self.layout = new_layout;
         EditResult {
             node: caret.node.to_string(),
             offset: caret.offset,
             revision: self.revision,
+            page_count: self.page_count(),
+            dirty,
         }
     }
 
@@ -446,6 +597,155 @@ impl WasmDocument {
             .find(|(id, _)| *id == node)
             .map(|(_, text)| text)
             .unwrap_or_default()
+    }
+
+    /// Every text-bearing paragraph in document order, with its byte length —
+    /// the ordering caret navigation and cross-paragraph edits traverse.
+    fn ordered_paragraphs(&self) -> Vec<(NodeId, u32)> {
+        let mut nodes: Vec<(NodeId, String)> = Vec::new();
+        collect_block_text(self.document.body(), &mut nodes);
+        nodes
+            .into_iter()
+            .map(|(id, text)| (id, text.len() as u32))
+            .collect()
+    }
+
+    /// Orders two selection endpoints into `(start, end)` by document position.
+    fn order_endpoints(
+        &self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+    ) -> Result<(Pos, Pos), String> {
+        let s_node = NodeId::from_str(start_node).map_err(|_| "invalid start node".to_string())?;
+        let e_node = NodeId::from_str(end_node).map_err(|_| "invalid end node".to_string())?;
+        let paras = self.ordered_paragraphs();
+        let si = paras
+            .iter()
+            .position(|(id, _)| *id == s_node)
+            .ok_or("start node not found")?;
+        let ei = paras
+            .iter()
+            .position(|(id, _)| *id == e_node)
+            .ok_or("end node not found")?;
+        let a = Pos::new(s_node, start_offset);
+        let b = Pos::new(e_node, end_offset);
+        if (si, start_offset) <= (ei, end_offset) {
+            Ok((a, b))
+        } else {
+            Ok((b, a))
+        }
+    }
+
+    /// The op sequence that deletes an ordered selection: one `DeleteText` within a
+    /// paragraph, or (across paragraphs) delete the start tail + each whole middle
+    /// paragraph + the end head, then join them all into the start paragraph.
+    fn selection_delete_ops(
+        &self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+    ) -> Result<Vec<Operation>, String> {
+        let (start, end) = self.order_endpoints(start_node, start_offset, end_node, end_offset)?;
+        if start.node == end.node {
+            if start.offset == end.offset {
+                return Ok(Vec::new());
+            }
+            return Ok(vec![Operation::DeleteText {
+                range: EditRange { start, end },
+            }]);
+        }
+        let paras = self.ordered_paragraphs();
+        let si = paras
+            .iter()
+            .position(|(id, _)| *id == start.node)
+            .ok_or("start not found")?;
+        let ei = paras
+            .iter()
+            .position(|(id, _)| *id == end.node)
+            .ok_or("end not found")?;
+        let start_len = paras[si].1;
+
+        let mut ops = Vec::new();
+        if start.offset < start_len {
+            ops.push(Operation::DeleteText {
+                range: EditRange {
+                    start,
+                    end: Pos::new(start.node, start_len),
+                },
+            });
+        }
+        for (id, len) in paras.iter().take(ei).skip(si + 1) {
+            if *len > 0 {
+                ops.push(Operation::DeleteText {
+                    range: EditRange {
+                        start: Pos::new(*id, 0),
+                        end: Pos::new(*id, *len),
+                    },
+                });
+            }
+        }
+        if end.offset > 0 {
+            ops.push(Operation::DeleteText {
+                range: EditRange {
+                    start: Pos::new(end.node, 0),
+                    end,
+                },
+            });
+        }
+        // Join every following paragraph (now empty in the middle) up to and
+        // including the end paragraph into the start paragraph.
+        for (id, _) in paras.iter().take(ei + 1).skip(si + 1) {
+            ops.push(Operation::JoinParagraphs {
+                first: start.node,
+                second: *id,
+            });
+        }
+        Ok(ops)
+    }
+
+    /// The caret position one step in `dir` from `(nid, offset)` — crossing line/
+    /// page boundaries (up/down) and paragraph boundaries (left/right).
+    fn moved_caret(&self, nid: NodeId, offset: u32, dir: &str) -> (NodeId, u32) {
+        match dir {
+            "up" | "down" => {
+                let direction = if dir == "up" {
+                    Direction::Up
+                } else {
+                    Direction::Down
+                };
+                LayoutSnapshot::new(&self.layout)
+                    .move_vertical(ModelPos::new(nid, offset), direction)
+                    .map_or((nid, offset), |p| (p.node, p.offset))
+            }
+            "left" => {
+                if offset > 0 {
+                    let text = self.paragraph_text(nid);
+                    (nid, prev_char_boundary(&text, offset as usize) as u32)
+                } else {
+                    let paras = self.ordered_paragraphs();
+                    match paras.iter().position(|(id, _)| *id == nid) {
+                        Some(i) if i > 0 => (paras[i - 1].0, paras[i - 1].1),
+                        _ => (nid, offset),
+                    }
+                }
+            }
+            "right" => {
+                let text = self.paragraph_text(nid);
+                if (offset as usize) < text.len() {
+                    (nid, next_char_boundary(&text, offset as usize) as u32)
+                } else {
+                    let paras = self.ordered_paragraphs();
+                    match paras.iter().position(|(id, _)| *id == nid) {
+                        Some(i) if i + 1 < paras.len() => (paras[i + 1].0, 0),
+                        _ => (nid, offset),
+                    }
+                }
+            }
+            _ => (nid, offset),
+        }
     }
 
     /// The page at `index`, or an out-of-range message.
@@ -730,12 +1030,18 @@ fn node_id(node: &str) -> Result<NodeId, JsValue> {
     NodeId::from_str(node).map_err(|_| to_js(format!("invalid node id: {node}")))
 }
 
-/// Where the caret lands after `op` is applied: at the end of an insertion, at the
-/// start of a deletion.
-fn caret_after(op: &Operation) -> Pos {
+/// Where the caret lands after `op` is applied: end of an insertion, start of a
+/// deletion, start of the new paragraph after a split, and the join seam after a
+/// join (recovered from the inverse split's boundary).
+fn caret_after(op: &Operation, inverse: &Operation) -> Pos {
     match op {
         Operation::InsertText { at, text } => Pos::new(at.node, at.offset + text.len() as u32),
         Operation::DeleteText { range } => range.start,
+        Operation::SplitParagraph { new_id, .. } => Pos::new(*new_id, 0),
+        Operation::JoinParagraphs { first, .. } => match inverse {
+            Operation::SplitParagraph { at, .. } => *at,
+            _ => Pos::new(*first, 0),
+        },
     }
 }
 
@@ -759,13 +1065,17 @@ fn next_char_boundary(text: &str, offset: usize) -> usize {
     i
 }
 
-/// The result of an edit: where the caret should be placed and the new revision.
+/// The result of an edit: the new caret, the revision, the page count, and the
+/// **dirty page indices** (0-based) whose layout changed — the only pages the
+/// frontend must re-raster.
 #[wasm_bindgen]
 #[derive(Clone, Debug)]
 pub struct EditResult {
     node: String,
     offset: u32,
     revision: u32,
+    page_count: u32,
+    dirty: Vec<u32>,
 }
 
 #[wasm_bindgen]
@@ -790,6 +1100,68 @@ impl EditResult {
     pub fn revision(&self) -> u32 {
         self.revision
     }
+
+    /// The page count after the edit (so the frontend can add/remove pages).
+    #[wasm_bindgen(getter, js_name = pageCount)]
+    #[must_use]
+    pub fn page_count(&self) -> u32 {
+        self.page_count
+    }
+
+    /// The 0-based indices of pages whose layout changed — re-raster only these.
+    #[wasm_bindgen(getter, js_name = dirtyPages)]
+    #[must_use]
+    pub fn dirty_pages(&self) -> Vec<u32> {
+        self.dirty.clone()
+    }
+}
+
+/// A caret position returned by navigation (no edit): node id + byte offset.
+#[wasm_bindgen]
+#[derive(Clone, Debug)]
+pub struct Caret {
+    node: String,
+    offset: u32,
+}
+
+#[wasm_bindgen]
+impl Caret {
+    /// The caret's paragraph node id (32-hex string).
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn node(&self) -> String {
+        self.node.clone()
+    }
+
+    /// The caret's byte offset within the node.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn offset(&self) -> u32 {
+        self.offset
+    }
+}
+
+/// The byte range `[start, end)` of the Unicode word containing (or ending at)
+/// `offset`, or `None` if the offset is not within a word (e.g. whitespace).
+fn word_bounds(text: &str, offset: usize) -> Option<(usize, usize)> {
+    use unicode_segmentation::UnicodeSegmentation;
+    for (start, word) in text.unicode_word_indices() {
+        let end = start + word.len();
+        if (start..=end).contains(&offset) {
+            return Some((start, end));
+        }
+    }
+    None
+}
+
+/// The indices of pages that differ between two layouts (changed, added, or
+/// removed) — the set the frontend must repaint.
+fn dirty_pages(old: &PaginatedLayout, new: &PaginatedLayout) -> Vec<u32> {
+    let max = old.pages.len().max(new.pages.len());
+    (0..max)
+        .filter(|&i| old.pages.get(i) != new.pages.get(i))
+        .map(|i| i as u32)
+        .collect()
 }
 
 #[cfg(test)]
@@ -955,6 +1327,40 @@ mod tests {
             d.copy_text(&node, 0, &node, end + 1),
             format!("Z{original}")
         );
+    }
+
+    /// Split (Enter) divides a paragraph and undo rejoins it; word selection and
+    /// caret movement resolve sensibly.
+    #[test]
+    fn split_word_and_move_caret() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let (node_id, text) = nodes
+            .iter()
+            .find(|(_, t)| t.contains(' '))
+            .map(|(id, t)| (*id, t.clone()))
+            .expect("a paragraph with a space");
+        let node = node_id.to_string();
+
+        // Word at offset 0 spans the first word.
+        let word = d.word_at(&node, 0);
+        assert_eq!(word.len(), 2);
+        assert_eq!(word[0], 0);
+        assert!(word[1] > 0 && (word[1] as usize) <= text.len());
+
+        // Move right by one (ASCII) byte.
+        let caret = d.move_caret(&node, 0, "right").expect("move");
+        assert_eq!(caret.offset(), 1);
+        assert_eq!(caret.node(), node);
+
+        // Split at the first space; the head keeps text[..sp]; undo rejoins.
+        let sp = text.find(' ').unwrap() as u32;
+        let result = d.split_paragraph(&node, sp).expect("split");
+        assert_eq!(result.offset(), 0, "caret at the new paragraph start");
+        assert_eq!(d.copy_text(&node, 0, &node, sp), text[..sp as usize]);
+        d.undo().expect("undo split");
+        assert_eq!(d.copy_text(&node, 0, &node, text.len() as u32), text);
     }
 
     /// Backspace deletes the character before the caret and undo restores it.
