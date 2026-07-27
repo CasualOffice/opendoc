@@ -596,6 +596,7 @@ impl WasmDocument {
 
     /// Sets the text color over the selection to an explicit RGB.
     #[wasm_bindgen(js_name = setTextColor)]
+    #[allow(clippy::too_many_arguments)] // flat JS signature (node/offsets + rgb)
     pub fn set_text_color(
         &mut self,
         start_node: &str,
@@ -728,7 +729,7 @@ impl WasmDocument {
         percent: u16,
     ) -> Result<EditResult, JsValue> {
         self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
-            let mut spacing = p.spacing.clone().unwrap_or_default();
+            let mut spacing = p.spacing.unwrap_or_default();
             spacing.line_percent = Some(percent);
             spacing.line_rule = Some(casual_doc_model::v1::LineRule::Auto);
             spacing.line_twips = None;
@@ -748,7 +749,7 @@ impl WasmDocument {
         delta_twips: i32,
     ) -> Result<EditResult, JsValue> {
         self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
-            let mut indent = p.indentation.clone().unwrap_or(Indentation {
+            let mut indent = p.indentation.unwrap_or(Indentation {
                 start_twips: None,
                 end_twips: None,
                 first_line_twips: None,
@@ -763,6 +764,7 @@ impl WasmDocument {
     /// Sets the paragraph background shading (`w:shd` fill) over the selection to
     /// an RGB, or clears it when `clear` is true.
     #[wasm_bindgen(js_name = setParagraphShading)]
+    #[allow(clippy::too_many_arguments)] // flat JS signature (node/offsets + rgb + clear)
     pub fn set_paragraph_shading(
         &mut self,
         start_node: &str,
