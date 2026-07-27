@@ -16,6 +16,7 @@
 use casual_doc_edit::{
     FormatDelta, Operation, Pos, Range as EditRange, apply as apply_edit, format_state,
 };
+use casual_doc_export::write_document;
 use casual_doc_import::{ImportConfig, ImportMode, import_package};
 use casual_doc_layout::compose::compose_page;
 use casual_doc_layout::document_layout::{document_page_config, paginate_document};
@@ -29,7 +30,8 @@ use casual_doc_layout::units::{Point, Rect, Size, Twip};
 use casual_doc_model::v1::{BlockNode, Document};
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
-use casual_doc_render::{MapMediaSource, RegistryFontSource, Surface, render};
+use casual_doc_render::{MediaSource, RegistryFontSource, Surface, render};
+use std::collections::BTreeMap;
 use std::str::FromStr;
 use wasm_bindgen::Clamped;
 use wasm_bindgen::prelude::*;
@@ -58,7 +60,9 @@ pub struct WasmDocument {
     document: Document,
     layout: PaginatedLayout,
     shaper: ParleyShaper,
-    media: MapMediaSource,
+    /// Inline-image bytes by package part name — served to the renderer (via
+    /// [`BorrowedMedia`]) and to the semantic writer on export.
+    media: BTreeMap<String, Vec<u8>>,
     /// The first-section page geometry — the fallback when a page's section id
     /// resolves to no boundary (a document with no `w:sectPr` falls back to
     /// US-Letter here, exactly as [`document_page_config`] defines).
@@ -79,7 +83,7 @@ pub struct WasmDocument {
 
 impl core::fmt::Debug for WasmDocument {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // `ParleyShaper` and `MapMediaSource` are opaque; report the shape a
+        // `ParleyShaper` is opaque; report the shape a
         // caller can act on without dumping the whole model.
         f.debug_struct("WasmDocument")
             .field("pages", &self.layout.page_count())
@@ -498,6 +502,90 @@ impl WasmDocument {
         }
     }
 
+    /// Like [`format_text`](Self::format_text) but across a selection that may span
+    /// paragraphs — each covered paragraph's sub-range is formatted, as one
+    /// undoable action.
+    #[wasm_bindgen(js_name = formatSelection)]
+    #[allow(clippy::too_many_arguments)] // a flat JS signature is clearer than a bag struct
+    pub fn format_selection(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        bold: Option<bool>,
+        italic: Option<bool>,
+        underline: Option<bool>,
+        strike: Option<bool>,
+    ) -> Result<EditResult, JsValue> {
+        let (start, end) = self
+            .order_endpoints(start_node, start_offset, end_node, end_offset)
+            .map_err(to_js)?;
+        let delta = FormatDelta {
+            bold,
+            italic,
+            underline,
+            strike,
+        };
+        let ops: Vec<Operation> = self
+            .selection_subranges(start, end)
+            .into_iter()
+            .map(|(node, s, e)| Operation::FormatText {
+                range: EditRange {
+                    start: Pos::new(node, s),
+                    end: Pos::new(node, e),
+                },
+                delta,
+            })
+            .collect();
+        if ops.is_empty() {
+            return Err(to_js("empty selection".into()));
+        }
+        self.apply_action(ops).map_err(to_js)
+    }
+
+    /// The uniform format state across a (possibly multi-paragraph) selection — a
+    /// toggle is `true` only when every covered run in every covered paragraph sets
+    /// it.
+    #[wasm_bindgen(js_name = selectionFormat)]
+    #[must_use]
+    pub fn selection_format(
+        &self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+    ) -> Format {
+        let Ok((start, end)) = self.order_endpoints(start_node, start_offset, end_node, end_offset)
+        else {
+            return Format::default();
+        };
+        let subs = self.selection_subranges(start, end);
+        if subs.is_empty() {
+            return Format::default();
+        }
+        let mut acc = Format {
+            bold: true,
+            italic: true,
+            underline: true,
+            strike: true,
+        };
+        for (node, s, e) in subs {
+            let st = format_state(
+                &self.document,
+                EditRange {
+                    start: Pos::new(node, s),
+                    end: Pos::new(node, e),
+                },
+            );
+            acc.bold &= st.bold;
+            acc.italic &= st.italic;
+            acc.underline &= st.underline;
+            acc.strike &= st.strike;
+        }
+        acc
+    }
+
     /// Undoes the last user action (one or many ops), returning the restored
     /// caret + revision.
     #[wasm_bindgen(js_name = undo)]
@@ -526,6 +614,27 @@ impl WasmDocument {
             .map_err(|e| to_js(format!("redo failed: {e}")))?;
         self.undo.push(undo_group);
         Ok(self.finish_edit(caret))
+    }
+
+    /// Serializes the current (edited) document to a `.docx` package the host can
+    /// save. Uses the semantic writer (`v1::Document` → WordprocessingML), so all
+    /// modeled content and edits are written; unmodeled opaque parts from the
+    /// original import are not carried through in this first cut (a follow-up wires
+    /// `write_document_with_retained_parts`).
+    #[wasm_bindgen(js_name = exportDocx)]
+    pub fn export_docx(&self) -> Result<Vec<u8>, JsValue> {
+        write_document(&self.document, &self.media)
+            .map_err(|e| to_js(format!("export failed: {e:?}")))
+    }
+}
+
+/// A [`MediaSource`] that borrows the document's media map — lets the renderer and
+/// the semantic writer share one owned copy of the image bytes.
+struct BorrowedMedia<'a>(&'a BTreeMap<String, Vec<u8>>);
+
+impl MediaSource for BorrowedMedia<'_> {
+    fn media_bytes(&self, media: &str) -> Option<&[u8]> {
+        self.0.get(media).map(Vec::as_slice)
     }
 }
 
@@ -564,7 +673,13 @@ impl WasmDocument {
         // the same face layout measured.
         let registry = self.shaper.registry();
         let fonts = RegistryFontSource::new(&registry);
-        render(&compose_page(page), &mut surface, dpi, &fonts, &self.media);
+        render(
+            &compose_page(page),
+            &mut surface,
+            dpi,
+            &fonts,
+            &BorrowedMedia(&self.media),
+        );
 
         Ok(PageBitmap {
             width_px,
@@ -762,6 +877,41 @@ impl WasmDocument {
             });
         }
         Ok(ops)
+    }
+
+    /// The per-paragraph sub-ranges an ordered selection covers: `(node, start,
+    /// end)` byte ranges, one per paragraph the selection touches (the start
+    /// paragraph's tail, whole middles, the end paragraph's head). Same-paragraph
+    /// selections yield a single entry.
+    fn selection_subranges(&self, start: Pos, end: Pos) -> Vec<(NodeId, u32, u32)> {
+        if start.node == end.node {
+            return if end.offset > start.offset {
+                vec![(start.node, start.offset, end.offset)]
+            } else {
+                Vec::new()
+            };
+        }
+        let paras = self.ordered_paragraphs();
+        let (Some(si), Some(ei)) = (
+            paras.iter().position(|(id, _)| *id == start.node),
+            paras.iter().position(|(id, _)| *id == end.node),
+        ) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        let start_len = paras[si].1;
+        if start.offset < start_len {
+            out.push((start.node, start.offset, start_len));
+        }
+        for (id, len) in paras.iter().take(ei).skip(si + 1) {
+            if *len > 0 {
+                out.push((*id, 0, *len));
+            }
+        }
+        if end.offset > 0 {
+            out.push((end.node, 0, end.offset));
+        }
+        out
     }
 
     /// The caret position one step in `dir` from `(nid, offset)` — crossing line/
@@ -1045,7 +1195,7 @@ fn open_document(bytes: &[u8]) -> Result<WasmDocument, String> {
 
     // Snapshot the inline-image bytes rendering will need, so the handle owns
     // everything and the package can be dropped.
-    let mut media = MapMediaSource::new();
+    let mut media = BTreeMap::new();
     for (_id, reference) in document.definitions().media.iter() {
         if let Ok(part_bytes) = package.read_part(&reference.part_name) {
             media.insert(reference.part_name.clone(), part_bytes);
@@ -1432,6 +1582,33 @@ mod tests {
         );
     }
 
+    /// An edit survives export → re-open: type text, export to `.docx`, re-open
+    /// the exported bytes, and confirm the inserted text is present.
+    #[test]
+    fn edit_survives_export_and_reopen() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, t)| !t.is_empty())
+            .map(|(id, _)| id.to_string())
+            .expect("a non-empty paragraph");
+
+        d.insert_text(&node, 0, "ZZTOP".to_string())
+            .expect("insert");
+        let bytes = d.export_docx().expect("export");
+        assert!(!bytes.is_empty(), "exported a non-empty package");
+
+        let reopened = open_document(&bytes).expect("re-open exported docx");
+        let mut nodes2 = Vec::new();
+        collect_block_text(reopened.document.body(), &mut nodes2);
+        assert!(
+            nodes2.iter().any(|(_, t)| t.starts_with("ZZTOP")),
+            "the inserted text survived the export/re-open round trip"
+        );
+    }
+
     /// Bold a range, confirm the format query reflects it, and undo restores it.
     #[test]
     fn format_bold_and_query_and_undo() {
@@ -1451,6 +1628,32 @@ mod tests {
 
         d.undo().expect("undo");
         assert!(!d.format_at(&node, 0, 3).bold(), "undo cleared bold");
+    }
+
+    /// Formatting spans paragraphs: bold a selection across two paragraphs, and
+    /// the combined query reports bold; undo clears it.
+    #[test]
+    fn format_selection_spans_paragraphs() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let pair = nodes
+            .windows(2)
+            .find(|w| !w[0].1.is_empty() && !w[1].1.is_empty())
+            .expect("two adjacent non-empty paragraphs");
+        let a = pair[0].0.to_string();
+        let b = pair[1].0.to_string();
+
+        assert!(!d.selection_format(&a, 0, &b, 1).bold());
+        d.format_selection(&a, 0, &b, 1, Some(true), None, None, None)
+            .expect("format across paragraphs");
+        assert!(
+            d.selection_format(&a, 0, &b, 1).bold(),
+            "bold applied across both paragraphs"
+        );
+
+        d.undo().expect("undo");
+        assert!(!d.selection_format(&a, 0, &b, 1).bold(), "undo cleared it");
     }
 
     /// Split (Enter) divides a paragraph and undo rejoins it; word selection and

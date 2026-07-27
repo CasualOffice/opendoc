@@ -13,15 +13,11 @@
         <span class="testing" title="Developer test harness — not a product or supported viewer.">testing only</span>
       </div>
       <div class="controls">
-        <div class="format" role="group" aria-label="Text formatting">
-          <button id="bold" type="button" class="fmt" title="Bold (⌘B)" aria-pressed="false"><b>B</b></button>
-          <button id="italic" type="button" class="fmt" title="Italic (⌘I)" aria-pressed="false"><i>I</i></button>
-          <button id="underline" type="button" class="fmt" title="Underline (⌘U)" aria-pressed="false"><u>U</u></button>
-        </div>
         <label class="file">
           <input id="file" type="file" accept=".docx" hidden />
           Open .docx
         </label>
+        <button id="save" type="button" class="save" disabled title="Download the edited document">Save .docx</button>
         <label class="zoom">
           Zoom
           <select id="zoom">
@@ -35,6 +31,14 @@
         <span id="status" class="status">Loading engine…</span>
       </div>
     </header>
+
+    <div class="toolbar" role="toolbar" aria-label="Formatting">
+      <div class="format" role="group" aria-label="Text formatting">
+        <button id="bold" type="button" class="fmt" title="Bold (⌘B)" aria-pressed="false"><b>B</b></button>
+        <button id="italic" type="button" class="fmt" title="Italic (⌘I)" aria-pressed="false"><i>I</i></button>
+        <button id="underline" type="button" class="fmt" title="Underline (⌘U)" aria-pressed="false"><u>U</u></button>
+      </div>
+    </div>
 
     <main id="viewport" class="viewport">
       <div id="drop" class="drop">
