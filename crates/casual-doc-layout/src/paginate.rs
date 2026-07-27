@@ -481,6 +481,19 @@ impl<'a> Paginator<'a> {
                 j += 1;
             }
             j = (j + 1).min(fragments.len());
+            // A forced page break (`pageBreakBefore`) inside a keep-next chain wins
+            // over keep-with-next (as in Word): end the group right before the first
+            // later member that forces a new page, so its break is honored on the
+            // next iteration as that group's head (`group[0]`, checked below).
+            if let Some(k) = fragments[i..j]
+                .iter()
+                .enumerate()
+                .skip(1)
+                .find(|(_, f)| f.break_control().page_break_before)
+                .map(|(k, _)| k)
+            {
+                j = i + k;
+            }
             let group = &fragments[i..j];
             let group_height: i32 = group.iter().map(|f| f.height().raw()).sum();
             let group_fits_page = group_height <= self.content_height;
@@ -1625,6 +1638,26 @@ mod tests {
         ];
         let layout = paginate(&fragments, &config);
         assert_eq!(layout.page_count(), 2, "pageBreakBefore forces a new page");
+        assert_eq!(layout.pages[0].placed.len(), 1);
+        assert_eq!(layout.pages[1].placed.len(), 1);
+    }
+
+    #[test]
+    fn page_break_before_wins_over_keep_next() {
+        let config = letter_config();
+        // para1 keeps-with-next (like a Heading), para2 forces a break. The break
+        // wins over keep-with-next (as in Word): para1 stays on page 1, para2 on
+        // page 2 — the keep-next chain is split at the forced break.
+        let fragments = vec![
+            paragraph_with(1, Twip(240), with(false, true)),
+            paragraph_with(2, Twip(240), with(true, false)),
+        ];
+        let layout = paginate(&fragments, &config);
+        assert_eq!(
+            layout.page_count(),
+            2,
+            "pageBreakBefore breaks the keep-next chain"
+        );
         assert_eq!(layout.pages[0].placed.len(), 1);
         assert_eq!(layout.pages[1].placed.len(), 1);
     }

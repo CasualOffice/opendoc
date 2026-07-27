@@ -67,6 +67,13 @@ const spacingBtn = document.getElementById("spacingBtn");
 const spacingMenu = document.getElementById("spacingMenu");
 const spaceBeforeInput = document.getElementById("spaceBefore");
 const spaceAfterInput = document.getElementById("spaceAfter");
+const paraOptsBtn = document.getElementById("paraOptsBtn");
+const paraOptsMenu = document.getElementById("paraOptsMenu");
+const paraShade = document.getElementById("paraShade");
+const paraShadeNone = document.getElementById("paraShadeNone");
+const pgKeepNext = document.getElementById("pgKeepNext");
+const pgKeepLines = document.getElementById("pgKeepLines");
+const pgBreakBefore = document.getElementById("pgBreakBefore");
 const indentDecBtn = document.getElementById("indentDec");
 const indentIncBtn = document.getElementById("indentInc");
 const bulletListBtn = document.getElementById("bulletList");
@@ -77,6 +84,7 @@ const runControls = [superBtn, subBtn, fontSizeSel, textColorInput, highlightSel
 const paraControls = [
   ...Object.values(alignBtns),
   spacingBtn,
+  paraOptsBtn,
   indentDecBtn,
   indentIncBtn,
   bulletListBtn,
@@ -927,7 +935,7 @@ function updateToolbar() {
 
   // Reflect the current paragraph style + spacing + list kind.
   paragraphStyleSel.value = hasSel && doc ? doc.paragraphStyleAt(selection.focus.node) : "";
-  if (hasSel && doc && !spacingMenu.hidden) reflectSpacingMenu();
+  if (hasSel && doc) for (const p of popovers) if (!p.menu.hidden) p.reflect();
   const listKind = hasSel && doc ? doc.listStyleAt(selection.focus.node) : "";
   bulletListBtn.setAttribute("aria-pressed", String(listKind === "bullet"));
   numberedListBtn.setAttribute("aria-pressed", String(listKind === "numbered"));
@@ -992,9 +1000,58 @@ fontSizeSel.addEventListener("change", () => {
     );
   }
 });
-// ---- Line & paragraph spacing menu -----------------------------------------
+// ---- Toolbar popovers (spacing, paragraph options) -------------------------
+// One lightweight manager: anchor a menu under its button, only one open at a
+// time, dismiss on outside-pointerdown / Escape. Each popover registers a
+// `reflect()` that syncs its controls to the caret paragraph.
 const TWIPS_PER_POINT = 20;
+const popovers = [];
 
+function openPopover(p) {
+  if (!selection) return;
+  for (const q of popovers) if (q !== p) closePopover(q);
+  const r = p.btn.getBoundingClientRect();
+  p.menu.hidden = false;
+  p.menu.style.left = `${Math.round(r.left)}px`;
+  p.menu.style.top = `${Math.round(r.bottom + 4)}px`;
+  p.btn.setAttribute("aria-expanded", "true");
+  p.reflect();
+}
+
+function closePopover(p) {
+  p.menu.hidden = true;
+  p.btn.setAttribute("aria-expanded", "false");
+}
+
+function registerPopover(btn, menu, reflect) {
+  const p = { btn, menu, reflect };
+  popovers.push(p);
+  onButton(btn, () => (menu.hidden ? openPopover(p) : closePopover(p)));
+  // Keep clicks inside the menu from stealing the selection focus, but let form
+  // controls (inputs) focus and toggle normally.
+  menu.addEventListener("mousedown", (e) => {
+    if (e.target.tagName !== "INPUT") e.preventDefault();
+  });
+  return p;
+}
+
+document.addEventListener("mousedown", (e) => {
+  for (const p of popovers) {
+    if (
+      !p.menu.hidden &&
+      !p.menu.contains(e.target) &&
+      e.target !== p.btn &&
+      !p.btn.contains(e.target)
+    ) {
+      closePopover(p);
+    }
+  }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") for (const p of popovers) if (!p.menu.hidden) closePopover(p);
+});
+
+// -- Line & paragraph spacing --------------------------------------------------
 /** Reflect the caret paragraph's spacing into the menu (line-preset check +
  *  space before/after fields). */
 function reflectSpacingMenu() {
@@ -1012,23 +1069,7 @@ function reflectSpacingMenu() {
     spaceAfterInput.value = s.afterTwip >= 0 ? String(Math.round(s.afterTwip / TWIPS_PER_POINT)) : "";
   }
 }
-
-function openSpacingMenu() {
-  if (!selection) return;
-  const r = spacingBtn.getBoundingClientRect();
-  spacingMenu.hidden = false;
-  spacingMenu.style.left = `${Math.round(r.left)}px`;
-  spacingMenu.style.top = `${Math.round(r.bottom + 4)}px`;
-  spacingBtn.setAttribute("aria-expanded", "true");
-  reflectSpacingMenu();
-}
-
-function closeSpacingMenu() {
-  spacingMenu.hidden = true;
-  spacingBtn.setAttribute("aria-expanded", "false");
-}
-
-onButton(spacingBtn, () => (spacingMenu.hidden ? openSpacingMenu() : closeSpacingMenu()));
+registerPopover(spacingBtn, spacingMenu, reflectSpacingMenu);
 
 for (const b of spacingMenu.querySelectorAll(".spacing-line")) {
   onButton(b, () => {
@@ -1052,23 +1093,36 @@ spaceAfterInput.addEventListener("change", () =>
   applySpace(spaceAfterInput, (a, b, c, d, t) => doc.setSpaceAfter(a, b, c, d, t)),
 );
 
-// Keep clicks inside the menu from stealing selection focus (but let inputs focus).
-spacingMenu.addEventListener("mousedown", (e) => {
-  if (e.target.tagName !== "INPUT") e.preventDefault();
-});
-document.addEventListener("mousedown", (e) => {
-  if (
-    !spacingMenu.hidden &&
-    !spacingMenu.contains(e.target) &&
-    e.target !== spacingBtn &&
-    !spacingBtn.contains(e.target)
-  ) {
-    closeSpacingMenu();
+// -- Paragraph options (shading + line/page-break flags) ----------------------
+function reflectParaOptsMenu() {
+  if (!doc || !selection) return;
+  const f = doc.paragraphFlags(selection.focus.node);
+  pgKeepNext.checked = f.keepNext;
+  pgKeepLines.checked = f.keepLines;
+  pgBreakBefore.checked = f.pageBreakBefore;
+  const rgb = doc.paragraphShadingAt(selection.focus.node);
+  if (rgb >= 0 && document.activeElement !== paraShade) {
+    paraShade.value = `#${rgb.toString(16).padStart(6, "0")}`;
   }
+}
+registerPopover(paraOptsBtn, paraOptsMenu, reflectParaOptsMenu);
+
+paraShade.addEventListener("input", () => {
+  const [r, g, b] = hexToRgb(paraShade.value);
+  runToolbarEdit((a, x, c, d) => doc.setParagraphShading(a, x, c, d, r, g, b, false));
 });
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !spacingMenu.hidden) closeSpacingMenu();
-});
+onButton(paraShadeNone, () =>
+  runToolbarEdit((a, x, c, d) => doc.setParagraphShading(a, x, c, d, 0, 0, 0, true)),
+);
+for (const [box, setter] of [
+  [pgKeepNext, (a, b, c, d, on) => doc.setKeepWithNext(a, b, c, d, on)],
+  [pgKeepLines, (a, b, c, d, on) => doc.setKeepLinesTogether(a, b, c, d, on)],
+  [pgBreakBefore, (a, b, c, d, on) => doc.setPageBreakBefore(a, b, c, d, on)],
+]) {
+  box.addEventListener("change", () =>
+    runToolbarEdit((a, b, c, d) => setter(a, b, c, d, box.checked)),
+  );
+}
 highlightSel.addEventListener("change", () => {
   const name = highlightSel.value;
   armOrApplyRun({ highlight: name }, () =>

@@ -1353,6 +1353,80 @@ impl WasmDocument {
         })
     }
 
+    /// The paragraph's shading fill as a packed `0xRRGGBB` int, or `-1` when unset —
+    /// for the paragraph-options menu's shading swatch.
+    #[wasm_bindgen(js_name = paragraphShadingAt)]
+    #[must_use]
+    pub fn paragraph_shading_at(&self, node: &str) -> i32 {
+        NodeId::from_str(node)
+            .ok()
+            .and_then(|nid| paragraph_properties(&self.document, nid))
+            .and_then(|p| p.shading.fill)
+            .map_or(-1, |c| {
+                (i32::from(c.r) << 16) | (i32::from(c.g) << 8) | i32::from(c.b)
+            })
+    }
+
+    /// Sets "keep with next" (`w:keepNext`) over the selection's paragraphs.
+    #[wasm_bindgen(js_name = setKeepWithNext)]
+    pub fn set_keep_with_next(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        on: bool,
+    ) -> Result<EditResult, JsValue> {
+        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
+            p.keep_next = on;
+        })
+    }
+
+    /// Sets "keep lines together" (`w:keepLines`) over the selection's paragraphs.
+    #[wasm_bindgen(js_name = setKeepLinesTogether)]
+    pub fn set_keep_lines_together(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        on: bool,
+    ) -> Result<EditResult, JsValue> {
+        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
+            p.keep_lines = on;
+        })
+    }
+
+    /// Sets "page break before" (`w:pageBreakBefore`) over the selection's paragraphs.
+    #[wasm_bindgen(js_name = setPageBreakBefore)]
+    pub fn set_page_break_before(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        on: bool,
+    ) -> Result<EditResult, JsValue> {
+        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
+            p.page_break_before = on;
+        })
+    }
+
+    /// The paragraph's line-and-page-break flags (keep-with-next, keep-lines,
+    /// page-break-before) for reflecting the paragraph-options menu's checkboxes.
+    #[wasm_bindgen(js_name = paragraphFlags)]
+    #[must_use]
+    pub fn paragraph_flags(&self, node: &str) -> ParagraphFlags {
+        NodeId::from_str(node)
+            .ok()
+            .and_then(|nid| paragraph_properties(&self.document, nid))
+            .map_or(ParagraphFlags::default(), |p| ParagraphFlags {
+                keep_next: p.keep_next,
+                keep_lines: p.keep_lines,
+                page_break_before: p.page_break_before,
+            })
+    }
+
     /// The uniform run styling of the selection (size/color/font/vert-align) for
     /// reflecting the current values in the toolbar. Blank/zero for a mixed or
     /// cross-paragraph selection.
@@ -2862,6 +2936,39 @@ impl ParagraphSpacing {
     }
 }
 
+/// A paragraph's line-and-page-break flags, for the paragraph-options menu.
+#[wasm_bindgen]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ParagraphFlags {
+    keep_next: bool,
+    keep_lines: bool,
+    page_break_before: bool,
+}
+
+#[wasm_bindgen]
+impl ParagraphFlags {
+    /// Keep this paragraph on the same page as the next (`w:keepNext`).
+    #[wasm_bindgen(getter, js_name = keepNext)]
+    #[must_use]
+    pub fn keep_next(&self) -> bool {
+        self.keep_next
+    }
+
+    /// Keep all lines of this paragraph on one page (`w:keepLines`).
+    #[wasm_bindgen(getter, js_name = keepLines)]
+    #[must_use]
+    pub fn keep_lines(&self) -> bool {
+        self.keep_lines
+    }
+
+    /// Force a page break before this paragraph (`w:pageBreakBefore`).
+    #[wasm_bindgen(getter, js_name = pageBreakBefore)]
+    #[must_use]
+    pub fn page_break_before(&self) -> bool {
+        self.page_break_before
+    }
+}
+
 /// Document statistics for the status footer.
 #[wasm_bindgen]
 #[derive(Clone, Copy, Debug, Default)]
@@ -3612,6 +3719,72 @@ mod tests {
         // Undo the clear → space-before returns to 240.
         d.undo().expect("undo");
         assert_eq!(d.paragraph_spacing(&node).before_twip(), 240);
+    }
+
+    /// Line-and-page-break flags and paragraph shading apply, reflect, and undo.
+    #[test]
+    fn paragraph_flags_and_shading_apply_reflect_and_undo() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, t)| t.len() >= 3)
+            .map(|(id, _)| id.to_string())
+            .expect("a paragraph with >=3 chars");
+
+        let f = d.paragraph_flags(&node);
+        assert!(!f.keep_next() && !f.keep_lines() && !f.page_break_before());
+
+        d.set_keep_with_next(&node, 0, &node, 0, true)
+            .expect("keep");
+        d.set_page_break_before(&node, 0, &node, 0, true)
+            .expect("pbb");
+        let f = d.paragraph_flags(&node);
+        assert!(f.keep_next() && f.page_break_before() && !f.keep_lines());
+
+        assert_eq!(d.paragraph_shading_at(&node), -1);
+        d.set_paragraph_shading(&node, 0, &node, 0, 0xFF, 0xE0, 0x80, false)
+            .expect("shade");
+        assert_eq!(d.paragraph_shading_at(&node), 0x00FF_E080);
+        d.set_paragraph_shading(&node, 0, &node, 0, 0, 0, 0, true)
+            .expect("clear shade");
+        assert_eq!(d.paragraph_shading_at(&node), -1);
+
+        // Undo the clear → the fill returns.
+        d.undo().expect("undo");
+        assert_eq!(d.paragraph_shading_at(&node), 0x00FF_E080);
+    }
+
+    /// A `pageBreakBefore` set through the live edit path must re-paginate and add a
+    /// page (guards the incremental pagination honoring break control, not just the
+    /// from-scratch paginator).
+    #[test]
+    fn page_break_before_repaginates_through_the_edit_path() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        // Second top-level (non-table) paragraph — forcing a break before it must
+        // push it (and everything after) to a new page.
+        let target = nodes
+            .iter()
+            .filter(|(id, _)| locate_table_row(&d.document, *id).is_none())
+            .nth(1)
+            .map(|(id, _)| id.to_string())
+            .expect("a second body paragraph");
+
+        let before = d.page_count();
+        d.set_page_break_before(&target, 0, &target, 0, true)
+            .expect("page break before");
+        assert!(
+            d.page_count() > before,
+            "pageBreakBefore must force a new page through the edit path (before={before}, after={})",
+            d.page_count()
+        );
+
+        // Undo restores the single page.
+        d.undo().expect("undo");
+        assert_eq!(d.page_count(), before);
     }
 
     /// Font family applies over a range; paragraph style applies, reads back, and
