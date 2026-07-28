@@ -81,3 +81,26 @@ Deferred (each its own analysed slice, functional when shipped): **Find/Replace*
   current control count; less like the reference.
 Recommendation: **A**, since the owner referenced the ribbon; keep it lean/contextual
 so no tab feels empty.
+
+## 6. Floating selection toolbar — competitive analysis & design
+
+Competitive read (selection-time formatting):
+- **MS Word** — mini-toolbar fades in by the cursor: font/size/B/I/U/colour/
+  highlight/styles. Fast but busy.
+- **Google Docs** — no floating bar; relies on the top toolbar, but shows
+  link/comment affordances on a selection.
+- **Notion** — floating bar: B/I/U/S/code/link/colour/comment/turn-into. The
+  cleanest, most-copied model.
+- **Medium** — minimal: B/I/link/H/quote. Content-first.
+- **Reference (`template.png`)** — `Normal▾  B I U  🖍 A▾  🔗 💬  ⋯`.
+
+Synthesis / decision: a **compact bar that appears above a non-empty selection**
+with only the **functional** inline actions we have today — **B I U S · highlight ·
+text colour**. Link/comment are deferred (no link-edit UI / comments model yet), so
+they are **not** shown (functional-only). It complements the ribbon (doesn't replace
+it) and reuses the ribbon's handlers verbatim.
+
+Behaviour: shows on a range selection, centred just above the selection's bounding
+box; hides when the selection collapses, on scroll/zoom, and during edits; never
+covers the first line (flips below when there's no room above). Reuses `.fmt`
+buttons + the popover tokens from doc 63.
