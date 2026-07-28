@@ -519,6 +519,40 @@ input {
   gap: 4px;
 }
 
+/* ---- Insert-table grid picker ---------------------------------------------- */
+.grid-picker {
+  padding: 8px;
+}
+
+.grid-cells {
+  display: grid;
+  grid-template-columns: repeat(10, 15px);
+  gap: 2px;
+}
+
+.grid-cells .gc {
+  width: 15px;
+  height: 15px;
+  border: 1px solid var(--line-strong);
+  border-radius: 2px;
+  background: var(--surface);
+  cursor: pointer;
+  padding: 0;
+}
+
+.grid-cells .gc.on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.grid-label {
+  margin-top: 7px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
 /* Border presets: a row of buttons each showing a mini box with the relevant
    edge(s) emphasized (CSS-drawn — no icon assets). */
 .border-row {

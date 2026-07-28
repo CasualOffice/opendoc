@@ -32,12 +32,13 @@ use casual_doc_layout::page::{Page, PaginatedLayout};
 use casual_doc_layout::paginate::PageConfig;
 use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_layout::units::{Point, Rect, Size, Twip};
+use casual_doc_model::v1::GridColumn;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, BorderEdge,
     CellVerticalAlignment, Document, HighlightColor, Indentation, LevelJustification, LevelSuffix,
     NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel, NumberingRef, Paragraph,
-    ParagraphProperties, RgbColor, StyleId, StyleKind, TabAlignment, TabStop, TableBorders,
-    TableCell, TableCellProperties, TableRow, VerticalAlignment,
+    ParagraphProperties, RgbColor, StyleId, StyleKind, TabAlignment, TabStop, Table, TableBorders,
+    TableCell, TableCellProperties, TableProperties, TableRow, VerticalAlignment,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
@@ -1225,6 +1226,120 @@ impl WasmDocument {
             BlockNode::Paragraph(p) => Some(p.id),
             _ => None,
         })
+    }
+
+    /// Inserts a fresh `rows`×`cols` table into the body right after the caret's
+    /// top-level block, with equal columns spanning the content width and a thin
+    /// single-line grid so it is visible. The caret lands in the first cell.
+    #[wasm_bindgen(js_name = insertTable)]
+    pub fn insert_table(
+        &mut self,
+        node: &str,
+        rows: u32,
+        cols: u32,
+    ) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let rows = rows.clamp(1, 50) as usize;
+        let cols = cols.clamp(1, 20) as usize;
+        let exhausted = || to_js("id space exhausted".into());
+
+        let c = &self.default_config;
+        let content_w =
+            (c.page_size.width.raw() - c.margin_start.raw() - c.margin_end.raw()).max(cols as i32);
+        let col_w = content_w / cols as i32;
+
+        let grid = (0..cols)
+            .map(|_| GridColumn {
+                width_twips: Some(col_w),
+            })
+            .collect();
+
+        let mut table_rows = Vec::with_capacity(rows);
+        for _ in 0..rows {
+            let mut cells = Vec::with_capacity(cols);
+            for _ in 0..cols {
+                let cell_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
+                let para_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
+                cells.push(TableCell {
+                    id: cell_id,
+                    properties: TableCellProperties {
+                        width_twips: Some(col_w),
+                        ..TableCellProperties::default()
+                    },
+                    blocks: vec![BlockNode::Paragraph(Paragraph {
+                        id: para_id,
+                        properties: ParagraphProperties::default(),
+                        inlines: Vec::new(),
+                    })],
+                });
+            }
+            let row_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
+            table_rows.push(TableRow {
+                id: row_id,
+                properties: Default::default(),
+                cells,
+            });
+        }
+
+        let mut properties = TableProperties::default();
+        set_table_borders_preset(&mut properties.borders, "all", || border_edge(0, 0, 0, 4));
+        let table_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
+        let table = Table {
+            id: table_id,
+            grid,
+            grid_change: None,
+            properties,
+            rows: table_rows,
+        };
+
+        let index = self.body_index_after(nid) as u32;
+        let caret = table
+            .rows
+            .first()
+            .and_then(first_paragraph_of_row)
+            .map_or_else(|| Pos::new(table_id, 0), |p| Pos::new(p, 0));
+        self.apply_action_caret(
+            vec![Operation::InsertTable {
+                container: None,
+                index,
+                table: Box::new(table),
+            }],
+            caret,
+        )
+        .map_err(to_js)
+    }
+
+    /// The body index right after the top-level block that (recursively) contains
+    /// `node` — where [`insert_table`](Self::insert_table) drops a new table. Falls
+    /// back to the end of the body.
+    fn body_index_after(&self, node: NodeId) -> usize {
+        let blocks = self.document.body();
+        blocks
+            .iter()
+            .position(|b| block_holds(b, node))
+            .map_or(blocks.len(), |i| i + 1)
+    }
+
+    /// Sets the table's horizontal alignment on the page: `"left"`/`"center"`/
+    /// `"right"` (the table containing `node`).
+    #[wasm_bindgen(js_name = setTableAlignment)]
+    pub fn set_table_alignment(&mut self, node: &str, align: &str) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let (table, _cell) =
+            locate_cell(&self.document, nid).ok_or_else(|| to_js("not in a table".into()))?;
+        let mut props = find_table(&self.document, table)
+            .map(|t| t.properties.clone())
+            .ok_or_else(|| to_js("table not found".into()))?;
+        props.alignment = Some(match align {
+            "center" => Alignment::Center,
+            "right" => Alignment::End,
+            _ => Alignment::Start,
+        });
+        self.apply_action(vec![Operation::SetTableProperties {
+            table,
+            properties: Box::new(props),
+        }])
+        .map_err(to_js)
     }
 
     /// Whether the caret's paragraph is inside a table cell — drives the table
@@ -2717,6 +2832,21 @@ fn flat_rect(page: u32, rect: Rect) -> [i32; 5] {
         rect.size.width.raw(),
         rect.size.height.raw(),
     ]
+}
+
+/// Whether `block` (recursively, through nested tables / content controls) holds the
+/// paragraph `node` — locates the top-level body block a caret belongs to.
+fn block_holds(block: &BlockNode, node: NodeId) -> bool {
+    match block {
+        BlockNode::Paragraph(p) => p.id == node,
+        BlockNode::Table(t) => t.rows.iter().any(|r| {
+            r.cells
+                .iter()
+                .any(|c| c.blocks.iter().any(|b| block_holds(b, node)))
+        }),
+        BlockNode::Sdt(s) => s.blocks.iter().any(|b| block_holds(b, node)),
+        _ => false,
+    }
 }
 
 /// A single-line border edge in the given RGB at `size_eighth_points` eighth-points.
@@ -4267,6 +4397,51 @@ mod tests {
         assert_eq!(d.cell_vertical_align_at(&cell_para), initial_valign);
         d.undo().expect("u shading");
         assert_eq!(d.cell_shading_at(&cell_para), initial_shading);
+    }
+
+    /// Inserting a fresh table adds a 3×4 grid after the caret's block and lands the
+    /// caret inside it; undo removes it. Table alignment applies and reflects.
+    #[test]
+    fn insert_table_and_align() {
+        fn top_tables(blocks: &[BlockNode]) -> Vec<(usize, usize)> {
+            blocks
+                .iter()
+                .filter_map(|b| match b {
+                    BlockNode::Table(t) => {
+                        Some((t.rows.len(), t.rows.first().map_or(0, |r| r.cells.len())))
+                    }
+                    _ => None,
+                })
+                .collect()
+        }
+
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let body_para = nodes
+            .iter()
+            .find(|(id, _)| !d.in_table(&id.to_string()))
+            .map(|(id, _)| id.to_string())
+            .expect("a top-level body paragraph");
+
+        let before = top_tables(d.document.body());
+        let res = d.insert_table(&body_para, 3, 4).expect("insert table");
+        let caret = res.node();
+        assert!(d.in_table(&caret), "caret lands inside the new table");
+        let after = top_tables(d.document.body());
+        assert_eq!(after.len(), before.len() + 1, "one more top-level table");
+        assert!(
+            after.contains(&(3, 4)),
+            "a 3x4 table was inserted: {after:?}"
+        );
+
+        // Align that new table centered, then read it back.
+        d.set_table_alignment(&caret, "center").expect("align");
+
+        // Undo align + insert → back to the original table set.
+        d.undo().expect("u align");
+        d.undo().expect("u insert");
+        assert_eq!(top_tables(d.document.body()), before);
     }
 
     /// A `pageBreakBefore` set through the live edit path must re-paginate and add a
