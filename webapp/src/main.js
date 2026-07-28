@@ -97,6 +97,10 @@ const railOutline = document.getElementById("railOutline");
 const outlinePanel = document.getElementById("outlinePanel");
 const outlineClose = document.getElementById("outlineClose");
 const outlineBody = document.getElementById("outlineBody");
+const linkChip = document.getElementById("linkChip");
+const linkChipKind = document.getElementById("linkChipKind");
+const linkChipTarget = document.getElementById("linkChipTarget");
+const linkChipAction = document.getElementById("linkChipAction");
 const indentDecBtn = document.getElementById("indentDec");
 const indentIncBtn = document.getElementById("indentInc");
 const bulletListBtn = document.getElementById("bulletList");
@@ -141,6 +145,11 @@ let dragging = false;
 /** Primary-pointer gesture retained until pointerup so link activation is
  * suppressed after a drag/Shift extension. */
 let pointerGesture = null;
+/** The model-derived link currently represented by the host-owned link chip. */
+let activeLink = null;
+/** One-frame throttle for pointer feedback over canvas-painted link geometry. */
+let linkHoverFrame = 0;
+let pendingLinkHover = null;
 /** Armed run formatting for typing at a collapsed caret (e.g. click Bold with no
  *  selection → next typed characters are bold). `null` when nothing is armed; else
  *  a subset of { bold, italic, underline, strike } → boolean. Cleared whenever the
@@ -190,12 +199,27 @@ async function boot() {
   } catch (err) {
     console.error(err);
     setStatus("Failed to load the WASM engine", "error");
+    return;
+  }
+
+  if (new URLSearchParams(window.location.search).get("demo") === "1") {
+    try {
+      setStatus("Loading the OpenDoc sample…");
+      const response = await fetch("./demo.docx");
+      if (!response.ok) throw new Error(`sample request returned ${response.status}`);
+      await openBytes(new Uint8Array(await response.arrayBuffer()), "opendoc-demo.docx");
+    } catch (err) {
+      console.error(err);
+      setStatus("The sample could not be loaded — you can still open a local DOCX", "error");
+    }
   }
 }
 
 async function openBytes(bytes, name) {
   try {
     setStatus(`Opening ${name}…`);
+    hideLinkChip();
+    clearLinkHover();
     // A previous document's memory is freed when it is dropped; replace it.
     if (doc) doc.free();
     doc = open(bytes);
@@ -435,23 +459,103 @@ function navigateToAnchor(node, offset, pageNumber) {
   scrollCaretIntoView();
 }
 
-/** Activates the authored link painted at a direct click. The runtime resolves
- * geometry/bookmarks; this host owns the external-scheme allowlist and browser
- * navigation. */
-function activateLinkAt(page, event) {
+/** Copies a WASM-owned link hit into an ordinary JS value, then frees it. */
+function linkAt(page, event) {
   if (!doc) return false;
   const { x, y } = pointToTwip(page, event);
   const hit = doc.linkAt(page.pageNumber, x, y);
-  if (!hit) return false;
+  if (!hit) return null;
   const link = {
     kind: hit.kind,
     url: hit.url,
     anchor: hit.anchor,
+    tooltip: hit.tooltip,
+    startNode: hit.startNode,
+    startOffset: hit.startOffset,
+    endNode: hit.endNode,
+    endOffset: hit.endOffset,
     targetNode: hit.targetNode,
     targetOffset: hit.targetOffset,
     targetPage: hit.targetPage,
   };
   hit.free();
+  return link;
+}
+
+/** Clears the visible chip without changing the document selection. */
+function hideLinkChip() {
+  activeLink = null;
+  linkChip.hidden = true;
+}
+
+/** Clears pointer feedback from every rendered page. */
+function clearLinkHover() {
+  pendingLinkHover = null;
+  if (linkHoverFrame) cancelAnimationFrame(linkHoverFrame);
+  linkHoverFrame = 0;
+  for (const page of pages) page.canvas.classList.remove("link-hover");
+}
+
+/** Throttles the model query used to make canvas-painted links visibly hoverable. */
+function scheduleLinkHover(page, event) {
+  pendingLinkHover = { page, clientX: event.clientX, clientY: event.clientY };
+  if (linkHoverFrame) return;
+  linkHoverFrame = requestAnimationFrame(() => {
+    linkHoverFrame = 0;
+    const pending = pendingLinkHover;
+    pendingLinkHover = null;
+    if (!pending || dragging || !pages.includes(pending.page)) return;
+    const hit = linkAt(pending.page, pending);
+    for (const candidate of pages) {
+      candidate.canvas.classList.toggle("link-hover", candidate === pending.page && !!hit);
+    }
+  });
+}
+
+/** Shows a bounded link chip and selects the exact authored model range, making
+ * the target discoverable without hijacking drag or Shift-selection behavior. */
+function showLinkChipAt(page, event) {
+  const link = linkAt(page, event);
+  if (!link) {
+    hideLinkChip();
+    return false;
+  }
+  activeLink = link;
+  pendingFormat = null;
+  selection = {
+    anchor: { node: link.startNode, offset: link.startOffset },
+    focus: { node: link.endNode, offset: link.endOffset },
+  };
+  drawSelection();
+
+  const internal = link.kind === "internal";
+  const resolved = !internal || (!!link.targetNode && !!link.targetPage);
+  const target = internal ? `#${link.anchor}` : link.url;
+  linkChipKind.textContent =
+    link.tooltip || (internal ? "Document bookmark" : "External link");
+  linkChipTarget.textContent = target;
+  linkChipTarget.title = target;
+  linkChipAction.textContent = internal ? (resolved ? "Jump" : "Missing") : "Open";
+  linkChipAction.disabled = !resolved;
+  linkChip.hidden = false;
+
+  const width = linkChip.offsetWidth;
+  const height = linkChip.offsetHeight;
+  const left = Math.max(12, Math.min(event.clientX - 18, window.innerWidth - width - 12));
+  let top = event.clientY + 14;
+  if (top + height > window.innerHeight - 12) top = event.clientY - height - 14;
+  linkChip.style.left = `${Math.round(left)}px`;
+  linkChip.style.top = `${Math.max(12, Math.round(top))}px`;
+  linkChipAction.focus({ preventScroll: true });
+  return true;
+}
+
+/** Activates a previously queried authored link. The runtime resolves
+ * geometry/bookmarks; this host owns the external-scheme allowlist and browser
+ * navigation. */
+function activateLink(link) {
+  if (!link) return false;
+  hideLinkChip();
 
   if (link.kind === "internal") {
     if (!link.targetNode || !link.targetPage) {
@@ -482,6 +586,8 @@ function activateLinkAt(page, event) {
 
 function onPointerDown(page, event) {
   if (event.button !== 0) return;
+  hideLinkChip();
+  clearLinkHover();
   pointerGesture = null;
   const anchor = anchorAt(page, event);
   if (!anchor) return;
@@ -504,7 +610,10 @@ function onPointerDown(page, event) {
 }
 
 function onPointerMove(page, event) {
-  if (!dragging) return;
+  if (!dragging) {
+    scheduleLinkHover(page, event);
+    return;
+  }
   if (
     pointerGesture &&
     Math.hypot(
@@ -530,7 +639,7 @@ function onPointerUp(event) {
     !gesture.moved &&
     Math.hypot(event.clientX - gesture.clientX, event.clientY - gesture.clientY) <= 4
   ) {
-    activateLinkAt(gesture.page, event);
+    showLinkChipAt(gesture.page, event);
   }
 }
 
@@ -579,6 +688,7 @@ pagesEl.addEventListener("pointermove", (e) => {
   const page = pageFromEvent(e);
   if (page) onPointerMove(page, e);
 });
+pagesEl.addEventListener("pointerleave", clearLinkHover);
 pagesEl.addEventListener("dblclick", (e) => {
   const page = pageFromEvent(e);
   if (page) selectWord(page, e);
@@ -597,6 +707,20 @@ pagesEl.addEventListener("click", (e) => {
   drawSelection();
 });
 window.addEventListener("pointerup", onPointerUp);
+
+linkChip.addEventListener("mousedown", (event) => {
+  // Keep the model selection visible while the host control receives the click.
+  event.preventDefault();
+});
+linkChipAction.addEventListener("click", () => activateLink(activeLink));
+document.addEventListener("pointerdown", (event) => {
+  if (!linkChip.hidden && !linkChip.contains(event.target)) hideLinkChip();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") hideLinkChip();
+});
+viewportEl.addEventListener("scroll", hideLinkChip, { passive: true });
+window.addEventListener("resize", hideLinkChip);
 
 // ---- Right-click table menu (Google-Docs style: structure lives here, not the
 //      toolbar) -----------------------------------------------------------------
@@ -1748,7 +1872,7 @@ const selHighlight = document.getElementById("selHighlight");
 /** Shows the floating toolbar centred just above the current range selection (or
  *  below it when there's no room), or hides it when the selection is collapsed. */
 function positionSelToolbar() {
-  if (!selection || !hasRange()) {
+  if (activeLink || !selection || !hasRange()) {
     selToolbar.hidden = true;
     return;
   }

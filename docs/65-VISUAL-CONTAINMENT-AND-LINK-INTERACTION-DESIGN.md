@@ -93,10 +93,23 @@ or removing an exact existing link is undoable through the normal transaction
 history. The editor exposes this through a Link command rather than direct model
 mutation.
 
+The editor must also make link identity visible without making the raster or DOM
+the source of truth. Pointer hover may query `link_at` to show a pointer cursor.
+A primary non-drag click selects the exact model range returned by that query and
+opens one bounded host-owned chip near the click. The chip shows the authored
+external URL or internal bookmark name and provides an explicit Open/Jump action;
+it dismisses on outside interaction, scroll, resize, Escape, document replacement,
+or a new drag. The existing host allowlist remains the only external activation
+path. Long chip targets truncate visually without changing the activated value.
+This keeps ordinary caret placement and drag/Shift selection intact while making
+canvas-painted links discoverable.
+
 Acceptance:
 
 - imported external links are discoverable and clickable under host policy;
 - imported TOC rows resolve their bookmark and move to the target page/position;
+- hover and direct click expose a visible link affordance without widening the
+  editor shell or intercepting text-selection drags;
 - create, update, remove, undo, redo, save, and reopen preserve link semantics;
 - ordinary clicks and drag selection outside links are unchanged.
 

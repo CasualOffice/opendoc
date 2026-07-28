@@ -1,15 +1,16 @@
-# Builds the WASM test viewer and deploys it to GitHub Pages.
+# Builds the developer site + pre-release WASM editor and deploys both to Pages.
 #
-# NOTE: the published site is a DEVELOPER TEST HARNESS ONLY (see webapp/README.md)
-# — a fast in-browser way to eyeball the engine's rendering/pagination on real
-# .docx files. It is not a product or a supported viewer.
-name: Deploy WASM test viewer (Pages)
+# The root is an indexable developer landing page; `editor.html` remains the
+# pre-release browser-first surface described in webapp/README.md.
+name: Deploy developer site and WASM editor (Pages)
 
 on:
   push:
     branches: [main]
     paths:
       - "webapp/**"
+      - "docs/assets/editor.jpg"
+      - "fixtures/corpus/real-producer-rich.docx"
       - "crates/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -53,12 +54,8 @@ jobs:
         with:
           tool: wasm-pack
 
-      - name: Build the WASM bridge
-        run: |
-          wasm-pack build crates/casual-doc-wasm \
-            --target web \
-            --out-dir "$GITHUB_WORKSPACE/webapp/pkg" \
-            --out-name casual_doc_wasm
+      - name: Build the site and WASM editor
+        run: ./webapp/build.sh
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
