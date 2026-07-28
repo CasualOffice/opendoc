@@ -91,6 +91,30 @@ const insertTableBtn = document.getElementById("insertTableBtn");
 const insertTableMenu = document.getElementById("insertTableMenu");
 const gridPicker = document.getElementById("gridPicker");
 const gridLabel = document.getElementById("gridLabel");
+const ribbonTabs = [...document.querySelectorAll(".ribbon-tab")];
+const ribbonPanels = [...document.querySelectorAll(".ribbon-panel")];
+const tabTable = document.getElementById("tabTable");
+const undoBtn = document.getElementById("undoBtn");
+const redoBtn = document.getElementById("redoBtn");
+const viewOutlineBtn = document.getElementById("viewOutlineBtn");
+const viewZoomOut = document.getElementById("viewZoomOut");
+const viewZoomIn = document.getElementById("viewZoomIn");
+
+/** Shows the named ribbon tab's panel and marks its tab selected. */
+function selectRibbonTab(name) {
+  for (const t of ribbonTabs) t.setAttribute("aria-selected", String(t.dataset.tab === name));
+  for (const p of ribbonPanels) p.hidden = p.dataset.panel !== name;
+}
+for (const t of ribbonTabs) {
+  t.addEventListener("click", () => {
+    if (!t.disabled) selectRibbonTab(t.dataset.tab);
+  });
+}
+undoBtn.addEventListener("click", () => runEdit(() => doc.undo()));
+redoBtn.addEventListener("click", () => runEdit(() => doc.redo()));
+viewOutlineBtn.addEventListener("click", () => toggleOutline());
+viewZoomOut.addEventListener("click", () => stepZoom(-1));
+viewZoomIn.addEventListener("click", () => stepZoom(1));
 const railOutline = document.getElementById("railOutline");
 const outlinePanel = document.getElementById("outlinePanel");
 const outlineClose = document.getElementById("outlineClose");
@@ -1042,8 +1066,20 @@ function updateToolbar() {
   numberedListBtn.setAttribute("aria-pressed", String(listKind === "numbered"));
   // The Table button (cell/table formatting) is enabled only inside a table;
   // Insert-table needs just a caret to drop the new table after.
-  tableBtn.disabled = !(hasSel && doc && doc.inTable(selection.focus.node));
+  const inTable = hasSel && doc && doc.inTable(selection.focus.node);
+  tableBtn.disabled = !inTable;
   insertTableBtn.disabled = !(hasSel && doc);
+  // Ribbon: undo/redo/view controls need a document; the Table tab is contextual.
+  undoBtn.disabled = !doc;
+  redoBtn.disabled = !doc;
+  viewOutlineBtn.disabled = !doc;
+  viewOutlineBtn.setAttribute("aria-pressed", String(!outlinePanel.hidden));
+  viewZoomOut.disabled = !doc;
+  viewZoomIn.disabled = !doc;
+  tabTable.disabled = !inTable;
+  if (tabTable.disabled && tabTable.getAttribute("aria-selected") === "true") {
+    selectRibbonTab("home");
+  }
 }
 
 /** Fills the paragraph-style dropdown from the open document's styles. */

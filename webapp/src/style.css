@@ -729,48 +729,99 @@ input {
   cursor: pointer;
 }
 
-/* ---- Toolbar --------------------------------------------------------------- */
-.toolbar {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 7px 14px;
+/* ---- Ribbon (tabbed toolbar) ----------------------------------------------- */
+.ribbon {
   background: var(--surface);
   border-bottom: 1px solid var(--line);
-  flex-wrap: wrap;
   z-index: 2;
 }
 
-.toolbar .group {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding-right: 6px;
-  margin-right: 3px;
-  border-right: 1px solid var(--line);
+.ribbon-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 34px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
 }
 
-.toolbar .group:last-child {
-  border-right: none;
+.ribbon-tab {
+  height: 34px;
+  padding: 0 14px;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 550;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
 }
 
-/* `hidden` must beat the flex display above (contextual table group). */
-.toolbar .group[hidden] {
+.ribbon-tab:hover:not(:disabled) {
+  color: var(--ink);
+}
+
+.ribbon-tab[aria-selected="true"] {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.ribbon-tab:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.ribbon-panel {
+  display: flex;
+  align-items: stretch;
+  padding: 6px 10px 5px;
+  overflow-x: auto;
+}
+
+.ribbon-panel[hidden] {
   display: none;
 }
 
-.group-label {
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--faint);
-  padding: 0 6px 0 2px;
+.rgroup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 0 10px;
+  border-right: 1px solid var(--line);
 }
 
-.group-table {
-  padding-left: 6px;
-  border-left: 1px solid var(--line);
+.rgroup:last-child {
+  border-right: none;
+}
+
+.rgroup-ctl {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 32px;
+}
+
+.rgroup-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.rgroup-note {
+  justify-content: center;
+}
+
+.rgroup-hint {
+  max-width: 190px;
+  font-size: 11px;
+  color: var(--faint);
+  line-height: 1.4;
+  text-align: center;
 }
 
 /* Select-based controls */
