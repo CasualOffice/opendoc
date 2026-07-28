@@ -7,13 +7,13 @@
 
 use std::collections::BTreeMap;
 
-use casual_doc_model::v1::{Document, NoteId, NoteKind};
+use casual_doc_model::v1::{Document, NoteId, NoteKind, SectionId};
 
 use crate::block::{BlockFragment, CellFragment};
-use crate::columns::SectionRun;
+use crate::columns::{SectionRun, paginate_columns_with_reservations};
 use crate::flow::build_galley_for_blocks;
 use crate::page::{Page, PaginatedLayout, PlacedFragment};
-use crate::paginate::{PageConfig, paginate_with_footnote_reservations};
+use crate::paginate::PageConfig;
 use crate::text::{LineLayout, LineShaper, NoteMarker};
 use crate::units::{Point, Rect, Size, Twip};
 
@@ -30,23 +30,24 @@ pub(crate) fn run_has_body_footnotes(run: &SectionRun) -> bool {
     run.galley.iter().any(fragment_has_footnote)
 }
 
-/// Paginates one single-column section run with page-local footnote bands.
+/// Paginates single-column section runs with page-local footnote bands. Each
+/// section's footnote bodies are flowed at that section's content width, while
+/// the page reservation loop remains global and bounded across section breaks.
 #[must_use]
-pub(crate) fn paginate_single_section_footnotes(
+pub(crate) fn paginate_single_column_footnotes(
     document: &Document,
     shaper: &dyn LineShaper,
-    run: &SectionRun,
+    runs: &[SectionRun],
 ) -> PaginatedLayout {
-    let notes = build_footnote_galleys(document, shaper, run.config.content_area().size.width);
+    let notes = build_section_footnote_galleys(document, shaper, runs);
     if notes.is_empty() {
-        return paginate_with_footnote_reservations(&run.galley, &run.config, &[]);
+        return paginate_columns_with_reservations(runs, &[]);
     }
 
     let mut reservations = Vec::new();
     for _ in 0..MAX_RESERVATION_PASSES {
-        let mut layout =
-            paginate_with_footnote_reservations(&run.galley, &run.config, &reservations);
-        let next = page_reservations(&layout, &notes, &run.config);
+        let mut layout = paginate_columns_with_reservations(runs, &reservations);
+        let next = page_reservations(&layout, &notes, runs);
         let merged = merge_reservations(&reservations, &next);
         if merged == reservations {
             place_footnotes(&mut layout, &notes, &next);
@@ -55,14 +56,11 @@ pub(crate) fn paginate_single_section_footnotes(
         reservations = merged;
     }
 
-    let layout = paginate_with_footnote_reservations(&run.galley, &run.config, &reservations);
-    let final_reservations = merge_reservations(
-        &reservations,
-        &page_reservations(&layout, &notes, &run.config),
-    );
-    let mut layout =
-        paginate_with_footnote_reservations(&run.galley, &run.config, &final_reservations);
-    let placed_reservations = page_reservations(&layout, &notes, &run.config);
+    let layout = paginate_columns_with_reservations(runs, &reservations);
+    let final_reservations =
+        merge_reservations(&reservations, &page_reservations(&layout, &notes, runs));
+    let mut layout = paginate_columns_with_reservations(runs, &final_reservations);
+    let placed_reservations = page_reservations(&layout, &notes, runs);
     place_footnotes(&mut layout, &notes, &placed_reservations);
     layout
 }
@@ -98,19 +96,44 @@ fn build_footnote_galleys(
         .collect()
 }
 
+fn build_section_footnote_galleys(
+    document: &Document,
+    shaper: &dyn LineShaper,
+    runs: &[SectionRun],
+) -> BTreeMap<SectionId, BTreeMap<NoteId, Vec<BlockFragment>>> {
+    runs.iter()
+        .map(|run| {
+            (
+                run.config.section,
+                build_footnote_galleys(document, shaper, run.config.content_area().size.width),
+            )
+        })
+        .collect()
+}
+
 fn page_reservations(
     layout: &PaginatedLayout,
-    notes: &BTreeMap<NoteId, Vec<BlockFragment>>,
-    config: &PageConfig,
+    notes: &BTreeMap<SectionId, BTreeMap<NoteId, Vec<BlockFragment>>>,
+    runs: &[SectionRun],
 ) -> Vec<Twip> {
-    let cap = footnote_cap(config);
     layout
         .pages
         .iter()
         .map(|page| {
+            let cap = runs
+                .iter()
+                .find(|run| run.config.section == page.section)
+                .map_or_else(
+                    || footnote_cap_for_area(page.content_area),
+                    |run| footnote_cap(&run.config),
+                );
             page_footnote_ids(page)
                 .into_iter()
-                .filter_map(|id| notes.get(&id))
+                .filter_map(|id| {
+                    notes
+                        .get(&page.section)
+                        .and_then(|section| section.get(&id))
+                })
                 .flat_map(|galley| galley.iter())
                 .map(BlockFragment::height)
                 .fold(Twip::ZERO, |a, h| a + h)
@@ -120,13 +143,17 @@ fn page_reservations(
 }
 
 fn footnote_cap(config: &PageConfig) -> Twip {
-    let body = config.content_area().size.height.raw();
+    footnote_cap_for_area(config.content_area())
+}
+
+fn footnote_cap_for_area(content: Rect) -> Twip {
+    let body = content.size.height.raw();
     Twip((body - MIN_BODY_HEIGHT_TWIPS).max(0))
 }
 
 fn place_footnotes(
     layout: &mut PaginatedLayout,
-    notes: &BTreeMap<NoteId, Vec<BlockFragment>>,
+    notes: &BTreeMap<SectionId, BTreeMap<NoteId, Vec<BlockFragment>>>,
     reservations: &[Twip],
 ) {
     for (index, page) in layout.pages.iter_mut().enumerate() {
@@ -135,11 +162,14 @@ fn place_footnotes(
             continue;
         }
         let ids = page_footnote_ids(page);
+        let Some(section_notes) = notes.get(&page.section) else {
+            continue;
+        };
         let band = Rect::new(
             Point::new(page.content_area.origin.x, page.content_area.bottom()),
             Size::new(page.content_area.size.width, band_height),
         );
-        page.footnotes = stack_note_galleys(ids, notes, band);
+        page.footnotes = stack_note_galleys(ids, section_notes, band);
     }
 }
 
@@ -350,6 +380,14 @@ mod tests {
         }
     }
 
+    fn section_with_width(id: u64, page_width_twips: i32, margin_twips: i32) -> SectionBoundary {
+        let mut section = section(id);
+        section.page_size.width_twips = page_width_twips;
+        section.page_margins.start_twips = margin_twips;
+        section.page_margins.end_twips = margin_twips;
+        section
+    }
+
     fn section_with_header(header: HeaderFooterId) -> SectionBoundary {
         let mut section = section(900);
         section.headers.push(HeaderFooterRef {
@@ -517,6 +555,51 @@ mod tests {
         assert!(
             note_page > 0,
             "the footnote follows the page containing the split table-cell reference"
+        );
+    }
+
+    #[test]
+    fn later_section_footnote_uses_that_sections_body_width() {
+        let note = NoteId::new(node(1_551));
+        let first_section = SectionId::new(node(1_552));
+        let second_section = SectionId::new(node(1_553));
+        let mut definitions = Definitions::default();
+        definitions.footnotes.insert(
+            note,
+            Note {
+                blocks: vec![paragraph(1_554, "later section footnote body")],
+            },
+        );
+        definitions.sections.push(section(1_552));
+        definitions
+            .sections
+            .push(section_with_width(1_553, 8_000, 1_000));
+        let mut first = paragraph(1_555, "first section");
+        if let BlockNode::Paragraph(paragraph) = &mut first {
+            paragraph.properties.section_break = Some(first_section);
+        }
+        let doc = document(vec![first, note_ref_paragraph(1_556, note)], definitions);
+        let shaper = ParleyShaper::new();
+
+        let layout = paginate_document(&doc, &shaper);
+        let note_page = layout
+            .pages
+            .iter()
+            .find(|page| !page.footnotes.is_empty())
+            .expect("expected a later-section footnote band");
+
+        assert_eq!(
+            note_page.section, second_section,
+            "the footnote belongs to the page carrying the later section"
+        );
+        assert_eq!(
+            note_page.footnotes[0].rect.size.width, note_page.content_area.size.width,
+            "the footnote body is flowed and placed at the later section content width"
+        );
+        assert_eq!(
+            note_page.footnotes[0].fragment.node_id(),
+            node(1_554),
+            "the later-section note body is visible"
         );
     }
 

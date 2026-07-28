@@ -163,21 +163,6 @@ pub fn paginate(fragments: &[BlockFragment], config: &PageConfig) -> PaginatedLa
     PaginatedLayout { pages: p.pages }
 }
 
-/// Paginates with a deterministic per-page footnote reservation. The reservation
-/// reduces only the body content area for that physical page; note placement is a
-/// separate post-pass that fills [`Page::footnotes`].
-#[must_use]
-pub(crate) fn paginate_with_footnote_reservations(
-    fragments: &[BlockFragment],
-    config: &PageConfig,
-    reservations: &[Twip],
-) -> PaginatedLayout {
-    let mut p = Paginator::new(config, Vec::new(), FlowPos::at(0), None, reservations);
-    p.run(fragments, 0);
-    p.flush();
-    PaginatedLayout { pages: p.pages }
-}
-
 /// Re-paginates `new_galley` given the previous layout and the galley it came
 /// from, doing work bounded to the edit neighborhood — the guarantee is that the
 /// result is **field-for-field identical to a full [`paginate`] of the new
