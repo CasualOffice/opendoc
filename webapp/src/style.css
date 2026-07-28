@@ -774,8 +774,166 @@ input {
 }
 
 /* ---- Viewport & pages ------------------------------------------------------ */
+/* ---- Work area: nav rail · side panels · document viewport ----------------- */
+.workarea {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.rail {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 7px;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+}
+
+.rail-btn {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.rail-btn svg {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+}
+
+.rail-btn:hover:not(:disabled) {
+  background: var(--bg-2);
+  color: var(--ink);
+}
+
+.rail-btn[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.rail-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.side-panel {
+  flex: 0 0 252px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+}
+
+.side-panel[hidden] {
+  display: none;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 42px;
+  padding: 0 8px 0 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.panel-title {
+  font-weight: 650;
+  font-size: 13px;
+}
+
+.panel-close {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.panel-close svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+
+.panel-close:hover {
+  background: var(--bg-2);
+  color: var(--ink);
+}
+
+.panel-body {
+  flex: 1;
+  overflow: auto;
+  padding: 6px;
+}
+
+/* Outline: a clickable heading tree, indented by level. */
+.outline-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.outline-item:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.outline-item.lvl-1 {
+  font-weight: 600;
+}
+
+.outline-item.lvl-2 {
+  padding-left: 20px;
+}
+
+.outline-item.lvl-3 {
+  padding-left: 32px;
+  color: var(--muted);
+}
+
+.outline-item.lvl-4,
+.outline-item.lvl-5,
+.outline-item.lvl-6 {
+  padding-left: 44px;
+  color: var(--muted);
+}
+
+.outline-empty {
+  padding: 14px 10px;
+  color: var(--faint);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .viewport {
   flex: 1;
+  min-width: 0;
   overflow: auto;
   position: relative;
   padding: 12px 0 48px;

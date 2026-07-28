@@ -1981,6 +1981,48 @@ impl WasmDocument {
             .unwrap_or_default()
     }
 
+    /// The document's heading outline as flat `"{level}\t{node}\t{text}"` rows (in
+    /// document order) — what the left Outline panel renders and navigates from. A
+    /// paragraph is a heading if it carries an `outlineLvl` or a Title/Heading N
+    /// style; `level` is 1-based (1 = top). Empty-text headings are skipped.
+    #[wasm_bindgen(js_name = documentOutline)]
+    #[must_use]
+    pub fn document_outline(&self) -> Vec<String> {
+        let mut nodes = Vec::new();
+        collect_block_text(self.document.body(), &mut nodes);
+        nodes
+            .into_iter()
+            .filter_map(|(id, text)| {
+                let level = self.heading_level_of(id)?;
+                let t = text.trim();
+                (!t.is_empty()).then(|| format!("{level}\t{id}\t{}", t.replace('\t', " ")))
+            })
+            .collect()
+    }
+
+    /// The heading level of paragraph `node` (1-based; 1 = top), or `None` if it is
+    /// not a heading. Prefers an explicit `outlineLvl`, else a `Title`/`Heading N`
+    /// style name.
+    fn heading_level_of(&self, node: NodeId) -> Option<u8> {
+        let props = paragraph_properties(&self.document, node)?;
+        if let Some(level) = props.outline_level.filter(|l| *l <= 8) {
+            return Some(level + 1);
+        }
+        let compact: String = self
+            .paragraph_style_at(&node.to_string())
+            .to_lowercase()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        if compact == "title" {
+            return Some(1);
+        }
+        compact
+            .strip_prefix("heading")
+            .and_then(|n| n.parse::<u8>().ok())
+            .filter(|n| (1..=9).contains(n))
+    }
+
     /// Undoes the last user action (one or many ops), returning the restored
     /// caret + revision.
     #[wasm_bindgen(js_name = undo)]
@@ -4442,6 +4484,28 @@ mod tests {
         d.undo().expect("u align");
         d.undo().expect("u insert");
         assert_eq!(top_tables(d.document.body()), before);
+    }
+
+    /// The document outline lists heading paragraphs as `level\tnode\ttext`, in order.
+    #[test]
+    fn document_outline_lists_headings() {
+        let d = open_document(RICH_DOCX).expect("open corpus docx");
+        let outline = d.document_outline();
+        // The corpus's "Rich Document" is a Heading 1 → a level-1 entry exists.
+        assert!(
+            outline.iter().any(|row| {
+                let mut it = row.splitn(3, '\t');
+                it.next() == Some("1") && it.nth(1).is_some_and(|t| t.contains("Rich Document"))
+            }),
+            "outline has the Heading 1 title: {outline:?}"
+        );
+        // Every row is well-formed: numeric level, a node id, non-empty text.
+        for row in &outline {
+            let parts: Vec<&str> = row.splitn(3, '\t').collect();
+            assert_eq!(parts.len(), 3, "row has level\\tnode\\ttext: {row:?}");
+            assert!(parts[0].parse::<u8>().is_ok(), "numeric level: {row:?}");
+            assert!(!parts[2].trim().is_empty(), "non-empty text: {row:?}");
+        }
     }
 
     /// A `pageBreakBefore` set through the live edit path must re-paginate and add a

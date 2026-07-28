@@ -222,16 +222,29 @@
       <div id="gridLabel" class="grid-label">Insert table</div>
     </div>
 
-    <main id="viewport" class="viewport">
-      <div id="drop" class="drop">
-        <div class="drop-card">
-          <svg class="drop-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></svg>
-          <p class="drop-title">Drop a <strong>.docx</strong> here</p>
-          <p class="muted">or use <em>Open</em> above — rendered entirely in your browser by the OpenDoc engine (WASM). Nothing is uploaded.</p>
+    <div class="workarea">
+      <nav class="rail" aria-label="Document navigation">
+        <button id="railOutline" type="button" class="rail-btn" title="Outline" aria-label="Outline" aria-pressed="false" disabled><svg viewBox="0 0 24 24"><path d="M3 9h2V5H3v4zm0 6h2v-4H3v4zm0 6h2v-4H3v4zm4-6h14v-4H7v4zm0 6h14v-4H7v4zM7 5v4h14V5H7z"/></svg></button>
+      </nav>
+      <aside id="outlinePanel" class="side-panel" hidden aria-label="Outline">
+        <div class="panel-head">
+          <span class="panel-title">Outline</span>
+          <button id="outlineClose" type="button" class="panel-close" title="Close outline" aria-label="Close outline"><svg viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
         </div>
-      </div>
-      <div id="pages" class="pages"></div>
-    </main>
+        <div id="outlineBody" class="panel-body outline-list"></div>
+      </aside>
+
+      <main id="viewport" class="viewport">
+        <div id="drop" class="drop">
+          <div class="drop-card">
+            <svg class="drop-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></svg>
+            <p class="drop-title">Drop a <strong>.docx</strong> here</p>
+            <p class="muted">or use <em>Open</em> above — rendered entirely in your browser by the OpenDoc engine (WASM). Nothing is uploaded.</p>
+          </div>
+        </div>
+        <div id="pages" class="pages"></div>
+      </main>
+    </div>
 
     <footer class="footer">
       <span class="foot-left">
