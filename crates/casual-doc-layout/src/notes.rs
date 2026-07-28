@@ -258,8 +258,9 @@ mod tests {
         BlockNode, Definitions, DocGrid, GridColumn, HeaderFooter, HeaderFooterId,
         HeaderFooterKind, HeaderFooterRef, InlineNode, Note, NoteProperties, NoteReference,
         PageBorders, PageMargins, PageNumbering, PageSize, PaperSource, Paragraph,
-        ParagraphProperties, Run, RunProperties, SectionBoundary, SectionColumns, SectionId, Table,
-        TableCell, TableCellProperties, TableProperties, TableRow, TableRowProperties,
+        ParagraphProperties, Run, RunProperties, SectionBoundary, SectionColumns, SectionId,
+        SectionType, Table, TableCell, TableCellProperties, TableProperties, TableRow,
+        TableRowProperties,
     };
 
     use crate::document_layout::{document_page_config, paginate_document};
@@ -600,6 +601,66 @@ mod tests {
             note_page.footnotes[0].fragment.node_id(),
             node(1_554),
             "the later-section note body is visible"
+        );
+    }
+
+    #[test]
+    fn continuous_later_section_footnote_reserves_on_shared_page() {
+        let note = NoteId::new(node(1_571));
+        let first_section = SectionId::new(node(1_572));
+        let second_section = SectionId::new(node(1_573));
+        let mut definitions = Definitions::default();
+        definitions.footnotes.insert(
+            note,
+            Note {
+                blocks: (0..8)
+                    .map(|i| paragraph(1_580 + i, "continuous footnote body"))
+                    .collect(),
+            },
+        );
+        definitions.sections.push(section(1_572));
+        let mut second = section(1_573);
+        second.section_type = Some(SectionType::Continuous);
+        definitions.sections.push(second);
+        let mut first = paragraph(1_574, "first section");
+        if let BlockNode::Paragraph(paragraph) = &mut first {
+            paragraph.properties.section_break = Some(first_section);
+        }
+        let doc = document(
+            vec![
+                first,
+                paragraph(1_575, "continuous lead"),
+                note_ref_paragraph(1_576, note),
+            ],
+            definitions,
+        );
+        let shaper = ParleyShaper::new();
+
+        let layout = paginate_document(&doc, &shaper);
+
+        assert_eq!(
+            layout.pages.len(),
+            1,
+            "the continuous section should share the first page"
+        );
+        assert_eq!(layout.pages[0].section, second_section);
+        assert!(
+            !layout.pages[0].footnotes.is_empty(),
+            "a footnote in the continuous section reserves and places on the shared page"
+        );
+        assert!(
+            layout.pages[0]
+                .placed
+                .iter()
+                .all(|placed| placed.rect.bottom() <= layout.pages[0].content_area.bottom()),
+            "body fragments remain above the reserved footnote band"
+        );
+        assert!(
+            layout.pages[0]
+                .footnotes
+                .iter()
+                .all(|placed| placed.rect.origin.y >= layout.pages[0].content_area.bottom()),
+            "footnote fragments sit below the reserved shared-page body area"
         );
     }
 

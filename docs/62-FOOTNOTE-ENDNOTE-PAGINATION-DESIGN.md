@@ -174,6 +174,12 @@ page-local and bounded, but the column paginator now accepts per-page bottom
 reservations so note bodies can be flowed and placed at the owning page section's
 content width. Multi-column note reservation remains deferred.
 
+Implementation note: the third Slice D increment adds regression coverage for a
+later continuous single-column section that shares a page and owns a footnote
+reference on that page. The note reserves shared-page body space and places below
+it. A footnote from an earlier section on a page later owned by a continuous
+section remains deferred until placed fragments carry section provenance.
+
 ## Invariants
 
 - A document with no note references produces byte-identical `PaginatedLayout`.
