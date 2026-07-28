@@ -553,6 +553,110 @@ input {
   font-variant-numeric: tabular-nums;
 }
 
+/* ---- Command palette (⌘K) -------------------------------------------------- */
+.cmd-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 12vh;
+  background: rgba(20, 22, 28, 0.34);
+}
+
+.cmd-overlay[hidden] {
+  display: none;
+}
+
+.cmd-box {
+  width: min(560px, 92vw);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(20, 22, 28, 0.32);
+  overflow: hidden;
+}
+
+.cmd-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.cmd-search-icon {
+  width: 18px;
+  height: 18px;
+  fill: var(--muted);
+  flex: 0 0 auto;
+}
+
+.cmd-search input {
+  flex: 1;
+  border: none;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 15px;
+  outline: none;
+}
+
+.cmd-kbd {
+  font-size: 11px;
+  color: var(--faint);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 2px 6px;
+}
+
+.cmd-list {
+  max-height: 340px;
+  overflow: auto;
+  padding: 6px;
+}
+
+.cmd-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cmd-item .cmd-group {
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.cmd-item .cmd-hint {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.cmd-item.sel,
+.cmd-item:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.cmd-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--faint);
+  font-size: 13px;
+}
+
 /* Border presets: a row of buttons each showing a mini box with the relevant
    edge(s) emphasized (CSS-drawn — no icon assets). */
 .border-row {

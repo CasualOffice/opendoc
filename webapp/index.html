@@ -222,6 +222,17 @@
       <div id="gridLabel" class="grid-label">Insert table</div>
     </div>
 
+    <div id="cmdPalette" class="cmd-overlay" hidden>
+      <div class="cmd-box" role="dialog" aria-label="Command palette" aria-modal="true">
+        <div class="cmd-search">
+          <svg class="cmd-search-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 10-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1114 9.5 4.5 4.5 0 019.5 14z"/></svg>
+          <input id="cmdInput" type="text" placeholder="Search commands…" autocomplete="off" spellcheck="false" aria-label="Search commands" />
+          <span class="cmd-kbd">⌘K</span>
+        </div>
+        <div id="cmdList" class="cmd-list" role="listbox" aria-label="Commands"></div>
+      </div>
+    </div>
+
     <div class="workarea">
       <nav class="rail" aria-label="Document navigation">
         <button id="railOutline" type="button" class="rail-btn" title="Outline" aria-label="Outline" aria-pressed="false" disabled><svg viewBox="0 0 24 24"><path d="M3 9h2V5H3v4zm0 6h2v-4H3v4zm0 6h2v-4H3v4zm4-6h14v-4H7v4zm0 6h14v-4H7v4zM7 5v4h14V5H7z"/></svg></button>
