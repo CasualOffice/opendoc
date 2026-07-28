@@ -95,7 +95,7 @@ bounded passes, but it is not removed inside the same convergence run. This avoi
 the common boundary oscillation where reserving a note band moves its reference to
 the next page, then dropping the old reservation moves it back. It can
 over-reserve an earlier page in that edge case, but it preserves deterministic
-termination and avoids body/note overlap until continuation-note parity lands.
+termination and avoids body/note overlap.
 
 ### 4. Placement
 
@@ -104,8 +104,10 @@ When convergence completes, each page receives `Page::footnotes`:
 - the band is placed at the bottom of `Page::content_area` after reservation;
 - note fragments stack top-to-bottom in reference order;
 - the page body remains above the reserved band;
-- oversized note content overflows inside the footnote band rather than causing
-  unbounded pagination loops.
+- multi-block note content that does not fit the current page's band carries to
+  the next existing body page and reserves space there;
+- a single block taller than the band overflows inside that band rather than
+  causing unbounded pagination loops.
 
 The display-list compositor already paints `Page::footnotes` as placed fragments
 or must be extended to do so in the same pass that paints body fragments.
@@ -207,6 +209,15 @@ stack rather than the sum of every note on the page. This keeps body content
 above the footnote band while avoiding page-wide footnote text in multi-column
 sections. Continuation-note behavior remains deferred.
 
+Implementation note: the eighth Slice D increment adds bounded block-level
+continuation for long footnotes. The reservation pass carries unplaced note
+blocks forward per section/column band and reserves the next body page by the
+tallest pending band stack. The placement pass uses the same queues, so a
+continuation page can receive footnote fragments even when it has no body
+reference. The final body page consumes any remaining note blocks with bounded
+overflow, and a single block taller than its band is consumed in place, preserving
+termination.
+
 ## Invariants
 
 - A document with no note references produces byte-identical `PaginatedLayout`.
@@ -227,7 +238,8 @@ Required synthetic tests:
 - a split paragraph whose second-page reference places its note on page two;
 - a table-cell reference in a row split across pages;
 - a note body containing a table and inline image;
-- an oversized note that terminates with bounded overflow;
+- a long multi-block note that continues onto a later body page;
+- an oversized single-block note that terminates with bounded overflow;
 - an endnote body appended after the main body;
 - no-reference document layout is unchanged.
 
