@@ -50,7 +50,7 @@ pub(crate) fn paginate_section_footnotes(
         let next = page_reservations(&layout, &notes, runs);
         let merged = merge_reservations(&reservations, &next);
         if merged == reservations {
-            place_footnotes(&mut layout, &notes, &next);
+            place_footnotes(&mut layout, &notes, runs, &next);
             return layout;
         }
         reservations = merged;
@@ -61,7 +61,7 @@ pub(crate) fn paginate_section_footnotes(
         merge_reservations(&reservations, &page_reservations(&layout, &notes, runs));
     let mut layout = paginate_columns_with_reservations(runs, &final_reservations);
     let placed_reservations = page_reservations(&layout, &notes, runs);
-    place_footnotes(&mut layout, &notes, &placed_reservations);
+    place_footnotes(&mut layout, &notes, runs, &placed_reservations);
     layout
 }
 
@@ -127,12 +127,10 @@ fn page_reservations(
                     || footnote_cap_for_area(page.content_area),
                     |run| footnote_cap(&run.config),
                 );
-            page_footnote_ids(page)
+            page_footnote_refs(page)
                 .into_iter()
-                .filter_map(|id| {
-                    notes
-                        .get(&page.section)
-                        .and_then(|section| section.get(&id))
+                .filter_map(|(section, id)| {
+                    notes.get(&section).and_then(|section| section.get(&id))
                 })
                 .flat_map(|galley| galley.iter())
                 .map(BlockFragment::height)
@@ -154,6 +152,7 @@ fn footnote_cap_for_area(content: Rect) -> Twip {
 fn place_footnotes(
     layout: &mut PaginatedLayout,
     notes: &BTreeMap<SectionId, BTreeMap<NoteId, Vec<BlockFragment>>>,
+    runs: &[SectionRun],
     reservations: &[Twip],
 ) {
     for (index, page) in layout.pages.iter_mut().enumerate() {
@@ -161,29 +160,31 @@ fn place_footnotes(
         if band_height <= Twip::ZERO {
             continue;
         }
-        let ids = page_footnote_ids(page);
-        let Some(section_notes) = notes.get(&page.section) else {
-            continue;
-        };
-        let band = Rect::new(
+        let refs = page_footnote_refs(page);
+        page.footnotes = stack_note_galleys(
+            refs,
+            notes,
+            runs,
             Point::new(page.content_area.origin.x, page.content_area.bottom()),
-            Size::new(page.content_area.size.width, band_height),
+            band_height,
         );
-        page.footnotes = stack_note_galleys(ids, section_notes, band);
     }
 }
 
 fn stack_note_galleys(
-    ids: Vec<NoteId>,
-    notes: &BTreeMap<NoteId, Vec<BlockFragment>>,
-    band: Rect,
+    refs: Vec<(SectionId, NoteId)>,
+    notes: &BTreeMap<SectionId, BTreeMap<NoteId, Vec<BlockFragment>>>,
+    runs: &[SectionRun],
+    origin: Point,
+    band_height: Twip,
 ) -> Vec<PlacedFragment> {
     let mut placed = Vec::new();
-    let mut y = band.origin.y;
-    for id in ids {
-        let Some(galley) = notes.get(&id) else {
+    let mut y = origin.y;
+    for (section, id) in refs {
+        let Some(galley) = notes.get(&section).and_then(|section| section.get(&id)) else {
             continue;
         };
+        let band = run_note_band(runs, section, origin, band_height);
         for fragment in galley {
             let height = fragment.height();
             placed.push(PlacedFragment {
@@ -192,6 +193,7 @@ fn stack_note_galleys(
                     Point::new(band.origin.x, y),
                     Size::new(band.size.width, height),
                 ),
+                section: Some(section),
             });
             y = y + height;
         }
@@ -199,12 +201,26 @@ fn stack_note_galleys(
     placed
 }
 
-fn page_footnote_ids(page: &Page) -> Vec<NoteId> {
-    let mut ids = Vec::new();
+fn run_note_band(runs: &[SectionRun], section: SectionId, origin: Point, height: Twip) -> Rect {
+    let content = runs
+        .iter()
+        .find(|run| run.config.section == section)
+        .map_or(Rect::new(origin, Size::new(Twip::ZERO, height)), |run| {
+            run.config.content_area()
+        });
+    Rect::new(
+        Point::new(content.origin.x, origin.y),
+        Size::new(content.size.width, height),
+    )
+}
+
+fn page_footnote_refs(page: &Page) -> Vec<(SectionId, NoteId)> {
+    let mut refs = Vec::new();
     for placed in &page.placed {
-        collect_fragment_notes(&placed.fragment, &mut ids);
+        let section = placed.section.unwrap_or(page.section);
+        collect_fragment_notes(&placed.fragment, section, &mut refs);
     }
-    ids
+    refs
 }
 
 fn fragment_has_footnote(fragment: &BlockFragment) -> bool {
@@ -217,10 +233,14 @@ fn fragment_has_footnote(fragment: &BlockFragment) -> bool {
     found
 }
 
-fn collect_fragment_notes(fragment: &BlockFragment, ids: &mut Vec<NoteId>) {
+fn collect_fragment_notes(
+    fragment: &BlockFragment,
+    section: SectionId,
+    refs: &mut Vec<(SectionId, NoteId)>,
+) {
     collect_fragment_note_markers(fragment, &mut |marker| {
         if marker.kind == NoteKind::Footnote {
-            ids.push(marker.note);
+            refs.push((section, marker.note));
         }
     });
 }
@@ -667,6 +687,62 @@ mod tests {
                 .iter()
                 .all(|placed| placed.rect.origin.y >= layout.pages[0].content_area.bottom()),
             "footnote fragments sit below the reserved shared-page body area"
+        );
+    }
+
+    #[test]
+    fn continuous_shared_page_uses_reference_fragment_section_for_footnotes() {
+        let note = NoteId::new(node(1_611));
+        let first_section = SectionId::new(node(1_612));
+        let second_section = SectionId::new(node(1_613));
+        let mut definitions = Definitions::default();
+        definitions.footnotes.insert(
+            note,
+            Note {
+                blocks: vec![paragraph(1_614, "early continuous footnote body")],
+            },
+        );
+        definitions
+            .sections
+            .push(section_with_width(1_612, 12_240, 1_440));
+        let mut second = section_with_width(1_613, 8_000, 1_000);
+        second.section_type = Some(SectionType::Continuous);
+        definitions.sections.push(second);
+        let mut first = note_ref_paragraph(1_615, note);
+        if let BlockNode::Paragraph(paragraph) = &mut first {
+            paragraph.properties.section_break = Some(first_section);
+        }
+        let doc = document(
+            vec![first, paragraph(1_616, "continuous tail")],
+            definitions,
+        );
+        let shaper = ParleyShaper::new();
+
+        let layout = paginate_document(&doc, &shaper);
+
+        assert_eq!(
+            layout.pages.len(),
+            1,
+            "the continuous section should share the first page"
+        );
+        assert_eq!(
+            layout.pages[0].section, second_section,
+            "the page-level section remains the later continuous section"
+        );
+        assert_eq!(
+            layout.pages[0].placed[0].section,
+            Some(first_section),
+            "the body fragment retains its source section"
+        );
+        assert_eq!(
+            layout.pages[0].footnotes[0].section,
+            Some(first_section),
+            "the footnote body uses the reference fragment's source section"
+        );
+        assert_eq!(
+            layout.pages[0].footnotes[0].rect.size.width,
+            Twip(9_360),
+            "the earlier-section note is placed at the earlier section content width"
         );
     }
 

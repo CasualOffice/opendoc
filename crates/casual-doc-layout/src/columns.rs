@@ -562,7 +562,11 @@ impl ColPaginator {
         }
         let col = self.column();
         let rect = Rect::new(Point::new(col.x, self.y), Size::new(width, height));
-        self.placed.push(PlacedFragment { fragment, rect });
+        self.placed.push(PlacedFragment {
+            fragment,
+            rect,
+            section: Some(self.config.section),
+        });
         self.y = self.y + height;
         self.page_max_y = Twip(self.page_max_y.raw().max(self.y.raw()));
     }

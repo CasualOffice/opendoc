@@ -57,6 +57,10 @@ pub struct PlacedFragment {
     pub fragment: BlockFragment,
     /// Its rectangle in page-local twip coordinates.
     pub rect: Rect,
+    /// The source section that produced this placed body fragment. `None` keeps
+    /// older serialized layouts valid and is interpreted as the page's section.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section: Option<SectionId>,
 }
 
 /// The stacking key of a floating object — how the float layer orders paints.

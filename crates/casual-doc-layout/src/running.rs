@@ -184,6 +184,7 @@ fn stack_in_band(fragments: &[BlockFragment], band: Rect) -> Vec<PlacedFragment>
         placed.push(PlacedFragment {
             fragment: fragment.clone(),
             rect,
+            section: None,
         });
         y = y + height;
     }
