@@ -176,6 +176,28 @@ dependency. The gate records platform, renderer, font-set, page size, and scale.
 The exact external `demo.docx` remains a local acceptance probe and its hash is
 recorded only in the existing corpus audit.
 
+Implemented on 2026-07-29 as
+`fixtures/generated/visual-containment.docx`. One redistribution-safe document
+contains the coupled drop cap, a tall left page float whose exclusion crosses
+into the following paragraph, and a long margined table row followed by two
+visually distinct successor rows. The render integration test:
+
+- imports and fully paginates the DOCX twice and requires identical pages;
+- proves the initial has zero flow advance and unclipped large ink while the
+  next paragraph returns from the side exclusion to full measure;
+- proves lines in both the anchor paragraph and its following paragraph stay
+  outside the float rectangle;
+- proves split-row cell content fits every emitted chunk and all row boxes are
+  monotonic/non-overlapping before the two successor rows;
+- renders five 7200 × 7200 twip pages at 96 DPI with bundled Roboto only and
+  checks raw RGBA FNV-1a `523048614c8139a9`.
+
+The fixture manifest records the renderer, platform contract, font set, page
+geometry, scale, page count, and hash. Existing focused layout tests retain the
+line-child/clip assertions, while the hyperlink/bookmark hit-map and activation
+assertions remain in the edit/WASM/browser tests from Slice B. No third-party
+document or screenshot is committed, and LibreOffice remains an offline oracle.
+
 ## Slice F — host-loaded web font families
 
 The browser build excludes the Roboto asset bytes from the WASM artifact and

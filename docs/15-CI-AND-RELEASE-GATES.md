@@ -4,7 +4,7 @@
 **CI provider:** GitHub Actions
 **Development toolchain:** Rust 1.96.0
 **MSRV:** Rust 1.88.0
-**Last updated:** 2026-07-24
+**Last updated:** 2026-07-29
 
 ## Purpose
 
@@ -96,6 +96,21 @@ cargo +1.96.0 check --workspace --all-features --locked --target wasm32-unknown-
 cargo +1.88.0 check --workspace --all-targets --all-features --locked
 ```
 
+The deterministic visual-containment gate is part of the workspace test run and
+can be invoked directly with:
+
+```sh
+cargo +1.96.0 test -p casual-doc-render --test visual_containment --locked
+```
+
+It imports the repository-generated `visual-containment.docx`, paginates twice
+for field-for-field determinism, validates drop-cap, cross-paragraph float, and
+split-table collision invariants, then renders all five pages at 96 DPI through
+the pinned bundled Roboto faces. The committed manifest records the physical
+page size, renderer, font set, scale, page count, and raw RGBA FNV-1a hash.
+System fonts and web-fetched host fonts are deliberately excluded from this
+baseline.
+
 Additional gates should be added as capabilities appear:
 
 - structure-aware XML and relationship fuzzing;
@@ -154,8 +169,8 @@ Additional gates should be added as capabilities appear:
 | Platform/MSRV | Implemented | macOS 15 ARM64, Windows 2025 x64, pinned Rust 1.96, and Rust 1.88 checks run on every PR. |
 | Dependency policy | Implemented | Licenses, sources, versions, and RustSec advisories. |
 | Fuzzing | Initial package target implemented | Pull requests compile the independently locked target; scheduled security CI runs a bounded seeded campaign. |
-| Corpus tests | Phase 0 package corpus + Phase 1A/1B round-trip corpus implemented | Seven package/security fixtures plus real-producer round-trip fixtures (import → write → reopen fixed-point) run in workspace tests; visual layer remains pending. |
-| Visual regression | Not started | Requires renderer and fixed fonts. |
+| Corpus tests | Package, semantic, round-trip, and generated rendering corpus implemented | Generated package/security/notes/visual fixtures plus real-producer round-trip fixtures run in workspace tests; repository policy rejects missing, unmanifested, or checksum-mismatched DOCX files. |
+| Visual regression | Initial deterministic gate implemented | Rights-safe five-page containment DOCX; collision invariants and raw RGBA hash use the bundled Roboto set at a pinned page size and 96 DPI. |
 | Benchmarking | Initial harness implemented | Package/model smoke is required; named-environment comparison is manual until a controlled runner is provisioned. |
 | Release artifacts | Not started | Define before beta. |
 
