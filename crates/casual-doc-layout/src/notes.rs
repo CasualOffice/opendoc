@@ -225,8 +225,11 @@ mod tests {
     use super::*;
     use casual_doc_model::NodeId;
     use casual_doc_model::v1::{
-        BlockNode, Definitions, InlineNode, Note, NoteReference, Paragraph, ParagraphProperties,
-        Run, RunProperties,
+        BlockNode, Definitions, DocGrid, GridColumn, HeaderFooter, HeaderFooterId,
+        HeaderFooterKind, HeaderFooterRef, InlineNode, Note, NoteProperties, NoteReference,
+        PageBorders, PageMargins, PageNumbering, PageSize, PaperSource, Paragraph,
+        ParagraphProperties, Run, RunProperties, SectionBoundary, SectionColumns, SectionId, Table,
+        TableCell, TableCellProperties, TableProperties, TableRow, TableRowProperties,
     };
 
     use crate::document_layout::{document_page_config, paginate_document};
@@ -267,8 +270,104 @@ mod tests {
         })
     }
 
+    fn long_note_ref_paragraph(id: u64, note: NoteId, leading_words: usize) -> BlockNode {
+        let text = (0..leading_words)
+            .map(|_| "wrapped")
+            .collect::<Vec<_>>()
+            .join(" ");
+        BlockNode::Paragraph(Paragraph {
+            id: node(id),
+            properties: ParagraphProperties::default(),
+            inlines: vec![
+                InlineNode::Run(Run {
+                    id: node(id + 10_000),
+                    properties: RunProperties::default(),
+                    text,
+                }),
+                InlineNode::NoteReference(NoteReference {
+                    id: node(id + 20_000),
+                    kind: NoteKind::Footnote,
+                    note,
+                }),
+                InlineNode::Run(Run {
+                    id: node(id + 30_000),
+                    properties: RunProperties::default(),
+                    text: " tail".to_string(),
+                }),
+            ],
+        })
+    }
+
     fn document(body: Vec<BlockNode>, definitions: Definitions) -> Document {
         Document::new(node(1), body, definitions).unwrap()
+    }
+
+    fn section_with_header(header: HeaderFooterId) -> SectionBoundary {
+        SectionBoundary {
+            id: SectionId::new(node(900)),
+            page_size: PageSize {
+                width_twips: 12_240,
+                height_twips: 15_840,
+            },
+            page_margins: PageMargins {
+                top_twips: 1_440,
+                bottom_twips: 1_440,
+                start_twips: 1_440,
+                end_twips: 1_440,
+                header_twips: None,
+                footer_twips: None,
+            },
+            columns: SectionColumns {
+                count: 1,
+                space_twips: None,
+                separator: None,
+                equal_width: None,
+                columns: Vec::new(),
+            },
+            headers: vec![HeaderFooterRef {
+                kind: HeaderFooterKind::Default,
+                reference: header,
+            }],
+            footers: Vec::new(),
+            section_type: None,
+            title_page: None,
+            vertical_alignment: None,
+            page_numbering: PageNumbering::default(),
+            doc_grid: DocGrid::default(),
+            orientation: None,
+            paper_source: PaperSource::default(),
+            page_borders: PageBorders::default(),
+            line_numbering: Default::default(),
+            footnote_props: NoteProperties::default(),
+            endnote_props: NoteProperties::default(),
+            text_direction: None,
+            bidi: false,
+        }
+    }
+
+    fn table_with_split_cell_note(note: NoteId) -> BlockNode {
+        let mut blocks: Vec<_> = (0..70)
+            .map(|i| paragraph(1_000 + i, "table cell body line"))
+            .collect();
+        blocks.push(note_ref_paragraph(1_200, note));
+        blocks.extend((0..8).map(|i| paragraph(1_300 + i, "table tail line")));
+        BlockNode::Table(Table {
+            id: node(950),
+            grid: vec![GridColumn {
+                width_twips: Some(9_000),
+            }],
+            grid_change: None,
+            properties: TableProperties::default(),
+            rows: vec![TableRow {
+                id: node(951),
+                properties: TableRowProperties::default(),
+                cells: vec![TableCell {
+                    id: node(952),
+                    properties: TableCellProperties::default(),
+                    blocks,
+                }],
+            }],
+        })
     }
 
     #[test]
@@ -336,6 +435,114 @@ mod tests {
         assert!(
             !note_page.footnotes.is_empty(),
             "the note body is assigned to the page containing the reference"
+        );
+    }
+
+    #[test]
+    fn split_paragraph_reference_places_footnote_on_the_containing_page() {
+        let note = NoteId::new(node(1_401));
+        let mut definitions = Definitions::default();
+        definitions.footnotes.insert(
+            note,
+            Note {
+                blocks: vec![paragraph(1_402, "split paragraph footnote")],
+            },
+        );
+        let doc = document(vec![long_note_ref_paragraph(1_410, note, 900)], definitions);
+        let shaper = ParleyShaper::new();
+
+        let layout = paginate_document(&doc, &shaper);
+
+        assert!(
+            layout.pages.len() >= 2,
+            "the long paragraph must split across pages"
+        );
+        assert!(
+            layout.pages[0].footnotes.is_empty(),
+            "the first split chunk precedes the note reference"
+        );
+        let note_page = layout
+            .pages
+            .iter()
+            .position(|page| !page.footnotes.is_empty())
+            .expect("expected a footnote on the split paragraph tail page");
+        assert!(
+            note_page > 0,
+            "the footnote belongs to the later page containing the reference line"
+        );
+    }
+
+    #[test]
+    fn split_table_cell_reference_places_footnote_on_the_containing_page() {
+        let note = NoteId::new(node(1_501));
+        let mut definitions = Definitions::default();
+        definitions.footnotes.insert(
+            note,
+            Note {
+                blocks: vec![paragraph(1_502, "split table footnote")],
+            },
+        );
+        let doc = document(vec![table_with_split_cell_note(note)], definitions);
+        let shaper = ParleyShaper::new();
+
+        let layout = paginate_document(&doc, &shaper);
+
+        assert!(
+            layout.pages.len() >= 2,
+            "the tall table row must split across pages"
+        );
+        assert!(
+            layout.pages[0].footnotes.is_empty(),
+            "the first row chunk precedes the table-cell note reference"
+        );
+        let note_page = layout
+            .pages
+            .iter()
+            .position(|page| !page.footnotes.is_empty())
+            .expect("expected a footnote on the row chunk containing the reference");
+        assert!(
+            note_page > 0,
+            "the footnote follows the page containing the split table-cell reference"
+        );
+    }
+
+    #[test]
+    fn header_note_reference_is_visible_but_does_not_reserve_body_footnotes() {
+        let note = NoteId::new(node(1_601));
+        let header = HeaderFooterId::new(node(1_602));
+        let mut definitions = Definitions::default();
+        definitions.footnotes.insert(
+            note,
+            Note {
+                blocks: vec![paragraph(1_603, "header footnote body")],
+            },
+        );
+        definitions.headers.insert(
+            header,
+            HeaderFooter {
+                blocks: vec![note_ref_paragraph(1_604, note)],
+            },
+        );
+        definitions.sections.push(section_with_header(header));
+        let doc = document(vec![paragraph(1_605, "body")], definitions);
+        let shaper = ParleyShaper::new();
+
+        let layout = paginate_document(&doc, &shaper);
+
+        assert_eq!(layout.pages.len(), 1);
+        assert!(
+            layout.pages[0].footnotes.is_empty(),
+            "header note markers are visible metadata but do not reserve body footnotes in this slice"
+        );
+        assert!(
+            layout.pages[0].header.iter().any(|placed| {
+                matches!(
+                    &placed.fragment,
+                    BlockFragment::Paragraph { lines, .. }
+                        if lines.lines.iter().any(|line| !line.notes.is_empty())
+                )
+            }),
+            "the header still exposes the visible note marker metadata"
         );
     }
 }

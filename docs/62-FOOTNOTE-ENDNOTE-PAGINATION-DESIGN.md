@@ -148,6 +148,12 @@ land after the footnote fixed-point loop is stable.
 - Do not reserve footnote bands for references inside headers/footers in this
   slice; those markers remain visible but note-body placement is body-flow owned.
 
+Implementation note: Slice B's footnote collector intentionally walks final
+placed body fragments rather than the pre-pagination galley. That means paragraph
+line slices and table-row cell splits already assign markers to the page that
+actually owns the split fragment. Slice C locks this behavior with regressions and
+keeps running-content markers out of body footnote reservation.
+
 ### Slice D — Multi-Section And Endnote Visibility
 
 - Resolve footnotes using the current page's section width and page geometry.
