@@ -113,6 +113,9 @@
         <button id="bulletList" type="button" class="fmt" title="Bulleted list" aria-label="Bulleted list" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M4 10.5c-.83 0-1.5.67-1.5 1.5s.67 1.5 1.5 1.5 1.5-.67 1.5-1.5-.67-1.5-1.5-1.5zm0-6c-.83 0-1.5.67-1.5 1.5S3.17 7.5 4 7.5 5.5 6.83 5.5 6 4.83 4.5 4 4.5zm0 12c-.83 0-1.5.68-1.5 1.5s.68 1.5 1.5 1.5 1.5-.68 1.5-1.5-.67-1.5-1.5-1.5zM7 19h14v-2H7v2zm0-6h14v-2H7v2zm0-8v2h14V5H7z"/></svg></button>
         <button id="numberedList" type="button" class="fmt" title="Numbered list" aria-label="Numbered list" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M2 17h2v.5H3v1h1v.5H2v1h3v-4H2v1zm1-9h1V4H2v1h1v3zm-1 3h1.8L2 13.1v.9h3v-1H3.2L5 10.9V10H2v1zm5-6v2h14V5H7zm0 14h14v-2H7v2zm0-6h14v-2H7v2z"/></svg></button>
       </div>
+      <div class="group">
+        <button id="tableBtn" type="button" class="fmt" title="Table &amp; cell formatting" aria-label="Table and cell formatting" aria-haspopup="menu" aria-expanded="false" disabled><svg viewBox="0 0 24 24"><path d="M10 10.02h5V21h-5V10.02zM17 21h3c1.1 0 2-.9 2-2v-9h-5v11zm3-18H5c-1.1 0-2 .9-2 2v3h19V5c0-1.1-.9-2-2-2zM3 19c0 1.1.9 2 2 2h3V10H3v9z"/></svg></button>
+      </div>
     </div>
 
     <div id="spacingMenu" class="context-menu spacing-menu" hidden role="menu" aria-label="Line and paragraph spacing">
@@ -162,6 +165,46 @@
       <label class="menu-check-row"><input id="pgKeepNext" type="checkbox" />Keep with next</label>
       <label class="menu-check-row"><input id="pgKeepLines" type="checkbox" />Keep lines together</label>
       <label class="menu-check-row"><input id="pgBreakBefore" type="checkbox" />Page break before</label>
+    </div>
+
+    <div id="tableMenu" class="context-menu spacing-menu" hidden role="menu" aria-label="Table and cell formatting">
+      <div class="menu-heading">Cell shading</div>
+      <div class="menu-row shade-row">
+        <label class="shade-pick"><input id="cellShade" type="color" value="#ffe08a" /><span>Fill</span></label>
+        <button type="button" id="cellShadeNone" class="chip-btn">None</button>
+      </div>
+      <div class="menu-divider"></div>
+      <div class="menu-heading">Vertical align</div>
+      <div class="menu-row">
+        <div class="segmented" id="cellVAlign" role="radiogroup" aria-label="Cell vertical alignment">
+          <button type="button" data-valign="top">Top</button>
+          <button type="button" data-valign="center">Middle</button>
+          <button type="button" data-valign="bottom">Bottom</button>
+        </div>
+      </div>
+      <div class="menu-divider"></div>
+      <div class="menu-heading">Cell borders</div>
+      <div class="menu-row border-row">
+        <div class="border-presets" role="group" aria-label="Cell borders">
+          <button type="button" class="border-btn" data-cellborder="none" title="No border" aria-pressed="false"><span class="bx"></span></button>
+          <button type="button" class="border-btn" data-cellborder="box" title="All borders" aria-pressed="false"><span class="bx"></span></button>
+          <button type="button" class="border-btn" data-cellborder="top" title="Top border" aria-pressed="false"><span class="bx"></span></button>
+          <button type="button" class="border-btn" data-cellborder="bottom" title="Bottom border" aria-pressed="false"><span class="bx"></span></button>
+          <button type="button" class="border-btn" data-cellborder="left" title="Left border" aria-pressed="false"><span class="bx"></span></button>
+          <button type="button" class="border-btn" data-cellborder="right" title="Right border" aria-pressed="false"><span class="bx"></span></button>
+        </div>
+        <label class="border-color" title="Border color"><input id="cellBorderColor" type="color" value="#000000" /></label>
+      </div>
+      <div class="menu-divider"></div>
+      <div class="menu-heading">Table borders</div>
+      <div class="menu-row">
+        <div class="chip-row" role="group" aria-label="Table borders">
+          <button type="button" class="chip-btn" data-tableborder="none">None</button>
+          <button type="button" class="chip-btn" data-tableborder="box">Box</button>
+          <button type="button" class="chip-btn" data-tableborder="all">All</button>
+        </div>
+        <label class="border-color" title="Table border color"><input id="tableBorderColor" type="color" value="#000000" /></label>
+      </div>
     </div>
 
     <main id="viewport" class="viewport">

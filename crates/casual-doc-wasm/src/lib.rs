@@ -15,8 +15,8 @@
 
 use casual_doc_edit::{
     FormatDelta, Operation, Pos, Range as EditRange, apply as apply_edit, caret_format,
-    caret_run_style, find_table, format_state, locate_table_cell, locate_table_row,
-    paragraph_properties, run_style_state,
+    caret_run_style, cell_properties, find_table, format_state, locate_cell, locate_table_cell,
+    locate_table_row, paragraph_properties, run_style_state,
 };
 use casual_doc_export::write_document;
 use casual_doc_import::{ImportConfig, ImportMode, import_package};
@@ -33,11 +33,11 @@ use casual_doc_layout::paginate::PageConfig;
 use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_layout::units::{Point, Rect, Size, Twip};
 use casual_doc_model::v1::{
-    AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, BorderEdge, Document,
-    HighlightColor, Indentation, LevelJustification, LevelSuffix, NumberFormat, NumberingInstance,
-    NumberingInstanceId, NumberingLevel, NumberingRef, Paragraph, ParagraphProperties, RgbColor,
-    StyleId, StyleKind, TabAlignment, TabStop, TableCell, TableCellProperties, TableRow,
-    VerticalAlignment,
+    AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, BorderEdge,
+    CellVerticalAlignment, Document, HighlightColor, Indentation, LevelJustification, LevelSuffix,
+    NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel, NumberingRef, Paragraph,
+    ParagraphProperties, RgbColor, StyleId, StyleKind, TabAlignment, TabStop, TableBorders,
+    TableCell, TableCellProperties, TableRow, VerticalAlignment,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
@@ -1252,6 +1252,133 @@ impl WasmDocument {
             .unwrap_or_default()
     }
 
+    /// Sets or clears the background shading fill of the cell containing `node`.
+    #[wasm_bindgen(js_name = setCellShading)]
+    pub fn set_cell_shading(
+        &mut self,
+        node: &str,
+        r: u8,
+        g: u8,
+        b: u8,
+        clear: bool,
+    ) -> Result<EditResult, JsValue> {
+        self.apply_cell_props(node, |p| {
+            p.shading.fill = if clear {
+                None
+            } else {
+                Some(RgbColor { r, g, b })
+            };
+        })
+    }
+
+    /// Sets the cell's vertical text alignment: `"top"` | `"center"` | `"bottom"`.
+    #[wasm_bindgen(js_name = setCellVerticalAlign)]
+    pub fn set_cell_vertical_align(
+        &mut self,
+        node: &str,
+        align: &str,
+    ) -> Result<EditResult, JsValue> {
+        let va = match align {
+            "center" => CellVerticalAlignment::Center,
+            "bottom" => CellVerticalAlignment::Bottom,
+            _ => CellVerticalAlignment::Top,
+        };
+        self.apply_cell_props(node, move |p| p.vertical_alignment = Some(va))
+    }
+
+    /// Applies a border `edges` preset to the cell containing `node`: `"none"`/`"box"`
+    /// clear-or-set the four cell edges; `"top"`/`"bottom"`/`"left"`/`"right"` toggle
+    /// one edge. Set edges use a single line of `size_eighth_points` in the RGB.
+    #[wasm_bindgen(js_name = setCellBorder)]
+    #[allow(clippy::too_many_arguments)] // flat JS signature (node + preset + rgb + size)
+    pub fn set_cell_border(
+        &mut self,
+        node: &str,
+        edges: &str,
+        r: u8,
+        g: u8,
+        b: u8,
+        size_eighth_points: u32,
+    ) -> Result<EditResult, JsValue> {
+        let edges = edges.to_string();
+        self.apply_cell_props(node, move |p| {
+            set_table_borders_preset(&mut p.borders, &edges, || {
+                border_edge(r, g, b, size_eighth_points)
+            });
+        })
+    }
+
+    /// Applies a border `edges` preset to the whole table containing `node`:
+    /// `"none"` clears all; `"box"` sets the four outer edges; `"all"` sets outer +
+    /// inside gridlines; `"top"`/`"bottom"`/`"left"`/`"right"` toggle one outer edge.
+    #[wasm_bindgen(js_name = setTableBorder)]
+    #[allow(clippy::too_many_arguments)] // flat JS signature (node + preset + rgb + size)
+    pub fn set_table_border(
+        &mut self,
+        node: &str,
+        edges: &str,
+        r: u8,
+        g: u8,
+        b: u8,
+        size_eighth_points: u32,
+    ) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let (table, _cell) =
+            locate_cell(&self.document, nid).ok_or_else(|| to_js("not in a table".into()))?;
+        let mut props = find_table(&self.document, table)
+            .map(|t| t.properties.clone())
+            .ok_or_else(|| to_js("table not found".into()))?;
+        set_table_borders_preset(&mut props.borders, edges, || {
+            border_edge(r, g, b, size_eighth_points)
+        });
+        self.apply_action(vec![Operation::SetTableProperties {
+            table,
+            properties: Box::new(props),
+        }])
+        .map_err(to_js)
+    }
+
+    /// The shading fill of the cell containing `node` as packed `0xRRGGBB`, or `-1`.
+    #[wasm_bindgen(js_name = cellShadingAt)]
+    #[must_use]
+    pub fn cell_shading_at(&self, node: &str) -> i32 {
+        self.cell_props_of(node)
+            .and_then(|p| p.shading.fill)
+            .map_or(-1, |c| {
+                (i32::from(c.r) << 16) | (i32::from(c.g) << 8) | i32::from(c.b)
+            })
+    }
+
+    /// The vertical alignment of the cell containing `node`: `"top"`/`"center"`/
+    /// `"bottom"` (defaults to `"top"`); `""` when not in a cell.
+    #[wasm_bindgen(js_name = cellVerticalAlignAt)]
+    #[must_use]
+    pub fn cell_vertical_align_at(&self, node: &str) -> String {
+        match self.cell_props_of(node) {
+            Some(p) => match p.vertical_alignment {
+                Some(CellVerticalAlignment::Center) => "center",
+                Some(CellVerticalAlignment::Bottom) => "bottom",
+                _ => "top",
+            }
+            .to_string(),
+            None => String::new(),
+        }
+    }
+
+    /// The cell's border edges as a bitmask (top=1, bottom=2, left=4, right=8) — for
+    /// reflecting the active cell-border presets.
+    #[wasm_bindgen(js_name = cellBorderEdges)]
+    #[must_use]
+    pub fn cell_border_edges(&self, node: &str) -> u8 {
+        self.cell_props_of(node).map_or(0, |p| {
+            let bd = &p.borders;
+            u8::from(bd.top.is_some())
+                | (u8::from(bd.bottom.is_some()) << 1)
+                | (u8::from(bd.start.is_some()) << 2)
+                | (u8::from(bd.end.is_some()) << 3)
+        })
+    }
+
     /// The first section's page geometry (width + side margins, in twips) — what the
     /// horizontal ruler draws its scale and margin zones from.
     #[wasm_bindgen(js_name = pageGeometry)]
@@ -2168,6 +2295,35 @@ impl WasmDocument {
         self.apply_action(ops).map_err(to_js)
     }
 
+    /// Reads the current properties of the cell containing `node`, applies `f`, and
+    /// installs them via `SetTableCellProperties` (one undoable action). Errors when
+    /// `node` is not inside a table cell.
+    fn apply_cell_props(
+        &mut self,
+        node: &str,
+        f: impl FnOnce(&mut TableCellProperties),
+    ) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let (_table, cell) =
+            locate_cell(&self.document, nid).ok_or_else(|| to_js("not in a table cell".into()))?;
+        let mut props =
+            cell_properties(&self.document, cell).ok_or_else(|| to_js("cell not found".into()))?;
+        f(&mut props);
+        self.apply_action(vec![Operation::SetTableCellProperties {
+            cell,
+            properties: Box::new(props),
+        }])
+        .map_err(to_js)
+    }
+
+    /// A clone of the current properties of the cell containing `node`, or `None` when
+    /// not in a cell — the read side of the cell-formatting reflect getters.
+    fn cell_props_of(&self, node: &str) -> Option<TableCellProperties> {
+        let nid = NodeId::from_str(node).ok()?;
+        let (_table, cell) = locate_cell(&self.document, nid)?;
+        cell_properties(&self.document, cell)
+    }
+
     /// Ruler-indent applier: like [`apply_paragraph_props`](Self::apply_paragraph_props)
     /// but skips paragraphs inside table cells. A body-scale indent applied to a
     /// narrow cell paragraph overflows the cell and mangles the table, so the ruler
@@ -2563,6 +2719,54 @@ fn flat_rect(page: u32, rect: Rect) -> [i32; 5] {
     ]
 }
 
+/// A single-line border edge in the given RGB at `size_eighth_points` eighth-points.
+fn border_edge(r: u8, g: u8, b: u8, size_eighth_points: u32) -> BorderEdge {
+    BorderEdge {
+        style: "single".to_string(),
+        size_eighth_points: Some(size_eighth_points.clamp(2, 96)),
+        color: Some(RgbColor { r, g, b }),
+        space_points: None,
+    }
+}
+
+/// Applies a border preset to a [`TableBorders`] (cell or table): `"none"` clears
+/// all; `"box"` sets the four outer edges; `"all"` adds the inside gridlines too;
+/// `"top"`/`"bottom"`/`"left"`/`"right"` toggle one outer edge. `mk` builds the edge.
+fn set_table_borders_preset(bd: &mut TableBorders, edges: &str, mk: impl Fn() -> BorderEdge) {
+    let toggle = |slot: &mut Option<BorderEdge>| {
+        *slot = if slot.is_none() { Some(mk()) } else { None };
+    };
+    match edges {
+        "none" => {
+            bd.top = None;
+            bd.bottom = None;
+            bd.start = None;
+            bd.end = None;
+            bd.inside_h = None;
+            bd.inside_v = None;
+        }
+        "box" => {
+            bd.top = Some(mk());
+            bd.bottom = Some(mk());
+            bd.start = Some(mk());
+            bd.end = Some(mk());
+        }
+        "all" => {
+            bd.top = Some(mk());
+            bd.bottom = Some(mk());
+            bd.start = Some(mk());
+            bd.end = Some(mk());
+            bd.inside_h = Some(mk());
+            bd.inside_v = Some(mk());
+        }
+        "top" => toggle(&mut bd.top),
+        "bottom" => toggle(&mut bd.bottom),
+        "left" => toggle(&mut bd.start),
+        "right" => toggle(&mut bd.end),
+        _ => {}
+    }
+}
+
 /// Ruler tab-alignment code (0 start / 1 center / 2 end / 3 decimal / 4 bar) → model.
 fn tab_alignment_from_code(code: u8) -> TabAlignment {
     match code {
@@ -2876,6 +3080,10 @@ fn caret_after(op: &Operation, inverse: &Operation) -> Pos {
             .first()
             .and_then(first_paragraph_of_row)
             .map_or_else(|| Pos::new(table.id, 0), |p| Pos::new(p, 0)),
+        // Cell/table formatting keeps the selection (the frontend does not collapse
+        // to this); these arms only keep the match exhaustive.
+        Operation::SetTableCellProperties { cell, .. } => Pos::new(*cell, 0),
+        Operation::SetTableProperties { table, .. } => Pos::new(*table, 0),
     }
 }
 
@@ -4009,6 +4217,56 @@ mod tests {
         // Undo the clear → the single remaining stop returns.
         d.undo().expect("undo");
         assert_eq!(d.paragraph_tabs(&node), vec![2160, 2]);
+    }
+
+    /// Cell shading / vertical alignment / borders and table borders apply through the
+    /// caret's cell, reflect via the getters, and undo.
+    #[test]
+    fn table_cell_and_table_formatting_apply_reflect_and_undo() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let cell_para = nodes
+            .iter()
+            .find(|(id, _)| d.in_table(&id.to_string()))
+            .map(|(id, _)| id.to_string())
+            .expect("a paragraph inside a table cell");
+
+        // Capture the corpus cell's initial state (it already carries some formatting)
+        // and verify each edit changes it, then undo restores it exactly.
+        let initial_shading = d.cell_shading_at(&cell_para);
+        let initial_valign = d.cell_vertical_align_at(&cell_para);
+        let initial_edges = d.cell_border_edges(&cell_para);
+
+        d.set_cell_shading(&cell_para, 0xEE, 0xEE, 0x00, false)
+            .expect("shade");
+        assert_eq!(d.cell_shading_at(&cell_para), 0x00EE_EE00);
+
+        d.set_cell_vertical_align(&cell_para, "bottom")
+            .expect("valign");
+        assert_eq!(d.cell_vertical_align_at(&cell_para), "bottom");
+
+        // Clear then box the cell borders (independent of the corpus's initial edges).
+        d.set_cell_border(&cell_para, "none", 0, 0, 0, 8)
+            .expect("clear border");
+        assert_eq!(d.cell_border_edges(&cell_para), 0);
+        d.set_cell_border(&cell_para, "box", 0, 0, 0, 8)
+            .expect("box border");
+        assert_eq!(d.cell_border_edges(&cell_para), 0b1111);
+
+        // A table-level border (outer + inside) applies without error.
+        d.set_table_border(&cell_para, "all", 0, 0, 0, 8)
+            .expect("table border");
+
+        // Undo every edit in reverse → back to the initial state.
+        d.undo().expect("u table border");
+        d.undo().expect("u box");
+        d.undo().expect("u clear");
+        assert_eq!(d.cell_border_edges(&cell_para), initial_edges);
+        d.undo().expect("u valign");
+        assert_eq!(d.cell_vertical_align_at(&cell_para), initial_valign);
+        d.undo().expect("u shading");
+        assert_eq!(d.cell_shading_at(&cell_para), initial_shading);
     }
 
     /// A `pageBreakBefore` set through the live edit path must re-paginate and add a

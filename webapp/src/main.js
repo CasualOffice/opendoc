@@ -79,6 +79,13 @@ const indentRightInput = document.getElementById("indentRight");
 const indentSpecialSel = document.getElementById("indentSpecial");
 const indentSpecialByInput = document.getElementById("indentSpecialBy");
 const borderColorInput = document.getElementById("borderColor");
+const tableBtn = document.getElementById("tableBtn");
+const tableFmtMenu = document.getElementById("tableMenu");
+const cellShade = document.getElementById("cellShade");
+const cellShadeNone = document.getElementById("cellShadeNone");
+const cellVAlign = document.getElementById("cellVAlign");
+const cellBorderColor = document.getElementById("cellBorderColor");
+const tableBorderColor = document.getElementById("tableBorderColor");
 const indentDecBtn = document.getElementById("indentDec");
 const indentIncBtn = document.getElementById("indentInc");
 const bulletListBtn = document.getElementById("bulletList");
@@ -1020,6 +1027,8 @@ function updateToolbar() {
   const listKind = hasSel && doc ? doc.listStyleAt(selection.focus.node) : "";
   bulletListBtn.setAttribute("aria-pressed", String(listKind === "bullet"));
   numberedListBtn.setAttribute("aria-pressed", String(listKind === "numbered"));
+  // The Table button (cell/table formatting) is enabled only inside a table.
+  tableBtn.disabled = !(hasSel && doc && doc.inTable(selection.focus.node));
 }
 
 /** Fills the paragraph-style dropdown from the open document's styles. */
@@ -1236,6 +1245,74 @@ for (const b of paraOptsMenu.querySelectorAll(".border-btn")) {
     const [r, g, bl] = hexToRgb(borderColorInput.value);
     runToolbarEdit((a, x, c, d) => doc.setParagraphBorder(a, x, c, d, b.dataset.border, r, g, bl, 8));
     reflectParaOptsMenu();
+  });
+}
+
+// -- Table & cell formatting (a single-node edit: applies to the caret's cell) --
+/** Runs a `(node) => EditResult` edit on the caret's node, preserving the selection
+ *  and repainting only the dirty pages (rebuild on a page-count change). */
+function runNodeEdit(thunk) {
+  if (!selection || !doc) return;
+  let res;
+  try {
+    res = thunk(selection.focus.node);
+  } catch (err) {
+    console.warn("edit ignored:", err?.message ?? err);
+    return;
+  }
+  const dirty = res.dirtyPages;
+  const newCount = res.pageCount;
+  res.free();
+  if (newCount !== pages.length) renderAll();
+  else {
+    for (const i of dirty) repaintPage(i);
+    drawSelection();
+  }
+}
+
+function reflectTableMenu() {
+  if (!doc || !selection) return;
+  const node = selection.focus.node;
+  const rgb = doc.cellShadingAt(node);
+  if (rgb >= 0 && document.activeElement !== cellShade) {
+    cellShade.value = `#${rgb.toString(16).padStart(6, "0")}`;
+  }
+  const va = doc.cellVerticalAlignAt(node) || "top";
+  for (const b of cellVAlign.querySelectorAll("button")) {
+    b.setAttribute("aria-pressed", String(b.dataset.valign === va));
+  }
+  const edges = doc.cellBorderEdges(node);
+  const bit = { top: 1, bottom: 2, left: 4, right: 8 };
+  for (const b of tableFmtMenu.querySelectorAll(".border-btn")) {
+    const k = b.dataset.cellborder;
+    const on = k === "box" ? edges === 0b1111 : k === "none" ? edges === 0 : (edges & bit[k]) !== 0;
+    b.setAttribute("aria-pressed", String(on));
+  }
+}
+registerPopover(tableBtn, tableFmtMenu, reflectTableMenu);
+
+cellShade.addEventListener("input", () => {
+  const [r, g, b] = hexToRgb(cellShade.value);
+  runNodeEdit((n) => doc.setCellShading(n, r, g, b, false));
+});
+onButton(cellShadeNone, () => runNodeEdit((n) => doc.setCellShading(n, 0, 0, 0, true)));
+for (const b of cellVAlign.querySelectorAll("button")) {
+  onButton(b, () => {
+    runNodeEdit((n) => doc.setCellVerticalAlign(n, b.dataset.valign));
+    reflectTableMenu();
+  });
+}
+for (const b of tableFmtMenu.querySelectorAll(".border-btn")) {
+  onButton(b, () => {
+    const [r, g, bl] = hexToRgb(cellBorderColor.value);
+    runNodeEdit((n) => doc.setCellBorder(n, b.dataset.cellborder, r, g, bl, 8));
+    reflectTableMenu();
+  });
+}
+for (const b of tableFmtMenu.querySelectorAll("[data-tableborder]")) {
+  onButton(b, () => {
+    const [r, g, bl] = hexToRgb(tableBorderColor.value);
+    runNodeEdit((n) => doc.setTableBorder(n, b.dataset.tableborder, r, g, bl, 8));
   });
 }
 
