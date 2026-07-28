@@ -16,7 +16,7 @@
   --glass-shadow:
     0 34px 90px rgba(0, 0, 0, 0.42),
     inset 0 1px 0 rgba(255, 255, 255, 0.08);
-  --max: 1180px;
+  --max: 1440px;
 }
 
 * {
@@ -101,15 +101,9 @@ footer {
 }
 
 .brand-mark {
-  display: grid;
-  width: 28px;
-  height: 28px;
-  place-items: center;
-  border-radius: 8px;
-  color: #fff;
-  background: linear-gradient(145deg, var(--accent-2), var(--accent));
-  box-shadow: 0 8px 24px rgba(220, 80, 74, 0.26);
-  font-size: 14px;
+  display: block;
+  width: 30px;
+  height: 30px;
 }
 
 nav {

@@ -107,6 +107,12 @@ input {
   letter-spacing: -0.02em;
 }
 
+.brand-logo {
+  display: block;
+  width: 26px;
+  height: 26px;
+}
+
 .testing {
   font-size: 10px;
   font-weight: 700;
