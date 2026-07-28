@@ -976,8 +976,8 @@ impl<'a> Paginator<'a> {
     }
 }
 
-/// Builds a paragraph fragment for `lines[range]`, re-basing each line's run
-/// origins so the first placed line sits at the fragment top, and keeping
+/// Builds a paragraph fragment for `lines[range]`, re-basing every paintable
+/// line child so the first placed line sits at the fragment top, and keeping
 /// `space_before`/`space_after` only on the head/tail chunk. Whether this slice is
 /// the paragraph's head (starts at line 0) and/or tail (ends at the last line) is
 /// derived from `range` — a slice covering the whole paragraph is both.
@@ -999,9 +999,7 @@ pub(crate) fn slice_paragraph(
         .iter()
         .map(|line| {
             let mut line = line.clone();
-            for run in &mut line.runs {
-                run.origin.y = Twip(run.origin.y.raw() - y_offset);
-            }
+            line.translate_contents_y(Twip(-y_offset));
             line
         })
         .collect();
@@ -1052,8 +1050,8 @@ pub(crate) fn make_row_chunk(
 /// Splits a row's cells at a vertical cut `avail` twips below the row top,
 /// returning the head cells (content that fits), the tail cells (the remainder,
 /// preserving every column so the continuation row keeps its geometry), and the
-/// head height actually used (the tallest cell's fitted content). A `used` of 0
-/// means nothing fit.
+/// head height actually used (the tallest content-bearing cell's fitted content
+/// plus its cloned top/bottom margins). A `used` of 0 means nothing fit.
 pub(crate) fn split_cells(
     cells: &[CellFragment],
     avail: i32,
@@ -1063,8 +1061,12 @@ pub(crate) fn split_cells(
     let mut used = 0;
     let mut has_tail = false;
     for cell in cells {
-        let (head_blocks, tail_blocks, cell_used) = split_blocks(&cell.blocks, avail);
-        used = used.max(cell_used);
+        let vertical_margins = cell.margins.top.raw() + cell.margins.bottom.raw();
+        let content_avail = avail.saturating_sub(vertical_margins);
+        let (head_blocks, tail_blocks, cell_used) = split_blocks(&cell.blocks, content_avail);
+        if cell_used > 0 || !head_blocks.is_empty() {
+            used = used.max(cell_used.saturating_add(vertical_margins));
+        }
         head.push(CellFragment {
             blocks: head_blocks,
             ..cell.clone()
@@ -1347,7 +1349,10 @@ mod tests {
     use super::*;
     use crate::block::{BoxMetrics, BreakControl};
     use crate::model::{ModelPos, ModelRange};
-    use crate::text::{Line, LineBreak, LineLayout};
+    use crate::text::{
+        Decoration, FontId, Glyph, GlyphRun, InlineImage, InlineRule, InlineTextBox, Line,
+        LineBreak, LineLayout, TextBoxContentLayout,
+    };
     use casual_doc_model::NodeId;
 
     /// A US-Letter page (12240×15840 twips) with 1-inch (1440) margins → an
@@ -1466,6 +1471,82 @@ mod tests {
             line.line_break = LineBreak::Hard;
         }
         fragment
+    }
+
+    #[test]
+    fn paragraph_slices_rebase_every_paintable_line_child() {
+        let node = tnode(900);
+        let range = ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, 1));
+        let blank_line = |height| Line {
+            runs: Vec::new(),
+            ascent: height,
+            descent: Twip::ZERO,
+            height,
+            clip: false,
+            range,
+            line_break: LineBreak::Wrap,
+            page_break_after: false,
+            bars: Vec::new(),
+            images: Vec::new(),
+            fields: Vec::new(),
+            notes: Vec::new(),
+            text_boxes: Vec::new(),
+            rules: Vec::new(),
+        };
+        let mut second = blank_line(Twip(200));
+        second.runs.push(GlyphRun {
+            font: FontId(0),
+            size: Twip(100),
+            character_scale_percent: 100,
+            color: [0, 0, 0, 255],
+            origin: Point::new(Twip(10), Twip(250)),
+            bidi_level: 0,
+            decoration: Decoration::default(),
+            highlight: None,
+            glyphs: vec![Glyph {
+                id: 1,
+                advance: Twip(50),
+                cluster: 0,
+            }],
+        });
+        second.images.push(InlineImage {
+            media: "word/media/image1.png".into(),
+            origin: Point::new(Twip(20), Twip(260)),
+            size: Size::new(Twip(40), Twip(50)),
+        });
+        second.text_boxes.push(InlineTextBox {
+            origin: Point::new(Twip(30), Twip(270)),
+            size: Size::new(Twip(60), Twip(70)),
+            blocks: Vec::new(),
+            border: None,
+            fill: None,
+            content_layout: TextBoxContentLayout::default(),
+        });
+        second.rules.push(InlineRule {
+            origin: Point::new(Twip(40), Twip(280)),
+            size: Size::new(Twip(80), Twip(10)),
+            color: [0, 0, 0, 255],
+        });
+        let lines = LineLayout {
+            lines: vec![blank_line(Twip(200)), second],
+        };
+
+        let sliced = slice_paragraph(
+            node,
+            &lines,
+            BoxMetrics::default(),
+            BreakControl::default(),
+            ParagraphDecor::default(),
+            1..2,
+        );
+        let BlockFragment::Paragraph { lines, .. } = sliced else {
+            unreachable!()
+        };
+        let line = &lines.lines[0];
+        assert_eq!(line.runs[0].origin.y, Twip(50));
+        assert_eq!(line.images[0].origin.y, Twip(60));
+        assert_eq!(line.text_boxes[0].origin.y, Twip(70));
+        assert_eq!(line.rules[0].origin.y, Twip(80));
     }
 
     #[test]
@@ -2306,5 +2387,78 @@ mod tests {
             }
         }
         assert_eq!(total_lines, 120, "no lines are lost when the row splits");
+    }
+
+    #[test]
+    fn a_margined_split_cell_cannot_overpaint_successor_rows() {
+        let config = letter_config();
+        let mut tall_paragraph = multiline(22, 120, Twip(240), BreakControl::default());
+        if let BlockFragment::Paragraph { lines, .. } = &mut tall_paragraph {
+            lines.lines[70].images.push(InlineImage {
+                media: "word/media/continuation.png".into(),
+                origin: Point::new(Twip(20), Twip(70 * 240 + 20)),
+                size: Size::new(Twip(80), Twip(80)),
+            });
+        }
+        let mut tall_cell = cell_of(21, vec![tall_paragraph]);
+        tall_cell.margins.top = Twip(120);
+        tall_cell.margins.bottom = Twip(180);
+        let row = table_row(20, 5, vec![tall_cell], true, false);
+        let next = table_row(
+            23,
+            5,
+            vec![cell_of(24, vec![paragraph(25, Twip(400))])],
+            true,
+            false,
+        );
+        let after_next = table_row(
+            26,
+            5,
+            vec![cell_of(27, vec![paragraph(28, Twip(400))])],
+            true,
+            false,
+        );
+
+        let layout = paginate(&[row, next, after_next], &config);
+        assert!(layout.page_count() >= 3);
+        for page in &layout.pages {
+            for pair in page.placed.windows(2) {
+                assert!(
+                    pair[0].rect.bottom().raw() <= pair[1].rect.origin.y.raw(),
+                    "successor rows must start below the preceding row chunk"
+                );
+            }
+            for placed in &page.placed {
+                let BlockFragment::TableRow { cells, height, .. } = &placed.fragment else {
+                    continue;
+                };
+                for cell in cells.iter().filter(|cell| !cell.blocks.is_empty()) {
+                    assert!(
+                        cell.occupied_height().raw() <= height.raw(),
+                        "the row chunk must contain its content and cloned margins"
+                    );
+                    for block in &cell.blocks {
+                        let BlockFragment::Paragraph { lines, .. } = block else {
+                            continue;
+                        };
+                        for image in lines.lines.iter().flat_map(|line| &line.images) {
+                            assert!(
+                                image.origin.y.raw() + image.size.height.raw()
+                                    <= lines.height().raw(),
+                                "a continuation image must stay in its paragraph slice"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        let placed_ids: Vec<_> = layout
+            .pages
+            .iter()
+            .flat_map(|page| &page.placed)
+            .map(|placed| placed.fragment.node_id())
+            .collect();
+        assert!(placed_ids.contains(&tnode(23)));
+        assert!(placed_ids.contains(&tnode(26)));
     }
 }

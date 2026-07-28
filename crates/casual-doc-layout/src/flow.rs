@@ -2732,21 +2732,11 @@ fn hr_line(rule: InlineRule, range: ModelRange) -> Line {
 /// images, text boxes, and rules down by `cursor_y` (into paragraph-absolute y) and
 /// advancing `cursor_y` past them.
 fn stack_lines(out: &mut Vec<Line>, mut lines: Vec<Line>, cursor_y: &mut Twip) {
+    let base = *cursor_y;
     for line in &mut lines {
-        for run in &mut line.runs {
-            run.origin.y = run.origin.y + *cursor_y;
-        }
-        for image in &mut line.images {
-            image.origin.y = image.origin.y + *cursor_y;
-        }
-        for text_box in &mut line.text_boxes {
-            text_box.origin.y = text_box.origin.y + *cursor_y;
-        }
-        for rule in &mut line.rules {
-            rule.origin.y = rule.origin.y + *cursor_y;
-        }
-        *cursor_y = *cursor_y + line.height;
+        line.translate_contents_y(base);
     }
+    *cursor_y = lines.iter().fold(base, |cursor, line| cursor + line.height);
     out.extend(lines);
 }
 
@@ -4158,6 +4148,57 @@ mod tests {
             BlockFragment::Paragraph { lines, .. } => lines,
             BlockFragment::TableRow { .. } => panic!("expected a paragraph fragment"),
         }
+    }
+
+    #[test]
+    fn stacking_a_multiline_batch_applies_its_base_once() {
+        use crate::model::{ModelPos, ModelRange};
+        use crate::text::{Decoration, FontId, Glyph, GlyphRun, LineBreak};
+
+        let node = NodeId::from_parts(99, 1).unwrap();
+        let range = ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, 1));
+        let line = |baseline| Line {
+            runs: vec![GlyphRun {
+                font: FontId(0),
+                size: Twip(100),
+                character_scale_percent: 100,
+                color: [0, 0, 0, 255],
+                origin: Point::new(Twip::ZERO, Twip(baseline)),
+                bidi_level: 0,
+                decoration: Decoration::default(),
+                highlight: None,
+                glyphs: vec![Glyph {
+                    id: 1,
+                    advance: Twip(50),
+                    cluster: 0,
+                }],
+            }],
+            ascent: Twip(80),
+            descent: Twip(20),
+            height: Twip(100),
+            clip: false,
+            range,
+            line_break: LineBreak::Wrap,
+            page_break_after: false,
+            bars: Vec::new(),
+            images: Vec::new(),
+            fields: Vec::new(),
+            notes: Vec::new(),
+            text_boxes: Vec::new(),
+            rules: Vec::new(),
+        };
+        // The shaper has already made the second baseline paragraph-relative.
+        let mut out = Vec::new();
+        let mut cursor = Twip(500);
+        stack_lines(&mut out, vec![line(80), line(180)], &mut cursor);
+
+        assert_eq!(out[0].runs[0].origin.y, Twip(580));
+        assert_eq!(
+            out[1].runs[0].origin.y,
+            Twip(680),
+            "the preceding line height must not be added a second time"
+        );
+        assert_eq!(cursor, Twip(700));
     }
 
     #[test]
