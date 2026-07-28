@@ -381,6 +381,7 @@ function drawSelection() {
   updateToolbar();
   updatePageNumber();
   updateRulerMarkers();
+  positionSelToolbar();
 }
 
 /** Outlines the table cell the caret is in (nothing when not in a table), so the
@@ -1623,6 +1624,63 @@ textColorInput.addEventListener("input", () => {
     runToolbarEdit((a, bo, c, d) => doc.setTextColor(a, bo, c, d, r, g, b)),
   );
 });
+
+// ---- Floating selection toolbar (appears above a text selection) ------------
+const selToolbar = document.getElementById("selToolbar");
+const selColor = document.getElementById("selColor");
+const selHighlight = document.getElementById("selHighlight");
+
+/** Shows the floating toolbar centred just above the current range selection (or
+ *  below it when there's no room), or hides it when the selection is collapsed. */
+function positionSelToolbar() {
+  if (!selection || !hasRange()) {
+    selToolbar.hidden = true;
+    return;
+  }
+  const rects = pagesEl.querySelectorAll(".overlay .highlight");
+  if (!rects.length) {
+    selToolbar.hidden = true;
+    return;
+  }
+  let top = Infinity;
+  let bottom = -Infinity;
+  let left = Infinity;
+  let right = -Infinity;
+  for (const el of rects) {
+    const b = el.getBoundingClientRect();
+    top = Math.min(top, b.top);
+    bottom = Math.max(bottom, b.bottom);
+    left = Math.min(left, b.left);
+    right = Math.max(right, b.right);
+  }
+  selToolbar.hidden = false; // must be visible to measure
+  const tw = selToolbar.offsetWidth;
+  const th = selToolbar.offsetHeight;
+  let x = (left + right) / 2 - tw / 2;
+  let y = top - th - 8;
+  if (y < 54) y = bottom + 8; // no room above → drop below the selection
+  x = Math.max(8, Math.min(x, window.innerWidth - tw - 8));
+  selToolbar.style.left = `${Math.round(x)}px`;
+  selToolbar.style.top = `${Math.round(y)}px`;
+}
+
+for (const b of selToolbar.querySelectorAll("[data-fmt]")) {
+  onButton(b, () => toggleFormat(b.dataset.fmt));
+}
+selColor.addEventListener("input", () => {
+  const [r, g, b] = hexToRgb(selColor.value);
+  runToolbarEdit((a, bo, c, d) => doc.setTextColor(a, bo, c, d, r, g, b));
+});
+selHighlight.addEventListener("change", () => {
+  const name = selHighlight.value;
+  runToolbarEdit((a, b, c, d) => doc.setHighlight(a, b, c, d, name));
+  selHighlight.value = "none";
+});
+// Keep clicks inside the bar from collapsing the selection; hide on viewport scroll.
+selToolbar.addEventListener("mousedown", (e) => {
+  if (e.target.tagName !== "INPUT" && e.target.tagName !== "SELECT") e.preventDefault();
+});
+viewportEl.addEventListener("scroll", () => (selToolbar.hidden = true), { passive: true });
 fontFamilySel.addEventListener("change", () => {
   const family = fontFamilySel.value;
   if (family) {
