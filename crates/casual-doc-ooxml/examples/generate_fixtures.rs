@@ -6,7 +6,9 @@ use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
 const CONTENT_TYPES: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+const NOTE_REFERENCES_CONTENT_TYPES: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/footnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"/><Override PartName="/word/endnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml"/></Types>"#;
 const ROOT_RELATIONSHIPS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+const NOTE_REFERENCES_DOCUMENT_RELS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdFootnotes" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/><Relationship Id="rIdEndnotes" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes" Target="endnotes.xml"/></Relationships>"#;
 const DOCUMENT: &[u8] = br#"<?xml version="1.0"?><w:document/>"#;
 const MIXED_UNICODE_DOCUMENT: &str = concat!(
     "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
@@ -17,6 +19,9 @@ const MIXED_UNICODE_DOCUMENT: &str = concat!(
     "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}\u{200d}\u{1f466}",
     "</w:t></w:r></w:p></w:body></w:document>",
 );
+const NOTE_REFERENCES_DOCUMENT: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Text with footnote</w:t></w:r><w:r><w:footnoteReference w:id="1"/></w:r></w:p><w:p><w:r><w:t>Text with endnote</w:t></w:r><w:r><w:endnoteReference w:id="2"/></w:r></w:p></w:body></w:document>"#;
+const NOTE_REFERENCES_FOOTNOTES: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?><w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:footnote w:id="-1" w:type="separator"><w:p><w:r><w:separator/></w:r></w:p></w:footnote><w:footnote w:id="0" w:type="continuationSeparator"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote><w:footnote w:id="1"><w:p><w:r><w:t>Generated footnote body.</w:t></w:r></w:p></w:footnote></w:footnotes>"#;
+const NOTE_REFERENCES_ENDNOTES: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?><w:endnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:endnote w:id="-1" w:type="separator"><w:p><w:r><w:separator/></w:r></w:p></w:endnote><w:endnote w:id="0" w:type="continuationSeparator"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:endnote><w:endnote w:id="2"><w:p><w:r><w:t>Generated endnote body.</w:t></w:r></w:p></w:endnote></w:endnotes>"#;
 const UNKNOWN_SAFE_PART: &[u8] =
     br#"<custom xmlns="urn:opendoc:fixture"><value>preserve-me</value></custom>"#;
 
@@ -29,6 +34,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     fs::write(
         output.join("mixed-unicode.docx"),
         package(&entries_with_document(MIXED_UNICODE_DOCUMENT.as_bytes()))?,
+    )?;
+
+    fs::write(
+        output.join("note-references.docx"),
+        package(&note_reference_entries())?,
     )?;
 
     let mut unknown_safe = minimal_entries();
@@ -98,6 +108,41 @@ fn entries_with_document(document: &[u8]) -> Vec<(String, Vec<u8>, CompressionMe
         (
             "_rels/.rels".to_owned(),
             ROOT_RELATIONSHIPS.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+    ]
+}
+
+fn note_reference_entries() -> Vec<(String, Vec<u8>, CompressionMethod)> {
+    vec![
+        (
+            "word/document.xml".to_owned(),
+            NOTE_REFERENCES_DOCUMENT.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "[Content_Types].xml".to_owned(),
+            NOTE_REFERENCES_CONTENT_TYPES.to_vec(),
+            CompressionMethod::Stored,
+        ),
+        (
+            "_rels/.rels".to_owned(),
+            ROOT_RELATIONSHIPS.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "word/_rels/document.xml.rels".to_owned(),
+            NOTE_REFERENCES_DOCUMENT_RELS.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "word/footnotes.xml".to_owned(),
+            NOTE_REFERENCES_FOOTNOTES.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "word/endnotes.xml".to_owned(),
+            NOTE_REFERENCES_ENDNOTES.to_vec(),
             CompressionMethod::Deflated,
         ),
     ]

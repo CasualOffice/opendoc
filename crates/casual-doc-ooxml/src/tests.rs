@@ -339,6 +339,39 @@ fn committed_package_fixtures_match_manifest_outcomes() {
         MIXED_UNICODE_DOCUMENT.as_bytes()
     );
 
+    let note_references = include_bytes!("../../../fixtures/generated/note-references.docx");
+    let mut package = DocxPackage::open(note_references, PackageLimits::default()).unwrap();
+    assert_eq!(
+        package
+            .entries()
+            .iter()
+            .map(|entry| entry.part_name.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            CONTENT_TYPES_PART,
+            ROOT_RELATIONSHIPS_PART,
+            "word/_rels/document.xml.rels",
+            DOCUMENT_PART,
+            "word/endnotes.xml",
+            "word/footnotes.xml",
+        ]
+    );
+    assert!(
+        std::str::from_utf8(&package.read_part(DOCUMENT_PART).unwrap())
+            .unwrap()
+            .contains("footnoteReference")
+    );
+    assert!(
+        std::str::from_utf8(&package.read_part("word/footnotes.xml").unwrap())
+            .unwrap()
+            .contains("Generated footnote body.")
+    );
+    assert!(
+        std::str::from_utf8(&package.read_part("word/endnotes.xml").unwrap())
+            .unwrap()
+            .contains("Generated endnote body.")
+    );
+
     let unknown_safe = include_bytes!("../../../fixtures/generated/unknown-safe-part.docx");
     let mut package = DocxPackage::open(unknown_safe, PackageLimits::default()).unwrap();
     assert!(
