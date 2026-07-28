@@ -199,6 +199,14 @@ relationships to both `word/footnotes.xml` and `word/endnotes.xml`. The package
 reader regression verifies the committed parts, and the import regression proves
 both reference kinds resolve from the package-level path.
 
+Implementation note: the seventh Slice D increment makes multi-column footnote
+placement column-local. The note collector carries the placed reference
+fragment's physical column x/width; note bodies are flowed and stacked at that
+column width, and the page-level reserved body height is the tallest column note
+stack rather than the sum of every note on the page. This keeps body content
+above the footnote band while avoiding page-wide footnote text in multi-column
+sections. Continuation-note behavior remains deferred.
+
 ## Invariants
 
 - A document with no note references produces byte-identical `PaginatedLayout`.

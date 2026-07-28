@@ -1,4 +1,4 @@
-//! Footnote placement for the bounded single-section pagination slice.
+//! Footnote placement for the bounded section/column pagination slice.
 //!
 //! The body paginator owns page breaking. This module wraps it with a small
 //! fixed-point loop: paginate with the current page reservations, inspect the
@@ -23,6 +23,25 @@ const MAX_RESERVATION_PASSES: usize = 6;
 /// Keep at least a small body area available when a note is oversized. The note
 /// body may overflow its band, but the convergence loop must remain bounded.
 const MIN_BODY_HEIGHT_TWIPS: i32 = 720;
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct NoteFlowKey {
+    section: SectionId,
+    width: Twip,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct NoteBandKey {
+    section: SectionId,
+    x: Twip,
+    width: Twip,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FootnoteRef {
+    note: NoteId,
+    band: NoteBandKey,
+}
 
 /// Whether a single-column section run has body footnote references.
 #[must_use]
@@ -50,7 +69,7 @@ pub(crate) fn paginate_section_footnotes(
         let next = page_reservations(&layout, &notes, runs);
         let merged = merge_reservations(&reservations, &next);
         if merged == reservations {
-            place_footnotes(&mut layout, &notes, runs, &next);
+            place_footnotes(&mut layout, &notes, &next);
             return layout;
         }
         reservations = merged;
@@ -61,7 +80,7 @@ pub(crate) fn paginate_section_footnotes(
         merge_reservations(&reservations, &page_reservations(&layout, &notes, runs));
     let mut layout = paginate_columns_with_reservations(runs, &final_reservations);
     let placed_reservations = page_reservations(&layout, &notes, runs);
-    place_footnotes(&mut layout, &notes, runs, &placed_reservations);
+    place_footnotes(&mut layout, &notes, &placed_reservations);
     layout
 }
 
@@ -100,20 +119,23 @@ fn build_section_footnote_galleys(
     document: &Document,
     shaper: &dyn LineShaper,
     runs: &[SectionRun],
-) -> BTreeMap<SectionId, BTreeMap<NoteId, Vec<BlockFragment>>> {
-    runs.iter()
-        .map(|run| {
-            (
-                run.config.section,
-                build_footnote_galleys(document, shaper, run.config.content_area().size.width),
-            )
-        })
-        .collect()
+) -> BTreeMap<NoteFlowKey, BTreeMap<NoteId, Vec<BlockFragment>>> {
+    let mut out = BTreeMap::new();
+    for run in runs {
+        for width in run.layout.flow_widths() {
+            out.entry(NoteFlowKey {
+                section: run.config.section,
+                width,
+            })
+            .or_insert_with(|| build_footnote_galleys(document, shaper, width));
+        }
+    }
+    out
 }
 
 fn page_reservations(
     layout: &PaginatedLayout,
-    notes: &BTreeMap<SectionId, BTreeMap<NoteId, Vec<BlockFragment>>>,
+    notes: &BTreeMap<NoteFlowKey, BTreeMap<NoteId, Vec<BlockFragment>>>,
     runs: &[SectionRun],
 ) -> Vec<Twip> {
     layout
@@ -127,17 +149,40 @@ fn page_reservations(
                     || footnote_cap_for_area(page.content_area),
                     |run| footnote_cap(&run.config),
                 );
-            page_footnote_refs(page)
-                .into_iter()
-                .filter_map(|(section, id)| {
-                    notes.get(&section).and_then(|section| section.get(&id))
-                })
-                .flat_map(|galley| galley.iter())
-                .map(BlockFragment::height)
-                .fold(Twip::ZERO, |a, h| a + h)
+            column_footnote_heights(page_footnote_refs(page), notes)
+                .into_values()
+                .max()
+                .unwrap_or(Twip::ZERO)
                 .min(cap)
         })
         .collect()
+}
+
+fn column_footnote_heights(
+    refs: Vec<FootnoteRef>,
+    notes: &BTreeMap<NoteFlowKey, BTreeMap<NoteId, Vec<BlockFragment>>>,
+) -> BTreeMap<NoteBandKey, Twip> {
+    let mut heights = BTreeMap::new();
+    for reference in refs {
+        let Some(galley) = notes
+            .get(&NoteFlowKey {
+                section: reference.band.section,
+                width: reference.band.width,
+            })
+            .and_then(|section| section.get(&reference.note))
+        else {
+            continue;
+        };
+        let height = galley
+            .iter()
+            .map(BlockFragment::height)
+            .fold(Twip::ZERO, |a, h| a + h);
+        heights
+            .entry(reference.band)
+            .and_modify(|total| *total = *total + height)
+            .or_insert(height);
+    }
+    heights
 }
 
 fn footnote_cap(config: &PageConfig) -> Twip {
@@ -151,8 +196,7 @@ fn footnote_cap_for_area(content: Rect) -> Twip {
 
 fn place_footnotes(
     layout: &mut PaginatedLayout,
-    notes: &BTreeMap<SectionId, BTreeMap<NoteId, Vec<BlockFragment>>>,
-    runs: &[SectionRun],
+    notes: &BTreeMap<NoteFlowKey, BTreeMap<NoteId, Vec<BlockFragment>>>,
     reservations: &[Twip],
 ) {
     for (index, page) in layout.pages.iter_mut().enumerate() {
@@ -161,64 +205,59 @@ fn place_footnotes(
             continue;
         }
         let refs = page_footnote_refs(page);
-        page.footnotes = stack_note_galleys(
-            refs,
-            notes,
-            runs,
-            Point::new(page.content_area.origin.x, page.content_area.bottom()),
-            band_height,
-        );
+        page.footnotes = stack_note_galleys(refs, notes, page.content_area.bottom(), band_height);
     }
 }
 
 fn stack_note_galleys(
-    refs: Vec<(SectionId, NoteId)>,
-    notes: &BTreeMap<SectionId, BTreeMap<NoteId, Vec<BlockFragment>>>,
-    runs: &[SectionRun],
-    origin: Point,
+    refs: Vec<FootnoteRef>,
+    notes: &BTreeMap<NoteFlowKey, BTreeMap<NoteId, Vec<BlockFragment>>>,
+    band_top: Twip,
     band_height: Twip,
 ) -> Vec<PlacedFragment> {
     let mut placed = Vec::new();
-    let mut y = origin.y;
-    for (section, id) in refs {
-        let Some(galley) = notes.get(&section).and_then(|section| section.get(&id)) else {
+    let mut cursors: BTreeMap<NoteBandKey, Twip> = BTreeMap::new();
+    for reference in refs {
+        let Some(galley) = notes
+            .get(&NoteFlowKey {
+                section: reference.band.section,
+                width: reference.band.width,
+            })
+            .and_then(|section| section.get(&reference.note))
+        else {
             continue;
         };
-        let band = run_note_band(runs, section, origin, band_height);
+        let y = cursors.entry(reference.band).or_insert(band_top);
+        let band = Rect::new(
+            Point::new(reference.band.x, band_top),
+            Size::new(reference.band.width, band_height),
+        );
         for fragment in galley {
             let height = fragment.height();
             placed.push(PlacedFragment {
                 fragment: fragment.clone(),
                 rect: Rect::new(
-                    Point::new(band.origin.x, y),
+                    Point::new(band.origin.x, *y),
                     Size::new(band.size.width, height),
                 ),
-                section: Some(section),
+                section: Some(reference.band.section),
             });
-            y = y + height;
+            *y = *y + height;
         }
     }
     placed
 }
 
-fn run_note_band(runs: &[SectionRun], section: SectionId, origin: Point, height: Twip) -> Rect {
-    let content = runs
-        .iter()
-        .find(|run| run.config.section == section)
-        .map_or(Rect::new(origin, Size::new(Twip::ZERO, height)), |run| {
-            run.config.content_area()
-        });
-    Rect::new(
-        Point::new(content.origin.x, origin.y),
-        Size::new(content.size.width, height),
-    )
-}
-
-fn page_footnote_refs(page: &Page) -> Vec<(SectionId, NoteId)> {
+fn page_footnote_refs(page: &Page) -> Vec<FootnoteRef> {
     let mut refs = Vec::new();
     for placed in &page.placed {
         let section = placed.section.unwrap_or(page.section);
-        collect_fragment_notes(&placed.fragment, section, &mut refs);
+        let band = NoteBandKey {
+            section,
+            x: placed.rect.origin.x,
+            width: placed.rect.size.width,
+        };
+        collect_fragment_notes(&placed.fragment, band, &mut refs);
     }
     refs
 }
@@ -235,12 +274,15 @@ fn fragment_has_footnote(fragment: &BlockFragment) -> bool {
 
 fn collect_fragment_notes(
     fragment: &BlockFragment,
-    section: SectionId,
-    refs: &mut Vec<(SectionId, NoteId)>,
+    band: NoteBandKey,
+    refs: &mut Vec<FootnoteRef>,
 ) {
     collect_fragment_note_markers(fragment, &mut |marker| {
         if marker.kind == NoteKind::Footnote {
-            refs.push((section, marker.note));
+            refs.push(FootnoteRef {
+                note: marker.note,
+                band,
+            });
         }
     });
 }
@@ -747,7 +789,7 @@ mod tests {
     }
 
     #[test]
-    fn two_column_footnote_reserves_page_wide_band() {
+    fn two_column_footnote_uses_the_reference_column_band() {
         let note = NoteId::new(node(1_631));
         let mut definitions = Definitions::default();
         definitions.footnotes.insert(
@@ -779,9 +821,18 @@ mod tests {
             note_page.content_area.size.height < default_content.size.height,
             "the multi-column reference page body area is reduced by the note band"
         );
+        let reference = note_page
+            .placed
+            .iter()
+            .find(|placed| placed.fragment.node_id() == node(1_690))
+            .expect("expected placed footnote reference paragraph");
         assert_eq!(
-            note_page.footnotes[0].rect.size.width, note_page.content_area.size.width,
-            "multi-column footnote bodies span the full section content width"
+            note_page.footnotes[0].rect.origin.x, reference.rect.origin.x,
+            "multi-column footnote bodies start under the reference column"
+        );
+        assert_eq!(
+            note_page.footnotes[0].rect.size.width, reference.rect.size.width,
+            "multi-column footnote bodies are flowed and placed at the reference column width"
         );
         assert!(
             note_page
