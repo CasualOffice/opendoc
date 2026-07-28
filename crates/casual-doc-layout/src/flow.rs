@@ -21,15 +21,16 @@ use std::hash::{Hash, Hasher};
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     Alignment, BlockNode, BorderEdge, BreakKind, Color, ColorScheme, DefinitionMap, Definitions,
-    Document, Drawing, DrawingAnchor, EmbeddedKind, EmbeddedObject, Extent, FontRef, FontScheme,
-    HeightRule, HighlightColor, HorizontalAlign, HorizontalAnchor, HorizontalPosition,
-    HorizontalRule as ModelHorizontalRule, HorizontalRuleAlign, Indentation, InlineNode,
-    LevelSuffix, LineRule, MediaId, MediaReference, NoteKind, NoteReference, ParagraphProperties,
-    Rgba, RunProperties, SchemeColor, SectionBoundary, SectionId, SectionType, ShapeStroke,
-    StyleId, Symbol, TabAlignment, TabLeader, TabStop, Table, TableBorders, TableCell, TableLayout,
-    TableRow, TableRowProperties, TextBox, TextBoxAutoFit, TextBoxBodyProperties,
-    TextBoxHorizontalOverflow, TextBoxVerticalAnchor, TextBoxVerticalOverflow, ThemeColorRef,
-    ThemeFontRef, VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition, WrapMode,
+    Document, Drawing, DrawingAnchor, DropCapFrame, DropCapMode, EmbeddedKind, EmbeddedObject,
+    Extent, FontRef, FontScheme, FrameWrap, HeightRule, HighlightColor, HorizontalAlign,
+    HorizontalAnchor, HorizontalPosition, HorizontalRule as ModelHorizontalRule,
+    HorizontalRuleAlign, Indentation, InlineNode, LevelSuffix, LineRule, MediaId, MediaReference,
+    NoteKind, NoteReference, Paragraph, ParagraphProperties, Rgba, RunProperties, SchemeColor,
+    SectionBoundary, SectionId, SectionType, ShapeStroke, StyleId, Symbol, TabAlignment, TabLeader,
+    TabStop, Table, TableBorders, TableCell, TableLayout, TableRow, TableRowProperties, TextBox,
+    TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxVerticalAnchor,
+    TextBoxVerticalOverflow, ThemeColorRef, ThemeFontRef, VerticalAlignment, VerticalAnchor,
+    VerticalMerge, VerticalPosition, WrapMode,
 };
 
 use crate::block::{
@@ -310,6 +311,12 @@ pub fn build_galley_cached(
     cache: &mut GalleyCache,
     dirty: &DirtySet,
 ) -> Vec<BlockFragment> {
+    // A drop-cap paragraph and its following body paragraph are one coupled flow
+    // unit. Until the cache key owns that adjacency, use the canonical fresh path
+    // rather than serving either half under a stale independent paragraph key.
+    if contains_drop_cap_pair(document.body(), &StyleCascade::new(document.definitions())) {
+        return build_galley(document, shaper, content_width);
+    }
     // The cache path resolves fonts exactly like the fresh path so a reused
     // fragment is byte-for-byte identical to a freshly built one; the resolved
     // face is folded into `paragraph_hash` (via `run.font`), so a cached fragment
@@ -682,47 +689,27 @@ fn flow_blocks(
     ctx: &mut FlowCtx,
 ) -> Vec<BlockFragment> {
     let mut galley = Vec::new();
-    for block in blocks {
+    let mut index = 0;
+    while index < blocks.len() {
+        if let (BlockNode::Paragraph(drop_cap), Some(BlockNode::Paragraph(body))) =
+            (&blocks[index], blocks.get(index + 1))
+            && let Some(frame) = effective_drop_cap_frame(drop_cap, &ctx.cascade)
+            && is_single_character_drop_cap(drop_cap)
+            && supports_drop_cap_layout(frame)
+        {
+            let mut drop_fragment = flow_paragraph(drop_cap, shaper, width, ctx, &[], true);
+            let exclusion = collapse_drop_cap_fragment(&mut drop_fragment, frame);
+            galley.push(drop_fragment);
+            let exclusions = exclusion.into_iter().collect::<Vec<_>>();
+            galley.push(flow_paragraph(body, shaper, width, ctx, &exclusions, false));
+            index += 2;
+            continue;
+        }
+
+        let block = &blocks[index];
         match block {
             BlockNode::Paragraph(paragraph) => {
-                // Resolve the paragraph's *effective* properties through the style
-                // cascade, and record its effective style so each run inherits the
-                // paragraph style's `rPr`.
-                ctx.para_style = ctx.cascade.paragraph_style(&paragraph.properties);
-                let mut props = ctx.cascade.resolve_paragraph(&paragraph.properties);
-                let mut items = Vec::new();
-                collect_items(&paragraph.inlines, &mut items, shaper, width, ctx);
-                prepend_paragraph_float_exclusions(paragraph.id, &mut items, ctx);
-                normalize_float_barriers(&mut items);
-                let range = ModelRange::new(
-                    ModelPos::new(paragraph.id, 0),
-                    ModelPos::new(paragraph.id, 0),
-                );
-                // Resolve the list marker (if any) before shaping: it advances the
-                // numbering counter, may merge the level's indent into `props`, and
-                // adjusts the body's first-line indent.
-                let (constraints, marker) =
-                    prepare_list_marker(paragraph.id, &mut props, width, ctx, shaper);
-                let mut lines = shape_paragraph_items(
-                    shaper,
-                    &items,
-                    &props.tabs,
-                    ctx.default_tab,
-                    constraints,
-                    range,
-                );
-                if let Some(marker) = marker {
-                    marker.inject(&mut lines, range);
-                }
-                ensure_nonempty_paragraph(&mut lines, &props, ctx, shaper, width, range);
-                apply_section_break(&mut lines, &paragraph.properties, ctx);
-                galley.push(BlockFragment::Paragraph {
-                    id: paragraph.id,
-                    lines,
-                    box_metrics: box_metrics(&props),
-                    break_control: break_control(&props),
-                    decor: paragraph_decor(&props, width),
-                });
+                galley.push(flow_paragraph(paragraph, shaper, width, ctx, &[], false));
             }
             BlockNode::Table(table) => flow_table(table, shaper, width, &mut galley, ctx),
             BlockNode::Sdt(sdt) => {
@@ -735,8 +722,146 @@ fn flow_blocks(
             // in the model to recurse; reserves nothing).
             BlockNode::AltChunk(_) => {}
         }
+        index += 1;
     }
     galley
+}
+
+fn flow_paragraph(
+    paragraph: &Paragraph,
+    shaper: &dyn LineShaper,
+    width: Twip,
+    ctx: &mut FlowCtx,
+    leading_exclusions: &[ParagraphFloatExclusion],
+    natural_line_height: bool,
+) -> BlockFragment {
+    // Resolve the paragraph's *effective* properties through the style cascade,
+    // and record its effective style so each run inherits the paragraph style's
+    // `rPr`.
+    ctx.para_style = ctx.cascade.paragraph_style(&paragraph.properties);
+    let mut props = ctx.cascade.resolve_paragraph(&paragraph.properties);
+    if natural_line_height && let Some(spacing) = props.spacing.as_mut() {
+        // Word's generated drop-cap paragraph commonly carries an exact line
+        // height smaller than its large initial. That box positions the frame; it
+        // must not become a glyph-ink clip in our coupled representation.
+        spacing.line_rule = None;
+        spacing.line_twips = None;
+        spacing.line_percent = None;
+    }
+    let mut items = Vec::new();
+    collect_items(&paragraph.inlines, &mut items, shaper, width, ctx);
+    prepend_paragraph_float_exclusions(paragraph.id, &mut items, ctx);
+    prepend_explicit_float_exclusions(leading_exclusions, &mut items);
+    normalize_float_barriers(&mut items);
+    let range = ModelRange::new(
+        ModelPos::new(paragraph.id, 0),
+        ModelPos::new(paragraph.id, 0),
+    );
+    // Resolve the list marker (if any) before shaping: it advances the numbering
+    // counter, may merge the level's indent into `props`, and adjusts the body's
+    // first-line indent.
+    let (constraints, marker) = prepare_list_marker(paragraph.id, &mut props, width, ctx, shaper);
+    let mut lines = shape_paragraph_items(
+        shaper,
+        &items,
+        &props.tabs,
+        ctx.default_tab,
+        constraints,
+        range,
+    );
+    if let Some(marker) = marker {
+        marker.inject(&mut lines, range);
+    }
+    ensure_nonempty_paragraph(&mut lines, &props, ctx, shaper, width, range);
+    apply_section_break(&mut lines, &paragraph.properties, ctx);
+    BlockFragment::Paragraph {
+        id: paragraph.id,
+        lines,
+        box_metrics: box_metrics(&props),
+        break_control: break_control(&props),
+        decor: paragraph_decor(&props, width),
+    }
+}
+
+fn contains_drop_cap_pair(blocks: &[BlockNode], cascade: &StyleCascade<'_>) -> bool {
+    blocks.windows(2).any(|pair| {
+        let (BlockNode::Paragraph(drop_cap), BlockNode::Paragraph(_)) = (&pair[0], &pair[1]) else {
+            return false;
+        };
+        effective_drop_cap_frame(drop_cap, cascade).is_some_and(supports_drop_cap_layout)
+            && is_single_character_drop_cap(drop_cap)
+    })
+}
+
+fn effective_drop_cap_frame(
+    paragraph: &Paragraph,
+    cascade: &StyleCascade<'_>,
+) -> Option<DropCapFrame> {
+    cascade
+        .resolve_paragraph(&paragraph.properties)
+        .drop_cap_frame
+}
+
+fn is_single_character_drop_cap(paragraph: &Paragraph) -> bool {
+    let text = node_plain_text(&paragraph.inlines);
+    let mut chars = text.chars();
+    chars.next().is_some() && chars.next().is_none()
+}
+
+fn supports_drop_cap_layout(frame: DropCapFrame) -> bool {
+    matches!(frame.wrap, None | Some(FrameWrap::Around | FrameWrap::Auto))
+}
+
+fn collapse_drop_cap_fragment(
+    fragment: &mut BlockFragment,
+    frame: DropCapFrame,
+) -> Option<ParagraphFloatExclusion> {
+    let BlockFragment::Paragraph {
+        lines, box_metrics, ..
+    } = fragment
+    else {
+        return None;
+    };
+    let natural_height = lines.height();
+    let right = lines
+        .lines
+        .iter()
+        .flat_map(|line| &line.runs)
+        .map(|run| {
+            run.origin.x
+                + run
+                    .glyphs
+                    .iter()
+                    .fold(Twip::ZERO, |advance, glyph| advance + glyph.advance)
+        })
+        .max()
+        .unwrap_or(Twip::ZERO);
+    let h_space = Twip(frame.horizontal_space_twips.unwrap_or(0) as i32);
+    let v_space = Twip(frame.vertical_space_twips.unwrap_or(0) as i32);
+    let width = (right + h_space).max(Twip(1));
+    let authored_height = Twip(i32::from(frame.lines).saturating_mul(240));
+    let height = natural_height.max(authored_height) + v_space;
+
+    // The following paragraph starts at the same block origin. Preserve the
+    // large run's baseline/ink, but make the frame paragraph flow-neutral and
+    // remove the exact-line clip that caused the page-5 truncation.
+    for line in &mut lines.lines {
+        line.height = Twip::ZERO;
+        line.clip = false;
+        if frame.mode == DropCapMode::Margin {
+            for run in &mut line.runs {
+                run.origin.x = run.origin.x - width;
+            }
+        }
+    }
+    box_metrics.space_before = Twip::ZERO;
+    box_metrics.space_after = Twip::ZERO;
+
+    (frame.mode == DropCapMode::Drop).then_some(ParagraphFloatExclusion {
+        side: InlineFloatSide::Left,
+        width,
+        height,
+    })
 }
 
 /// Flows a table into one [`BlockFragment::TableRow`] per row at Word-grade
@@ -2029,6 +2154,13 @@ fn prepend_paragraph_float_exclusions<'a>(
     else {
         return;
     };
+    prepend_explicit_float_exclusions(exclusions, items);
+}
+
+fn prepend_explicit_float_exclusions<'a>(
+    exclusions: &[ParagraphFloatExclusion],
+    items: &mut Vec<FlowItem<'a>>,
+) {
     // Insert in reverse so the stable, page-derived order is preserved at byte 0.
     for exclusion in exclusions.iter().rev() {
         if exclusion.width.raw() > 0 && exclusion.height.raw() > 0 {
@@ -4135,7 +4267,7 @@ mod tests {
     use casual_doc_model::v1::{
         BlockNode, CommentId, Definitions, Document, EmbeddedObject, EmbeddedPart, Extent,
         InlineNode, Math, MediaId, MediaReference, NoBreakHyphen, Note, NoteId, NoteReference,
-        Paragraph, ParagraphProperties, Run, RunProperties, SoftHyphen,
+        Paragraph, ParagraphProperties, Run, RunProperties, SoftHyphen, Spacing,
     };
 
     fn run_node(id: u64, text: &str, properties: RunProperties) -> InlineNode {
@@ -7819,6 +7951,139 @@ mod tests {
         assert_eq!(center.origin.x, Twip(2000));
         let right = make(HorizontalRuleAlign::Right);
         assert_eq!(right.origin.x, Twip(4000));
+    }
+
+    #[test]
+    fn framed_initial_is_unclipped_and_excludes_following_lines() {
+        let drop_cap = BlockNode::Paragraph(Paragraph {
+            id: NodeId::from_parts(70, 1).unwrap(),
+            properties: ParagraphProperties {
+                keep_next: true,
+                spacing: Some(Spacing {
+                    line_rule: Some(LineRule::Exact),
+                    line_twips: Some(700),
+                    ..Spacing::default()
+                }),
+                drop_cap_frame: Some(DropCapFrame {
+                    mode: DropCapMode::Drop,
+                    lines: 3,
+                    wrap: Some(FrameWrap::Around),
+                    horizontal_anchor: None,
+                    vertical_anchor: None,
+                    horizontal_alignment: None,
+                    vertical_alignment: None,
+                    horizontal_position_twips: None,
+                    vertical_position_twips: None,
+                    horizontal_space_twips: Some(80),
+                    vertical_space_twips: None,
+                }),
+                ..ParagraphProperties::default()
+            },
+            inlines: vec![run_node(
+                71,
+                "D",
+                RunProperties {
+                    size_half_points: Some(117),
+                    ..RunProperties::default()
+                },
+            )],
+        });
+        let body = BlockNode::Paragraph(Paragraph {
+            id: NodeId::from_parts(72, 1).unwrap(),
+            properties: ParagraphProperties::default(),
+            inlines: vec![run_node(
+                73,
+                &"rop cap body text wraps beside the initial ".repeat(40),
+                RunProperties::default(),
+            )],
+        });
+        let document = document(vec![drop_cap, body]);
+        let shaper = ParleyShaper::new();
+        let width = Twip(5_000);
+        let galley = build_galley(&document, &shaper, width);
+        let BlockFragment::Paragraph { lines: initial, .. } = &galley[0] else {
+            panic!("drop cap paragraph");
+        };
+        assert_eq!(galley[0].height(), Twip::ZERO);
+        assert_eq!(initial.lines.len(), 1);
+        assert!(!initial.lines[0].clip, "the large initial is never clipped");
+        assert_eq!(initial.lines[0].height, Twip::ZERO);
+        assert!(initial.lines[0].runs[0].size >= Twip(1_170));
+
+        let BlockFragment::Paragraph { lines: body, .. } = &galley[1] else {
+            panic!("following paragraph");
+        };
+        let shifted = body
+            .lines
+            .iter()
+            .take_while(|line| {
+                line.runs
+                    .first()
+                    .is_some_and(|run| run.origin.x > Twip::ZERO)
+            })
+            .count();
+        assert!(
+            shifted >= 3,
+            "the initial occupies at least three body lines"
+        );
+        assert!(
+            body.lines.iter().skip(shifted).any(|line| line
+                .runs
+                .first()
+                .is_some_and(|run| run.origin.x == Twip::ZERO)),
+            "the paragraph returns to its full measure below the initial"
+        );
+
+        let mut cache = GalleyCache::new();
+        assert_eq!(
+            build_galley_cached(
+                &document,
+                &shaper,
+                width,
+                &mut cache,
+                &DirtySet::everything()
+            ),
+            galley,
+            "cached layout uses the coupled drop-cap flow path"
+        );
+    }
+
+    #[test]
+    fn unsupported_frame_wrap_does_not_acquire_drop_cap_layout() {
+        let framed = BlockNode::Paragraph(Paragraph {
+            id: NodeId::from_parts(74, 1).unwrap(),
+            properties: ParagraphProperties {
+                drop_cap_frame: Some(DropCapFrame {
+                    mode: DropCapMode::Drop,
+                    lines: 3,
+                    wrap: Some(FrameWrap::None),
+                    horizontal_anchor: None,
+                    vertical_anchor: None,
+                    horizontal_alignment: None,
+                    vertical_alignment: None,
+                    horizontal_position_twips: None,
+                    vertical_position_twips: None,
+                    horizontal_space_twips: None,
+                    vertical_space_twips: None,
+                }),
+                ..ParagraphProperties::default()
+            },
+            inlines: vec![run_node(75, "D", RunProperties::default())],
+        });
+        let body = paragraph(
+            76,
+            vec![run_node(77, "ordinary body", RunProperties::default())],
+        );
+        let galley = build_galley(
+            &document(vec![framed, body]),
+            &ParleyShaper::new(),
+            Twip(5_000),
+        );
+        assert!(galley[0].height() > Twip::ZERO);
+        let BlockFragment::Paragraph { lines, .. } = &galley[1] else {
+            panic!("body paragraph");
+        };
+        assert_eq!(lines.lines[0].runs[0].origin.x, Twip::ZERO);
     }
 
     #[test]

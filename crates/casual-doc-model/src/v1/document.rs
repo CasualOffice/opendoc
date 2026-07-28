@@ -694,6 +694,27 @@ impl Document {
                 )?;
             }
         }
+        if let Some(frame) = properties.drop_cap_frame {
+            check_domain(frame.lines > 0, "paragraph.drop_cap_frame.lines")?;
+            for position in [
+                frame.horizontal_position_twips,
+                frame.vertical_position_twips,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                check_domain(
+                    (-31_680..=31_680).contains(&position),
+                    "paragraph.drop_cap_frame.position",
+                )?;
+            }
+            for space in [frame.horizontal_space_twips, frame.vertical_space_twips]
+                .into_iter()
+                .flatten()
+            {
+                check_domain(space <= 31_680, "paragraph.drop_cap_frame.spacing")?;
+            }
+        }
         if let Some(level) = properties.outline_level {
             check_domain(level <= 9, "paragraph.outline_level")?;
         }

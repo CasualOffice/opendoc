@@ -118,7 +118,7 @@ open as a PR at the time of writing.
 `latentStyles`, `stylesWithEffects.xml`, `webSettings.xml` (opaque preserve via P1F-2);
 glossary/AutoText **semantic** modeling (preserve opaque first — currently the only truly
 silent whole-part drop, `import/lib.rs`); ruby annotation text; ink (`w:contentPart`);
-`w:framePr`/drop caps; `w:background`; digital signatures (edit invalidates them anyway —
+generic non-drop `w:framePr` layout; `w:background`; digital signatures (edit invalidates them anyway —
 drop-and-report deliberately); vertical text, distribute alignment, kashida justification.
 **Policy decision needed:** `.docm` macro files are rejected at open
 (`ooxml/package.rs:196-198`) — a hard capability gap; decide strip-and-open vs.

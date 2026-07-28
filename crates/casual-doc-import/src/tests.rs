@@ -941,6 +941,57 @@ fn paragraph_flag_and_outline_properties_are_mapped() {
 }
 
 #[test]
+fn drop_cap_frame_properties_are_mapped_without_a_compatibility_drop() {
+    use casual_doc_model::v1::{
+        DropCapMode, FrameHorizontalAlignment, FrameHorizontalAnchor, FrameVerticalAlignment,
+        FrameVerticalAnchor, FrameWrap,
+    };
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:pPr>
+            <w:framePr w:dropCap="drop" w:lines="3" w:wrap="around"
+                w:hAnchor="text" w:vAnchor="margin" w:xAlign="left" w:yAlign="top"
+                w:x="-120" w:y="80" w:hSpace="90" w:vSpace="40"/>
+        </w:pPr><w:r><w:t>D</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let frame = paragraph(&import, 0)
+        .properties
+        .drop_cap_frame
+        .expect("drop-cap frame");
+    assert_eq!(frame.mode, DropCapMode::Drop);
+    assert_eq!(frame.lines, 3);
+    assert_eq!(frame.wrap, Some(FrameWrap::Around));
+    assert_eq!(frame.horizontal_anchor, Some(FrameHorizontalAnchor::Text));
+    assert_eq!(frame.vertical_anchor, Some(FrameVerticalAnchor::Margin));
+    assert_eq!(
+        frame.horizontal_alignment,
+        Some(FrameHorizontalAlignment::Left)
+    );
+    assert_eq!(frame.vertical_alignment, Some(FrameVerticalAlignment::Top));
+    assert_eq!(frame.horizontal_position_twips, Some(-120));
+    assert_eq!(frame.vertical_position_twips, Some(80));
+    assert_eq!(frame.horizontal_space_twips, Some(90));
+    assert_eq!(frame.vertical_space_twips, Some(40));
+    assert!(!features(&import).contains(&"framePr"));
+}
+
+#[test]
+fn generic_or_malformed_frames_are_reported_not_misrepresented() {
+    for frame in [
+        r#"<w:framePr w:dropCap="none" w:lines="3"/>"#,
+        r#"<w:framePr w:dropCap="drop" w:lines="0"/>"#,
+        r#"<w:framePr w:dropCap="drop" w:lines="3" w:x="999999"/>"#,
+    ] {
+        let xml = format!(
+            r#"<w:document xmlns:w="urn:w"><w:body><w:p><w:pPr>{frame}</w:pPr><w:r><w:t>D</w:t></w:r></w:p></w:body></w:document>"#
+        );
+        let import = import(xml.as_bytes());
+        assert_eq!(paragraph(&import, 0).properties.drop_cap_frame, None);
+        assert!(features(&import).contains(&"framePr"));
+    }
+}
+
+#[test]
 fn paragraph_borders_shading_and_tabs_are_mapped() {
     use casual_doc_model::v1::{RgbColor, TabAlignment, TabLeader};
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>

@@ -672,6 +672,129 @@ pub struct NumberingRef {
     pub level: u8,
 }
 
+/// How a paragraph frame carries a drop capital (`w:framePr@dropCap`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DropCapMode {
+    /// The initial occupies the leading edge of the text column.
+    Drop,
+    /// The initial sits in the leading page margin.
+    Margin,
+}
+
+/// Text wrapping requested by a drop-cap paragraph frame.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FrameWrap {
+    /// Wrap text around the frame.
+    Around,
+    /// Do not place text beside the frame.
+    NotBeside,
+    /// Let the consumer select the wrapping behavior.
+    Auto,
+    /// Disable wrapping.
+    None,
+}
+
+/// Horizontal reference box of a drop-cap paragraph frame.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FrameHorizontalAnchor {
+    /// Page margin box.
+    Margin,
+    /// Whole page box.
+    Page,
+    /// Current text column.
+    Text,
+}
+
+/// Vertical reference box of a drop-cap paragraph frame.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FrameVerticalAnchor {
+    /// Page margin box.
+    Margin,
+    /// Whole page box.
+    Page,
+    /// Current text region.
+    Text,
+}
+
+/// Named horizontal alignment of a drop-cap paragraph frame.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FrameHorizontalAlignment {
+    /// Center in the reference box.
+    Center,
+    /// Facing-page inside edge.
+    Inside,
+    /// Physical left edge.
+    Left,
+    /// Facing-page outside edge.
+    Outside,
+    /// Physical right edge.
+    Right,
+}
+
+/// Named vertical alignment of a drop-cap paragraph frame.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FrameVerticalAlignment {
+    /// Bottom of the reference box.
+    Bottom,
+    /// Center in the reference box.
+    Center,
+    /// Inline with the surrounding text.
+    Inline,
+    /// Facing-page inside edge.
+    Inside,
+    /// Facing-page outside edge.
+    Outside,
+    /// Top of the reference box.
+    Top,
+}
+
+/// The bounded `w:framePr` surface used by a drop-cap paragraph.
+///
+/// Generic paragraph frames (`dropCap="none"` or no drop-cap mode) remain
+/// compatibility-retained and reported by import rather than being
+/// misrepresented as drop caps.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DropCapFrame {
+    /// Whether the initial is in-column or in-margin.
+    pub mode: DropCapMode,
+    /// Number of following body lines occupied by the initial (`1..=255`).
+    pub lines: u8,
+    /// Requested text wrap.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wrap: Option<FrameWrap>,
+    /// Horizontal reference box.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub horizontal_anchor: Option<FrameHorizontalAnchor>,
+    /// Vertical reference box.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vertical_anchor: Option<FrameVerticalAnchor>,
+    /// Named horizontal alignment.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub horizontal_alignment: Option<FrameHorizontalAlignment>,
+    /// Named vertical alignment.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vertical_alignment: Option<FrameVerticalAlignment>,
+    /// Explicit horizontal position in twips.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub horizontal_position_twips: Option<i32>,
+    /// Explicit vertical position in twips.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vertical_position_twips: Option<i32>,
+    /// Horizontal clearance from adjacent text in twips.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub horizontal_space_twips: Option<u32>,
+    /// Vertical clearance from adjacent text in twips.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vertical_space_twips: Option<u32>,
+}
+
 /// Typed paragraph properties. An empty value serializes to `{}`.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -691,6 +814,9 @@ pub struct ParagraphProperties {
     /// Spacing.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub spacing: Option<Spacing>,
+    /// Drop-cap paragraph frame (`w:framePr` with `dropCap=drop|margin`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drop_cap_frame: Option<DropCapFrame>,
     /// Keep this paragraph on the same page as the next (`w:keepNext`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub keep_next: bool,

@@ -2795,6 +2795,32 @@ mod semantic_tests {
     }
 
     #[test]
+    fn drop_cap_frame_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::BlockNode;
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:pPr>
+                <w:framePr w:dropCap="drop" w:lines="3" w:wrap="around"
+                    w:hAnchor="text" w:vAnchor="margin" w:xAlign="left" w:yAlign="top"
+                    w:x="-120" w:y="80" w:hSpace="90" w:vSpace="40"/>
+            </w:pPr><w:r><w:rPr><w:sz w:val="117"/></w:rPr><w:t>D</w:t></w:r></w:p>
+            <w:p><w:r><w:t>rop cap body</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(m1, m2, "drop-cap frame survives write -> reopen");
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        assert_eq!(
+            paragraph
+                .properties
+                .drop_cap_frame
+                .expect("modeled frame")
+                .lines,
+            3
+        );
+    }
+
+    #[test]
     fn paragraph_mark_run_properties_survive_the_semantic_round_trip() {
         // The paragraph-mark w:rPr (the pilcrow's own formatting): a formatted
         // mark on the first paragraph and a present-but-empty mark on the second

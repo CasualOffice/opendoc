@@ -145,8 +145,13 @@ Layout recognizes a framed one-character drop-cap paragraph followed by a body
 paragraph as a coupled flow unit. The glyph is measured at its authored size,
 placed without exact-line clipping, and contributes a side exclusion spanning
 the authored number of body lines. The next paragraph wraps beside that box and
-returns to the full measure below it. Margin drop caps use the margin-side
-reference box; invalid line counts are clamped to the validated model domain.
+returns to the full measure below it. Margin drop caps shift into the leading
+margin and leave the body measure intact. The coupled layout path is intentionally
+limited to absent/`around`/`auto` wrapping; `none`/`notBeside`, multi-character,
+and non-adjacent frames keep ordinary paragraph flow. Named anchors,
+alignments, and explicit positions round-trip semantically but are not yet
+consumed by this bounded layout path. Invalid line counts or bounded coordinates
+are compatibility-reported on import and rejected by model validation.
 
 Acceptance:
 
