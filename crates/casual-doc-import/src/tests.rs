@@ -3401,6 +3401,43 @@ fn endnote_reference_and_body_are_modeled() {
 }
 
 #[test]
+fn generated_note_reference_fixture_models_footnote_and_endnote() {
+    let bytes = include_bytes!("../../../fixtures/generated/note-references.docx");
+    let mut package = DocxPackage::open(bytes, casual_doc_ooxml::PackageLimits::default()).unwrap();
+    let import = import_package(&mut package, ImportConfig::default()).unwrap();
+
+    let mut references = Vec::new();
+    for block in import.document.body() {
+        let BlockNode::Paragraph(paragraph) = block else {
+            continue;
+        };
+        for inline in &paragraph.inlines {
+            if let InlineNode::NoteReference(reference) = inline {
+                references.push(reference);
+            }
+        }
+    }
+
+    assert_eq!(references.len(), 2);
+    assert_eq!(references[0].kind, casual_doc_model::v1::NoteKind::Footnote);
+    assert_eq!(references[1].kind, casual_doc_model::v1::NoteKind::Endnote);
+    let footnote = import
+        .document
+        .definitions()
+        .footnotes
+        .get(&references[0].note)
+        .expect("footnote definition resolves");
+    let endnote = import
+        .document
+        .definitions()
+        .endnotes
+        .get(&references[1].note)
+        .expect("endnote definition resolves");
+    assert_eq!(tb_block_text(&footnote.blocks), "Generated footnote body.");
+    assert_eq!(tb_block_text(&endnote.blocks), "Generated endnote body.");
+}
+
+#[test]
 fn footnote_containing_a_text_box_preserves_its_content() {
     // Regression (review major): closing a note must unwind text-box frames and
     // finish the restored paragraph, so a note's text box content is not dropped.
