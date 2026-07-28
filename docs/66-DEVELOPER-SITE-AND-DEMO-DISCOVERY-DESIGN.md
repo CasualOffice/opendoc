@@ -1,6 +1,6 @@
 # Developer Site and Demo Discovery Design
 
-**Status:** Accepted for implementation
+**Status:** Implemented
 **Owner:** Codex
 **Scope:** GitHub Pages entry point, live sample routing, README visual, search
 and LLM discovery surfaces
@@ -106,3 +106,12 @@ The Pages workflow continues to deploy `webapp/` and now calls the repository
 build script so WASM and staged assets cannot drift. Rolling back the landing
 page requires restoring the editor as `index.html`; the runtime API and document
 model do not change.
+
+## Verification
+
+Implemented and deployed on 2026-07-29. GitHub Pages workflow run
+`30403402189` built and deployed commit `2a01853` successfully. A production
+browser smoke verified the root and demo routes at desktop and mobile
+viewports, automatic sample loading, the production WASM resources, no
+horizontal overflow, and no console errors. `robots.txt`, `sitemap.xml`, and
+`llms.txt` each returned HTTP 200 from the custom domain.
