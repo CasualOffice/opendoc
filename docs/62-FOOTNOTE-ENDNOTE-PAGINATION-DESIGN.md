@@ -89,6 +89,14 @@ last deterministic layout and emits/report-surfaces a compatibility limitation
 once that reporting seam exists for layout. Until then, tests must cover stable
 convergence for the supported cases.
 
+Slice B implements the single-section/single-column loop with monotonic
+per-page reservations: a page reservation may grow or first appear during the
+bounded passes, but it is not removed inside the same convergence run. This avoids
+the common boundary oscillation where reserving a note band moves its reference to
+the next page, then dropping the old reservation moves it back. It can
+over-reserve an earlier page in that edge case, but it preserves deterministic
+termination and avoids body/note overlap until continuation-note parity lands.
+
 ### 4. Placement
 
 When convergence completes, each page receives `Page::footnotes`:

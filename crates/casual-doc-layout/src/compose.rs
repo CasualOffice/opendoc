@@ -201,6 +201,9 @@ pub fn compose_page(page: &Page) -> DisplayList {
     for placed in &page.placed {
         compose_fragment(&mut list, &placed.fragment, placed.rect.origin);
     }
+    for placed in &page.footnotes {
+        compose_fragment(&mut list, &placed.fragment, placed.rect.origin);
+    }
     for placed in &page.footer {
         compose_fragment(&mut list, &placed.fragment, placed.rect.origin);
     }

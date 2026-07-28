@@ -133,6 +133,16 @@ impl PageConfig {
     }
 }
 
+fn reservation_for_page(reservations: &[Twip], page_index: usize) -> Twip {
+    reservations.get(page_index).copied().unwrap_or(Twip::ZERO)
+}
+
+fn content_area_with_reservation(config: &PageConfig, reservation: Twip) -> Rect {
+    let mut content = config.content_area();
+    content.size.height = (content.size.height - reservation).max(Twip::ZERO);
+    content
+}
+
 /// The minimum lines kept together at a page break (Word's default widow/orphan
 /// count) when a paragraph carries `w:widowControl`.
 const MIN_WIDOW_ORPHAN: usize = 2;
@@ -147,7 +157,22 @@ const MIN_WIDOW_ORPHAN: usize = 2;
 /// overflows rather than looping, so pagination always terminates.
 #[must_use]
 pub fn paginate(fragments: &[BlockFragment], config: &PageConfig) -> PaginatedLayout {
-    let mut p = Paginator::new(config, Vec::new(), FlowPos::at(0), None);
+    let mut p = Paginator::new(config, Vec::new(), FlowPos::at(0), None, &[]);
+    p.run(fragments, 0);
+    p.flush();
+    PaginatedLayout { pages: p.pages }
+}
+
+/// Paginates with a deterministic per-page footnote reservation. The reservation
+/// reduces only the body content area for that physical page; note placement is a
+/// separate post-pass that fills [`Page::footnotes`].
+#[must_use]
+pub(crate) fn paginate_with_footnote_reservations(
+    fragments: &[BlockFragment],
+    config: &PageConfig,
+    reservations: &[Twip],
+) -> PaginatedLayout {
+    let mut p = Paginator::new(config, Vec::new(), FlowPos::at(0), None, reservations);
     p.run(fragments, 0);
     p.flush();
     PaginatedLayout { pages: p.pages }
@@ -246,7 +271,7 @@ pub fn repaginate_with_stats(
     );
 
     let prefix: Vec<Page> = prev.pages[..resume_page].to_vec();
-    let mut p = Paginator::new(config, prefix, FlowPos::at(resume_index as u32), halt);
+    let mut p = Paginator::new(config, prefix, FlowPos::at(resume_index as u32), halt, &[]);
     p.run(new_galley, resume_index);
     p.flush();
 
@@ -418,6 +443,7 @@ impl HaltLookup {
 /// Mutable pagination state, walked fragment by fragment.
 struct Paginator<'a> {
     config: &'a PageConfig,
+    reservations: &'a [Twip],
     content: Rect,
     content_bottom: i32,
     content_height: i32,
@@ -449,10 +475,13 @@ impl<'a> Paginator<'a> {
         pages: Vec<Page>,
         at: FlowPos,
         halt: Option<HaltLookup>,
+        reservations: &'a [Twip],
     ) -> Self {
-        let content = config.content_area();
+        let content =
+            content_area_with_reservation(config, reservation_for_page(reservations, pages.len()));
         Self {
             config,
+            reservations,
             content,
             content_bottom: content.bottom().raw(),
             content_height: content.size.height.raw(),
@@ -466,6 +495,15 @@ impl<'a> Paginator<'a> {
             current_table: None,
             table_headers: Vec::new(),
         }
+    }
+
+    fn reset_page_content(&mut self) {
+        self.content = content_area_with_reservation(
+            self.config,
+            reservation_for_page(self.reservations, self.pages.len()),
+        );
+        self.content_bottom = self.content.bottom().raw();
+        self.content_height = self.content.size.height.raw();
     }
 
     /// Walks keep-with-next groups of `fragments[from..]`, placing them into
@@ -564,6 +602,7 @@ impl<'a> Paginator<'a> {
                 flow,
             );
             self.pages.push(page);
+            self.reset_page_content();
             self.cursor_y = self.content.origin.y;
             self.page_start = self.at;
             // The page just closed; `self.at` is the next page's start. If it

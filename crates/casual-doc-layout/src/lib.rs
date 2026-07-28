@@ -35,6 +35,7 @@ pub mod fonts;
 pub mod hittest;
 pub mod incremental;
 pub mod model;
+pub mod notes;
 pub mod numbering;
 pub mod page;
 pub mod paginate;
