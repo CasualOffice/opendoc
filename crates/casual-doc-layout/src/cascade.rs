@@ -208,6 +208,9 @@ fn overlay_paragraph(base: &mut ParagraphProperties, over: &ParagraphProperties)
     }
     base.indentation = merge_indentation(base.indentation, over.indentation);
     base.spacing = merge_spacing(base.spacing, over.spacing);
+    if over.drop_cap_frame.is_some() {
+        base.drop_cap_frame = over.drop_cap_frame;
+    }
     base.keep_next |= over.keep_next;
     base.keep_lines |= over.keep_lines;
     base.page_break_before |= over.page_break_before;

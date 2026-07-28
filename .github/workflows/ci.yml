@@ -241,6 +241,25 @@ jobs:
         run: |
           jq -r '.fixtures[] | "\(.sha256)  fixtures/\(.path)"' fixtures/manifest.json \
             | sha256sum --check -
+      - name: Validate visual baseline metadata
+        run: |
+          jq -e '
+            any(.fixtures[]; .visualBaseline != null)
+            and all(.fixtures[];
+              .visualBaseline == null
+              or (
+                (.visualBaseline.renderer | type == "string" and length > 0)
+                and (.visualBaseline.platform | type == "string" and length > 0)
+                and (.visualBaseline.fontSet | type == "string" and length > 0)
+                and (.visualBaseline.pageSizeTwips | type == "array" and length == 2)
+                and all(.visualBaseline.pageSizeTwips[]; type == "number" and . > 0)
+                and (.visualBaseline.pageCount | type == "number" and . > 0)
+                and (.visualBaseline.dpi | type == "number" and . > 0)
+                and (.visualBaseline.format == "rgba8-fnv1a64")
+                and (.visualBaseline.hash | test("^[0-9a-f]{16}$"))
+              )
+            )
+          ' fixtures/manifest.json
       - name: Reject unmanifested or missing fixtures
         run: |
           jq -r '.fixtures[].path' fixtures/manifest.json | sort > "${RUNNER_TEMP}/manifest-paths"

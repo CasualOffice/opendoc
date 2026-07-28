@@ -75,11 +75,11 @@ pub struct ParleyShaper {
 }
 
 impl ParleyShaper {
-    /// Creates a shaper with every bundled family (Roboto and Caladea, each
-    /// regular/bold/italic/bold-italic) registered into an empty collection (no
-    /// system fonts — deterministic). Each run pushes its resolved family plus
-    /// weight/style, so `parley` selects the same face the resolver did; the run's
-    /// [`FontId`] rides the brush so the renderer draws the same.
+    /// Creates a shaper with every target-bundled family registered into an empty
+    /// collection (no system fonts — deterministic). Browser builds may omit
+    /// host-provisioned families such as Roboto. Each run pushes its resolved
+    /// family plus weight/style, so `parley` selects the same face the resolver
+    /// did; the run's [`FontId`] rides the brush so the renderer draws the same.
     #[must_use]
     pub fn new() -> Self {
         let mut fonts = FontContext::new();
@@ -104,7 +104,8 @@ impl ParleyShaper {
             families.push((family.base, name));
         }
         let default_family = families
-            .first()
+            .iter()
+            .find(|(base, _)| *base == crate::fonts::DEFAULT_FAMILY.base)
             .map(|(_, name)| name.clone())
             .expect("the bundled faces register at least one family");
         Self {
@@ -1350,6 +1351,69 @@ mod tests {
         assert!(
             saw_cleared_line,
             "a line below the float should recover the full paragraph width"
+        );
+    }
+
+    #[test]
+    fn simultaneous_edge_floats_union_the_available_line_interval() {
+        let shaper = ParleyShaper::new();
+        let text = "aaaa aaaa aaaa aaaa aaaa ".repeat(30);
+        let max_width = Twip(3_600);
+        let left = Twip(900);
+        let right = Twip(1_100);
+        let float_height = Twip(700);
+        let layout = shaper.shape_paragraph_with_inline_objects(
+            &[run(&text)],
+            &[],
+            &[
+                InlineFloatSpec {
+                    index: 0,
+                    side: InlineFloatSide::Left,
+                    width: left,
+                    height: float_height,
+                },
+                InlineFloatSpec {
+                    index: 0,
+                    side: InlineFloatSide::Right,
+                    width: right,
+                    height: float_height,
+                },
+            ],
+            LineConstraints {
+                max_width,
+                ..LineConstraints::default()
+            },
+            para_range(),
+        );
+
+        let mut y = 0;
+        let mut saw_cleared_line = false;
+        for line in &layout.lines {
+            let start = line.runs.first().map_or(0, |run| run.origin.x.raw());
+            let end = line
+                .runs
+                .iter()
+                .map(|run| {
+                    run.origin.x.raw()
+                        + run
+                            .glyphs
+                            .iter()
+                            .map(|glyph| glyph.advance.raw())
+                            .sum::<i32>()
+                })
+                .max()
+                .unwrap_or(0);
+            if y < float_height.raw() {
+                assert!(start >= left.raw());
+                assert!(end <= max_width.raw() - right.raw() + 2);
+            } else if start == 0 && end > max_width.raw() - right.raw() {
+                saw_cleared_line = true;
+            }
+            y += line.height.raw();
+        }
+        assert!(
+            saw_cleared_line,
+            "a line below both floats should recover the full measure"
         );
     }
 

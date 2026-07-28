@@ -13,8 +13,9 @@
 //! bold/italic flags. Every bundled family is license-clean for redistribution
 //! with the source:
 //!
-//! - `FontId(0)..=3` — **Roboto** (Apache-2.0), the default family and the
-//!   ultimate fallback.
+//! - `FontId(0)..=3` — **Roboto** (Apache-2.0), the native/headless default.
+//!   The `external-web-fonts` WASM build omits these four byte blobs and uses
+//!   Liberation Sans until the browser registers its pinned external Roboto.
 //! - `FontId(4)..=7` — **Caladea** (Apache-2.0), a metric-compatible substitute
 //!   for Cambria.
 //! - `FontId(8)..=11` — **Carlito** (SIL OFL-1.1), a metric-compatible substitute
@@ -38,14 +39,36 @@
 
 use crate::text::FontId;
 
+/// Whether this target embeds Roboto rather than expecting the host to register
+/// it. The feature is deliberately WASM-only so `--all-features` native builds
+/// retain deterministic baselines.
+pub const ROBOTO_IS_BUNDLED: bool =
+    !cfg!(all(feature = "external-web-fonts", target_arch = "wasm32"));
+
 /// Roboto Regular (Apache-2.0).
+#[cfg(not(all(feature = "external-web-fonts", target_arch = "wasm32")))]
 pub const ROBOTO_REGULAR: &[u8] = include_bytes!("../fonts/Roboto-Regular.ttf");
+/// Empty web placeholder for the externally provisioned Roboto Regular face.
+#[cfg(all(feature = "external-web-fonts", target_arch = "wasm32"))]
+pub const ROBOTO_REGULAR: &[u8] = &[];
 /// Roboto Bold.
+#[cfg(not(all(feature = "external-web-fonts", target_arch = "wasm32")))]
 pub const ROBOTO_BOLD: &[u8] = include_bytes!("../fonts/Roboto-Bold.ttf");
+/// Empty web placeholder for the externally provisioned Roboto Bold face.
+#[cfg(all(feature = "external-web-fonts", target_arch = "wasm32"))]
+pub const ROBOTO_BOLD: &[u8] = &[];
 /// Roboto Italic.
+#[cfg(not(all(feature = "external-web-fonts", target_arch = "wasm32")))]
 pub const ROBOTO_ITALIC: &[u8] = include_bytes!("../fonts/Roboto-Italic.ttf");
+/// Empty web placeholder for the externally provisioned Roboto Italic face.
+#[cfg(all(feature = "external-web-fonts", target_arch = "wasm32"))]
+pub const ROBOTO_ITALIC: &[u8] = &[];
 /// Roboto Bold Italic.
+#[cfg(not(all(feature = "external-web-fonts", target_arch = "wasm32")))]
 pub const ROBOTO_BOLD_ITALIC: &[u8] = include_bytes!("../fonts/Roboto-BoldItalic.ttf");
+/// Empty web placeholder for the externally provisioned Roboto Bold Italic face.
+#[cfg(all(feature = "external-web-fonts", target_arch = "wasm32"))]
+pub const ROBOTO_BOLD_ITALIC: &[u8] = &[];
 
 /// Caladea Regular (Apache-2.0) — metric-compatible with Cambria.
 pub const CALADEA_REGULAR: &[u8] = include_bytes!("../fonts/Caladea-Regular.ttf");
@@ -213,8 +236,18 @@ pub const LIBERATION_MONO: BundledFamily = BundledFamily {
     ],
 };
 
+/// The target's deterministic default family. Browser builds use Liberation
+/// Sans until the host-provided Roboto family is registered; native/headless
+/// builds retain Roboto.
+#[cfg(not(all(feature = "external-web-fonts", target_arch = "wasm32")))]
+pub const DEFAULT_FAMILY: &BundledFamily = &ROBOTO;
+/// Web-only fallback while external fonts load.
+#[cfg(all(feature = "external-web-fonts", target_arch = "wasm32"))]
+pub const DEFAULT_FAMILY: &BundledFamily = &LIBERATION_SANS;
+
 /// Every bundled family, in `base`-id order — the resolver's fallback chain and
 /// the shaper's registration order.
+#[cfg(not(all(feature = "external-web-fonts", target_arch = "wasm32")))]
 pub const FAMILIES: [&BundledFamily; 6] = [
     &ROBOTO,
     &CALADEA,
@@ -224,8 +257,20 @@ pub const FAMILIES: [&BundledFamily; 6] = [
     &LIBERATION_MONO,
 ];
 
+/// The web bundle excludes Roboto's four blobs; the family remains a semantic
+/// resolver target and is supplied dynamically by the host.
+#[cfg(all(feature = "external-web-fonts", target_arch = "wasm32"))]
+pub const FAMILIES: [&BundledFamily; 5] = [
+    &CALADEA,
+    &CARLITO,
+    &LIBERATION_SANS,
+    &LIBERATION_SERIF,
+    &LIBERATION_MONO,
+];
+
 /// Every bundled face, `(FontId, bytes)`, in id order — the shaper registration
 /// and renderer lookup table.
+#[cfg(not(all(feature = "external-web-fonts", target_arch = "wasm32")))]
 pub const BUNDLED_FACES: [(FontId, &[u8]); 24] = [
     (FontId(0), ROBOTO_REGULAR),
     (FontId(1), ROBOTO_BOLD),
@@ -253,32 +298,57 @@ pub const BUNDLED_FACES: [(FontId, &[u8]); 24] = [
     (FontId(23), LIBERATION_MONO_BOLD_ITALIC),
 ];
 
-/// The [`FontId`] of the bundled *default* (Roboto) face for the given bold/italic
-/// combination. Retained as the ultimate fallback; the resolver selects other
-/// families via [`BundledFamily::face_id`].
+/// Every face retained in the web bundle.
+#[cfg(all(feature = "external-web-fonts", target_arch = "wasm32"))]
+pub const BUNDLED_FACES: [(FontId, &[u8]); 20] = [
+    (FontId(4), CALADEA_REGULAR),
+    (FontId(5), CALADEA_BOLD),
+    (FontId(6), CALADEA_ITALIC),
+    (FontId(7), CALADEA_BOLD_ITALIC),
+    (FontId(8), CARLITO_REGULAR),
+    (FontId(9), CARLITO_BOLD),
+    (FontId(10), CARLITO_ITALIC),
+    (FontId(11), CARLITO_BOLD_ITALIC),
+    (FontId(12), LIBERATION_SANS_REGULAR),
+    (FontId(13), LIBERATION_SANS_BOLD),
+    (FontId(14), LIBERATION_SANS_ITALIC),
+    (FontId(15), LIBERATION_SANS_BOLD_ITALIC),
+    (FontId(16), LIBERATION_SERIF_REGULAR),
+    (FontId(17), LIBERATION_SERIF_BOLD),
+    (FontId(18), LIBERATION_SERIF_ITALIC),
+    (FontId(19), LIBERATION_SERIF_BOLD_ITALIC),
+    (FontId(20), LIBERATION_MONO_REGULAR),
+    (FontId(21), LIBERATION_MONO_BOLD),
+    (FontId(22), LIBERATION_MONO_ITALIC),
+    (FontId(23), LIBERATION_MONO_BOLD_ITALIC),
+];
+
+/// The [`FontId`] of the target's bundled default face for the given bold/italic
+/// combination. The resolver selects other families via
+/// [`BundledFamily::face_id`].
 #[must_use]
 pub fn face_id(bold: bool, italic: bool) -> FontId {
-    ROBOTO.face_id(bold, italic)
+    DEFAULT_FAMILY.face_id(bold, italic)
 }
 
-/// The registered family name for a [`FontId`] (falls back to Roboto's name for
-/// an unknown id).
+/// The registered family name for a [`FontId`] (falls back to the target's
+/// default family for an unknown id).
 #[must_use]
 pub fn family_name(id: FontId) -> &'static str {
     FAMILIES
         .iter()
         .find(|family| family.contains(id))
-        .map_or(ROBOTO.name, |family| family.name)
+        .map_or(DEFAULT_FAMILY.name, |family| family.name)
 }
 
-/// The font bytes for a [`FontId`] (falls back to Roboto Regular for an unknown
-/// id).
+/// The font bytes for a [`FontId`] (falls back to the target's default regular
+/// face for an unknown id).
 #[must_use]
 pub fn face_bytes(id: FontId) -> &'static [u8] {
     BUNDLED_FACES
         .iter()
         .find(|(face, _)| *face == id)
-        .map_or(ROBOTO_REGULAR, |(_, bytes)| bytes)
+        .map_or(DEFAULT_FAMILY.face_bytes(0), |(_, bytes)| bytes)
 }
 
 #[cfg(test)]

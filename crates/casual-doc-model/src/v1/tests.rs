@@ -1502,6 +1502,50 @@ fn paragraph_long_tail_properties_round_trip() {
 }
 
 #[test]
+fn drop_cap_frame_round_trips_and_is_bounded() {
+    let frame = DropCapFrame {
+        mode: DropCapMode::Drop,
+        lines: 3,
+        wrap: Some(FrameWrap::Around),
+        horizontal_anchor: Some(FrameHorizontalAnchor::Text),
+        vertical_anchor: Some(FrameVerticalAnchor::Text),
+        horizontal_alignment: Some(FrameHorizontalAlignment::Left),
+        vertical_alignment: Some(FrameVerticalAlignment::Top),
+        horizontal_position_twips: Some(-120),
+        vertical_position_twips: Some(80),
+        horizontal_space_twips: Some(90),
+        vertical_space_twips: Some(40),
+    };
+    let block = BlockNode::Paragraph(Paragraph {
+        id: tid(1),
+        properties: ParagraphProperties {
+            drop_cap_frame: Some(frame),
+            ..ParagraphProperties::default()
+        },
+        inlines: vec![run_inline(tid(2), "D")],
+    });
+    let document = table_document(vec![block]).unwrap();
+    let reloaded =
+        Document::from_json(&document.to_json().unwrap(), SnapshotLimits::default()).unwrap();
+    assert_eq!(document, reloaded);
+
+    let bad = BlockNode::Paragraph(Paragraph {
+        id: tid(1),
+        properties: ParagraphProperties {
+            drop_cap_frame: Some(DropCapFrame { lines: 0, ..frame }),
+            ..ParagraphProperties::default()
+        },
+        inlines: vec![run_inline(tid(2), "D")],
+    });
+    assert!(matches!(
+        table_document(vec![bad]),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "paragraph.drop_cap_frame.lines"
+        })
+    ));
+}
+
+#[test]
 fn paragraph_borders_shading_tabs_round_trip_and_bound() {
     let properties = ParagraphProperties {
         borders: ParagraphBorders {

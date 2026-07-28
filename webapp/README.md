@@ -21,16 +21,20 @@ Milestones landed here:
 
 - **P1G-001** (WASM bridge + first pixel): `open`, `pageCount`, `pageSize`,
   `renderPage`.
-- **Web font provisioning**: CJK / complex-script fallback fetched over the
-  network (see below).
+- **Web font provisioning**: external Roboto/Noto families plus coverage-driven
+  CJK / complex-script fallbacks (see below).
 - **P1G-003** (copy in view): drag to select, ⌘C to copy. The caret and
   selection highlight are **drawn from the engine's own geometry** (`hitTest`,
   `caretRect`, `selectionRects`), so they match the painted glyphs exactly. This
   is the first read-only slice of the scalable interaction pipeline
   (`docs/58-INTERACTION-SELECTION-EDITING-ARCHITECTURE.md`) that editing —
   text, then tables/images/floats/headers — extends.
+- **Link interaction and authoring**: imported external hyperlinks activate
+  through a host-owned `http`/`https`/`mailto` allowlist; internal hyperlinks
+  and TOC rows resolve their bookmark and scroll to the target caret/page.
+  Insert → Link creates, updates, or removes an undoable same-paragraph link.
 
-Native find/AT overlay, hyperlink-open, and editing arrive in later milestones.
+Native find/AT overlay remains a later milestone.
 
 ## Run it locally
 
@@ -49,16 +53,22 @@ python3 -m http.server 8080    # or any static server
 **GitHub Pages** on pushes to `main` that touch `webapp/` or the engine crates.
 The deployed site is, again, **only a testing surface**.
 
-## Fonts (CJK / complex scripts)
+## Fonts (external families and script coverage)
 
-The WASM build ships only bundled **Latin** faces, so CJK / complex-script text
-would otherwise render as blank/`.notdef` tofu (▯). On open, the viewer inspects
-`missingCoverage()`, works out which scripts are needed, and **fetches the
-matching Noto face(s) over the network** (jsDelivr) — Japanese/Korean/Simplified
-Chinese (CJK OTFs, ~16 MB each, fetched once and cached), plus Arabic,
-Devanagari, Hebrew, Thai — registers them via the engine's fallback seam, and
-re-renders. This is the "browser = network-fetched fonts" half of the
-font-provisioning strategy.
+The web build omits Roboto's four static blobs from the WASM artifact. Before
+first paint, the host fetches commit-pinned variable upright/italic faces for
+**Roboto**, **Noto Sans**, and **Noto Serif** from jsDelivr, registers all
+successful responses in one bounded batch, and repaginates once. The URLs and
+family metadata live in `src/web_fonts.mjs`, so a self-hosted deployment can
+replace the CDN policy without changing the Rust SDK.
+
+After named-family registration, the viewer inspects `missingCoverage()`, works
+out which additional scripts are needed, and fetches only the matching Noto
+fallbacks — Japanese/Korean/Simplified Chinese (CJK OTFs, ~16 MB each), plus
+Arabic, Devanagari, Hebrew, and Thai. Assets use immutable commit URLs and are
+cached across documents. If fetching fails, opening continues with the
+metric-compatible faces retained in WASM and the status surface reports the
+coverage limitation.
 
 Not yet covered: **color emoji** (a separate font case) and high-quality
 **Japanese line breaking** (parley currently has no `ja` segmentation

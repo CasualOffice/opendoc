@@ -5,10 +5,11 @@
 //! (unknown, or present-but-out-of-domain/degraded).
 
 use casual_doc_model::v1::{
-    Alignment, BreakKind, Color, EmphasisMark, FontName, FontRef, HighlightColor, Indentation,
-    Language, LineRule, MAX_SYMBOL_FONT_LEN, ParagraphProperties, RgbColor, RunFontHint,
-    RunProperties, Spacing, StyleKind, ThemeFont, ThemeFontRef, VerticalAlignment,
-    VerticalTextAlignment,
+    Alignment, BreakKind, Color, DropCapFrame, DropCapMode, EmphasisMark, FontName, FontRef,
+    FrameHorizontalAlignment, FrameHorizontalAnchor, FrameVerticalAlignment, FrameVerticalAnchor,
+    FrameWrap, HighlightColor, Indentation, Language, LineRule, MAX_SYMBOL_FONT_LEN,
+    ParagraphProperties, RgbColor, RunFontHint, RunProperties, Spacing, StyleKind, ThemeFont,
+    ThemeFontRef, VerticalAlignment, VerticalTextAlignment,
 };
 use quick_xml::events::BytesStart;
 
@@ -285,6 +286,10 @@ pub(crate) fn apply_paragraph_property(
             }
             properties.spacing = Some(spacing);
         }
+        b"framePr" => match drop_cap_frame(element) {
+            Some(frame) => properties.drop_cap_frame = Some(frame),
+            None => return false,
+        },
         // Toggle flags (`CT_OnOff`): present means on unless `val` is 0/false/off.
         b"keepNext" => properties.keep_next = is_true(attribute_value(element, b"val").as_deref()),
         b"keepLines" => {
@@ -356,6 +361,92 @@ pub(crate) fn apply_paragraph_property(
         _ => return false,
     }
     true
+}
+
+fn drop_cap_frame(element: &BytesStart<'_>) -> Option<DropCapFrame> {
+    let mode = match attribute_value(element, b"dropCap").as_deref()? {
+        "drop" => DropCapMode::Drop,
+        "margin" => DropCapMode::Margin,
+        _ => return None,
+    };
+    let lines = match attribute_value(element, b"lines") {
+        Some(value) => value.parse::<u8>().ok().filter(|lines| *lines > 0)?,
+        None => 1,
+    };
+    let wrap = match attribute_value(element, b"wrap").as_deref() {
+        Some("around") => Some(FrameWrap::Around),
+        Some("notBeside") => Some(FrameWrap::NotBeside),
+        Some("auto") => Some(FrameWrap::Auto),
+        Some("none") => Some(FrameWrap::None),
+        Some(_) => return None,
+        None => None,
+    };
+    let horizontal_anchor = match attribute_value(element, b"hAnchor").as_deref() {
+        Some("margin") => Some(FrameHorizontalAnchor::Margin),
+        Some("page") => Some(FrameHorizontalAnchor::Page),
+        Some("text") => Some(FrameHorizontalAnchor::Text),
+        Some(_) => return None,
+        None => None,
+    };
+    let vertical_anchor = match attribute_value(element, b"vAnchor").as_deref() {
+        Some("margin") => Some(FrameVerticalAnchor::Margin),
+        Some("page") => Some(FrameVerticalAnchor::Page),
+        Some("text") => Some(FrameVerticalAnchor::Text),
+        Some(_) => return None,
+        None => None,
+    };
+    let horizontal_alignment = match attribute_value(element, b"xAlign").as_deref() {
+        Some("center") => Some(FrameHorizontalAlignment::Center),
+        Some("inside") => Some(FrameHorizontalAlignment::Inside),
+        Some("left") => Some(FrameHorizontalAlignment::Left),
+        Some("outside") => Some(FrameHorizontalAlignment::Outside),
+        Some("right") => Some(FrameHorizontalAlignment::Right),
+        Some(_) => return None,
+        None => None,
+    };
+    let vertical_alignment = match attribute_value(element, b"yAlign").as_deref() {
+        Some("bottom") => Some(FrameVerticalAlignment::Bottom),
+        Some("center") => Some(FrameVerticalAlignment::Center),
+        Some("inline") => Some(FrameVerticalAlignment::Inline),
+        Some("inside") => Some(FrameVerticalAlignment::Inside),
+        Some("outside") => Some(FrameVerticalAlignment::Outside),
+        Some("top") => Some(FrameVerticalAlignment::Top),
+        Some(_) => return None,
+        None => None,
+    };
+    let signed_twips = |name: &[u8]| -> Option<Option<i32>> {
+        match attribute_value(element, name) {
+            Some(value) => value
+                .parse::<i32>()
+                .ok()
+                .filter(|value| (-31_680..=31_680).contains(value))
+                .map(Some),
+            None => Some(None),
+        }
+    };
+    let unsigned_twips = |name: &[u8]| -> Option<Option<u32>> {
+        match attribute_value(element, name) {
+            Some(value) => value
+                .parse::<u32>()
+                .ok()
+                .filter(|value| *value <= 31_680)
+                .map(Some),
+            None => Some(None),
+        }
+    };
+    Some(DropCapFrame {
+        mode,
+        lines,
+        wrap,
+        horizontal_anchor,
+        vertical_anchor,
+        horizontal_alignment,
+        vertical_alignment,
+        horizontal_position_twips: signed_twips(b"x")?,
+        vertical_position_twips: signed_twips(b"y")?,
+        horizontal_space_twips: unsigned_twips(b"hSpace")?,
+        vertical_space_twips: unsigned_twips(b"vSpace")?,
+    })
 }
 
 pub(crate) fn alignment_from(value: &str) -> Option<Alignment> {

@@ -10,6 +10,10 @@ authors.workspace = true
 publish = false
 
 [features]
+# Omits the Roboto asset bytes only when compiling for `wasm32`. Browser hosts
+# supply Roboto through the runtime font registry; native/headless builds retain
+# the complete deterministic bundle even under `--all-features`.
+external-web-fonts = []
 # Native OS font fallback. Turns on `fontique`'s system font source (through
 # `parley`) so a run whose code points are not covered by the bundled faces
 # (CJK, symbols, complex scripts) shapes with an installed OS font, which the

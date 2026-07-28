@@ -17,14 +17,16 @@
 //! Nested groups compose their transforms.
 //!
 //! A float is *positioned* against the geometry of the section that owns its
-//! anchoring paragraph. Text does not yet re-flow around it (`wrapSquare`/… are
-//! laid out like `wrapNone`).
+//! anchoring paragraph. Paragraph/line-relative side wrapping is handled during
+//! ordinary flow; page/margin-relative square-family body wrapping is resolved
+//! by the document driver's bounded fixed point. Contour wrapping still uses the
+//! object's rectangular extent.
 
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     BlockNode, Document, DrawingAnchor, Extent, GroupChild, HorizontalAlign, HorizontalAnchor,
     HorizontalPosition, InlineNode, Rgba, SectionBoundary, SectionId, ShapeGeometry, ShapeStroke,
-    VerticalAlign, VerticalAnchor, VerticalPosition, WordprocessingGroup,
+    VerticalAlign, VerticalAnchor, VerticalPosition, WordprocessingGroup, WrapDistances, WrapMode,
 };
 
 use crate::block::BlockFragment;
@@ -81,6 +83,160 @@ pub fn place_floats(
             }
         }
     }
+}
+
+/// One top-level body float whose square-family wrap rectangle can exclude text
+/// in paragraphs beyond its anchor paragraph.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct BodyWrapRect {
+    pub(crate) page_index: usize,
+    pub(crate) source: NodeId,
+    pub(crate) rect: Rect,
+    pub(crate) distances: WrapDistances,
+}
+
+/// Resolves the page-local wrap rectangles of eligible top-level body floats
+/// against an already paginated layout. The document driver converts these into
+/// paragraph-local line exclusions and iterates to a fixed point.
+pub(crate) fn body_wrap_rects(
+    layout: &PaginatedLayout,
+    document: &Document,
+    shaper: &dyn LineShaper,
+    config: &PageConfig,
+) -> Vec<BodyWrapRect> {
+    let ctx = FloatCtx {
+        document,
+        shaper,
+        config,
+        order: 0,
+    };
+    let sections = body_section_ids(document, config.section);
+    let mut out = Vec::new();
+    for (block, section) in document.body().iter().zip(sections) {
+        let BlockNode::Paragraph(paragraph) = block else {
+            continue;
+        };
+        collect_body_wrap_inlines(
+            layout,
+            &ctx,
+            paragraph.id,
+            section,
+            &paragraph.inlines,
+            &mut out,
+        );
+    }
+    out
+}
+
+fn collect_body_wrap_inlines(
+    layout: &PaginatedLayout,
+    ctx: &FloatCtx<'_>,
+    paragraph: NodeId,
+    section: SectionId,
+    inlines: &[InlineNode],
+    out: &mut Vec<BodyWrapRect>,
+) {
+    for inline in inlines {
+        match inline {
+            InlineNode::AnchoredDrawing(drawing) => {
+                push_body_wrap_rect(
+                    layout,
+                    ctx,
+                    paragraph,
+                    section,
+                    drawing.anchor,
+                    drawing.extent,
+                    None,
+                    out,
+                );
+            }
+            InlineNode::TextBox(text_box) if text_box.anchor.is_some() => {
+                let anchor = text_box.anchor.expect("guarded");
+                let extent = text_box.extent.unwrap_or(Extent {
+                    width_emu: 0,
+                    height_emu: 0,
+                });
+                let refs = target(layout, ctx, Some(paragraph), PageScope::Body, section, None).1;
+                let authored = resolve_anchor_rect(&anchor, extent, &refs);
+                let flowed = flow_anchored_text_box(
+                    ctx.document,
+                    &text_box.blocks,
+                    ctx.shaper,
+                    authored.size,
+                    &text_box.body_properties,
+                );
+                push_body_wrap_rect(
+                    layout,
+                    ctx,
+                    paragraph,
+                    section,
+                    anchor,
+                    extent,
+                    Some(flowed.size),
+                    out,
+                );
+            }
+            InlineNode::Group(group) => {
+                if let Some(anchor) = group.anchor {
+                    push_body_wrap_rect(
+                        layout,
+                        ctx,
+                        paragraph,
+                        section,
+                        anchor,
+                        group.extent,
+                        None,
+                        out,
+                    );
+                }
+            }
+            InlineNode::Hyperlink(link) => {
+                collect_body_wrap_inlines(layout, ctx, paragraph, section, &link.inlines, out)
+            }
+            InlineNode::Field(field) => {
+                collect_body_wrap_inlines(layout, ctx, paragraph, section, &field.inlines, out)
+            }
+            InlineNode::Revision(revision) => {
+                collect_body_wrap_inlines(layout, ctx, paragraph, section, &revision.inlines, out)
+            }
+            InlineNode::Sdt(sdt) => {
+                collect_body_wrap_inlines(layout, ctx, paragraph, section, &sdt.inlines, out)
+            }
+            _ => {}
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_body_wrap_rect(
+    layout: &PaginatedLayout,
+    ctx: &FloatCtx<'_>,
+    paragraph: NodeId,
+    section: SectionId,
+    anchor: DrawingAnchor,
+    extent: Extent,
+    flowed_size: Option<Size>,
+    out: &mut Vec<BodyWrapRect>,
+) {
+    if anchor.behind_doc
+        || !matches!(
+            anchor.wrap,
+            WrapMode::Square | WrapMode::Tight | WrapMode::Through
+        )
+    {
+        return;
+    }
+    let (page_index, refs) = target(layout, ctx, Some(paragraph), PageScope::Body, section, None);
+    let mut rect = resolve_anchor_rect(&anchor, extent, &refs);
+    if let Some(size) = flowed_size {
+        rect.size = size;
+    }
+    out.push(BodyWrapRect {
+        page_index,
+        source: paragraph,
+        rect,
+        distances: anchor.wrap_distances,
+    });
 }
 
 /// The header band height needed so the body content clears the section's

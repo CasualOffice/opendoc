@@ -353,6 +353,29 @@ pub struct Line {
     pub rules: Vec<InlineRule>,
 }
 
+impl Line {
+    /// Translates every paintable child into a new vertical coordinate space.
+    ///
+    /// Line children are paragraph-relative after shaping and fragment-relative
+    /// after pagination. Keeping the translation in one place prevents a split
+    /// continuation from rebasing glyphs while leaving images, text boxes, or
+    /// rules behind in the preceding fragment's coordinates.
+    pub(crate) fn translate_contents_y(&mut self, delta: Twip) {
+        for run in &mut self.runs {
+            run.origin.y = run.origin.y + delta;
+        }
+        for image in &mut self.images {
+            image.origin.y = image.origin.y + delta;
+        }
+        for text_box in &mut self.text_boxes {
+            text_box.origin.y = text_box.origin.y + delta;
+        }
+        for rule in &mut self.rules {
+            rule.origin.y = rule.origin.y + delta;
+        }
+    }
+}
+
 /// The result of shaping one paragraph: its ordered lines.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct LineLayout {

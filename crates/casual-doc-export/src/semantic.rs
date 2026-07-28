@@ -22,23 +22,24 @@ use casual_doc_model::v1::{
     AnchoredDrawing, AppProperties, BlockNode, BorderEdge, BreakKind, CellVerticalAlignment,
     CnfStyle, Color, ColorScheme, Comment, CommentId, CoreProperties, CustomProperty, CustomValue,
     DefinitionMap, Definitions, DocGridType, Document, DocumentDefaults, DocumentProtectionEdit,
-    DocumentSettings, EmbeddedKind, EmbeddedObject, EmbeddedPart, EmphasisMark, Extent,
-    FontCollection, FontDescriptor, FontFamilyKind, FontPitch, FontRef, FontScheme,
-    FormCheckBoxSize, FormFieldData, FormFieldKind, FormTextType, GridColumn, GroupChild,
-    GroupShape, GroupTextBox, GroupTransform, HeaderFooterId, HeaderFooterKind, HeightRule,
-    HighlightColor, HorizontalAlign, HorizontalAnchor, HorizontalPosition, HorizontalRuleAlign,
-    HyperlinkTarget, InlineNode, LevelJustification, LevelSuffix, LineNumberRestart, LineRule,
-    MediaId, MediaReference, MoveKind, Note, NoteId, NoteKind, NoteNumberRestart, NotePosition,
-    NoteProperties, NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel,
-    PageBorderDisplay, PageBorderOffset, PageOrientation, PageVerticalAlignment,
-    ParagraphProperties, Person, PointEmu, PositionalTabAlignment, PositionalTabLeader,
-    PositionalTabRelativeTo, ProofState, PropChange, RevisionKind, RgbColor, Rgba, RunFontHint,
-    RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind,
-    SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionType, ShapeGeometry,
-    ShapeStroke, Style, StyleId, StyleKind, TabAlignment, TabLeader, Table, TableAnchor,
-    TableBorders, TableCell, TableCellProperties, TableFloatPosition, TableLayout, TableOverlap,
-    TableProperties, TableRow, TableRowProperties, TableStyleOverride, TableStyleRegion,
-    TableXAlign, TableYAlign, TextBox, TextBoxAutoFit, TextBoxBodyProperties,
+    DocumentSettings, DropCapFrame, DropCapMode, EmbeddedKind, EmbeddedObject, EmbeddedPart,
+    EmphasisMark, Extent, FontCollection, FontDescriptor, FontFamilyKind, FontPitch, FontRef,
+    FontScheme, FormCheckBoxSize, FormFieldData, FormFieldKind, FormTextType,
+    FrameHorizontalAlignment, FrameHorizontalAnchor, FrameVerticalAlignment, FrameVerticalAnchor,
+    FrameWrap, GridColumn, GroupChild, GroupShape, GroupTextBox, GroupTransform, HeaderFooterId,
+    HeaderFooterKind, HeightRule, HighlightColor, HorizontalAlign, HorizontalAnchor,
+    HorizontalPosition, HorizontalRuleAlign, HyperlinkTarget, InlineNode, LevelJustification,
+    LevelSuffix, LineNumberRestart, LineRule, MediaId, MediaReference, MoveKind, Note, NoteId,
+    NoteKind, NoteNumberRestart, NotePosition, NoteProperties, NumberFormat, NumberingInstance,
+    NumberingInstanceId, NumberingLevel, PageBorderDisplay, PageBorderOffset, PageOrientation,
+    PageVerticalAlignment, ParagraphProperties, Person, PointEmu, PositionalTabAlignment,
+    PositionalTabLeader, PositionalTabRelativeTo, ProofState, PropChange, RevisionKind, RgbColor,
+    Rgba, RunFontHint, RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData,
+    SdtControlKind, SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionType,
+    ShapeGeometry, ShapeStroke, Style, StyleId, StyleKind, TabAlignment, TabLeader, Table,
+    TableAnchor, TableBorders, TableCell, TableCellProperties, TableFloatPosition, TableLayout,
+    TableOverlap, TableProperties, TableRow, TableRowProperties, TableStyleOverride,
+    TableStyleRegion, TableXAlign, TableYAlign, TextBox, TextBoxAutoFit, TextBoxBodyProperties,
     TextBoxHorizontalOverflow, TextBoxVerticalAnchor, TextBoxVerticalOverflow, TextDirection,
     ThemeFontRef, VerticalAlign, VerticalAlignment, VerticalAnchor, VerticalMerge,
     VerticalPosition, VerticalTextAlignment, WordprocessingGroup, WrapMode, Zoom, ZoomMode,
@@ -3288,6 +3289,9 @@ fn write_paragraph_properties(
             w.write_event(Event::Empty(start(name))).map_err(pkg)?;
         }
     }
+    if let Some(frame) = &properties.drop_cap_frame {
+        write_drop_cap_frame(w, frame)?;
+    }
     // Tri-state paragraph toggles (`CT_OnOff`): bare = on, `w:val="0"` = an
     // explicit off, nothing = absent — so a default-ON toggle turned off survives.
     for (value, name) in [
@@ -3442,6 +3446,91 @@ fn write_paragraph_properties(
     }
     w.write_event(Event::End(BytesEnd::new("w:pPr")))
         .map_err(pkg)?;
+    Ok(())
+}
+
+fn write_drop_cap_frame(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    frame: &DropCapFrame,
+) -> Result<(), ExportError> {
+    let mut el = start("w:framePr");
+    el.push_attribute((
+        "w:dropCap",
+        match frame.mode {
+            DropCapMode::Drop => "drop",
+            DropCapMode::Margin => "margin",
+        },
+    ));
+    el.push_attribute(("w:lines", frame.lines.to_string().as_str()));
+    if let Some(wrap) = frame.wrap {
+        el.push_attribute((
+            "w:wrap",
+            match wrap {
+                FrameWrap::Around => "around",
+                FrameWrap::NotBeside => "notBeside",
+                FrameWrap::Auto => "auto",
+                FrameWrap::None => "none",
+            },
+        ));
+    }
+    if let Some(anchor) = frame.horizontal_anchor {
+        el.push_attribute((
+            "w:hAnchor",
+            match anchor {
+                FrameHorizontalAnchor::Margin => "margin",
+                FrameHorizontalAnchor::Page => "page",
+                FrameHorizontalAnchor::Text => "text",
+            },
+        ));
+    }
+    if let Some(anchor) = frame.vertical_anchor {
+        el.push_attribute((
+            "w:vAnchor",
+            match anchor {
+                FrameVerticalAnchor::Margin => "margin",
+                FrameVerticalAnchor::Page => "page",
+                FrameVerticalAnchor::Text => "text",
+            },
+        ));
+    }
+    if let Some(alignment) = frame.horizontal_alignment {
+        el.push_attribute((
+            "w:xAlign",
+            match alignment {
+                FrameHorizontalAlignment::Center => "center",
+                FrameHorizontalAlignment::Inside => "inside",
+                FrameHorizontalAlignment::Left => "left",
+                FrameHorizontalAlignment::Outside => "outside",
+                FrameHorizontalAlignment::Right => "right",
+            },
+        ));
+    }
+    if let Some(alignment) = frame.vertical_alignment {
+        el.push_attribute((
+            "w:yAlign",
+            match alignment {
+                FrameVerticalAlignment::Bottom => "bottom",
+                FrameVerticalAlignment::Center => "center",
+                FrameVerticalAlignment::Inline => "inline",
+                FrameVerticalAlignment::Inside => "inside",
+                FrameVerticalAlignment::Outside => "outside",
+                FrameVerticalAlignment::Top => "top",
+            },
+        ));
+    }
+    if let Some(position) = frame.horizontal_position_twips {
+        el.push_attribute(("w:x", position.to_string().as_str()));
+    }
+    if let Some(position) = frame.vertical_position_twips {
+        el.push_attribute(("w:y", position.to_string().as_str()));
+    }
+    if let Some(space) = frame.horizontal_space_twips {
+        el.push_attribute(("w:hSpace", space.to_string().as_str()));
+    }
+    if let Some(space) = frame.vertical_space_twips {
+        el.push_attribute(("w:vSpace", space.to_string().as_str()));
+    }
+    w.write_event(Event::Empty(el)).map_err(pkg)?;
     Ok(())
 }
 
