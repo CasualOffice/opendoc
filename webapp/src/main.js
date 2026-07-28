@@ -1415,6 +1415,131 @@ function toggleOutline() {
 railOutline.addEventListener("click", toggleOutline);
 outlineClose.addEventListener("click", toggleOutline);
 
+// ---- Command palette (⌘K) — fuzzy search over real editor actions -----------
+const cmdPalette = document.getElementById("cmdPalette");
+const cmdInput = document.getElementById("cmdInput");
+const cmdList = document.getElementById("cmdList");
+let cmdMatches = [];
+let cmdSel = 0;
+
+/** The command set, rebuilt per open so dynamic entries (the document's styles)
+ *  are current. Every command runs a real action; `noDoc` ones work with no doc. */
+function buildCommands() {
+  const fmt = (k) => () => toggleFormat(k);
+  const align = (a) => () => runToolbarEdit((s, o, e, f) => doc.setAlignment(s, o, e, f, a));
+  const cmds = [
+    { label: "Open…", group: "File", kw: "load docx", noDoc: true, run: () => fileEl.click() },
+    { label: "Save (download .docx)", group: "File", kw: "export download", run: () => saveDocx() },
+    { label: "Undo", group: "Edit", kw: "revert", run: () => runEdit(() => doc.undo()) },
+    { label: "Redo", group: "Edit", kw: "", run: () => runEdit(() => doc.redo()) },
+    { label: "Bold", group: "Format", kw: "strong", run: fmt("bold") },
+    { label: "Italic", group: "Format", kw: "emphasis", run: fmt("italic") },
+    { label: "Underline", group: "Format", kw: "", run: fmt("underline") },
+    { label: "Strikethrough", group: "Format", kw: "strike", run: fmt("strike") },
+    { label: "Align left", group: "Paragraph", kw: "", run: align("start") },
+    { label: "Align center", group: "Paragraph", kw: "centre", run: align("center") },
+    { label: "Align right", group: "Paragraph", kw: "", run: align("end") },
+    { label: "Justify", group: "Paragraph", kw: "align", run: align("justify") },
+    { label: "Bullet list", group: "Paragraph", kw: "unordered", run: () => runToolbarEdit((s, o, e, f) => doc.toggleList(s, o, e, f, "bullet")) },
+    { label: "Numbered list", group: "Paragraph", kw: "ordered", run: () => runToolbarEdit((s, o, e, f) => doc.toggleList(s, o, e, f, "numbered")) },
+    { label: "Increase indent", group: "Paragraph", kw: "", run: () => runToolbarEdit((s, o, e, f) => doc.adjustIndent(s, o, e, f, 360)) },
+    { label: "Decrease indent", group: "Paragraph", kw: "outdent", run: () => runToolbarEdit((s, o, e, f) => doc.adjustIndent(s, o, e, f, -360)) },
+    { label: "Insert table (3×3)", group: "Insert", kw: "grid", run: () => selection && runEdit(() => doc.insertTable(selection.focus.node, 3, 3)) },
+    { label: "Toggle outline", group: "View", kw: "headings navigation", run: () => toggleOutline() },
+    { label: "Zoom in", group: "View", kw: "", run: () => stepZoom(1) },
+    { label: "Zoom out", group: "View", kw: "", run: () => stepZoom(-1) },
+    { label: "Settings", group: "View", kw: "theme accent dark", run: () => settingsBtn.click() },
+  ];
+  if (doc) {
+    for (const name of doc.listStyles()) {
+      cmds.push({
+        label: `Style: ${name}`,
+        group: "Style",
+        kw: "paragraph heading",
+        run: () => runToolbarEdit((s, o, e, f) => doc.setParagraphStyle(s, o, e, f, name)),
+      });
+    }
+  }
+  return cmds.filter((c) => doc || c.noDoc);
+}
+
+function renderCommands(query) {
+  const q = query.trim().toLowerCase();
+  const all = buildCommands();
+  cmdMatches = q
+    ? all.filter((c) => `${c.label} ${c.group} ${c.kw}`.toLowerCase().includes(q))
+    : all;
+  cmdSel = 0;
+  cmdList.replaceChildren();
+  if (!cmdMatches.length) {
+    const empty = document.createElement("div");
+    empty.className = "cmd-empty";
+    empty.textContent = "No matching commands";
+    cmdList.appendChild(empty);
+    return;
+  }
+  cmdMatches.forEach((c, i) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = `cmd-item${i === cmdSel ? " sel" : ""}`;
+    item.setAttribute("role", "option");
+    item.innerHTML = `<span>${c.label}</span><span class="cmd-hint">${c.group}</span>`;
+    item.addEventListener("mousemove", () => setCmdSel(i));
+    item.addEventListener("click", () => runCommand(i));
+    cmdList.appendChild(item);
+  });
+}
+
+function setCmdSel(i) {
+  cmdSel = i;
+  const items = cmdList.querySelectorAll(".cmd-item");
+  items.forEach((el, k) => el.classList.toggle("sel", k === i));
+  items[i]?.scrollIntoView({ block: "nearest" });
+}
+
+function runCommand(i) {
+  const cmd = cmdMatches[i];
+  if (!cmd) return;
+  closeCmd();
+  cmd.run();
+}
+
+function openCmd() {
+  cmdPalette.hidden = false;
+  cmdInput.value = "";
+  renderCommands("");
+  cmdInput.focus();
+}
+function closeCmd() {
+  cmdPalette.hidden = true;
+}
+
+cmdInput.addEventListener("input", () => renderCommands(cmdInput.value));
+cmdInput.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    setCmdSel(Math.min(cmdSel + 1, cmdMatches.length - 1));
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    setCmdSel(Math.max(cmdSel - 1, 0));
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    runCommand(cmdSel);
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    closeCmd();
+  }
+});
+cmdPalette.addEventListener("pointerdown", (e) => {
+  if (e.target === cmdPalette) closeCmd(); // click the backdrop
+});
+document.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    cmdPalette.hidden ? openCmd() : closeCmd();
+  }
+});
+
 // Indentation: left/right absolute, and a first-line/hanging "special" indent
 // (setFirstLineIndent encodes hanging as a negative value, 0 clears both).
 indentLeftInput.addEventListener("change", () =>
