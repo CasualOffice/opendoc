@@ -3244,12 +3244,13 @@ fn paragraph_links<'a>(document: &Document, paragraph: &'a Paragraph) -> Vec<Par
 }
 
 /// Number of UTF-8 bytes an inline contributes to the layout anchor stream.
-/// This mirrors `flow::collect_items`, including synthetic display values that
-/// the plain-text copy helper intentionally omits.
+/// This mirrors `tabs::split_blocks`: ordinary/positional tabs affect geometry
+/// but are zero-width in the current model-offset space, while synthetic display
+/// values contribute the bytes the shaper assigns them.
 fn inline_anchor_len(document: &Document, inline: &InlineNode) -> u32 {
     match inline {
         InlineNode::Run(run) => run.text.len() as u32,
-        InlineNode::Tab(_) | InlineNode::PositionalTab(_) => 1,
+        InlineNode::Tab(_) | InlineNode::PositionalTab(_) => 0,
         InlineNode::Symbol(symbol) => {
             char::from_u32(symbol.char).map_or(0, |ch| ch.len_utf8() as u32)
         }
@@ -5402,5 +5403,111 @@ mod tests {
 
         let copied = doc.copy_text(&a_id.to_string(), 0, &b_id.to_string(), b_text.len() as u32);
         assert_eq!(copied, format!("{a_text}\n{b_text}"));
+    }
+
+    #[test]
+    fn tabbed_toc_link_uses_layout_offset_space_and_is_clickable() {
+        use casual_doc_model::v1::{Bookmark, BookmarkStart, Definitions, Hyperlink, Run, Tab};
+
+        let document_id = NodeId::from_parts(90, 1).unwrap();
+        let source_id = NodeId::from_parts(90, 2).unwrap();
+        let target_id = NodeId::from_parts(90, 3).unwrap();
+        let bookmark_id = BookmarkId::new(NodeId::from_parts(90, 4).unwrap());
+        let mut definitions = Definitions::default();
+        definitions.bookmarks.insert(
+            bookmark_id,
+            Bookmark {
+                name: "_Toc1".to_owned(),
+            },
+        );
+        let document = Document::new(
+            document_id,
+            vec![
+                BlockNode::Paragraph(Paragraph {
+                    id: source_id,
+                    properties: ParagraphProperties::default(),
+                    inlines: vec![InlineNode::Hyperlink(Hyperlink {
+                        id: NodeId::from_parts(90, 5).unwrap(),
+                        target: HyperlinkTarget::Internal(InternalTarget {
+                            anchor: "_Toc1".to_owned(),
+                        }),
+                        tooltip: None,
+                        inlines: vec![
+                            InlineNode::Run(Run {
+                                id: NodeId::from_parts(90, 6).unwrap(),
+                                properties: Default::default(),
+                                text: "Tables".to_owned(),
+                            }),
+                            InlineNode::Tab(Tab {
+                                id: NodeId::from_parts(90, 7).unwrap(),
+                            }),
+                            InlineNode::Run(Run {
+                                id: NodeId::from_parts(90, 8).unwrap(),
+                                properties: Default::default(),
+                                text: "3".to_owned(),
+                            }),
+                        ],
+                    })],
+                }),
+                BlockNode::Paragraph(Paragraph {
+                    id: target_id,
+                    properties: ParagraphProperties::default(),
+                    inlines: vec![
+                        InlineNode::BookmarkStart(BookmarkStart {
+                            id: NodeId::from_parts(90, 9).unwrap(),
+                            bookmark: bookmark_id,
+                        }),
+                        InlineNode::Run(Run {
+                            id: NodeId::from_parts(90, 10).unwrap(),
+                            properties: Default::default(),
+                            text: "Tables heading".to_owned(),
+                        }),
+                    ],
+                }),
+            ],
+            definitions,
+        )
+        .expect("valid TOC-like document");
+
+        let shaper = ParleyShaper::new();
+        let layout = paginate_document(&document, &shaper);
+        let default_config = document_page_config(&document);
+        let handle = WasmDocument {
+            document,
+            layout,
+            shaper,
+            media: BTreeMap::new(),
+            default_config,
+            edit_ids: IdGenerator::new(0x5a),
+            undo: Vec::new(),
+            redo: Vec::new(),
+            revision: 0,
+            galley_cache: GalleyCache::new(),
+            bullet_list: None,
+            numbered_list: None,
+        };
+
+        let paragraph =
+            find_paragraph(handle.document.body(), source_id).expect("source paragraph");
+        let links = paragraph_links(&handle.document, paragraph);
+        assert_eq!(links.len(), 1);
+        assert_eq!(
+            links[0].range,
+            ModelRange::new(ModelPos::new(source_id, 0), ModelPos::new(source_id, 7)),
+            "tabs position paint but consume no byte in the layout anchor space"
+        );
+        let rects = LayoutSnapshot::new(&handle.layout).selection_rects(links[0].range);
+        let (page, rect) = rects.first().copied().expect("linked TOC row geometry");
+        let point = Point::new(
+            rect.origin.x + Twip(rect.size.width.raw() / 2),
+            rect.origin.y + Twip(rect.size.height.raw() / 2),
+        );
+        let hit = handle
+            .link_at(page, point.x.raw(), point.y.raw())
+            .expect("painted tabbed TOC row is clickable");
+        assert_eq!(hit.kind(), "internal");
+        assert_eq!(hit.anchor(), "_Toc1");
+        assert_eq!(hit.target_node(), target_id.to_string());
+        assert!(hit.target_page() > 0);
     }
 }

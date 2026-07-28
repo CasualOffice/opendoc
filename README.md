@@ -11,9 +11,10 @@ out and renders it to pixels, for native, WebAssembly, and headless hosts that
 need real DOCX fidelity without a browser, a server, or a UI framework.
 
 The same engine compiles to WebAssembly and drives a **live in-browser editor** —
-[try it at **opendoc.casualoffice.org**](https://opendoc.casualoffice.org).
+[open the bundled DOCX demo](https://opendoc.casualoffice.org/editor.html?demo=1)
+or visit the [developer site](https://opendoc.casualoffice.org).
 
-[![OpenDoc in-browser editor](docs/assets/editor.jpg)](https://opendoc.casualoffice.org)
+[![OpenDoc in-browser editor](docs/assets/editor.jpg)](https://opendoc.casualoffice.org/editor.html?demo=1)
 
 Developed by [CasualOffice](https://github.com/CasualOffice) as the document engine
 for Casual Docs and an SDK others can embed.
@@ -97,8 +98,10 @@ separate locked all-target check on the MSRV.
 
 ## Try it in your browser
 
-**Live demo: [opendoc.casualoffice.org](https://opendoc.casualoffice.org)** — open
-a `.docx` and edit it right now, no install.
+**Live sample:
+[opendoc.casualoffice.org/editor.html?demo=1](https://opendoc.casualoffice.org/editor.html?demo=1)**
+— inspect and edit a bundled `.docx`, no install. To start with your own local
+file, open the [blank editor](https://opendoc.casualoffice.org/editor.html).
 
 `webapp/` is a zero-server harness that runs the engine as WebAssembly: open a
 `.docx`, see it rendered exactly as the engine lays it out, and **edit it live** —
@@ -111,12 +114,14 @@ it locally:
 # Requires wasm-pack (https://drager.github.io/wasm-pack) and the pinned toolchain.
 ./webapp/build.sh     # compile the engine to webapp/pkg and wire the harness
 ./webapp/serve.py     # serve on http://localhost:8099 with no-cache headers
-# then open http://localhost:8099/index.html
+# then open the site at http://localhost:8099/
+# or the editor at http://localhost:8099/editor.html?demo=1
 ```
 
-It is a developer test harness, not a supported product — the browser-first
-surface the editor is built and fine-tuned on. Theme and accent color are
-customizable from the in-app settings (⚙). See the architecture in
+The editor is a pre-release developer surface, not a stable SDK or supported
+product. It is the browser-first environment where interaction and DOCX fidelity
+are built and fine-tuned. Theme and accent color are customizable from the
+in-app settings (⚙). See the architecture in
 [Editor shell & render (Phase 1G)](docs/56-EDITOR-SHELL-AND-RENDER-ARCHITECTURE.md).
 
 ## Example
@@ -156,6 +161,10 @@ around floats, slightly tall CJK fallback metrics, a couple of ±1 page-count ga
 some footer field-recompute edge cases. Footnote/endnote body placement, inline
 math (OMML), and multi-column layout aren't done. A GPU backend, the Tauri desktop
 shell, worker isolation, and a stable public SDK are not started.
+
+The current focus is deeper DOCX fidelity. A stable public SDK, ODT/plain-text
+and other format adapters, and native PDF export from the engine display list
+are future goals rather than shipped capabilities.
 
 Details: [fidelity gap analysis](docs/46-RENDERING-FIDELITY-GAP-ANALYSIS.md) ·
 [support matrix](docs/18-SUPPORT-MATRIX.md).

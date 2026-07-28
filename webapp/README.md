@@ -1,21 +1,22 @@
-# OpenDoc WASM viewer — **testing harness only**
+# OpenDoc developer site and pre-release WASM editor
 
 > [!IMPORTANT]
-> **This is a developer test harness, not a product and not a supported viewer.**
-> It exists so we can open real `.docx` files and eyeball the engine's rendering
-> and pagination in a browser — a fast, deployable feedback loop for finding and
-> fine-tuning fidelity issues. It is intentionally minimal, unstyled beyond the
-> essentials, and carries **no stability guarantees**. Do not build on it or link
-> to it as a public feature. The real, self-hostable viewer/editor SDK is tracked
-> separately (docs 56 & 57, Phase 1G).
+> The editor is a **pre-release developer surface**, not a stable SDK or
+> supported product. It exists to exercise real `.docx` import, rendering,
+> interaction, editing, and write-back in a browser. Public SDK packaging and
+> stability are tracked separately (docs 56 & 57, Phase 1G).
 
-## What it does
+## Routes
 
-Loads `casual-doc-wasm` (the OpenDoc engine — import → paginate → render —
-compiled to WebAssembly) and renders a document you pick **entirely in your
-browser**. Nothing is uploaded to a server. It is the browser-first surface the
-viewer→editor is developed and fine-tuned on (doc 56 decision: fat client,
-Rust→WASM, canvas paint).
+- `/` is the developer landing page.
+- `/editor.html` opens the editor for a local DOCX.
+- `/editor.html?demo=1` opens the repository-owned sample automatically.
+
+The editor loads `casual-doc-wasm` (import → paginate → render, compiled to
+WebAssembly) and keeps document bytes in the browser. Nothing is uploaded to a
+document server. External font retrieval remains host-owned and is documented
+below. This is the browser-first surface where the editor and DOCX fidelity are
+developed and fine-tuned (doc 56: fat client, Rust→WASM, canvas paint).
 
 Milestones landed here:
 
@@ -40,18 +41,19 @@ Native find/AT overlay remains a later milestone.
 
 ```bash
 cd webapp
-./build.sh                     # builds ./pkg via wasm-pack
-python3 -m http.server 8080    # or any static server
-# open http://localhost:8080
+./build.sh       # builds ./pkg and stages the demo + site image
+./serve.py       # no-cache server at http://localhost:8099/
 ```
 
-`./pkg/` is generated (git-ignored); `build.sh` and the CI workflow rebuild it.
+`./pkg/`, `./demo.docx`, and `./assets/` are generated (git-ignored);
+`build.sh` and the Pages workflow rebuild them.
 
 ## Deployment
 
 `.github/workflows/pages.yml` builds the WASM and publishes this directory to
 **GitHub Pages** on pushes to `main` that touch `webapp/` or the engine crates.
-The deployed site is, again, **only a testing surface**.
+The custom domain is `opendoc.casualoffice.org`. The deployed editor remains
+pre-release; the landing page labels current support and future goals separately.
 
 ## Fonts (external families and script coverage)
 

@@ -682,6 +682,92 @@ input {
   margin: 0 3px;
 }
 
+/* A host-owned affordance for canvas-painted links. The engine supplies the
+   exact authored range/target; this chip supplies visible, policy-checked
+   activation without making DOM text authoritative. */
+.link-chip {
+  position: fixed;
+  z-index: 45;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: max-content;
+  max-width: min(440px, calc(100vw - 24px));
+  min-width: min(300px, calc(100vw - 24px));
+  padding: 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 10px 34px rgba(20, 22, 28, 0.24);
+}
+
+.link-chip[hidden] {
+  display: none;
+}
+
+.link-chip-icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.link-chip-icon svg {
+  width: 17px;
+  height: 17px;
+  fill: currentColor;
+}
+
+.link-chip-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.link-chip-kind {
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+}
+
+.link-chip-target {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.link-chip-action {
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--accent-line);
+  border-radius: 7px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.link-chip-action:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+.link-chip-action:disabled {
+  border-color: var(--line);
+  color: var(--faint);
+  background: var(--bg-2);
+  cursor: default;
+}
+
 /* Border presets: a row of buttons each showing a mini box with the relevant
    edge(s) emphasized (CSS-drawn — no icon assets). */
 .border-row {
@@ -1007,9 +1093,13 @@ input {
 
 .side-panel {
   flex: 0 0 252px;
+  width: 252px;
+  min-width: 0;
+  max-width: min(252px, calc(100vw - 52px));
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow: hidden;
   background: var(--surface);
   border-right: 1px solid var(--line);
 }
@@ -1020,6 +1110,7 @@ input {
 
 .panel-head {
   display: flex;
+  min-width: 0;
   align-items: center;
   justify-content: space-between;
   height: 42px;
@@ -1057,6 +1148,7 @@ input {
 
 .panel-body {
   flex: 1;
+  min-width: 0;
   overflow: auto;
   padding: 6px;
 }
@@ -1304,6 +1396,10 @@ input {
   border-radius: 3px;
   max-width: 96vw;
   cursor: text;
+}
+
+.page.link-hover {
+  cursor: pointer;
 }
 
 /* Selection / caret layer over the (white) canvas — fixed light-surface colors. */

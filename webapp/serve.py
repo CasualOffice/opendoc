@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Dev server for the OpenDoc WASM test harness.
+"""Dev server for the OpenDoc developer site and WASM editor.
 
 Serves this directory on http://localhost:8099 with **no-cache** headers, so a
 rebuilt `pkg/` or an edited `src/` is picked up on a plain reload — the default
@@ -7,7 +7,7 @@ rebuilt `pkg/` or an edited `src/` is picked up on a plain reload — the defaul
 silently serves a stale build (a real source of "I updated it but nothing
 changed" confusion). Run it after `./build.sh`:
 
-    ./serve.py            then open http://localhost:8099/index.html
+    ./serve.py            then open http://localhost:8099/
 """
 import http.server
 import sys
@@ -23,5 +23,5 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
 
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8099
-    print(f"Serving the WASM harness (no-cache) on http://localhost:{port}/index.html")
+    print(f"Serving OpenDoc (no-cache) on http://localhost:{port}/")
     http.server.test(HandlerClass=NoCacheHandler, port=port, bind="127.0.0.1")

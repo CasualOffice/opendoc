@@ -1,2 +1,4 @@
 # wasm-pack build output — rebuilt locally (build.sh) and in CI (pages.yml).
 /pkg/
+/assets/
+/demo.docx

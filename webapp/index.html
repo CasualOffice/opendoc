@@ -3,366 +3,329 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>OpenDoc — WASM viewer</title>
-    <link rel="stylesheet" href="./src/style.css" />
+    <title>OpenDoc — Rust DOCX engine and WebAssembly editor</title>
+    <meta
+      name="description"
+      content="An open-source Rust DOCX engine and embeddable WebAssembly editor with deterministic layout, loss-aware OOXML round trips, and no required server."
+    />
+    <meta
+      name="keywords"
+      content="Rust DOCX engine, WebAssembly document editor, DOCX SDK, OOXML parser, embeddable document editor, headless DOCX renderer"
+    />
+    <meta name="author" content="CasualOffice" />
+    <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
+    <meta name="theme-color" content="#0b0c0f" />
+    <link rel="canonical" href="https://opendoc.casualoffice.org/" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="OpenDoc" />
+    <meta property="og:title" content="OpenDoc — a Rust DOCX engine you can embed" />
+    <meta
+      property="og:description"
+      content="Deterministic DOCX import, editing, layout, rendering, and export for native, WebAssembly, and headless hosts."
+    />
+    <meta property="og:url" content="https://opendoc.casualoffice.org/" />
+    <meta
+      property="og:image"
+      content="https://opendoc.casualoffice.org/assets/editor.jpg"
+    />
+    <meta property="og:image:alt" content="The OpenDoc browser editor rendering a DOCX document" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="OpenDoc — Rust DOCX engine and WebAssembly editor" />
+    <meta
+      name="twitter:description"
+      content="An open-source, deterministic, loss-aware DOCX runtime for developers."
+    />
+    <meta
+      name="twitter:image"
+      content="https://opendoc.casualoffice.org/assets/editor.jpg"
+    />
+
+    <link rel="stylesheet" href="./src/marketing.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "SoftwareSourceCode",
+            "name": "OpenDoc",
+            "description": "An open-source Rust document runtime for deterministic DOCX import, editing, layout, rendering, and export.",
+            "codeRepository": "https://github.com/CasualOffice/opendoc",
+            "license": "https://www.apache.org/licenses/LICENSE-2.0",
+            "programmingLanguage": ["Rust", "JavaScript", "WebAssembly"],
+            "runtimePlatform": ["Native", "WebAssembly", "Headless"],
+            "url": "https://opendoc.casualoffice.org/",
+            "author": {
+              "@type": "Organization",
+              "name": "CasualOffice",
+              "url": "https://github.com/CasualOffice"
+            }
+          },
+          {
+            "@type": "WebApplication",
+            "name": "OpenDoc Editor",
+            "url": "https://opendoc.casualoffice.org/editor.html",
+            "applicationCategory": "DeveloperApplication",
+            "operatingSystem": "Any modern browser",
+            "browserRequirements": "JavaScript and WebAssembly",
+            "description": "A client-side DOCX editor powered by the OpenDoc Rust and WebAssembly runtime.",
+            "isAccessibleForFree": true,
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "USD"
+            }
+          }
+        ]
+      }
+    </script>
   </head>
   <body>
-    <header class="bar">
-      <div class="brand">
-        <span class="mark">OpenDoc</span>
-        <span class="testing" title="Developer test harness — not a product or supported viewer.">testing</span>
-        <span class="divider" hidden id="titleDivider"></span>
-        <span class="doc-title" id="docTitle" hidden></span>
-      </div>
-      <div class="controls">
-        <label class="btn btn-primary file">
-          <input id="file" type="file" accept=".docx" hidden />
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></svg>
-          Open
-        </label>
-        <button id="save" type="button" class="btn" disabled title="Download the edited document">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V7zm-5 16a3 3 0 110-6 3 3 0 010 6zm3-10H5V5h10z"/></svg>
-          Save
-        </button>
-        <button id="settingsBtn" type="button" class="btn icon-only" title="Settings" aria-label="Settings" aria-expanded="false">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.14 12.94c.04-.3.06-.61.06-.94s-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.49.49 0 00-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 00-.48-.41h-3.84a.48.48 0 00-.48.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 00-.59.22L2.74 8.87a.49.49 0 00.12.61l2.03 1.58c-.05.3-.07.63-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.48-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 00-.12-.61l-2.03-1.58zM12 15.6A3.6 3.6 0 1112 8.4a3.6 3.6 0 010 7.2z"/></svg>
-        </button>
-      </div>
+    <header class="site-header">
+      <a class="brand" href="./" aria-label="OpenDoc home">
+        <span class="brand-mark" aria-hidden="true">O</span>
+        <span>OpenDoc</span>
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="#capabilities">Capabilities</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#status">Status</a>
+        <a href="https://github.com/CasualOffice/opendoc">GitHub</a>
+      </nav>
+      <a class="header-cta" href="./editor.html">Open editor <span aria-hidden="true">↗</span></a>
     </header>
 
-    <div id="settingsPanel" class="settings-panel" hidden role="dialog" aria-label="Settings">
-      <div class="settings-section">
-        <div class="settings-label">Theme</div>
-        <div class="segmented" id="themeSeg" role="radiogroup" aria-label="Theme">
-          <button type="button" data-theme="system">System</button>
-          <button type="button" data-theme="light">Light</button>
-          <button type="button" data-theme="dark">Dark</button>
-        </div>
-      </div>
-      <div class="settings-section">
-        <div class="settings-label">Accent</div>
-        <div class="swatches" id="accentSwatches">
-          <button type="button" class="acc" data-accent="#e2622a" style="--c:#e2622a" title="Orange" aria-label="Orange"></button>
-          <button type="button" class="acc" data-accent="#2f7ae5" style="--c:#2f7ae5" title="Blue" aria-label="Blue"></button>
-          <button type="button" class="acc" data-accent="#2aa775" style="--c:#2aa775" title="Green" aria-label="Green"></button>
-          <button type="button" class="acc" data-accent="#8a63d2" style="--c:#8a63d2" title="Purple" aria-label="Purple"></button>
-          <button type="button" class="acc" data-accent="#d64562" style="--c:#d64562" title="Rose" aria-label="Rose"></button>
-          <button type="button" class="acc" data-accent="#c88a1a" style="--c:#c88a1a" title="Amber" aria-label="Amber"></button>
-          <label class="acc acc-custom" title="Custom color">
-            <input id="accentCustom" type="color" value="#e2622a" />
-          </label>
-        </div>
-      </div>
-      <div class="settings-foot">
-        <span class="oss">Open-source · customizable</span>
-        <button type="button" id="settingsReset" class="link">Reset</button>
-      </div>
-    </div>
-
-    <div class="ribbon">
-      <div class="ribbon-tabs" role="tablist" aria-label="Ribbon">
-        <button id="tabHome" type="button" class="ribbon-tab" data-tab="home" role="tab" aria-selected="true">Home</button>
-        <button id="tabInsert" type="button" class="ribbon-tab" data-tab="insert" role="tab" aria-selected="false">Insert</button>
-        <button id="tabTable" type="button" class="ribbon-tab" data-tab="table" role="tab" aria-selected="false" disabled>Table</button>
-        <button id="tabView" type="button" class="ribbon-tab" data-tab="view" role="tab" aria-selected="false">View</button>
-      </div>
-      <div class="ribbon-body">
-        <div class="ribbon-panel" data-panel="home" role="tabpanel" aria-label="Home">
-          <div class="rgroup">
-            <div class="rgroup-ctl">
-              <button id="undoBtn" type="button" class="fmt" title="Undo (⌘Z)" aria-label="Undo" disabled><svg viewBox="0 0 24 24"><path d="M12.5 8c-2.65 0-5.05.99-6.9 2.6L2 7v9h9l-3.62-3.62c1.39-1.16 3.16-1.88 5.12-1.88 3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.08 11.03 17.15 8 12.5 8z"/></svg></button>
-              <button id="redoBtn" type="button" class="fmt" title="Redo (⌘⇧Z)" aria-label="Redo" disabled><svg viewBox="0 0 24 24"><path d="M18.4 10.6C16.55 8.99 14.15 8 11.5 8c-4.65 0-8.58 3.03-9.96 7.22L3.9 16c1.05-3.19 4.05-5.5 7.6-5.5 1.95 0 3.73.72 5.12 1.88L13 16h9V7l-3.6 3.6z"/></svg></button>
-            </div>
-            <span class="rgroup-label">Undo</span>
+    <main>
+      <section class="hero">
+        <div class="hero-glow hero-glow-a" aria-hidden="true"></div>
+        <div class="hero-glow hero-glow-b" aria-hidden="true"></div>
+        <div class="hero-copy">
+          <div class="eyebrow"><span></span> Open-source DOCX infrastructure</div>
+          <h1>Own the document engine, not the dependency.</h1>
+          <p class="hero-lede">
+            OpenDoc is a deterministic, embeddable Word-document runtime written in Rust.
+            Import, edit, lay out, render, and write <code>.docx</code> across native,
+            WebAssembly, and headless hosts—without a required server or UI framework.
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="./editor.html?demo=1">
+              Try the live demo <span aria-hidden="true">→</span>
+            </a>
+            <a class="button button-secondary" href="./editor.html">Open your DOCX</a>
           </div>
-          <div class="rgroup">
-            <div class="rgroup-ctl">
-              <label class="ctl" title="Paragraph style">
-                <select id="paragraphStyle"><option value="">Style</option></select>
-              </label>
-              <label class="ctl" title="Font">
-                <select id="fontFamily">
-                  <option value="">Font</option>
-                  <option>Arial</option><option>Calibri</option><option>Cambria</option>
-                  <option>Courier New</option><option>Georgia</option><option>Helvetica</option>
-                  <option>Noto Sans</option><option>Noto Serif</option><option>Roboto</option>
-                  <option>Times New Roman</option><option>Verdana</option>
-                </select>
-              </label>
-              <label class="ctl size" title="Font size (pt)">
-                <select id="fontSize">
-                  <option value="">Size</option>
-                  <option>8</option><option>9</option><option>10</option><option>11</option>
-                  <option>12</option><option>14</option><option>16</option><option>18</option>
-                  <option>20</option><option>24</option><option>28</option><option>32</option>
-                  <option>36</option><option>48</option><option>72</option>
-                </select>
-              </label>
-            </div>
-            <span class="rgroup-label">Styles &amp; font</span>
-          </div>
-          <div class="rgroup">
-            <div class="rgroup-ctl">
-              <button id="bold" type="button" class="fmt" title="Bold (⌘B)" aria-label="Bold" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M15.6 10.79c.97-.67 1.65-1.77 1.65-2.79 0-2.26-1.75-4-4-4H7v14h7.04c2.09 0 3.71-1.7 3.71-3.79 0-1.52-.86-2.82-2.15-3.42zM10 6.5h3c.83 0 1.5.67 1.5 1.5s-.67 1.5-1.5 1.5h-3v-3zm3.5 9H10v-3h3.5c.83 0 1.5.67 1.5 1.5s-.67 1.5-1.5 1.5z"/></svg></button>
-              <button id="italic" type="button" class="fmt" title="Italic (⌘I)" aria-label="Italic" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M10 4v3h2.21l-3.42 8H6v3h8v-3h-2.21l3.42-8H18V4z"/></svg></button>
-              <button id="underline" type="button" class="fmt" title="Underline (⌘U)" aria-label="Underline" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M12 17c3.31 0 6-2.69 6-6V3h-2.5v8c0 1.93-1.57 3.5-3.5 3.5S8.5 12.93 8.5 11V3H6v8c0 3.31 2.69 6 6 6zm-7 2v2h14v-2H5z"/></svg></button>
-              <button id="strike" type="button" class="fmt" title="Strikethrough" aria-label="Strikethrough" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M10 19h4v-3h-4v3zM5 4v3h5v3h4V7h5V4H5zM3 14h18v-2H3v2z"/></svg></button>
-              <label class="ctl swatch" title="Text color"><span>A</span><input id="textColor" type="color" value="#000000" /></label>
-              <label class="ctl" title="Highlight">
-                <select id="highlight">
-                  <option value="none">Highlight</option>
-                  <option value="yellow">Yellow</option><option value="green">Green</option>
-                  <option value="cyan">Cyan</option><option value="magenta">Magenta</option>
-                  <option value="red">Red</option><option value="none">None</option>
-                </select>
-              </label>
-              <button id="superscript" type="button" class="fmt" title="Superscript" aria-label="Superscript"><svg viewBox="0 0 24 24"><path d="M22 7h-2v1h3v1h-4V7c0-.55.45-1 1-1h2V5h-3V4h3c.55 0 1 .45 1 1v1c0 .55-.45 1-1 1zM5.88 20h2.66l3.4-5.42h.12l3.4 5.42h2.66l-4.65-7.27L17.81 6h-2.68l-3.07 4.99h-.12L8.85 6H6.19l4.32 6.73L5.88 20z"/></svg></button>
-              <button id="subscript" type="button" class="fmt" title="Subscript" aria-label="Subscript"><svg viewBox="0 0 24 24"><path d="M22 18h-2v1h3v1h-4v-2c0-.55.45-1 1-1h2v-1h-3v-1h3c.55 0 1 .45 1 1v1c0 .55-.45 1-1 1zM5.88 18h2.66l3.4-5.42h.12l3.4 5.42h2.66l-4.65-7.27L17.81 4h-2.68l-3.07 4.99h-.12L8.85 4H6.19l4.32 6.73L5.88 18z"/></svg></button>
-            </div>
-            <span class="rgroup-label">Font</span>
-          </div>
-          <div class="rgroup">
-            <div class="rgroup-ctl">
-              <button id="alignStart" type="button" class="fmt" title="Align left" aria-label="Align left" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M15 15H3v2h12v-2zm0-8H3v2h12V7zM3 13h18v-2H3v2zm0 8h18v-2H3v2zM3 3v2h18V3H3z"/></svg></button>
-              <button id="alignCenter" type="button" class="fmt" title="Center" aria-label="Center" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M7 15v2h10v-2H7zm-4 6h18v-2H3v2zm0-8h18v-2H3v2zm4-6v2h10V7H7zM3 3v2h18V3H3z"/></svg></button>
-              <button id="alignEnd" type="button" class="fmt" title="Align right" aria-label="Align right" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M3 21h18v-2H3v2zm6-4h12v-2H9v2zm-6-4h18v-2H3v2zm6-4h12V7H9v2zM3 3v2h18V3H3z"/></svg></button>
-              <button id="alignJustify" type="button" class="fmt" title="Justify" aria-label="Justify" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M3 21h18v-2H3v2zm0-4h18v-2H3v2zm0-4h18v-2H3v2zm0-4h18V7H3v2zm0-6v2h18V3H3z"/></svg></button>
-              <button id="spacingBtn" type="button" class="fmt" title="Line &amp; paragraph spacing" aria-label="Line and paragraph spacing" aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 24 24"><path d="M6 7h2.5L5 3.5 1.5 7H4v10H1.5L5 20.5 8.5 17H6V7zm4-2v2h12V5H10zm0 14h12v-2H10v2zm0-6h12v-2H10v2z"/></svg></button>
-              <button id="indentDec" type="button" class="fmt" title="Decrease indent (⇧Tab)" aria-label="Decrease indent"><svg viewBox="0 0 24 24"><path d="M11 17h10v-2H11v2zm-8-5l4 4V8l-4 4zm0 9h18v-2H3v2zM3 3v2h18V3H3zm8 6h10V7H11v2zm0 4h10v-2H11v2z"/></svg></button>
-              <button id="indentInc" type="button" class="fmt" title="Increase indent (Tab)" aria-label="Increase indent"><svg viewBox="0 0 24 24"><path d="M3 21h18v-2H3v2zM3 8v8l4-4-4-4zm8 9h10v-2H11v2zM3 3v2h18V3H3zm8 6h10V7H11v2zm0 4h10v-2H11v2z"/></svg></button>
-              <button id="bulletList" type="button" class="fmt" title="Bulleted list" aria-label="Bulleted list" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M4 10.5c-.83 0-1.5.67-1.5 1.5s.67 1.5 1.5 1.5 1.5-.67 1.5-1.5-.67-1.5-1.5-1.5zm0-6c-.83 0-1.5.67-1.5 1.5S3.17 7.5 4 7.5 5.5 6.83 5.5 6 4.83 4.5 4 4.5zm0 12c-.83 0-1.5.68-1.5 1.5s.68 1.5 1.5 1.5 1.5-.68 1.5-1.5-.67-1.5-1.5-1.5zM7 19h14v-2H7v2zm0-6h14v-2H7v2zm0-8v2h14V5H7z"/></svg></button>
-              <button id="numberedList" type="button" class="fmt" title="Numbered list" aria-label="Numbered list" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M2 17h2v.5H3v1h1v.5H2v1h3v-4H2v1zm1-9h1V4H2v1h1v3zm-1 3h1.8L2 13.1v.9h3v-1H3.2L5 10.9V10H2v1zm5-6v2h14V5H7zm0 14h14v-2H7v2zm0-6h14v-2H7v2z"/></svg></button>
-              <button id="paraOptsBtn" type="button" class="fmt" title="Paragraph options (indent, shading, borders, tabs, breaks)" aria-label="Paragraph options" aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 24 24"><path d="M13 4v12h-2v-4c-2.21 0-4-1.79-4-4s1.79-4 4-4h7v2h-2v12h-2V6h-1V4h1z"/></svg></button>
-            </div>
-            <span class="rgroup-label">Paragraph</span>
-          </div>
+          <p class="privacy-note">
+            <span aria-hidden="true">●</span>
+            Your document stays in the browser. The demo runs on the same Rust engine.
+          </p>
         </div>
 
-        <div class="ribbon-panel" data-panel="insert" role="tabpanel" aria-label="Insert" hidden>
-          <div class="rgroup">
-            <div class="rgroup-ctl">
-              <button id="insertTableBtn" type="button" class="fmt" title="Insert table" aria-label="Insert table" aria-haspopup="menu" aria-expanded="false" disabled><svg viewBox="0 0 24 24"><path d="M20 3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM8 19H4v-4h4v4zm0-6H4V9h4v4zm0-6H4V5h4v2zm6 12h-4v-4h4v4zm0-6h-4V9h4v4zm0-6h-4V5h4v2zm6 12h-4v-4h4v4zm0-6h-4V9h4v4zm0-6h-4V5h4v2z"/></svg></button>
-            </div>
-            <span class="rgroup-label">Table</span>
+        <div class="product-stage" aria-label="OpenDoc editor preview">
+          <div class="stage-bar">
+            <span class="stage-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span>opendoc.casualoffice.org/editor.html</span>
+            <a href="./editor.html?demo=1">Launch demo</a>
           </div>
-          <div class="rgroup">
-            <div class="rgroup-ctl">
-              <button id="insertLinkBtn" type="button" class="fmt" title="Add or edit link" aria-label="Add or edit link" disabled><svg viewBox="0 0 24 24"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7a5 5 0 0 0 0 10h4v-1.9H7A3.1 3.1 0 0 1 3.9 12zM8 13h8v-2H8v2zm9-6h-4v1.9h4a3.1 3.1 0 1 1 0 6.2h-4V17h4a5 5 0 0 0 0-10z"/></svg></button>
-            </div>
-            <span class="rgroup-label">Link</span>
-          </div>
+          <a href="./editor.html?demo=1" aria-label="Open the live OpenDoc editor demo">
+            <img
+              src="./assets/editor.jpg"
+              width="1456"
+              height="829"
+              alt="OpenDoc browser editor with a DOCX page, formatting ribbon, outline panel, and status bar"
+            />
+          </a>
         </div>
+      </section>
 
-        <div class="ribbon-panel" data-panel="table" role="tabpanel" aria-label="Table" hidden>
-          <div class="rgroup">
-            <div class="rgroup-ctl">
-              <button id="tableBtn" type="button" class="fmt" title="Table &amp; cell formatting" aria-label="Table and cell formatting" aria-haspopup="menu" aria-expanded="false" disabled><svg viewBox="0 0 24 24"><path d="M10 10.02h5V21h-5V10.02zM17 21h3c1.1 0 2-.9 2-2v-9h-5v11zm3-18H5c-1.1 0-2 .9-2 2v3h19V5c0-1.1-.9-2-2-2zM3 19c0 1.1.9 2 2 2h3V10H3v9z"/></svg></button>
-            </div>
-            <span class="rgroup-label">Cell &amp; table</span>
+      <section class="proof-strip" aria-label="Project facts">
+        <div><strong>Rust → WASM</strong><span>One engine across hosts</span></div>
+        <div><strong>Apache-2.0</strong><span>Open source and embeddable</span></div>
+        <div><strong>No required server</strong><span>Host-owned storage and policy</span></div>
+        <div><strong>Loss-aware</strong><span>Preserve or report unsupported data</span></div>
+      </section>
+
+      <section id="capabilities" class="section">
+        <div class="section-intro">
+          <span class="section-kicker">Built for document systems</span>
+          <h2>A runtime beneath your product—not another iframe around someone else’s.</h2>
+          <p>
+            OpenDoc keeps the normalized model and deterministic layout engine authoritative.
+            The browser canvas is a rendering surface, never the document source of truth.
+          </p>
+        </div>
+        <div class="capability-grid">
+          <article>
+            <span class="card-number">01</span>
+            <h3>Loss-aware DOCX</h3>
+            <p>
+              Parse OOXML into a typed editable model. Safe unsupported package data is
+              retained or surfaced explicitly instead of disappearing during save.
+            </p>
+            <ul>
+              <li>Semantic import and export</li>
+              <li>Byte-identical unedited reconstruction</li>
+              <li>Compatibility dispositions</li>
+            </ul>
+          </article>
+          <article>
+            <span class="card-number">02</span>
+            <h3>Deterministic layout</h3>
+            <p>
+              Shape, paginate, compose, and rasterize from one Rust pipeline with pinned
+              inputs and regression gates for geometry, collisions, and page output.
+            </p>
+            <ul>
+              <li>Paragraphs, tables, sections, floats</li>
+              <li>Backend-neutral display list</li>
+              <li>CPU fidelity oracle</li>
+            </ul>
+          </article>
+          <article>
+            <span class="card-number">03</span>
+            <h3>Embeddable editing</h3>
+            <p>
+              Route public mutation through a closed command set with inverses, selection
+              anchors, undo/redo, and host-owned network, storage, and authentication policy.
+            </p>
+            <ul>
+              <li>Native, web, and headless targets</li>
+              <li>No mandatory React or provider</li>
+              <li>Incremental browser repaint</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section id="architecture" class="architecture">
+        <div class="architecture-copy">
+          <span class="section-kicker">A hard host boundary</span>
+          <h2>Document semantics in Rust. Product policy in your hands.</h2>
+          <p>
+            The engine owns document state, transactions, selection, pagination, hit testing,
+            and serialization. Your host owns files, fonts, network access, telemetry,
+            permissions, and product UI.
+          </p>
+          <a class="text-link" href="https://github.com/CasualOffice/opendoc/blob/main/docs/02-ARCHITECTURE.md">
+            Read the architecture <span aria-hidden="true">→</span>
+          </a>
+        </div>
+        <div class="pipeline" role="img" aria-label="DOCX flows through import, model, layout, and export or rendering">
+          <div class="pipeline-label">OpenDoc core</div>
+          <div class="pipeline-row">
+            <span>DOCX</span><i>→</i><span>Model</span><i>→</i><span>Layout</span><i>→</i><span>Pixels</span>
           </div>
-          <div class="rgroup rgroup-note">
-            <span class="rgroup-hint">Right-click a cell for insert / delete row &amp; column.</span>
+          <div class="pipeline-branch">
+            <span>Commands + transactions</span>
+            <span>Semantic DOCX export</span>
+          </div>
+          <div class="host-row">
+            <span>WebAssembly</span><span>Native</span><span>Headless</span>
           </div>
         </div>
+      </section>
 
-        <div class="ribbon-panel" data-panel="view" role="tabpanel" aria-label="View" hidden>
-          <div class="rgroup">
-            <div class="rgroup-ctl">
-              <button id="viewOutlineBtn" type="button" class="fmt" title="Toggle outline" aria-label="Toggle outline" aria-pressed="false" disabled><svg viewBox="0 0 24 24"><path d="M3 9h2V5H3v4zm0 6h2v-4H3v4zm0 6h2v-4H3v4zm4-6h14v-4H7v4zm0 6h14v-4H7v4zM7 5v4h14V5H7z"/></svg></button>
-            </div>
-            <span class="rgroup-label">Show</span>
-          </div>
-          <div class="rgroup">
-            <div class="rgroup-ctl">
-              <button id="viewZoomOut" type="button" class="fmt" title="Zoom out" aria-label="Zoom out" disabled><svg viewBox="0 0 24 24"><path d="M19 13H5v-2h14z"/></svg></button>
-              <button id="viewZoomIn" type="button" class="fmt" title="Zoom in" aria-label="Zoom in" disabled><svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z"/></svg></button>
-            </div>
-            <span class="rgroup-label">Zoom</span>
-          </div>
+      <section class="section developer-start">
+        <div class="section-intro compact">
+          <span class="section-kicker">Inspect the real thing</span>
+          <h2>Clone it, run the gates, open a document.</h2>
+          <p>No account, opaque cloud service, or hosted document backend is required.</p>
         </div>
-      </div>
-    </div>
+        <div class="terminal" aria-label="OpenDoc quickstart commands">
+          <div class="terminal-head"><span></span><span></span><span></span><b>quickstart</b></div>
+          <pre><code><em>$</em> git clone https://github.com/CasualOffice/opendoc.git
+<em>$</em> cd opendoc
+<em>$</em> cargo test --workspace --all-features --locked
 
-    <div id="spacingMenu" class="context-menu spacing-menu" hidden role="menu" aria-label="Line and paragraph spacing">
-      <div class="menu-heading">Line spacing</div>
-      <button type="button" class="menu-item spacing-line" data-percent="100" role="menuitemradio"><span class="menu-check" aria-hidden="true"></span>Single</button>
-      <button type="button" class="menu-item spacing-line" data-percent="115" role="menuitemradio"><span class="menu-check" aria-hidden="true"></span>1.15</button>
-      <button type="button" class="menu-item spacing-line" data-percent="150" role="menuitemradio"><span class="menu-check" aria-hidden="true"></span>1.5</button>
-      <button type="button" class="menu-item spacing-line" data-percent="200" role="menuitemradio"><span class="menu-check" aria-hidden="true"></span>Double</button>
-      <div class="menu-divider"></div>
-      <label class="menu-row">Space before<input id="spaceBefore" type="number" min="0" max="720" step="1" inputmode="numeric" /><span class="menu-unit">pt</span></label>
-      <label class="menu-row">Space after<input id="spaceAfter" type="number" min="0" max="720" step="1" inputmode="numeric" /><span class="menu-unit">pt</span></label>
-    </div>
-
-    <div id="paraOptsMenu" class="context-menu spacing-menu" hidden role="menu" aria-label="Paragraph options">
-      <div class="menu-heading">Indentation</div>
-      <label class="menu-row">Left<input id="indentLeft" type="number" min="0" max="12" step="0.1" inputmode="decimal" /><span class="menu-unit">in</span></label>
-      <label class="menu-row">Right<input id="indentRight" type="number" min="0" max="12" step="0.1" inputmode="decimal" /><span class="menu-unit">in</span></label>
-      <div class="menu-row">
-        <select id="indentSpecial" class="menu-select" aria-label="Special indent">
-          <option value="none">None</option>
-          <option value="first">First line</option>
-          <option value="hanging">Hanging</option>
-        </select>
-        <input id="indentSpecialBy" type="number" min="0" max="12" step="0.1" inputmode="decimal" value="0.5" aria-label="Special indent amount" /><span class="menu-unit">in</span>
-      </div>
-      <div class="menu-divider"></div>
-      <div class="menu-heading">Shading</div>
-      <div class="menu-row shade-row">
-        <label class="shade-pick"><input id="paraShade" type="color" value="#ffe08a" /><span>Fill</span></label>
-        <button type="button" id="paraShadeNone" class="chip-btn">None</button>
-      </div>
-      <div class="menu-divider"></div>
-      <div class="menu-heading">Borders</div>
-      <div class="menu-row border-row">
-        <div class="border-presets" role="group" aria-label="Paragraph borders">
-          <button type="button" class="border-btn" data-border="none" title="No border" aria-pressed="false"><span class="bx"></span></button>
-          <button type="button" class="border-btn" data-border="box" title="All borders" aria-pressed="false"><span class="bx"></span></button>
-          <button type="button" class="border-btn" data-border="top" title="Top border" aria-pressed="false"><span class="bx"></span></button>
-          <button type="button" class="border-btn" data-border="bottom" title="Bottom border" aria-pressed="false"><span class="bx"></span></button>
-          <button type="button" class="border-btn" data-border="left" title="Left border" aria-pressed="false"><span class="bx"></span></button>
-          <button type="button" class="border-btn" data-border="right" title="Right border" aria-pressed="false"><span class="bx"></span></button>
+<span># Run the same browser editor locally</span>
+<em>$</em> ./webapp/build.sh
+<em>$</em> ./webapp/serve.py</code></pre>
         </div>
-        <label class="border-color" title="Border color"><input id="borderColor" type="color" value="#000000" /></label>
-      </div>
-      <div class="menu-divider"></div>
-      <div class="menu-heading">Line &amp; page breaks</div>
-      <label class="menu-check-row"><input id="pgKeepNext" type="checkbox" />Keep with next</label>
-      <label class="menu-check-row"><input id="pgKeepLines" type="checkbox" />Keep lines together</label>
-      <label class="menu-check-row"><input id="pgBreakBefore" type="checkbox" />Page break before</label>
-    </div>
+      </section>
 
-    <div id="tableMenu" class="context-menu spacing-menu" hidden role="menu" aria-label="Table and cell formatting">
-      <div class="menu-heading">Cell shading</div>
-      <div class="menu-row shade-row">
-        <label class="shade-pick"><input id="cellShade" type="color" value="#ffe08a" /><span>Fill</span></label>
-        <button type="button" id="cellShadeNone" class="chip-btn">None</button>
-      </div>
-      <div class="menu-divider"></div>
-      <div class="menu-heading">Vertical align</div>
-      <div class="menu-row">
-        <div class="segmented" id="cellVAlign" role="radiogroup" aria-label="Cell vertical alignment">
-          <button type="button" data-valign="top">Top</button>
-          <button type="button" data-valign="center">Middle</button>
-          <button type="button" data-valign="bottom">Bottom</button>
+      <section id="status" class="status-section">
+        <div>
+          <span class="status-pill">Pre-release</span>
+          <h2>Serious architecture. Honest support claims.</h2>
         </div>
-      </div>
-      <div class="menu-divider"></div>
-      <div class="menu-heading">Cell borders</div>
-      <div class="menu-row border-row">
-        <div class="border-presets" role="group" aria-label="Cell borders">
-          <button type="button" class="border-btn" data-cellborder="none" title="No border" aria-pressed="false"><span class="bx"></span></button>
-          <button type="button" class="border-btn" data-cellborder="box" title="All borders" aria-pressed="false"><span class="bx"></span></button>
-          <button type="button" class="border-btn" data-cellborder="top" title="Top border" aria-pressed="false"><span class="bx"></span></button>
-          <button type="button" class="border-btn" data-cellborder="bottom" title="Bottom border" aria-pressed="false"><span class="bx"></span></button>
-          <button type="button" class="border-btn" data-cellborder="left" title="Left border" aria-pressed="false"><span class="bx"></span></button>
-          <button type="button" class="border-btn" data-cellborder="right" title="Right border" aria-pressed="false"><span class="bx"></span></button>
-        </div>
-        <label class="border-color" title="Border color"><input id="cellBorderColor" type="color" value="#000000" /></label>
-      </div>
-      <div class="menu-divider"></div>
-      <div class="menu-heading">Table borders</div>
-      <div class="menu-row">
-        <div class="chip-row" role="group" aria-label="Table borders">
-          <button type="button" class="chip-btn" data-tableborder="none">None</button>
-          <button type="button" class="chip-btn" data-tableborder="box">Box</button>
-          <button type="button" class="chip-btn" data-tableborder="all">All</button>
-        </div>
-        <label class="border-color" title="Table border color"><input id="tableBorderColor" type="color" value="#000000" /></label>
-      </div>
-      <div class="menu-divider"></div>
-      <div class="menu-heading">Table align</div>
-      <div class="menu-row">
-        <div class="segmented" id="tableAlign" role="radiogroup" aria-label="Table alignment">
-          <button type="button" data-talign="left">Left</button>
-          <button type="button" data-talign="center">Center</button>
-          <button type="button" data-talign="right">Right</button>
-        </div>
-      </div>
-    </div>
-
-    <div id="insertTableMenu" class="context-menu grid-picker" hidden role="menu" aria-label="Insert table">
-      <div id="gridPicker" class="grid-cells"></div>
-      <div id="gridLabel" class="grid-label">Insert table</div>
-    </div>
-
-    <div id="cmdPalette" class="cmd-overlay" hidden>
-      <div class="cmd-box" role="dialog" aria-label="Command palette" aria-modal="true">
-        <div class="cmd-search">
-          <svg class="cmd-search-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 10-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1114 9.5 4.5 4.5 0 019.5 14z"/></svg>
-          <input id="cmdInput" type="text" placeholder="Search commands…" autocomplete="off" spellcheck="false" aria-label="Search commands" />
-          <span class="cmd-kbd">⌘K</span>
-        </div>
-        <div id="cmdList" class="cmd-list" role="listbox" aria-label="Commands"></div>
-      </div>
-    </div>
-
-    <div id="selToolbar" class="sel-toolbar" role="toolbar" aria-label="Selection formatting" hidden>
-      <button type="button" class="fmt" data-fmt="bold" title="Bold (⌘B)" aria-label="Bold"><svg viewBox="0 0 24 24"><path d="M15.6 10.79c.97-.67 1.65-1.77 1.65-2.79 0-2.26-1.75-4-4-4H7v14h7.04c2.09 0 3.71-1.7 3.71-3.79 0-1.52-.86-2.82-2.15-3.42zM10 6.5h3c.83 0 1.5.67 1.5 1.5s-.67 1.5-1.5 1.5h-3v-3zm3.5 9H10v-3h3.5c.83 0 1.5.67 1.5 1.5s-.67 1.5-1.5 1.5z"/></svg></button>
-      <button type="button" class="fmt" data-fmt="italic" title="Italic (⌘I)" aria-label="Italic"><svg viewBox="0 0 24 24"><path d="M10 4v3h2.21l-3.42 8H6v3h8v-3h-2.21l3.42-8H18V4z"/></svg></button>
-      <button type="button" class="fmt" data-fmt="underline" title="Underline (⌘U)" aria-label="Underline"><svg viewBox="0 0 24 24"><path d="M12 17c3.31 0 6-2.69 6-6V3h-2.5v8c0 1.93-1.57 3.5-3.5 3.5S8.5 12.93 8.5 11V3H6v8c0 3.31 2.69 6 6 6zm-7 2v2h14v-2H5z"/></svg></button>
-      <button type="button" class="fmt" data-fmt="strike" title="Strikethrough" aria-label="Strikethrough"><svg viewBox="0 0 24 24"><path d="M10 19h4v-3h-4v3zM5 4v3h5v3h4V7h5V4H5zM3 14h18v-2H3v2z"/></svg></button>
-      <span class="sel-divider"></span>
-      <label class="ctl swatch" title="Text color"><span>A</span><input id="selColor" type="color" value="#000000" /></label>
-      <label class="ctl" title="Highlight">
-        <select id="selHighlight" aria-label="Highlight">
-          <option value="none">Highlight</option>
-          <option value="yellow">Yellow</option><option value="green">Green</option>
-          <option value="cyan">Cyan</option><option value="magenta">Magenta</option>
-          <option value="red">Red</option><option value="none">None</option>
-        </select>
-      </label>
-    </div>
-
-    <div class="workarea">
-      <nav class="rail" aria-label="Document navigation">
-        <button id="railOutline" type="button" class="rail-btn" title="Outline" aria-label="Outline" aria-pressed="false" disabled><svg viewBox="0 0 24 24"><path d="M3 9h2V5H3v4zm0 6h2v-4H3v4zm0 6h2v-4H3v4zm4-6h14v-4H7v4zm0 6h14v-4H7v4zM7 5v4h14V5H7z"/></svg></button>
-      </nav>
-      <aside id="outlinePanel" class="side-panel" hidden aria-label="Outline">
-        <div class="panel-head">
-          <span class="panel-title">Outline</span>
-          <button id="outlineClose" type="button" class="panel-close" title="Close outline" aria-label="Close outline"><svg viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
-        </div>
-        <div id="outlineBody" class="panel-body outline-list"></div>
-      </aside>
-
-      <main id="viewport" class="viewport">
-        <div id="drop" class="drop">
-          <div class="drop-card">
-            <svg class="drop-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></svg>
-            <p class="drop-title">Drop a <strong>.docx</strong> here</p>
-            <p class="muted">or use <em>Open</em> above — rendered entirely in your browser by the OpenDoc engine (WASM). Nothing is uploaded.</p>
+        <div>
+          <p>
+            OpenDoc already imports, edits, lays out, renders, and writes real DOCX files,
+            but it is not yet a stable SDK or a pixel-perfect replacement for Word.
+            Fidelity is tracked with generated fixtures, LibreOffice comparisons, and CI
+            gates rather than feature checkboxes.
+          </p>
+          <div class="status-links">
+            <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/18-SUPPORT-MATRIX.md">Support matrix</a>
+            <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/06-ROADMAP-AND-DELIVERY.md">Roadmap</a>
+            <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/14-EXECUTION-TRACKER.md">Execution tracker</a>
           </div>
         </div>
-        <div id="pages" class="pages"></div>
-      </main>
-    </div>
+      </section>
 
-    <footer class="footer">
-      <span class="foot-left">
-        <span id="status" class="status">Loading engine…</span>
-        <span class="stats" id="stats" hidden>
-          <span id="statWords">0 words</span>
-          <span class="dot">·</span>
-          <span id="statParas">0 paragraphs</span>
-        </span>
-      </span>
-      <span class="foot-right">
-        <span id="statPages" class="stat-pages" hidden>Page 1 of 1</span>
-        <span class="zoom">
-          <button id="zoomOut" type="button" class="zbtn" title="Zoom out" aria-label="Zoom out"><svg viewBox="0 0 24 24"><path d="M19 13H5v-2h14z"/></svg></button>
-          <select id="zoom" aria-label="Zoom level">
-            <option value="0.75">75%</option>
-            <option value="1" selected>100%</option>
-            <option value="1.25">125%</option>
-            <option value="1.5">150%</option>
-            <option value="2">200%</option>
-          </select>
-          <button id="zoomIn" type="button" class="zbtn" title="Zoom in" aria-label="Zoom in"><svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z"/></svg></button>
-        </span>
-      </span>
+      <section class="section horizon">
+        <div class="section-intro">
+          <span class="section-kicker">Where the project is going</span>
+          <h2>DOCX fidelity first. A broader document platform next.</h2>
+          <p>
+            The current priority is trustworthy DOCX compatibility. These are
+            planned directions, not claims about today’s release.
+          </p>
+        </div>
+        <div class="horizon-grid">
+          <article class="current">
+            <span>Current focus</span>
+            <h3>Deep DOCX fidelity</h3>
+            <p>
+              Close layout, pagination, round-trip, and interaction gaps against
+              generated corpus evidence and established desktop renderers.
+            </p>
+          </article>
+          <article>
+            <span>Future goal</span>
+            <h3>Stable SDK release</h3>
+            <p>
+              Versioned Rust and WebAssembly APIs, self-hostable packages, and
+              durable embedding contracts for production applications.
+            </p>
+          </article>
+          <article>
+            <span>Future goal</span>
+            <h3>More document formats</h3>
+            <p>
+              Extend the normalized runtime beyond DOCX to ODT, plain text, and
+              additional document formats without forking the editing engine.
+            </p>
+          </article>
+          <article>
+            <span>Future goal</span>
+            <h3>Native PDF export</h3>
+            <p>
+              Produce PDF from the engine’s own deterministic layout and display
+              list rather than routing documents through a browser print path.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="final-cta">
+        <span class="section-kicker">See the engine, not a mockup</span>
+        <h2>Open the live editor with a real DOCX.</h2>
+        <p>Explore rendering, selection, formatting, tables, links, undo/redo, and save—all client-side.</p>
+        <div class="hero-actions">
+          <a class="button button-primary" href="./editor.html?demo=1">Load the sample <span aria-hidden="true">→</span></a>
+          <a class="button button-secondary" href="https://github.com/CasualOffice/opendoc">View source on GitHub</a>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <a class="brand" href="./"><span class="brand-mark" aria-hidden="true">O</span><span>OpenDoc</span></a>
+      <p>Open-source document infrastructure by <a href="https://github.com/CasualOffice">CasualOffice</a>.</p>
+      <div>
+        <a href="./llms.txt">llms.txt</a>
+        <a href="https://github.com/CasualOffice/opendoc/blob/main/LICENSE">Apache-2.0</a>
+        <a href="https://github.com/CasualOffice/opendoc">GitHub</a>
+      </div>
     </footer>
-
-    <script type="module" src="./src/main.js"></script>
   </body>
 </html>

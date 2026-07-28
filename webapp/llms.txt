@@ -1,0 +1,45 @@
+# OpenDoc
+
+> OpenDoc is an open-source Rust document runtime for deterministic, loss-aware
+> DOCX import, editing, layout, rendering, and export across native,
+> WebAssembly, and headless hosts.
+
+OpenDoc is developed by CasualOffice and licensed under Apache-2.0. The engine,
+not the browser DOM, owns document state and layout. Host applications own
+storage, network, authentication, fonts, telemetry, and product UI policy. No
+server, React dependency, or collaboration provider is required.
+
+OpenDoc is pre-release. It handles real DOCX documents and powers a live
+client-side browser editor, but it is not yet a stable public SDK or a
+pixel-perfect replacement for Microsoft Word. Consult the support matrix and
+execution tracker before relying on a specific fidelity claim.
+
+The current priority is DOCX fidelity. Future goals include a stable SDK
+release, ODT/plain-text and other document-format support, and native PDF export
+from the runtime's deterministic layout/display-list pipeline. These are roadmap
+directions, not currently supported features.
+
+## Primary links
+
+- Project overview: https://opendoc.casualoffice.org/
+- Live sample: https://opendoc.casualoffice.org/editor.html?demo=1
+- Browser editor: https://opendoc.casualoffice.org/editor.html
+- Source repository: https://github.com/CasualOffice/opendoc
+- Architecture: https://github.com/CasualOffice/opendoc/blob/main/docs/02-ARCHITECTURE.md
+- SDK API direction: https://github.com/CasualOffice/opendoc/blob/main/docs/05-SDK-API-SPEC.md
+- Support matrix: https://github.com/CasualOffice/opendoc/blob/main/docs/18-SUPPORT-MATRIX.md
+- Roadmap: https://github.com/CasualOffice/opendoc/blob/main/docs/06-ROADMAP-AND-DELIVERY.md
+- Execution tracker: https://github.com/CasualOffice/opendoc/blob/main/docs/14-EXECUTION-TRACKER.md
+- License: https://github.com/CasualOffice/opendoc/blob/main/LICENSE
+
+## Technical scope
+
+- OOXML package admission with explicit path, size, expansion, and resource bounds.
+- Normalized editable document model with styles, sections, tables, drawings,
+  links, fields, notes, headers/footers, comments, revisions, bookmarks, and
+  content controls.
+- Semantic DOCX writer plus byte-identical reconstruction for unedited packages.
+- Rust text shaping, pagination, display-list composition, CPU raster rendering,
+  hit testing, model-anchored selection, command-based editing, and undo/redo.
+- Rust-native, wasm32, and headless execution targets with host-populated font
+  and resource seams.
