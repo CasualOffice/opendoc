@@ -88,7 +88,8 @@ The following are materially implemented and should not be listed as open gaps:
 - `PAGE` and `NUMPAGES` recomputation in body content, headers/footers, inline
   text boxes, and anchored text boxes;
 - positional tabs (including TOC dot leaders), literal tabs in `w:t`, formatted
-  symbols, run character scale, and exact-line paint containment;
+  symbols, run character scale, exact-line paint containment, visible note
+  reference marks, and bounded footnote/endnote pagination;
 - theme color resolution, system/host font fallback, and CJK metric/advance
   corrections on the supported host path;
 - page background paint when the host creates the surface with the document
@@ -102,9 +103,9 @@ still use bounded approximations.
 
 | Priority | Gap | User-visible consequence | Primary evidence |
 | --- | --- | --- | --- |
-| P0 | Modeled inline leaves are omitted by layout | Notes, object previews, math fallback, and special hyphens can be invisible | `flow.rs::collect_items` catch-all |
+| P0 | Modeled inline leaves are omitted by layout | Object previews, math fallback, and special hyphens can be invisible | `flow.rs::collect_items` catch-all |
 | P0 | `altChunk` occupies no layout space | Referenced HTML/RTF/text/sub-document content is preserved but absent from render | `flow.rs` `BlockNode::AltChunk(_) => {}` |
-| P0 | Footnote/endnote placement is absent | Reference marks and note bodies do not render or reserve page space | `paginate.rs::build_page`; `Page::footnotes` |
+| P1 | Footnote/endnote placement is bounded, not Word-complete | Common note references and bodies render, but separator customization, footnote-only trailing pages, and full section policy remain approximations | `notes.rs`; `62-FOOTNOTE-ENDNOTE-PAGINATION-DESIGN.md` |
 | P1 | Square-family exclusion is only local/bounded | Cross-paragraph, page-relative, contour, and overlapping-float cases can still diverge | `flow.rs::shape_with_float_exclusions` |
 | P1 | Table style cascade and advanced table geometry are not consumed | Styled tables lose conditional fills/borders/fonts; floating/bidi/spaced tables become inline approximations | `cascade.rs`; `flow.rs::flow_table` |
 | P1 | Paragraph base direction and per-script run slots are not selected | Arabic/Hebrew/mixed-script layout and East Asian/complex-script typography can use wrong direction, face, weight, or size | `flow.rs::line_constraints`, `requested_family` |
@@ -127,8 +128,6 @@ catch-all silently ignores several valid `InlineNode` variants:
   preview;
 - `Math` — the retained OMML and best-effort `m:t` text fallback round-trip, but
   neither is shown;
-- `NoteReference` — the reference glyph is absent, before considering note-body
-  pagination;
 - `NoBreakHyphen` and `SoftHyphen` — visible/break semantics are absent;
 - comment, bookmark, move, and range markers — zero-width markers may correctly
   remain non-painting, but comments additionally lack any visible review
@@ -155,27 +154,36 @@ relinked, but it contributes zero height and no fallback representation.
 Each slice needs body, header, footer, nested-cell, and text-box tests where the
 node is valid in that context.
 
-### 2. Footnotes and endnotes are modeled but not paginated
+### 2. Footnotes and endnotes have bounded pagination support
 
-The model stores footnote/endnote definitions and inline references. `Page`
-already has a `footnotes` band, but `paginate.rs::build_page` initializes it to
-an empty vector and there is no later placement pass. `NoteReference` is also
-dropped by inline collection.
+The note path is now a dedicated layout pass (`notes.rs`) over the section/column
+paginator. Inline note references produce visible superscript markers and carry a
+side-channel marker into pagination. Footnote definitions flow through the shared
+block pipeline, reserve a page-local bottom band, and run through a bounded
+monotonic fixed-point loop so reference pages shrink without body/note overlap.
+The collector walks placed body fragments, so split paragraphs and split table
+cell rows assign the note to the page that actually contains the reference. The
+pass is section-aware, uses placed-fragment section provenance on mixed
+continuous-section pages, supports multi-column sections, and places
+multi-column note bodies under the reference column rather than across the full
+page.
 
-This requires more than painting the reference number. A correct implementation
-must:
+Long multi-block footnotes now continue onto later existing body pages: unplaced
+note blocks are carried per section/column band, continuation pages reserve their
+own footnote band even when they have no new body reference, and a single block
+taller than the available band is consumed in place with bounded overflow so
+pagination terminates. Endnote bodies are appended once in first-reference order
+after the final body section and paginate as ordinary body content rather than in
+`Page::footnotes`.
 
-- resolve the reference mark and note definition;
-- flow note content through the shared block pipeline;
-- reserve a bottom band on the page containing the reference;
-- repaginate when the reservation moves body content and therefore moves the
-  reference;
-- handle split/continued notes within explicit bounds;
-- place endnotes at the configured section/document boundary;
-- honor per-section numbering, restart, format, and placement policy.
+Remaining fidelity gaps:
 
-This is a fixed-point pagination feature and should not be mixed into the small
-inline-leaf PR.
+- custom footnote separator and continuation-separator rendering;
+- creating additional footnote-only trailing pages after body pages are
+  exhausted;
+- full Word-compatible per-section `footnotePr`/`endnotePr` placement,
+  numbering, restart, and `docEnd`/`sectEnd` policy;
+- visual corpus baselines for real-producer note-heavy documents.
 
 ### 3. Float wrapping remains bounded and paragraph-local
 
@@ -498,9 +506,9 @@ proves a smaller safe combination.
    - table `basedOn`, look flags, conditional regions, and cell/paragraph/run
      overlays;
    - then cell spacing/bidi/alignment; floating tables last.
-6. **Footnote/endnote pagination**
-   - reference marks, note band, fixed point, continuation, endnote placement,
-     and per-section policy.
+6. **Footnote/endnote fidelity**
+   - separator/continuation-separator paint, footnote-only trailing pages,
+     full per-section note policy, and real-corpus visual baselines.
 7. **RTL/per-script typography**
     - paragraph base direction, per-script font slots, complex-script
       bold/italic/size, then language-specific line rules.

@@ -65,13 +65,15 @@ leaders, line boxes, images, or table placement.
 | Medical form | 3 | 3 | 4 | Styled checkbox glyphs and row containment fixed; row/pagination parity remains |
 | Chinese SDS | 17 | 18 | 16 | Overpaint/box escape fixed; conservative readable line containment exposes residual balancing drift |
 | Sample Document | 26 | 26 | 26 | Mixed geometry, TOC, furniture, inline images, and square wrap verified |
-| demo | 8 | 8 | 8 | Count remains stable; notes and mixed-object behavior remain incomplete |
+| demo | 8 | 8 | 8 | Count remains stable; mixed-object behavior remains incomplete |
 
 The last measured text-only matches were 100% Class notes, 89% medical, 99%
 Chinese SDS, 97% Sample Document, and 94% demo. These are diagnostic numbers,
 not release claims. Sample Document has the correct page count while its TOC,
 later-section furniture, mixed surface, inline images, and float wrapping are
-now verified. Its equations and notes remain visibly absent.
+now verified. Equations remain visibly absent; notes now have bounded reference,
+footnote-band, continuation, and endnote-append support, with separator and full
+section-policy fidelity still open.
 
 ## Fixture feature inventory
 
@@ -280,7 +282,9 @@ box intersections by page/node is still required.
 The exact Sample fixture confirms:
 
 - all three OMML equations are invisible;
-- note reference marks and footnote/endnote bodies are absent;
+- note reference marks and common footnote/endnote bodies now render through the
+  bounded note-pagination path; separator customization and full per-section note
+  policy remain open;
 - native checked SDT checkboxes do not show their checked presentation;
 - floating tables remain inline approximations;
 - the two-column section and separator are already strong;
@@ -350,7 +354,7 @@ approved equivalents for:
 - exact line spacing with CJK, super/subscript, and an explicit clip expectation;
 - auto-height and exact-height table rows with inline images;
 - checked and unchecked SDT controls;
-- footnote/endnote reference and bottom-band pagination.
+- note separator/continuation-separator paint and full per-section note policy.
 
 Each golden must record page dimensions, placed geometry, display-list
 primitives, page count, font set, and a reviewed reference image.
