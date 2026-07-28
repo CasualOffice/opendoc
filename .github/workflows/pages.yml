@@ -6,7 +6,7 @@ name: Deploy developer site and WASM editor (Pages)
 
 on:
   push:
-    branches: [main, codex/visual-fidelity-containment-links]
+    branches: [main]
     paths:
       - "webapp/**"
       - "docs/assets/editor.jpg"
