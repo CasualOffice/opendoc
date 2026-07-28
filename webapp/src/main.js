@@ -86,6 +86,11 @@ const cellShadeNone = document.getElementById("cellShadeNone");
 const cellVAlign = document.getElementById("cellVAlign");
 const cellBorderColor = document.getElementById("cellBorderColor");
 const tableBorderColor = document.getElementById("tableBorderColor");
+const tableAlign = document.getElementById("tableAlign");
+const insertTableBtn = document.getElementById("insertTableBtn");
+const insertTableMenu = document.getElementById("insertTableMenu");
+const gridPicker = document.getElementById("gridPicker");
+const gridLabel = document.getElementById("gridLabel");
 const indentDecBtn = document.getElementById("indentDec");
 const indentIncBtn = document.getElementById("indentInc");
 const bulletListBtn = document.getElementById("bulletList");
@@ -1027,8 +1032,10 @@ function updateToolbar() {
   const listKind = hasSel && doc ? doc.listStyleAt(selection.focus.node) : "";
   bulletListBtn.setAttribute("aria-pressed", String(listKind === "bullet"));
   numberedListBtn.setAttribute("aria-pressed", String(listKind === "numbered"));
-  // The Table button (cell/table formatting) is enabled only inside a table.
+  // The Table button (cell/table formatting) is enabled only inside a table;
+  // Insert-table needs just a caret to drop the new table after.
   tableBtn.disabled = !(hasSel && doc && doc.inTable(selection.focus.node));
+  insertTableBtn.disabled = !(hasSel && doc);
 }
 
 /** Fills the paragraph-style dropdown from the open document's styles. */
@@ -1315,6 +1322,45 @@ for (const b of tableFmtMenu.querySelectorAll("[data-tableborder]")) {
     runNodeEdit((n) => doc.setTableBorder(n, b.dataset.tableborder, r, g, bl, 8));
   });
 }
+for (const b of tableAlign.querySelectorAll("button")) {
+  onButton(b, () => runNodeEdit((n) => doc.setTableAlignment(n, b.dataset.talign)));
+}
+
+// -- Insert table: a hover grid picker (Google-Docs style) --------------------
+const GRID_ROWS = 8;
+const GRID_COLS = 10;
+for (let r = 1; r <= GRID_ROWS; r++) {
+  for (let c = 1; c <= GRID_COLS; c++) {
+    const cell = document.createElement("button");
+    cell.type = "button";
+    cell.className = "gc";
+    cell.dataset.r = String(r);
+    cell.dataset.c = String(c);
+    gridPicker.appendChild(cell);
+  }
+}
+function highlightGrid(rows, cols) {
+  for (const cell of gridPicker.children) {
+    const on = Number(cell.dataset.r) <= rows && Number(cell.dataset.c) <= cols;
+    cell.classList.toggle("on", on);
+  }
+  gridLabel.textContent = rows ? `${cols} × ${rows}` : "Insert table";
+}
+gridPicker.addEventListener("pointermove", (e) => {
+  const cell = e.target.closest(".gc");
+  if (cell) highlightGrid(Number(cell.dataset.r), Number(cell.dataset.c));
+});
+gridPicker.addEventListener("pointerleave", () => highlightGrid(0, 0));
+gridPicker.addEventListener("pointerdown", (e) => {
+  const cell = e.target.closest(".gc");
+  if (!cell || !selection || !doc) return;
+  e.preventDefault();
+  const rows = Number(cell.dataset.r);
+  const cols = Number(cell.dataset.c);
+  runEdit(() => doc.insertTable(selection.focus.node, rows, cols));
+  closePopover(insertTablePopover);
+});
+const insertTablePopover = registerPopover(insertTableBtn, insertTableMenu, () => highlightGrid(0, 0));
 
 // Indentation: left/right absolute, and a first-line/hanging "special" indent
 // (setFirstLineIndent encodes hanging as a negative value, 0 clears both).
