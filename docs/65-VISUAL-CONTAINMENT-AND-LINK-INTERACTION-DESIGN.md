@@ -112,17 +112,23 @@ pagination-aware exclusions. The implementation uses a bounded fixed-point:
 4. stop when float rectangles and affected line measures stabilize, or after
    three passes.
 
-Multiple floats contribute a union of horizontal exclusion intervals per line.
-The supported envelope is explicit rectangular geometry with left/right side
-placement. Unsupported contours remain rectangular. On non-convergence, the
-float becomes a conservative `topAndBottom` barrier for the affected band so
-text cannot overpaint it. Incremental pagination may fall back to full
-pagination for documents containing these cross-paragraph exclusions until a
-stable cache key includes the exclusion map.
+Because a page/margin-relative object can sit above its anchoring paragraph,
+every top-level paragraph whose origin falls inside the resolved vertical band
+is considered, including an earlier paragraph. (A paragraph that begins above
+the float needs a future line-offset exclusion rather than an incorrect
+whole-paragraph shift.) Multiple edge-anchored floats contribute the union (the
+maximum occupied interval per edge) on each line. The supported envelope is
+explicit rectangular geometry with left/right side placement. Unsupported
+contours remain rectangular. On non-convergence, the widest and longest
+observed exclusion on each edge is retained for one terminating pagination pass
+so text cannot overpaint any observed float band. Incremental pagination
+deliberately falls back to the same full fixed point whenever these
+cross-paragraph exclusions are present.
 
 Acceptance:
 
-- the page-7 arrows exclude every intersecting following body line;
+- the page-7 arrows exclude every intersecting body line even though the right
+  arrow is anchored in a later paragraph;
 - multiple exclusion rectangles combine deterministically;
 - pagination terminates and repeated layout is byte-for-byte stable.
 

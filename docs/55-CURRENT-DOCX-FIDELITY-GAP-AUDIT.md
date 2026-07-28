@@ -185,7 +185,7 @@ Remaining fidelity gaps:
   numbering, restart, and `docEnd`/`sectEnd` policy;
 - visual corpus baselines for real-producer note-heavy documents.
 
-### 3. Float wrapping remains bounded and paragraph-local
+### 3. Float wrapping is bounded; contours and nested cross-paragraph cases remain
 
 The model carries `None`, `Square`, `Tight`, `Through`, and `TopAndBottom` plus
 four wrap distances. `TopAndBottom` inserts a local vertical barrier.
@@ -194,23 +194,30 @@ explicit geometry use a resumable line breaker that narrows only intersecting
 lines and restores the full measure below the object. Tight/through currently
 use the square bounding box rather than a contour.
 
-Consequences:
+The document driver now adds a bounded three-pass page-coupled fixed point for
+top-level body pictures, text boxes, and groups. Page/margin/column-relative
+square-family rectangles exclude every top-level paragraph whose origin falls
+inside the resolved vertical band, including paragraphs before a later anchor,
+and overlapping edge intervals union deterministically. Cached pagination uses
+the identical fixed point.
 
-- exclusions do not continue into later paragraphs;
+Remaining consequences:
+
 - tight/through wrapping does not use an authored contour;
-- page/margin/alignment-relative objects do not push later paragraphs;
-- multiple overlapping side floats have no exclusion union;
-- the current VML body safety policy must keep unsupported side/page cases
-  inline to avoid overprint.
+- cross-paragraph exclusion does not yet descend into tables, text boxes, or
+  running bands;
+- a paragraph that begins above a later float needs line-offset exclusion;
+- the current VML body safety policy still keeps unsupported side/page cases
+  inline;
+- exact character-relative and non-edge-aligned side wrapping remain deferred.
 
 This affects body content, nested table cells, text boxes, headers, and footers;
 the shared flow path propagates both the existing local support and the
 remaining limitation.
 
-**Next bounded design:** extend the existing line-interval seam with
-cross-paragraph lifetime and a deterministic page-coupled convergence rule
-before enabling page-relative body VML floats. Multiple-float interval unions
-and tight/through contours follow.
+**Next bounded design:** extend the page-coupled map through nested fragment
+owners before enabling page-relative body VML floats. Tight/through contours
+follow.
 
 ### 4. Headers and footers are section-scoped
 

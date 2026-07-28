@@ -37,20 +37,26 @@
 
 use std::collections::BTreeMap;
 
+use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     BlockNode, Document, GroupChild, HeaderFooterKind, HeaderFooterRef, InlineNode, NoteId,
     NoteKind, SectionBoundary,
 };
 
-use crate::anchor::{header_float_reserve_for_section, place_floats};
+use crate::anchor::{body_wrap_rects, header_float_reserve_for_section, place_floats};
+use crate::block::BlockFragment;
 use crate::columns::{
     ColumnLayout, SectionRun, column_layout, paginate_columns, section_starts_new_page,
 };
-use crate::flow::{build_galley_cached, build_galley_for_blocks, flow_header_footer};
+use crate::flow::{
+    ParagraphFloatExclusion, ParagraphFloatExclusions, build_galley_cached,
+    build_galley_for_blocks, build_galley_for_blocks_with_exclusions, flow_header_footer,
+};
 use crate::incremental::{DirtySet, GalleyCache};
 use crate::notes::{paginate_section_footnotes, run_has_body_footnotes};
 use crate::paginate::{PageConfig, resolve_anchored_fields, resolve_fields};
 use crate::running::{HeaderFooter, RunningContent, place_running_content_on_page};
+use crate::text::InlineFloatSide;
 use crate::units::{Size, Twip};
 use casual_doc_model::v1::SectionId;
 
@@ -254,6 +260,24 @@ fn build_section_runs(
     shaper: &dyn crate::text::LineShaper,
     plans: &[SectionPlan],
 ) -> Vec<SectionRun> {
+    build_section_runs_inner(document, shaper, plans, None)
+}
+
+fn build_section_runs_with_exclusions(
+    document: &Document,
+    shaper: &dyn crate::text::LineShaper,
+    plans: &[SectionPlan],
+    exclusions: &ParagraphFloatExclusions,
+) -> Vec<SectionRun> {
+    build_section_runs_inner(document, shaper, plans, Some(exclusions))
+}
+
+fn build_section_runs_inner(
+    document: &Document,
+    shaper: &dyn crate::text::LineShaper,
+    plans: &[SectionPlan],
+    exclusions: Option<&ParagraphFloatExclusions>,
+) -> Vec<SectionRun> {
     let sections = &document.definitions().sections;
     let body = document.body();
     if sections.is_empty() {
@@ -261,7 +285,7 @@ fn build_section_runs(
         let content = config.content_area();
         let layout = ColumnLayout::single(content);
         let blocks = body_with_appended_endnotes(document, body, body);
-        let galley = build_galley_for_blocks(document, shaper, &blocks, layout.flow_width());
+        let galley = build_body_galley(document, shaper, &blocks, layout.flow_width(), exclusions);
         return vec![SectionRun {
             config,
             layout,
@@ -281,6 +305,7 @@ fn build_section_runs(
             plan_for_section(plans, boundary.id),
             boundary,
             &body[start..end_excl],
+            exclusions,
             &mut runs,
         );
         start = end_excl;
@@ -294,6 +319,7 @@ fn build_section_runs(
             plan_for_section(plans, last.id),
             last,
             &trailing,
+            exclusions,
             &mut runs,
         );
     }
@@ -450,6 +476,7 @@ fn push_section_run(
     plan: &SectionPlan,
     boundary: &SectionBoundary,
     blocks: &[BlockNode],
+    exclusions: Option<&ParagraphFloatExclusions>,
     runs: &mut Vec<SectionRun>,
 ) {
     if blocks.is_empty() {
@@ -458,12 +485,12 @@ fn push_section_run(
     let config = plan.config;
 
     let layout = column_layout(&boundary.columns, config.content_area());
-    let galley = build_galley_for_blocks(document, shaper, blocks, layout.flow_width());
+    let galley = build_body_galley(document, shaper, blocks, layout.flow_width(), exclusions);
     let column_galleys = if layout.has_unequal_widths() {
         layout
             .flow_widths()
             .into_iter()
-            .map(|width| build_galley_for_blocks(document, shaper, blocks, width))
+            .map(|width| build_body_galley(document, shaper, blocks, width, exclusions))
             .collect()
     } else {
         Vec::new()
@@ -475,6 +502,21 @@ fn push_section_run(
         column_galleys,
         starts_new_page: section_starts_new_page(boundary),
     });
+}
+
+fn build_body_galley(
+    document: &Document,
+    shaper: &dyn crate::text::LineShaper,
+    blocks: &[BlockNode],
+    width: Twip,
+    exclusions: Option<&ParagraphFloatExclusions>,
+) -> Vec<BlockFragment> {
+    exclusions.map_or_else(
+        || build_galley_for_blocks(document, shaper, blocks, width),
+        |exclusions| {
+            build_galley_for_blocks_with_exclusions(document, shaper, blocks, width, exclusions)
+        },
+    )
 }
 
 /// Lays a whole [`Document`] out into a finished, ready-to-render
@@ -548,6 +590,46 @@ fn finish_pagination(
     plans: &[SectionPlan],
     runs: &[SectionRun],
 ) -> crate::page::PaginatedLayout {
+    let mut layout = finish_pagination_pass(document, shaper, plans, runs);
+    let mut exclusions = paragraph_float_exclusions(document, shaper, plans, &layout);
+    if exclusions.is_empty() {
+        return layout;
+    }
+
+    // Float placement and paragraph line measures depend on each other. Three
+    // bounded passes cover the practical page-relative/grouped-shape cases while
+    // making termination independent of document input.
+    let mut previous_exclusions = exclusions.clone();
+    for _ in 0..3 {
+        let applied_exclusions = exclusions.clone();
+        let runs = build_section_runs_with_exclusions(document, shaper, plans, &exclusions);
+        let next = finish_pagination_pass(document, shaper, plans, &runs);
+        let next_exclusions = paragraph_float_exclusions(document, shaper, plans, &next);
+        if next_exclusions == exclusions {
+            return next;
+        }
+        layout = next;
+        previous_exclusions = applied_exclusions;
+        exclusions = next_exclusions;
+        if exclusions.is_empty() {
+            return layout;
+        }
+    }
+
+    // Non-convergence uses a conservative edge envelope: the widest exclusion
+    // observed on either side persists for the greatest observed clearance. One
+    // final pagination cannot paint text into a previously observed float band.
+    let conservative = conservative_exclusions(&previous_exclusions, &exclusions);
+    let runs = build_section_runs_with_exclusions(document, shaper, plans, &conservative);
+    finish_pagination_pass(document, shaper, plans, &runs)
+}
+
+fn finish_pagination_pass(
+    document: &Document,
+    shaper: &dyn crate::text::LineShaper,
+    plans: &[SectionPlan],
+    runs: &[SectionRun],
+) -> crate::page::PaginatedLayout {
     let fallback_config = plans[0].config;
     let mut layout = if runs.iter().any(run_has_body_footnotes) {
         paginate_section_footnotes(document, shaper, runs)
@@ -577,6 +659,111 @@ fn finish_pagination(
     resolve_anchored_fields(&mut layout, shaper);
 
     layout
+}
+
+fn paragraph_float_exclusions(
+    document: &Document,
+    shaper: &dyn crate::text::LineShaper,
+    plans: &[SectionPlan],
+    layout: &crate::page::PaginatedLayout,
+) -> ParagraphFloatExclusions {
+    let wraps = body_wrap_rects(layout, document, shaper, &plans[0].config);
+    if wraps.is_empty() {
+        return ParagraphFloatExclusions::new();
+    }
+
+    let body_order: BTreeMap<NodeId, usize> = document
+        .body()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, block)| match block {
+            BlockNode::Paragraph(paragraph) => Some((paragraph.id, index)),
+            _ => None,
+        })
+        .collect();
+    let mut paragraphs = Vec::new();
+    for (page_index, page) in layout.pages.iter().enumerate() {
+        for placed in &page.placed {
+            if let BlockFragment::Paragraph { id, .. } = &placed.fragment {
+                paragraphs.push((page_index, *id, placed.rect));
+            }
+        }
+    }
+
+    let mut exclusions = ParagraphFloatExclusions::new();
+    for wrap in wraps {
+        if !body_order.contains_key(&wrap.source) {
+            continue;
+        }
+        let left = wrap.rect.origin.x - emu_to_twip(wrap.distances.start_emu);
+        let right = wrap.rect.right() + emu_to_twip(wrap.distances.end_emu);
+        let top = wrap.rect.origin.y - emu_to_twip(wrap.distances.top_emu);
+        let bottom = wrap.rect.bottom() + emu_to_twip(wrap.distances.bottom_emu);
+        for (page_index, paragraph, rect) in &paragraphs {
+            if !body_order.contains_key(paragraph) {
+                continue;
+            }
+            // Page- and margin-relative objects can sit above their anchoring
+            // paragraph (the right arrow in demo.docx is one such object), so
+            // every overlapping top-level paragraph on the resolved page must be
+            // considered. The bounded fixed point below makes that backward
+            // dependency deterministic.
+            if *page_index != wrap.page_index
+                || top > rect.origin.y
+                || bottom <= rect.origin.y
+                || right <= rect.origin.x
+                || left >= rect.right()
+            {
+                continue;
+            }
+            let paragraph_mid = rect.origin.x.raw() + rect.size.width.raw() / 2;
+            let float_mid = left.raw() + (right.raw() - left.raw()) / 2;
+            let (side, raw_width) = if float_mid <= paragraph_mid {
+                (InlineFloatSide::Left, right.raw() - rect.origin.x.raw())
+            } else {
+                (InlineFloatSide::Right, rect.right().raw() - left.raw())
+            };
+            let max_width = (rect.size.width.raw() - 1).max(1);
+            let exclusion = ParagraphFloatExclusion {
+                side,
+                width: Twip(raw_width.clamp(1, max_width)),
+                height: Twip((bottom.raw() - rect.origin.y.raw()).max(1)),
+            };
+            let values = exclusions.entry(*paragraph).or_default();
+            if !values.contains(&exclusion) {
+                values.push(exclusion);
+            }
+        }
+    }
+    exclusions
+}
+
+fn conservative_exclusions(
+    first: &ParagraphFloatExclusions,
+    second: &ParagraphFloatExclusions,
+) -> ParagraphFloatExclusions {
+    let mut result = ParagraphFloatExclusions::new();
+    for source in [first, second] {
+        for (paragraph, exclusions) in source {
+            for exclusion in exclusions {
+                let values = result.entry(*paragraph).or_default();
+                if let Some(existing) = values
+                    .iter_mut()
+                    .find(|existing| existing.side == exclusion.side)
+                {
+                    existing.width = existing.width.max(exclusion.width);
+                    existing.height = existing.height.max(exclusion.height);
+                } else {
+                    values.push(*exclusion);
+                }
+            }
+        }
+    }
+    result
+}
+
+fn emu_to_twip(emu: i64) -> Twip {
+    Twip((emu / 635).clamp(0, i64::from(i32::MAX)) as i32)
 }
 
 /// [`build_section_runs`], but the common **single-section** body is flowed through
@@ -789,6 +976,230 @@ mod cached_pagination_tests {
                 .flat_map(|page| page.placed.iter())
                 .any(|placed| placed.fragment.node_id() == node(9_101)),
             "the referenced endnote body should remain visible through the cached entry point"
+        );
+    }
+}
+
+#[cfg(test)]
+mod cross_paragraph_float_tests {
+    use super::*;
+    use crate::shape::ParleyShaper;
+    use casual_doc_model::v1::{
+        AnchorHorizontal, AnchorVertical, AnchoredDrawing, Definitions, DrawingAnchor, Extent,
+        HorizontalAlign, HorizontalAnchor, HorizontalPosition, InlineNode, MediaId, MediaReference,
+        Paragraph, ParagraphProperties, Run, RunProperties, VerticalAlign, VerticalAnchor,
+        VerticalPosition, WrapDistances, WrapMode,
+    };
+
+    fn node(id: u64) -> NodeId {
+        NodeId::from_parts(81, id).unwrap()
+    }
+
+    fn paragraph(id: u64, text: String, extra: Vec<InlineNode>) -> BlockNode {
+        let mut inlines = vec![InlineNode::Run(Run {
+            id: node(id + 100),
+            properties: RunProperties::default(),
+            text,
+        })];
+        inlines.extend(extra);
+        BlockNode::Paragraph(Paragraph {
+            id: node(id),
+            properties: ParagraphProperties::default(),
+            inlines,
+        })
+    }
+
+    fn floating_document() -> (Document, NodeId) {
+        let media = MediaId::new(node(900));
+        let mut definitions = Definitions::default();
+        definitions.media.insert(
+            media,
+            MediaReference {
+                relationship_id: "rIdFloat".to_owned(),
+                media_type: "image/png".to_owned(),
+                part_name: "word/media/float.png".to_owned(),
+            },
+        );
+        let drawing = InlineNode::AnchoredDrawing(AnchoredDrawing {
+            id: node(901),
+            media,
+            extent: Extent {
+                width_emu: 1_500 * 635,
+                height_emu: 1_800 * 635,
+            },
+            anchor: DrawingAnchor {
+                horizontal: AnchorHorizontal {
+                    relative_from: HorizontalAnchor::Margin,
+                    position: HorizontalPosition::Align(HorizontalAlign::Left),
+                },
+                vertical: AnchorVertical {
+                    relative_from: VerticalAnchor::Paragraph,
+                    position: VerticalPosition::Align(VerticalAlign::Top),
+                },
+                wrap: WrapMode::Square,
+                wrap_distances: WrapDistances::default(),
+                behind_doc: false,
+            },
+            descr: None,
+            relative_height: None,
+        });
+        let target = node(2);
+        let prose = "following paragraph text wraps beside the floating object ".repeat(90);
+        let document = Document::new(
+            node(999),
+            vec![
+                paragraph(1, "anchor".to_owned(), vec![drawing]),
+                paragraph(2, prose, Vec::new()),
+                paragraph(3, "after".to_owned(), Vec::new()),
+            ],
+            definitions,
+        )
+        .unwrap();
+        (document, target)
+    }
+
+    fn backward_margin_float_document() -> (Document, NodeId) {
+        let media = MediaId::new(node(920));
+        let mut definitions = Definitions::default();
+        definitions.media.insert(
+            media,
+            MediaReference {
+                relationship_id: "rIdBackwardFloat".to_owned(),
+                media_type: "image/png".to_owned(),
+                part_name: "word/media/backward-float.png".to_owned(),
+            },
+        );
+        let drawing = InlineNode::AnchoredDrawing(AnchoredDrawing {
+            id: node(921),
+            media,
+            extent: Extent {
+                width_emu: 1_500 * 635,
+                height_emu: 1_800 * 635,
+            },
+            anchor: DrawingAnchor {
+                horizontal: AnchorHorizontal {
+                    relative_from: HorizontalAnchor::Margin,
+                    position: HorizontalPosition::Align(HorizontalAlign::Left),
+                },
+                vertical: AnchorVertical {
+                    relative_from: VerticalAnchor::Margin,
+                    position: VerticalPosition::Align(VerticalAlign::Top),
+                },
+                wrap: WrapMode::Square,
+                wrap_distances: WrapDistances::default(),
+                behind_doc: false,
+            },
+            descr: None,
+            relative_height: None,
+        });
+        let target = node(11);
+        let document = Document::new(
+            node(998),
+            vec![
+                paragraph(
+                    11,
+                    "paragraph before its later anchor must wrap around the margin object "
+                        .repeat(18),
+                    Vec::new(),
+                ),
+                paragraph(12, "later anchor".to_owned(), vec![drawing]),
+            ],
+            definitions,
+        )
+        .unwrap();
+        (document, target)
+    }
+
+    #[test]
+    fn square_float_excludes_intersecting_lines_in_following_paragraph() {
+        let (document, target) = floating_document();
+        let shaper = ParleyShaper::new();
+        let layout = paginate_document(&document, &shaper);
+        assert_eq!(
+            layout,
+            paginate_document(&document, &shaper),
+            "bounded float reflow must be deterministic"
+        );
+
+        let page = &layout.pages[0];
+        let float = page.anchored.first().expect("placed anchored drawing");
+        let placed = page
+            .placed
+            .iter()
+            .find(|placed| placed.fragment.node_id() == target)
+            .expect("following paragraph");
+        let BlockFragment::Paragraph { lines, .. } = &placed.fragment else {
+            panic!("target should be a paragraph");
+        };
+
+        let mut shifted = 0;
+        let mut restored = 0;
+        for line in &lines.lines {
+            let Some(run) = line.runs.first() else {
+                continue;
+            };
+            let baseline = placed.rect.origin.y + run.origin.y;
+            let x = placed.rect.origin.x + run.origin.x;
+            if baseline < float.rect.bottom() {
+                assert!(
+                    x >= float.rect.right(),
+                    "line at y={} starts at {}, inside float ending at {}",
+                    baseline.raw(),
+                    x.raw(),
+                    float.rect.right().raw()
+                );
+                shifted += 1;
+            } else if run.origin.x == Twip::ZERO {
+                restored += 1;
+            }
+        }
+        assert!(
+            shifted >= 2,
+            "the float should affect multiple following lines"
+        );
+        assert!(
+            restored >= 1,
+            "full paragraph measure should return below the float"
+        );
+
+        let mut cache = GalleyCache::new();
+        let cached =
+            paginate_document_cached(&document, &shaper, &mut cache, &DirtySet::everything());
+        assert_eq!(
+            cached, layout,
+            "cached entry point uses the same fixed point"
+        );
+    }
+
+    #[test]
+    fn margin_float_can_exclude_a_paragraph_before_its_anchor() {
+        let (document, target) = backward_margin_float_document();
+        let layout = paginate_document(&document, &ParleyShaper::new());
+        let page = &layout.pages[0];
+        let float = page.anchored.first().expect("placed anchored drawing");
+        let placed = page
+            .placed
+            .iter()
+            .find(|placed| placed.fragment.node_id() == target)
+            .expect("paragraph before the anchor");
+        let BlockFragment::Paragraph { lines, .. } = &placed.fragment else {
+            panic!("target should be a paragraph");
+        };
+
+        let intersecting: Vec<_> = lines
+            .lines
+            .iter()
+            .filter_map(|line| line.runs.first())
+            .filter(|run| placed.rect.origin.y + run.origin.y < float.rect.bottom())
+            .collect();
+        assert!(
+            intersecting.len() >= 2,
+            "the margin float should intersect multiple earlier lines"
+        );
+        assert!(
+            intersecting
+                .iter()
+                .all(|run| { placed.rect.origin.x + run.origin.x >= float.rect.right() })
         );
     }
 }

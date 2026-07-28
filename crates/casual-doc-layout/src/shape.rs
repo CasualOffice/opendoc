@@ -1355,6 +1355,69 @@ mod tests {
     }
 
     #[test]
+    fn simultaneous_edge_floats_union_the_available_line_interval() {
+        let shaper = ParleyShaper::new();
+        let text = "aaaa aaaa aaaa aaaa aaaa ".repeat(30);
+        let max_width = Twip(3_600);
+        let left = Twip(900);
+        let right = Twip(1_100);
+        let float_height = Twip(700);
+        let layout = shaper.shape_paragraph_with_inline_objects(
+            &[run(&text)],
+            &[],
+            &[
+                InlineFloatSpec {
+                    index: 0,
+                    side: InlineFloatSide::Left,
+                    width: left,
+                    height: float_height,
+                },
+                InlineFloatSpec {
+                    index: 0,
+                    side: InlineFloatSide::Right,
+                    width: right,
+                    height: float_height,
+                },
+            ],
+            LineConstraints {
+                max_width,
+                ..LineConstraints::default()
+            },
+            para_range(),
+        );
+
+        let mut y = 0;
+        let mut saw_cleared_line = false;
+        for line in &layout.lines {
+            let start = line.runs.first().map_or(0, |run| run.origin.x.raw());
+            let end = line
+                .runs
+                .iter()
+                .map(|run| {
+                    run.origin.x.raw()
+                        + run
+                            .glyphs
+                            .iter()
+                            .map(|glyph| glyph.advance.raw())
+                            .sum::<i32>()
+                })
+                .max()
+                .unwrap_or(0);
+            if y < float_height.raw() {
+                assert!(start >= left.raw());
+                assert!(end <= max_width.raw() - right.raw() + 2);
+            } else if start == 0 && end > max_width.raw() - right.raw() {
+                saw_cleared_line = true;
+            }
+            y += line.height.raw();
+        }
+        assert!(
+            saw_cleared_line,
+            "a line below both floats should recover the full measure"
+        );
+    }
+
+    #[test]
     fn dense_auto_spacing_preserves_the_authored_sub_single_pitch() {
         let shaper = ParleyShaper::new();
         let scaled = StyledRun {

@@ -51,6 +51,18 @@ use crate::text::{
 };
 use crate::units::{Point, Size, Twip};
 
+/// One page-derived edge exclusion applied at the start of a body paragraph.
+/// These are produced by the bounded cross-paragraph float pass after an initial
+/// pagination and consumed only by the next fixed-point iteration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ParagraphFloatExclusion {
+    pub(crate) side: InlineFloatSide,
+    pub(crate) width: Twip,
+    pub(crate) height: Twip,
+}
+
+pub(crate) type ParagraphFloatExclusions = BTreeMap<NodeId, Vec<ParagraphFloatExclusion>>;
+
 /// Context threaded through the flow: the font resolver, the document's theme
 /// font scheme (needed to turn `w:rFonts@*Theme` slots into concrete families),
 /// and the running font-resolution report.
@@ -96,6 +108,9 @@ struct FlowCtx<'a> {
     /// `a:normAutofit@lnSpcReduction`, in per-100000 units, scoped to the current
     /// text body.
     line_spacing_reduction: u32,
+    /// Page-derived exclusions from body floats that intersect top-level body
+    /// paragraphs. `None` on the initial pagination and in running content.
+    paragraph_float_exclusions: Option<&'a ParagraphFloatExclusions>,
 }
 
 /// Builds a galley of block fragments from a document's body, shaped to fit
@@ -144,6 +159,7 @@ pub fn build_galley_with_report(
         numbering: NumberingState::new(),
         text_scale: 100_000,
         line_spacing_reduction: 0,
+        paragraph_float_exclusions: None,
     };
     let galley = flow_blocks(document.body(), shaper, content_width, &mut ctx);
     (galley, report)
@@ -164,6 +180,26 @@ pub fn build_galley_for_blocks(
     shaper: &dyn LineShaper,
     blocks: &[BlockNode],
     content_width: Twip,
+) -> Vec<BlockFragment> {
+    build_galley_for_blocks_inner(document, shaper, blocks, content_width, None)
+}
+
+pub(crate) fn build_galley_for_blocks_with_exclusions(
+    document: &Document,
+    shaper: &dyn LineShaper,
+    blocks: &[BlockNode],
+    content_width: Twip,
+    exclusions: &ParagraphFloatExclusions,
+) -> Vec<BlockFragment> {
+    build_galley_for_blocks_inner(document, shaper, blocks, content_width, Some(exclusions))
+}
+
+fn build_galley_for_blocks_inner(
+    document: &Document,
+    shaper: &dyn LineShaper,
+    blocks: &[BlockNode],
+    content_width: Twip,
+    exclusions: Option<&ParagraphFloatExclusions>,
 ) -> Vec<BlockFragment> {
     let resolver = FontResolver::new();
     let mut report = FontResolutionReport::new();
@@ -186,6 +222,7 @@ pub fn build_galley_for_blocks(
         numbering: NumberingState::new(),
         text_scale: 100_000,
         line_spacing_reduction: 0,
+        paragraph_float_exclusions: exclusions,
     };
     flow_blocks(blocks, shaper, content_width, &mut ctx)
 }
@@ -245,6 +282,7 @@ fn flow_running_blocks(
         numbering: NumberingState::new(),
         text_scale,
         line_spacing_reduction,
+        paragraph_float_exclusions: None,
     };
     flow_blocks(blocks, shaper, content_width, &mut ctx)
 }
@@ -301,6 +339,7 @@ pub fn build_galley_cached(
         numbering: NumberingState::new(),
         text_scale: 100_000,
         line_spacing_reduction: 0,
+        paragraph_float_exclusions: None,
     };
     cache.begin_build(content_width);
     let mut galley = Vec::new();
@@ -321,6 +360,7 @@ pub fn build_galley_cached(
                     content_width,
                     &mut ctx,
                 );
+                prepend_paragraph_float_exclusions(paragraph.id, &mut items, &ctx);
                 normalize_float_barriers(&mut items);
                 // A numbered paragraph advances the document-order counter and gets a
                 // marker; it bypasses the galley cache (the marker number is not in
@@ -652,6 +692,7 @@ fn flow_blocks(
                 let mut props = ctx.cascade.resolve_paragraph(&paragraph.properties);
                 let mut items = Vec::new();
                 collect_items(&paragraph.inlines, &mut items, shaper, width, ctx);
+                prepend_paragraph_float_exclusions(paragraph.id, &mut items, ctx);
                 normalize_float_barriers(&mut items);
                 let range = ModelRange::new(
                     ModelPos::new(paragraph.id, 0),
@@ -1278,6 +1319,7 @@ fn block_intrinsic(blocks: &[BlockNode], shaper: &dyn LineShaper, ctx: &FlowCtx)
         numbering: NumberingState::default(),
         text_scale: ctx.text_scale,
         line_spacing_reduction: ctx.line_spacing_reduction,
+        paragraph_float_exclusions: None,
     };
     let mut min = 0;
     let mut preferred = 0;
@@ -1974,6 +2016,32 @@ fn float_flow_item(anchor: &DrawingAnchor, extent: &Extent) -> Option<FlowItem<'
         width,
         height,
     })
+}
+
+fn prepend_paragraph_float_exclusions<'a>(
+    paragraph: NodeId,
+    items: &mut Vec<FlowItem<'a>>,
+    ctx: &FlowCtx<'_>,
+) {
+    let Some(exclusions) = ctx
+        .paragraph_float_exclusions
+        .and_then(|by_paragraph| by_paragraph.get(&paragraph))
+    else {
+        return;
+    };
+    // Insert in reverse so the stable, page-derived order is preserved at byte 0.
+    for exclusion in exclusions.iter().rev() {
+        if exclusion.width.raw() > 0 && exclusion.height.raw() > 0 {
+            items.insert(
+                0,
+                FlowItem::FloatExclusion {
+                    side: exclusion.side,
+                    width: exclusion.width,
+                    height: exclusion.height,
+                },
+            );
+        }
+    }
 }
 
 /// Moves paragraph-local float exclusions to the paragraph start and coalesces
@@ -4120,6 +4188,7 @@ mod tests {
             numbering: NumberingState::new(),
             text_scale: 100_000,
             line_spacing_reduction: 0,
+            paragraph_float_exclusions: None,
         };
         let mut items = Vec::new();
         collect_items(
@@ -5201,6 +5270,7 @@ mod tests {
             numbering: NumberingState::new(),
             text_scale: 100_000,
             line_spacing_reduction: 0,
+            paragraph_float_exclusions: None,
         };
         let mut runs = Vec::new();
         collect_runs(&inlines, &mut runs, &mut ctx);
@@ -5255,6 +5325,7 @@ mod tests {
             numbering: NumberingState::new(),
             text_scale: 100_000,
             line_spacing_reduction: 0,
+            paragraph_float_exclusions: None,
         };
         let mut runs = Vec::new();
         collect_runs(&inlines, &mut runs, &mut ctx);
