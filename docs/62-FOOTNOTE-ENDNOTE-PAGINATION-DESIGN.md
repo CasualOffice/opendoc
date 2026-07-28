@@ -180,6 +180,12 @@ reference on that page. The note reserves shared-page body space and places belo
 it. A footnote from an earlier section on a page later owned by a continuous
 section remains deferred until placed fragments carry section provenance.
 
+Implementation note: the fourth Slice D increment extends the bounded reservation
+loop to multi-column section runs. Multi-column footnotes reserve one page-wide
+bottom band through the column paginator and flow note bodies at the section's
+full content width. Per-column note balancing and continuation-note behavior
+remain deferred.
+
 ## Invariants
 
 - A document with no note references produces byte-identical `PaginatedLayout`.
