@@ -12,15 +12,16 @@
 //! model, no byte↔grapheme bridge — hit-testing, selection, and editing all speak
 //! byte offsets.
 //!
-//! **This is slice 1: text `InsertText` + `DeleteText` on top-level runs.**
-//! `SplitParagraph`/`JoinParagraphs`, nested-wrapper edits, and object/table ops
-//! are additive follow-ups (doc 59 staging).
+//! The operation set is intentionally additive and bounded: text/paragraph/run,
+//! table structure/properties, and exact-range hyperlink edits are supported.
+//! Partial edits inside nested wrappers and broader object editing remain
+//! explicit follow-ups (doc 59 staging).
 
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
-    BlockNode, Color, Document, FontName, FontRef, GridColumn, HighlightColor, InlineNode,
-    Paragraph, ParagraphProperties, RgbColor, Run, RunProperties, Table, TableCell,
-    TableCellProperties, TableProperties, TableRow, VerticalAlignment,
+    BlockNode, Color, Document, FontName, FontRef, GridColumn, HighlightColor, Hyperlink,
+    HyperlinkTarget, InlineNode, Paragraph, ParagraphProperties, RgbColor, Run, RunProperties,
+    Table, TableCell, TableCellProperties, TableProperties, TableRow, VerticalAlignment,
 };
 
 /// A run-property change to apply over a range: each `Some(_)` field sets that
@@ -151,6 +152,21 @@ pub enum Operation {
         range: Range,
         /// The property change.
         delta: FormatDelta,
+    },
+    /// Creates, updates, or removes a hyperlink over an exact same-paragraph text
+    /// range. `Some(target)` creates a wrapper (or updates the wrapper already
+    /// occupying exactly `range`); `None` removes that exact wrapper while
+    /// preserving its inline children. The inverse restores the paragraph's
+    /// original inline tree verbatim.
+    SetHyperlink {
+        /// The linked text range.
+        range: Range,
+        /// Fresh identity used when a new hyperlink wrapper is created.
+        id: NodeId,
+        /// New target, or `None` to remove the exact hyperlink wrapper.
+        target: Option<HyperlinkTarget>,
+        /// Optional screen tip. Must be non-empty and at most 255 bytes.
+        tooltip: Option<String>,
     },
     /// Replace a paragraph's entire inline content. This is the inverse vehicle
     /// for structural edits (formatting run-splits) whose forward effect is not a
@@ -386,6 +402,96 @@ pub fn apply(
             // above) can leave adjacent equal-property runs, which the model forbids;
             // merge them so the document stays re-validatable and export-clean.
             coalesce_adjacent_runs(&mut para.inlines);
+            Ok(Operation::SetInlines { node, inlines: old })
+        }
+        Operation::SetHyperlink {
+            range,
+            id,
+            target,
+            tooltip,
+        } => {
+            if range.start.node != range.end.node {
+                return Err(EditError::CrossParagraph);
+            }
+            if range.end.offset <= range.start.offset {
+                return Err(EditError::EmptyEdit);
+            }
+            if !valid_hyperlink_values(target.as_ref(), tooltip.as_deref()) {
+                return Err(EditError::Unsupported);
+            }
+            let node = range.start.node;
+            let para = find_paragraph_mut(doc.body_mut(), node).ok_or(EditError::NodeNotFound)?;
+            if range.end.offset > paragraph_text_len(para) {
+                return Err(EditError::OffsetOutOfRange);
+            }
+            let old = para.inlines.clone();
+
+            // Updating/removing an existing link is exact-range only. That keeps
+            // edits deterministic and avoids silently splitting an imported
+            // hyperlink wrapper.
+            if let Some(index) =
+                exact_hyperlink_index(&para.inlines, range.start.offset, range.end.offset)
+            {
+                if let Some(target) = target {
+                    let InlineNode::Hyperlink(link) = &mut para.inlines[index] else {
+                        unreachable!("exact_hyperlink_index only returns hyperlinks");
+                    };
+                    link.target = target.clone();
+                    link.tooltip = tooltip.clone();
+                } else {
+                    let InlineNode::Hyperlink(link) = para.inlines.remove(index) else {
+                        unreachable!("exact_hyperlink_index only returns hyperlinks");
+                    };
+                    para.inlines.splice(index..index, link.inlines);
+                    coalesce_adjacent_runs(&mut para.inlines);
+                }
+                return Ok(Operation::SetInlines { node, inlines: old });
+            }
+
+            let Some(target) = target else {
+                return Err(EditError::Unsupported);
+            };
+            // Creating a link currently accepts top-level text runs. Align both
+            // boundaries first so the wrapper covers exactly the requested bytes.
+            // Selections that cut through any existing wrapper remain unsupported.
+            let mut next_inlines = para.inlines.clone();
+            ensure_run_boundary(&mut next_inlines, range.end.offset, ids)?;
+            ensure_run_boundary(&mut next_inlines, range.start.offset, ids)?;
+            let covered =
+                covered_top_level_indices(&next_inlines, range.start.offset, range.end.offset)?;
+            if covered.is_empty()
+                || covered
+                    .iter()
+                    .any(|index| !matches!(next_inlines[*index], InlineNode::Run(_)))
+            {
+                return Err(EditError::Unsupported);
+            }
+            let first = covered[0];
+            let last = *covered.last().expect("covered is non-empty");
+            let mut children: Vec<InlineNode> = next_inlines.drain(first..=last).collect();
+            // Give newly-authored links a recognizable default without clobbering
+            // explicit author formatting. Imported/updated links retain their
+            // existing run styling verbatim.
+            for child in &mut children {
+                if let InlineNode::Run(run) = child {
+                    run.properties.underline.get_or_insert(true);
+                    run.properties.color.get_or_insert(Color::Rgb(RgbColor {
+                        r: 0x05,
+                        g: 0x63,
+                        b: 0xc1,
+                    }));
+                }
+            }
+            next_inlines.insert(
+                first,
+                InlineNode::Hyperlink(Hyperlink {
+                    id: *id,
+                    target: target.clone(),
+                    tooltip: tooltip.clone(),
+                    inlines: children,
+                }),
+            );
+            para.inlines = next_inlines;
             Ok(Operation::SetInlines { node, inlines: old })
         }
         Operation::SetInlines { node, inlines } => {
@@ -1112,7 +1218,8 @@ fn uniform<T: PartialEq>(
 
 /// Finds the paragraph with `id` (immutable), recursing into tables and content
 /// controls.
-fn find_paragraph(blocks: &[BlockNode], id: NodeId) -> Option<&Paragraph> {
+#[must_use]
+pub fn find_paragraph(blocks: &[BlockNode], id: NodeId) -> Option<&Paragraph> {
     for block in blocks {
         match block {
             BlockNode::Paragraph(p) if p.id == id => return Some(p),
@@ -1202,6 +1309,56 @@ fn run_segments(inlines: &[InlineNode]) -> Vec<RunSeg> {
         cum += len;
     }
     segs
+}
+
+fn valid_hyperlink_values(target: Option<&HyperlinkTarget>, tooltip: Option<&str>) -> bool {
+    let target_valid = target.is_none_or(|target| match target {
+        HyperlinkTarget::External(external) => {
+            !external.url.is_empty() && external.url.len() <= 2048
+        }
+        HyperlinkTarget::Internal(internal) => {
+            !internal.anchor.is_empty() && internal.anchor.len() <= 255
+        }
+    });
+    let tooltip_valid = tooltip.is_none_or(|value| !value.is_empty() && value.len() <= 255);
+    target_valid && tooltip_valid
+}
+
+/// Returns the top-level hyperlink whose cumulative text range exactly matches
+/// `[start, end)`.
+fn exact_hyperlink_index(inlines: &[InlineNode], start: u32, end: u32) -> Option<usize> {
+    let mut offset = 0u32;
+    for (index, inline) in inlines.iter().enumerate() {
+        let next = offset.saturating_add(inline_text_len(inline));
+        if matches!(inline, InlineNode::Hyperlink(_)) && offset == start && next == end {
+            return Some(index);
+        }
+        offset = next;
+    }
+    None
+}
+
+/// Returns the contiguous top-level inline indices exactly covered by
+/// `[start, end)`. A partial overlap with a non-run wrapper is rejected.
+fn covered_top_level_indices(
+    inlines: &[InlineNode],
+    start: u32,
+    end: u32,
+) -> Result<Vec<usize>, EditError> {
+    let mut covered = Vec::new();
+    let mut offset = 0u32;
+    for (index, inline) in inlines.iter().enumerate() {
+        let len = inline_text_len(inline);
+        let next = offset.saturating_add(len);
+        if len > 0 && offset < end && next > start {
+            if offset < start || next > end {
+                return Err(EditError::Unsupported);
+            }
+            covered.push(index);
+        }
+        offset = next;
+    }
+    Ok(covered)
 }
 
 /// Inserts `text` at `offset` into a paragraph's inlines, splicing into the run
@@ -1549,6 +1706,12 @@ mod tests {
         Document::new(n(1000), paragraphs, Definitions::default()).expect("valid document")
     }
 
+    fn external(url: &str) -> HyperlinkTarget {
+        HyperlinkTarget::External(casual_doc_model::v1::ExternalTarget {
+            url: url.to_owned(),
+        })
+    }
+
     /// The concatenated text of paragraph `id` (top-level runs), for assertions.
     fn text_of(document: &Document, id: NodeId) -> String {
         fn walk(blocks: &[BlockNode], id: NodeId) -> Option<String> {
@@ -1611,6 +1774,117 @@ mod tests {
         // Applying the inverse restores the original text (undo).
         apply(&mut d, &mut ids, &inverse).unwrap();
         assert_eq!(text_of(&d, p), "Helloworld");
+    }
+
+    #[test]
+    fn set_hyperlink_create_update_remove_and_inverse_are_exact() {
+        let p = n(2);
+        let mut d = doc(vec![para(2, vec![run(3, "Hello world")])]);
+        let mut ids = IdGenerator::new(9);
+        let range = Range {
+            start: Pos::new(p, 6),
+            end: Pos::new(p, 11),
+        };
+
+        let original = d.clone();
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetHyperlink {
+                range,
+                id: n(4),
+                target: Some(external("https://example.com/one")),
+                tooltip: Some("Example".to_owned()),
+            },
+        )
+        .unwrap();
+        d.validate().unwrap();
+        let para = find_paragraph(d.body(), p).unwrap();
+        let InlineNode::Hyperlink(link) = &para.inlines[1] else {
+            panic!("selected text was not wrapped");
+        };
+        assert_eq!(link.id, n(4));
+        assert_eq!(link.target, external("https://example.com/one"));
+        assert_eq!(nested_len(&link.inlines), 5);
+        let created = d.clone();
+
+        let update_inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetHyperlink {
+                range,
+                id: n(99),
+                target: Some(external("https://example.com/two")),
+                tooltip: None,
+            },
+        )
+        .unwrap();
+        let para = find_paragraph(d.body(), p).unwrap();
+        let InlineNode::Hyperlink(link) = &para.inlines[1] else {
+            panic!("existing link disappeared");
+        };
+        assert_eq!(link.id, n(4), "updates preserve the imported link identity");
+        assert_eq!(link.target, external("https://example.com/two"));
+
+        apply(&mut d, &mut ids, &update_inverse).unwrap();
+        assert_eq!(d, created, "inverse restores the post-create inline tree");
+
+        let remove_inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetHyperlink {
+                range,
+                id: n(4),
+                target: None,
+                tooltip: None,
+            },
+        )
+        .unwrap();
+        d.validate().unwrap();
+        assert!(
+            find_paragraph(d.body(), p)
+                .unwrap()
+                .inlines
+                .iter()
+                .all(|inline| !matches!(inline, InlineNode::Hyperlink(_)))
+        );
+        apply(&mut d, &mut ids, &remove_inverse).unwrap();
+        assert!(matches!(
+            find_paragraph(d.body(), p).unwrap().inlines[1],
+            InlineNode::Hyperlink(_)
+        ));
+
+        apply(&mut d, &mut ids, &inverse).unwrap();
+        assert_eq!(d, original);
+    }
+
+    #[test]
+    fn set_hyperlink_rejects_partial_existing_wrapper_without_mutation() {
+        let p = n(2);
+        let linked = InlineNode::Hyperlink(Hyperlink {
+            id: n(4),
+            target: external("https://example.com"),
+            tooltip: None,
+            inlines: vec![run(5, "linked")],
+        });
+        let mut d = doc(vec![para(2, vec![run(3, "A "), linked])]);
+        let before = d.clone();
+        let mut ids = IdGenerator::new(9);
+        let result = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetHyperlink {
+                range: Range {
+                    start: Pos::new(p, 3),
+                    end: Pos::new(p, 8),
+                },
+                id: n(6),
+                target: Some(external("https://other.example")),
+                tooltip: None,
+            },
+        );
+        assert_eq!(result, Err(EditError::Unsupported));
+        assert_eq!(d, before);
     }
 
     #[test]

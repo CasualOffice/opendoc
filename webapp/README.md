@@ -29,8 +29,12 @@ Milestones landed here:
   is the first read-only slice of the scalable interaction pipeline
   (`docs/58-INTERACTION-SELECTION-EDITING-ARCHITECTURE.md`) that editing —
   text, then tables/images/floats/headers — extends.
+- **Link interaction and authoring**: imported external hyperlinks activate
+  through a host-owned `http`/`https`/`mailto` allowlist; internal hyperlinks
+  and TOC rows resolve their bookmark and scroll to the target caret/page.
+  Insert → Link creates, updates, or removes an undoable same-paragraph link.
 
-Native find/AT overlay, hyperlink-open, and editing arrive in later milestones.
+Native find/AT overlay remains a later milestone.
 
 ## Run it locally
 

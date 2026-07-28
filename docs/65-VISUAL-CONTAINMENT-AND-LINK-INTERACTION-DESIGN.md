@@ -68,8 +68,11 @@ Acceptance:
 
 ## Slice B — hyperlink and TOC interaction
 
-Layout retains a link span for each flattened `InlineNode::Hyperlink`. A public
-`link_at(page, point)` query returns:
+The runtime reconstructs a link span for each flattened
+`InlineNode::Hyperlink` using the same node-relative UTF-8 byte accounting as
+shaping, then intersects those ranges with layout selection rectangles. This
+keeps the model authoritative and avoids duplicating target metadata in cached
+line fragments. A public `link_at(page, point)` query returns:
 
 - the model range;
 - display text range;

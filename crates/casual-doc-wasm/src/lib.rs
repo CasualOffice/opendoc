@@ -15,8 +15,8 @@
 
 use casual_doc_edit::{
     FormatDelta, Operation, Pos, Range as EditRange, apply as apply_edit, caret_format,
-    caret_run_style, cell_properties, find_table, format_state, locate_cell, locate_table_cell,
-    locate_table_row, paragraph_properties, run_style_state,
+    caret_run_style, cell_properties, find_paragraph, find_table, format_state, locate_cell,
+    locate_table_cell, locate_table_row, paragraph_properties, run_style_state,
 };
 use casual_doc_export::write_document;
 use casual_doc_import::{ImportConfig, ImportMode, import_package};
@@ -35,9 +35,10 @@ use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_layout::units::{Point, Rect, Size, Twip};
 use casual_doc_model::v1::GridColumn;
 use casual_doc_model::v1::{
-    AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, BorderEdge,
-    CellVerticalAlignment, Document, HighlightColor, Indentation, LevelJustification, LevelSuffix,
-    NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel, NumberingRef, Paragraph,
+    AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, BookmarkId, BorderEdge,
+    CellVerticalAlignment, Document, ExternalTarget, HighlightColor, Hyperlink, HyperlinkTarget,
+    Indentation, InlineNode, InternalTarget, LevelJustification, LevelSuffix, NumberFormat,
+    NumberingInstance, NumberingInstanceId, NumberingLevel, NumberingRef, Paragraph,
     ParagraphProperties, RgbColor, StyleId, StyleKind, TabAlignment, TabStop, Table, TableBorders,
     TableCell, TableCellProperties, TableProperties, TableRow, VerticalAlignment,
 };
@@ -242,6 +243,62 @@ impl WasmDocument {
         })
     }
 
+    /// Resolves a direct content click to the hyperlink painted at that point.
+    /// External targets are returned verbatim for the host to policy-check before
+    /// opening. Internal targets additionally resolve their bookmark marker to a
+    /// model caret and 1-based target page, enabling TOC/page navigation without
+    /// making the runtime own browser navigation policy.
+    #[wasm_bindgen(js_name = linkAt)]
+    #[must_use]
+    pub fn link_at(&self, page: u32, x_twip: i32, y_twip: i32) -> Option<LinkHit> {
+        let point = Point::new(Twip(x_twip), Twip(y_twip));
+        let snapshot = LayoutSnapshot::new(&self.layout);
+        let hit = snapshot.hit_test(page, point)?;
+        if hit.zone != HitZone::Content {
+            return None;
+        }
+        let paragraph = find_paragraph(self.document.body(), hit.pos.node)?;
+        let links = paragraph_links(&self.document, paragraph);
+        let link = links.into_iter().find(|candidate| {
+            snapshot
+                .selection_rects(candidate.range)
+                .into_iter()
+                .any(|(candidate_page, rect)| candidate_page == page && rect.contains(point))
+        })?;
+
+        let (kind, url, anchor, target) = match &link.link.target {
+            HyperlinkTarget::External(external) => {
+                ("external", external.url.clone(), String::new(), None)
+            }
+            HyperlinkTarget::Internal(internal) => (
+                "internal",
+                String::new(),
+                internal.anchor.clone(),
+                resolve_bookmark(&self.document, &internal.anchor),
+            ),
+        };
+        let (target_node, target_offset, target_page) = target.map_or_else(
+            || (String::new(), 0, 0),
+            |pos| {
+                let target_page = snapshot.caret_rect(pos).map_or(0, |(page, _)| page);
+                (pos.node.to_string(), pos.offset, target_page)
+            },
+        );
+        Some(LinkHit {
+            kind,
+            url,
+            anchor,
+            tooltip: link.link.tooltip.clone().unwrap_or_default(),
+            start_node: link.range.start.node.to_string(),
+            start_offset: link.range.start.offset,
+            end_node: link.range.end.node.to_string(),
+            end_offset: link.range.end.offset,
+            target_node,
+            target_offset,
+            target_page,
+        })
+    }
+
     /// The caret box for a model anchor, as `[page, xTwip, yTwip, wTwip, hTwip]`
     /// (page-local; `w` is 0). Empty if the anchor resolves to no line (e.g. a
     /// stale position) or `node` is malformed.
@@ -344,6 +401,64 @@ impl WasmDocument {
                 start: Pos::new(node, start),
                 end: Pos::new(node, end),
             },
+        })
+        .map_err(to_js)
+    }
+
+    /// Creates or updates a hyperlink over a non-empty same-paragraph selection.
+    /// A target beginning with `#` is an internal bookmark anchor; all other
+    /// targets are retained as external URLs. Activation policy remains host-owned.
+    #[wasm_bindgen(js_name = setHyperlink)]
+    pub fn set_hyperlink(
+        &mut self,
+        node: &str,
+        start: u32,
+        end: u32,
+        target: String,
+        tooltip: Option<String>,
+    ) -> Result<EditResult, JsValue> {
+        let node = node_id(node)?;
+        let target = if let Some(anchor) = target.strip_prefix('#') {
+            HyperlinkTarget::Internal(InternalTarget {
+                anchor: anchor.to_owned(),
+            })
+        } else {
+            HyperlinkTarget::External(ExternalTarget { url: target })
+        };
+        let id = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".into()))?;
+        self.apply(Operation::SetHyperlink {
+            range: EditRange {
+                start: Pos::new(node, start),
+                end: Pos::new(node, end),
+            },
+            id,
+            target: Some(target),
+            tooltip,
+        })
+        .map_err(to_js)
+    }
+
+    /// Removes the hyperlink wrapper occupying exactly the supplied selection,
+    /// preserving its linked text and formatting.
+    #[wasm_bindgen(js_name = removeHyperlink)]
+    pub fn remove_hyperlink(
+        &mut self,
+        node: &str,
+        start: u32,
+        end: u32,
+    ) -> Result<EditResult, JsValue> {
+        let node = node_id(node)?;
+        self.apply(Operation::SetHyperlink {
+            range: EditRange {
+                start: Pos::new(node, start),
+                end: Pos::new(node, end),
+            },
+            id: node,
+            target: None,
+            tooltip: None,
         })
         .map_err(to_js)
     }
@@ -3076,6 +3191,229 @@ fn slice_bytes(text: &str, from: usize, to: usize) -> String {
     }
 }
 
+struct ParagraphLink<'a> {
+    link: &'a Hyperlink,
+    range: ModelRange,
+}
+
+/// Collects hyperlink wrappers with ranges in the same byte-anchor space used by
+/// shaping and hit-testing. Revisions and inline content controls are transparent,
+/// matching the layout flattener.
+fn paragraph_links<'a>(document: &Document, paragraph: &'a Paragraph) -> Vec<ParagraphLink<'a>> {
+    fn walk<'a>(
+        document: &Document,
+        inlines: &'a [InlineNode],
+        node: NodeId,
+        offset: &mut u32,
+        out: &mut Vec<ParagraphLink<'a>>,
+    ) {
+        for inline in inlines {
+            match inline {
+                InlineNode::Hyperlink(link) => {
+                    let start = *offset;
+                    *offset = offset.saturating_add(inlines_anchor_len(document, &link.inlines));
+                    out.push(ParagraphLink {
+                        link,
+                        range: ModelRange::new(
+                            ModelPos::new(node, start),
+                            ModelPos::new(node, *offset),
+                        ),
+                    });
+                }
+                InlineNode::Revision(revision) => {
+                    walk(document, &revision.inlines, node, offset, out)
+                }
+                InlineNode::Sdt(sdt) => walk(document, &sdt.inlines, node, offset, out),
+                _ => {
+                    *offset = offset.saturating_add(inline_anchor_len(document, inline));
+                }
+            }
+        }
+    }
+
+    let mut links = Vec::new();
+    let mut offset = 0;
+    walk(
+        document,
+        &paragraph.inlines,
+        paragraph.id,
+        &mut offset,
+        &mut links,
+    );
+    links
+}
+
+/// Number of UTF-8 bytes an inline contributes to the layout anchor stream.
+/// This mirrors `flow::collect_items`, including synthetic display values that
+/// the plain-text copy helper intentionally omits.
+fn inline_anchor_len(document: &Document, inline: &InlineNode) -> u32 {
+    match inline {
+        InlineNode::Run(run) => run.text.len() as u32,
+        InlineNode::Tab(_) | InlineNode::PositionalTab(_) => 1,
+        InlineNode::Symbol(symbol) => {
+            char::from_u32(symbol.char).map_or(0, |ch| ch.len_utf8() as u32)
+        }
+        InlineNode::Hyperlink(link) => inlines_anchor_len(document, &link.inlines),
+        InlineNode::Revision(revision) => inlines_anchor_len(document, &revision.inlines),
+        InlineNode::Sdt(sdt) => inlines_anchor_len(document, &sdt.inlines),
+        InlineNode::Field(field) => field_anchor_len(field),
+        InlineNode::NoteReference(reference) => {
+            let notes = match reference.kind {
+                casual_doc_model::v1::NoteKind::Footnote => &document.definitions().footnotes,
+                casual_doc_model::v1::NoteKind::Endnote => &document.definitions().endnotes,
+            };
+            let ordinal = notes
+                .iter()
+                .position(|(id, _)| *id == reference.note)
+                .map_or_else(|| "?".to_owned(), |index| (index + 1).to_string());
+            ordinal.len() as u32
+        }
+        InlineNode::CommentReference(_) => "[comment]".len() as u32,
+        InlineNode::Math(math) => {
+            if math.text.is_empty() {
+                "[equation]".len() as u32
+            } else {
+                math.text.len().saturating_add(2) as u32
+            }
+        }
+        InlineNode::NoBreakHyphen(_) => '\u{2011}'.len_utf8() as u32,
+        InlineNode::SoftHyphen(_) => '\u{00ad}'.len_utf8() as u32,
+        InlineNode::EmbeddedObject(object) if object.preview.is_none() => match &object.kind {
+            casual_doc_model::v1::EmbeddedKind::Chart => "[chart]".len() as u32,
+            casual_doc_model::v1::EmbeddedKind::Diagram => "[diagram]".len() as u32,
+            casual_doc_model::v1::EmbeddedKind::OleObject
+            | casual_doc_model::v1::EmbeddedKind::Other(_) => "[object]".len() as u32,
+        },
+        _ => 0,
+    }
+}
+
+fn inlines_anchor_len(document: &Document, inlines: &[InlineNode]) -> u32 {
+    inlines.iter().fold(0u32, |total, inline| {
+        total.saturating_add(inline_anchor_len(document, inline))
+    })
+}
+
+fn field_anchor_len(field: &casual_doc_model::v1::Field) -> u32 {
+    let cached = field.inlines.iter().fold(0u32, |total, inline| {
+        let len = match inline {
+            InlineNode::Run(run) => run.text.len() as u32,
+            InlineNode::Tab(_) => 1,
+            _ => 0,
+        };
+        total.saturating_add(len)
+    });
+    if cached > 0 {
+        return cached;
+    }
+    matches!(
+        field
+            .instruction
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .to_ascii_uppercase()
+            .as_str(),
+        "PAGE" | "NUMPAGES"
+    ) as u32
+}
+
+/// Resolves a bookmark name to the zero-width `BookmarkStart` marker in document
+/// flow. Anchor strings are resolved through the definition table; they are never
+/// interpreted as paragraph ids.
+fn resolve_bookmark(document: &Document, anchor: &str) -> Option<ModelPos> {
+    let bookmark = document
+        .definitions()
+        .bookmarks
+        .iter()
+        .find_map(|(id, definition)| (definition.name == anchor).then_some(*id))?;
+
+    fn inlines_pos(
+        document: &Document,
+        inlines: &[InlineNode],
+        node: NodeId,
+        bookmark: BookmarkId,
+        offset: &mut u32,
+    ) -> Option<ModelPos> {
+        for inline in inlines {
+            match inline {
+                InlineNode::BookmarkStart(marker) if marker.bookmark == bookmark => {
+                    return Some(ModelPos::new(node, *offset));
+                }
+                InlineNode::Hyperlink(link) => {
+                    if let Some(pos) = inlines_pos(document, &link.inlines, node, bookmark, offset)
+                    {
+                        return Some(pos);
+                    }
+                }
+                InlineNode::Revision(revision) => {
+                    if let Some(pos) =
+                        inlines_pos(document, &revision.inlines, node, bookmark, offset)
+                    {
+                        return Some(pos);
+                    }
+                }
+                InlineNode::Sdt(sdt) => {
+                    if let Some(pos) = inlines_pos(document, &sdt.inlines, node, bookmark, offset) {
+                        return Some(pos);
+                    }
+                }
+                InlineNode::Field(field) => {
+                    if let Some(pos) = inlines_pos(document, &field.inlines, node, bookmark, offset)
+                    {
+                        return Some(pos);
+                    }
+                }
+                _ => {
+                    *offset = offset.saturating_add(inline_anchor_len(document, inline));
+                }
+            }
+        }
+        None
+    }
+
+    fn blocks_pos(
+        document: &Document,
+        blocks: &[BlockNode],
+        bookmark: BookmarkId,
+    ) -> Option<ModelPos> {
+        for block in blocks {
+            match block {
+                BlockNode::Paragraph(paragraph) => {
+                    let mut offset = 0;
+                    if let Some(pos) = inlines_pos(
+                        document,
+                        &paragraph.inlines,
+                        paragraph.id,
+                        bookmark,
+                        &mut offset,
+                    ) {
+                        return Some(pos);
+                    }
+                }
+                BlockNode::Table(table) => {
+                    for row in &table.rows {
+                        for cell in &row.cells {
+                            if let Some(pos) = blocks_pos(document, &cell.blocks, bookmark) {
+                                return Some(pos);
+                            }
+                        }
+                    }
+                }
+                BlockNode::Sdt(sdt) => {
+                    if let Some(pos) = blocks_pos(document, &sdt.blocks, bookmark) {
+                        return Some(pos);
+                    }
+                }
+                BlockNode::AltChunk(_) => {}
+            }
+        }
+        None
+    }
+
+    blocks_pos(document, document.body(), bookmark)
+}
+
 /// The model anchor a point resolved to (doc 58 §2 `TextCaret`/`Outside`): a
 /// `NodeId` (32-hex string), a node-relative UTF-8 byte offset, and whether the
 /// point was inside content or snapped in from outside.
@@ -3108,6 +3446,105 @@ impl HitPayload {
     #[must_use]
     pub fn zone(&self) -> String {
         self.zone.to_string()
+    }
+}
+
+/// A hyperlink resolved at a page-local point. The runtime reports both the
+/// authored target and, for internal links, the resolved bookmark caret/page;
+/// the embedding host decides whether and how navigation is allowed.
+#[wasm_bindgen]
+#[derive(Clone, Debug)]
+pub struct LinkHit {
+    kind: &'static str,
+    url: String,
+    anchor: String,
+    tooltip: String,
+    start_node: String,
+    start_offset: u32,
+    end_node: String,
+    end_offset: u32,
+    target_node: String,
+    target_offset: u32,
+    target_page: u32,
+}
+
+#[wasm_bindgen]
+impl LinkHit {
+    /// `"external"` or `"internal"`.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn kind(&self) -> String {
+        self.kind.to_owned()
+    }
+
+    /// External target URL, or empty for an internal target.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn url(&self) -> String {
+        self.url.clone()
+    }
+
+    /// Internal bookmark name, or empty for an external target.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn anchor(&self) -> String {
+        self.anchor.clone()
+    }
+
+    /// Optional authored screen tip (empty when absent).
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn tooltip(&self) -> String {
+        self.tooltip.clone()
+    }
+
+    /// Paragraph node containing the linked range.
+    #[wasm_bindgen(getter, js_name = startNode)]
+    #[must_use]
+    pub fn start_node(&self) -> String {
+        self.start_node.clone()
+    }
+
+    /// Start byte offset of the linked range.
+    #[wasm_bindgen(getter, js_name = startOffset)]
+    #[must_use]
+    pub fn start_offset(&self) -> u32 {
+        self.start_offset
+    }
+
+    /// Paragraph node ending the linked range (currently identical to startNode).
+    #[wasm_bindgen(getter, js_name = endNode)]
+    #[must_use]
+    pub fn end_node(&self) -> String {
+        self.end_node.clone()
+    }
+
+    /// End byte offset of the linked range.
+    #[wasm_bindgen(getter, js_name = endOffset)]
+    #[must_use]
+    pub fn end_offset(&self) -> u32 {
+        self.end_offset
+    }
+
+    /// Resolved internal-bookmark paragraph node, or empty if unresolved/external.
+    #[wasm_bindgen(getter, js_name = targetNode)]
+    #[must_use]
+    pub fn target_node(&self) -> String {
+        self.target_node.clone()
+    }
+
+    /// Resolved internal-bookmark byte offset.
+    #[wasm_bindgen(getter, js_name = targetOffset)]
+    #[must_use]
+    pub fn target_offset(&self) -> u32 {
+        self.target_offset
+    }
+
+    /// Resolved internal-bookmark 1-based page, or 0 if unresolved/external.
+    #[wasm_bindgen(getter, js_name = targetPage)]
+    #[must_use]
+    pub fn target_page(&self) -> u32 {
+        self.target_page
     }
 }
 
@@ -3328,6 +3765,7 @@ fn caret_after(op: &Operation, inverse: &Operation) -> Pos {
         },
         // Formatting keeps the selection; the frontend does not collapse to this.
         Operation::FormatText { range, .. } => range.start,
+        Operation::SetHyperlink { range, .. } => range.start,
         Operation::SetInlines { node, .. } | Operation::SetParagraphProperties { node, .. } => {
             Pos::new(*node, 0)
         }
@@ -3933,6 +4371,178 @@ mod tests {
         // A malformed node id is an empty result, not a panic.
         assert!(doc.caret_rect("not-a-node", 0).is_empty());
         assert!(doc.copy_text("bad", 0, "bad", 1).is_empty());
+    }
+
+    #[test]
+    fn hyperlink_authoring_hit_activation_undo_and_roundtrip() {
+        fn editable_run(blocks: &[BlockNode]) -> Option<(NodeId, u32, u32)> {
+            for block in blocks {
+                match block {
+                    BlockNode::Paragraph(paragraph) => {
+                        let mut offset = 0;
+                        for inline in &paragraph.inlines {
+                            let len = node_plain_text(core::slice::from_ref(inline)).len() as u32;
+                            if matches!(inline, InlineNode::Run(_)) && len > 0 {
+                                return Some((paragraph.id, offset, offset + len));
+                            }
+                            offset += len;
+                        }
+                    }
+                    BlockNode::Table(table) => {
+                        for row in &table.rows {
+                            for cell in &row.cells {
+                                if let Some(found) = editable_run(&cell.blocks) {
+                                    return Some(found);
+                                }
+                            }
+                        }
+                    }
+                    BlockNode::Sdt(sdt) => {
+                        if let Some(found) = editable_run(&sdt.blocks) {
+                            return Some(found);
+                        }
+                    }
+                    BlockNode::AltChunk(_) => {}
+                }
+            }
+            None
+        }
+
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let (node_id, start, end) =
+            editable_run(d.document.body()).expect("an editable top-level run");
+        let node = node_id.to_string();
+        d.set_hyperlink(
+            &node,
+            start,
+            end,
+            "https://example.com/document".to_owned(),
+            Some("Example".to_owned()),
+        )
+        .expect("create link");
+        d.document.validate().expect("link edit remains valid");
+
+        let rects = d.selection_rects(&node, start, &node, end);
+        assert!(rects.len() >= 5);
+        let (page, x, y, width, height) = (rects[0] as u32, rects[1], rects[2], rects[3], rects[4]);
+        let link = d
+            .link_at(page, x + width / 2, y + height / 2)
+            .expect("painted linked text is directly clickable");
+        assert_eq!(link.kind(), "external");
+        assert_eq!(link.url(), "https://example.com/document");
+        assert_eq!(link.tooltip(), "Example");
+        assert_eq!(link.start_node(), node);
+        assert_eq!(link.start_offset(), start);
+        assert_eq!(link.end_offset(), end);
+
+        let bytes = d.export_docx().expect("export linked document");
+        let reopened = open_document(&bytes).expect("re-open linked document");
+        let paragraph = find_paragraph(reopened.document.body(), node_id).expect("same paragraph");
+        let links = paragraph_links(&reopened.document, paragraph);
+        assert_eq!(links.len(), 1);
+        assert_eq!(
+            links[0].link.target,
+            HyperlinkTarget::External(ExternalTarget {
+                url: "https://example.com/document".to_owned(),
+            })
+        );
+
+        d.undo().expect("undo link");
+        assert!(
+            paragraph_links(
+                &d.document,
+                find_paragraph(d.document.body(), node_id).unwrap()
+            )
+            .is_empty()
+        );
+        d.redo().expect("redo link");
+        d.remove_hyperlink(&node, start, end).expect("remove link");
+        assert!(
+            paragraph_links(
+                &d.document,
+                find_paragraph(d.document.body(), node_id).unwrap()
+            )
+            .is_empty()
+        );
+        d.undo().expect("undo remove");
+        assert_eq!(
+            paragraph_links(
+                &d.document,
+                find_paragraph(d.document.body(), node_id).unwrap()
+            )
+            .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn internal_link_resolves_named_bookmark_marker() {
+        use casual_doc_model::v1::{
+            Bookmark, BookmarkStart, Definitions, Hyperlink, Run, RunProperties,
+        };
+
+        let bookmark_id = BookmarkId::new(NodeId::from_parts(70, 1).unwrap());
+        let source_id = NodeId::from_parts(70, 2).unwrap();
+        let target_id = NodeId::from_parts(70, 3).unwrap();
+        let mut definitions = Definitions::default();
+        definitions.bookmarks.insert(
+            bookmark_id,
+            Bookmark {
+                name: "Heading_1".to_owned(),
+            },
+        );
+        let document = Document::new(
+            NodeId::from_parts(70, 10).unwrap(),
+            vec![
+                BlockNode::Paragraph(Paragraph {
+                    id: source_id,
+                    properties: ParagraphProperties::default(),
+                    inlines: vec![InlineNode::Hyperlink(Hyperlink {
+                        id: NodeId::from_parts(70, 4).unwrap(),
+                        target: HyperlinkTarget::Internal(InternalTarget {
+                            anchor: "Heading_1".to_owned(),
+                        }),
+                        tooltip: None,
+                        inlines: vec![InlineNode::Run(Run {
+                            id: NodeId::from_parts(70, 5).unwrap(),
+                            properties: Default::default(),
+                            text: "Go".to_owned(),
+                        })],
+                    })],
+                }),
+                BlockNode::Paragraph(Paragraph {
+                    id: target_id,
+                    properties: ParagraphProperties::default(),
+                    inlines: vec![
+                        InlineNode::Run(Run {
+                            id: NodeId::from_parts(70, 6).unwrap(),
+                            properties: RunProperties::default(),
+                            text: "Before ".to_owned(),
+                        }),
+                        InlineNode::BookmarkStart(BookmarkStart {
+                            id: NodeId::from_parts(70, 7).unwrap(),
+                            bookmark: bookmark_id,
+                        }),
+                        InlineNode::Run(Run {
+                            id: NodeId::from_parts(70, 8).unwrap(),
+                            properties: RunProperties {
+                                bold: Some(true),
+                                ..RunProperties::default()
+                            },
+                            text: "Heading".to_owned(),
+                        }),
+                    ],
+                }),
+            ],
+            definitions,
+        )
+        .expect("valid bookmarked document");
+
+        assert_eq!(
+            resolve_bookmark(&document, "Heading_1"),
+            Some(ModelPos::new(target_id, 7))
+        );
+        assert_eq!(resolve_bookmark(&document, "missing"), None);
     }
 
     /// Type a character, confirm the model text changed, then undo and confirm it

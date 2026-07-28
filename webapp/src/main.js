@@ -65,6 +65,7 @@ const cellBorderColor = document.getElementById("cellBorderColor");
 const tableBorderColor = document.getElementById("tableBorderColor");
 const tableAlign = document.getElementById("tableAlign");
 const insertTableBtn = document.getElementById("insertTableBtn");
+const insertLinkBtn = document.getElementById("insertLinkBtn");
 const insertTableMenu = document.getElementById("insertTableMenu");
 const gridPicker = document.getElementById("gridPicker");
 const gridLabel = document.getElementById("gridLabel");
@@ -137,6 +138,9 @@ let pages = [];
 /** Current selection as model anchors, or null. `focus` trails the pointer. */
 let selection = null; // { anchor: {node, offset}, focus: {node, offset} }
 let dragging = false;
+/** Primary-pointer gesture retained until pointerup so link activation is
+ * suppressed after a drag/Shift extension. */
+let pointerGesture = null;
 /** Armed run formatting for typing at a collapsed caret (e.g. click Bold with no
  *  selection → next typed characters are bold). `null` when nothing is armed; else
  *  a subset of { bold, italic, underline, strike } → boolean. Cleared whenever the
@@ -415,12 +419,81 @@ function place(flat, kind) {
   page.overlay.appendChild(el);
 }
 
+/** Navigates to an internal-link target and makes the target page/caret visible. */
+function navigateToAnchor(node, offset, pageNumber) {
+  if (!node) return;
+  pendingFormat = null;
+  selection = {
+    anchor: { node, offset },
+    focus: { node, offset },
+  };
+  drawSelection();
+  pages[pageNumber - 1]?.canvas.closest(".page-wrap")?.scrollIntoView({
+    block: "start",
+    inline: "nearest",
+  });
+  scrollCaretIntoView();
+}
+
+/** Activates the authored link painted at a direct click. The runtime resolves
+ * geometry/bookmarks; this host owns the external-scheme allowlist and browser
+ * navigation. */
+function activateLinkAt(page, event) {
+  if (!doc) return false;
+  const { x, y } = pointToTwip(page, event);
+  const hit = doc.linkAt(page.pageNumber, x, y);
+  if (!hit) return false;
+  const link = {
+    kind: hit.kind,
+    url: hit.url,
+    anchor: hit.anchor,
+    targetNode: hit.targetNode,
+    targetOffset: hit.targetOffset,
+    targetPage: hit.targetPage,
+  };
+  hit.free();
+
+  if (link.kind === "internal") {
+    if (!link.targetNode || !link.targetPage) {
+      setStatus(`Bookmark “${link.anchor}” was not found`, "error");
+      return true;
+    }
+    navigateToAnchor(link.targetNode, link.targetOffset, link.targetPage);
+    setStatus(`Jumped to ${link.anchor}`);
+    return true;
+  }
+
+  let target;
+  try {
+    target = new URL(link.url, window.location.href);
+  } catch {
+    setStatus("Blocked an invalid link target", "error");
+    return true;
+  }
+  if (target.protocol === "http:" || target.protocol === "https:") {
+    window.open(target.href, "_blank", "noopener,noreferrer");
+  } else if (target.protocol === "mailto:") {
+    window.location.assign(target.href);
+  } else {
+    setStatus(`Blocked ${target.protocol || "unknown"} link scheme`, "error");
+  }
+  return true;
+}
+
 function onPointerDown(page, event) {
   if (event.button !== 0) return;
+  pointerGesture = null;
   const anchor = anchorAt(page, event);
   if (!anchor) return;
   pendingFormat = null; // a click moves the caret → disarm typing format
   dragging = true;
+  pointerGesture = {
+    page,
+    clientX: event.clientX,
+    clientY: event.clientY,
+    moved: false,
+    shift: event.shiftKey,
+  };
   // Shift+Click extends the current selection to the click (keeps the anchor).
   selection =
     event.shiftKey && selection
@@ -432,14 +505,33 @@ function onPointerDown(page, event) {
 
 function onPointerMove(page, event) {
   if (!dragging) return;
+  if (
+    pointerGesture &&
+    Math.hypot(
+      event.clientX - pointerGesture.clientX,
+      event.clientY - pointerGesture.clientY,
+    ) > 4
+  ) {
+    pointerGesture.moved = true;
+  }
   const focus = anchorAt(page, event);
   if (!focus) return;
   selection = { anchor: selection.anchor, focus };
   drawSelection();
 }
 
-function onPointerUp() {
+function onPointerUp(event) {
+  const gesture = pointerGesture;
+  pointerGesture = null;
   dragging = false;
+  if (
+    gesture &&
+    !gesture.shift &&
+    !gesture.moved &&
+    Math.hypot(event.clientX - gesture.clientX, event.clientY - gesture.clientY) <= 4
+  ) {
+    activateLinkAt(gesture.page, event);
+  }
 }
 
 /** Double-click selects the word under the pointer. */
@@ -1063,6 +1155,8 @@ function updateToolbar() {
   const inTable = hasSel && doc && doc.inTable(selection.focus.node);
   tableBtn.disabled = !inTable;
   insertTableBtn.disabled = !(hasSel && doc);
+  insertLinkBtn.disabled =
+    !range || selection.anchor.node !== selection.focus.node;
   // Ribbon: undo/redo/view controls need a document; the Table tab is contextual.
   undoBtn.disabled = !doc;
   redoBtn.disabled = !doc;
@@ -1096,6 +1190,33 @@ function onButton(el, handler) {
   });
 }
 
+/** Creates/updates the selected same-paragraph text as an external URL or
+ * `#bookmark`; an empty submitted value removes an exact existing link. */
+function editSelectionLink() {
+  if (!doc || !selection || !hasRange()) return;
+  const { anchor, focus } = selection;
+  if (anchor.node !== focus.node) {
+    setStatus("Links must stay within one paragraph", "error");
+    return;
+  }
+  const start = Math.min(anchor.offset, focus.offset);
+  const end = Math.max(anchor.offset, focus.offset);
+  const value = window.prompt(
+    "Link URL or #bookmark (leave empty to remove an existing link):",
+    "https://",
+  );
+  if (value === null) return;
+  const target = value.trim();
+  if (target) {
+    runToolbarEdit(() =>
+      doc.setHyperlink(anchor.node, start, end, target),
+    );
+  } else {
+    runToolbarEdit(() => doc.removeHyperlink(anchor.node, start, end));
+  }
+}
+
+onButton(insertLinkBtn, editSelectionLink);
 for (const key of ["bold", "italic", "underline", "strike"]) {
   onButton(fmtButtons[key], () => toggleFormat(key));
 }
@@ -1475,6 +1596,7 @@ function buildCommands() {
     { label: "Increase indent", group: "Paragraph", kw: "", run: () => runToolbarEdit((s, o, e, f) => doc.adjustIndent(s, o, e, f, 360)) },
     { label: "Decrease indent", group: "Paragraph", kw: "outdent", run: () => runToolbarEdit((s, o, e, f) => doc.adjustIndent(s, o, e, f, -360)) },
     { label: "Insert table (3×3)", group: "Insert", kw: "grid", run: () => selection && runEdit(() => doc.insertTable(selection.focus.node, 3, 3)) },
+    { label: "Add or edit link", group: "Insert", kw: "hyperlink url bookmark toc", run: () => editSelectionLink() },
     { label: "Toggle outline", group: "View", kw: "headings navigation", run: () => toggleOutline() },
     { label: "Zoom in", group: "View", kw: "", run: () => stepZoom(1) },
     { label: "Zoom out", group: "View", kw: "", run: () => stepZoom(-1) },
