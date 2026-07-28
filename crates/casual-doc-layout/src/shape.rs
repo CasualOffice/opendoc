@@ -1065,6 +1065,7 @@ impl ParleyShaper {
                 bars: Vec::new(),
                 images: out_images,
                 fields: Vec::new(),
+                notes: Vec::new(),
                 text_boxes: Vec::new(),
                 rules: Vec::new(),
             });
@@ -1143,6 +1144,7 @@ mod tests {
             bars: Vec::new(),
             images: Vec::new(),
             fields: Vec::new(),
+            notes: Vec::new(),
             text_boxes: Vec::new(),
             rules: Vec::new(),
         }

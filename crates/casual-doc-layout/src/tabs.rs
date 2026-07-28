@@ -25,7 +25,7 @@ use crate::block::BlockFragment;
 use crate::model::{ModelPos, ModelRange};
 use crate::text::{
     Decoration, FieldKind, FieldStyle, Glyph, GlyphRun, InlineFloatSide, InlineRule, Line,
-    LineBreak, LineConstraints, LineLayout, LineShaper, StyledRun, TextAlignment,
+    LineBreak, LineConstraints, LineLayout, LineShaper, NoteMarker, StyledRun, TextAlignment,
     TextBoxContentLayout, TextBoxStroke,
 };
 use crate::units::{Point, Size, Twip};
@@ -86,6 +86,10 @@ pub enum FlowItem<'a> {
         /// The run styling, so the field pass can reshape a new value.
         style: FieldStyle,
     },
+    /// A footnote/endnote reference side-channel marker. The visible reference
+    /// glyph is represented by an adjacent [`FlowItem::Run`]; this zero-width item
+    /// is consumed by paragraph flow to attach note metadata to the shaped line.
+    NoteReference(NoteMarker),
     /// An inline text box (`wps:txbx` / `v:textbox`): its recursive block content
     /// already flowed through the shared pipeline into fragments, the box's outer
     /// size (twips), and its border/fill (RGBA). Laid out as an inline box on its
@@ -377,6 +381,7 @@ fn split_blocks<'a>(items: &'a [FlowItem<'a>], base: u32) -> Vec<Block<'a>> {
             // reach here.
             FlowItem::Image { .. }
             | FlowItem::Field { .. }
+            | FlowItem::NoteReference(_)
             | FlowItem::TextBox { .. }
             | FlowItem::HorizontalRule(_)
             | FlowItem::FloatBarrier { .. }
@@ -566,6 +571,7 @@ fn layout_tabbed_line(
                 bars: Vec::new(),
                 images: Vec::new(),
                 fields: Vec::new(),
+                notes: Vec::new(),
                 text_boxes: Vec::new(),
                 rules: Vec::new(),
             };
@@ -982,6 +988,7 @@ fn empty_line(node: NodeId, offset: u32, bars: Vec<Twip>) -> Line {
         bars,
         images: Vec::new(),
         fields: Vec::new(),
+        notes: Vec::new(),
         text_boxes: Vec::new(),
         rules: Vec::new(),
     }

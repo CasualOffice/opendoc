@@ -11,6 +11,8 @@ use std::borrow::Cow;
 
 use serde::{Deserialize, Serialize};
 
+use casual_doc_model::v1::{NoteId, NoteKind};
+
 use crate::block::BlockFragment;
 use crate::model::ModelRange;
 use crate::units::{Point, Size, Twip};
@@ -281,6 +283,17 @@ pub struct FieldMarker {
     pub value: String,
 }
 
+/// A note reference carried on a laid-out line. The visible reference glyph is a
+/// normal glyph run; this marker is the pagination side channel used by the later
+/// footnote/endnote placement pass.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct NoteMarker {
+    /// Whether this reference points to a footnote or an endnote definition.
+    pub kind: NoteKind,
+    /// The referenced note definition id.
+    pub note: NoteId,
+}
+
 /// One laid-out line: its glyph runs (visually ordered), vertical metrics, the
 /// model range it covers (for hit-testing), and how it ends.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -324,6 +337,10 @@ pub struct Line {
     /// non-empty so a plain galley stays byte-identical.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fields: Vec<FieldMarker>,
+    /// Footnote/endnote references on this line. Empty for the common line; the
+    /// paginator consumes it to reserve/place page-local note bodies.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<NoteMarker>,
     /// Inline text boxes placed on this line (`wps:txbx` / `v:textbox`), each a
     /// bordered box of flowed block content. Empty for the common line; serialized
     /// only when non-empty so a plain galley stays byte-identical.
@@ -514,6 +531,7 @@ pub trait LineShaper {
                     size: image.size,
                 }],
                 fields: Vec::new(),
+                notes: Vec::new(),
                 text_boxes: Vec::new(),
                 rules: Vec::new(),
             });
@@ -570,6 +588,7 @@ mod tests {
             bars: Vec::new(),
             images: Vec::new(),
             fields: Vec::new(),
+            notes: Vec::new(),
             text_boxes: Vec::new(),
             rules: Vec::new(),
         };
