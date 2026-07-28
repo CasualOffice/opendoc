@@ -91,6 +91,10 @@ const insertTableBtn = document.getElementById("insertTableBtn");
 const insertTableMenu = document.getElementById("insertTableMenu");
 const gridPicker = document.getElementById("gridPicker");
 const gridLabel = document.getElementById("gridLabel");
+const railOutline = document.getElementById("railOutline");
+const outlinePanel = document.getElementById("outlinePanel");
+const outlineClose = document.getElementById("outlineClose");
+const outlineBody = document.getElementById("outlineBody");
 const indentDecBtn = document.getElementById("indentDec");
 const indentIncBtn = document.getElementById("indentInc");
 const bulletListBtn = document.getElementById("bulletList");
@@ -196,10 +200,12 @@ async function openBytes(bytes, name) {
     docTitleEl.hidden = false;
     titleDividerEl.hidden = false;
     saveBtn.disabled = false;
+    railOutline.disabled = false;
     populateStyles();
     dropEl.hidden = true;
     await provisionFonts(name);
     await renderAll();
+    buildOutline();
   } catch (err) {
     console.error(err);
     setStatus(`Could not open ${name}: ${err.message ?? err}`, "error");
@@ -847,6 +853,7 @@ async function applyEditResult(res) {
     drawSelection();
   }
   updateStats(); // word/paragraph counts may have changed
+  buildOutline(); // headings may have changed (no-op when the panel is closed)
   scrollCaretIntoView();
 }
 
@@ -905,6 +912,7 @@ async function runToolbarEdit(thunk) {
     for (const i of dirty) repaintPage(i);
     drawSelection();
   }
+  buildOutline(); // a style change may add/remove a heading (no-op when closed)
 }
 
 /** The uniform run-format state over the selection, or null if not a range. */
@@ -1361,6 +1369,51 @@ gridPicker.addEventListener("pointerdown", (e) => {
   closePopover(insertTablePopover);
 });
 const insertTablePopover = registerPopover(insertTableBtn, insertTableMenu, () => highlightGrid(0, 0));
+
+// ---- Outline panel (heading tree → scroll-to) -------------------------------
+/** Rebuilds the outline list from the document's headings (no-op when hidden). */
+function buildOutline() {
+  if (!doc || outlinePanel.hidden) return;
+  const rows = doc.documentOutline(); // "level\tnode\ttext"
+  outlineBody.replaceChildren();
+  if (!rows.length) {
+    const empty = document.createElement("div");
+    empty.className = "outline-empty";
+    empty.textContent = "No headings yet. Apply a Heading style to build an outline.";
+    outlineBody.appendChild(empty);
+    return;
+  }
+  for (const row of rows) {
+    const tab = row.indexOf("\t");
+    const tab2 = row.indexOf("\t", tab + 1);
+    const level = Math.min(6, Math.max(1, Number(row.slice(0, tab)) || 1));
+    const node = row.slice(tab + 1, tab2);
+    const text = row.slice(tab2 + 1);
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = `outline-item lvl-${level}`;
+    item.textContent = text;
+    item.title = text;
+    item.addEventListener("click", () => navigateToNode(node));
+    outlineBody.appendChild(item);
+  }
+}
+
+/** Places the caret at the start of `node` and scrolls it into view. */
+function navigateToNode(node) {
+  if (!doc) return;
+  selection = { anchor: { node, offset: 0 }, focus: { node, offset: 0 } };
+  drawSelection();
+  scrollCaretIntoView();
+}
+
+function toggleOutline() {
+  outlinePanel.hidden = !outlinePanel.hidden;
+  railOutline.setAttribute("aria-pressed", String(!outlinePanel.hidden));
+  buildOutline();
+}
+railOutline.addEventListener("click", toggleOutline);
+outlineClose.addEventListener("click", toggleOutline);
 
 // Indentation: left/right absolute, and a first-line/hanging "special" indent
 // (setFirstLineIndent encodes hanging as a negative value, 0 clears both).
