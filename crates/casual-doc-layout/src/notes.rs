@@ -252,6 +252,14 @@ mod tests {
     }
 
     fn note_ref_paragraph(id: u64, note: NoteId) -> BlockNode {
+        typed_note_ref_paragraph(id, note, NoteKind::Footnote)
+    }
+
+    fn endnote_ref_paragraph(id: u64, note: NoteId) -> BlockNode {
+        typed_note_ref_paragraph(id, note, NoteKind::Endnote)
+    }
+
+    fn typed_note_ref_paragraph(id: u64, note: NoteId, kind: NoteKind) -> BlockNode {
         BlockNode::Paragraph(Paragraph {
             id: node(id),
             properties: ParagraphProperties::default(),
@@ -263,7 +271,7 @@ mod tests {
                 }),
                 InlineNode::NoteReference(NoteReference {
                     id: node(id + 20_000),
-                    kind: NoteKind::Footnote,
+                    kind,
                     note,
                 }),
             ],
@@ -302,9 +310,9 @@ mod tests {
         Document::new(node(1), body, definitions).unwrap()
     }
 
-    fn section_with_header(header: HeaderFooterId) -> SectionBoundary {
+    fn section(id: u64) -> SectionBoundary {
         SectionBoundary {
-            id: SectionId::new(node(900)),
+            id: SectionId::new(node(id)),
             page_size: PageSize {
                 width_twips: 12_240,
                 height_twips: 15_840,
@@ -324,10 +332,7 @@ mod tests {
                 equal_width: None,
                 columns: Vec::new(),
             },
-            headers: vec![HeaderFooterRef {
-                kind: HeaderFooterKind::Default,
-                reference: header,
-            }],
+            headers: Vec::new(),
             footers: Vec::new(),
             section_type: None,
             title_page: None,
@@ -343,6 +348,15 @@ mod tests {
             text_direction: None,
             bidi: false,
         }
+    }
+
+    fn section_with_header(header: HeaderFooterId) -> SectionBoundary {
+        let mut section = section(900);
+        section.headers.push(HeaderFooterRef {
+            kind: HeaderFooterKind::Default,
+            reference: header,
+        });
+        section
     }
 
     fn table_with_split_cell_note(note: NoteId) -> BlockNode {
@@ -543,6 +557,128 @@ mod tests {
                 )
             }),
             "the header still exposes the visible note marker metadata"
+        );
+    }
+
+    #[test]
+    fn endnote_body_is_appended_as_ordinary_body_content() {
+        let endnote = NoteId::new(node(1_701));
+        let mut definitions = Definitions::default();
+        definitions.endnotes.insert(
+            endnote,
+            Note {
+                blocks: vec![paragraph(1_702, "endnote body")],
+            },
+        );
+        let doc = document(
+            vec![
+                paragraph(1_703, "body"),
+                endnote_ref_paragraph(1_704, endnote),
+            ],
+            definitions,
+        );
+        let shaper = ParleyShaper::new();
+
+        let layout = paginate_document(&doc, &shaper);
+        let page = layout.pages.last().expect("expected a page");
+
+        assert!(
+            layout.pages.iter().all(|page| page.footnotes.is_empty()),
+            "endnotes use ordinary body pagination, not Page::footnotes"
+        );
+        assert!(
+            page.placed
+                .iter()
+                .any(|placed| placed.fragment.node_id() == node(1_702)),
+            "the referenced endnote body is appended after body content"
+        );
+    }
+
+    #[test]
+    fn endnote_bodies_append_once_in_first_reference_order() {
+        let first = NoteId::new(node(1_801));
+        let second = NoteId::new(node(1_802));
+        let mut definitions = Definitions::default();
+        definitions.endnotes.insert(
+            first,
+            Note {
+                blocks: vec![paragraph(1_811, "first endnote body")],
+            },
+        );
+        definitions.endnotes.insert(
+            second,
+            Note {
+                blocks: vec![paragraph(1_812, "second endnote body")],
+            },
+        );
+        let doc = document(
+            vec![
+                endnote_ref_paragraph(1_821, second),
+                endnote_ref_paragraph(1_822, first),
+                endnote_ref_paragraph(1_823, second),
+            ],
+            definitions,
+        );
+        let shaper = ParleyShaper::new();
+
+        let layout = paginate_document(&doc, &shaper);
+        let appended: Vec<_> = layout
+            .pages
+            .iter()
+            .flat_map(|page| page.placed.iter())
+            .map(|placed| placed.fragment.node_id())
+            .filter(|id| *id == node(1_811) || *id == node(1_812))
+            .collect();
+
+        assert_eq!(
+            appended,
+            vec![node(1_812), node(1_811)],
+            "endnote definitions append once in first-reference order"
+        );
+    }
+
+    #[test]
+    fn endnote_referenced_before_final_section_appends_after_final_body() {
+        let endnote = NoteId::new(node(1_901));
+        let first_section = SectionId::new(node(1_902));
+        let mut definitions = Definitions::default();
+        definitions.endnotes.insert(
+            endnote,
+            Note {
+                blocks: vec![paragraph(1_903, "early-section endnote body")],
+            },
+        );
+        definitions.sections.push(section(1_902));
+        definitions.sections.push(section(1_904));
+        let mut first = endnote_ref_paragraph(1_905, endnote);
+        if let BlockNode::Paragraph(paragraph) = &mut first {
+            paragraph.properties.section_break = Some(first_section);
+        }
+        let doc = document(
+            vec![first, paragraph(1_906, "final section body")],
+            definitions,
+        );
+        let shaper = ParleyShaper::new();
+
+        let layout = paginate_document(&doc, &shaper);
+        let placed: Vec<_> = layout
+            .pages
+            .iter()
+            .flat_map(|page| page.placed.iter())
+            .map(|placed| placed.fragment.node_id())
+            .collect();
+        let final_body = placed
+            .iter()
+            .position(|id| *id == node(1_906))
+            .expect("expected final section body");
+        let endnote_body = placed
+            .iter()
+            .position(|id| *id == node(1_903))
+            .expect("expected appended endnote body");
+
+        assert!(
+            endnote_body > final_body,
+            "endnotes referenced in earlier sections append after the final body section"
         );
     }
 }

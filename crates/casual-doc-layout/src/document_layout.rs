@@ -38,7 +38,8 @@
 use std::collections::BTreeMap;
 
 use casual_doc_model::v1::{
-    BlockNode, Document, HeaderFooterKind, HeaderFooterRef, SectionBoundary,
+    BlockNode, Document, GroupChild, HeaderFooterKind, HeaderFooterRef, InlineNode, NoteId,
+    NoteKind, SectionBoundary,
 };
 
 use crate::anchor::{header_float_reserve_for_section, place_floats};
@@ -259,7 +260,8 @@ fn build_section_runs(
         let config = plans[0].config;
         let content = config.content_area();
         let layout = ColumnLayout::single(content);
-        let galley = build_galley_for_blocks(document, shaper, body, layout.flow_width());
+        let blocks = body_with_appended_endnotes(document, body, body);
+        let galley = build_galley_for_blocks(document, shaper, &blocks, layout.flow_width());
         return vec![SectionRun {
             config,
             layout,
@@ -285,16 +287,124 @@ fn build_section_runs(
     }
     // The trailing (body-level) final section covers everything left.
     if let Some(last) = sections.last() {
+        let trailing = body_with_appended_endnotes(document, &body[start..], body);
         push_section_run(
             document,
             shaper,
             plan_for_section(plans, last.id),
             last,
-            &body[start..],
+            &trailing,
             &mut runs,
         );
     }
     runs
+}
+
+fn body_with_appended_endnotes(
+    document: &Document,
+    blocks: &[BlockNode],
+    reference_scope: &[BlockNode],
+) -> Vec<BlockNode> {
+    let endnotes = referenced_endnotes(reference_scope);
+    if endnotes.is_empty() {
+        return blocks.to_vec();
+    }
+    let mut out = blocks.to_vec();
+    for id in endnotes {
+        if let Some(note) = document.definitions().endnotes.get(&id) {
+            out.extend(note.blocks.clone());
+        }
+    }
+    out
+}
+
+fn referenced_endnotes(blocks: &[BlockNode]) -> Vec<NoteId> {
+    let mut out = Vec::new();
+    for block in blocks {
+        collect_block_endnotes(block, &mut out);
+    }
+    out
+}
+
+fn push_unique_endnote(out: &mut Vec<NoteId>, note: NoteId) {
+    if !out.contains(&note) {
+        out.push(note);
+    }
+}
+
+fn collect_block_endnotes(block: &BlockNode, out: &mut Vec<NoteId>) {
+    match block {
+        BlockNode::Paragraph(paragraph) => collect_inline_endnotes(&paragraph.inlines, out),
+        BlockNode::Table(table) => {
+            for row in &table.rows {
+                for cell in &row.cells {
+                    for block in &cell.blocks {
+                        collect_block_endnotes(block, out);
+                    }
+                }
+            }
+        }
+        BlockNode::Sdt(sdt) => {
+            for block in &sdt.blocks {
+                collect_block_endnotes(block, out);
+            }
+        }
+        BlockNode::AltChunk(_) => {}
+    }
+}
+
+fn collect_inline_endnotes(inlines: &[InlineNode], out: &mut Vec<NoteId>) {
+    for inline in inlines {
+        match inline {
+            InlineNode::NoteReference(reference) if reference.kind == NoteKind::Endnote => {
+                push_unique_endnote(out, reference.note);
+            }
+            InlineNode::Hyperlink(hyperlink) => collect_inline_endnotes(&hyperlink.inlines, out),
+            InlineNode::Field(field) => collect_inline_endnotes(&field.inlines, out),
+            InlineNode::TextBox(text_box) => {
+                for block in &text_box.blocks {
+                    collect_block_endnotes(block, out);
+                }
+            }
+            InlineNode::Group(group) => collect_group_endnotes(&group.children, out),
+            InlineNode::Revision(revision) => collect_inline_endnotes(&revision.inlines, out),
+            InlineNode::Sdt(sdt) => collect_inline_endnotes(&sdt.inlines, out),
+            InlineNode::Run(_)
+            | InlineNode::Tab(_)
+            | InlineNode::Break(_)
+            | InlineNode::Drawing(_)
+            | InlineNode::AnchoredDrawing(_)
+            | InlineNode::EmbeddedObject(_)
+            | InlineNode::CommentReference(_)
+            | InlineNode::CommentRangeStart(_)
+            | InlineNode::CommentRangeEnd(_)
+            | InlineNode::BookmarkStart(_)
+            | InlineNode::BookmarkEnd(_)
+            | InlineNode::MoveRangeStart(_)
+            | InlineNode::MoveRangeEnd(_)
+            | InlineNode::Math(_)
+            | InlineNode::Symbol(_)
+            | InlineNode::HorizontalRule(_)
+            | InlineNode::NoBreakHyphen(_)
+            | InlineNode::SoftHyphen(_)
+            | InlineNode::PositionalTab(_)
+            | InlineNode::NoteReference(_) => {}
+        }
+    }
+}
+
+fn collect_group_endnotes(children: &[GroupChild], out: &mut Vec<NoteId>) {
+    for child in children {
+        match child {
+            GroupChild::TextBox(text_box) => {
+                for block in &text_box.blocks {
+                    collect_block_endnotes(block, out);
+                }
+            }
+            GroupChild::Group(group) => collect_group_endnotes(&group.children, out),
+            GroupChild::Picture(_) | GroupChild::Shape(_) => {}
+        }
+    }
 }
 
 /// Finds the precomputed plan for `section`, falling back to the first plan for
@@ -473,8 +583,9 @@ fn finish_pagination(
 
 /// [`build_section_runs`], but the common **single-section** body is flowed through
 /// the galley `cache` so unchanged paragraphs are reused rather than re-shaped.
-/// Documents that carry explicit section breaks re-shape fully (each section's
-/// slice would need its own cache, and multi-section editing is the rarer case).
+/// Documents that carry explicit section breaks or referenced endnotes re-shape
+/// fully (each section slice or synthetic endnote appendix would need its own
+/// cache, and these are rarer than plain body edits).
 fn build_section_runs_cached(
     document: &Document,
     shaper: &dyn crate::text::LineShaper,
@@ -482,7 +593,9 @@ fn build_section_runs_cached(
     cache: &mut GalleyCache,
     dirty: &DirtySet,
 ) -> Vec<SectionRun> {
-    if !document.definitions().sections.is_empty() {
+    if !document.definitions().sections.is_empty()
+        || !referenced_endnotes(document.body()).is_empty()
+    {
         return build_section_runs(document, shaper, plans);
     }
     // Single-section fast path: one full-width run over the whole body, built
@@ -506,7 +619,8 @@ mod cached_pagination_tests {
     use crate::shape::ParleyShaper;
     use casual_doc_model::NodeId;
     use casual_doc_model::v1::{
-        BlockNode, Definitions, InlineNode, Paragraph, ParagraphProperties, Run, RunProperties,
+        BlockNode, Definitions, InlineNode, Note, NoteId, NoteKind, NoteReference, Paragraph,
+        ParagraphProperties, Run, RunProperties,
     };
 
     fn node(id: u64) -> NodeId {
@@ -533,6 +647,46 @@ mod cached_pagination_tests {
             })
             .collect();
         Document::new(node(9_000), body, Definitions::default()).unwrap()
+    }
+
+    fn doc_with_endnote() -> Document {
+        let endnote = NoteId::new(node(9_100));
+        let mut definitions = Definitions::default();
+        definitions.endnotes.insert(
+            endnote,
+            Note {
+                blocks: vec![BlockNode::Paragraph(Paragraph {
+                    id: node(9_101),
+                    properties: ParagraphProperties::default(),
+                    inlines: vec![InlineNode::Run(Run {
+                        id: node(9_102),
+                        properties: RunProperties::default(),
+                        text: "cached endnote body".to_owned(),
+                    })],
+                })],
+            },
+        );
+        let body = vec![
+            BlockNode::Paragraph(Paragraph {
+                id: node(9_103),
+                properties: ParagraphProperties::default(),
+                inlines: vec![InlineNode::Run(Run {
+                    id: node(9_104),
+                    properties: RunProperties::default(),
+                    text: "body".to_owned(),
+                })],
+            }),
+            BlockNode::Paragraph(Paragraph {
+                id: node(9_105),
+                properties: ParagraphProperties::default(),
+                inlines: vec![InlineNode::NoteReference(NoteReference {
+                    id: node(9_106),
+                    kind: NoteKind::Endnote,
+                    note: endnote,
+                })],
+            }),
+        ];
+        Document::new(node(9_107), body, definitions).unwrap()
     }
 
     // Enough prose to span several pages, so an edit that reuses cached paragraphs
@@ -614,6 +768,29 @@ mod cached_pagination_tests {
             cache.shaped_last_build(),
             1,
             "only the inserted paragraph should have been shaped"
+        );
+    }
+
+    #[test]
+    fn cached_matches_full_when_endnotes_are_appended() {
+        let shaper = ParleyShaper::new();
+        let doc = doc_with_endnote();
+        let mut cache = GalleyCache::new();
+
+        let cached = paginate_document_cached(&doc, &shaper, &mut cache, &DirtySet::everything());
+        let full = paginate_document(&doc, &shaper);
+
+        assert_eq!(
+            cached, full,
+            "cached pagination must preserve the synthetic endnote appendix"
+        );
+        assert!(
+            cached
+                .pages
+                .iter()
+                .flat_map(|page| page.placed.iter())
+                .any(|placed| placed.fragment.node_id() == node(9_101)),
+            "the referenced endnote body should remain visible through the cached entry point"
         );
     }
 }

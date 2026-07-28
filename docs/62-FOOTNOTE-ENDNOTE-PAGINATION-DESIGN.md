@@ -160,6 +160,14 @@ keeps running-content markers out of body footnote reservation.
 - Append endnote bodies according to the simplest modeled policy.
 - Add generated corpus fixtures for footnote and endnote references.
 
+Implementation note: the first Slice D increment appends referenced endnote
+definitions, once each in first-reference order, after the final body section.
+They flow through ordinary body pagination and never populate `Page::footnotes`.
+The cached sectionless pagination entry point falls back to the full path when
+referenced endnotes require this synthetic appendix.
+Section-end placement and multi-section footnote reservation remain separate
+follow-ups because they require section-aware reservation in the column paginator.
+
 ## Invariants
 
 - A document with no note references produces byte-identical `PaginatedLayout`.
