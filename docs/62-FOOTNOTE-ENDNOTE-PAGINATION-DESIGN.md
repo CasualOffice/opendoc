@@ -186,6 +186,12 @@ bottom band through the column paginator and flow note bodies at the section's
 full content width. Per-column note balancing and continuation-note behavior
 remain deferred.
 
+Implementation note: the fifth Slice D increment adds optional source-section
+provenance to placed body fragments. Footnote collection uses the placed
+fragment's section, falling back to the page section for older layouts, so a
+reference from an earlier section on a page later owned by a continuous section
+still resolves note geometry from the reference section.
+
 ## Invariants
 
 - A document with no note references produces byte-identical `PaginatedLayout`.

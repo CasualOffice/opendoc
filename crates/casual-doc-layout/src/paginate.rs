@@ -616,7 +616,11 @@ impl<'a> Paginator<'a> {
             Point::new(self.content.origin.x, self.cursor_y),
             Size::new(self.content.size.width, height),
         );
-        self.placed.push(PlacedFragment { fragment, rect });
+        self.placed.push(PlacedFragment {
+            fragment,
+            rect,
+            section: Some(self.config.section),
+        });
         self.cursor_y = self.cursor_y + height;
     }
 
@@ -827,7 +831,11 @@ impl<'a> Paginator<'a> {
                 Point::new(self.content.origin.x, self.cursor_y),
                 Size::new(self.content.size.width, height),
             );
-            self.placed.push(PlacedFragment { fragment: h, rect });
+            self.placed.push(PlacedFragment {
+                fragment: h,
+                rect,
+                section: Some(self.config.section),
+            });
             self.cursor_y = self.cursor_y + height;
         }
     }
