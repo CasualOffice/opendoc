@@ -30,11 +30,11 @@ pub(crate) fn run_has_body_footnotes(run: &SectionRun) -> bool {
     run.galley.iter().any(fragment_has_footnote)
 }
 
-/// Paginates single-column section runs with page-local footnote bands. Each
-/// section's footnote bodies are flowed at that section's content width, while
-/// the page reservation loop remains global and bounded across section breaks.
+/// Paginates section runs with page-local footnote bands. Each section's footnote
+/// bodies are flowed at that section's full content width, while the page
+/// reservation loop remains global and bounded across section and column breaks.
 #[must_use]
-pub(crate) fn paginate_single_column_footnotes(
+pub(crate) fn paginate_section_footnotes(
     document: &Document,
     shaper: &dyn LineShaper,
     runs: &[SectionRun],
@@ -389,6 +389,12 @@ mod tests {
         section
     }
 
+    fn section_with_columns(id: u64, count: u16) -> SectionBoundary {
+        let mut section = section(id);
+        section.columns.count = count;
+        section
+    }
+
     fn section_with_header(header: HeaderFooterId) -> SectionBoundary {
         let mut section = section(900);
         section.headers.push(HeaderFooterRef {
@@ -661,6 +667,59 @@ mod tests {
                 .iter()
                 .all(|placed| placed.rect.origin.y >= layout.pages[0].content_area.bottom()),
             "footnote fragments sit below the reserved shared-page body area"
+        );
+    }
+
+    #[test]
+    fn two_column_footnote_reserves_page_wide_band() {
+        let note = NoteId::new(node(1_631));
+        let mut definitions = Definitions::default();
+        definitions.footnotes.insert(
+            note,
+            Note {
+                blocks: (0..10)
+                    .map(|i| paragraph(1_640 + i, "two column footnote body"))
+                    .collect(),
+            },
+        );
+        definitions.sections.push(section_with_columns(1_632, 2));
+        let mut body: Vec<_> = (0..26)
+            .map(|i| paragraph(1_660 + i, "two column body line"))
+            .collect();
+        body.push(note_ref_paragraph(1_690, note));
+        body.extend((0..10).map(|i| paragraph(1_700 + i, "two column tail line")));
+        let doc = document(body, definitions);
+        let shaper = ParleyShaper::new();
+
+        let layout = paginate_document(&doc, &shaper);
+        let default_content = document_page_config(&doc).content_area();
+        let note_page = layout
+            .pages
+            .iter()
+            .find(|page| !page.footnotes.is_empty())
+            .expect("expected a multi-column footnote band");
+
+        assert!(
+            note_page.content_area.size.height < default_content.size.height,
+            "the multi-column reference page body area is reduced by the note band"
+        );
+        assert_eq!(
+            note_page.footnotes[0].rect.size.width, note_page.content_area.size.width,
+            "multi-column footnote bodies span the full section content width"
+        );
+        assert!(
+            note_page
+                .placed
+                .iter()
+                .all(|placed| placed.rect.bottom() <= note_page.content_area.bottom()),
+            "body fragments remain above the multi-column footnote band"
+        );
+        assert!(
+            note_page
+                .footnotes
+                .iter()
+                .all(|placed| placed.rect.origin.y >= note_page.content_area.bottom()),
+            "footnote fragments sit below the reserved multi-column body area"
         );
     }
 

@@ -48,7 +48,7 @@ use crate::columns::{
 };
 use crate::flow::{build_galley_cached, build_galley_for_blocks, flow_header_footer};
 use crate::incremental::{DirtySet, GalleyCache};
-use crate::notes::{paginate_single_column_footnotes, run_has_body_footnotes};
+use crate::notes::{paginate_section_footnotes, run_has_body_footnotes};
 use crate::paginate::{PageConfig, resolve_anchored_fields, resolve_fields};
 use crate::running::{HeaderFooter, RunningContent, place_running_content_on_page};
 use crate::units::{Size, Twip};
@@ -549,10 +549,8 @@ fn finish_pagination(
     runs: &[SectionRun],
 ) -> crate::page::PaginatedLayout {
     let fallback_config = plans[0].config;
-    let mut layout = if runs.iter().all(|run| run.layout.is_single_column())
-        && runs.iter().any(run_has_body_footnotes)
-    {
-        paginate_single_column_footnotes(document, shaper, runs)
+    let mut layout = if runs.iter().any(run_has_body_footnotes) {
+        paginate_section_footnotes(document, shaper, runs)
     } else {
         paginate_columns(runs)
     };
