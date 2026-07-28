@@ -21,12 +21,13 @@ use std::hash::{Hash, Hasher};
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     Alignment, BlockNode, BorderEdge, BreakKind, Color, ColorScheme, DefinitionMap, Definitions,
-    Document, Drawing, DrawingAnchor, Extent, FontRef, FontScheme, HeightRule, HighlightColor,
-    HorizontalAlign, HorizontalAnchor, HorizontalPosition, HorizontalRule as ModelHorizontalRule,
-    HorizontalRuleAlign, Indentation, InlineNode, LevelSuffix, LineRule, MediaId, MediaReference,
-    ParagraphProperties, Rgba, RunProperties, SchemeColor, SectionBoundary, SectionId, SectionType,
-    ShapeStroke, StyleId, Symbol, TabAlignment, TabLeader, TabStop, Table, TableBorders, TableCell,
-    TableLayout, TableRow, TableRowProperties, TextBox, TextBoxAutoFit, TextBoxBodyProperties,
+    Document, Drawing, DrawingAnchor, EmbeddedKind, EmbeddedObject, Extent, FontRef, FontScheme,
+    HeightRule, HighlightColor, HorizontalAlign, HorizontalAnchor, HorizontalPosition,
+    HorizontalRule as ModelHorizontalRule, HorizontalRuleAlign, Indentation, InlineNode,
+    LevelSuffix, LineRule, MediaId, MediaReference, NoteKind, NoteReference, ParagraphProperties,
+    Rgba, RunProperties, SchemeColor, SectionBoundary, SectionId, SectionType, ShapeStroke,
+    StyleId, Symbol, TabAlignment, TabLeader, TabStop, Table, TableBorders, TableCell, TableLayout,
+    TableRow, TableRowProperties, TextBox, TextBoxAutoFit, TextBoxBodyProperties,
     TextBoxHorizontalOverflow, TextBoxVerticalAnchor, TextBoxVerticalOverflow, ThemeColorRef,
     ThemeFontRef, VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition, WrapMode,
 };
@@ -1768,6 +1769,7 @@ fn collect_items<'a>(
                     out.push(item);
                 }
             }
+            InlineNode::EmbeddedObject(object) => embedded_object_items(object, out, ctx),
             InlineNode::AnchoredDrawing(drawing) => {
                 if let Some(item) = float_flow_item(&drawing.anchor, &drawing.extent) {
                     out.push(item);
@@ -1798,12 +1800,115 @@ fn collect_items<'a>(
             InlineNode::Hyperlink(hyperlink) => {
                 collect_items(&hyperlink.inlines, out, shaper, width, ctx)
             }
+            InlineNode::NoteReference(reference) => {
+                out.push(FlowItem::Run(note_reference_run(reference, ctx)));
+            }
+            InlineNode::CommentReference(_) => {
+                out.push(FlowItem::Run(styled_owned_run(
+                    "[comment]".to_owned(),
+                    &comment_marker_properties(),
+                    ctx,
+                )));
+            }
             InlineNode::Revision(revision) => {
                 collect_items(&revision.inlines, out, shaper, width, ctx)
             }
             InlineNode::Sdt(sdt) => collect_items(&sdt.inlines, out, shaper, width, ctx),
+            InlineNode::Math(math) => {
+                let text = if math.text.is_empty() {
+                    "[equation]".to_owned()
+                } else {
+                    format!("[{}]", math.text)
+                };
+                out.push(FlowItem::Run(styled_owned_run(
+                    text,
+                    &RunProperties::default(),
+                    ctx,
+                )));
+            }
+            InlineNode::NoBreakHyphen(_) => {
+                out.push(FlowItem::Run(styled_run(
+                    "\u{2011}",
+                    &RunProperties::default(),
+                    ctx,
+                )));
+            }
+            InlineNode::SoftHyphen(_) => {
+                out.push(FlowItem::Run(styled_run(
+                    "\u{00ad}",
+                    &RunProperties::default(),
+                    ctx,
+                )));
+            }
             _ => {}
         }
+    }
+}
+
+fn embedded_object_items<'a>(
+    object: &EmbeddedObject,
+    out: &mut Vec<FlowItem<'a>>,
+    ctx: &mut FlowCtx,
+) {
+    if let Some(preview) = object.preview
+        && let Some(media) = ctx.media.get(&preview)
+    {
+        let size = extent_to_size(&object.extent);
+        if size.width.raw() > 0 && size.height.raw() > 0 {
+            out.push(FlowItem::Image {
+                media: media.part_name.clone(),
+                size,
+            });
+            return;
+        }
+    }
+
+    out.push(FlowItem::Run(styled_owned_run(
+        embedded_object_label(object).to_owned(),
+        &RunProperties::default(),
+        ctx,
+    )));
+}
+
+fn embedded_object_label(object: &EmbeddedObject) -> &'static str {
+    match &object.kind {
+        EmbeddedKind::Chart => "[chart]",
+        EmbeddedKind::Diagram => "[diagram]",
+        EmbeddedKind::OleObject => "[object]",
+        EmbeddedKind::Other(_) => "[object]",
+    }
+}
+
+fn note_reference_run(reference: &NoteReference, ctx: &mut FlowCtx) -> StyledRun<'static> {
+    let ordinal = match reference.kind {
+        NoteKind::Footnote => note_ordinal(&ctx.definitions.footnotes, reference.note),
+        NoteKind::Endnote => note_ordinal(&ctx.definitions.endnotes, reference.note),
+    };
+    let text = ordinal.map_or_else(|| "?".to_owned(), |n| n.to_string());
+    styled_owned_run(text, &note_reference_properties(), ctx)
+}
+
+fn note_ordinal<V>(
+    notes: &DefinitionMap<casual_doc_model::v1::NoteId, V>,
+    note: casual_doc_model::v1::NoteId,
+) -> Option<usize> {
+    notes
+        .iter()
+        .position(|(id, _)| *id == note)
+        .map(|index| index + 1)
+}
+
+fn note_reference_properties() -> RunProperties {
+    RunProperties {
+        vertical_alignment: Some(VerticalAlignment::Superscript),
+        ..RunProperties::default()
+    }
+}
+
+fn comment_marker_properties() -> RunProperties {
+    RunProperties {
+        vertical_alignment: Some(VerticalAlignment::Superscript),
+        ..RunProperties::default()
     }
 }
 
@@ -3015,6 +3120,38 @@ fn styled_run<'a>(text: &'a str, properties: &RunProperties, ctx: &mut FlowCtx) 
     build_styled_run(text, &effective, ctx)
 }
 
+fn styled_owned_run(
+    text: String,
+    properties: &RunProperties,
+    ctx: &mut FlowCtx,
+) -> StyledRun<'static> {
+    let effective = ctx.cascade.resolve_run(ctx.para_style, properties);
+    let (size, baseline_shift) = scaled_run_metrics(&effective, ctx.text_scale);
+    let text = case_transform(&text, &effective).into_owned();
+    let bold = effective.bold.unwrap_or(false);
+    let italic = effective.italic.unwrap_or(false);
+    StyledRun {
+        font: resolve_font(&text, &effective, bold, italic, ctx),
+        requested_family: requested_family(&effective, ctx.scheme).map(Cow::Owned),
+        text: Cow::Owned(text),
+        size,
+        character_scale_percent: effective.character_scale_percent.unwrap_or(100),
+        bold,
+        italic,
+        letter_spacing: scale_twip(
+            effective.character_spacing_twips.map_or(Twip::ZERO, Twip),
+            ctx.text_scale,
+        ),
+        color: run_color(effective.color, ctx.palette),
+        decoration: Decoration {
+            underline: effective.underline.unwrap_or(false),
+            strikethrough: effective.strike.unwrap_or(false),
+        },
+        highlight: effective.highlight.and_then(highlight_rgba),
+        baseline_shift,
+    }
+}
+
 /// Builds a [`StyledRun`] from already-resolved (effective) run properties. The
 /// property cascade (style + docDefaults) is applied by [`styled_run`] /
 /// [`push_styled_runs`] before this runs, so `properties` here is the value
@@ -3871,8 +4008,9 @@ mod tests {
     use crate::shape::ParleyShaper;
     use casual_doc_model::NodeId;
     use casual_doc_model::v1::{
-        BlockNode, Definitions, Document, InlineNode, Paragraph, ParagraphProperties, Run,
-        RunProperties,
+        BlockNode, CommentId, Definitions, Document, EmbeddedObject, EmbeddedPart, Extent,
+        InlineNode, Math, MediaId, MediaReference, NoBreakHyphen, Note, NoteId, NoteReference,
+        Paragraph, ParagraphProperties, Run, RunProperties, SoftHyphen,
     };
 
     fn run_node(id: u64, text: &str, properties: RunProperties) -> InlineNode {
@@ -3898,6 +4036,49 @@ mod tests {
             Definitions::default(),
         )
         .unwrap()
+    }
+
+    fn collected_items<'a>(
+        definitions: &'a Definitions,
+        inlines: &'a [InlineNode],
+    ) -> Vec<FlowItem<'a>> {
+        let resolver = FontResolver::new();
+        let shaper = ParleyShaper::new();
+        let mut report = FontResolutionReport::new();
+        let mut ctx = FlowCtx {
+            resolver: &resolver,
+            scheme: definitions.font_scheme.as_ref(),
+            report: &mut report,
+            default_tab: crate::tabs::DEFAULT_TAB_STOP,
+            media: &definitions.media,
+            palette: None,
+            cascade: StyleCascade::new(definitions),
+            para_style: None,
+            sections: &[],
+            definitions,
+            numbering: NumberingState::new(),
+            text_scale: 100_000,
+            line_spacing_reduction: 0,
+        };
+        let mut items = Vec::new();
+        collect_items(
+            inlines,
+            &mut items,
+            &shaper,
+            Twip::from_points(400),
+            &mut ctx,
+        );
+        items
+    }
+
+    fn run_texts(items: &[FlowItem<'_>]) -> Vec<String> {
+        items
+            .iter()
+            .filter_map(|item| match item {
+                FlowItem::Run(run) => Some(run.text.to_string()),
+                _ => None,
+            })
+            .collect()
     }
 
     /// The lines of the first paragraph fragment in a galley.
@@ -4661,6 +4842,124 @@ mod tests {
         assert!(
             glyphs >= 12,
             "hyperlink + revision text both shaped (got {glyphs})"
+        );
+    }
+
+    #[test]
+    fn visible_inline_leaf_floor_is_collected() {
+        let note = NoteId::new(NodeId::from_parts(101, 1).unwrap());
+        let mut definitions = Definitions::default();
+        definitions.footnotes.insert(
+            note,
+            Note {
+                blocks: vec![paragraph(
+                    102,
+                    vec![run_node(103, "note body", RunProperties::default())],
+                )],
+            },
+        );
+
+        let inlines = vec![
+            InlineNode::Math(Math {
+                id: NodeId::from_parts(10, 1).unwrap(),
+                omml: "<m:oMath/>".to_owned(),
+                text: "x+y".to_owned(),
+            }),
+            InlineNode::NoBreakHyphen(NoBreakHyphen {
+                id: NodeId::from_parts(11, 1).unwrap(),
+            }),
+            InlineNode::SoftHyphen(SoftHyphen {
+                id: NodeId::from_parts(12, 1).unwrap(),
+            }),
+            InlineNode::NoteReference(NoteReference {
+                id: NodeId::from_parts(13, 1).unwrap(),
+                kind: NoteKind::Footnote,
+                note,
+            }),
+            InlineNode::CommentReference(casual_doc_model::v1::CommentReference {
+                id: NodeId::from_parts(14, 1).unwrap(),
+                comment: CommentId::new(NodeId::from_parts(104, 1).unwrap()),
+            }),
+        ];
+
+        let items = collected_items(&definitions, &inlines);
+        assert_eq!(
+            run_texts(&items),
+            vec!["[x+y]", "\u{2011}", "\u{00ad}", "1", "[comment]"],
+            "modeled inline leaves get explicit visible/text-bearing flow atoms"
+        );
+        let note_run = items.iter().find_map(|item| match item {
+            FlowItem::Run(run) if run.text == "1" => Some(run),
+            _ => None,
+        });
+        assert!(
+            note_run.is_some_and(|run| run.baseline_shift > Twip::ZERO),
+            "note references use a superscript marker style"
+        );
+    }
+
+    #[test]
+    fn embedded_object_uses_preview_image_or_visible_placeholder() {
+        let media = MediaId::new(NodeId::from_parts(201, 1).unwrap());
+        let mut definitions = Definitions::default();
+        definitions.media.insert(
+            media,
+            MediaReference {
+                relationship_id: "rIdPreview".to_owned(),
+                media_type: "image/png".to_owned(),
+                part_name: "word/media/preview.png".to_owned(),
+            },
+        );
+        let part = EmbeddedPart {
+            relationship_id: "rIdObject".to_owned(),
+            relationship_type:
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart"
+                    .to_owned(),
+            part_name: "word/charts/chart1.xml".to_owned(),
+        };
+        let preview = InlineNode::EmbeddedObject(EmbeddedObject {
+            id: NodeId::from_parts(202, 1).unwrap(),
+            kind: EmbeddedKind::Chart,
+            part: part.clone(),
+            extra_parts: Vec::new(),
+            preview: Some(media),
+            extent: Extent {
+                width_emu: 635_000,
+                height_emu: 317_500,
+            },
+            prog_id: None,
+        });
+        let placeholder = InlineNode::EmbeddedObject(EmbeddedObject {
+            id: NodeId::from_parts(203, 1).unwrap(),
+            kind: EmbeddedKind::Chart,
+            part,
+            extra_parts: Vec::new(),
+            preview: None,
+            extent: Extent {
+                width_emu: 635_000,
+                height_emu: 317_500,
+            },
+            prog_id: None,
+        });
+
+        let preview_inlines = [preview];
+        let preview_items = collected_items(&definitions, &preview_inlines);
+        assert!(
+            matches!(
+                &preview_items[..],
+                [FlowItem::Image { media, size }]
+                    if media == "word/media/preview.png"
+                        && *size == Size::new(Twip(1_000), Twip(500))
+            ),
+            "an embedded object with a preview uses the existing image pipeline"
+        );
+
+        let placeholder_inlines = [placeholder];
+        let placeholder_items = collected_items(&definitions, &placeholder_inlines);
+        assert_eq!(
+            run_texts(&placeholder_items),
+            vec!["[chart]"],
+            "an embedded object without a preview is visibly represented"
         );
     }
 
