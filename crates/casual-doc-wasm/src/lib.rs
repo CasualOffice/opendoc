@@ -20,6 +20,7 @@ use casual_doc_edit::{
 };
 use casual_doc_export::write_document;
 use casual_doc_import::{ImportConfig, ImportMode, import_package};
+use casual_doc_layout::cascade::StyleCascade;
 use casual_doc_layout::compose::compose_page;
 use casual_doc_layout::document_layout::{
     document_page_config, paginate_document, paginate_document_cached,
@@ -1990,10 +1991,14 @@ impl WasmDocument {
     pub fn document_outline(&self) -> Vec<String> {
         let mut nodes = Vec::new();
         collect_block_text(self.document.body(), &mut nodes);
+        // Build the style cascade once; heading level comes from the *effective*
+        // paragraph properties (a Heading/Title style's outlineLvl is inherited,
+        // not written on the paragraph), so headings in real documents are found.
+        let cascade = StyleCascade::new(self.document.definitions());
         nodes
             .into_iter()
             .filter_map(|(id, text)| {
-                let level = self.heading_level_of(id)?;
+                let level = self.heading_level_of(id, &cascade)?;
                 let t = text.trim();
                 (!t.is_empty()).then(|| format!("{level}\t{id}\t{}", t.replace('\t', " ")))
             })
@@ -2001,26 +2006,40 @@ impl WasmDocument {
     }
 
     /// The heading level of paragraph `node` (1-based; 1 = top), or `None` if it is
-    /// not a heading. Prefers an explicit `outlineLvl`, else a `Title`/`Heading N`
-    /// style name.
-    fn heading_level_of(&self, node: NodeId) -> Option<u8> {
-        let props = paragraph_properties(&self.document, node)?;
-        if let Some(level) = props.outline_level.filter(|l| *l <= 8) {
+    /// not a heading. Robust across how producers mark headings:
+    /// 1. the **effective** `outlineLvl` (resolved through the whole style chain);
+    /// 2. otherwise, walk the paragraph's style + its `basedOn` ancestors for a
+    ///    style that carries its own `outlineLvl` or a `Title`/`Heading N` name
+    ///    (so a custom style *based on* Heading 2 is still found).
+    fn heading_level_of(&self, node: NodeId, cascade: &StyleCascade) -> Option<u8> {
+        let direct = paragraph_properties(&self.document, node)?;
+        if let Some(level) = cascade
+            .resolve_paragraph(&direct)
+            .outline_level
+            .filter(|l| *l <= 8)
+        {
             return Some(level + 1);
         }
-        let compact: String = self
-            .paragraph_style_at(&node.to_string())
-            .to_lowercase()
-            .chars()
-            .filter(|c| !c.is_whitespace())
-            .collect();
-        if compact == "title" {
-            return Some(1);
+        let defs = self.document.definitions();
+        let mut style_id = direct.style_ref;
+        for _ in 0..24 {
+            let Some(style) = style_id.and_then(|id| defs.styles.get(&id)) else {
+                break;
+            };
+            if let Some(level) = style
+                .paragraph
+                .as_ref()
+                .and_then(|p| p.outline_level)
+                .filter(|l| *l <= 8)
+            {
+                return Some(level + 1);
+            }
+            if let Some(level) = heading_level_from_name(style.name.as_deref()) {
+                return Some(level);
+            }
+            style_id = style.based_on;
         }
-        compact
-            .strip_prefix("heading")
-            .and_then(|n| n.parse::<u8>().ok())
-            .filter(|n| (1..=9).contains(n))
+        None
     }
 
     /// Undoes the last user action (one or many ops), returning the restored
@@ -2874,6 +2893,23 @@ fn flat_rect(page: u32, rect: Rect) -> [i32; 5] {
         rect.size.width.raw(),
         rect.size.height.raw(),
     ]
+}
+
+/// The heading level (1-based; 1 = top) implied by a style `name` — `Title` or
+/// `Heading N` (case- and whitespace-insensitive), else `None`.
+fn heading_level_from_name(name: Option<&str>) -> Option<u8> {
+    let compact: String = name?
+        .to_lowercase()
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    if compact == "title" {
+        return Some(1);
+    }
+    compact
+        .strip_prefix("heading")
+        .and_then(|n| n.parse::<u8>().ok())
+        .filter(|n| (1..=9).contains(n))
 }
 
 /// Whether `block` (recursively, through nested tables / content controls) holds the
