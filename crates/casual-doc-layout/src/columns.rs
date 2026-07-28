@@ -122,6 +122,14 @@ impl ColumnLayout {
                 .any(|column| column.width != first.width)
         })
     }
+
+    /// Whether this section is the single full-width column path. Footnote body
+    /// reservation starts here; multi-column page-local reservations require a
+    /// separate column paginator extension.
+    #[must_use]
+    pub(crate) fn is_single_column(&self) -> bool {
+        self.columns.len() == 1
+    }
 }
 
 /// Resolves a section's [`SectionColumns`] into a laid-out [`ColumnLayout`] across
