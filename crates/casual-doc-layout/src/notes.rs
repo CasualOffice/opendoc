@@ -5,7 +5,7 @@
 //! placed body lines for footnote markers, compute the bottom-band heights, and
 //! repeat until the reservations stabilize or the hard cap is reached.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 use casual_doc_model::v1::{Document, NoteId, NoteKind, SectionId};
 
@@ -138,10 +138,13 @@ fn page_reservations(
     notes: &BTreeMap<NoteFlowKey, BTreeMap<NoteId, Vec<BlockFragment>>>,
     runs: &[SectionRun],
 ) -> Vec<Twip> {
+    let mut queues: BTreeMap<NoteBandKey, VecDeque<BlockFragment>> = BTreeMap::new();
+    let page_count = layout.pages.len();
     layout
         .pages
         .iter()
-        .map(|page| {
+        .enumerate()
+        .map(|(index, page)| {
             let cap = runs
                 .iter()
                 .find(|run| run.config.section == page.section)
@@ -149,8 +152,9 @@ fn page_reservations(
                     || footnote_cap_for_area(page.content_area),
                     |run| footnote_cap(&run.config),
                 );
-            column_footnote_heights(page_footnote_refs(page), notes)
-                .into_values()
+            enqueue_page_footnotes(page_footnote_refs(page), notes, &mut queues);
+            consume_queues_for_reservation(&mut queues, cap, index + 1 == page_count)
+                .into_iter()
                 .max()
                 .unwrap_or(Twip::ZERO)
                 .min(cap)
@@ -158,11 +162,11 @@ fn page_reservations(
         .collect()
 }
 
-fn column_footnote_heights(
+fn enqueue_page_footnotes(
     refs: Vec<FootnoteRef>,
     notes: &BTreeMap<NoteFlowKey, BTreeMap<NoteId, Vec<BlockFragment>>>,
-) -> BTreeMap<NoteBandKey, Twip> {
-    let mut heights = BTreeMap::new();
+    queues: &mut BTreeMap<NoteBandKey, VecDeque<BlockFragment>>,
+) {
     for reference in refs {
         let Some(galley) = notes
             .get(&NoteFlowKey {
@@ -173,16 +177,55 @@ fn column_footnote_heights(
         else {
             continue;
         };
-        let height = galley
+        queues
+            .entry(reference.band)
+            .or_default()
+            .extend(galley.iter().cloned());
+    }
+}
+
+fn consume_queues_for_reservation(
+    queues: &mut BTreeMap<NoteBandKey, VecDeque<BlockFragment>>,
+    cap: Twip,
+    is_last_page: bool,
+) -> Vec<Twip> {
+    queues
+        .values_mut()
+        .map(|queue| consume_queue_for_reservation(queue, cap, is_last_page))
+        .collect()
+}
+
+fn consume_queue_for_reservation(
+    queue: &mut VecDeque<BlockFragment>,
+    cap: Twip,
+    is_last_page: bool,
+) -> Twip {
+    if queue.is_empty() || cap <= Twip::ZERO {
+        return Twip::ZERO;
+    }
+    if is_last_page {
+        let total = queue
             .iter()
             .map(BlockFragment::height)
             .fold(Twip::ZERO, |a, h| a + h);
-        heights
-            .entry(reference.band)
-            .and_modify(|total| *total = *total + height)
-            .or_insert(height);
+        queue.clear();
+        return total.min(cap);
     }
-    heights
+
+    let mut used = Twip::ZERO;
+    while let Some(fragment) = queue.front() {
+        let height = fragment.height();
+        if used + height <= cap {
+            used = used + height;
+            queue.pop_front();
+        } else if used == Twip::ZERO {
+            queue.pop_front();
+            return cap;
+        } else {
+            break;
+        }
+    }
+    used
 }
 
 fn footnote_cap(config: &PageConfig) -> Twip {
@@ -199,50 +242,54 @@ fn place_footnotes(
     notes: &BTreeMap<NoteFlowKey, BTreeMap<NoteId, Vec<BlockFragment>>>,
     reservations: &[Twip],
 ) {
+    let mut queues: BTreeMap<NoteBandKey, VecDeque<BlockFragment>> = BTreeMap::new();
+    let page_count = layout.pages.len();
     for (index, page) in layout.pages.iter_mut().enumerate() {
         let band_height = reservations.get(index).copied().unwrap_or(Twip::ZERO);
+        let refs = page_footnote_refs(page);
+        enqueue_page_footnotes(refs, notes, &mut queues);
         if band_height <= Twip::ZERO {
             continue;
         }
-        let refs = page_footnote_refs(page);
-        page.footnotes = stack_note_galleys(refs, notes, page.content_area.bottom(), band_height);
+        page.footnotes = stack_note_galleys(
+            &mut queues,
+            page.content_area.bottom(),
+            band_height,
+            index + 1 == page_count,
+        );
     }
 }
 
 fn stack_note_galleys(
-    refs: Vec<FootnoteRef>,
-    notes: &BTreeMap<NoteFlowKey, BTreeMap<NoteId, Vec<BlockFragment>>>,
+    queues: &mut BTreeMap<NoteBandKey, VecDeque<BlockFragment>>,
     band_top: Twip,
     band_height: Twip,
+    is_last_page: bool,
 ) -> Vec<PlacedFragment> {
     let mut placed = Vec::new();
-    let mut cursors: BTreeMap<NoteBandKey, Twip> = BTreeMap::new();
-    for reference in refs {
-        let Some(galley) = notes
-            .get(&NoteFlowKey {
-                section: reference.band.section,
-                width: reference.band.width,
-            })
-            .and_then(|section| section.get(&reference.note))
-        else {
-            continue;
-        };
-        let y = cursors.entry(reference.band).or_insert(band_top);
+    for (band_key, queue) in queues.iter_mut() {
+        let mut y = band_top;
         let band = Rect::new(
-            Point::new(reference.band.x, band_top),
-            Size::new(reference.band.width, band_height),
+            Point::new(band_key.x, band_top),
+            Size::new(band_key.width, band_height),
         );
-        for fragment in galley {
+        while let Some(fragment) = queue.front() {
             let height = fragment.height();
+            let fits = y + height <= band_top + band_height;
+            let first_in_band = y == band_top;
+            if !fits && !is_last_page && !first_in_band {
+                break;
+            }
+            let fragment = queue.pop_front().expect("front existed");
             placed.push(PlacedFragment {
-                fragment: fragment.clone(),
+                fragment,
                 rect: Rect::new(
-                    Point::new(band.origin.x, *y),
+                    Point::new(band.origin.x, y),
                     Size::new(band.size.width, height),
                 ),
-                section: Some(reference.band.section),
+                section: Some(band_key.section),
             });
-            *y = *y + height;
+            y = y + height;
         }
     }
     placed
@@ -847,6 +894,94 @@ mod tests {
                 .iter()
                 .all(|placed| placed.rect.origin.y >= note_page.content_area.bottom()),
             "footnote fragments sit below the reserved multi-column body area"
+        );
+    }
+
+    #[test]
+    fn long_footnote_continues_onto_the_next_body_page() {
+        let note = NoteId::new(node(1_721));
+        let note_blocks = 90;
+        let mut definitions = Definitions::default();
+        definitions.footnotes.insert(
+            note,
+            Note {
+                blocks: (0..note_blocks)
+                    .map(|i| paragraph(1_730 + i, "continued footnote body"))
+                    .collect(),
+            },
+        );
+        definitions.sections.push(section(1_722));
+        let mut body = vec![note_ref_paragraph(1_723, note)];
+        body.extend((0..130).map(|i| paragraph(1_900 + i, "body after long footnote")));
+        let doc = document(body, definitions);
+        let shaper = ParleyShaper::new();
+
+        let layout = paginate_document(&doc, &shaper);
+        let first_note_page = layout
+            .pages
+            .iter()
+            .position(|page| !page.footnotes.is_empty())
+            .expect("expected the referenced footnote page");
+        let continuation_page = first_note_page + 1;
+
+        assert!(
+            !layout.pages[continuation_page].footnotes.is_empty(),
+            "the note body should continue onto the next body page"
+        );
+        assert!(
+            page_footnote_refs(&layout.pages[continuation_page]).is_empty(),
+            "the continuation page should not need another body reference"
+        );
+        assert!(
+            layout.pages[continuation_page]
+                .footnotes
+                .iter()
+                .all(|placed| placed.rect.origin.y
+                    >= layout.pages[continuation_page].content_area.bottom()),
+            "continued footnote fragments sit below the reserved body area"
+        );
+        let placed_note_blocks = layout
+            .pages
+            .iter()
+            .flat_map(|page| page.footnotes.iter())
+            .filter(|placed| {
+                let raw = placed.fragment.node_id().as_u128();
+                raw >= node(1_730).as_u128() && raw < node(1_730 + note_blocks).as_u128()
+            })
+            .count();
+        assert_eq!(
+            placed_note_blocks, note_blocks as usize,
+            "all multi-block footnote content remains visible across continuation pages"
+        );
+    }
+
+    #[test]
+    fn oversized_single_block_footnote_overflows_in_place() {
+        let note = NoteId::new(node(2_021));
+        let long_text = (0..3_000)
+            .map(|_| "oversized")
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut definitions = Definitions::default();
+        definitions.footnotes.insert(
+            note,
+            Note {
+                blocks: vec![paragraph(2_022, &long_text)],
+            },
+        );
+        definitions.sections.push(section(2_023));
+        let doc = document(vec![note_ref_paragraph(2_024, note)], definitions);
+        let shaper = ParleyShaper::new();
+
+        let layout = paginate_document(&doc, &shaper);
+        let default_content = document_page_config(&doc).content_area();
+        let band_height = default_content.size.height - layout.pages[0].content_area.size.height;
+
+        assert_eq!(layout.pages[0].footnotes.len(), 1);
+        assert_eq!(layout.pages[0].footnotes[0].fragment.node_id(), node(2_022));
+        assert!(
+            layout.pages[0].footnotes[0].rect.size.height > band_height,
+            "an over-band single block is consumed and allowed to overflow the band"
         );
     }
 
