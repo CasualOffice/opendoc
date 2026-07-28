@@ -46,8 +46,8 @@ use crate::tabs::{self, FlowItem};
 use crate::text::{
     Decoration, FieldKind, FieldMarker, FieldStyle, FontId, Glyph, GlyphRun, InlineFloatSide,
     InlineFloatSpec, InlineImage, InlineImageSpec, InlineRule, InlineTextBox, Line, LineBreak,
-    LineConstraints, LineLayout, LineShaper, StyledRun, TextAlignment, TextBoxContentLayout,
-    TextBoxStroke,
+    LineConstraints, LineLayout, LineShaper, NoteMarker, StyledRun, TextAlignment,
+    TextBoxContentLayout, TextBoxStroke,
 };
 use crate::units::{Point, Size, Twip};
 
@@ -582,6 +582,11 @@ fn paragraph_hash(
                 (*side as u8).hash(&mut hasher);
                 width.0.hash(&mut hasher);
                 height.0.hash(&mut hasher);
+            }
+            FlowItem::NoteReference(marker) => {
+                10u8.hash(&mut hasher);
+                (marker.kind as u8).hash(&mut hasher);
+                marker.note.node_id().as_u128().hash(&mut hasher);
             }
         }
     }
@@ -1801,6 +1806,10 @@ fn collect_items<'a>(
                 collect_items(&hyperlink.inlines, out, shaper, width, ctx)
             }
             InlineNode::NoteReference(reference) => {
+                out.push(FlowItem::NoteReference(NoteMarker {
+                    kind: reference.kind,
+                    note: reference.note,
+                }));
                 out.push(FlowItem::Run(note_reference_run(reference, ctx)));
             }
             InlineNode::CommentReference(_) => {
@@ -2332,6 +2341,7 @@ fn shape_paragraph_items(
     constraints: LineConstraints,
     range: ModelRange,
 ) -> LineLayout {
+    let note_positions = collect_note_positions(items, range.start.offset);
     let is_standalone = |item: &FlowItem<'_>| {
         matches!(
             item,
@@ -2339,7 +2349,10 @@ fn shape_paragraph_items(
         )
     };
     if !items.iter().any(is_standalone) {
-        return shape_inline_chunk(shaper, items, tab_stops, default_tab, constraints, range);
+        let mut layout =
+            shape_inline_chunk(shaper, items, tab_stops, default_tab, constraints, range);
+        attach_note_markers(&mut layout, &note_positions);
+        return layout;
     }
 
     let mut out: Vec<Line> = Vec::new();
@@ -2392,7 +2405,56 @@ fn shape_paragraph_items(
             }
         }
     }
-    LineLayout { lines: out }
+    let mut layout = LineLayout { lines: out };
+    attach_note_markers(&mut layout, &note_positions);
+    layout
+}
+
+fn collect_note_positions(items: &[FlowItem<'_>], base: u32) -> Vec<(u32, NoteMarker)> {
+    let mut byte = base;
+    let mut notes = Vec::new();
+    for item in items {
+        match item {
+            FlowItem::Run(run) => {
+                byte = byte.saturating_add(run.text.len() as u32);
+            }
+            FlowItem::Field { value, .. } => {
+                byte = byte.saturating_add(value.len() as u32);
+            }
+            FlowItem::NoteReference(marker) => notes.push((byte, *marker)),
+            FlowItem::Tab
+            | FlowItem::PositionalTab { .. }
+            | FlowItem::Break(_)
+            | FlowItem::Image { .. }
+            | FlowItem::TextBox { .. }
+            | FlowItem::HorizontalRule(_)
+            | FlowItem::FloatBarrier { .. }
+            | FlowItem::FloatExclusion { .. } => {}
+        }
+    }
+    notes
+}
+
+fn attach_note_markers(layout: &mut LineLayout, notes: &[(u32, NoteMarker)]) {
+    if layout.lines.is_empty() {
+        return;
+    }
+    for (byte, marker) in notes {
+        let mut target = layout.lines.len() - 1;
+        for (index, line) in layout.lines.iter().enumerate() {
+            let start = line.range.start.offset;
+            let end = line.range.end.offset;
+            if start <= *byte && (start == end || *byte < end) {
+                target = index;
+                break;
+            }
+            if *byte <= end {
+                target = index;
+                break;
+            }
+        }
+        layout.lines[target].notes.push(*marker);
+    }
 }
 
 /// Shapes one standalone-box-free paragraph chunk, retaining the specialized
@@ -2577,6 +2639,7 @@ fn image_line(media: String, size: Size, range: ModelRange) -> Line {
             size,
         }],
         fields: Vec::new(),
+        notes: Vec::new(),
         text_boxes: Vec::new(),
         rules: Vec::new(),
     }
@@ -2598,6 +2661,7 @@ fn float_barrier_line(height: Twip, range: ModelRange) -> Line {
         bars: Vec::new(),
         images: Vec::new(),
         fields: Vec::new(),
+        notes: Vec::new(),
         text_boxes: Vec::new(),
         rules: Vec::new(),
     }
@@ -2627,6 +2691,7 @@ fn textbox_line(
         bars: Vec::new(),
         images: Vec::new(),
         fields: Vec::new(),
+        notes: Vec::new(),
         text_boxes: vec![InlineTextBox {
             origin: Point::new(Twip::ZERO, Twip::ZERO),
             size,
@@ -2657,6 +2722,7 @@ fn hr_line(rule: InlineRule, range: ModelRange) -> Line {
         bars: Vec::new(),
         images: Vec::new(),
         fields: Vec::new(),
+        notes: Vec::new(),
         text_boxes: Vec::new(),
         rules: vec![rule],
     }
@@ -2996,6 +3062,7 @@ fn layout_fielded_line(
         bars: Vec::new(),
         images: Vec::new(),
         fields,
+        notes: Vec::new(),
         text_boxes: Vec::new(),
         rules: Vec::new(),
     }
@@ -4038,6 +4105,10 @@ mod tests {
         .unwrap()
     }
 
+    fn document_with_definitions(body: Vec<BlockNode>, definitions: Definitions) -> Document {
+        Document::new(NodeId::from_parts(1, 1).unwrap(), body, definitions).unwrap()
+    }
+
     fn collected_items<'a>(
         definitions: &'a Definitions,
         inlines: &'a [InlineNode],
@@ -4895,6 +4966,101 @@ mod tests {
         assert!(
             note_run.is_some_and(|run| run.baseline_shift > Twip::ZERO),
             "note references use a superscript marker style"
+        );
+    }
+
+    #[test]
+    fn note_reference_metadata_attaches_to_the_shaped_line() {
+        let note = NoteId::new(NodeId::from_parts(201, 1).unwrap());
+        let mut definitions = Definitions::default();
+        definitions
+            .footnotes
+            .insert(note, Note { blocks: Vec::new() });
+        let doc = document_with_definitions(
+            vec![paragraph(
+                10,
+                vec![
+                    run_node(11, "before", RunProperties::default()),
+                    InlineNode::NoteReference(NoteReference {
+                        id: NodeId::from_parts(12, 1).unwrap(),
+                        kind: NoteKind::Footnote,
+                        note,
+                    }),
+                    run_node(13, "after", RunProperties::default()),
+                ],
+            )],
+            definitions,
+        );
+
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&doc, &shaper, Twip::from_points(400));
+        let lines = first_paragraph_lines(&galley);
+        assert_eq!(
+            lines.lines[0].notes,
+            vec![NoteMarker {
+                kind: NoteKind::Footnote,
+                note
+            }],
+            "the visible note marker also carries pagination metadata"
+        );
+    }
+
+    #[test]
+    fn note_reference_metadata_flows_inside_a_table_cell() {
+        use casual_doc_model::v1::{
+            GridColumn, Table, TableCell, TableCellProperties, TableProperties, TableRow,
+            TableRowProperties,
+        };
+
+        let note = NoteId::new(NodeId::from_parts(301, 1).unwrap());
+        let mut definitions = Definitions::default();
+        definitions
+            .footnotes
+            .insert(note, Note { blocks: Vec::new() });
+        let cell = TableCell {
+            id: NodeId::from_parts(20, 1).unwrap(),
+            properties: TableCellProperties::default(),
+            blocks: vec![paragraph(
+                21,
+                vec![
+                    run_node(22, "cell", RunProperties::default()),
+                    InlineNode::NoteReference(NoteReference {
+                        id: NodeId::from_parts(23, 1).unwrap(),
+                        kind: NoteKind::Footnote,
+                        note,
+                    }),
+                ],
+            )],
+        };
+        let table = BlockNode::Table(Table {
+            id: NodeId::from_parts(30, 1).unwrap(),
+            grid: vec![GridColumn {
+                width_twips: Some(3000),
+            }],
+            grid_change: None,
+            properties: TableProperties::default(),
+            rows: vec![TableRow {
+                id: NodeId::from_parts(31, 1).unwrap(),
+                properties: TableRowProperties::default(),
+                cells: vec![cell],
+            }],
+        });
+        let doc = document_with_definitions(vec![table], definitions);
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&doc, &shaper, Twip::from_points(400));
+        let BlockFragment::TableRow { cells, .. } = &galley[0] else {
+            panic!("expected table row");
+        };
+        let BlockFragment::Paragraph { lines, .. } = &cells[0].blocks[0] else {
+            panic!("expected flowed cell paragraph");
+        };
+        assert_eq!(
+            lines.lines[0].notes,
+            vec![NoteMarker {
+                kind: NoteKind::Footnote,
+                note
+            }],
+            "table-cell paragraphs expose note metadata through the shared flow path"
         );
     }
 
@@ -7313,6 +7479,7 @@ mod tests {
                         bars: Vec::new(),
                         images: Vec::new(),
                         fields: Vec::new(),
+                        notes: Vec::new(),
                         text_boxes: Vec::new(),
                         rules: Vec::new(),
                     }],
