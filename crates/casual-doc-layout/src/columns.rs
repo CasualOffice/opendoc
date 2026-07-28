@@ -254,7 +254,19 @@ pub fn section_starts_new_page(section: &SectionBoundary) -> bool {
 /// deliberately not part of it (the driver uses it on full runs only).
 #[must_use]
 pub fn paginate_columns(runs: &[SectionRun]) -> PaginatedLayout {
-    let mut p = ColPaginator::new();
+    paginate_columns_with_reservations(runs, &[])
+}
+
+/// [`paginate_columns`], with page-local bottom reservations subtracted from each
+/// emitted page's body content area. This is used by footnote pagination; callers
+/// provide reservations from a previous pass, and missing entries mean no
+/// reservation for that page.
+#[must_use]
+pub(crate) fn paginate_columns_with_reservations(
+    runs: &[SectionRun],
+    reservations: &[Twip],
+) -> PaginatedLayout {
+    let mut p = ColPaginator::new(reservations);
     for run in runs {
         p.run_section(run);
     }
@@ -302,10 +314,13 @@ struct ColPaginator {
     at: FlowPos,
     /// Flow position where the current (open) page began.
     page_start: FlowPos,
+    /// Page-local reserved bottom bands, indexed by the page currently being
+    /// produced.
+    reservations: Vec<Twip>,
 }
 
 impl ColPaginator {
-    fn new() -> Self {
+    fn new(reservations: &[Twip]) -> Self {
         Self {
             pages: Vec::new(),
             placed: Vec::new(),
@@ -336,6 +351,7 @@ impl ColPaginator {
             next_base: 0,
             at: FlowPos::at(0),
             page_start: FlowPos::at(0),
+            reservations: reservations.to_vec(),
         }
     }
 
@@ -358,7 +374,7 @@ impl ColPaginator {
         }
 
         self.config = run.config;
-        self.content = run.config.content_area();
+        self.content = self.current_content_area();
         self.columns = run.layout.columns.clone();
         self.separator = run.layout.separator;
         self.band_top = if self.placed.is_empty() {
@@ -855,10 +871,24 @@ impl ColPaginator {
             self.page_separators.clear();
         }
         self.col = 0;
+        self.content = self.current_content_area();
         self.band_top = self.content.origin.y;
         self.y = self.content.origin.y;
         self.page_max_y = self.content.origin.y;
         self.page_start = self.at;
+    }
+
+    fn current_content_area(&self) -> Rect {
+        let mut content = self.config.content_area();
+        let reserved = self
+            .reservations
+            .get(self.pages.len())
+            .copied()
+            .unwrap_or(Twip::ZERO);
+        if reserved > Twip::ZERO {
+            content.size.height = Twip((content.size.height.raw() - reserved.raw()).max(0));
+        }
+        content
     }
 }
 

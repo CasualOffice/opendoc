@@ -168,6 +168,12 @@ referenced endnotes require this synthetic appendix.
 Section-end placement and multi-section footnote reservation remain separate
 follow-ups because they require section-aware reservation in the column paginator.
 
+Implementation note: the second Slice D increment extends footnote reservation
+from one section run to all single-column section runs. Reservations are still
+page-local and bounded, but the column paginator now accepts per-page bottom
+reservations so note bodies can be flowed and placed at the owning page section's
+content width. Multi-column note reservation remains deferred.
+
 ## Invariants
 
 - A document with no note references produces byte-identical `PaginatedLayout`.
