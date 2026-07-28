@@ -75,11 +75,11 @@ pub struct ParleyShaper {
 }
 
 impl ParleyShaper {
-    /// Creates a shaper with every bundled family (Roboto and Caladea, each
-    /// regular/bold/italic/bold-italic) registered into an empty collection (no
-    /// system fonts — deterministic). Each run pushes its resolved family plus
-    /// weight/style, so `parley` selects the same face the resolver did; the run's
-    /// [`FontId`] rides the brush so the renderer draws the same.
+    /// Creates a shaper with every target-bundled family registered into an empty
+    /// collection (no system fonts — deterministic). Browser builds may omit
+    /// host-provisioned families such as Roboto. Each run pushes its resolved
+    /// family plus weight/style, so `parley` selects the same face the resolver
+    /// did; the run's [`FontId`] rides the brush so the renderer draws the same.
     #[must_use]
     pub fn new() -> Self {
         let mut fonts = FontContext::new();
@@ -104,7 +104,8 @@ impl ParleyShaper {
             families.push((family.base, name));
         }
         let default_family = families
-            .first()
+            .iter()
+            .find(|(base, _)| *base == crate::fonts::DEFAULT_FAMILY.base)
             .map(|(_, name)| name.clone())
             .expect("the bundled faces register at least one family");
         Self {

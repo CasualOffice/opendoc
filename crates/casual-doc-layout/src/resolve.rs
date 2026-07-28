@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 
 use skrifa::{FontRef, MetadataProvider};
 
-use crate::fonts::{self, BundledFamily, ROBOTO};
+use crate::fonts::{self, BundledFamily, DEFAULT_FAMILY};
 use crate::text::FontId;
 
 /// Distinct-entry ceiling per report bucket; excess requests are counted against
@@ -163,7 +163,7 @@ pub fn cover_fallback(primary: FontId, ch: char) -> Option<FontId> {
 fn substitute(family: &str) -> (&'static BundledFamily, Disposition) {
     match crate::font_substitution::substitute(family) {
         Some(sub) => (sub.family, disposition(sub.kind)),
-        None => (&ROBOTO, Disposition::Fallback),
+        None => (DEFAULT_FAMILY, Disposition::Fallback),
     }
 }
 
@@ -283,6 +283,7 @@ impl FontResolutionReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fonts::ROBOTO;
     use crate::fonts::{CALADEA, CARLITO, LIBERATION_MONO, LIBERATION_SANS, LIBERATION_SERIF};
 
     #[test]

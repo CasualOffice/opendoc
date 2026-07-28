@@ -62,6 +62,12 @@ fn viewer_limits() -> PackageLimits {
     }
 }
 
+/// Host font batch admission: enough for several variable families while
+/// preventing an accidental/untrusted JS caller from cloning an unbounded blob
+/// into the shaper.
+const MAX_HOST_FONT_FACES: usize = 16;
+const MAX_HOST_FONT_BYTES: usize = 32 * 1024 * 1024;
+
 /// An open document: the imported model, its current pagination, and the shaper
 /// (and its font registry) that produced it, plus the media bytes rendering needs.
 ///
@@ -195,6 +201,18 @@ impl WasmDocument {
     pub fn register_font(&mut self, bytes: &[u8]) {
         self.shaper.register_font(bytes.to_vec());
         self.repaginate();
+    }
+
+    /// Registers a bounded batch of host-provided named-family fonts and
+    /// re-paginates exactly once. `bytes` is the concatenation of every font blob;
+    /// `lengths` gives each blob's byte length in the same order.
+    ///
+    /// The packed form keeps the JS↔WASM ABI simple and avoids one complete
+    /// document reflow per face when the browser provisions the Roboto/Noto
+    /// families before first paint.
+    #[wasm_bindgen(js_name = registerFonts)]
+    pub fn register_fonts(&mut self, bytes: &[u8], lengths: Vec<u32>) -> Result<(), JsValue> {
+        self.register_fonts_inner(bytes, &lengths).map_err(to_js)
     }
 
     // ---- Selection & copy (P1G-003) ----------------------------------------
@@ -2154,6 +2172,49 @@ impl WasmDocument {
         self.layout = paginate_document(&self.document, &self.shaper);
     }
 
+    fn register_fonts_inner(&mut self, bytes: &[u8], lengths: &[u32]) -> Result<(), String> {
+        if lengths.is_empty() {
+            return Ok(());
+        }
+        if lengths.len() > MAX_HOST_FONT_FACES {
+            return Err(format!(
+                "font batch has {} faces; limit is {MAX_HOST_FONT_FACES}",
+                lengths.len()
+            ));
+        }
+        if bytes.len() > MAX_HOST_FONT_BYTES {
+            return Err(format!(
+                "font batch has {} bytes; limit is {MAX_HOST_FONT_BYTES}",
+                bytes.len()
+            ));
+        }
+        let mut total = 0usize;
+        for &length in lengths {
+            let length = usize::try_from(length).map_err(|_| "font length is too large")?;
+            if length == 0 {
+                return Err("font batch contains an empty face".into());
+            }
+            total = total
+                .checked_add(length)
+                .ok_or_else(|| "font batch length overflow".to_owned())?;
+        }
+        if total != bytes.len() {
+            return Err(format!(
+                "font batch lengths total {total} bytes, but payload has {}",
+                bytes.len()
+            ));
+        }
+
+        let mut start = 0usize;
+        for &length in lengths {
+            let end = start + length as usize;
+            self.shaper.register_font(bytes[start..end].to_vec());
+            start = end;
+        }
+        self.repaginate();
+        Ok(())
+    }
+
     /// Applies one forward op as a single undoable action, with the caret at that
     /// op's natural resting place.
     fn apply(&mut self, op: Operation) -> Result<EditResult, String> {
@@ -3793,6 +3854,31 @@ mod tests {
         );
         assert_eq!(doc.page_count(), before);
         assert!(doc.missing_coverage().is_empty());
+    }
+
+    #[test]
+    fn named_font_batch_is_bounded_and_repaginates_once_after_admission() {
+        let mut doc = open_document(RICH_DOCX).expect("open corpus docx");
+        let faces = [
+            casual_doc_layout::fonts::ROBOTO_REGULAR,
+            casual_doc_layout::fonts::ROBOTO_ITALIC,
+        ];
+        let lengths: Vec<u32> = faces.iter().map(|face| face.len() as u32).collect();
+        let bytes: Vec<u8> = faces.into_iter().flatten().copied().collect();
+        let before = doc.page_count();
+
+        doc.register_fonts_inner(&bytes, &lengths)
+            .expect("valid host font batch");
+        assert_eq!(doc.page_count(), before);
+        assert!(
+            doc.register_fonts_inner(&bytes, &[bytes.len() as u32 - 1])
+                .is_err(),
+            "declared lengths must cover the payload exactly"
+        );
+        assert!(
+            doc.register_fonts_inner(&[0], &[0]).is_err(),
+            "empty faces are rejected before registration"
+        );
     }
 
     /// An out-of-range page index is a clean error, not a panic. Exercises the

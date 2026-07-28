@@ -6,36 +6,13 @@
 // no server, deployable as static files (e.g. GitHub Pages).
 
 import init, { open } from "../pkg/casual_doc_wasm.js";
-
-// Network-fetched fallback faces, keyed by a script bucket. The browser WASM
-// build ships only bundled Latin faces, so CJK / complex-script runs render as
-// `.notdef` tofu (▯) until a covering face is registered — the "browser =
-// network-fetched fonts" half of the font-provisioning strategy. CORS-enabled
-// raw TTF/OTF (skrifa reads OpenType, not woff2). CJK OTFs are large (~16 MB);
-// fetched once, then cached by the browser and in `fontCache`.
-const CJK = "https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@main/Sans/OTF";
-const NOTO = "https://cdn.jsdelivr.net/gh/notofonts/notofonts.github.io@main/fonts";
-const FALLBACK_FONTS = {
-  jp: { url: `${CJK}/Japanese/NotoSansCJKjp-Regular.otf`, scripts: ["Hani", "Hira", "Kana"] },
-  kr: { url: `${CJK}/Korean/NotoSansCJKkr-Regular.otf`, scripts: ["Hani", "Hang"] },
-  sc: { url: `${CJK}/SimplifiedChinese/NotoSansCJKsc-Regular.otf`, scripts: ["Hani"] },
-  arabic: { url: `${NOTO}/NotoSansArabic/hinted/ttf/NotoSansArabic-Regular.ttf`, scripts: ["Arab"] },
-  devanagari: { url: `${NOTO}/NotoSansDevanagari/hinted/ttf/NotoSansDevanagari-Regular.ttf`, scripts: ["Deva"] },
-  hebrew: { url: `${NOTO}/NotoSansHebrew/hinted/ttf/NotoSansHebrew-Regular.ttf`, scripts: ["Hebr"] },
-  thai: { url: `${NOTO}/NotoSansThai/hinted/ttf/NotoSansThai-Regular.ttf`, scripts: ["Thai"] },
-};
-
-/** Which fallback bucket (if any) covers a code point. */
-function fontKeyFor(cp) {
-  if ((cp >= 0x3040 && cp <= 0x30ff) || (cp >= 0x31f0 && cp <= 0x31ff)) return "jp"; // kana
-  if ((cp >= 0xac00 && cp <= 0xd7a3) || (cp >= 0x1100 && cp <= 0x11ff) || (cp >= 0x3130 && cp <= 0x318f)) return "kr"; // hangul
-  if ((cp >= 0x4e00 && cp <= 0x9fff) || (cp >= 0x3400 && cp <= 0x4dbf) || (cp >= 0xf900 && cp <= 0xfaff)) return "sc"; // han
-  if (cp >= 0x0600 && cp <= 0x06ff) return "arabic";
-  if (cp >= 0x0900 && cp <= 0x097f) return "devanagari";
-  if (cp >= 0x0590 && cp <= 0x05ff) return "hebrew";
-  if (cp >= 0x0e00 && cp <= 0x0e7f) return "thai";
-  return null;
-}
+import {
+  NAMED_WEB_FONT_FACES,
+  SCRIPT_FALLBACK_FONTS,
+  fallbackKeysFor,
+  fetchFontBytes,
+  packFontBytes,
+} from "./web_fonts.mjs";
 
 /** url → Uint8Array of already-fetched font bytes (persists across documents). */
 const fontCache = new Map();
@@ -227,8 +204,14 @@ async function openBytes(bytes, name) {
     railOutline.disabled = false;
     populateStyles();
     dropEl.hidden = true;
-    await provisionFonts(name);
+    const fontWarnings = await provisionFonts(name);
     await renderAll();
+    if (fontWarnings.length > 0) {
+      setStatus(
+        `Opened ${name}; unavailable web fonts: ${[...new Set(fontWarnings)].join(", ")}`,
+        "error",
+      );
+    }
     buildOutline();
   } catch (err) {
     console.error(err);
@@ -236,40 +219,50 @@ async function openBytes(bytes, name) {
   }
 }
 
-// If the freshly-opened document has code points the bundled faces can't cover
-// (CJK / complex scripts), fetch the covering Noto face(s) and register them so
-// pagination + render pick them up — replacing tofu with real glyphs.
+// Provision the host-owned named families in one bounded batch/repagination,
+// then fetch only the script fallbacks this document's uncovered code points
+// require. Network failures do not block opening: the target-bundled
+// metric-compatible faces remain available.
 async function provisionFonts(name) {
-  if (!doc) return;
-  const missing = doc.missingCoverage();
-  if (missing.length === 0) return;
+  if (!doc) return [];
+  const warnings = [];
+  setStatus(`Fetching web fonts for ${name}…`);
 
-  const keys = new Set();
-  for (const cp of missing) {
-    const key = fontKeyFor(cp);
-    if (key) keys.add(key);
+  const named = await Promise.allSettled(
+    NAMED_WEB_FONT_FACES.map((face) => fetchFontBytes(face.url, fontCache)),
+  );
+  const namedBytes = named
+    .filter((result) => result.status === "fulfilled")
+    .map((result) => result.value);
+  if (namedBytes.length > 0) {
+    const packed = packFontBytes(namedBytes);
+    doc.registerFonts(packed.bytes, packed.lengths);
   }
-  // JP and KR already include Han, so the separate SC fetch is redundant then.
-  if (keys.has("jp") || keys.has("kr")) keys.delete("sc");
-  if (keys.size === 0) return; // uncovered scripts we have no font for
+  for (const [index, result] of named.entries()) {
+    if (result.status === "rejected") {
+      const face = NAMED_WEB_FONT_FACES[index];
+      console.warn(`font ${face.family} (${face.url}) failed:`, result.reason);
+      warnings.push(face.family);
+    }
+  }
+
+  const missing = doc.missingCoverage();
+  const keys = fallbackKeysFor(missing);
+  if (keys.length === 0) return warnings;
 
   setStatus(`Fetching fonts for ${name} (${[...keys].join(", ")})…`);
   for (const key of keys) {
-    const { url, scripts } = FALLBACK_FONTS[key];
+    const { url, scripts } = SCRIPT_FALLBACK_FONTS[key];
     try {
-      let bytes = fontCache.get(url);
-      if (!bytes) {
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        bytes = new Uint8Array(await res.arrayBuffer());
-        fontCache.set(url, bytes);
-      }
+      const bytes = await fetchFontBytes(url, fontCache);
       doc.registerFallbackFont(bytes, scripts); // registers + re-paginates
     } catch (err) {
       console.warn(`font ${key} (${url}) failed:`, err);
       setStatus(`Could not load the ${key} font — some text may show as ▯`, "error");
+      warnings.push(key);
     }
   }
+  return warnings;
 }
 
 async function renderAll() {

@@ -15,6 +15,13 @@ publish = false
 # so native parity tests exercise the same code.
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# Browser builds keep Roboto/Noto assets in the host and register them at
+# runtime. The layout feature is target-gated, so native parity tests retain the
+# deterministic complete bundle.
+default = ["web-host-fonts"]
+web-host-fonts = ["casual-doc-layout/external-web-fonts"]
+
 # Modern rustc emits bulk-memory / sign-ext / nontrapping-fptoint instructions by
 # default; `wasm-opt` must be told to accept them, or validation fails. These
 # flags keep the -O size pass working with the version wasm-pack ships.

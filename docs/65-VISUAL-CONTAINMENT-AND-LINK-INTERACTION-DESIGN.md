@@ -162,10 +162,45 @@ dependency. The gate records platform, renderer, font-set, page size, and scale.
 The exact external `demo.docx` remains a local acceptance probe and its hash is
 recorded only in the existing corpus audit.
 
+## Slice F — host-loaded web font families
+
+The browser build excludes the Roboto asset bytes from the WASM artifact and
+keeps a deterministic metric-compatible bundled fallback for the interval
+between document open and host provisioning. The web host fetches version-pinned,
+CORS-enabled OpenType assets and registers them through the existing
+host-populatable registry before first paint:
+
+- Roboto variable upright and italic faces;
+- Noto Sans variable upright and italic faces;
+- Noto Serif variable upright and italic faces;
+- the existing script-specific Noto CJK/Arabic/Devanagari/Hebrew/Thai faces,
+  fetched only when `missingCoverage()` reports a relevant code point.
+
+Font URLs and family metadata live in a testable web manifest, not in the Rust
+runtime. The manifest may be replaced by a self-host deployment without changing
+the SDK. Fetches are cached by immutable URL. A batch registration API admits a
+bounded number/total size of host blobs and performs one repagination after the
+batch, avoiding one full layout per face.
+
+Native/headless builds keep the current pinned deterministic bundled set. The
+web-only feature changes neither the normalized document nor semantic export;
+it changes only the explicit font input to shaping. If the network is unavailable,
+the editor remains usable with its bundled metric-compatible fallback and reports
+the unavailable family instead of blocking document open.
+
+Acceptance:
+
+- release WASM built for the web omits the four Roboto static byte blobs;
+- Roboto, Noto Sans, and Noto Serif are fetched externally and selectable;
+- all six variable faces register in one bounded batch and trigger one
+  repagination;
+- script-specific fonts stay coverage-driven rather than eagerly downloading
+  the large CJK assets;
+- native deterministic layout tests are byte-for-byte unchanged.
+
 ## Delivery and rollback
 
 Each slice lands as an individual commit and the set is reviewed in one PR.
 Every behavior-changing slice includes focused tests before its tracker row is
 marked Done. A slice can be reverted independently; schema additions are
 additive and remain readable if a later layout slice is rolled back.
-
