@@ -9,6 +9,7 @@ import {
   clickIntoFirstPage,
   moveCaretToDocStart,
   MOD,
+  WORD_MOD,
 } from "./fixtures.mjs";
 
 async function findStatusFor(page, query) {
@@ -127,7 +128,7 @@ test("native-platform word movement and deletion use one semantic engine action"
 
   const marker = "WORD_DELETE_ALPHA BETA";
   await page.keyboard.type(marker);
-  await page.keyboard.press("Alt+ArrowLeft");
+  await page.keyboard.press(`${WORD_MOD}+ArrowLeft`);
   await page.keyboard.type("X");
   expect(await findStatusFor(page, "WORD_DELETE_ALPHA XBETA")).toBe("1 match");
 
@@ -135,7 +136,7 @@ test("native-platform word movement and deletion use one semantic engine action"
   expect(await findStatusFor(page, marker)).toBe("1 match");
   await moveCaretToDocStart(page);
   for (let i = 0; i < marker.length; i++) await page.keyboard.press("ArrowRight");
-  await page.keyboard.press("Alt+Backspace");
+  await page.keyboard.press(`${WORD_MOD}+Backspace`);
   expect(await findStatusFor(page, marker)).toBe("No match");
   expect(await findStatusFor(page, "WORD_DELETE_ALPHA ")).toBe("1 match");
 

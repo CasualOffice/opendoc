@@ -1,6 +1,7 @@
 import { test as base, expect } from "@playwright/test";
 
 const MOD = process.platform === "darwin" ? "Meta" : "Control";
+const WORD_MOD = process.platform === "darwin" ? "Alt" : "Control";
 
 // Collects console errors/pageerrors for the duration of a test so specs can
 // assert none occurred instead of only checking the behavior they triggered.
@@ -15,7 +16,7 @@ export const test = base.extend({
   },
 });
 
-export { expect, MOD };
+export { expect, MOD, WORD_MOD };
 
 // Navigates to the demo document and waits for the WASM engine to boot, the
 // sample to open, and every page to finish its first render (mirrors the
