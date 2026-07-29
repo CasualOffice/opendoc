@@ -1,6 +1,8 @@
-# wasm-pack build output — rebuilt locally (build.sh) and in CI (pages.yml).
+# wasm/site build output — rebuilt locally and in CI; chrome fonts stay tracked.
 /pkg/
-/assets/
+/assets/*
+!/assets/fonts/
+!/assets/fonts/*
 /demo.docx
 /sample.docx
 

@@ -2402,6 +2402,23 @@ impl WasmDocument {
         serde_json::to_string(&core).unwrap_or_else(|_| "{}".to_string())
     }
 
+    /// All modeled DOCX metadata (`docProps/core.xml`, `app.xml`, and
+    /// `custom.xml`) as one read-only JSON object. This complements
+    /// [`document_properties`](Self::document_properties), whose core-only
+    /// payload remains the stable mutation shape used by
+    /// [`set_document_properties`](Self::set_document_properties).
+    #[wasm_bindgen(js_name = documentMetadata)]
+    #[must_use]
+    pub fn document_metadata(&self) -> String {
+        let metadata = self.document.properties().cloned().unwrap_or_default();
+        serde_json::to_string(&serde_json::json!({
+            "core": metadata.core,
+            "app": metadata.app,
+            "custom": metadata.custom,
+        }))
+        .unwrap_or_else(|_| r#"{"core":{},"app":{},"custom":[]}"#.to_string())
+    }
+
     /// Replaces the document's core properties from a JSON object in the same
     /// shape [`document_properties`](Self::document_properties) returns — an
     /// absent/`null` field clears that property. One undoable action.
@@ -5876,6 +5893,21 @@ mod tests {
     use super::*;
 
     const RICH_DOCX: &[u8] = include_bytes!("../../../fixtures/corpus/real-producer-rich.docx");
+    const SAMPLE_DOCX: &[u8] = include_bytes!("../../../sample.docx");
+
+    #[test]
+    fn document_metadata_exposes_core_app_and_custom_groups() {
+        let doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let metadata: serde_json::Value =
+            serde_json::from_str(&doc.document_metadata()).expect("metadata JSON");
+
+        assert_eq!(metadata["core"]["creator"], "CasualOffice");
+        assert_eq!(metadata["core"]["created"], "2013-12-23T23:15:00Z");
+        assert_eq!(metadata["core"]["modified"], "2013-12-23T23:15:00Z");
+        assert_eq!(metadata["app"]["application"], "Microsoft Macintosh Word");
+        assert_eq!(metadata["app"]["appVersion"], "14.0000");
+        assert!(metadata["custom"].is_array());
+    }
 
     /// The bridge paginates a corpus document to the **same** page count as the
     /// native pipeline — the façade adds no layout of its own (doc 57 §10,

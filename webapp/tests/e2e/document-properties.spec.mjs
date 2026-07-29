@@ -7,6 +7,44 @@
 // mirroring the existing copyRichRuns/pasteRichRuns convention.
 import { test, expect, gotoEditor, clickIntoFirstPage, MOD } from "./fixtures.mjs";
 
+test("the public demo opens sample.docx and exposes its real saved metadata", async ({
+  page,
+  consoleErrors,
+}) => {
+  const docxRequests = [];
+  page.on("request", (request) => {
+    if (request.url().endsWith(".docx")) docxRequests.push(request.url());
+  });
+
+  await page.goto("/editor.html?demo=1");
+  await page.waitForFunction(
+    () =>
+      document.body.classList.contains("doc-loaded") &&
+      document.getElementById("status")?.textContent === "",
+    null,
+    { timeout: 45_000 },
+  );
+
+  await expect(page.locator("#docTitle")).toHaveValue("sample.docx");
+  expect(docxRequests.some((url) => url.endsWith("/sample.docx"))).toBe(true);
+  expect(docxRequests.some((url) => url.endsWith("/demo.docx"))).toBe(false);
+
+  await page.locator("#propertiesBtn").click();
+  await expect(page.locator("#propTitle")).toHaveValue("OpenDoc Feature Test Document");
+  await expect(page.locator("#propCreator")).toHaveValue("CasualOffice");
+  await expect(page.locator("#metaCreated")).toHaveAttribute(
+    "title",
+    "2013-12-23T23:15:00Z",
+  );
+  await expect(page.locator("#metaModified")).toHaveAttribute(
+    "title",
+    "2013-12-23T23:15:00Z",
+  );
+  await expect(page.locator("#metaApplication")).toHaveText("Microsoft Macintosh Word");
+  await expect(page.locator("#metaAppVersion")).toHaveText("14.0000");
+  expect(consoleErrors).toEqual([]);
+});
+
 test("the header title renames the document and Save reflects the new name", async ({
   page,
   consoleErrors,
@@ -137,4 +175,51 @@ test("the orientation toggle swaps width and height without applying yet", async
   await page.locator("#pageSetupBtn").click();
   await expect(page.locator("#pageWidth")).toHaveValue("8.27");
   await page.keyboard.press("Escape");
+});
+
+test("properties and page setup are keyboard-safe, mobile-bounded modal dialogs", async ({
+  page,
+  consoleErrors,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await gotoEditor(page);
+
+  const propertiesBtn = page.locator("#propertiesBtn");
+  await propertiesBtn.click();
+  const propertiesDialog = page.locator("#propertiesPanel");
+  await expect(propertiesDialog).toHaveAttribute("aria-modal", "true");
+  await expect(page.locator("#propTitle")).toBeFocused();
+  await page.locator("#propertiesClose").click();
+  await expect(propertiesBtn).toBeFocused();
+
+  await page.locator("#tabView").click();
+  const pageSetupBtn = page.locator("#pageSetupBtn");
+  await pageSetupBtn.click();
+  const setupDialog = page.locator("#pageSetupMenu");
+  await expect(setupDialog).toHaveAttribute("aria-modal", "true");
+  await expect(page.locator('button[data-orientation="portrait"]')).toBeFocused();
+
+  const cardBounds = await page.locator(".page-setup-dialog").evaluate((card) => {
+    const rect = card.getBoundingClientRect();
+    return {
+      left: rect.left,
+      top: rect.top,
+      right: rect.right,
+      bottom: rect.bottom,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    };
+  });
+  expect(cardBounds.left).toBeGreaterThanOrEqual(0);
+  expect(cardBounds.top).toBeGreaterThanOrEqual(0);
+  expect(cardBounds.right).toBeLessThanOrEqual(cardBounds.viewportWidth);
+  expect(cardBounds.bottom).toBeLessThanOrEqual(cardBounds.viewportHeight);
+  await expect(page.locator("#pageSetupApply")).toBeVisible();
+
+  await page.locator("#pageWidth").fill("10");
+  await expect(page.locator("#pagePreviewLabel")).toContainText("10 × 11.69 in");
+  await page.keyboard.press("Escape");
+  await expect(setupDialog).toBeHidden();
+  await expect(pageSetupBtn).toBeFocused();
+  expect(consoleErrors).toEqual([]);
 });

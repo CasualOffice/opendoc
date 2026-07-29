@@ -22,7 +22,7 @@ export { expect, MOD };
 // manual "headless browser smoke" checks previously narrated in
 // docs/14-EXECUTION-TRACKER.md — see docs/67-EDITOR-UX-GAP-ANALYSIS.md).
 export async function gotoEditor(page) {
-  await page.goto("/editor.html?demo=1");
+  await page.goto("/editor.html?fixture=rich");
   await page.waitForFunction(
     () => {
       const status = document.getElementById("status");

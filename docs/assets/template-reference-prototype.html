@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400,0,0&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="_ds/casual-editor-design-system-from-live-ap-8fdee2aa-6818-470e-8ddd-c2522194adf1/fonts.css" />
+<link rel="stylesheet" href="_ds/casual-editor-design-system-from-live-ap-8fdee2aa-6818-470e-8ddd-c2522194adf1/tokens.css" />
+<script src="_ds/casual-editor-design-system-from-live-ap-8fdee2aa-6818-470e-8ddd-c2522194adf1/_ds_bundle.js"></script>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+.ms{font-family:'Material Symbols Outlined';line-height:1;-webkit-font-feature-settings:'liga';font-feature-settings:'liga';font-weight:400;user-select:none}
+::selection{background:rgba(26,115,232,.28)}
+::highlight(vfind){background:#ffe066;color:#202124}
+::highlight(vfindcur){background:#ff9800;color:#fff}
+::-webkit-scrollbar{width:12px;height:12px}
+::-webkit-scrollbar-thumb{background:#bcc0c4;border-radius:8px;border:3px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover{background:#9aa0a6}
+a{color:#1a73e8}
+/* runtime document content (user-generated inside contentEditable — cannot be inline) */
+.vdoc{font-family:'Calibri','Carlito',sans-serif;font-size:11pt;line-height:1.55;color:#202124;outline:none}
+.vdoc:focus{outline:none}
+.vdoc h1{font-size:26pt;font-weight:600;letter-spacing:-.01em;margin:0 0 6px}
+.vdoc h2{font-size:17pt;font-weight:600;margin:22px 0 6px}
+.vdoc h3{font-size:13.5pt;font-weight:600;margin:16px 0 4px}
+.vdoc h4{font-size:11.5pt;font-weight:600;margin:12px 0 3px;color:#3c4043}
+.vdoc p{margin:0 0 11px}
+.vdoc ul,.vdoc ol{margin:0 0 12px;padding-left:26px}
+.vdoc li{margin:2px 0}
+.vdoc .vsub{color:#5f6368;font-size:11pt;margin:-2px 0 20px}
+.vdoc .vtip{display:flex;gap:10px;align-items:flex-start;background:#e8f0fe;border-radius:8px;padding:12px 15px;font-family:'Inter',sans-serif;font-size:11pt;margin:6px 0 16px}
+.vdoc .vcmt{background:#fff3bf;border-bottom:2px solid #f2c200;border-radius:2px;cursor:pointer}
+.vdoc hr{border:none;border-top:1px solid #e0e0e0;margin:20px 0}
+.vdoc[data-mode="viewing"]{caret-color:transparent}
+@keyframes vpop{from{opacity:0;transform:translateY(6px) scale(.98)}to{opacity:1;transform:none}}
+@keyframes vfade{from{opacity:0}to{opacity:1}}
+</style>
+</helmet>
+
+<div style="height:100vh;display:flex;flex-direction:column;background:#eef1f5;font-family:'Inter',system-ui,sans-serif;color:#202124;overflow:hidden;user-select:none">
+
+  <!-- ===== TITLE BAR ===== -->
+  <div style="display:flex;align-items:center;gap:12px;padding:7px 14px 5px;flex:0 0 auto">
+    <svg width="26" height="26" viewBox="0 0 40 40" style="flex:0 0 auto"><rect width="40" height="40" rx="9" fill="#1a73e8"/><path d="M12 11h16M12 20h16M12 29h10" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/></svg>
+    <div style="display:flex;align-items:center;gap:5px;font-size:18px;font-weight:600;letter-spacing:-.01em">Vellum</div>
+    <div style="display:flex;flex-direction:column;gap:0;margin-left:4px;min-width:0">
+      <div style="display:flex;align-items:center;gap:8px">
+        <input value="{{ docTitle }}" onInput="{{ onTitle }}" spellcheck="false" style="font-size:15px;font-weight:500;color:#1f2937;border:none;background:transparent;padding:2px 6px;border-radius:4px;font-family:inherit;width:260px;outline:none" />
+        <span style="display:flex;align-items:center;gap:5px;font-size:12px;color:{{ savedColor }};white-space:nowrap"><span class="ms" style="font-size:16px;color:{{ savedColor }}">{{ savedIcon }}</span>{{ savedText }}</span>
+      </div>
+      <div style="display:flex;gap:0;margin-left:2px">
+        <span onClick="{{ openPalette }}" style="font-size:13px;color:#1f2937;padding:2px 8px;border-radius:4px;cursor:pointer" style-hover="background:#e2e6ea">File</span>
+        <span onClick="{{ openPalette }}" style="font-size:13px;color:#1f2937;padding:2px 8px;border-radius:4px;cursor:pointer" style-hover="background:#e2e6ea">Edit</span>
+        <span onClick="{{ openPalette }}" style="font-size:13px;color:#1f2937;padding:2px 8px;border-radius:4px;cursor:pointer" style-hover="background:#e2e6ea">View</span>
+        <span onClick="{{ openPalette }}" style="font-size:13px;color:#1f2937;padding:2px 8px;border-radius:4px;cursor:pointer" style-hover="background:#e2e6ea">Insert</span>
+        <span onClick="{{ openPalette }}" style="font-size:13px;color:#1f2937;padding:2px 8px;border-radius:4px;cursor:pointer" style-hover="background:#e2e6ea">Format</span>
+        <span onClick="{{ openPalette }}" style="font-size:13px;color:#1f2937;padding:2px 8px;border-radius:4px;cursor:pointer" style-hover="background:#e2e6ea">Tools</span>
+        <span onClick="{{ openPalette }}" style="font-size:13px;color:#1f2937;padding:2px 8px;border-radius:4px;cursor:pointer" style-hover="background:#e2e6ea">Help</span>
+      </div>
+    </div>
+    <div style="flex:1"></div>
+    <button onClick="{{ openPalette }}" style="display:flex;align-items:center;gap:8px;height:34px;padding:0 12px 0 12px;border-radius:8px;border:1px solid #dadce0;background:#fff;color:#5f6368;font-size:13px;cursor:pointer;font-family:inherit" style-hover="background:#f1f3f4"><span class="ms" style="font-size:17px">search</span>Search <span style="font-size:10.5px;background:#f1f3f4;border-radius:4px;padding:1px 5px;font-weight:600">⌘K</span></button>
+    <div style="display:flex;align-items:center;margin:0 4px">
+      <div style="width:28px;height:28px;border-radius:50%;background:#c2410c;color:#fff;display:grid;place-items:center;font-size:11px;font-weight:600;border:2px solid #eef1f5">AJ</div>
+      <div style="width:28px;height:28px;border-radius:50%;background:#7b1fa2;color:#fff;display:grid;place-items:center;font-size:11px;font-weight:600;border:2px solid #eef1f5;margin-left:-8px">MC</div>
+      <div style="width:28px;height:28px;border-radius:50%;background:#0f766e;color:#fff;display:grid;place-items:center;font-size:11px;font-weight:600;border:2px solid #eef1f5;margin-left:-8px">PP</div>
+    </div>
+    <button style="display:flex;align-items:center;gap:8px;height:36px;padding:0 18px;border-radius:8px;background:#1a73e8;color:#fff;font-size:14px;font-weight:500;border:none;cursor:pointer;font-family:inherit" style-hover="background:#1765cc"><span class="ms" style="font-size:18px;color:#fff">group_add</span>Share</button>
+  </div>
+
+  <!-- ===== RIBBON ===== -->
+  <div style="margin:0 12px;flex:0 0 auto">
+    <div style="display:flex;align-items:center;gap:1px;padding:0 4px">
+      <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="7">
+        <span onClick="{{ t.go }}" style="{{ t.style }}">{{ t.name }}</span>
+      </sc-for>
+    </div>
+    <div style="background:#fff;border:1px solid #dadce0;border-radius:9px;padding:6px 4px;display:flex;align-items:stretch;overflow:hidden;min-height:76px">
+
+      <!-- HOME TAB -->
+      <sc-if value="{{ isHome }}" hint-placeholder-val="{{ true }}">
+      <div style="display:flex;align-items:stretch;width:100%">
+        <div style="display:flex;flex-direction:column;align-items:center;flex:0 0 auto;padding:0 6px">
+          <div style="display:flex;gap:1px">
+            <button onClick="{{ cmd.undo }}" title="Undo" style="{{ b.plain }}"><span class="ms" style="font-size:19px;color:#5f6368">undo</span></button>
+            <button onClick="{{ cmd.redo }}" title="Redo" style="{{ b.plain }}"><span class="ms" style="font-size:19px;color:#5f6368">redo</span></button>
+            <button onClick="{{ cmd.paint }}" title="Format painter" style="{{ b.plain }}"><span class="ms" style="font-size:18px;color:#5f6368">format_paint</span></button>
+            <button onClick="{{ cmd.clear }}" title="Clear formatting" style="{{ b.plain }}"><span class="ms" style="font-size:18px;color:#5f6368">format_clear</span></button>
+          </div>
+          <span style="font-size:10.5px;color:#80868b;margin-top:auto;padding-top:5px">Clipboard</span>
+        </div>
+        <div style="width:1px;background:#e8eaed;margin:2px 4px"></div>
+        <!-- style + font -->
+        <div style="display:flex;flex-direction:column;align-items:center;flex:0 0 auto;padding:0 6px">
+          <div style="display:flex;flex-direction:column;gap:5px">
+            <div style="display:flex;gap:5px;align-items:center;position:relative">
+              <button onClick="{{ menu.style }}" style="display:flex;align-items:center;justify-content:space-between;width:132px;height:26px;border:1px solid #dadce0;border-radius:5px;padding:0 8px;font-size:13px;background:#fff;cursor:pointer;font-family:inherit" style-hover="background:#f8f9fa">{{ curStyle }} <span class="ms" style="font-size:16px;color:#80868b">arrow_drop_down</span></button>
+              <sc-if value="{{ styleMenuOpen }}" hint-placeholder-val="{{ false }}">
+                <div style="position:absolute;top:30px;left:0;z-index:60;width:180px;background:#fff;border:1px solid #dadce0;border-radius:8px;box-shadow:0 8px 24px rgba(60,64,67,.28);padding:6px;animation:vpop .12s ease">
+                  <sc-for list="{{ styleOpts }}" as="s" hint-placeholder-count="5">
+                    <div onClick="{{ s.apply }}" style="padding:7px 10px;border-radius:6px;cursor:pointer;color:#202124" style-hover="background:#f1f3f4"><span style="{{ s.preview }}">{{ s.label }}</span></div>
+                  </sc-for>
+                </div>
+              </sc-if>
+            </div>
+            <div style="display:flex;gap:4px;align-items:center;position:relative">
+              <button onClick="{{ menu.font }}" style="display:flex;align-items:center;justify-content:space-between;width:104px;height:26px;border:1px solid #dadce0;border-radius:5px;padding:0 8px;font-size:12.5px;background:#fff;cursor:pointer;font-family:inherit" style-hover="background:#f8f9fa">{{ curFont }} <span class="ms" style="font-size:16px;color:#80868b">arrow_drop_down</span></button>
+              <sc-if value="{{ fontMenuOpen }}" hint-placeholder-val="{{ false }}">
+                <div style="position:absolute;top:30px;left:0;z-index:60;width:190px;background:#fff;border:1px solid #dadce0;border-radius:8px;box-shadow:0 8px 24px rgba(60,64,67,.28);padding:6px;animation:vpop .12s ease">
+                  <sc-for list="{{ fontOpts }}" as="f" hint-placeholder-count="6">
+                    <div onClick="{{ f.apply }}" style="padding:7px 10px;border-radius:6px;cursor:pointer;font-size:13px" style-hover="background:#f1f3f4"><span style="{{ f.style }}">{{ f.label }}</span></div>
+                  </sc-for>
+                </div>
+              </sc-if>
+              <div style="display:flex;align-items:center;border:1px solid #dadce0;border-radius:5px;height:26px;position:relative">
+                <button onClick="{{ cmd.sizeDown }}" style="width:24px;height:100%;border:none;background:transparent;cursor:pointer;display:grid;place-items:center" style-hover="background:#f1f3f4"><span class="ms" style="font-size:16px;color:#5f6368">remove</span></button>
+                <div onClick="{{ menu.size }}" style="width:34px;text-align:center;font-size:13px;cursor:pointer">{{ curSize }}</div>
+                <button onClick="{{ cmd.sizeUp }}" style="width:24px;height:100%;border:none;background:transparent;cursor:pointer;display:grid;place-items:center" style-hover="background:#f1f3f4"><span class="ms" style="font-size:16px;color:#5f6368">add</span></button>
+                <sc-if value="{{ sizeMenuOpen }}" hint-placeholder-val="{{ false }}">
+                  <div style="position:absolute;top:30px;left:0;z-index:60;width:70px;max-height:220px;overflow:auto;background:#fff;border:1px solid #dadce0;border-radius:8px;box-shadow:0 8px 24px rgba(60,64,67,.28);padding:5px;animation:vpop .12s ease">
+                    <sc-for list="{{ sizeOpts }}" as="z" hint-placeholder-count="8">
+                      <div onClick="{{ z.apply }}" style="padding:6px 10px;border-radius:5px;cursor:pointer;font-size:13px;text-align:center" style-hover="background:#f1f3f4">{{ z.v }}</div>
+                    </sc-for>
+                  </div>
+                </sc-if>
+              </div>
+            </div>
+          </div>
+          <span style="font-size:10.5px;color:#80868b;margin-top:auto;padding-top:5px">Font</span>
+        </div>
+        <div style="width:1px;background:#e8eaed;margin:2px 4px"></div>
+        <!-- inline format -->
+        <div style="display:flex;flex-direction:column;align-items:center;flex:0 0 auto;padding:0 6px">
+          <div style="display:flex;flex-direction:column;gap:4px">
+            <div style="display:flex;gap:1px;align-items:center">
+              <button onClick="{{ cmd.bold }}" title="Bold ⌘B" style="{{ b.bold }}"><span style="font-weight:700;font-size:15px">B</span></button>
+              <button onClick="{{ cmd.italic }}" title="Italic ⌘I" style="{{ b.italic }}"><span style="font-style:italic;font-size:15px;font-family:Georgia,serif">I</span></button>
+              <button onClick="{{ cmd.underline }}" title="Underline ⌘U" style="{{ b.underline }}"><span style="text-decoration:underline;font-size:14px">U</span></button>
+              <button onClick="{{ cmd.strike }}" title="Strikethrough" style="{{ b.strike }}"><span style="text-decoration:line-through;font-size:14px">S</span></button>
+              <div style="position:relative">
+                <button onClick="{{ menu.fore }}" title="Text color" style="{{ b.plain }}"><span class="ms" style="font-size:18px;color:#5f6368">format_color_text</span><span style="position:absolute;bottom:4px;left:6px;right:6px;height:3px;border-radius:1px;background:{{ foreColor }}"></span></button>
+                <sc-if value="{{ foreMenuOpen }}" hint-placeholder-val="{{ false }}">
+                  <div style="position:absolute;top:32px;left:0;z-index:60;width:150px;background:#fff;border:1px solid #dadce0;border-radius:8px;box-shadow:0 8px 24px rgba(60,64,67,.28);padding:9px;display:grid;grid-template-columns:repeat(6,1fr);gap:6px;animation:vpop .12s ease">
+                    <sc-for list="{{ foreSwatches }}" as="c" hint-placeholder-count="12">
+                      <div onClick="{{ c.apply }}" title="{{ c.hex }}" style="{{ c.style }}"></div>
+                    </sc-for>
+                  </div>
+                </sc-if>
+              </div>
+              <div style="position:relative">
+                <button onClick="{{ menu.hilite }}" title="Highlight" style="{{ b.plain }}"><span class="ms" style="font-size:18px;color:#5f6368">ink_highlighter</span><span style="position:absolute;bottom:4px;left:6px;right:6px;height:3px;border-radius:1px;background:{{ hiliteColor }}"></span></button>
+                <sc-if value="{{ hiliteMenuOpen }}" hint-placeholder-val="{{ false }}">
+                  <div style="position:absolute;top:32px;left:0;z-index:60;width:150px;background:#fff;border:1px solid #dadce0;border-radius:8px;box-shadow:0 8px 24px rgba(60,64,67,.28);padding:9px;display:grid;grid-template-columns:repeat(6,1fr);gap:6px;animation:vpop .12s ease">
+                    <sc-for list="{{ hiliteSwatches }}" as="c" hint-placeholder-count="12">
+                      <div onClick="{{ c.apply }}" title="{{ c.hex }}" style="{{ c.style }}"></div>
+                    </sc-for>
+                  </div>
+                </sc-if>
+              </div>
+            </div>
+            <div style="display:flex;gap:1px;align-items:center">
+              <button onClick="{{ cmd.link }}" title="Insert link ⌘K" style="{{ b.plain }}"><span class="ms" style="font-size:18px;color:#5f6368">link</span></button>
+              <button onClick="{{ cmd.comment }}" title="Add comment" style="{{ b.plain }}"><span class="ms" style="font-size:18px;color:#5f6368">add_comment</span></button>
+              <button onClick="{{ cmd.image }}" title="Insert image" style="{{ b.plain }}"><span class="ms" style="font-size:18px;color:#5f6368">image</span></button>
+              <button onClick="{{ cmd.hr }}" title="Horizontal line" style="{{ b.plain }}"><span class="ms" style="font-size:18px;color:#5f6368">horizontal_rule</span></button>
+            </div>
+          </div>
+          <span style="font-size:10.5px;color:#80868b;margin-top:auto;padding-top:5px">Font &amp; Insert</span>
+        </div>
+        <div style="width:1px;background:#e8eaed;margin:2px 4px"></div>
+        <!-- paragraph -->
+        <div style="display:flex;flex-direction:column;align-items:center;flex:0 0 auto;padding:0 6px">
+          <div style="display:flex;flex-direction:column;gap:4px">
+            <div style="display:flex;gap:1px">
+              <button onClick="{{ cmd.ul }}" title="Bulleted list" style="{{ b.ul }}"><span class="ms" style="font-size:18px">format_list_bulleted</span></button>
+              <button onClick="{{ cmd.ol }}" title="Numbered list" style="{{ b.ol }}"><span class="ms" style="font-size:18px">format_list_numbered</span></button>
+              <button onClick="{{ cmd.check }}" title="Checklist" style="{{ b.plain }}"><span class="ms" style="font-size:18px;color:#5f6368">checklist</span></button>
+              <button onClick="{{ cmd.outdent }}" title="Decrease indent" style="{{ b.plain }}"><span class="ms" style="font-size:18px;color:#5f6368">format_indent_decrease</span></button>
+              <button onClick="{{ cmd.indent }}" title="Increase indent" style="{{ b.plain }}"><span class="ms" style="font-size:18px;color:#5f6368">format_indent_increase</span></button>
+            </div>
+            <div style="display:flex;gap:1px">
+              <button onClick="{{ cmd.alignLeft }}" title="Align left" style="{{ b.alignLeft }}"><span class="ms" style="font-size:18px">format_align_left</span></button>
+              <button onClick="{{ cmd.alignCenter }}" title="Align center" style="{{ b.alignCenter }}"><span class="ms" style="font-size:18px">format_align_center</span></button>
+              <button onClick="{{ cmd.alignRight }}" title="Align right" style="{{ b.alignRight }}"><span class="ms" style="font-size:18px">format_align_right</span></button>
+              <button onClick="{{ cmd.alignJustify }}" title="Justify" style="{{ b.alignJustify }}"><span class="ms" style="font-size:18px">format_align_justify</span></button>
+              <button onClick="{{ cmd.quote }}" title="Quote" style="{{ b.plain }}"><span class="ms" style="font-size:18px;color:#5f6368">format_quote</span></button>
+            </div>
+          </div>
+          <span style="font-size:10.5px;color:#80868b;margin-top:auto;padding-top:5px">Paragraph</span>
+        </div>
+        <div style="width:1px;background:#e8eaed;margin:2px 4px"></div>
+        <!-- styles gallery -->
+        <div style="display:flex;flex-direction:column;align-items:center;flex:1 1 auto;min-width:0;padding:0 6px">
+          <div style="display:flex;gap:6px;overflow:hidden">
+            <sc-for list="{{ galleryOpts }}" as="g" hint-placeholder-count="4">
+              <div onClick="{{ g.apply }}" style="{{ g.style }}">{{ g.label }}</div>
+            </sc-for>
+          </div>
+          <span style="font-size:10.5px;color:#80868b;margin-top:auto;padding-top:5px">Styles</span>
+        </div>
+        <div style="width:1px;background:#e8eaed;margin:2px 4px"></div>
+        <div style="display:flex;flex-direction:column;align-items:center;flex:0 0 auto;padding:0 8px">
+          <div style="display:flex;flex-direction:column;gap:3px;padding-top:2px">
+            <span onClick="{{ openFind }}" style="font-size:12px;color:#1f2937;display:flex;align-items:center;gap:6px;cursor:pointer;padding:3px 6px;border-radius:5px" style-hover="background:#f1f3f4"><span class="ms" style="font-size:16px;color:#5f6368">search</span>Find</span>
+            <span onClick="{{ openFind }}" style="font-size:12px;color:#1f2937;display:flex;align-items:center;gap:6px;cursor:pointer;padding:3px 6px;border-radius:5px" style-hover="background:#f1f3f4"><span class="ms" style="font-size:16px;color:#5f6368">find_replace</span>Replace</span>
+          </div>
+          <span style="font-size:10.5px;color:#80868b;margin-top:auto;padding-top:5px">Editing</span>
+        </div>
+      </div>
+      </sc-if>
+
+      <!-- OTHER TABS -->
+      <sc-if value="{{ isOther }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;align-items:center;gap:6px;width:100%;padding:0 6px;flex-wrap:wrap">
+        <sc-for list="{{ otherTools }}" as="o" hint-placeholder-count="5">
+          <button onClick="{{ o.run }}" style="display:flex;align-items:center;gap:8px;height:56px;padding:0 14px;border:1px solid #e8eaed;border-radius:8px;background:#fff;cursor:pointer;font-family:inherit;font-size:12.5px;color:#1f2937;flex-direction:column;justify-content:center;min-width:76px" style-hover="background:#f1f3f4"><span class="ms" style="font-size:24px;color:#5f6368">{{ o.icon }}</span>{{ o.label }}</button>
+        </sc-for>
+      </div>
+      </sc-if>
+    </div>
+  </div>
+
+  <!-- ===== WORKSPACE ===== -->
+  <div style="flex:1;display:flex;min-height:0;margin-top:8px">
+
+    <!-- NAV RAIL -->
+    <div style="flex:0 0 auto;display:flex;min-height:0">
+      <div style="width:56px;background:#eef1f5;display:flex;flex-direction:column;align-items:center;padding-top:10px;gap:3px;border-right:1px solid #e0e0e0">
+        <sc-for list="{{ railItems }}" as="r" hint-placeholder-count="5">
+          <div onClick="{{ r.go }}" title="{{ r.label }}" style="{{ r.style }}"><span class="ms" style="{{ r.iconStyle }}">{{ r.icon }}</span><span style="font-size:9px">{{ r.label }}</span></div>
+        </sc-for>
+      </div>
+      <sc-if value="{{ panelOpen }}" hint-placeholder-val="{{ true }}">
+      <div style="width:236px;background:#fff;border-right:1px solid #e0e0e0;display:flex;flex-direction:column;min-height:0">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:13px 14px 10px;flex:0 0 auto"><span style="font-size:15px;font-weight:600">{{ panelTitle }}</span><span onClick="{{ closePanel }}" class="ms" style="font-size:18px;color:#5f6368;cursor:pointer;border-radius:4px;padding:2px" style-hover="background:#f1f3f4">close</span></div>
+
+        <sc-if value="{{ railMode }}" hint-placeholder-val="{{ true }}">
+        <div style="flex:0 0 auto;padding:0 12px 8px"><div style="display:flex;align-items:center;gap:7px;background:#f1f3f4;border-radius:8px;padding:7px 10px"><span class="ms" style="font-size:16px;color:#5f6368">search</span><input value="{{ railSearch }}" onInput="{{ onRailSearch }}" placeholder="Search document" style="border:none;background:transparent;font-size:12.5px;flex:1;outline:none;font-family:inherit" /></div></div>
+        </sc-if>
+
+        <div style="flex:1;overflow:auto;padding:0 6px 8px;min-height:0">
+          <sc-if value="{{ showOutline }}" hint-placeholder-val="{{ true }}">
+            <sc-for list="{{ outline }}" as="h" hint-placeholder-count="8">
+              <div onClick="{{ h.go }}" style="{{ h.style }}">{{ h.label }}</div>
+            </sc-for>
+            <sc-if value="{{ outlineEmpty }}" hint-placeholder-val="{{ false }}">
+              <div style="padding:16px 12px;font-size:12px;color:#80868b;line-height:1.5">Add headings to your document to build an outline.</div>
+            </sc-if>
+          </sc-if>
+          <sc-if value="{{ showSearchResults }}" hint-placeholder-val="{{ false }}">
+            <sc-for list="{{ searchResults }}" as="s" hint-placeholder-count="4">
+              <div onClick="{{ s.go }}" style="padding:9px 11px;border-radius:7px;cursor:pointer;font-size:12px;line-height:1.45;color:#3c4043" style-hover="background:#f1f3f4"><span style="{{ s.hlStyle }}">{{ s.snippet }}</span></div>
+            </sc-for>
+            <sc-if value="{{ searchEmpty }}" hint-placeholder-val="{{ false }}">
+              <div style="padding:16px 12px;font-size:12px;color:#80868b">No matches for “{{ railSearch }}”.</div>
+            </sc-if>
+          </sc-if>
+        </div>
+      </div>
+      </sc-if>
+    </div>
+
+    <!-- CANVAS -->
+    <div id="vcanvas" style="flex:1;overflow:auto;background:#eef1f5;display:flex;flex-direction:column;align-items:center;padding:26px 0 60px;position:relative;min-width:0">
+      <div style="width:816px;transform-origin:top center;transform:scale({{ zoomScale }})">
+        <div style="background:#fff;box-shadow:0 1px 3px rgba(60,64,67,.28),0 8px 22px rgba(60,64,67,.12);padding:76px 84px;min-height:1000px;border-radius:2px">
+          <div id="vdoc" class="vdoc" contentEditable="{{ editable }}" data-mode="{{ mode }}" spellcheck="true"><h1>Product Requirements Specification</h1><p class="vsub">Version 2.0 · Confidential · Owned by Product</p><h2>1. Introduction</h2><p>This document defines the requirements for <b>Vellum</b>, a modern collaborative writing platform. It is intended for the product, engineering, and design teams building and maintaining the editor.</p><h2>2. Product Overview</h2><h3>2.1 Purpose</h3><p>Vellum provides a fast, familiar, standards-based writing surface that interoperates cleanly with existing office formats while enabling real-time collaboration.</p><h3>2.2 Goals</h3><p>The primary goal of this product is to provide a powerful, open editing experience that is compatible with open standards and offers a familiar, productive experience for users across all platforms.</p><ol><li>Provide a clean and intuitive user interface</li><li>Ensure compatibility with common office formats</li><li>Support real-time collaboration and commenting</li><li>Maintain excellent performance on large documents</li></ol><div class="vtip"><span class="ms" style="font-size:18px;color:#1a73e8">lightbulb</span><span><b>Tip:</b> Use styles for consistent formatting. This makes your document easier to navigate and maintain.</span></div><h2>3. Functional Requirements</h2><p>The system shall provide the following core functionality.</p><h3>3.1 User Management</h3><ul><li>User registration and authentication</li><li>Role-based access control</li><li>Profile management and presence</li></ul><h3>3.2 Document Management</h3><ul><li>Create, open, autosave, and version documents</li><li>Import and export standard formats</li></ul><h2>4. Non-Functional Requirements</h2><h3>4.1 Performance</h3><p>The editor shall remain responsive with documents up to 200 pages, keeping keystroke latency under 50 milliseconds.</p><h3>4.2 Security</h3><p>All data in transit shall be encrypted. Access is governed by document-level permissions.</p></div>
+        </div>
+      </div>
+      <!-- floating selection toolbar -->
+      <sc-if value="{{ selVisible }}" hint-placeholder-val="{{ false }}">
+        <div style="{{ selBarStyle }}">
+          <button onClick="{{ cmd.bold }}" style="{{ fb.bold }}"><span style="font-weight:700;font-size:14px">B</span></button>
+          <button onClick="{{ cmd.italic }}" style="{{ fb.italic }}"><span style="font-style:italic;font-size:14px;font-family:Georgia,serif">I</span></button>
+          <button onClick="{{ cmd.underline }}" style="{{ fb.underline }}"><span style="text-decoration:underline;font-size:13px">U</span></button>
+          <div style="width:1px;height:18px;background:#3c4043;margin:0 2px"></div>
+          <button onClick="{{ menu.foreFloat }}" style="{{ fb.plain }}"><span class="ms" style="font-size:16px;color:#e8eaed">format_color_text</span></button>
+          <button onClick="{{ cmd.hiliteYellow }}" style="{{ fb.plain }}"><span class="ms" style="font-size:16px;color:#e8eaed">ink_highlighter</span></button>
+          <div style="width:1px;height:18px;background:#3c4043;margin:0 2px"></div>
+          <button onClick="{{ cmd.link }}" style="{{ fb.plain }}"><span class="ms" style="font-size:16px;color:#e8eaed">link</span></button>
+          <button onClick="{{ cmd.comment }}" style="{{ fb.plain }}"><span class="ms" style="font-size:16px;color:#e8eaed">add_comment</span></button>
+        </div>
+      </sc-if>
+    </div>
+
+    <!-- CONTEXT PANEL -->
+    <sc-if value="{{ contextOpen }}" hint-placeholder-val="{{ true }}">
+    <div style="flex:0 0 auto;width:314px;background:#fff;border-left:1px solid #e0e0e0;display:flex;flex-direction:column;min-height:0">
+      <div style="display:flex;align-items:center;gap:18px;padding:12px 16px 0;border-bottom:1px solid #f1f3f4;flex:0 0 auto">
+        <sc-for list="{{ ctxTabs }}" as="c" hint-placeholder-count="3">
+          <span onClick="{{ c.go }}" style="{{ c.style }}">{{ c.name }}</span>
+        </sc-for>
+        <span onClick="{{ closeContext }}" class="ms" style="font-size:18px;color:#5f6368;margin-left:auto;padding-bottom:8px;cursor:pointer">close</span>
+      </div>
+
+      <sc-if value="{{ ctxComments }}" hint-placeholder-val="{{ true }}">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px 8px;flex:0 0 auto"><span style="font-size:12px;color:#5f6368">{{ commentCountLabel }}</span><span style="font-size:12px;color:#5f6368;display:flex;align-items:center;gap:3px;border:1px solid #dadce0;border-radius:6px;padding:3px 8px">All <span class="ms" style="font-size:15px">arrow_drop_down</span></span></div>
+      <div style="flex:1;overflow:auto;padding:0 12px 12px;display:flex;flex-direction:column;gap:10px;min-height:0">
+        <sc-for list="{{ comments }}" as="c" hint-placeholder-count="3">
+          <div onClick="{{ c.go }}" style="border:1px solid #e8eaed;border-radius:11px;padding:12px 13px;cursor:pointer;transition:border-color .12s" style-hover="border-color:#1a73e8">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><div style="{{ c.avStyle }}">{{ c.initials }}</div><div style="line-height:1.2"><div style="font-size:12.5px;font-weight:600">{{ c.author }}</div><div style="font-size:10.5px;color:#80868b">{{ c.time }}</div></div><span onClick="{{ c.resolve }}" class="ms" style="font-size:18px;color:#80868b;margin-left:auto;cursor:pointer;border-radius:50%;padding:2px" style-hover="background:#e6f4ea;color:#188038" title="Resolve">check_circle</span></div>
+            <sc-if value="{{ c.quoted }}" hint-placeholder-val="{{ false }}"><div style="font-size:11.5px;color:#5f6368;border-left:2px solid #f2c200;padding-left:8px;margin-bottom:7px;font-style:italic">{{ c.quote }}</div></sc-if>
+            <div style="font-size:12.5px;line-height:1.5;color:#3c4043">{{ c.text }}</div>
+          </div>
+        </sc-for>
+        <sc-if value="{{ noComments }}" hint-placeholder-val="{{ false }}">
+          <div style="padding:24px 12px;text-align:center;color:#80868b"><span class="ms" style="font-size:34px;color:#c4c7c5">forum</span><div style="font-size:12.5px;margin-top:8px;line-height:1.5">Select text and click <span class="ms" style="font-size:15px;vertical-align:-2px">add_comment</span> to start a discussion.</div></div>
+        </sc-if>
+      </div>
+      </sc-if>
+
+      <sc-if value="{{ ctxProps }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:1;overflow:auto;padding:16px;min-height:0;font-size:13px;color:#3c4043">
+        <sc-for list="{{ docProps }}" as="p" hint-placeholder-count="5">
+          <div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid #f1f3f4"><span style="color:#5f6368">{{ p.k }}</span><span style="font-weight:500">{{ p.v }}</span></div>
+        </sc-for>
+      </div>
+      </sc-if>
+
+      <sc-if value="{{ ctxStyles }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:1;overflow:auto;padding:12px;min-height:0;display:flex;flex-direction:column;gap:8px">
+        <sc-for list="{{ styleOpts }}" as="s" hint-placeholder-count="5">
+          <div onClick="{{ s.apply }}" style="border:1px solid #e8eaed;border-radius:9px;padding:11px 13px;cursor:pointer" style-hover="background:#f8f9fa;border-color:#dadce0"><span style="{{ s.preview }}">{{ s.label }}</span></div>
+        </sc-for>
+      </div>
+      </sc-if>
+    </div>
+    </sc-if>
+  </div>
+
+  <!-- ===== STATUS BAR ===== -->
+  <div style="flex:0 0 auto;display:flex;align-items:center;gap:16px;padding:0 14px;height:30px;border-top:1px solid #e0e0e0;background:#eef1f5;color:#5f6368;font-size:12px">
+    <span style="display:flex;align-items:center;gap:5px"><span class="ms" style="font-size:15px">description</span>{{ pageLabel }}</span>
+    <span>{{ words }} words</span>
+    <span>{{ chars }} characters</span>
+    <span style="display:flex;align-items:center;gap:3px">English (US) <span class="ms" style="font-size:15px">arrow_drop_down</span></span>
+    <span onClick="{{ toggleMode }}" style="display:flex;align-items:center;gap:4px;cursor:pointer;border-radius:5px;padding:2px 7px;background:{{ modeBg }};color:{{ modeColor }}"><span class="ms" style="font-size:15px;color:{{ modeColor }}">{{ modeIcon }}</span>{{ modeLabel }}</span>
+    <div style="flex:1"></div>
+    <div style="display:flex;gap:2px"><span onClick="{{ toggleContext }}" class="ms" style="font-size:17px;cursor:pointer;color:{{ ctxToggleColor }}" title="Toggle panel">vertical_split</span></div>
+    <div style="display:flex;align-items:center;gap:6px">
+      <button onClick="{{ zoomOut }}" style="width:22px;height:22px;border:none;background:transparent;cursor:pointer;display:grid;place-items:center;border-radius:4px" style-hover="background:#e2e6ea"><span class="ms" style="font-size:16px">remove</span></button>
+      <span style="min-width:38px;text-align:center">{{ zoom }}%</span>
+      <button onClick="{{ zoomIn }}" style="width:22px;height:22px;border:none;background:transparent;cursor:pointer;display:grid;place-items:center;border-radius:4px" style-hover="background:#e2e6ea"><span class="ms" style="font-size:16px">add</span></button>
+    </div>
+    <div style="width:1px;height:16px;background:#dadce0"></div>
+    <span style="display:flex;align-items:center;gap:5px;color:#188038"><span class="ms" style="font-size:16px;color:#188038">cloud_done</span>Synced</span>
+  </div>
+
+  <!-- ===== FIND BAR ===== -->
+  <sc-if value="{{ findOpen }}" hint-placeholder-val="{{ false }}">
+  <div style="position:fixed;top:150px;right:34px;z-index:80;background:#fff;border:1px solid #dadce0;border-radius:10px;box-shadow:0 10px 30px rgba(60,64,67,.3);display:flex;align-items:center;gap:6px;padding:8px 10px;animation:vpop .14s ease">
+    <span class="ms" style="font-size:18px;color:#5f6368">search</span>
+    <input id="vfindinput" value="{{ fq }}" onInput="{{ onFind }}" placeholder="Find in document" style="border:none;outline:none;font-size:13px;width:180px;font-family:inherit" />
+    <span style="font-size:12px;color:#80868b;min-width:52px;text-align:center">{{ findLabel }}</span>
+    <button onClick="{{ findPrev }}" style="width:26px;height:26px;border:none;background:transparent;border-radius:6px;cursor:pointer;display:grid;place-items:center" style-hover="background:#f1f3f4"><span class="ms" style="font-size:18px;color:#5f6368">keyboard_arrow_up</span></button>
+    <button onClick="{{ findNext }}" style="width:26px;height:26px;border:none;background:transparent;border-radius:6px;cursor:pointer;display:grid;place-items:center" style-hover="background:#f1f3f4"><span class="ms" style="font-size:18px;color:#5f6368">keyboard_arrow_down</span></button>
+    <div style="width:1px;height:18px;background:#e0e0e0"></div>
+    <button onClick="{{ closeFind }}" style="width:26px;height:26px;border:none;background:transparent;border-radius:6px;cursor:pointer;display:grid;place-items:center" style-hover="background:#f1f3f4"><span class="ms" style="font-size:18px;color:#5f6368">close</span></button>
+  </div>
+  </sc-if>
+
+  <!-- ===== COMMAND PALETTE ===== -->
+  <sc-if value="{{ paletteOpen }}" hint-placeholder-val="{{ false }}">
+  <div onClick="{{ closePalette }}" style="position:fixed;inset:0;z-index:90;background:rgba(32,33,36,.32);display:flex;justify-content:center;align-items:flex-start;padding-top:120px;animation:vfade .12s ease">
+    <div onClick="{{ stop }}" style="width:560px;max-width:92vw;background:#fff;border-radius:14px;box-shadow:0 24px 60px rgba(0,0,0,.4);overflow:hidden;animation:vpop .14s ease">
+      <div style="display:flex;align-items:center;gap:10px;padding:15px 18px;border-bottom:1px solid #f1f3f4"><span class="ms" style="font-size:20px;color:#5f6368">search</span><input id="vpalinput" value="{{ pq }}" onInput="{{ onPalette }}" placeholder="Search commands and actions" style="border:none;outline:none;font-size:15px;flex:1;font-family:inherit" /><span style="font-size:11px;color:#80868b;background:#f1f3f4;border-radius:5px;padding:3px 7px;font-weight:600">ESC</span></div>
+      <div style="max-height:340px;overflow:auto;padding:8px">
+        <sc-if value="{{ palResults.length }}" hint-placeholder-val="{{ true }}">
+          <sc-for list="{{ palResults }}" as="r" hint-placeholder-count="6">
+            <div onClick="{{ r.run }}" onMouseEnter="{{ r.hover }}" style="{{ r.style }}"><span class="ms" style="font-size:20px;color:{{ r.iconColor }}">{{ r.icon }}</span><span style="flex:1;font-size:13.5px;color:#1f2937">{{ r.label }}</span><span style="font-size:11px;color:#80868b">{{ r.hint }}</span></div>
+          </sc-for>
+        </sc-if>
+        <sc-if value="{{ palEmpty }}" hint-placeholder-val="{{ false }}">
+          <div style="padding:28px;text-align:center;color:#80868b;font-size:13px">No commands match “{{ pq }}”.</div>
+        </sc-if>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900}}">
+class Component extends DCLogic {
+  state = {
+    docTitle: 'Product Requirements Specification',
+    words: 0, chars: 0, pages: 1,
+    outline: [], comments: [],
+    zoom: 100, mode: 'editing', tab: 'home', saved: true,
+    railTab: 'outline', panelOpen: true, railSearch: '',
+    contextOpen: true, ctxTab: 'comments',
+    paletteOpen: false, pq: '', pi: 0,
+    findOpen: false, fq: '', findCount: 0, findIdx: 0,
+    openMenu: null,
+    foreColor: '#1a73e8', hiliteColor: '#ffe066',
+    fmt: {},
+    sel: { visible: false, top: 0, left: 0 },
+  };
+
+  // ---------- lifecycle ----------
+  componentDidMount(){
+    this.ed = document.getElementById('vdoc');
+    this.canvas = document.getElementById('vcanvas');
+    try {
+      const saved = localStorage.getItem('vellum:doc');
+      const t = localStorage.getItem('vellum:title');
+      if (saved && this.ed) this.ed.innerHTML = saved;
+      if (t) this.setState({ docTitle: t });
+    } catch(e){}
+    this._onKey = this.onKey.bind(this);
+    this._onSel = this.onSelChange.bind(this);
+    this._onInput = () => { this.markDirty(); this.sync(); };
+    document.addEventListener('keydown', this._onKey, true);
+    document.addEventListener('selectionchange', this._onSel);
+    if (this.ed) this.ed.addEventListener('input', this._onInput);
+    this._rebindComments();
+    this.sync();
+  }
+  componentWillUnmount(){
+    document.removeEventListener('keydown', this._onKey, true);
+    document.removeEventListener('selectionchange', this._onSel);
+    if (this.ed) this.ed.removeEventListener('input', this._onInput);
+  }
+
+  // ---------- core sync ----------
+  sync(){
+    if (!this.ed) return;
+    const text = this.ed.innerText.replace(/\u00a0/g,' ');
+    const words = (text.match(/\S+/g) || []).length;
+    const chars = text.replace(/\s/g,'').length;
+    const pages = Math.max(1, Math.ceil(this.ed.scrollHeight / 1000));
+    // outline
+    const hs = this.ed.querySelectorAll('h1,h2,h3,h4');
+    const outline = [];
+    hs.forEach((el,i) => {
+      if (!el.id) el.id = 'vh-' + i + '-' + Math.random().toString(36).slice(2,6);
+      const lvl = +el.tagName[1];
+      outline.push({ id: el.id, level: lvl, label: (el.innerText||'').trim() || 'Untitled' });
+    });
+    const fmt = this.readFmt();
+    this.setState({ words, chars, pages, outline, fmt });
+  }
+  readFmt(){
+    const q = c => { try { return document.queryCommandState(c); } catch(e){ return false; } };
+    let block = '';
+    try { block = (document.queryCommandValue('formatBlock')||'').toLowerCase(); } catch(e){}
+    return {
+      bold:q('bold'), italic:q('italic'), underline:q('underline'), strike:q('strikeThrough'),
+      ul:q('insertUnorderedList'), ol:q('insertOrderedList'),
+      left:q('justifyLeft'), center:q('justifyCenter'), right:q('justifyRight'), justify:q('justifyFull'),
+      block,
+    };
+  }
+  markDirty(){
+    this.setState({ saved: false });
+    clearTimeout(this._saveT);
+    this._saveT = setTimeout(() => this.save(), 700);
+  }
+  save(){
+    try {
+      if (this.ed) localStorage.setItem('vellum:doc', this.ed.innerHTML);
+      localStorage.setItem('vellum:title', this.state.docTitle);
+    } catch(e){}
+    this.setState({ saved: true });
+  }
+
+  // ---------- editing ----------
+  focusEd(){ if (this.ed) this.ed.focus(); }
+  exec(cmd, val){
+    this.focusEd();
+    try { document.execCommand('styleWithCSS', false, true); } catch(e){}
+    try { document.execCommand(cmd, false, val); } catch(e){}
+    this.afterEdit();
+  }
+  afterEdit(){ this.markDirty(); this.sync(); }
+  setBlock(tag){ this.exec('formatBlock', tag); this.closeMenus(); }
+  applyStyle(prop, val){
+    this.focusEd();
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount) { this.closeMenus(); return; }
+    const range = sel.getRangeAt(0);
+    if (range.collapsed) { this.closeMenus(); return; }
+    const span = document.createElement('span');
+    span.style[prop] = val;
+    try { span.appendChild(range.extractContents()); range.insertNode(span);
+      sel.removeAllRanges(); const r = document.createRange(); r.selectNodeContents(span); sel.addRange(r);
+    } catch(e){}
+    this.afterEdit(); this.closeMenus();
+  }
+  changeSize(delta){
+    const cur = this.currentSizePt();
+    const scale = [8,9,10,11,12,14,16,18,20,24,28,32,36,48,60];
+    let idx = scale.indexOf(cur); if (idx < 0) idx = 3;
+    idx = Math.max(0, Math.min(scale.length-1, idx + delta));
+    this.applyStyle('fontSize', scale[idx] + 'pt');
+  }
+  currentSizePt(){
+    try {
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount){
+        let n = sel.getRangeAt(0).startContainer;
+        if (n.nodeType === 3) n = n.parentElement;
+        if (n){ const fs = parseFloat(getComputedStyle(n).fontSize); return Math.round(fs * 72/96); }
+      }
+    } catch(e){}
+    return 11;
+  }
+
+  // ---------- comments ----------
+  addComment(){
+    this.focusEd();
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount || sel.getRangeAt(0).collapsed){
+      this.setState({ contextOpen: true, ctxTab: 'comments' });
+      return;
+    }
+    const range = sel.getRangeAt(0);
+    const quote = sel.toString().slice(0, 90);
+    const id = 'c' + Date.now();
+    const span = document.createElement('span');
+    span.className = 'vcmt'; span.setAttribute('data-cid', id);
+    try { span.appendChild(range.extractContents()); range.insertNode(span); } catch(e){ return; }
+    span.addEventListener('click', () => this.gotoComment(id));
+    const texts = ['Should we clarify this section?','Let\u2019s add an example here.','Please review the wording.','Can we quantify this?','Looks good \u2014 minor tweak needed.'];
+    const c = { id, author: 'You', initials: 'YO', color: '#1a73e8', quote, text: texts[Math.floor(Math.random()*texts.length)], time: 'just now' };
+    this.setState(s => ({ comments: [c, ...s.comments], contextOpen: true, ctxTab: 'comments' }));
+    this.markDirty();
+    window.getSelection().removeAllRanges();
+  }
+  resolveComment(id, e){
+    if (e) e.stopPropagation();
+    if (this.ed){
+      const span = this.ed.querySelector('[data-cid="'+id+'"]');
+      if (span){ const p = span.parentNode; while(span.firstChild) p.insertBefore(span.firstChild, span); p.removeChild(span); }
+    }
+    this.setState(s => ({ comments: s.comments.filter(c => c.id !== id) }));
+    this.markDirty();
+  }
+  gotoComment(id){
+    if (!this.ed || !this.canvas) return;
+    const el = this.ed.querySelector('[data-cid="'+id+'"]');
+    if (el) this.scrollTo(el);
+  }
+  _rebindComments(){
+    if (!this.ed) return;
+    const seed = ['Alice Johnson','Michael Chen','Priya Patel'];
+    const spans = this.ed.querySelectorAll('[data-cid]');
+    const existing = [];
+    spans.forEach(s => { const id = s.getAttribute('data-cid'); s.addEventListener('click', () => this.gotoComment(id)); });
+  }
+
+  // ---------- navigation ----------
+  scrollTo(el){
+    if (!this.canvas || !el) return;
+    const cRect = this.canvas.getBoundingClientRect();
+    const eRect = el.getBoundingClientRect();
+    this.canvas.scrollTop += (eRect.top - cRect.top) - 90;
+    const orig = el.style.background;
+    el.style.transition = 'background .3s'; el.style.background = 'rgba(26,115,232,.14)';
+    setTimeout(() => { el.style.background = orig; }, 650);
+  }
+  gotoHeading(id){ if (this.ed) this.scrollTo(this.ed.querySelector('#'+CSS.escape(id))); }
+
+  // ---------- search (rail) ----------
+  railSearchResults(){
+    const q = (this.state.railSearch||'').trim().toLowerCase();
+    if (!q || !this.ed) return [];
+    const out = [];
+    const walker = document.createTreeWalker(this.ed, NodeFilter.SHOW_TEXT);
+    let node, i = 0;
+    while ((node = walker.nextNode()) && out.length < 40){
+      const t = node.nodeValue; const idx = t.toLowerCase().indexOf(q);
+      if (idx > -1){
+        const start = Math.max(0, idx-24);
+        const pre = (start>0?'\u2026':'') + t.slice(start, idx);
+        const mid = t.slice(idx, idx+q.length);
+        const post = t.slice(idx+q.length, idx+q.length+40);
+        out.push({ node, pre, mid, post, key: i++ });
+      }
+    }
+    return out;
+  }
+
+  // ---------- find (⌘F) ----------
+  runFind(q){
+    this._findRanges = [];
+    if (typeof CSS === 'undefined' || !CSS.highlights) return;
+    CSS.highlights.delete('vfind'); CSS.highlights.delete('vfindcur');
+    if (!q || !this.ed){ this.setState({ findCount: 0, findIdx: 0 }); return; }
+    const ranges = [];
+    const walker = document.createTreeWalker(this.ed, NodeFilter.SHOW_TEXT);
+    const ql = q.toLowerCase(); let node;
+    while ((node = walker.nextNode())){
+      const t = node.nodeValue.toLowerCase(); let i = t.indexOf(ql);
+      while (i > -1){ const r = document.createRange(); r.setStart(node,i); r.setEnd(node,i+q.length); ranges.push(r); i = t.indexOf(ql, i+q.length); }
+    }
+    this._findRanges = ranges;
+    this.setState({ findCount: ranges.length, findIdx: 0 });
+    this.paintFind(0);
+  }
+  paintFind(idx){
+    if (typeof CSS === 'undefined' || !CSS.highlights) return;
+    const ranges = this._findRanges || [];
+    CSS.highlights.delete('vfind'); CSS.highlights.delete('vfindcur');
+    if (!ranges.length) return;
+    const others = ranges.filter((_,i) => i !== idx);
+    if (others.length) CSS.highlights.set('vfind', new Highlight(...others));
+    CSS.highlights.set('vfindcur', new Highlight(ranges[idx]));
+    const cur = ranges[idx];
+    if (cur && this.canvas){ let el = cur.startContainer; if (el.nodeType===3) el = el.parentElement; this.scrollTo(el); }
+  }
+  findStep(d){
+    const n = (this._findRanges||[]).length; if (!n) return;
+    const idx = (this.state.findIdx + d + n) % n;
+    this.setState({ findIdx: idx }); this.paintFind(idx);
+  }
+
+  // ---------- menus / palette ----------
+  closeMenus(){ this.setState({ openMenu: null }); }
+  toggleMenu(m){ this.setState(s => ({ openMenu: s.openMenu === m ? null : m })); }
+  openPalette(){ this.setState({ paletteOpen: true, pq: '', pi: 0, openMenu: null }); setTimeout(() => { const el = document.getElementById('vpalinput'); if (el) el.focus(); }, 30); }
+  closePalette(){ this.setState({ paletteOpen: false }); }
+  openFindBar(){ this.setState({ findOpen: true }); setTimeout(() => { const el = document.getElementById('vfindinput'); if (el){ el.focus(); el.select(); } }, 30); if (this.state.fq) this.runFind(this.state.fq); }
+  closeFindBar(){ this.setState({ findOpen: false }); if (CSS.highlights){ CSS.highlights.delete('vfind'); CSS.highlights.delete('vfindcur'); } }
+
+  // ---------- keyboard ----------
+  onKey(e){
+    const meta = e.metaKey || e.ctrlKey;
+    if (meta && e.key.toLowerCase() === 'k'){ e.preventDefault(); this.openPalette(); return; }
+    if (meta && e.key.toLowerCase() === 'f'){ e.preventDefault(); this.openFindBar(); return; }
+    if (meta && e.key.toLowerCase() === 's'){ e.preventDefault(); this.save(); return; }
+    if (e.key === 'Escape'){
+      if (this.state.paletteOpen){ this.closePalette(); return; }
+      if (this.state.findOpen){ this.closeFindBar(); return; }
+      if (this.state.openMenu){ this.closeMenus(); return; }
+    }
+    if (this.state.paletteOpen){
+      const res = this.paletteResults();
+      if (e.key === 'ArrowDown'){ e.preventDefault(); this.setState(s => ({ pi: Math.min(res.length-1, s.pi+1) })); }
+      else if (e.key === 'ArrowUp'){ e.preventDefault(); this.setState(s => ({ pi: Math.max(0, s.pi-1) })); }
+      else if (e.key === 'Enter'){ e.preventDefault(); const r = res[this.state.pi]; if (r) this.runCmd(r.action); this.closePalette(); }
+      return;
+    }
+    if (this.state.findOpen && e.key === 'Enter'){ e.preventDefault(); this.findStep(e.shiftKey ? -1 : 1); }
+  }
+
+  // ---------- selection floating toolbar ----------
+  onSelChange(){
+    cancelAnimationFrame(this._selRaf);
+    this._selRaf = requestAnimationFrame(() => {
+      const sel = window.getSelection();
+      const inEd = sel && sel.rangeCount && this.ed && this.ed.contains(sel.anchorNode);
+      if (inEd && !sel.getRangeAt(0).collapsed && this.state.mode === 'editing'){
+        const rect = sel.getRangeAt(0).getBoundingClientRect();
+        this.setState({ sel: { visible: true, top: rect.top - 50, left: rect.left + rect.width/2 }, fmt: this.readFmt() });
+      } else {
+        if (this.state.sel.visible) this.setState({ sel: { visible: false, top:0, left:0 } });
+        if (inEd) this.setState({ fmt: this.readFmt() });
+      }
+    });
+  }
+
+  // ---------- command registry ----------
+  runCmd(a){ if (typeof a === 'function') a(); }
+  commandList(){
+    const E = (c,v)=>()=>this.exec(c,v);
+    return [
+      { id:'bold', label:'Bold', icon:'format_bold', hint:'⌘B', action:E('bold') },
+      { id:'italic', label:'Italic', icon:'format_italic', hint:'⌘I', action:E('italic') },
+      { id:'underline', label:'Underline', icon:'format_underlined', hint:'⌘U', action:E('underline') },
+      { id:'h1', label:'Title', icon:'title', hint:'Style', action:()=>this.setBlock('h1') },
+      { id:'h2', label:'Heading 1', icon:'format_h1', hint:'Style', action:()=>this.setBlock('h2') },
+      { id:'h3', label:'Heading 2', icon:'format_h2', hint:'Style', action:()=>this.setBlock('h3') },
+      { id:'normal', label:'Normal text', icon:'notes', hint:'Style', action:()=>this.setBlock('p') },
+      { id:'ul', label:'Bulleted list', icon:'format_list_bulleted', hint:'', action:E('insertUnorderedList') },
+      { id:'ol', label:'Numbered list', icon:'format_list_numbered', hint:'', action:E('insertOrderedList') },
+      { id:'link', label:'Insert link', icon:'link', hint:'', action:()=>this.insertLink() },
+      { id:'comment', label:'Add comment', icon:'add_comment', hint:'', action:()=>this.addComment() },
+      { id:'image', label:'Insert image', icon:'image', hint:'', action:()=>this.insertImage() },
+      { id:'table', label:'Insert table', icon:'table_chart', hint:'', action:()=>this.insertTable() },
+      { id:'hr', label:'Insert horizontal line', icon:'horizontal_rule', hint:'', action:E('insertHorizontalRule') },
+      { id:'find', label:'Find in document', icon:'search', hint:'⌘F', action:()=>this.openFindBar() },
+      { id:'outline', label:'Show outline', icon:'toc', hint:'', action:()=>this.setState({ railTab:'outline', panelOpen:true }) },
+      { id:'comments', label:'Show comments', icon:'forum', hint:'', action:()=>this.setState({ contextOpen:true, ctxTab:'comments' }) },
+      { id:'zoomin', label:'Zoom in', icon:'zoom_in', hint:'', action:()=>this.setZoom(this.state.zoom+10) },
+      { id:'zoomout', label:'Zoom out', icon:'zoom_out', hint:'', action:()=>this.setZoom(this.state.zoom-10) },
+      { id:'mode', label:'Toggle editing / viewing', icon:'edit', hint:'', action:()=>this.toggleMode() },
+      { id:'save', label:'Save now', icon:'save', hint:'⌘S', action:()=>this.save() },
+      { id:'clear', label:'Clear formatting', icon:'format_clear', hint:'', action:E('removeFormat') },
+    ];
+  }
+  paletteResults(){
+    const q = (this.state.pq||'').trim().toLowerCase();
+    let list = this.commandList();
+    if (q) list = list.filter(c => c.label.toLowerCase().includes(q));
+    return list;
+  }
+  insertLink(){ const url = window.prompt('Link URL', 'https://'); if (url) this.exec('createLink', url); }
+  insertImage(){ const url = window.prompt('Image URL'); if (url) this.exec('insertImage', url); }
+  insertTable(){
+    this.focusEd();
+    let html = '<table style="border-collapse:collapse;width:100%;margin:8px 0">';
+    for (let r=0;r<3;r++){ html += '<tr>'; for (let c=0;c<3;c++){ html += '<td style="border:1px solid #dadce0;padding:6px 10px;min-width:60px">'+(r===0?'<b>Col '+(c+1)+'</b>':'&nbsp;')+'</td>'; } html += '</tr>'; }
+    html += '</table><p><br></p>';
+    this.exec('insertHTML', html);
+  }
+  toggleMode(){ this.setState(s => ({ mode: s.mode === 'editing' ? 'viewing' : 'editing', sel:{visible:false,top:0,left:0} })); }
+  setZoom(z){ this.setState({ zoom: Math.max(50, Math.min(200, z)) }); }
+
+  // ---------- style helpers for render ----------
+  tb(active){
+    return 'height:28px;min-width:28px;padding:0 6px;border-radius:6px;display:flex;align-items:center;justify-content:center;gap:3px;border:none;cursor:pointer;font-family:inherit;color:#202124;transition:background .1s;background:' + (active ? '#e8f0fe' : 'transparent') + ';box-shadow:' + (active ? 'inset 0 0 0 1px rgba(26,115,232,.25)' : 'none') + ';';
+  }
+  fbtn(active){
+    return 'height:30px;min-width:30px;padding:0 7px;border-radius:6px;display:flex;align-items:center;justify-content:center;border:none;cursor:pointer;color:#e8eaed;background:' + (active ? 'rgba(255,255,255,.2)' : 'transparent') + ';';
+  }
+  railBtn(active){
+    return 'display:flex;flex-direction:column;align-items:center;gap:2px;width:46px;padding:7px 0;border-radius:9px;cursor:pointer;color:' + (active ? '#1a73e8':'#5f6368') + ';background:' + (active ? '#e8f0fe':'transparent') + ';transition:background .12s;';
+  }
+
+  renderVals(){
+    const S = this.state;
+    const fmt = S.fmt || {};
+    const E = (c,v)=>()=>this.exec(c,v);
+
+    // ribbon tabs
+    const tabNames = ['home','insert','draw','layout','references','review','view'];
+    const tabLabels = {home:'Home',insert:'Insert',draw:'Draw',layout:'Layout',references:'References',review:'Review',view:'View'};
+    const tabs = tabNames.map(n => ({
+      name: tabLabels[n], go: () => this.setState({ tab: n, openMenu: null }),
+      style: 'font-size:13.5px;padding:7px 13px 8px;cursor:pointer;border-radius:6px 6px 0 0;' + (S.tab===n ? 'color:#1a73e8;font-weight:600;border-bottom:2.5px solid #1a73e8;' : 'color:#5f6368;font-weight:500;border-bottom:2.5px solid transparent;'),
+    }));
+
+    // format buttons
+    const b = {
+      plain: this.tb(false),
+      bold: this.tb(fmt.bold), italic: this.tb(fmt.italic), underline: this.tb(fmt.underline), strike: this.tb(fmt.strike),
+      ul: this.tb(fmt.ul), ol: this.tb(fmt.ol),
+      alignLeft: this.tb(fmt.left), alignCenter: this.tb(fmt.center), alignRight: this.tb(fmt.right), alignJustify: this.tb(fmt.justify),
+    };
+    const fb = { plain: this.fbtn(false), bold: this.fbtn(fmt.bold), italic: this.fbtn(fmt.italic), underline: this.fbtn(fmt.underline) };
+
+    const cmd = {
+      undo:E('undo'), redo:E('redo'), paint:()=>{}, clear:E('removeFormat'),
+      bold:E('bold'), italic:E('italic'), underline:E('underline'), strike:E('strikeThrough'),
+      ul:E('insertUnorderedList'), ol:E('insertOrderedList'), check:E('insertUnorderedList'),
+      indent:E('indent'), outdent:E('outdent'), quote:()=>this.setBlock('blockquote'),
+      alignLeft:E('justifyLeft'), alignCenter:E('justifyCenter'), alignRight:E('justifyRight'), alignJustify:E('justifyFull'),
+      link:()=>this.insertLink(), comment:()=>this.addComment(), image:()=>this.insertImage(), hr:E('insertHorizontalRule'),
+      sizeUp:()=>this.changeSize(1), sizeDown:()=>this.changeSize(-1),
+      hiliteYellow:()=>this.exec('hiliteColor','#ffe066'),
+    };
+
+    const menu = {
+      style:()=>this.toggleMenu('style'), font:()=>this.toggleMenu('font'), size:()=>this.toggleMenu('size'),
+      fore:()=>this.toggleMenu('fore'), hilite:()=>this.toggleMenu('hilite'), foreFloat:()=>this.exec('foreColor','#d93025'),
+    };
+
+    // style dropdown
+    const styleDefs = [
+      { label:'Normal text', tag:'p', preview:'font-size:14px;color:#202124' },
+      { label:'Title', tag:'h1', preview:'font-size:22px;font-weight:600' },
+      { label:'Heading 1', tag:'h2', preview:'font-size:17px;font-weight:600' },
+      { label:'Heading 2', tag:'h3', preview:'font-size:14px;font-weight:600' },
+      { label:'Heading 3', tag:'h4', preview:'font-size:13px;font-weight:600;color:#3c4043' },
+    ];
+    const styleOpts = styleDefs.map(d => ({ label:d.label, preview:d.preview, apply:()=>this.setBlock(d.tag) }));
+    const blockMap = { p:'Normal text', div:'Normal text', h1:'Title', h2:'Heading 1', h3:'Heading 2', h4:'Heading 3', blockquote:'Quote' };
+    const curStyle = blockMap[fmt.block] || 'Normal text';
+
+    const galleryDefs = [
+      { label:'Normal', tag:'p', style:'display:flex;align-items:center;justify-content:center;padding:0 12px;height:52px;white-space:nowrap;border:1px solid #dadce0;border-radius:6px;font-size:13px;cursor:pointer' },
+      { label:'Title', tag:'h1', style:'display:flex;align-items:center;justify-content:center;padding:0 12px;height:52px;white-space:nowrap;border:1px solid #dadce0;border-radius:6px;font-size:19px;cursor:pointer' },
+      { label:'Heading 1', tag:'h2', style:'display:flex;align-items:center;justify-content:center;padding:0 12px;height:52px;white-space:nowrap;border:1px solid #dadce0;border-radius:6px;font-size:15px;font-weight:600;cursor:pointer' },
+      { label:'Heading 2', tag:'h3', style:'display:flex;align-items:center;justify-content:center;padding:0 12px;height:52px;white-space:nowrap;border:1px solid #dadce0;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer' },
+    ];
+    const galleryOpts = galleryDefs.map(d => ({ label:d.label, style:d.style, apply:()=>this.setBlock(d.tag) }));
+
+    // fonts
+    const fontDefs = [
+      { label:'Carlito', stack:"'Calibri','Carlito',sans-serif" },
+      { label:'Caladea', stack:"'Cambria','Caladea',serif" },
+      { label:'Arial', stack:"Arial,'Liberation Sans',sans-serif" },
+      { label:'Times', stack:"'Times New Roman','Liberation Serif',serif" },
+      { label:'Courier', stack:"'Courier New','Liberation Mono',monospace" },
+      { label:'Inter', stack:"'Inter',sans-serif" },
+    ];
+    const fontOpts = fontDefs.map(d => ({ label:d.label, style:'font-family:'+d.stack, apply:()=>this.applyStyle('fontFamily', d.stack) }));
+    const sizeOpts = [8,9,10,11,12,14,16,18,20,24,28,32,36,48].map(v => ({ v, apply:()=>this.applyStyle('fontSize', v+'pt') }));
+
+    // color swatches
+    const fores = ['#202124','#5f6368','#ffffff','#d93025','#e8710a','#f9ab00','#188038','#1a73e8','#1967d2','#7b1fa2','#c2185b','#795548'];
+    const hilites = ['#ffe066','#a7f3d0','#bfdbfe','#fbcfe8','#fde68a','#ddd6fe','#fca5a5','#bbf7d0','#e5e7eb','#fef08a','#c7d2fe','transparent'];
+    const foreSwatches = fores.map(hex => ({ hex, style:'width:20px;height:20px;border-radius:5px;cursor:pointer;background:'+hex+';box-shadow:inset 0 0 0 1px rgba(0,0,0,.12)', apply:()=>{ this.setState({foreColor:hex}); this.exec('foreColor',hex); } }));
+    const hiliteSwatches = hilites.map(hex => ({ hex, style:'width:20px;height:20px;border-radius:5px;cursor:pointer;background:'+(hex==='transparent'?'#fff':hex)+';box-shadow:inset 0 0 0 1px rgba(0,0,0,.12)'+(hex==='transparent'?';background-image:linear-gradient(45deg,#f00 0,#f00 100%);background-size:0':''), apply:()=>{ this.setState({hiliteColor:hex==='transparent'?'#ffe066':hex}); this.exec('hiliteColor', hex==='transparent'?'transparent':hex); } }));
+
+    // rail
+    const railDefs = [
+      { id:'outline', icon:'toc', label:'Outline' },
+      { id:'pages', icon:'description', label:'Pages' },
+      { id:'search', icon:'search', label:'Search' },
+      { id:'comments', icon:'forum', label:'Comments' },
+      { id:'bookmarks', icon:'bookmark_border', label:'Marks' },
+    ];
+    const railItems = railDefs.map(d => ({
+      icon:d.icon, label:d.label,
+      style:this.railBtn(S.panelOpen && S.railTab===d.id),
+      iconStyle:'font-size:20px;color:'+((S.panelOpen&&S.railTab===d.id)?'#1a73e8':'#5f6368'),
+      go:()=>{
+        if (d.id==='comments'){ this.setState({ contextOpen:true, ctxTab:'comments' }); return; }
+        this.setState(s => ({ railTab:d.id, panelOpen: !(s.panelOpen && s.railTab===d.id) }));
+      },
+    }));
+    const panelTitle = { outline:'Outline', pages:'Pages', search:'Search', bookmarks:'Bookmarks' }[S.railTab] || 'Outline';
+    const railMode = S.railTab === 'search';
+    const showOutline = S.railTab === 'outline' && !(railMode && S.railSearch);
+    const outline = S.outline.map(h => ({
+      label:h.label, go:()=>this.gotoHeading(h.id),
+      style:'padding:6px 10px 6px '+(10 + (h.level-1)*13)+'px;border-radius:6px;cursor:pointer;font-size:12.5px;line-height:1.4;color:'+(h.level===1?'#202124':h.level===2?'#3c4043':'#5f6368')+';font-weight:'+(h.level<=2?'500':'400')+';',
+    }));
+
+    // rail search results
+    const rawSearch = railMode && S.railSearch ? this.railSearchResults() : [];
+    const searchResults = rawSearch.map(r => ({
+      snippet: r.pre + r.mid + r.post,
+      hlStyle: 'background:transparent',
+      go:()=>{ let el = r.node.parentElement; this.scrollTo(el); },
+    }));
+    const showSearchResults = railMode && !!S.railSearch;
+
+    // context tabs
+    const ctxDefs = [ {id:'comments',name:'Comments'}, {id:'properties',name:'Properties'}, {id:'styles',name:'Styles'} ];
+    const ctxTabs = ctxDefs.map(d => ({ name:d.name, go:()=>this.setState({ ctxTab:d.id, contextOpen:true }),
+      style:'font-size:13.5px;padding-bottom:10px;cursor:pointer;'+(S.ctxTab===d.id?'color:#1a73e8;font-weight:600;border-bottom:2.5px solid #1a73e8;':'color:#5f6368;border-bottom:2.5px solid transparent;') }));
+
+    const avColors = {'#1a73e8':'#1a73e8','#c2410c':'#c2410c','#7b1fa2':'#7b1fa2','#0f766e':'#0f766e'};
+    const comments = S.comments.map(c => ({
+      author:c.author, initials:c.initials, time:c.time, text:c.text, quote:c.quote, quoted: !!c.quote,
+      avStyle:'width:26px;height:26px;border-radius:50%;background:'+(c.color||'#1a73e8')+';color:#fff;display:grid;place-items:center;font-size:10px;font-weight:600;flex:0 0 auto',
+      go:()=>this.gotoComment(c.id), resolve:(e)=>this.resolveComment(c.id, e),
+    }));
+
+    // palette
+    const palResults = this.paletteResults().map((r,i) => ({
+      label:r.label, icon:r.icon, hint:r.hint, iconColor: i===S.pi ? '#1a73e8' : '#5f6368',
+      run:()=>{ this.runCmd(r.action); this.closePalette(); },
+      hover:()=>this.setState({ pi:i }),
+      style:'display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:9px;cursor:pointer;background:'+(i===S.pi?'#e8f0fe':'transparent')+';',
+    }));
+
+    // other tabs
+    const otherToolDefs = {
+      insert:[ {icon:'table_chart',label:'Table',a:()=>this.insertTable()},{icon:'image',label:'Image',a:()=>this.insertImage()},{icon:'link',label:'Link',a:()=>this.insertLink()},{icon:'add_comment',label:'Comment',a:()=>this.addComment()},{icon:'horizontal_rule',label:'Divider',a:()=>this.exec('insertHorizontalRule')},{icon:'functions',label:'Equation',a:()=>{}},{icon:'sticky_note_2',label:'Text box',a:()=>{}} ],
+      draw:[ {icon:'edit',label:'Pen',a:()=>{}},{icon:'ink_highlighter',label:'Highlighter',a:()=>{}},{icon:'ink_eraser',label:'Eraser',a:()=>{}},{icon:'gesture',label:'Lasso',a:()=>{}},{icon:'shapes',label:'Shapes',a:()=>{}} ],
+      layout:[ {icon:'view_column',label:'Columns',a:()=>{}},{icon:'space_bar',label:'Margins',a:()=>{}},{icon:'crop_portrait',label:'Orientation',a:()=>{}},{icon:'insert_page_break',label:'Break',a:()=>this.exec('insertHorizontalRule')},{icon:'format_line_spacing',label:'Spacing',a:()=>{}} ],
+      references:[ {icon:'toc',label:'Contents',a:()=>this.setState({railTab:'outline',panelOpen:true})},{icon:'note_alt',label:'Footnote',a:()=>{}},{icon:'menu_book',label:'Citation',a:()=>{}},{icon:'bookmark',label:'Bookmark',a:()=>{}},{icon:'label',label:'Caption',a:()=>{}} ],
+      review:[ {icon:'spellcheck',label:'Spelling',a:()=>{}},{icon:'add_comment',label:'Comment',a:()=>this.addComment()},{icon:'difference',label:'Track',a:()=>{}},{icon:'forum',label:'Comments',a:()=>this.setState({contextOpen:true,ctxTab:'comments'})},{icon:'translate',label:'Language',a:()=>{}} ],
+      view:[ {icon:'toc',label:'Outline',a:()=>this.setState({railTab:'outline',panelOpen:true})},{icon:'vertical_split',label:'Panel',a:()=>this.setState(s=>({contextOpen:!s.contextOpen}))},{icon:'zoom_in',label:'Zoom in',a:()=>this.setZoom(S.zoom+10)},{icon:'zoom_out',label:'Zoom out',a:()=>this.setZoom(S.zoom-10)},{icon:'edit',label:'Mode',a:()=>this.toggleMode()} ],
+    };
+    const otherTools = (otherToolDefs[S.tab]||[]).map(t => ({ icon:t.icon, label:t.label, run:t.a }));
+
+    const findLabel = S.findCount ? (S.findIdx+1)+' / '+S.findCount : (S.fq ? '0 / 0' : '');
+
+    return {
+      docTitle:S.docTitle, onTitle:(e)=>{ this.setState({docTitle:e.target.value}); this.markDirty(); },
+      savedText: S.saved ? 'Saved' : 'Saving…', savedIcon: S.saved ? 'cloud_done' : 'cloud_sync', savedColor: S.saved ? '#188038' : '#5f6368',
+      tabs, isHome: S.tab==='home', isOther: S.tab!=='home', otherTools,
+      b, fb, cmd, menu,
+      curStyle, styleOpts, galleryOpts, styleMenuOpen:S.openMenu==='style',
+      curFont: 'Carlito', fontOpts, fontMenuOpen:S.openMenu==='font',
+      curSize: this.currentSizePt(), sizeOpts, sizeMenuOpen:S.openMenu==='size',
+      foreColor:S.foreColor, hiliteColor:S.hiliteColor, foreSwatches, hiliteSwatches,
+      foreMenuOpen:S.openMenu==='fore', hiliteMenuOpen:S.openMenu==='hilite',
+      // rail
+      railItems, panelOpen:S.panelOpen, panelTitle, railMode, railSearch:S.railSearch,
+      onRailSearch:(e)=>this.setState({railSearch:e.target.value}),
+      showOutline, outline, outlineEmpty: showOutline && outline.length===0,
+      showSearchResults, searchResults, searchEmpty: showSearchResults && searchResults.length===0,
+      closePanel:()=>this.setState({panelOpen:false}),
+      // canvas
+      zoomScale: (S.zoom/100), zoom:S.zoom, editable: S.mode==='editing', mode:S.mode,
+      selVisible:S.sel.visible, selBarStyle:'position:fixed;z-index:70;top:'+S.sel.top+'px;left:'+S.sel.left+'px;transform:translateX(-50%);display:flex;align-items:center;gap:1px;background:#202124;border-radius:9px;padding:4px 6px;box-shadow:0 6px 20px rgba(0,0,0,.35);animation:vpop .1s ease',
+      // context
+      contextOpen:S.contextOpen, ctxTabs,
+      ctxComments:S.ctxTab==='comments', ctxProps:S.ctxTab==='properties', ctxStyles:S.ctxTab==='styles',
+      comments, noComments: S.comments.length===0,
+      commentCountLabel: S.comments.length + (S.comments.length===1?' comment':' comments'),
+      docProps:[ {k:'Title',v:S.docTitle.length>18?S.docTitle.slice(0,18)+'…':S.docTitle}, {k:'Words',v:String(S.words)}, {k:'Characters',v:String(S.chars)}, {k:'Pages',v:String(S.pages)}, {k:'Owner',v:'You'}, {k:'Last edit',v:S.saved?'Saved':'Unsaved'} ],
+      closeContext:()=>this.setState({contextOpen:false}),
+      // status
+      pageLabel:'Page 1 of '+S.pages, words:S.words, chars:S.chars,
+      modeLabel: S.mode==='editing'?'Editing':'Viewing', modeIcon: S.mode==='editing'?'edit':'visibility',
+      modeBg:'#e8f0fe', modeColor:'#1a73e8', toggleMode:()=>this.toggleMode(),
+      ctxToggleColor: S.contextOpen?'#1a73e8':'#5f6368', toggleContext:()=>this.setState(s=>({contextOpen:!s.contextOpen})),
+      zoomIn:()=>this.setZoom(S.zoom+10), zoomOut:()=>this.setZoom(S.zoom-10),
+      // find
+      findOpen:S.findOpen, fq:S.fq, findLabel,
+      onFind:(e)=>{ this.setState({fq:e.target.value}); this.runFind(e.target.value); },
+      findNext:()=>this.findStep(1), findPrev:()=>this.findStep(-1), closeFind:()=>this.closeFindBar(), openFind:()=>this.openFindBar(),
+      // palette
+      paletteOpen:S.paletteOpen, pq:S.pq, palResults, palEmpty: palResults.length===0,
+      onPalette:(e)=>this.setState({pq:e.target.value, pi:0}),
+      openPalette:()=>this.openPalette(), closePalette:()=>this.closePalette(), stop:(e)=>e.stopPropagation(),
+    };
+  }
+}
+</script>
+</body>
+</html>

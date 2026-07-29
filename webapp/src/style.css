@@ -7,6 +7,28 @@
   --error: #c0392b;
   --radius: 8px;
   --radius-sm: 7px;
+  /* One shared radius/shadow for every floating "card" surface (settings,
+     context menus, command palette, find panel) — doc 69 §4.3 found these
+     drifting across 8/10/12px with 3 near-duplicate shadows. */
+  --radius-popover: 10px;
+  --shadow-popover: 0 10px 34px rgba(20, 22, 28, 0.24);
+  /* Named type, control-height, and icon grids from doc 69 §3.3/§4.1/§4.2.
+     Values preserve the existing shell except where the design explicitly
+     consolidates equivalent caption/icon roles. */
+  --fs-micro: 9px;
+  --fs-caption: 10px;
+  --fs-small: 12px;
+  --fs-body: 13px;
+  --fs-medium: 15px;
+  --h-control: 30px;
+  --h-search: 34px;
+  --h-tab: 34px;
+  --h-rail-control: 44px;
+  --h-footer: 30px;
+  --h-header: 44px;
+  --icon-compact: 16px;
+  --icon-control: 18px;
+  --icon-rail: 20px;
 }
 
 /* Light palette (default + explicit). */
@@ -69,7 +91,7 @@ body {
 body {
   display: flex;
   flex-direction: column;
-  font: 13px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+  font: var(--fs-body)/1.5 "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
   color: var(--ink);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
@@ -85,9 +107,8 @@ input {
 .bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 16px;
-  height: 44px;
+  height: var(--h-header);
   padding: 0 14px;
   background: var(--surface);
   border-bottom: 1px solid var(--line);
@@ -95,15 +116,65 @@ input {
   z-index: 3;
 }
 
+/* Visible ⌘K entry point (doc 69 §1.4.1/§1.2) — the palette itself already
+   existed and worked; it only lacked a discoverable trigger. Wired to the
+   same openCmd() the keyboard shortcut calls, in main.js. */
+.search-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--h-search);
+  padding: 0 10px;
+  margin-left: 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  flex: 0 1 240px;
+  min-width: 0;
+}
+
+.search-trigger:hover {
+  background: var(--bg-2);
+  border-color: var(--muted);
+}
+
+.search-trigger .ms {
+  flex: 0 0 auto;
+  font-size: var(--icon-compact);
+}
+
+.search-trigger .search-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  font-size: var(--fs-body);
+}
+
+.search-trigger kbd {
+  flex: 0 0 auto;
+  font: 600 var(--fs-caption)/1 inherit;
+  color: var(--faint);
+  background: var(--bg-2);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+
 .brand {
   display: flex;
   align-items: center;
   gap: 9px;
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .brand .mark {
   font-weight: 700;
-  font-size: 15px;
+  font-size: var(--fs-medium);
   letter-spacing: -0.02em;
 }
 
@@ -114,7 +185,7 @@ input {
 }
 
 .testing {
-  font-size: 10px;
+  font-size: var(--fs-caption);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -128,6 +199,8 @@ input {
   display: flex;
   align-items: center;
   gap: 8px;
+  margin-left: auto;
+  flex: 0 0 auto;
 }
 
 /* ---- Buttons --------------------------------------------------------------- */
@@ -135,7 +208,7 @@ input {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 30px;
+  height: var(--h-control);
   padding: 0 12px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--line-strong);
@@ -147,10 +220,10 @@ input {
   transition: background 0.12s, border-color 0.12s, opacity 0.12s;
 }
 
-.btn svg {
-  width: 17px;
-  height: 17px;
-  fill: currentColor;
+/* Unified icon grid (doc 69 §4.2): header/menu icons are 18px, matching
+   .fmt's ribbon icons instead of a separate 17px size. */
+.btn .ms {
+  font-size: var(--icon-control);
 }
 
 .btn:hover:not(:disabled) {
@@ -192,11 +265,13 @@ input {
 
 .doc-title {
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fs-body);
   font-weight: 550;
   color: var(--ink);
-  width: 42vw;
+  width: auto;
   max-width: 320px;
+  min-width: 0;
+  flex: 1 1 auto;
   padding: 3px 6px;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
@@ -228,15 +303,15 @@ input {
 /* ---- Settings popover ------------------------------------------------------ */
 .settings-panel {
   position: absolute;
-  top: 44px;
+  top: var(--h-header);
   right: 12px;
   z-index: 20;
   width: 268px;
   padding: 14px;
   background: var(--surface);
   border: 1px solid var(--line-strong);
-  border-radius: 12px;
-  box-shadow: 0 12px 40px rgba(20, 22, 28, 0.22);
+  border-radius: var(--radius-popover);
+  box-shadow: var(--shadow-popover);
 }
 
 .settings-panel[hidden] {
@@ -248,7 +323,7 @@ input {
 }
 
 .settings-label {
-  font-size: 11px;
+  font-size: var(--fs-caption);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -327,52 +402,437 @@ input {
   border-top: 1px solid var(--line);
 }
 
-/* ---- Document properties popover -------------------------------------------- */
-.properties-panel {
-  width: 320px;
+/* ---- Modal dialogs --------------------------------------------------------- */
+body.modal-open {
+  overflow: hidden;
 }
 
-.prop-field {
-  display: block;
-  margin-bottom: 10px;
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--faint);
+.dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(20, 22, 28, 0.42);
+  backdrop-filter: blur(2px);
 }
 
-.prop-field:last-child {
-  margin-bottom: 0;
+.dialog-overlay[hidden] {
+  display: none;
 }
 
-.prop-field input[type="text"],
-.prop-field textarea {
-  display: block;
+.dialog-card {
+  display: flex;
+  width: min(620px, 100%);
+  max-height: min(720px, calc(100vh - 48px));
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 24px 72px rgba(20, 22, 28, 0.3);
+}
+
+.dialog-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 20px 22px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.dialog-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.dialog-heading-icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 21px;
+}
+
+.dialog-heading h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+
+.dialog-heading p {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: var(--fs-small);
+}
+
+.dialog-close {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.dialog-close .ms {
+  font-size: var(--icon-control);
+}
+
+.dialog-close:hover {
+  background: var(--bg-2);
+  color: var(--ink);
+}
+
+.dialog-body {
+  min-height: 0;
+  overflow: auto;
+  padding: 20px 22px 22px;
+}
+
+.dialog-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 13px 22px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-2);
+}
+
+.dialog-note {
+  color: var(--muted);
+  font-size: var(--fs-small);
+}
+
+.dialog-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.dialog-button {
+  height: 34px;
+  min-width: 80px;
+  padding: 0 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.dialog-button:hover {
+  border-color: var(--muted);
+  background: var(--bg-2);
+}
+
+.dialog-button-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.dialog-button-primary:hover {
+  border-color: var(--accent);
+  background: var(--accent);
+  filter: brightness(1.05);
+}
+
+.properties-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.field-wide {
+  grid-column: 1 / -1;
+}
+
+.dialog-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 7px;
+  color: var(--muted);
+  font-size: var(--fs-small);
+  font-weight: 600;
+}
+
+.dialog-field > input,
+.dialog-field > textarea {
   width: 100%;
-  margin-top: 6px;
-  padding: 6px 8px;
-  border: 1px solid var(--line);
+  min-width: 0;
+  border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--ink);
   font: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  text-transform: none;
-  letter-spacing: normal;
+  font-size: var(--fs-body);
+  font-weight: 450;
+}
+
+.dialog-field > input {
+  height: 36px;
+  padding: 0 10px;
+}
+
+.dialog-field > textarea {
+  min-height: 76px;
+  padding: 9px 10px;
+  line-height: 1.45;
   resize: vertical;
 }
 
-.prop-field input[type="text"]:focus,
-.prop-field textarea:focus {
+.dialog-field > input:focus,
+.dialog-field > textarea:focus,
+.number-control:focus-within {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-soft);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.metadata-section,
+.metadata-disclosure {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.metadata-section h3 {
+  margin: 0 0 12px;
+  color: var(--ink);
+  font-size: var(--fs-body);
+  font-weight: 650;
+}
+
+.metadata-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 18px;
+  margin: 0;
+}
+
+.metadata-facts > div {
+  min-width: 0;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+}
+
+.metadata-facts dt {
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+}
+
+.metadata-facts dd {
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: var(--fs-small);
+  font-weight: 550;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+}
+
+.metadata-facts dd.metadata-empty {
+  color: var(--faint);
+  font-weight: 450;
+}
+
+.metadata-disclosure summary {
+  color: var(--ink);
+  font-size: var(--fs-body);
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.metadata-disclosure[open] summary {
+  margin-bottom: 12px;
+}
+
+.metadata-facts-compact {
+  gap: 8px 12px;
+}
+
+.metadata-fact-wide {
+  grid-column: 1 / -1;
+}
+
+/* ---- Page setup dialog ----------------------------------------------------- */
+.page-setup-dialog {
+  width: min(760px, 100%);
+}
+
+.page-setup-body {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  gap: 24px;
+}
+
+.page-preview {
+  display: flex;
+  min-height: 330px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 12px;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--bg-2);
+}
+
+.page-preview-sheet {
+  position: relative;
+  width: 150px;
+  aspect-ratio: var(--page-ratio, 8.27 / 11.69);
+  overflow: hidden;
+  border: 1px solid #d7dbe0;
+  border-radius: 2px;
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(20, 22, 28, 0.15);
+  transition: width 0.16s ease, aspect-ratio 0.16s ease;
+}
+
+.page-preview-sheet[data-orientation="landscape"] {
+  width: 210px;
+}
+
+.page-preview-margins {
+  position: absolute;
+  inset:
+    var(--preview-margin-top, 8%)
+    var(--preview-margin-right, 8%)
+    var(--preview-margin-bottom, 8%)
+    var(--preview-margin-left, 8%);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding-top: 4px;
+  border: 1px dashed #c7ccd3;
+}
+
+.page-preview-margins span {
+  display: block;
+  height: 2px;
+  margin-inline: 10%;
+  border-radius: 999px;
+  background: #e3e6ea;
+}
+
+.page-preview-margins span:nth-child(2) {
+  width: 68%;
+}
+
+.page-preview-margins span:nth-child(3) {
+  width: 82%;
+}
+
+.page-preview-margins span:nth-child(4) {
+  width: 54%;
+}
+
+.page-preview-label {
+  color: var(--muted);
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
+}
+
+.page-setup-fields {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.dialog-group {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.dialog-group legend {
+  margin-bottom: 9px;
+  padding: 0;
+  color: var(--ink);
+  font-size: var(--fs-body);
+  font-weight: 650;
+}
+
+.dialog-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.orientation-segmented button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.orientation-segmented .ms {
+  font-size: var(--icon-control);
+}
+
+.number-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  height: 36px;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.number-control input {
+  width: 100%;
+  min-width: 0;
+  padding: 0 4px 0 10px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-body);
+  font-variant-numeric: tabular-nums;
+}
+
+.number-control > span {
+  display: grid;
+  place-items: center;
+  border-left: 1px solid var(--line);
+  background: var(--bg-2);
+  color: var(--muted);
+  font-size: var(--fs-small);
+  font-weight: 500;
 }
 
 .oss {
-  font-size: 11px;
+  font-size: var(--fs-caption);
   color: var(--faint);
 }
 
@@ -393,8 +853,8 @@ input {
   padding: 5px;
   background: var(--surface);
   border: 1px solid var(--line-strong);
-  border-radius: 10px;
-  box-shadow: 0 10px 34px rgba(20, 22, 28, 0.24);
+  border-radius: var(--radius-popover);
+  box-shadow: var(--shadow-popover);
 }
 
 .context-menu[hidden] {
@@ -410,7 +870,7 @@ input {
   border-radius: 6px;
   background: transparent;
   color: var(--ink);
-  font-size: 13px;
+  font-size: var(--fs-body);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -438,7 +898,7 @@ input {
 
 .menu-heading {
   padding: 4px 10px 6px;
-  font-size: 11px;
+  font-size: var(--fs-caption);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -448,7 +908,7 @@ input {
 .table-context {
   padding: 0 10px 6px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-small);
   font-variant-numeric: tabular-nums;
 }
 
@@ -484,7 +944,7 @@ input {
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--ink);
 }
 
@@ -525,7 +985,7 @@ input {
 
 .menu-unit {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-small);
   width: 14px;
 }
 
@@ -535,7 +995,7 @@ input {
   align-items: center;
   gap: 9px;
   padding: 6px 10px;
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--ink);
   cursor: pointer;
   border-radius: 6px;
@@ -581,7 +1041,7 @@ input {
   background: var(--surface);
   color: var(--muted);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-small);
   cursor: pointer;
 }
 
@@ -625,7 +1085,7 @@ input {
 .grid-label {
   margin-top: 7px;
   text-align: center;
-  font-size: 12px;
+  font-size: var(--fs-small);
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
@@ -650,8 +1110,8 @@ input {
   width: min(560px, 92vw);
   background: var(--surface);
   border: 1px solid var(--line-strong);
-  border-radius: 12px;
-  box-shadow: 0 20px 60px rgba(20, 22, 28, 0.32);
+  border-radius: var(--radius-popover);
+  box-shadow: var(--shadow-popover);
   overflow: hidden;
 }
 
@@ -664,9 +1124,8 @@ input {
 }
 
 .cmd-search-icon {
-  width: 18px;
-  height: 18px;
-  fill: var(--muted);
+  color: var(--muted);
+  font-size: var(--icon-control);
   flex: 0 0 auto;
 }
 
@@ -676,12 +1135,12 @@ input {
   background: none;
   color: var(--ink);
   font: inherit;
-  font-size: 15px;
+  font-size: var(--fs-medium);
   outline: none;
 }
 
 .cmd-kbd {
-  font-size: 11px;
+  font-size: var(--fs-caption);
   color: var(--faint);
   border: 1px solid var(--line);
   border-radius: 5px;
@@ -705,20 +1164,20 @@ input {
   background: transparent;
   color: var(--ink);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fs-body);
   text-align: left;
   cursor: pointer;
 }
 
 .cmd-item .cmd-group {
   color: var(--faint);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 
 .cmd-item .cmd-hint {
   margin-left: auto;
   color: var(--faint);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 
 .cmd-item.sel,
@@ -731,7 +1190,7 @@ input {
   padding: 16px;
   text-align: center;
   color: var(--faint);
-  font-size: 13px;
+  font-size: var(--fs-body);
 }
 
 /* ---- Find / replace -------------------------------------------------------- */
@@ -747,8 +1206,8 @@ input {
   padding: 10px;
   background: var(--surface);
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius);
-  box-shadow: 0 12px 36px rgba(20, 22, 28, 0.22);
+  border-radius: var(--radius-popover);
+  box-shadow: var(--shadow-popover);
 }
 
 .find-panel[hidden] {
@@ -769,14 +1228,14 @@ input {
 .find-panel input[type="text"] {
   flex: 1;
   min-width: 0;
-  height: 30px;
+  height: var(--h-control);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--ink);
   padding: 0 8px;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fs-body);
   outline: none;
 }
 
@@ -787,14 +1246,14 @@ input {
 
 .find-panel .btn.icon-only {
   flex: none;
-  height: 30px;
+  height: var(--h-control);
 }
 
 .find-status {
   flex: none;
   min-width: 64px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-small);
   font-variant-numeric: tabular-nums;
   text-align: center;
   white-space: nowrap;
@@ -817,12 +1276,12 @@ input {
   align-items: center;
   justify-content: center;
   gap: 4px;
-  height: 30px;
+  height: var(--h-control);
   padding: 0 8px;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-small);
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
@@ -863,9 +1322,9 @@ input {
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 4px;
-  background: var(--surface);
-  border: 1px solid var(--line-strong);
+  padding: 4px 6px;
+  background: #202124;
+  border: 1px solid #202124;
   border-radius: 9px;
   box-shadow: 0 8px 26px rgba(20, 22, 28, 0.22);
 }
@@ -877,8 +1336,33 @@ input {
 .sel-divider {
   width: 1px;
   height: 20px;
-  background: var(--line);
+  background: rgba(255, 255, 255, 0.2);
   margin: 0 3px;
+}
+
+.sel-toolbar .fmt {
+  color: #e8eaed;
+}
+
+.sel-toolbar .fmt:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.sel-toolbar .fmt[aria-pressed="true"] {
+  color: #ffffff;
+  background: color-mix(in srgb, var(--accent) 42%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 68%, transparent);
+}
+
+.sel-toolbar .ctl.swatch {
+  color: #e8eaed;
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+.sel-toolbar .ctl select {
+  color: #e8eaed;
+  border-color: rgba(255, 255, 255, 0.22);
+  background-color: #202124;
 }
 
 /* A host-owned affordance for canvas-painted links. The engine supplies the
@@ -915,10 +1399,8 @@ input {
   background: var(--accent-soft);
 }
 
-.link-chip-icon svg {
-  width: 17px;
-  height: 17px;
-  fill: currentColor;
+.link-chip-icon .ms {
+  font-size: 17px;
 }
 
 .link-chip-copy {
@@ -930,7 +1412,7 @@ input {
 
 .link-chip-kind {
   color: var(--faint);
-  font-size: 10px;
+  font-size: var(--fs-caption);
   font-weight: 700;
   letter-spacing: 0.045em;
   text-transform: uppercase;
@@ -939,7 +1421,7 @@ input {
 .link-chip-target {
   overflow: hidden;
   color: var(--ink);
-  font-size: 12px;
+  font-size: var(--fs-small);
   font-weight: 550;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1042,7 +1524,10 @@ input {
 /* ---- Ribbon (tabbed toolbar) ----------------------------------------------- */
 .ribbon {
   background: var(--surface);
-  border-bottom: 1px solid var(--line);
+  margin: 6px 8px 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  overflow: hidden;
   z-index: 2;
 }
 
@@ -1050,19 +1535,19 @@ input {
   display: flex;
   align-items: flex-end;
   gap: 2px;
-  height: 34px;
+  height: var(--h-tab);
   padding: 0 12px;
   border-bottom: 1px solid var(--line);
 }
 
 .ribbon-tab {
-  height: 34px;
+  height: var(--h-tab);
   padding: 0 14px;
   border: none;
   background: none;
   color: var(--muted);
   font: inherit;
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 550;
   cursor: pointer;
   border-bottom: 2px solid transparent;
@@ -1114,10 +1599,8 @@ input {
 }
 
 .rgroup-label {
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-size: 10.5px;
+  font-weight: 500;
   color: var(--faint);
   white-space: nowrap;
 }
@@ -1128,7 +1611,7 @@ input {
 
 .rgroup-hint {
   max-width: 190px;
-  font-size: 11px;
+  font-size: var(--fs-small);
   color: var(--faint);
   line-height: 1.4;
   text-align: center;
@@ -1141,7 +1624,7 @@ input {
 }
 
 .ctl select {
-  height: 30px;
+  height: var(--h-control);
   padding: 0 26px 0 9px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--line-strong);
@@ -1171,7 +1654,7 @@ input {
 /* Text-color swatch */
 .ctl.swatch {
   gap: 2px;
-  height: 30px;
+  height: var(--h-control);
   padding: 0 4px 0 7px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--line-strong);
@@ -1205,8 +1688,8 @@ input {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: var(--h-control);
+  height: var(--h-control);
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -1216,11 +1699,35 @@ input {
   transition: background 0.11s, color 0.11s, border-color 0.11s;
 }
 
-.fmt svg {
-  width: 18px;
-  height: 18px;
-  fill: currentColor;
+.fmt .ms {
+  font-size: var(--icon-control);
   display: block;
+}
+
+.format-glyph {
+  display: block;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.bold-glyph {
+  font-weight: 700;
+}
+
+.italic-glyph {
+  font-family: Georgia, serif;
+  font-style: italic;
+}
+
+.underline-glyph {
+  font-size: 14px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.strike-glyph {
+  font-size: 14px;
+  text-decoration: line-through;
 }
 
 .fmt:hover:not(:disabled) {
@@ -1244,6 +1751,7 @@ input {
   flex: 1;
   display: flex;
   min-height: 0;
+  margin-top: 8px;
 }
 
 .rail {
@@ -1253,15 +1761,20 @@ input {
   align-items: center;
   gap: 4px;
   padding: 8px 7px;
-  background: var(--surface);
+  background: var(--bg-2);
   border-right: 1px solid var(--line);
 }
 
+/* A text caption under the icon (doc 69 §1.2/§1.4.4): every rail destination
+   in the reference has a visible label; OpenDoc's had icon+tooltip only. */
 .rail-btn {
-  width: 36px;
-  height: 36px;
-  display: grid;
-  place-items: center;
+  width: 40px;
+  height: var(--h-rail-control);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
   border: none;
   border-radius: 8px;
   background: transparent;
@@ -1269,10 +1782,13 @@ input {
   cursor: pointer;
 }
 
-.rail-btn svg {
-  width: 20px;
-  height: 20px;
-  fill: currentColor;
+.rail-btn .ms {
+  font-size: var(--icon-rail);
+}
+
+.rail-btn > span:not(.ms) {
+  font-size: var(--fs-micro);
+  font-weight: 600;
 }
 
 .rail-btn:hover:not(:disabled) {
@@ -1334,10 +1850,8 @@ input {
   cursor: pointer;
 }
 
-.panel-close svg {
-  width: 16px;
-  height: 16px;
-  fill: currentColor;
+.panel-close .ms {
+  font-size: var(--icon-compact);
 }
 
 .panel-close:hover {
@@ -1542,7 +2056,7 @@ input {
 .ruler-num {
   position: absolute;
   top: 12px;
-  font-size: 9px;
+  font-size: var(--fs-micro);
   line-height: 1;
   color: var(--muted);
   transform: translateX(-50%);
@@ -1700,12 +2214,15 @@ input {
  * `<body>` once a document is open, which reveals the chrome again. */
 body:not(.doc-loaded) .ribbon,
 body:not(.doc-loaded) .rail,
-body:not(.doc-loaded) .footer {
+body:not(.doc-loaded) .footer,
+body:not(.doc-loaded) .search-trigger,
+body:not(.doc-loaded) #save,
+body:not(.doc-loaded) #propertiesBtn {
   display: none;
 }
 
 body:not(.doc-loaded) .drop {
-  min-height: calc(100vh - 44px);
+  min-height: calc(100vh - var(--h-header));
 }
 
 .drop {
@@ -1730,15 +2247,13 @@ body:not(.doc-loaded) .drop-card {
 }
 
 .drop-icon {
-  width: 44px;
-  height: 44px;
-  fill: var(--faint);
+  color: var(--faint);
+  font-size: 44px;
   margin-bottom: 8px;
 }
 
 body:not(.doc-loaded) .drop-icon {
-  width: 56px;
-  height: 56px;
+  font-size: 56px;
 }
 
 .drop-title {
@@ -1761,12 +2276,12 @@ body:not(.doc-loaded) .drop-title {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  height: 32px;
+  height: var(--h-footer);
   padding: 0 12px 0 16px;
-  font-size: 12px;
+  font-size: var(--fs-small);
   color: var(--muted);
   border-top: 1px solid var(--line);
-  background: var(--surface);
+  background: var(--bg-2);
   z-index: 2;
 }
 
@@ -1832,10 +2347,11 @@ body:not(.doc-loaded) .drop-title {
   cursor: pointer;
 }
 
-.zbtn svg {
-  width: 15px;
-  height: 15px;
-  fill: currentColor;
+/* Unified icon grid (doc 69 §4.2): 16px for compact/footer contexts,
+   matching the other two steps (18px ribbon/menu, 20px rail) instead of a
+   fourth one-off 15px size. */
+.zbtn .ms {
+  font-size: var(--icon-compact);
 }
 
 .zbtn:hover {
@@ -1850,7 +2366,7 @@ body:not(.doc-loaded) .drop-title {
   color: var(--ink);
   border-radius: 5px;
   padding: 0 2px;
-  font-size: 12px;
+  font-size: var(--fs-small);
   font-variant-numeric: tabular-nums;
   cursor: pointer;
   text-align: center;
@@ -1858,4 +2374,133 @@ body:not(.doc-loaded) .drop-title {
 
 .footer .zoom select:hover {
   background: var(--bg-2);
+}
+
+/* The desktop editor remains the primary target, but the header must never
+   force the whole document to scroll horizontally. Collapse only redundant
+   labels; the complete ribbon keeps its own horizontal scroll behavior. */
+@media (max-width: 900px) {
+  .bar {
+    gap: 10px;
+  }
+
+  .search-trigger {
+    flex: 0 0 var(--h-search);
+    width: var(--h-search);
+    padding: 0;
+    justify-content: center;
+  }
+
+  .search-trigger .search-label,
+  .search-trigger kbd {
+    display: none;
+  }
+}
+
+@media (max-width: 620px) {
+  .bar {
+    gap: 8px;
+    padding-inline: 8px;
+  }
+
+  .brand {
+    gap: 6px;
+  }
+
+  .brand .mark,
+  .testing {
+    display: none;
+  }
+
+  .controls {
+    gap: 4px;
+  }
+
+  .controls .btn {
+    width: var(--h-control);
+    padding: 0;
+    justify-content: center;
+  }
+
+  .controls .btn-label {
+    display: none;
+  }
+
+  .dialog-overlay {
+    padding: 10px;
+  }
+
+  .dialog-card {
+    max-height: calc(100vh - 20px);
+    border-radius: 12px;
+  }
+
+  .dialog-head {
+    padding: 16px;
+  }
+
+  .dialog-heading {
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .dialog-heading-icon {
+    width: 34px;
+    height: 34px;
+    flex-basis: 34px;
+    font-size: var(--icon-control);
+  }
+
+  .dialog-heading h2 {
+    font-size: 16px;
+  }
+
+  .dialog-heading p {
+    line-height: 1.35;
+  }
+
+  .dialog-body {
+    padding: 16px;
+  }
+
+  .dialog-foot {
+    padding: 12px 16px;
+  }
+
+  .dialog-note {
+    display: none;
+  }
+
+  .properties-grid,
+  .dialog-field-grid,
+  .metadata-facts {
+    grid-template-columns: 1fr;
+  }
+
+  .field-wide,
+  .metadata-fact-wide {
+    grid-column: auto;
+  }
+
+  .page-setup-body {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+
+  .page-preview {
+    min-height: 160px;
+    padding: 16px;
+  }
+
+  .page-preview-sheet {
+    width: 76px;
+  }
+
+  .page-preview-sheet[data-orientation="landscape"] {
+    width: 130px;
+  }
+
+  .page-setup-fields {
+    gap: 18px;
+  }
 }
