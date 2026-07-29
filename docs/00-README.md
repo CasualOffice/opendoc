@@ -95,6 +95,10 @@ The runtime is not a UI toolkit and is not a DOCX-only editor. It is a determini
 64. `64-EDITOR-TOOLBAR-RIBBON-DESIGN.md` — editor command/ribbon information architecture and interaction design.
 65. `65-VISUAL-CONTAINMENT-AND-LINK-INTERACTION-DESIGN.md` — accepted design for line/table containment, cross-paragraph floats, framed drop caps, hyperlinks/TOC navigation, and visual regression gates.
 66. `66-DEVELOPER-SITE-AND-DEMO-DISCOVERY-DESIGN.md` — developer-first GitHub Pages landing page, live sample/editor routing, and search/LLM discovery contract.
+67. `67-EDITOR-UX-GAP-ANALYSIS.md` — evidence-based editor UX gaps and prioritized delivery gates.
+68. `68-COMMENTS-AND-SUGGESTIONS-DESIGN.md` — review-mode comments, suggestions, and host-policy design.
+69. `69-MS-WORD-2026-COMPETITIVE-DESIGN-GUIDE.md` — current Word/Vellum interaction and visual reference guidance.
+70. `70-TABLE-EDITING-UX-FOUNDATION-DESIGN.md` — contextual table ribbon, right-side properties inspector, and atomic Apply contract.
 
 Also present (not in the numbered sequence): `PHASE-1A-SEMANTIC-MODELING-TRACKER.md`.
 
