@@ -145,6 +145,7 @@ let dragging = false;
 /** Primary-pointer gesture retained until pointerup so link activation is
  * suppressed after a drag/Shift extension. */
 let pointerGesture = null;
+let selectionAutoScrollFrame = 0;
 /** The model-derived link currently represented by the host-owned link chip. */
 let activeLink = null;
 /** One-frame throttle for pointer feedback over canvas-painted link geometry. */
@@ -165,6 +166,8 @@ function focusEditorSurface() {
 function resetPointerGesture() {
   pointerGesture = null;
   dragging = false;
+  if (selectionAutoScrollFrame) cancelAnimationFrame(selectionAutoScrollFrame);
+  selectionAutoScrollFrame = 0;
 }
 
 function isInteractiveChromeTarget(target) {
@@ -176,6 +179,10 @@ function isInteractiveChromeTarget(target) {
 
 function eventTargetsEditor(event) {
   return event.target === pagesEl || pagesEl.contains(event.target) || document.activeElement === pagesEl;
+}
+
+function clientPointEvent(clientX, clientY) {
+  return { clientX, clientY };
 }
 
 function setStatus(text, kind = "") {
@@ -618,6 +625,8 @@ function onPointerDown(page, event) {
     page,
     clientX: event.clientX,
     clientY: event.clientY,
+    lastClientX: event.clientX,
+    lastClientY: event.clientY,
     moved: false,
     shift: event.shiftKey,
   };
@@ -627,6 +636,7 @@ function onPointerDown(page, event) {
       ? { anchor: selection.anchor, focus: anchor }
       : { anchor, focus: anchor };
   drawSelection();
+  startSelectionAutoScroll();
   event.preventDefault();
 }
 
@@ -639,6 +649,13 @@ function onPointerMove(page, event) {
     scheduleLinkHover(page, event);
     return;
   }
+  updateDragSelection(event);
+}
+
+function updateDragSelection(event) {
+  if (!dragging || !pointerGesture || !selection) return;
+  pointerGesture.lastClientX = event.clientX;
+  pointerGesture.lastClientY = event.clientY;
   if (
     pointerGesture &&
     Math.hypot(
@@ -648,10 +665,45 @@ function onPointerMove(page, event) {
   ) {
     pointerGesture.moved = true;
   }
+  const page = pageFromClientPoint(event.clientX, event.clientY);
+  if (!page) return;
   const focus = anchorAt(page, event);
   if (!focus) return;
   selection = { anchor: selection.anchor, focus };
   drawSelection();
+}
+
+const AUTO_SCROLL_EDGE_PX = 56;
+const AUTO_SCROLL_MAX_PX = 24;
+
+function startSelectionAutoScroll() {
+  if (selectionAutoScrollFrame) return;
+  const tick = () => {
+    selectionAutoScrollFrame = 0;
+    if (!dragging || !pointerGesture) return;
+
+    const rect = viewportEl.getBoundingClientRect();
+    const y = pointerGesture.lastClientY;
+    let dy = 0;
+    if (y < rect.top + AUTO_SCROLL_EDGE_PX) {
+      const ratio = Math.min(1, (rect.top + AUTO_SCROLL_EDGE_PX - y) / AUTO_SCROLL_EDGE_PX);
+      dy = -Math.ceil(ratio * AUTO_SCROLL_MAX_PX);
+    } else if (y > rect.bottom - AUTO_SCROLL_EDGE_PX) {
+      const ratio = Math.min(1, (y - (rect.bottom - AUTO_SCROLL_EDGE_PX)) / AUTO_SCROLL_EDGE_PX);
+      dy = Math.ceil(ratio * AUTO_SCROLL_MAX_PX);
+    }
+
+    if (dy !== 0) {
+      const before = viewportEl.scrollTop;
+      viewportEl.scrollTop = Math.max(0, before + dy);
+      if (viewportEl.scrollTop !== before) {
+        updateDragSelection(clientPointEvent(pointerGesture.lastClientX, pointerGesture.lastClientY));
+      }
+    }
+
+    selectionAutoScrollFrame = requestAnimationFrame(tick);
+  };
+  selectionAutoScrollFrame = requestAnimationFrame(tick);
 }
 
 function onPointerUp(event) {
@@ -705,13 +757,40 @@ function pageFromEvent(event) {
   const idx = [...pagesEl.querySelectorAll(".page-wrap")].indexOf(wrap);
   return pages[idx] ?? null;
 }
+
+function pageFromClientPoint(clientX, clientY) {
+  const target = document.elementFromPoint(clientX, clientY);
+  const direct = target ? pageFromEvent({ target }) : null;
+  if (direct) return direct;
+  if (!pages.length) return null;
+
+  let best = null;
+  let bestDistance = Infinity;
+  for (const page of pages) {
+    const rect = page.canvas.getBoundingClientRect();
+    const dx = clientX < rect.left ? rect.left - clientX : clientX > rect.right ? clientX - rect.right : 0;
+    const dy = clientY < rect.top ? rect.top - clientY : clientY > rect.bottom ? clientY - rect.bottom : 0;
+    const dist = dx * dx + dy * dy;
+    if (dist < bestDistance) {
+      bestDistance = dist;
+      best = page;
+    }
+  }
+  return best;
+}
 pagesEl.addEventListener("pointerdown", (e) => {
   const page = pageFromEvent(e);
   if (page) onPointerDown(page, e);
 });
 pagesEl.addEventListener("pointermove", (e) => {
   const page = pageFromEvent(e);
-  if (page) onPointerMove(page, e);
+  if (page && !dragging) onPointerMove(page, e);
+});
+window.addEventListener("pointermove", (e) => {
+  if (dragging) {
+    if (e.buttons === 0) resetPointerGesture();
+    else updateDragSelection(e);
+  }
 });
 pagesEl.addEventListener("pointerleave", clearLinkHover);
 pagesEl.addEventListener("dblclick", (e) => {
