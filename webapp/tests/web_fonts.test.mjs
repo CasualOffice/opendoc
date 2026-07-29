@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   NAMED_WEB_FONT_FACES,
+  SCRIPT_FALLBACK_FONTS,
   fallbackKeysFor,
   fetchFontBytes,
   packFontBytes,
@@ -34,6 +35,54 @@ test("script fallback routing is coverage-driven and coalesces Han", () => {
     "hebrew",
     "thai",
   ]);
+});
+
+// Regression: only Devanagari was covered among the Indic scripts, so a
+// document mixing Hindi with e.g. Bengali or Tamil (as the sample.docx
+// fixture does) silently tofu'd every non-Devanagari Indic run.
+test("every common Indic script has its own fallback bucket, not just Devanagari", () => {
+  assert.deepEqual(
+    fallbackKeysFor([
+      0x0995, // Bengali KA
+      0x0a15, // Gurmukhi KA
+      0x0a95, // Gujarati KA
+      0x0b15, // Oriya KA
+      0x0b95, // Tamil UU (first letter after vowels)
+      0x0c15, // Telugu KA
+      0x0c95, // Kannada KA
+      0x0d15, // Malayalam KA
+      0x0d9a, // Sinhala KAYANNA
+    ]),
+    [
+      "bengali",
+      "gurmukhi",
+      "gujarati",
+      "oriya",
+      "tamil",
+      "telugu",
+      "kannada",
+      "malayalam",
+      "sinhala",
+    ],
+  );
+});
+
+test("checkbox/dingbat symbols outside Noto Sans's coverage fall back too", () => {
+  assert.deepEqual(
+    fallbackKeysFor([
+      0x25a1, // □ WHITE SQUARE — the sample fixture's table "Result" column
+      0x2610, // ☐ BALLOT BOX — the sample fixture's checklist bullets
+    ]),
+    ["symbols"],
+  );
+});
+
+test("every script fallback font resolves to a pinned, immutable Noto URL", () => {
+  for (const [key, font] of Object.entries(SCRIPT_FALLBACK_FONTS)) {
+    assert.ok(font.scripts.length > 0, `${key} declares no scripts`);
+    assert.match(font.url, /^https:\/\/cdn\.jsdelivr\.net\/gh\/notofonts\//);
+    assert.match(font.url, /@[0-9a-f]{40}\//);
+  }
 });
 
 test("font fetches are cached and blobs pack without loss", async () => {

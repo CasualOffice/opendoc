@@ -2418,7 +2418,11 @@ function selectTextMatch(match) {
     focus: { node: match.endNode, offset: match.endOffset },
   };
   drawSelection();
-  focusEditorSurface();
+  // Deliberately does NOT call focusEditorSurface(): this runs on every
+  // keystroke while live-searching (findInput's "input" listener), and
+  // stealing focus back to the canvas mid-typing sent subsequent keystrokes
+  // to the document instead of the find box. Focus returns to the canvas
+  // only when the panel actually closes (closeFind).
   scrollCaretIntoView();
   updateFindStatus();
   return true;

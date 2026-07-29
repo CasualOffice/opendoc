@@ -66,6 +66,42 @@ export const SCRIPT_FALLBACK_FONTS = Object.freeze({
     url: `${NOTO}/NotoSansDevanagari/hinted/ttf/NotoSansDevanagari-Regular.ttf`,
     scripts: Object.freeze(["Deva"]),
   }),
+  bengali: Object.freeze({
+    url: `${NOTO}/NotoSansBengali/hinted/ttf/NotoSansBengali-Regular.ttf`,
+    scripts: Object.freeze(["Beng"]),
+  }),
+  gurmukhi: Object.freeze({
+    url: `${NOTO}/NotoSansGurmukhi/hinted/ttf/NotoSansGurmukhi-Regular.ttf`,
+    scripts: Object.freeze(["Guru"]),
+  }),
+  gujarati: Object.freeze({
+    url: `${NOTO}/NotoSansGujarati/hinted/ttf/NotoSansGujarati-Regular.ttf`,
+    scripts: Object.freeze(["Gujr"]),
+  }),
+  oriya: Object.freeze({
+    url: `${NOTO}/NotoSansOriya/hinted/ttf/NotoSansOriya-Regular.ttf`,
+    scripts: Object.freeze(["Orya"]),
+  }),
+  tamil: Object.freeze({
+    url: `${NOTO}/NotoSansTamil/hinted/ttf/NotoSansTamil-Regular.ttf`,
+    scripts: Object.freeze(["Taml"]),
+  }),
+  telugu: Object.freeze({
+    url: `${NOTO}/NotoSansTelugu/hinted/ttf/NotoSansTelugu-Regular.ttf`,
+    scripts: Object.freeze(["Telu"]),
+  }),
+  kannada: Object.freeze({
+    url: `${NOTO}/NotoSansKannada/hinted/ttf/NotoSansKannada-Regular.ttf`,
+    scripts: Object.freeze(["Knda"]),
+  }),
+  malayalam: Object.freeze({
+    url: `${NOTO}/NotoSansMalayalam/hinted/ttf/NotoSansMalayalam-Regular.ttf`,
+    scripts: Object.freeze(["Mlym"]),
+  }),
+  sinhala: Object.freeze({
+    url: `${NOTO}/NotoSansSinhala/hinted/ttf/NotoSansSinhala-Regular.ttf`,
+    scripts: Object.freeze(["Sinh"]),
+  }),
   hebrew: Object.freeze({
     url: `${NOTO}/NotoSansHebrew/hinted/ttf/NotoSansHebrew-Regular.ttf`,
     scripts: Object.freeze(["Hebr"]),
@@ -73,6 +109,18 @@ export const SCRIPT_FALLBACK_FONTS = Object.freeze({
   thai: Object.freeze({
     url: `${NOTO}/NotoSansThai/hinted/ttf/NotoSansThai-Regular.ttf`,
     scripts: Object.freeze(["Thai"]),
+  }),
+  // Not a script per se (ISO 15924 "Zsym" isn't a real value) — a synthetic
+  // bucket key for the Geometric Shapes / Miscellaneous Symbols / Dingbats
+  // blocks. Noto Sans (the Calibri/system-font substitute) doesn't cover
+  // these at all, so plain content like a "☐"/"□" checklist placeholder
+  // (as in the sample fixture's acceptance-checklist and Result-column
+  // cells) tofu'd. Noto Sans Symbols 2 is the intended monochrome fallback
+  // for exactly this range (full pictographic/color emoji are a separate,
+  // much larger gap — see fontKeyForCodePoint's emoji comment).
+  symbols: Object.freeze({
+    url: `${NOTO}/NotoSansSymbols2/hinted/ttf/NotoSansSymbols2-Regular.ttf`,
+    scripts: Object.freeze(["Zsym"]),
   }),
 });
 
@@ -94,8 +142,25 @@ export function fontKeyForCodePoint(cp) {
     return "sc";
   if (cp >= 0x0600 && cp <= 0x06ff) return "arabic";
   if (cp >= 0x0900 && cp <= 0x097f) return "devanagari";
+  if (cp >= 0x0980 && cp <= 0x09ff) return "bengali";
+  if (cp >= 0x0a00 && cp <= 0x0a7f) return "gurmukhi";
+  if (cp >= 0x0a80 && cp <= 0x0aff) return "gujarati";
+  if (cp >= 0x0b00 && cp <= 0x0b7f) return "oriya";
+  if (cp >= 0x0b80 && cp <= 0x0bff) return "tamil";
+  if (cp >= 0x0c00 && cp <= 0x0c7f) return "telugu";
+  if (cp >= 0x0c80 && cp <= 0x0cff) return "kannada";
+  if (cp >= 0x0d00 && cp <= 0x0d7f) return "malayalam";
+  if (cp >= 0x0d80 && cp <= 0x0dff) return "sinhala";
   if (cp >= 0x0590 && cp <= 0x05ff) return "hebrew";
   if (cp >= 0x0e00 && cp <= 0x0e7f) return "thai";
+  // Geometric Shapes / Miscellaneous Symbols / Dingbats — not full emoji
+  // (those need color-glyph rendering support the engine doesn't have yet).
+  if (
+    (cp >= 0x25a0 && cp <= 0x25ff) ||
+    (cp >= 0x2600 && cp <= 0x26ff) ||
+    (cp >= 0x2700 && cp <= 0x27bf)
+  )
+    return "symbols";
   return null;
 }
 
