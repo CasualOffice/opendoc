@@ -1,0 +1,12 @@
+{
+  "name": "opendoc-webapp",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:unit": "node --test tests/*.test.mjs",
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.0"
+  }
+}
