@@ -1690,7 +1690,142 @@ impl WasmDocument {
                 .map_or_else(String::new, height_rule_name),
             cell_margin_twips: uniform_margins(t.properties.cell_margins).unwrap_or(-1),
             cell_spacing_twips: t.properties.cell_spacing_twips.unwrap_or(-1),
+            alignment: match t.properties.alignment {
+                Some(Alignment::Center) => "center",
+                Some(Alignment::End) => "right",
+                _ => "left",
+            }
+            .to_owned(),
         }
+    }
+
+    /// Applies the table-properties inspector draft as one undoable action.
+    ///
+    /// Only fields present in the JSON patch are changed, so opening and applying
+    /// the inspector does not materialize model defaults that were previously
+    /// absent. Table-, active-row-, and active-column-level values are committed
+    /// together through one [`Operation::ReplaceTable`].
+    #[wasm_bindgen(js_name = applyTableProperties)]
+    pub fn apply_table_properties(
+        &mut self,
+        node: &str,
+        properties_json: &str,
+    ) -> Result<EditResult, JsValue> {
+        let patch: TablePropertiesPatch = serde_json::from_str(properties_json)
+            .map_err(|err| to_js(format!("invalid table properties: {err}")))?;
+        if patch.is_empty() {
+            return Err(to_js("no table property changes".into()));
+        }
+
+        let nid = node_id(node)?;
+        let (table, row, _) = locate_table_row(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        let (_, column) = locate_table_cell(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        let mut replacement = find_table(&self.document, table)
+            .ok_or_else(|| to_js("table not found".into()))?
+            .clone();
+
+        if let Some(alignment) = patch.alignment.as_deref() {
+            replacement.properties.alignment = Some(match alignment {
+                "left" | "start" => Alignment::Start,
+                "center" => Alignment::Center,
+                "right" | "end" => Alignment::End,
+                _ => {
+                    return Err(to_js(
+                        "table alignment must be left, center, or right".into(),
+                    ));
+                }
+            });
+        }
+        if let Some(width) = patch.table_width_twips {
+            ensure_optional_twips("table width", width)?;
+            replacement.properties.width_twips = (width >= 0).then_some(width);
+        }
+        if let Some(indent) = patch.table_indent_twips {
+            ensure_signed_twips("table indent", indent)?;
+            replacement.properties.indent_twips = Some(indent);
+        }
+        if let Some(fixed) = patch.fixed_layout {
+            replacement.properties.layout = Some(if fixed {
+                TableLayout::Fixed
+            } else {
+                TableLayout::Autofit
+            });
+        }
+        if let Some(margin) = patch.cell_margin_twips {
+            ensure_optional_twips("cell margin", margin)?;
+            replacement.properties.cell_margins = if margin < 0 {
+                CellMargins::default()
+            } else {
+                CellMargins {
+                    top_twips: Some(margin),
+                    start_twips: Some(margin),
+                    bottom_twips: Some(margin),
+                    end_twips: Some(margin),
+                }
+            };
+        }
+        if let Some(spacing) = patch.cell_spacing_twips {
+            ensure_optional_twips("cell spacing", spacing)?;
+            replacement.properties.cell_spacing_twips = (spacing >= 0).then_some(spacing);
+        }
+
+        let active_row = replacement
+            .rows
+            .get_mut(row as usize)
+            .ok_or_else(|| to_js("row is outside the table".into()))?;
+        if let Some(header) = patch.header_row {
+            active_row.properties.header = header;
+        }
+        if let Some(rule) = patch.row_height_rule.as_deref() {
+            let height = patch.row_height_twips.unwrap_or(-1);
+            active_row.properties.height = match rule {
+                "auto" => RowHeight::default(),
+                "atLeast" | "at_least" => RowHeight {
+                    value_twips: Some(required_twips("row height", height)? as u32),
+                    rule: Some(HeightRule::AtLeast),
+                },
+                "exact" => RowHeight {
+                    value_twips: Some(required_twips("row height", height)? as u32),
+                    rule: Some(HeightRule::Exact),
+                },
+                _ => {
+                    return Err(to_js(
+                        "row height rule must be auto, atLeast, or exact".into(),
+                    ));
+                }
+            };
+        } else if patch.row_height_twips.is_some() {
+            return Err(to_js("row height requires a row height rule".into()));
+        }
+
+        if let Some(width) = patch.column_width_twips {
+            ensure_optional_twips("column width", width)?;
+            if !table_is_regular(&replacement) {
+                return Err(to_js("column width requires a regular table".into()));
+            }
+            let column = column as usize;
+            let columns = table_column_count(&replacement);
+            if column >= columns {
+                return Err(to_js("column is outside the table".into()));
+            }
+            if replacement.grid.len() < columns {
+                replacement
+                    .grid
+                    .resize(columns, GridColumn { width_twips: None });
+            }
+            replacement.grid[column].width_twips = (width >= 0).then_some(width);
+            for row in &mut replacement.rows {
+                row.cells[column].properties.width_twips = (width >= 0).then_some(width);
+            }
+        }
+
+        self.apply_action(vec![Operation::ReplaceTable {
+            table,
+            replacement: Box::new(replacement),
+        }])
+        .map_err(to_js)
     }
 
     /// Sets the active regular table column's preferred width in twips. Updates
@@ -3130,7 +3265,7 @@ impl WasmDocument {
         for op in &ops {
             let inverse = apply_edit(&mut self.document, &mut self.edit_ids, op)
                 .map_err(|e| format!("{e:?}"))?;
-            caret = caret_after(op, &inverse, self.document.id());
+            caret = caret_after(op, &inverse, &self.document);
             inverses.push(inverse);
         }
         // To undo, apply the inverses in reverse order of the forward ops.
@@ -3902,6 +4037,39 @@ struct PageSetupJson {
     page_size: SectionPageSize,
     page_margins: PageMargins,
     orientation: Option<PageOrientation>,
+}
+
+/// Sparse draft emitted by the host's table-properties inspector. Optional fields
+/// mean "leave the current model value untouched"; numeric `-1` values clear an
+/// optional measurement.
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+struct TablePropertiesPatch {
+    alignment: Option<String>,
+    table_width_twips: Option<i32>,
+    table_indent_twips: Option<i32>,
+    fixed_layout: Option<bool>,
+    header_row: Option<bool>,
+    column_width_twips: Option<i32>,
+    row_height_twips: Option<i32>,
+    row_height_rule: Option<String>,
+    cell_margin_twips: Option<i32>,
+    cell_spacing_twips: Option<i32>,
+}
+
+impl TablePropertiesPatch {
+    fn is_empty(&self) -> bool {
+        self.alignment.is_none()
+            && self.table_width_twips.is_none()
+            && self.table_indent_twips.is_none()
+            && self.fixed_layout.is_none()
+            && self.header_row.is_none()
+            && self.column_width_twips.is_none()
+            && self.row_height_twips.is_none()
+            && self.row_height_rule.is_none()
+            && self.cell_margin_twips.is_none()
+            && self.cell_spacing_twips.is_none()
+    }
 }
 
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -4775,6 +4943,7 @@ pub struct TableInfo {
     row_height_rule: String,
     cell_margin_twips: i32,
     cell_spacing_twips: i32,
+    alignment: String,
 }
 
 impl TableInfo {
@@ -4796,6 +4965,7 @@ impl TableInfo {
             row_height_rule: String::new(),
             cell_margin_twips: -1,
             cell_spacing_twips: -1,
+            alignment: "left".to_owned(),
         }
     }
 }
@@ -4896,6 +5066,12 @@ impl TableInfo {
     #[must_use]
     pub fn cell_spacing_twips(&self) -> i32 {
         self.cell_spacing_twips
+    }
+
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn alignment(&self) -> String {
+        self.alignment.clone()
     }
 }
 
@@ -5074,6 +5250,32 @@ fn first_paragraph_of_cell(cell: &TableCell) -> Option<NodeId> {
     })
 }
 
+fn first_paragraph_of_cell_id(blocks: &[BlockNode], cell_id: NodeId) -> Option<NodeId> {
+    for block in blocks {
+        match block {
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        if cell.id == cell_id {
+                            return first_paragraph_of_cell(cell);
+                        }
+                        if let Some(paragraph) = first_paragraph_of_cell_id(&cell.blocks, cell_id) {
+                            return Some(paragraph);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(paragraph) = first_paragraph_of_cell_id(&sdt.blocks, cell_id) {
+                    return Some(paragraph);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 fn table_column_count(table: &Table) -> usize {
     if !table.grid.is_empty() {
         return table.grid.len();
@@ -5119,6 +5321,34 @@ fn uniform_margins(margins: CellMargins) -> Option<i32> {
         && margins.bottom_twips == Some(top)
         && margins.end_twips == Some(top))
     .then_some(top)
+}
+
+fn ensure_optional_twips(label: &str, value: i32) -> Result<(), JsValue> {
+    if (-1..=31_680).contains(&value) {
+        Ok(())
+    } else {
+        Err(to_js(format!(
+            "{label} must be -1 or between 0 and 31680 twips"
+        )))
+    }
+}
+
+fn ensure_signed_twips(label: &str, value: i32) -> Result<(), JsValue> {
+    if (-31_680..=31_680).contains(&value) {
+        Ok(())
+    } else {
+        Err(to_js(format!(
+            "{label} must be between -31680 and 31680 twips"
+        )))
+    }
+}
+
+fn required_twips(label: &str, value: i32) -> Result<i32, JsValue> {
+    if (0..=31_680).contains(&value) {
+        Ok(value)
+    } else {
+        Err(to_js(format!("{label} must be between 0 and 31680 twips")))
+    }
 }
 
 fn table_is_regular(table: &Table) -> bool {
@@ -5346,7 +5576,14 @@ fn list_level(numbered: bool) -> NumberingLevel {
     }
 }
 
-fn caret_after(op: &Operation, inverse: &Operation, doc_id: NodeId) -> Pos {
+fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos {
+    let doc_id = document.id();
+    let table_anchor = |table| {
+        find_table(document, table)
+            .and_then(|table| table.rows.first())
+            .and_then(first_paragraph_of_row)
+            .map_or_else(|| Pos::new(table, 0), |paragraph| Pos::new(paragraph, 0))
+    };
     match op {
         Operation::InsertText { at, text } => Pos::new(at.node, at.offset + text.len() as u32),
         Operation::DeleteText { range } => range.start,
@@ -5366,12 +5603,12 @@ fn caret_after(op: &Operation, inverse: &Operation, doc_id: NodeId) -> Pos {
         Operation::InsertRow { table, row, .. } => {
             first_paragraph_of_row(row).map_or_else(|| Pos::new(*table, 0), |p| Pos::new(p, 0))
         }
-        Operation::DeleteRow { table, .. } => Pos::new(*table, 0),
+        Operation::DeleteRow { table, .. } => table_anchor(*table),
         Operation::InsertColumn { table, cells, .. } => cells
             .first()
             .and_then(first_paragraph_of_cell)
             .map_or_else(|| Pos::new(*table, 0), |p| Pos::new(p, 0)),
-        Operation::DeleteColumn { table, .. } => Pos::new(*table, 0),
+        Operation::DeleteColumn { table, .. } => table_anchor(*table),
         // Row/table ops go through `apply_action_caret`, which overrides the caret.
         Operation::DeleteTable { table } => Pos::new(*table, 0),
         Operation::InsertTable { table, .. } => table
@@ -5381,9 +5618,13 @@ fn caret_after(op: &Operation, inverse: &Operation, doc_id: NodeId) -> Pos {
             .map_or_else(|| Pos::new(table.id, 0), |p| Pos::new(p, 0)),
         // Cell/table formatting keeps the selection (the frontend does not collapse
         // to this); these arms only keep the match exhaustive.
-        Operation::SetTableCellProperties { cell, .. } => Pos::new(*cell, 0),
-        Operation::SetTableProperties { table, .. } => Pos::new(*table, 0),
-        Operation::ReplaceTable { table, .. } => Pos::new(*table, 0),
+        Operation::SetTableCellProperties { cell, .. } => {
+            first_paragraph_of_cell_id(document.body(), *cell)
+                .map_or_else(|| Pos::new(*cell, 0), |paragraph| Pos::new(paragraph, 0))
+        }
+        Operation::SetTableProperties { table, .. } | Operation::ReplaceTable { table, .. } => {
+            table_anchor(*table)
+        }
         // Document-global, not node-scoped — always routed through
         // `apply_action_caret` with the caller's own caret, so this natural
         // position is never actually used; the document's own root id is a
@@ -7017,6 +7258,68 @@ mod tests {
         assert!(!d.table_info(&caret).header_row());
         d.undo().expect("undo column width");
         assert_ne!(d.table_info(&caret).column_width_twips(), 2_160);
+    }
+
+    #[test]
+    fn table_properties_inspector_applies_as_one_undo_action() {
+        use casual_doc_edit::{find_table, locate_table_cell};
+
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let body_para = nodes
+            .iter()
+            .find(|(id, _)| !d.in_table(&id.to_string()))
+            .map(|(id, _)| id.to_string())
+            .expect("body paragraph outside tables");
+        let caret = d
+            .insert_table(&body_para, 2, 3)
+            .expect("insert table")
+            .node();
+        let (table_id, _) =
+            locate_table_cell(&d.document, NodeId::from_str(&caret).unwrap()).unwrap();
+        let before = find_table(&d.document, table_id)
+            .expect("inserted table")
+            .clone();
+
+        d.apply_table_properties(
+            &caret,
+            r#"{
+                "alignment":"center",
+                "tableWidthTwips":8640,
+                "tableIndentTwips":720,
+                "fixedLayout":true,
+                "headerRow":true,
+                "columnWidthTwips":2160,
+                "rowHeightTwips":540,
+                "rowHeightRule":"exact",
+                "cellMarginTwips":144,
+                "cellSpacingTwips":72
+            }"#,
+        )
+        .expect("apply inspector draft");
+
+        let info = d.table_info(&caret);
+        assert_eq!(info.alignment(), "center");
+        assert_eq!(info.table_width_twips(), 8_640);
+        assert_eq!(info.table_indent_twips(), 720);
+        assert!(info.fixed_layout());
+        assert!(info.header_row());
+        assert_eq!(info.column_width_twips(), 2_160);
+        assert_eq!(info.row_height_twips(), 540);
+        assert_eq!(info.row_height_rule(), "exact");
+        assert_eq!(info.cell_margin_twips(), 144);
+        assert_eq!(info.cell_spacing_twips(), 72);
+
+        let undo = d.undo().expect("one undo reverses the complete inspector");
+        assert!(
+            d.in_table(&undo.node()),
+            "undo should keep the caret in the restored table"
+        );
+        assert_eq!(
+            find_table(&d.document, table_id).expect("table remains after undo"),
+            &before
+        );
     }
 
     /// Delete a whole table and undo it: the body's table count drops by one, the

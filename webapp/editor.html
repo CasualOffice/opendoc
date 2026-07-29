@@ -255,15 +255,49 @@
           </div>
         </div>
 
-        <div class="ribbon-panel" data-panel="table" role="tabpanel" aria-label="Table" hidden>
+        <div class="ribbon-panel table-ribbon" data-panel="table" role="tabpanel" aria-label="Table" hidden>
           <div class="rgroup">
             <div class="rgroup-ctl">
-              <button id="tableBtn" type="button" class="fmt" title="Table &amp; cell formatting" aria-label="Table and cell formatting" aria-haspopup="menu" aria-expanded="false" disabled><span class="ms" aria-hidden="true">table_chart</span></button>
+              <button type="button" class="fmt" data-table-select="row" title="Select current row" aria-label="Select current row" disabled><span class="ms" aria-hidden="true">table_rows</span></button>
+              <button type="button" class="fmt" data-table-select="column" title="Select current column" aria-label="Select current column" disabled><span class="ms" aria-hidden="true">view_column</span></button>
+              <button type="button" class="fmt" data-table-select="table" title="Select table" aria-label="Select table" disabled><span class="ms" aria-hidden="true">select_all</span></button>
             </div>
-            <span class="rgroup-label">Cell &amp; table</span>
+            <span class="rgroup-label">Select</span>
           </div>
-          <div class="rgroup rgroup-note">
-            <span class="rgroup-hint">Right-click a cell for insert / delete row &amp; column.</span>
+          <div class="rgroup">
+            <div class="rgroup-ctl">
+              <button type="button" class="fmt" data-table-action="insert-row-above" title="Insert row above" aria-label="Insert row above" disabled><span class="ms" aria-hidden="true">add_row_above</span></button>
+              <button type="button" class="fmt" data-table-action="insert-row-below" title="Insert row below" aria-label="Insert row below" disabled><span class="ms" aria-hidden="true">add_row_below</span></button>
+              <button type="button" class="fmt" data-table-action="insert-column-left" title="Insert column left" aria-label="Insert column left" disabled><span class="ms" aria-hidden="true">add_column_left</span></button>
+              <button type="button" class="fmt" data-table-action="insert-column-right" title="Insert column right" aria-label="Insert column right" disabled><span class="ms" aria-hidden="true">add_column_right</span></button>
+              <span class="rgroup-mini-divider" aria-hidden="true"></span>
+              <button type="button" class="fmt table-danger" data-table-action="delete-row" title="Delete current row" aria-label="Delete current row" disabled><span class="ms" aria-hidden="true">delete</span><span class="table-command-badge" aria-hidden="true">R</span></button>
+              <button type="button" class="fmt table-danger" data-table-action="delete-column" title="Delete current column" aria-label="Delete current column" disabled><span class="ms" aria-hidden="true">delete</span><span class="table-command-badge" aria-hidden="true">C</span></button>
+              <button type="button" class="fmt table-danger" data-table-action="delete-table" title="Delete table" aria-label="Delete table" disabled><span class="ms" aria-hidden="true">delete</span><span class="table-command-badge" aria-hidden="true">T</span></button>
+            </div>
+            <span class="rgroup-label">Rows &amp; columns</span>
+          </div>
+          <div class="rgroup">
+            <div class="rgroup-ctl">
+              <button type="button" class="fmt" id="mergeCellsBtn" title="Merge selected cells" aria-label="Merge selected cells" disabled><span class="ms" aria-hidden="true">cell_merge</span></button>
+              <button type="button" class="fmt" id="splitCellBtn" title="Split current merged cell" aria-label="Split current merged cell" disabled><span class="ms" aria-hidden="true">splitscreen</span></button>
+            </div>
+            <span class="rgroup-label">Merge</span>
+          </div>
+          <div class="rgroup">
+            <div class="rgroup-ctl">
+              <button id="tableBtn" type="button" class="fmt" title="Cell shading, alignment, and borders" aria-label="Cell and border formatting" aria-haspopup="dialog" aria-expanded="false" disabled><span class="ms" aria-hidden="true">format_color_fill</span></button>
+            </div>
+            <span class="rgroup-label">Cell format</span>
+          </div>
+          <div class="rgroup">
+            <div class="rgroup-ctl">
+              <button id="tablePropertiesBtn" type="button" class="fmt" title="Table properties" aria-label="Table properties" aria-controls="tablePropertiesPanel" aria-expanded="false" disabled><span class="ms" aria-hidden="true">tune</span></button>
+            </div>
+            <span class="rgroup-label">Properties</span>
+          </div>
+          <div class="rgroup table-context-group" aria-live="polite">
+            <span id="tableContext" class="rgroup-hint"></span>
           </div>
         </div>
 
@@ -399,70 +433,7 @@
       <label class="menu-check-row"><input id="pgBreakBefore" type="checkbox" />Page break before</label>
     </div>
 
-    <div id="tableMenu" class="context-menu spacing-menu" hidden role="menu" aria-label="Table and cell formatting">
-      <div class="menu-heading">Structure</div>
-      <div id="tableContext" class="table-context"></div>
-      <div class="menu-row">
-        <div class="chip-row" role="group" aria-label="Table selection">
-          <button type="button" class="chip-btn" data-table-select="row">Select row</button>
-          <button type="button" class="chip-btn" data-table-select="column">Select column</button>
-          <button type="button" class="chip-btn" data-table-select="table">Select table</button>
-        </div>
-      </div>
-      <div class="menu-row">
-        <div class="chip-row" role="group" aria-label="Merge and split cells">
-          <button type="button" class="chip-btn" id="mergeCellsBtn">Merge selected</button>
-          <button type="button" class="chip-btn" id="splitCellBtn">Split cell</button>
-        </div>
-      </div>
-      <div class="menu-divider"></div>
-      <div class="menu-heading">Properties</div>
-      <label class="menu-check-row"><input id="tableHeaderRow" type="checkbox" />Repeat header row</label>
-      <label class="menu-check-row"><input id="tableFixedLayout" type="checkbox" />Fixed column widths</label>
-      <div class="menu-row">
-        <span>Column width</span>
-        <input id="tableColumnWidth" type="number" min="0.05" max="22" step="0.05" inputmode="decimal" />
-        <span class="menu-unit">in</span>
-      </div>
-      <div class="menu-row">
-        <span>Table width</span>
-        <input id="tableWidth" type="number" min="0" max="22" step="0.05" inputmode="decimal" />
-        <span class="menu-unit">in</span>
-      </div>
-      <div class="menu-row">
-        <span>Indent</span>
-        <input id="tableIndent" type="number" min="-22" max="22" step="0.05" inputmode="decimal" />
-        <span class="menu-unit">in</span>
-      </div>
-      <div class="menu-row">
-        <span>Row height</span>
-        <input id="tableRowHeight" type="number" min="0" max="22" step="0.05" inputmode="decimal" />
-        <select id="tableRowHeightRule" class="menu-select" aria-label="Row height rule">
-          <option value="auto">Auto</option>
-          <option value="atLeast">At least</option>
-          <option value="exact">Exact</option>
-        </select>
-      </div>
-      <div class="menu-row">
-        <span>Cell margin</span>
-        <input id="tableCellMargin" type="number" min="0" max="2" step="0.02" inputmode="decimal" />
-        <span class="menu-unit">in</span>
-      </div>
-      <div class="menu-row">
-        <span>Cell spacing</span>
-        <input id="tableCellSpacing" type="number" min="0" max="2" step="0.02" inputmode="decimal" />
-        <span class="menu-unit">in</span>
-      </div>
-      <div class="menu-divider"></div>
-      <button type="button" class="menu-item" data-table-action="insert-row-above">Insert row above</button>
-      <button type="button" class="menu-item" data-table-action="insert-row-below">Insert row below</button>
-      <button type="button" class="menu-item" data-table-action="insert-column-left">Insert column left</button>
-      <button type="button" class="menu-item" data-table-action="insert-column-right">Insert column right</button>
-      <div class="menu-divider"></div>
-      <button type="button" class="menu-item danger" data-table-action="delete-row">Delete row</button>
-      <button type="button" class="menu-item danger" data-table-action="delete-column">Delete column</button>
-      <button type="button" class="menu-item danger" data-table-action="delete-table">Delete table</button>
-      <div class="menu-divider"></div>
+    <div id="tableMenu" class="context-menu spacing-menu table-format-menu" hidden role="dialog" aria-label="Cell and border formatting">
       <div class="menu-heading">Cell shading</div>
       <div class="menu-row shade-row">
         <label class="shade-pick"><input id="cellShade" type="color" value="#ffe08a" /><span>Fill</span></label>
@@ -499,15 +470,6 @@
           <button type="button" class="chip-btn" data-tableborder="all">All</button>
         </div>
         <label class="border-color" title="Table border color"><input id="tableBorderColor" type="color" value="#000000" /></label>
-      </div>
-      <div class="menu-divider"></div>
-      <div class="menu-heading">Table align</div>
-      <div class="menu-row">
-        <div class="segmented" id="tableAlign" role="radiogroup" aria-label="Table alignment">
-          <button type="button" data-talign="left">Left</button>
-          <button type="button" data-talign="center">Center</button>
-          <button type="button" data-talign="right">Right</button>
-        </div>
       </div>
     </div>
 
@@ -594,6 +556,76 @@
         </div>
         <div id="pages" class="pages" tabindex="0" aria-label="Document editing surface"></div>
       </main>
+
+      <aside id="tablePropertiesPanel" class="side-panel table-properties-panel" hidden aria-labelledby="tablePropertiesTitle" aria-describedby="tablePropertiesDescription">
+        <header class="panel-head table-properties-head">
+          <div class="table-panel-heading">
+            <span class="ms table-panel-icon" aria-hidden="true">table_chart</span>
+            <span>
+              <strong id="tablePropertiesTitle" class="panel-title">Table properties</strong>
+              <small id="tablePropertiesContext"></small>
+            </span>
+          </div>
+          <button id="tablePropertiesClose" type="button" class="panel-close" title="Close" aria-label="Close table properties">
+            <span class="ms" aria-hidden="true">close</span>
+          </button>
+        </header>
+        <div class="panel-body table-properties-body">
+          <p id="tablePropertiesDescription" class="table-properties-intro">Adjust the current table, row, column, and default cell spacing.</p>
+          <div class="table-properties-grid">
+            <fieldset class="dialog-group table-property-section">
+              <legend>Table</legend>
+              <div class="dialog-field">
+                <span>Alignment</span>
+                <span class="segmented" id="tableAlign" role="radiogroup" aria-label="Table alignment">
+                  <button type="button" data-talign="left">Left</button>
+                  <button type="button" data-talign="center">Center</button>
+                  <button type="button" data-talign="right">Right</button>
+                </span>
+              </div>
+              <div class="dialog-field-grid">
+                <label class="dialog-field">Preferred width<span class="number-control"><input id="tableWidth" type="number" min="0" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+                <label class="dialog-field">Indent from left<span class="number-control"><input id="tableIndent" type="number" min="-22" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+              </div>
+              <label class="dialog-check"><input id="tableFixedLayout" type="checkbox" /><span><strong>Fixed column widths</strong><small>Turn off for AutoFit-style layout.</small></span></label>
+            </fieldset>
+
+            <fieldset class="dialog-group table-property-section">
+              <legend>Current row</legend>
+              <label class="dialog-check"><input id="tableHeaderRow" type="checkbox" /><span><strong>Repeat as header row</strong><small>Repeat this row when the table continues on another page.</small></span></label>
+              <div class="dialog-field-grid">
+                <label class="dialog-field">Height<span class="number-control"><input id="tableRowHeight" type="number" min="0" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+                <label class="dialog-field">Height rule<select id="tableRowHeightRule" class="dialog-select">
+                  <option value="auto">Auto</option>
+                  <option value="atLeast">At least</option>
+                  <option value="exact">Exact</option>
+                </select></label>
+              </div>
+            </fieldset>
+
+            <fieldset class="dialog-group table-property-section">
+              <legend>Current column</legend>
+              <label class="dialog-field">Preferred width<span class="number-control"><input id="tableColumnWidth" type="number" min="0.01" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+              <p id="tableColumnWidthNote" class="dialog-field-note">Available for regular, unmerged tables.</p>
+            </fieldset>
+
+            <fieldset class="dialog-group table-property-section">
+              <legend>Default cell spacing</legend>
+              <div class="dialog-field-grid">
+                <label class="dialog-field">Cell margin<span class="number-control"><input id="tableCellMargin" type="number" min="0" max="2" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+                <label class="dialog-field">Between cells<span class="number-control"><input id="tableCellSpacing" type="number" min="0" max="2" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+              </div>
+            </fieldset>
+          </div>
+        </div>
+        <footer class="table-properties-actions">
+          <span class="table-properties-note">Applies as one undoable change.</span>
+          <div class="dialog-actions">
+            <button type="button" id="tablePropertiesReset" class="dialog-button">Reset</button>
+            <button type="button" id="tablePropertiesApply" class="dialog-button dialog-button-primary">Apply</button>
+          </div>
+        </footer>
+      </aside>
     </div>
 
     <footer class="footer">

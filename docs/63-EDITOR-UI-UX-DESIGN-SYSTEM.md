@@ -98,9 +98,10 @@ Where things live, so we stay consistent as we add features:
 - **Character & paragraph formatting** → toolbar (+ floating selection toolbar).
 - **Paragraph structure** (indent/spacing/borders/tabs/breaks) → paragraph popover
   + ruler (indents, tabs).
-- **Tables** → Insert-table (toolbar grid picker); cell/table formatting (Table
-  popover); structural row/column ops (right-click menu). Merge/split → cell-range
-  selection (later).
+- **Tables** → Insert-table (toolbar grid picker); contextual Table ribbon for
+  select/structure/merge; compact cell-format popover; right properties inspector
+  for measurements and layout. The right-click structure menu remains an
+  alternative pointer path.
 - **Navigation** (outline, pages, find) → left rail/panel + ⌘K.
 - **Inspect/apply** (styles, properties, comments) → right context panel.
 - **Document actions** (open/save/export/print, page setup) → top bar + ⌘K.
