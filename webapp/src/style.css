@@ -1541,6 +1541,20 @@ input {
   animation: caret-blink 1.06s steps(1) infinite;
 }
 
+/* Live IME composition preview: shows in-progress text at the caret without
+ * ever touching the document — compositionend still owns the real commit. */
+.overlay .ime-preedit {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  padding: 0 2px;
+  color: #111;
+  background: color-mix(in srgb, var(--accent) 10%, #fff);
+  border-bottom: 2px solid var(--accent);
+  white-space: pre;
+  font: inherit;
+}
+
 /* Active table-cell outline: a soft accent ring so you see the cell you edit. */
 .overlay .cell-outline {
   position: absolute;

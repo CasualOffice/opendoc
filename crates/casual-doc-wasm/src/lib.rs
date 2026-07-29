@@ -36,12 +36,12 @@ use casual_doc_layout::units::{Point, Rect, Size, Twip};
 use casual_doc_model::v1::GridColumn;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, BookmarkId, BorderEdge,
-    CellMargins, CellVerticalAlignment, Document, ExternalTarget, HeightRule, HighlightColor,
-    Hyperlink, HyperlinkTarget, Indentation, InlineNode, InternalTarget, LevelJustification,
-    LevelSuffix, NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel,
-    NumberingRef, Paragraph, ParagraphProperties, RgbColor, RowHeight, StyleId, StyleKind,
-    TabAlignment, TabStop, Table, TableBorders, TableCell, TableCellProperties, TableLayout,
-    TableProperties, TableRow, VerticalAlignment, VerticalMerge,
+    CellMargins, CellVerticalAlignment, Color, Document, ExternalTarget, FontName, FontRef,
+    HeightRule, HighlightColor, Hyperlink, HyperlinkTarget, Indentation, InlineNode,
+    InternalTarget, LevelJustification, LevelSuffix, NumberFormat, NumberingInstance,
+    NumberingInstanceId, NumberingLevel, NumberingRef, Paragraph, ParagraphProperties, RgbColor,
+    RowHeight, Run, StyleId, StyleKind, TabAlignment, TabStop, Table, TableBorders, TableCell,
+    TableCellProperties, TableLayout, TableProperties, TableRow, VerticalAlignment, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
@@ -364,6 +364,129 @@ impl WasmDocument {
             return String::new();
         };
         self.copy_text_inner(range)
+    }
+
+    /// The selection as a rich-run clipboard fragment, serialized as JSON (the
+    /// internal payload doc 67's "rich clipboard" row calls for): paragraph
+    /// breaks, run formatting (bold/italic/underline/strike/size/color/
+    /// highlight/vertAlign/font), and hyperlink targets. Scoped to paragraph
+    /// text — a `Table` block or any exotic inline (field, content control,
+    /// drawing, …) intersecting the range falls back to its existing plain-text
+    /// extraction, unstyled, so nothing is silently dropped, only unstyled.
+    /// Returns `"[]"` if either anchor is unknown.
+    #[wasm_bindgen(js_name = copyRichRuns)]
+    #[must_use]
+    pub fn copy_rich_runs(
+        &self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+    ) -> String {
+        let Some(range) = parse_range(start_node, start_offset, end_node, end_offset) else {
+            return "[]".to_string();
+        };
+        serde_json::to_string(&self.copy_rich_runs_inner(range))
+            .unwrap_or_else(|_| "[]".to_string())
+    }
+
+    /// Replaces the selection (if any) with a rich-run clipboard fragment — the
+    /// paste counterpart of [`copy_rich_runs`](Self::copy_rich_runs). Builds one
+    /// `InsertText`/`FormatText`/`SetHyperlink`/`SplitParagraph` op per run or
+    /// paragraph-break marker and commits them as a single undoable action (the
+    /// same atomic multi-op batching `replaceSelection` and `insertStyledText`
+    /// already use). `runs_json` must be a JSON array in the shape
+    /// `copyRichRuns` produces.
+    #[wasm_bindgen(js_name = pasteRichRuns)]
+    pub fn paste_rich_runs(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        runs_json: String,
+    ) -> Result<EditResult, JsValue> {
+        let runs: Vec<ClipboardRun> = serde_json::from_str(&runs_json)
+            .map_err(|e| to_js(format!("invalid clipboard payload: {e}")))?;
+        let (start, _end) = self
+            .order_endpoints(start_node, start_offset, end_node, end_offset)
+            .map_err(to_js)?;
+        let mut ops = self
+            .selection_delete_ops(start_node, start_offset, end_node, end_offset)
+            .map_err(to_js)?;
+
+        let mut cursor = start;
+        for run in &runs {
+            if run.paragraph_break {
+                let new_id = self
+                    .edit_ids
+                    .next_id()
+                    .map_err(|_| to_js("id space exhausted".into()))?;
+                ops.push(Operation::SplitParagraph { at: cursor, new_id });
+                cursor = Pos::new(new_id, 0);
+                continue;
+            }
+            if run.text.is_empty() {
+                continue;
+            }
+            let insert_start = cursor;
+            let insert_end = Pos::new(cursor.node, cursor.offset + run.text.len() as u32);
+            ops.push(Operation::InsertText {
+                at: insert_start,
+                text: run.text.clone(),
+            });
+            let delta = FormatDelta {
+                bold: run.bold,
+                italic: run.italic,
+                underline: run.underline,
+                strike: run.strike,
+                color: run.color.as_deref().and_then(parse_hex_color),
+                highlight: run.highlight.as_deref().map(parse_highlight),
+                size_half_points: run.size_half_points,
+                vertical_alignment: run.vert_align.as_deref().map(|v| match v {
+                    "super" => VerticalAlignment::Superscript,
+                    "sub" => VerticalAlignment::Subscript,
+                    _ => VerticalAlignment::Baseline,
+                }),
+                font: run.font.clone(),
+            };
+            if delta != FormatDelta::default() {
+                ops.push(Operation::FormatText {
+                    range: EditRange {
+                        start: insert_start,
+                        end: insert_end,
+                    },
+                    delta,
+                });
+            }
+            if let Some(href) = &run.href {
+                let id = self
+                    .edit_ids
+                    .next_id()
+                    .map_err(|_| to_js("id space exhausted".into()))?;
+                let target = if let Some(anchor) = href.strip_prefix('#') {
+                    HyperlinkTarget::Internal(InternalTarget {
+                        anchor: anchor.to_owned(),
+                    })
+                } else {
+                    HyperlinkTarget::External(ExternalTarget { url: href.clone() })
+                };
+                ops.push(Operation::SetHyperlink {
+                    range: EditRange {
+                        start: insert_start,
+                        end: insert_end,
+                    },
+                    id,
+                    target: Some(target),
+                    tooltip: None,
+                });
+            }
+            cursor = insert_end;
+        }
+        if ops.is_empty() {
+            return Err(to_js("nothing to paste".into()));
+        }
+        self.apply_action_caret(ops, cursor).map_err(to_js)
     }
 
     /// Finds the next/previous literal text match from a model position. Matches
@@ -3554,6 +3677,238 @@ impl WasmDocument {
         parts.push(slice_bytes(&nodes[ei].1, 0, eo));
         parts.join("\n")
     }
+
+    fn copy_rich_runs_inner(&self, range: ModelRange) -> Vec<ClipboardRun> {
+        let mut nodes: Vec<(NodeId, String)> = Vec::new();
+        collect_block_text(self.document.body(), &mut nodes);
+
+        let start = nodes.iter().position(|(id, _)| *id == range.start.node);
+        let end = nodes.iter().position(|(id, _)| *id == range.end.node);
+        let (Some(mut si), Some(mut ei)) = (start, end) else {
+            return Vec::new();
+        };
+        let (mut so, mut eo) = (range.start.offset as usize, range.end.offset as usize);
+        if si > ei || (si == ei && so > eo) {
+            std::mem::swap(&mut si, &mut ei);
+            std::mem::swap(&mut so, &mut eo);
+        }
+
+        let mut out = Vec::new();
+        for (idx, (node, text)) in nodes.iter().enumerate().take(ei + 1).skip(si) {
+            if idx > si {
+                out.push(ClipboardRun {
+                    paragraph_break: true,
+                    ..ClipboardRun::default()
+                });
+            }
+            let (node, full_len) = (*node, text.len());
+            let lo = if idx == si { so } else { 0 };
+            let hi = if idx == ei { eo } else { full_len };
+            if lo >= hi {
+                continue;
+            }
+            let Some(paragraph) = find_paragraph(self.document.body(), node) else {
+                continue;
+            };
+            paragraph_rich_runs(&self.document, paragraph, lo as u32, hi as u32, &mut out);
+        }
+        out
+    }
+}
+
+/// Walks one paragraph's inlines in the same byte-anchor space
+/// `paragraph_links`/`inline_anchor_len` use, emitting a [`ClipboardRun`] for
+/// each `Run` (styled) or `Hyperlink`-wrapped `Run` (styled + `href`) that
+/// intersects `[lo, hi)`, clipped to the intersection. Any other inline kind
+/// intersecting the range falls back to its slice of the paragraph's existing
+/// plain-text extraction (`node_plain_text` — the same source `copyText`
+/// uses), unstyled — never silently dropped.
+/// One element of a rich-clipboard fragment: either a formatted text run
+/// (`paragraph_break: false`) or a paragraph-break marker (`paragraph_break:
+/// true`, every other field ignored). Crosses the JS boundary as JSON — a
+/// bridge payload, not a new engine type — so `copyRichRuns` and
+/// `pasteRichRuns` share exactly this shape with no separate wasm-bindgen
+/// struct to keep in sync. Field names match [`FormatDelta`]'s vocabulary.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+struct ClipboardRun {
+    text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bold: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    italic: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    underline: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    strike: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    size_half_points: Option<u32>,
+    /// `#rrggbb`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    color: Option<String>,
+    /// A [`highlight_name`] value (e.g. `"yellow"`, `"none"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    highlight: Option<String>,
+    /// `"super"` or `"sub"` (baseline is `None`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    vert_align: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    font: Option<String>,
+    /// An external URL, or `#anchor` for an internal bookmark target —
+    /// [`set_hyperlink`](WasmDocument::set_hyperlink)'s existing convention.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    href: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    paragraph_break: bool,
+}
+
+fn paragraph_rich_runs(
+    document: &Document,
+    paragraph: &Paragraph,
+    lo: u32,
+    hi: u32,
+    out: &mut Vec<ClipboardRun>,
+) {
+    let full_text = node_plain_text(&paragraph.inlines);
+    let mut offset = 0u32;
+    walk_inlines_rich(
+        document,
+        &paragraph.inlines,
+        None,
+        &mut offset,
+        lo,
+        hi,
+        &full_text,
+        out,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn walk_inlines_rich(
+    document: &Document,
+    inlines: &[InlineNode],
+    href: Option<&str>,
+    offset: &mut u32,
+    lo: u32,
+    hi: u32,
+    full_text: &str,
+    out: &mut Vec<ClipboardRun>,
+) {
+    for inline in inlines {
+        match inline {
+            InlineNode::Run(run) => {
+                let start = *offset;
+                let end = start.saturating_add(run.text.len() as u32);
+                *offset = end;
+                let (a, b) = (start.max(lo), end.min(hi));
+                if a < b {
+                    let text = slice_bytes(&run.text, (a - start) as usize, (b - start) as usize);
+                    out.push(clipboard_run_from(run, href, text));
+                }
+            }
+            InlineNode::Hyperlink(link) => {
+                let href = hyperlink_href(&link.target);
+                walk_inlines_rich(
+                    document,
+                    &link.inlines,
+                    Some(&href),
+                    offset,
+                    lo,
+                    hi,
+                    full_text,
+                    out,
+                );
+            }
+            InlineNode::Revision(revision) => {
+                walk_inlines_rich(
+                    document,
+                    &revision.inlines,
+                    href,
+                    offset,
+                    lo,
+                    hi,
+                    full_text,
+                    out,
+                );
+            }
+            InlineNode::Sdt(sdt) => {
+                walk_inlines_rich(document, &sdt.inlines, href, offset, lo, hi, full_text, out);
+            }
+            other => {
+                let start = *offset;
+                let end = start.saturating_add(inline_anchor_len(document, other));
+                *offset = end;
+                let (a, b) = (start.max(lo), end.min(hi));
+                if a < b {
+                    let text = slice_bytes(full_text, a as usize, b as usize);
+                    if !text.is_empty() {
+                        out.push(ClipboardRun {
+                            text,
+                            ..ClipboardRun::default()
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn clipboard_run_from(run: &Run, href: Option<&str>, text: String) -> ClipboardRun {
+    let props = &run.properties;
+    ClipboardRun {
+        text,
+        bold: props.bold,
+        italic: props.italic,
+        underline: props.underline,
+        strike: props.strike,
+        size_half_points: props.size_half_points,
+        color: match &props.color {
+            Some(Color::Rgb(c)) => Some(format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b)),
+            _ => None,
+        },
+        highlight: props.highlight.map(highlight_name),
+        vert_align: match props.vertical_alignment {
+            Some(VerticalAlignment::Superscript) => Some("super".to_string()),
+            Some(VerticalAlignment::Subscript) => Some("sub".to_string()),
+            _ => None,
+        },
+        font: match &props.font_ref {
+            Some(FontRef::Named(FontName { name })) => Some(name.clone()),
+            _ => None,
+        },
+        href: href.map(str::to_string),
+        paragraph_break: false,
+    }
+}
+
+fn hyperlink_href(target: &HyperlinkTarget) -> String {
+    match target {
+        HyperlinkTarget::External(external) => external.url.clone(),
+        HyperlinkTarget::Internal(internal) => format!("#{}", internal.anchor),
+    }
+}
+
+fn highlight_name(color: HighlightColor) -> String {
+    match color {
+        HighlightColor::None => "none",
+        HighlightColor::Black => "black",
+        HighlightColor::Blue => "blue",
+        HighlightColor::Cyan => "cyan",
+        HighlightColor::DarkBlue => "darkblue",
+        HighlightColor::DarkCyan => "darkcyan",
+        HighlightColor::DarkGray => "darkgray",
+        HighlightColor::DarkGreen => "darkgreen",
+        HighlightColor::DarkMagenta => "darkmagenta",
+        HighlightColor::DarkRed => "darkred",
+        HighlightColor::DarkYellow => "darkyellow",
+        HighlightColor::Green => "green",
+        HighlightColor::LightGray => "lightgray",
+        HighlightColor::Magenta => "magenta",
+        HighlightColor::Red => "red",
+        HighlightColor::White => "white",
+        HighlightColor::Yellow => "yellow",
+    }
+    .to_string()
 }
 
 /// Collects every text-bearing node (paragraphs, including those inside tables and
@@ -5893,6 +6248,110 @@ mod tests {
         d.undo().expect("undo delete");
         d.undo().expect("undo bold");
         assert_eq!(d.copy_text(&node, 0, &node, len), text);
+    }
+
+    /// `copyRichRuns` → `pasteRichRuns` round-trips a bold run, a hyperlinked
+    /// run, and plain text as one undoable paste — the P0 "rich clipboard"
+    /// gap (doc 67). Catches an export/import shape asymmetry directly,
+    /// without a browser.
+    #[test]
+    fn rich_clipboard_round_trip_preserves_formatting_and_links() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, t)| !t.is_empty())
+            .map(|(id, _)| id.to_string())
+            .expect("a non-empty paragraph");
+
+        // Build "Bold Link plain" at the paragraph start: "Bold " bold,
+        // "Link" hyperlinked, " plain" unstyled.
+        d.insert_styled_text(
+            &node,
+            0,
+            "Bold ".to_string(),
+            Some(true),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("insert bold");
+        d.insert_text(&node, 5, "Link".to_string())
+            .expect("insert link text");
+        d.set_hyperlink(&node, 5, 9, "https://example.com".to_string(), None)
+            .expect("set hyperlink");
+        d.insert_text(&node, 9, " plain".to_string())
+            .expect("insert plain text");
+
+        let json = d.copy_rich_runs(&node, 0, &node, 15);
+        let runs: Vec<ClipboardRun> = serde_json::from_str(&json).expect("valid clipboard json");
+        assert_eq!(runs.len(), 3, "bold run + linked run + plain run");
+        assert_eq!(runs[0].text, "Bold ");
+        assert_eq!(runs[0].bold, Some(true));
+        assert_eq!(runs[0].href, None);
+        assert_eq!(runs[1].text, "Link");
+        assert_eq!(runs[1].href.as_deref(), Some("https://example.com"));
+        assert_eq!(runs[2].text, " plain");
+        assert_eq!(runs[2].bold, None);
+        assert_eq!(runs[2].href, None);
+
+        // Paste the exact fragment back in at the paragraph's new end.
+        let mut nodes2 = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes2);
+        let end_offset = nodes2
+            .iter()
+            .find(|(id, _)| id.to_string() == node)
+            .map(|(_, t)| t.len() as u32)
+            .expect("node still present");
+
+        d.paste_rich_runs(&node, end_offset, &node, end_offset, json)
+            .expect("paste rich runs");
+
+        let bold_end = end_offset + 5;
+        assert!(
+            d.format_at(&node, end_offset, bold_end).bold(),
+            "pasted text is bold"
+        );
+        let link_start = bold_end;
+        let link_end = link_start + 4;
+        let paragraph = find_paragraph(
+            d.document.body(),
+            NodeId::from_str(&node).expect("valid node id"),
+        )
+        .expect("paragraph still present");
+        let links = paragraph_links(&d.document, paragraph);
+        assert!(
+            links
+                .iter()
+                .any(|l| l.range.start.offset == link_start && l.range.end.offset == link_end),
+            "pasted link lands at the expected range"
+        );
+        assert_eq!(
+            d.copy_text(&node, link_end, &node, link_end + 6),
+            " plain",
+            "pasted plain text follows the link"
+        );
+
+        // One undo reverts the whole paste (delete-if-any + N inserts + format +
+        // hyperlink), since it was built as a single `apply_action_caret` batch.
+        d.undo().expect("undo paste");
+        let mut nodes3 = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes3);
+        let restored_len = nodes3
+            .iter()
+            .find(|(id, _)| id.to_string() == node)
+            .map(|(_, t)| t.len() as u32)
+            .expect("node still present after undo");
+        assert_eq!(
+            restored_len, end_offset,
+            "undo removes the pasted fragment in one step"
+        );
     }
 
     /// Editing works **inside a table cell** exactly as in the body: hit-testing

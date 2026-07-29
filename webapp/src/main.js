@@ -13,6 +13,7 @@ import {
   fetchFontBytes,
   packFontBytes,
 } from "./web_fonts.mjs";
+import { embedMarker, extractMarker, htmlToRuns, runsToHtml } from "./clipboard.mjs";
 
 /** url → Uint8Array of already-fetched font bytes (persists across documents). */
 const fontCache = new Map();
@@ -526,6 +527,45 @@ function paintSelection({ anchor, focus }) {
   place(doc.caretRect(focus.node, focus.offset), "caret");
 }
 
+/** The live IME composition overlay element, or `null` when no composition
+ *  is in progress. Kept across `compositionupdate` calls so its text can be
+ *  updated in place instead of recreated every keystroke. */
+let imePreeditEl = null;
+
+/** Shows the IME live-preedit overlay at a caret anchor: the in-progress
+ * composition text the browser has not yet committed. Never touches the
+ * document — `compositionend` still owns the actual insertion
+ * (`commitComposedText`) — this only makes the intermediate state visible
+ * (docs/67-EDITOR-UX-GAP-ANALYSIS.md, "IME live preedit"). */
+function showImePreedit(node, offset, text) {
+  hideImePreedit();
+  const flat = doc?.caretRect(node, offset) ?? [];
+  if (flat.length < 5) return;
+  const [pageNumber, x, y, , h] = flat;
+  const page = pages[pageNumber - 1];
+  if (!page) return;
+  const { sx, sy } = scaleOf(page);
+  const el = document.createElement("div");
+  el.className = "ime-preedit";
+  el.style.left = `${x * sx}px`;
+  el.style.top = `${y * sy}px`;
+  el.style.height = `${h * sy}px`;
+  el.textContent = text;
+  page.overlay.appendChild(el);
+  imePreeditEl = el;
+}
+
+/** Updates the live-preedit overlay's text (a `compositionupdate` tick). */
+function updateImePreedit(text) {
+  if (imePreeditEl) imePreeditEl.textContent = text;
+}
+
+/** Removes the live-preedit overlay, if shown. */
+function hideImePreedit() {
+  imePreeditEl?.remove();
+  imePreeditEl = null;
+}
+
 /** Places one flat `[page, x, y, w, h]` twip rect as a `kind` box on its page,
  *  converting twips → CSS px with that page's live scale. */
 function place(flat, kind) {
@@ -879,18 +919,42 @@ function selectionText() {
   return doc.copyText(anchor.node, anchor.offset, focus.node, focus.offset);
 }
 
+/** The selection as clipboard HTML: the exact `copyRichRuns` JSON embedded as
+ * a leading comment (a lossless internal round-trip marker) plus a visible
+ * rendering built from the same runs (what an external app sees). `null` if
+ * there's nothing to copy. */
+function selectionRichHtml() {
+  if (!selection) return null;
+  const { anchor, focus } = selection;
+  const runsJson = doc.copyRichRuns(anchor.node, anchor.offset, focus.node, focus.offset);
+  const runs = JSON.parse(runsJson);
+  if (!runs.length) return null;
+  return embedMarker(runsJson) + runsToHtml(runs);
+}
+
 async function copySelection(event = null) {
   const text = selectionText();
   if (!text) return;
+  const html = selectionRichHtml();
   if (event?.clipboardData) {
     event.preventDefault();
     event.clipboardData.setData("text/plain", text);
+    if (html) event.clipboardData.setData("text/html", html);
     const n = text.length;
     setStatus(`Copied ${n} character${n === 1 ? "" : "s"}`);
     return true;
   }
   try {
-    await navigator.clipboard.writeText(text);
+    if (html && window.ClipboardItem) {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          "text/plain": new Blob([text], { type: "text/plain" }),
+          "text/html": new Blob([html], { type: "text/html" }),
+        }),
+      ]);
+    } else {
+      await navigator.clipboard.writeText(text);
+    }
     const n = text.length;
     setStatus(`Copied ${n} character${n === 1 ? "" : "s"}`);
     return true;
@@ -2574,16 +2638,58 @@ async function commitComposedText(text) {
   await pasteText(text);
 }
 
-/** Paste (⌘V): insert clipboard text at the caret, replacing any selection and
- *  turning newlines into paragraph splits. */
+/** Replaces the selection with a rich-run clipboard fragment, as one
+ * undoable action (`doc.pasteRichRuns` — the paste counterpart of
+ * `copyRichRuns`). `runsJson` must be a JSON array in the shape
+ * `copyRichRuns` produces. */
+async function pasteRichRunsJson(runsJson) {
+  if (!doc || !selection) return;
+  const { anchor, focus } = selection;
+  await runEdit(() =>
+    doc.pasteRichRuns(anchor.node, anchor.offset, focus.node, focus.offset, runsJson),
+  );
+}
+
+/** Tries to paste `html` as a rich fragment: the internal round-trip marker
+ * if present (an OpenDoc-to-OpenDoc copy, lossless), else a best-effort
+ * sanitized parse of the DOM (an external app's paste — Word, Docs, a
+ * browser selection). Returns whether anything was pasted, so the caller can
+ * fall back to plain text when `html` carries no usable content. */
+async function pasteHtml(html) {
+  if (!html) return false;
+  const internal = extractMarker(html);
+  if (internal) {
+    await pasteRichRunsJson(internal);
+    return true;
+  }
+  const parsed = new DOMParser().parseFromString(html, "text/html");
+  const runs = htmlToRuns(parsed.body);
+  if (!runs.length) return false;
+  await pasteRichRunsJson(JSON.stringify(runs));
+  return true;
+}
+
+/** Paste (⌘V): insert clipboard content at the caret, replacing any
+ *  selection. Rich HTML (internal or external) wins when present; plain text
+ *  with newline-as-paragraph-split remains the fallback. */
 async function paste(event = null) {
   if (!doc || !selection) return;
   if (event?.clipboardData) {
     event.preventDefault();
+    const html = event.clipboardData.getData("text/html");
+    if (await pasteHtml(html)) return;
     await pasteText(event.clipboardData.getData("text/plain"));
     return;
   }
   try {
+    if (navigator.clipboard.read) {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        if (!item.types.includes("text/html")) continue;
+        const html = await (await item.getType("text/html")).text();
+        if (await pasteHtml(html)) return;
+      }
+    }
     const text = await navigator.clipboard.readText();
     await pasteText(text);
   } catch (err) {
@@ -2605,8 +2711,14 @@ document.addEventListener("compositionstart", (e) => {
   if (!editorTextInputEvent(e)) return;
   composingText = true;
   pendingFormat = null;
+  if (selection) showImePreedit(selection.focus.node, selection.focus.offset, e.data || "");
+});
+document.addEventListener("compositionupdate", (e) => {
+  if (!composingText) return;
+  updateImePreedit(e.data || "");
 });
 document.addEventListener("compositionend", async (e) => {
+  hideImePreedit();
   if (!editorTextInputEvent(e)) {
     composingText = false;
     return;

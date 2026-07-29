@@ -178,6 +178,8 @@ dependencies = [
  "casual-doc-model",
  "casual-doc-ooxml",
  "casual-doc-render",
+ "serde",
+ "serde_json",
  "unicode-segmentation",
  "wasm-bindgen",
 ]

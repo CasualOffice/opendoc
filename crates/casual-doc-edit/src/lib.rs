@@ -1402,24 +1402,40 @@ fn insert_text(
             return Ok(());
         }
     }
-    // Offset sits in a non-run gap: append to the nearest preceding run…
-    if let Some(seg) = segs.iter().rev().find(|s| s.end <= offset)
+    // Offset sits exactly at a non-run boundary (e.g. right after/before a
+    // hyperlink or tab): extend the run truly touching that edge, not merely
+    // the nearest one — `<=`/`>=` here would let the insert jump *across* an
+    // intervening non-run inline (a trailing hyperlink, say) into a run that
+    // only looks "nearest" by position, silently absorbing new text into the
+    // wrong (and wrongly-formatted) run.
+    if let Some(seg) = segs.iter().find(|s| s.end == offset)
         && let InlineNode::Run(run) = &mut inlines[seg.idx]
     {
         run.text.push_str(text);
         return Ok(());
     }
-    // …else prepend to the nearest following run…
-    if let Some(seg) = segs.iter().find(|s| s.start >= offset)
+    if let Some(seg) = segs.iter().find(|s| s.start == offset)
         && let InlineNode::Run(run) = &mut inlines[seg.idx]
     {
         run.text.insert_str(0, text);
         return Ok(());
     }
-    // …else the paragraph has no runs: create one at the front.
+    // …else no run touches `offset` at all (it sits at the edge of a non-run
+    // inline with no adjacent run — e.g. a paragraph ending in a hyperlink, or
+    // an empty paragraph): insert a fresh run at the matching top-level
+    // position, not always at the front.
+    let mut cum = 0u32;
+    let mut insert_at = inlines.len();
+    for (idx, inline) in inlines.iter().enumerate() {
+        if cum == offset {
+            insert_at = idx;
+            break;
+        }
+        cum += inline_text_len(inline);
+    }
     let id = ids.next().ok_or(EditError::IdExhausted)?;
     inlines.insert(
-        0,
+        insert_at,
         InlineNode::Run(Run {
             id,
             properties: RunProperties::default(),
