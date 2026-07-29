@@ -314,6 +314,17 @@
       </div>
     </div>
 
+    <div id="findPanel" class="find-panel" role="dialog" aria-label="Find and replace" hidden>
+      <input id="findInput" type="text" placeholder="Find" autocomplete="off" spellcheck="false" aria-label="Find" />
+      <button id="findPrev" type="button" class="icon-btn" title="Previous match" aria-label="Previous match"><svg viewBox="0 0 24 24"><path d="M7.41 15.41 12 10.83l4.59 4.58L18 14l-6-6-6 6z"/></svg></button>
+      <button id="findNext" type="button" class="icon-btn" title="Next match" aria-label="Next match"><svg viewBox="0 0 24 24"><path d="m7.41 8.59 4.59 4.58 4.59-4.58L18 10l-6 6-6-6z"/></svg></button>
+      <span id="findStatus" class="find-status"></span>
+      <label class="find-case"><input id="findCase" type="checkbox" /> Aa</label>
+      <input id="replaceInput" type="text" placeholder="Replace" autocomplete="off" spellcheck="false" aria-label="Replace" />
+      <button id="replaceOne" type="button" class="chip-btn">Replace</button>
+      <button id="findClose" type="button" class="icon-btn" title="Close" aria-label="Close find"><svg viewBox="0 0 24 24"><path d="m18.3 5.71-1.41-1.41L12 9.17 7.11 4.3 5.7 5.71 10.59 10.6 5.7 15.49l1.41 1.41L12 12.01l4.89 4.89 1.41-1.41-4.89-4.89z"/></svg></button>
+    </div>
+
     <div id="selToolbar" class="sel-toolbar" role="toolbar" aria-label="Selection formatting" hidden>
       <button type="button" class="fmt" data-fmt="bold" title="Bold (⌘B)" aria-label="Bold"><svg viewBox="0 0 24 24"><path d="M15.6 10.79c.97-.67 1.65-1.77 1.65-2.79 0-2.26-1.75-4-4-4H7v14h7.04c2.09 0 3.71-1.7 3.71-3.79 0-1.52-.86-2.82-2.15-3.42zM10 6.5h3c.83 0 1.5.67 1.5 1.5s-.67 1.5-1.5 1.5h-3v-3zm3.5 9H10v-3h3.5c.83 0 1.5.67 1.5 1.5s-.67 1.5-1.5 1.5z"/></svg></button>
       <button type="button" class="fmt" data-fmt="italic" title="Italic (⌘I)" aria-label="Italic"><svg viewBox="0 0 24 24"><path d="M10 4v3h2.21l-3.42 8H6v3h8v-3h-2.21l3.42-8H18V4z"/></svg></button>

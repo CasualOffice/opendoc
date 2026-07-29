@@ -77,6 +77,15 @@ const redoBtn = document.getElementById("redoBtn");
 const viewOutlineBtn = document.getElementById("viewOutlineBtn");
 const viewZoomOut = document.getElementById("viewZoomOut");
 const viewZoomIn = document.getElementById("viewZoomIn");
+const findPanel = document.getElementById("findPanel");
+const findInput = document.getElementById("findInput");
+const replaceInput = document.getElementById("replaceInput");
+const findPrevBtn = document.getElementById("findPrev");
+const findNextBtn = document.getElementById("findNext");
+const findStatus = document.getElementById("findStatus");
+const findCase = document.getElementById("findCase");
+const replaceOneBtn = document.getElementById("replaceOne");
+const findCloseBtn = document.getElementById("findClose");
 
 /** Shows the named ribbon tab's panel and marks its tab selected. */
 function selectRibbonTab(name) {
@@ -176,7 +185,7 @@ function resetPointerGesture() {
 function isInteractiveChromeTarget(target) {
   if (!(target instanceof Element)) return false;
   return !!target.closest(
-    "input, select, textarea, button, [contenteditable='true'], .context-menu, .settings-panel, .cmd-overlay, .link-chip",
+    "input, select, textarea, button, [contenteditable='true'], .context-menu, .settings-panel, .cmd-overlay, .find-panel, .link-chip",
   );
 }
 
@@ -1857,6 +1866,7 @@ function buildCommands() {
     { label: "Save (download .docx)", group: "File", kw: "export download", run: () => saveDocx() },
     { label: "Undo", group: "Edit", kw: "revert", run: () => runEdit(() => doc.undo()) },
     { label: "Redo", group: "Edit", kw: "", run: () => runEdit(() => doc.redo()) },
+    { label: "Find and replace", group: "Edit", kw: "search replace", run: () => openFind() },
     { label: "Bold", group: "Format", kw: "strong", run: fmt("bold") },
     { label: "Italic", group: "Format", kw: "emphasis", run: fmt("italic") },
     { label: "Underline", group: "Format", kw: "", run: fmt("underline") },
@@ -1963,6 +1973,127 @@ document.addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
     e.preventDefault();
     cmdPalette.hidden ? openCmd() : closeCmd();
+  }
+});
+
+// ---- Find / replace ---------------------------------------------------------
+function setFindStatus(text, miss = false) {
+  findStatus.textContent = text;
+  findStatus.classList.toggle("miss", miss);
+}
+
+function selectedPlainText() {
+  if (!selection) return "";
+  const { anchor, focus } = selection;
+  if (anchor.node === focus.node && anchor.offset === focus.offset) return "";
+  return doc.copyText(anchor.node, anchor.offset, focus.node, focus.offset);
+}
+
+function queryMatchesSelection() {
+  const query = findInput.value;
+  if (!query) return false;
+  const selected = selectedPlainText();
+  if (!selected.includes("\n")) {
+    return findCase.checked
+      ? selected === query
+      : selected.toLocaleLowerCase() === query.toLocaleLowerCase();
+  }
+  return false;
+}
+
+function selectTextMatch(match) {
+  if (!match.found) {
+    setFindStatus("No match", true);
+    return false;
+  }
+  selection = {
+    anchor: { node: match.startNode, offset: match.startOffset },
+    focus: { node: match.endNode, offset: match.endOffset },
+  };
+  drawSelection();
+  focusEditorSurface();
+  scrollCaretIntoView();
+  setFindStatus("1 match");
+  return true;
+}
+
+function findFromSelection(forward) {
+  if (!doc || !findInput.value) {
+    setFindStatus("");
+    return false;
+  }
+  let start = selection ? (forward ? selection.focus : selection.anchor) : null;
+  let ownedStart = null;
+  if (!start) {
+    ownedStart = forward ? doc.firstPosition() : doc.lastPosition();
+    start = { node: ownedStart.node, offset: ownedStart.offset };
+  }
+  const match = doc.findText(findInput.value, start.node, start.offset, forward, findCase.checked);
+  const found = selectTextMatch(match);
+  match.free();
+  ownedStart?.free();
+  return found;
+}
+
+async function replaceCurrentMatch() {
+  if (!doc || !findInput.value) return;
+  if (!queryMatchesSelection()) {
+    findFromSelection(true);
+    return;
+  }
+  const { anchor, focus } = selection;
+  await runEdit(() =>
+    doc.replaceSelection(anchor.node, anchor.offset, focus.node, focus.offset, replaceInput.value),
+  );
+  findFromSelection(true);
+}
+
+function openFind() {
+  if (!doc) return;
+  findPanel.hidden = false;
+  const selected = selectedPlainText();
+  if (selected && !selected.includes("\n") && selected.length <= 80) findInput.value = selected;
+  setFindStatus("");
+  findInput.focus();
+  findInput.select();
+}
+
+function closeFind() {
+  findPanel.hidden = true;
+  focusEditorSurface();
+}
+
+findInput.addEventListener("input", () => {
+  if (findInput.value) findFromSelection(true);
+  else setFindStatus("");
+});
+findInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    findFromSelection(!e.shiftKey);
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    closeFind();
+  }
+});
+replaceInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    replaceCurrentMatch();
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    closeFind();
+  }
+});
+findCase.addEventListener("change", () => findFromSelection(true));
+findPrevBtn.addEventListener("click", () => findFromSelection(false));
+findNextBtn.addEventListener("click", () => findFromSelection(true));
+replaceOneBtn.addEventListener("click", replaceCurrentMatch);
+findCloseBtn.addEventListener("click", closeFind);
+document.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
+    e.preventDefault();
+    openFind();
   }
 });
 
