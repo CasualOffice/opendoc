@@ -66,6 +66,16 @@ impl Document {
         self.properties.as_ref()
     }
 
+    /// Mutable access to document metadata, lazily installing an empty group
+    /// if none exists yet. The edit-crate seam for mutating `docProps/*`
+    /// (mirrors `body_mut`/`definitions_mut`); an all-empty result is left in
+    /// place rather than collapsed back to `None` — `DocumentProperties`'s own
+    /// `skip_serializing_if` already omits an empty group on write.
+    pub fn properties_mut(&mut self) -> &mut DocumentProperties {
+        self.properties
+            .get_or_insert_with(DocumentProperties::default)
+    }
+
     /// Attaches the page background color (`w:background`), re-validating the
     /// document. The color paints behind the whole page.
     pub fn with_background(mut self, color: RgbColor) -> Result<Self, ModelError> {
