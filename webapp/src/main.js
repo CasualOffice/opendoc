@@ -146,6 +146,9 @@ let dragging = false;
  * suppressed after a drag/Shift extension. */
 let pointerGesture = null;
 let selectionAutoScrollFrame = 0;
+let chromeRefreshFrame = 0;
+let chromeRefreshStats = false;
+let chromeRefreshOutline = false;
 /** The model-derived link currently represented by the host-owned link chip. */
 let activeLink = null;
 /** One-frame throttle for pointer feedback over canvas-painted link geometry. */
@@ -188,6 +191,21 @@ function clientPointEvent(clientX, clientY) {
 function setStatus(text, kind = "") {
   statusEl.textContent = text;
   statusEl.className = `status ${kind}`;
+}
+
+function scheduleChromeRefresh({ stats = false, outline = false } = {}) {
+  chromeRefreshStats ||= stats;
+  chromeRefreshOutline ||= outline;
+  if (chromeRefreshFrame) return;
+  chromeRefreshFrame = requestAnimationFrame(() => {
+    chromeRefreshFrame = 0;
+    const refreshStats = chromeRefreshStats;
+    const refreshOutline = chromeRefreshOutline;
+    chromeRefreshStats = false;
+    chromeRefreshOutline = false;
+    if (refreshStats) updateStats();
+    if (refreshOutline) buildOutline();
+  });
 }
 
 /** Refreshes the footer word / paragraph / page counts from the engine. */
@@ -1197,8 +1215,7 @@ async function applyEditResult(res) {
     for (const i of dirty) repaintPage(i);
     drawSelection();
   }
-  updateStats(); // word/paragraph counts may have changed
-  buildOutline(); // headings may have changed (no-op when the panel is closed)
+  scheduleChromeRefresh({ stats: true, outline: true });
   scrollCaretIntoView();
 }
 
@@ -1257,7 +1274,7 @@ async function runToolbarEdit(thunk) {
     for (const i of dirty) repaintPage(i);
     drawSelection();
   }
-  buildOutline(); // a style change may add/remove a heading (no-op when closed)
+  scheduleChromeRefresh({ outline: true });
 }
 
 /** The uniform run-format state over the selection, or null if not a range. */
@@ -1669,6 +1686,7 @@ function runNodeEdit(thunk) {
     for (const i of dirty) repaintPage(i);
     drawSelection();
   }
+  scheduleChromeRefresh({ outline: true });
 }
 
 function reflectTableMenu() {
