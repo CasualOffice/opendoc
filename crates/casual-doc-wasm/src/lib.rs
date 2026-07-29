@@ -40,7 +40,7 @@ use casual_doc_model::v1::{
     Indentation, InlineNode, InternalTarget, LevelJustification, LevelSuffix, NumberFormat,
     NumberingInstance, NumberingInstanceId, NumberingLevel, NumberingRef, Paragraph,
     ParagraphProperties, RgbColor, StyleId, StyleKind, TabAlignment, TabStop, Table, TableBorders,
-    TableCell, TableCellProperties, TableProperties, TableRow, VerticalAlignment,
+    TableCell, TableCellProperties, TableProperties, TableRow, VerticalAlignment, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
@@ -1609,6 +1609,84 @@ impl WasmDocument {
             }
         }
         out
+    }
+
+    /// Merges the active table selection mode (`"row"`, `"column"`, `"table"`) in
+    /// a regular table. Selected-cell content is preserved by moving it into the
+    /// top-left merged cell in row-major order.
+    #[wasm_bindgen(js_name = mergeTableSelection)]
+    pub fn merge_table_selection(&mut self, node: &str, mode: &str) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let (table, row, _) = locate_table_row(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        let (_, col) = locate_table_cell(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        let original = find_table(&self.document, table)
+            .ok_or_else(|| to_js("table not found".into()))?
+            .clone();
+        if !table_is_regular(&original) {
+            return Err(to_js("merge requires a regular table".into()));
+        }
+        let rows = original.rows.len();
+        let cols = table_column_count(&original);
+        let (r0, r1, c0, c1) = match mode {
+            "row" => (row as usize, row as usize, 0, cols.saturating_sub(1)),
+            "column" => (0, rows.saturating_sub(1), col as usize, col as usize),
+            "table" => (0, rows.saturating_sub(1), 0, cols.saturating_sub(1)),
+            _ => return Err(to_js("unknown table selection mode".into())),
+        };
+        if r0 == r1 && c0 == c1 {
+            return Err(to_js("select at least two cells to merge".into()));
+        }
+        let replacement =
+            merge_regular_table_selection(original, r0, r1, c0, c1, &mut self.edit_ids)
+                .map_err(to_js)?;
+        let caret = replacement
+            .rows
+            .get(r0)
+            .and_then(|r| r.cells.get(c0))
+            .and_then(first_paragraph_of_cell)
+            .map_or(Pos::new(nid, 0), |p| Pos::new(p, 0));
+        self.apply_action_caret(
+            vec![Operation::ReplaceTable {
+                table,
+                replacement: Box::new(replacement),
+            }],
+            caret,
+        )
+        .map_err(to_js)
+    }
+
+    /// Splits the active merged cell in the current regularized merged table back
+    /// into normal cells. The top-left cell keeps the merged content; recreated
+    /// cells are empty but valid.
+    #[wasm_bindgen(js_name = splitMergedCell)]
+    pub fn split_merged_cell(&mut self, node: &str) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let (table, row, _) = locate_table_row(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        let (_, col) = locate_table_cell(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        let original = find_table(&self.document, table)
+            .ok_or_else(|| to_js("table not found".into()))?
+            .clone();
+        let replacement =
+            split_table_cell(original, row as usize, col as usize, &mut self.edit_ids)
+                .map_err(to_js)?;
+        let caret = replacement
+            .rows
+            .get(row as usize)
+            .and_then(|r| r.cells.get(col as usize))
+            .and_then(first_paragraph_of_cell)
+            .map_or(Pos::new(nid, 0), |p| Pos::new(p, 0));
+        self.apply_action_caret(
+            vec![Operation::ReplaceTable {
+                table,
+                replacement: Box::new(replacement),
+            }],
+            caret,
+        )
+        .map_err(to_js)
     }
 
     /// Sets or clears the background shading fill of the cell containing `node`.
@@ -4151,6 +4229,145 @@ fn table_selection_anchors(
     out
 }
 
+fn merge_regular_table_selection(
+    mut table: Table,
+    r0: usize,
+    r1: usize,
+    c0: usize,
+    c1: usize,
+    ids: &mut IdGenerator,
+) -> Result<Table, String> {
+    if !table_is_regular(&table) || r0 > r1 || c0 > c1 || r1 >= table.rows.len() {
+        return Err("selection is not a regular rectangular table range".into());
+    }
+    let cols = table_column_count(&table);
+    if c1 >= cols {
+        return Err("selection is outside the table".into());
+    }
+    let width = c1 - c0 + 1;
+    let height = r1 - r0 + 1;
+    let mut merged_blocks = Vec::new();
+    for row in &table.rows[r0..=r1] {
+        for cell in &row.cells[c0..=c1] {
+            merged_blocks.extend(cell.blocks.clone());
+        }
+    }
+
+    for r in r0..=r1 {
+        let row = table
+            .rows
+            .get_mut(r)
+            .ok_or_else(|| "selection row is outside the table".to_owned())?;
+        if row.cells.len() < c1 + 1 {
+            return Err("selection column is outside the row".into());
+        }
+        row.cells.drain(c0 + 1..=c1);
+        let cell = row
+            .cells
+            .get_mut(c0)
+            .ok_or_else(|| "selection target cell missing".to_owned())?;
+        cell.properties.grid_span = (width > 1).then_some(width as u32);
+        if height > 1 {
+            cell.properties.vertical_merge = Some(if r == r0 {
+                VerticalMerge::Restart
+            } else {
+                VerticalMerge::Continue
+            });
+        } else {
+            cell.properties.vertical_merge = None;
+        }
+        if r == r0 {
+            cell.blocks = merged_blocks.clone();
+        } else {
+            cell.blocks = vec![empty_paragraph_block(ids)?];
+        }
+    }
+    Ok(table)
+}
+
+fn split_table_cell(
+    mut table: Table,
+    row_index: usize,
+    col_index: usize,
+    ids: &mut IdGenerator,
+) -> Result<Table, String> {
+    let row = table
+        .rows
+        .get(row_index)
+        .ok_or_else(|| "cell row is outside the table".to_owned())?;
+    let cell = row
+        .cells
+        .get(col_index)
+        .ok_or_else(|| "cell column is outside the table".to_owned())?;
+    if matches!(
+        cell.properties.vertical_merge,
+        Some(VerticalMerge::Continue)
+    ) {
+        return Err("split from the top-left merged cell".into());
+    }
+    let width = cell.properties.grid_span.unwrap_or(1).max(1) as usize;
+    let mut height = 1usize;
+    if matches!(cell.properties.vertical_merge, Some(VerticalMerge::Restart)) {
+        for row in table.rows.iter().skip(row_index + 1) {
+            let Some(next) = row.cells.get(col_index) else {
+                break;
+            };
+            if next.properties.vertical_merge == Some(VerticalMerge::Continue)
+                && next.properties.grid_span.unwrap_or(1).max(1) as usize == width
+            {
+                height += 1;
+            } else {
+                break;
+            }
+        }
+    }
+    if width == 1 && height == 1 {
+        return Err("cell is not merged".into());
+    }
+
+    for r in row_index..row_index + height {
+        let row = table
+            .rows
+            .get_mut(r)
+            .ok_or_else(|| "merged row is outside the table".to_owned())?;
+        let cell = row
+            .cells
+            .get_mut(col_index)
+            .ok_or_else(|| "merged cell is outside the row".to_owned())?;
+        cell.properties.grid_span = None;
+        cell.properties.vertical_merge = None;
+        if r != row_index {
+            cell.blocks = vec![empty_paragraph_block(ids)?];
+        }
+        for offset in 1..width {
+            row.cells
+                .insert(col_index + offset, empty_table_cell(ids, None)?);
+        }
+    }
+    Ok(table)
+}
+
+fn empty_table_cell(ids: &mut IdGenerator, width_twips: Option<i32>) -> Result<TableCell, String> {
+    let cell_id = ids.next_id().map_err(|_| "id space exhausted".to_owned())?;
+    Ok(TableCell {
+        id: cell_id,
+        properties: TableCellProperties {
+            width_twips,
+            ..TableCellProperties::default()
+        },
+        blocks: vec![empty_paragraph_block(ids)?],
+    })
+}
+
+fn empty_paragraph_block(ids: &mut IdGenerator) -> Result<BlockNode, String> {
+    let para_id = ids.next_id().map_err(|_| "id space exhausted".to_owned())?;
+    Ok(BlockNode::Paragraph(Paragraph {
+        id: para_id,
+        properties: ParagraphProperties::default(),
+        inlines: Vec::new(),
+    }))
+}
+
 /// A single top-level list level: a bullet glyph or a `1.` decimal, indented so the
 /// marker hangs to the left of the body text (Word's default 0.5″ indent with a
 /// 0.25″ hanging marker).
@@ -4219,6 +4436,7 @@ fn caret_after(op: &Operation, inverse: &Operation) -> Pos {
         // to this); these arms only keep the match exhaustive.
         Operation::SetTableCellProperties { cell, .. } => Pos::new(*cell, 0),
         Operation::SetTableProperties { table, .. } => Pos::new(*table, 0),
+        Operation::ReplaceTable { table, .. } => Pos::new(*table, 0),
     }
 }
 
@@ -5481,6 +5699,41 @@ mod tests {
         assert_eq!(d.table_selection_rects(&caret, "table").len(), 6 * 5);
         assert!(d.table_selection_rects(&body_para, "table").is_empty());
         assert!(d.table_selection_rects(&caret, "unknown").is_empty());
+    }
+
+    #[test]
+    fn merge_and_split_selected_table_cells_round_trip() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let body_para = nodes
+            .iter()
+            .find(|(id, _)| !d.in_table(&id.to_string()))
+            .map(|(id, _)| id.to_string())
+            .expect("body paragraph outside tables");
+
+        let res = d.insert_table(&body_para, 2, 3).expect("insert table");
+        let caret = res.node();
+        assert!(d.table_info(&caret).regular());
+
+        let merged = d
+            .merge_table_selection(&caret, "row")
+            .expect("merge selected row");
+        let merged_node = merged.node();
+        let info = d.table_info(&merged_node);
+        assert!(info.found());
+        assert!(!info.regular(), "merged row is no longer a regular grid");
+        assert_eq!(d.table_selection_rects(&merged_node, "row").len(), 5);
+
+        let split = d.split_merged_cell(&merged_node).expect("split merged row");
+        let split_node = split.node();
+        assert!(d.table_info(&split_node).regular());
+        assert_eq!(d.table_selection_rects(&split_node, "table").len(), 6 * 5);
+
+        d.undo().expect("undo split");
+        assert!(!d.table_info(&merged_node).regular());
+        d.undo().expect("undo merge");
+        assert!(d.table_info(&caret).regular());
     }
 
     /// Delete a whole table and undo it: the body's table count drops by one, the

@@ -65,6 +65,8 @@ const cellBorderColor = document.getElementById("cellBorderColor");
 const tableBorderColor = document.getElementById("tableBorderColor");
 const tableAlign = document.getElementById("tableAlign");
 const tableContext = document.getElementById("tableContext");
+const mergeCellsBtn = document.getElementById("mergeCellsBtn");
+const splitCellBtn = document.getElementById("splitCellBtn");
 const insertTableBtn = document.getElementById("insertTableBtn");
 const insertLinkBtn = document.getElementById("insertLinkBtn");
 const insertTableMenu = document.getElementById("insertTableMenu");
@@ -1785,6 +1787,24 @@ for (const b of tableFmtMenu.querySelectorAll("[data-table-select]")) {
     focusEditorSurface();
   });
 }
+
+onButton(mergeCellsBtn, async () => {
+  if (!selection || !doc) return;
+  if (!tableSelection) {
+    setStatus("Select a table row, column, or table first", "error");
+    return;
+  }
+  closePopover(tablePopover);
+  await runEdit(() => doc.mergeTableSelection(tableSelection.node, tableSelection.mode));
+  tableSelection = null;
+});
+
+onButton(splitCellBtn, async () => {
+  if (!selection || !doc) return;
+  closePopover(tablePopover);
+  await runEdit(() => doc.splitMergedCell(selection.focus.node));
+  tableSelection = null;
+});
 
 cellShade.addEventListener("change", () => {
   const [r, g, b] = hexToRgb(cellShade.value);

@@ -264,6 +264,15 @@ pub enum Operation {
         /// The properties to install.
         properties: Box<TableProperties>,
     },
+    /// Replace a table's full structure with `replacement`. This is reserved for
+    /// structural transforms such as merge/split cells where exact undo needs the
+    /// previous row/cell topology.
+    ReplaceTable {
+        /// The table to replace.
+        table: NodeId,
+        /// The replacement table. Its id must match `table`.
+        replacement: Box<Table>,
+    },
 }
 
 /// Why an edit could not be applied. No partial mutation ever occurs: an op
@@ -630,6 +639,17 @@ pub fn apply(
             Ok(Operation::SetTableProperties {
                 table: *table,
                 properties: Box::new(previous),
+            })
+        }
+        Operation::ReplaceTable { table, replacement } => {
+            if replacement.id != *table {
+                return Err(EditError::Unsupported);
+            }
+            let t = find_table_mut(doc.body_mut(), *table).ok_or(EditError::NodeNotFound)?;
+            let previous = std::mem::replace(t, (**replacement).clone());
+            Ok(Operation::ReplaceTable {
+                table: *table,
+                replacement: Box::new(previous),
             })
         }
     }
