@@ -1783,14 +1783,15 @@ gridPicker.addEventListener("pointermove", (e) => {
   if (cell) highlightGrid(Number(cell.dataset.r), Number(cell.dataset.c));
 });
 gridPicker.addEventListener("pointerleave", () => highlightGrid(0, 0));
-gridPicker.addEventListener("pointerdown", (e) => {
+gridPicker.addEventListener("pointerdown", async (e) => {
   const cell = e.target.closest(".gc");
   if (!cell || !selection || !doc) return;
   e.preventDefault();
   const rows = Number(cell.dataset.r);
   const cols = Number(cell.dataset.c);
-  runEdit(() => doc.insertTable(selection.focus.node, rows, cols));
+  await runEdit(() => doc.insertTable(selection.focus.node, rows, cols));
   closePopover(insertTablePopover);
+  focusEditorSurface();
 });
 const insertTablePopover = registerPopover(insertTableBtn, insertTableMenu, () => highlightGrid(0, 0));
 
@@ -2253,6 +2254,15 @@ document.addEventListener("keydown", async (e) => {
   if (key === "Tab") {
     e.preventDefault();
     pendingFormat = null;
+    if (doc.inTable(selection.focus.node)) {
+      try {
+        const c = doc.moveTableCell(selection.focus.node, !e.shiftKey);
+        navToPosition(c, false);
+      } catch {
+        // First/last-cell boundaries are expected no-ops for this navigation slice.
+      }
+      return;
+    }
     await runToolbarEdit((a, b, c, d) => doc.adjustIndent(a, b, c, d, e.shiftKey ? -360 : 360));
     return;
   }

@@ -1486,6 +1486,24 @@ impl WasmDocument {
             .is_some_and(|nid| locate_table_row(&self.document, nid).is_some())
     }
 
+    /// Moves the caret to the next/previous editable cell in the current innermost
+    /// table. Pure navigation: no edit and no row creation at table boundaries.
+    #[wasm_bindgen(js_name = moveTableCell)]
+    pub fn move_table_cell(&self, node: &str, forward: bool) -> Result<Caret, JsValue> {
+        let nid = node_id(node)?;
+        let (table, row, _) = locate_table_row(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        let (_, col) = locate_table_cell(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        let target = self
+            .table_cell_anchor(table, row, col, forward)
+            .ok_or_else(|| to_js("no adjacent table cell".into()))?;
+        Ok(Caret {
+            node: target.to_string(),
+            offset: 0,
+        })
+    }
+
     /// The active cell's border box as a flat `[page, x, y, w, h]` in page-local
     /// twips (empty when the caret is not in a table) — the geometry the frontend
     /// draws the active-cell highlight from.
@@ -2843,6 +2861,44 @@ impl WasmDocument {
             idx.saturating_sub(1)
         };
         first_paragraph_of_cell(row.cells.get(target)?)
+    }
+
+    /// The first paragraph of the adjacent cell in row-major order.
+    fn table_cell_anchor(
+        &self,
+        table: NodeId,
+        row: u32,
+        col: u32,
+        forward: bool,
+    ) -> Option<NodeId> {
+        let t = find_table(&self.document, table)?;
+        let row_idx = row as usize;
+        let col_idx = col as usize;
+        let target = if forward {
+            let row = t.rows.get(row_idx)?;
+            if col_idx + 1 < row.cells.len() {
+                Some((row_idx, col_idx + 1))
+            } else if row_idx + 1 < t.rows.len() {
+                Some((row_idx + 1, 0))
+            } else {
+                None
+            }
+        } else if col_idx > 0 {
+            Some((row_idx, col_idx - 1))
+        } else if row_idx > 0 {
+            let prev_row = t.rows.get(row_idx - 1)?;
+            prev_row
+                .cells
+                .len()
+                .checked_sub(1)
+                .map(|last| (row_idx - 1, last))
+        } else {
+            None
+        }?;
+        t.rows
+            .get(target.0)
+            .and_then(|r| r.cells.get(target.1))
+            .and_then(first_paragraph_of_cell)
     }
 
     /// The id of the paragraph style with `name`, if one exists.
@@ -4838,6 +4894,50 @@ mod tests {
         assert_eq!(cols(&d), before_cols - 1);
         d.undo().expect("undo delete column");
         assert_eq!(cols(&d), before_cols);
+    }
+
+    /// Tab-style cell navigation moves row-major through the current innermost
+    /// table without mutating it.
+    #[test]
+    fn table_cell_navigation_moves_row_major_without_editing() {
+        let d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let nested_a = nodes
+            .iter()
+            .find(|(_, t)| t == "Nested A")
+            .map(|(id, _)| *id)
+            .expect("the first nested-table cell paragraph");
+        let nested_b = nodes
+            .iter()
+            .find(|(_, t)| t == "Nested B")
+            .map(|(id, _)| *id)
+            .expect("the second nested-table cell paragraph");
+
+        let next = d
+            .move_table_cell(&nested_a.to_string(), true)
+            .expect("next cell");
+        assert_eq!(next.node(), nested_b.to_string());
+        assert_eq!(next.offset(), 0);
+
+        let prev = d
+            .move_table_cell(&nested_b.to_string(), false)
+            .expect("previous cell");
+        assert_eq!(prev.node(), nested_a.to_string());
+        assert_eq!(prev.offset(), 0);
+
+        let (table, first_row, _) =
+            locate_table_row(&d.document, nested_a).expect("nested A row location");
+        let (_, first_col) = locate_table_cell(&d.document, nested_a).expect("nested A cell");
+        assert_eq!(
+            d.table_cell_anchor(table, first_row, first_col, false),
+            None
+        );
+
+        let (table, last_row, _) =
+            locate_table_row(&d.document, nested_b).expect("nested B row location");
+        let (_, last_col) = locate_table_cell(&d.document, nested_b).expect("nested B cell");
+        assert_eq!(d.table_cell_anchor(table, last_row, last_col, true), None);
     }
 
     /// Delete a whole table and undo it: the body's table count drops by one, the
