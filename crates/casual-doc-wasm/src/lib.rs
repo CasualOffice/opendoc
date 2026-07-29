@@ -4599,7 +4599,7 @@ fn table_is_regular(table: &Table) -> bool {
     table.rows.iter().all(|row| {
         row.cells.len() == cols
             && row.cells.iter().all(|cell| {
-                !cell.properties.grid_span.is_some_and(|span| span > 1)
+                cell.properties.grid_span.is_none_or(|span| span <= 1)
                     && cell.properties.vertical_merge.is_none()
             })
     })
