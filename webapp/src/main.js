@@ -761,17 +761,31 @@ function selectWord(page, event) {
   }
 }
 
-async function copySelection() {
+function selectionText() {
   if (!selection) return;
   const { anchor, focus } = selection;
-  const text = doc.copyText(anchor.node, anchor.offset, focus.node, focus.offset);
+  return doc.copyText(anchor.node, anchor.offset, focus.node, focus.offset);
+}
+
+async function copySelection(event = null) {
+  const text = selectionText();
   if (!text) return;
+  if (event?.clipboardData) {
+    event.preventDefault();
+    event.clipboardData.setData("text/plain", text);
+    const n = text.length;
+    setStatus(`Copied ${n} character${n === 1 ? "" : "s"}`);
+    return true;
+  }
   try {
     await navigator.clipboard.writeText(text);
     const n = text.length;
     setStatus(`Copied ${n} character${n === 1 ? "" : "s"}`);
+    return true;
   } catch (err) {
     console.warn("clipboard write failed:", err);
+    setStatus("Clipboard write was blocked by the browser", "err");
+    return false;
   }
 }
 
@@ -2282,25 +2296,21 @@ function selectAll() {
   focusEditorSurface();
 }
 
+function editorClipboardEvent(event) {
+  return doc && selection && !isInteractiveChromeTarget(event.target) && eventTargetsEditor(event);
+}
+
 /** Cut (⌘X): copy the selection to the clipboard, then delete it. */
-async function cut() {
+async function cut(event = null) {
   if (!hasRange()) return;
-  await copySelection();
+  const copied = await copySelection(event);
+  if (!copied) return;
   const { anchor, focus } = selection;
   await runEdit(() => doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset));
 }
 
-/** Paste (⌘V): insert clipboard text at the caret, replacing any selection and
- *  turning newlines into paragraph splits. */
-async function paste() {
+async function pasteText(text) {
   if (!doc || !selection) return;
-  let text;
-  try {
-    text = await navigator.clipboard.readText();
-  } catch (err) {
-    console.warn("paste failed:", err);
-    return;
-  }
   if (!text) return;
   if (hasRange()) {
     const { anchor, focus } = selection;
@@ -2312,6 +2322,34 @@ async function paste() {
     if (lines[i]) await runEdit(() => doc.insertText(selection.focus.node, selection.focus.offset, lines[i]));
   }
 }
+
+/** Paste (⌘V): insert clipboard text at the caret, replacing any selection and
+ *  turning newlines into paragraph splits. */
+async function paste(event = null) {
+  if (!doc || !selection) return;
+  if (event?.clipboardData) {
+    event.preventDefault();
+    await pasteText(event.clipboardData.getData("text/plain"));
+    return;
+  }
+  try {
+    const text = await navigator.clipboard.readText();
+    await pasteText(text);
+  } catch (err) {
+    console.warn("paste failed:", err);
+    setStatus("Clipboard paste was blocked by the browser", "err");
+  }
+}
+
+document.addEventListener("copy", (e) => {
+  if (editorClipboardEvent(e) && hasRange()) copySelection(e);
+});
+document.addEventListener("cut", (e) => {
+  if (editorClipboardEvent(e) && hasRange()) cut(e);
+});
+document.addEventListener("paste", (e) => {
+  if (editorClipboardEvent(e)) paste(e);
+});
 
 const FORMAT_KEYS = { b: "bold", i: "italic", u: "underline" };
 
@@ -2327,7 +2365,8 @@ document.addEventListener("keydown", async (e) => {
 
   // Clipboard, select-all, history (⌘/Ctrl based).
   if (mod && lower === "c") {
-    copySelection();
+    e.preventDefault();
+    await copySelection();
     return;
   }
   if (mod && lower === "x") {
