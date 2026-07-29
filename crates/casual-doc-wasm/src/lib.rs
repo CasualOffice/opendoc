@@ -100,6 +100,10 @@ pub struct WasmDocument {
     undo: Vec<Vec<Operation>>,
     /// Redo stack — forward-op groups of undone actions; cleared on a fresh edit.
     redo: Vec<Vec<Operation>>,
+    /// The last incremental typing action eligible to absorb another adjacent
+    /// keystroke. The host owns gesture boundaries through `session`; the engine
+    /// additionally requires exact caret continuity before coalescing history.
+    typing_history: Option<TypingHistory>,
     /// Monotonic model revision, bumped on every applied edit.
     revision: u32,
     /// Shaped-paragraph cache for the incremental edit path: an edit re-shapes only
@@ -112,6 +116,12 @@ pub struct WasmDocument {
     /// the document grows at most one abstract+instance per list kind.
     bullet_list: Option<NumberingInstanceId>,
     numbered_list: Option<NumberingInstanceId>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct TypingHistory {
+    session: u32,
+    caret: Pos,
 }
 
 impl core::fmt::Debug for WasmDocument {
@@ -146,6 +156,20 @@ impl WasmDocument {
         // A paginated document never exceeds u32 pages within the admission
         // limits; the cast is saturating for defensiveness.
         u32::try_from(self.layout.page_count()).unwrap_or(u32::MAX)
+    }
+
+    /// Whether the document has at least one user action available to undo.
+    #[wasm_bindgen(getter, js_name = canUndo)]
+    #[must_use]
+    pub fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
+    }
+
+    /// Whether the document has at least one undone action available to redo.
+    #[wasm_bindgen(getter, js_name = canRedo)]
+    #[must_use]
+    pub fn can_redo(&self) -> bool {
+        !self.redo.is_empty()
     }
 
     /// The page box size of page `index` (0-based), in twips, resolved against
@@ -741,6 +765,63 @@ impl WasmDocument {
         self.apply_action(ops).map_err(to_js)
     }
 
+    /// Replaces a selection (which may be collapsed) with normalized plain text
+    /// as one atomic user action. Newlines become paragraph splits inside the
+    /// same operation group, so paste, IME commit, and replace-with-Enter each
+    /// consume exactly one undo step.
+    #[wasm_bindgen(js_name = insertPlainText)]
+    pub fn insert_plain_text(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        text: String,
+    ) -> Result<EditResult, JsValue> {
+        let (start, _end) = self
+            .order_endpoints(start_node, start_offset, end_node, end_offset)
+            .map_err(to_js)?;
+        let mut ops = self
+            .selection_delete_ops(start_node, start_offset, end_node, end_offset)
+            .map_err(to_js)?;
+        let (mut insert_ops, caret) = self.plain_text_ops(start, &text).map_err(to_js)?;
+        ops.append(&mut insert_ops);
+        if ops.is_empty() {
+            return Err(to_js("nothing to insert".into()));
+        }
+        self.apply_action_caret(ops, caret).map_err(to_js)
+    }
+
+    /// Incremental keyboard typing with explicit host gesture identity. Each call
+    /// still edits/reflows immediately; adjacent calls with the same `session`
+    /// coalesce into one history entry only when the previous caret exactly
+    /// matches this insertion start.
+    #[wasm_bindgen(js_name = typeText)]
+    pub fn type_text(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        text: String,
+        session: u32,
+    ) -> Result<EditResult, JsValue> {
+        let (start, end) = self
+            .order_endpoints(start_node, start_offset, end_node, end_offset)
+            .map_err(to_js)?;
+        let mut ops = self
+            .selection_delete_ops(start_node, start_offset, end_node, end_offset)
+            .map_err(to_js)?;
+        let (mut insert_ops, caret) = self.plain_text_ops(start, &text).map_err(to_js)?;
+        ops.append(&mut insert_ops);
+        if ops.is_empty() {
+            return Err(to_js("nothing to type".into()));
+        }
+        let one_line = !text.contains('\r') && !text.contains('\n');
+        self.apply_typing_action(ops, caret, start, session, start == end, one_line)
+            .map_err(to_js)
+    }
+
     /// Moves a caret by one step in `dir` (`"left"`, `"right"`, `"up"`, `"down"`),
     /// crossing line, paragraph, and page boundaries. Pure navigation — no edit.
     #[wasm_bindgen(js_name = moveCaret)]
@@ -750,6 +831,28 @@ impl WasmDocument {
         Ok(Caret {
             node: pos.0.to_string(),
             offset: pos.1,
+        })
+    }
+
+    /// Returns the ordered start or end edge of a selection. Selection ordering
+    /// belongs to the engine because anchors in different paragraphs cannot be
+    /// compared correctly by the browser host.
+    #[wasm_bindgen(js_name = selectionEdge)]
+    pub fn selection_edge(
+        &self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        toward_end: bool,
+    ) -> Result<Caret, JsValue> {
+        let (start, end) = self
+            .order_endpoints(start_node, start_offset, end_node, end_offset)
+            .map_err(to_js)?;
+        let pos = if toward_end { end } else { start };
+        Ok(Caret {
+            node: pos.node.to_string(),
+            offset: pos.offset,
         })
     }
 
@@ -893,39 +996,62 @@ impl WasmDocument {
         font: Option<String>,
     ) -> Result<EditResult, JsValue> {
         let nid = node_id(node)?;
-        let end = offset + text.len() as u32;
-        let delta = FormatDelta {
+        self.styled_text_action(
+            nid,
+            offset,
+            text,
             bold,
             italic,
             underline,
             strike,
-            color: color.as_deref().and_then(parse_hex_color),
-            highlight: highlight.as_deref().map(parse_highlight),
             size_half_points,
-            vertical_alignment: vert_align.as_deref().map(|v| match v {
-                "super" => VerticalAlignment::Superscript,
-                "sub" => VerticalAlignment::Subscript,
-                _ => VerticalAlignment::Baseline,
-            }),
+            color,
+            highlight,
+            vert_align,
             font,
-        };
-        let mut ops = vec![Operation::InsertText {
-            at: Pos::new(nid, offset),
+            None,
+        )
+        .map_err(to_js)
+    }
+
+    /// Styled counterpart of [`type_text`](Self::type_text): preserves an armed
+    /// run format while allowing adjacent keyboard calls in the same host typing
+    /// session to undo/redo as one user action.
+    #[wasm_bindgen(js_name = typeStyledText)]
+    #[allow(clippy::too_many_arguments)] // a flat JS signature is clearer than a bag struct
+    pub fn type_styled_text(
+        &mut self,
+        node: &str,
+        offset: u32,
+        text: String,
+        bold: Option<bool>,
+        italic: Option<bool>,
+        underline: Option<bool>,
+        strike: Option<bool>,
+        size_half_points: Option<u32>,
+        color: Option<String>,
+        highlight: Option<String>,
+        vert_align: Option<String>,
+        font: Option<String>,
+        session: u32,
+    ) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        self.styled_text_action(
+            nid,
+            offset,
             text,
-        }];
-        if delta != FormatDelta::default() {
-            ops.push(Operation::FormatText {
-                range: EditRange {
-                    start: Pos::new(nid, offset),
-                    end: Pos::new(nid, end),
-                },
-                delta,
-            });
-        }
-        // The batch's last op is FormatText, whose caret is its range start; the user
-        // expects the caret *after* the inserted text, so pin it explicitly.
-        self.apply_action_caret(ops, Pos::new(nid, end))
-            .map_err(to_js)
+            bold,
+            italic,
+            underline,
+            strike,
+            size_half_points,
+            color,
+            highlight,
+            vert_align,
+            font,
+            Some(session),
+        )
+        .map_err(to_js)
     }
 
     /// Like [`format_text`](Self::format_text) but across a selection that may span
@@ -3038,6 +3164,7 @@ impl WasmDocument {
     /// caret + revision.
     #[wasm_bindgen(js_name = undo)]
     pub fn undo(&mut self) -> Result<EditResult, JsValue> {
+        self.typing_history = None;
         let group = self
             .undo
             .pop()
@@ -3053,6 +3180,7 @@ impl WasmDocument {
     /// Redoes the last undone action.
     #[wasm_bindgen(js_name = redo)]
     pub fn redo(&mut self) -> Result<EditResult, JsValue> {
+        self.typing_history = None;
         let group = self
             .redo
             .pop()
@@ -3189,6 +3317,96 @@ impl WasmDocument {
         Ok(())
     }
 
+    /// Builds the closed operation group for inserting normalized plain text at
+    /// `start`. Line breaks are structural paragraph splits, never literal
+    /// newline characters inside a run.
+    fn plain_text_ops(&mut self, start: Pos, text: &str) -> Result<(Vec<Operation>, Pos), String> {
+        let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+        let mut ops = Vec::new();
+        let mut cursor = start;
+        for (index, line) in normalized.split('\n').enumerate() {
+            if index > 0 {
+                let new_id = self
+                    .edit_ids
+                    .next_id()
+                    .map_err(|_| "id space exhausted".to_owned())?;
+                ops.push(Operation::SplitParagraph { at: cursor, new_id });
+                cursor = Pos::new(new_id, 0);
+            }
+            if line.is_empty() {
+                continue;
+            }
+            let byte_len =
+                u32::try_from(line.len()).map_err(|_| "inserted text is too large".to_owned())?;
+            ops.push(Operation::InsertText {
+                at: cursor,
+                text: line.to_owned(),
+            });
+            cursor.offset = cursor
+                .offset
+                .checked_add(byte_len)
+                .ok_or_else(|| "text offset overflow".to_owned())?;
+        }
+        Ok((ops, cursor))
+    }
+
+    /// Shared implementation for ordinary and gesture-grouped styled typing.
+    #[allow(clippy::too_many_arguments)]
+    fn styled_text_action(
+        &mut self,
+        node: NodeId,
+        offset: u32,
+        text: String,
+        bold: Option<bool>,
+        italic: Option<bool>,
+        underline: Option<bool>,
+        strike: Option<bool>,
+        size_half_points: Option<u32>,
+        color: Option<String>,
+        highlight: Option<String>,
+        vert_align: Option<String>,
+        font: Option<String>,
+        typing_session: Option<u32>,
+    ) -> Result<EditResult, String> {
+        if text.is_empty() {
+            return Err("nothing to type".into());
+        }
+        let text_len =
+            u32::try_from(text.len()).map_err(|_| "inserted text is too large".to_owned())?;
+        let end = offset
+            .checked_add(text_len)
+            .ok_or_else(|| "text offset overflow".to_owned())?;
+        let delta = FormatDelta {
+            bold,
+            italic,
+            underline,
+            strike,
+            color: color.as_deref().and_then(parse_hex_color),
+            highlight: highlight.as_deref().map(parse_highlight),
+            size_half_points,
+            vertical_alignment: vert_align.as_deref().map(|v| match v {
+                "super" => VerticalAlignment::Superscript,
+                "sub" => VerticalAlignment::Subscript,
+                _ => VerticalAlignment::Baseline,
+            }),
+            font,
+        };
+        let start = Pos::new(node, offset);
+        let caret = Pos::new(node, end);
+        let one_line = !text.contains('\r') && !text.contains('\n');
+        let mut ops = vec![Operation::InsertText { at: start, text }];
+        if delta != FormatDelta::default() {
+            ops.push(Operation::FormatText {
+                range: EditRange { start, end: caret },
+                delta,
+            });
+        }
+        match typing_session {
+            Some(session) => self.apply_typing_action(ops, caret, start, session, true, one_line),
+            None => self.apply_action_caret(ops, caret),
+        }
+    }
+
     /// Applies one forward op as a single undoable action, with the caret at that
     /// op's natural resting place.
     fn apply(&mut self, op: Operation) -> Result<EditResult, String> {
@@ -3201,6 +3419,7 @@ impl WasmDocument {
     /// corrupts. A single op needs no snapshot (it validates before mutating), so
     /// typing stays clone-free.
     fn apply_action(&mut self, ops: Vec<Operation>) -> Result<EditResult, String> {
+        self.typing_history = None;
         if ops.is_empty() {
             return Err("empty edit".into());
         }
@@ -3229,6 +3448,7 @@ impl WasmDocument {
         ops: Vec<Operation>,
         caret: Pos,
     ) -> Result<EditResult, String> {
+        self.typing_history = None;
         if ops.is_empty() {
             return Err("empty edit".into());
         }
@@ -3244,6 +3464,52 @@ impl WasmDocument {
                     self.document = snapshot;
                 }
                 Err(e)
+            }
+        }
+    }
+
+    /// Applies one incremental typing tick and optionally folds it into the
+    /// previous tick's inverse group. `may_merge` is false while replacing a
+    /// range; that action can begin a session, but an unexpected second range
+    /// cannot be folded into it. `keep_open` is false for structural text such as
+    /// a newline.
+    #[allow(clippy::too_many_arguments)]
+    fn apply_typing_action(
+        &mut self,
+        ops: Vec<Operation>,
+        caret: Pos,
+        start: Pos,
+        session: u32,
+        may_merge: bool,
+        keep_open: bool,
+    ) -> Result<EditResult, String> {
+        if ops.is_empty() {
+            return Err("empty typing edit".into());
+        }
+        let snapshot = (ops.len() > 1).then(|| self.document.clone());
+        match self.apply_group(ops) {
+            Ok((_, mut inverses)) => {
+                let merge = may_merge
+                    && self.redo.is_empty()
+                    && self.undo.last().is_some()
+                    && self.typing_history.is_some_and(|previous| {
+                        previous.session == session && previous.caret == start
+                    });
+                if merge {
+                    let mut previous = self.undo.pop().expect("history entry checked above");
+                    inverses.append(&mut previous);
+                }
+                self.undo.push(inverses);
+                self.redo.clear();
+                self.typing_history = keep_open.then_some(TypingHistory { session, caret });
+                Ok(self.finish_edit(caret))
+            }
+            Err(error) => {
+                if let Some(snapshot) = snapshot {
+                    self.document = snapshot;
+                }
+                self.typing_history = None;
+                Err(error)
             }
         }
     }
@@ -5262,6 +5528,7 @@ fn open_document(bytes: &[u8]) -> Result<WasmDocument, String> {
         edit_ids: IdGenerator::new(edit_namespace),
         undo: Vec::new(),
         redo: Vec::new(),
+        typing_history: None,
         revision: 0,
         // Populated lazily on the first edit's incremental re-pagination; the open
         // above uses the full path since there is nothing yet to reuse.
@@ -6642,6 +6909,170 @@ mod tests {
             d.copy_text(&node, 0, &node, end + 1),
             format!("Z{original}")
         );
+    }
+
+    /// Rapid adjacent typing is one user action, while a different host gesture
+    /// id starts a new history entry. History availability is exposed as engine
+    /// truth for the shell's Undo/Redo buttons.
+    #[test]
+    fn typing_sessions_coalesce_only_adjacent_history() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let (node_id, original) = nodes
+            .iter()
+            .find(|(_, text)| !text.is_empty())
+            .map(|(id, text)| (*id, text.clone()))
+            .expect("a non-empty paragraph");
+        let node = node_id.to_string();
+
+        assert!(!d.can_undo());
+        assert!(!d.can_redo());
+        d.type_text(&node, 0, &node, 0, "A".to_owned(), 41)
+            .expect("first typing tick");
+        d.type_text(&node, 1, &node, 1, "B".to_owned(), 41)
+            .expect("adjacent typing tick");
+        assert_eq!(d.undo.len(), 1, "one host typing session is one action");
+        assert!(d.can_undo());
+        assert!(!d.can_redo());
+
+        d.undo().expect("undo typing session");
+        assert_eq!(
+            d.copy_text(&node, 0, &node, original.len() as u32),
+            original
+        );
+        assert!(!d.can_undo());
+        assert!(d.can_redo());
+
+        d.redo().expect("redo typing session");
+        assert_eq!(
+            d.copy_text(&node, 0, &node, original.len() as u32 + 2),
+            format!("AB{original}")
+        );
+        assert!(d.can_undo());
+        assert!(!d.can_redo());
+
+        d.type_text(&node, 2, &node, 2, "C".to_owned(), 42)
+            .expect("new typing gesture");
+        assert_eq!(
+            d.undo.len(),
+            2,
+            "a different host session starts a new action"
+        );
+        d.undo().expect("undo only the new gesture");
+        assert_eq!(
+            d.copy_text(&node, 0, &node, original.len() as u32 + 2),
+            format!("AB{original}")
+        );
+    }
+
+    #[test]
+    fn styled_typing_session_undoes_insert_and_format_together() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let (node_id, original) = nodes
+            .iter()
+            .find(|(_, text)| !text.is_empty())
+            .map(|(id, text)| (*id, text.clone()))
+            .expect("a non-empty paragraph");
+        let node = node_id.to_string();
+
+        for (offset, text) in [(0, "A"), (1, "B")] {
+            d.type_styled_text(
+                &node,
+                offset,
+                text.to_owned(),
+                Some(true),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                77,
+            )
+            .expect("styled typing tick");
+        }
+        assert_eq!(d.undo.len(), 1);
+        assert!(d.format_at(&node, 0, 2).bold());
+        d.undo().expect("undo styled typing session");
+        assert_eq!(
+            d.copy_text(&node, 0, &node, original.len() as u32),
+            original
+        );
+    }
+
+    /// Plain multiline insertion performs selection deletion, paragraph splits,
+    /// and every inserted line in one atomic history group.
+    #[test]
+    fn plain_text_replacement_is_one_atomic_action() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let (node_id, original) = nodes
+            .iter()
+            .find(|(_, text)| text.len() >= 2)
+            .map(|(id, text)| (*id, text.clone()))
+            .expect("a paragraph with two bytes");
+        let node = node_id.to_string();
+
+        let result = d
+            .insert_plain_text(&node, 0, &node, 2, "A\r\nB\nC".to_owned())
+            .expect("replace selection with multiline text");
+        assert_eq!(d.undo.len(), 1, "the complete replacement is one action");
+        assert_eq!(
+            d.copy_text(&node, 0, &result.node(), result.offset()),
+            "A\nB\nC",
+            "line endings become structural paragraph breaks"
+        );
+
+        d.undo().expect("undo multiline replacement");
+        assert_eq!(
+            d.copy_text(&node, 0, &node, original.len() as u32),
+            original,
+            "one undo restores both deleted text and paragraph structure"
+        );
+        assert!(!d.can_undo());
+        assert!(d.can_redo());
+    }
+
+    /// The engine, not JS string comparison, resolves selection order across
+    /// paragraphs for plain-arrow range collapse.
+    #[test]
+    fn selection_edge_orders_cross_paragraph_anchors() {
+        let d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let (first, first_text) = nodes.first().expect("fixture needs a first paragraph");
+        let (second, second_text) = nodes.get(1).expect("fixture needs a second paragraph");
+
+        let start = d
+            .selection_edge(
+                &second.to_string(),
+                second_text.len() as u32,
+                &first.to_string(),
+                0,
+                false,
+            )
+            .expect("ordered start");
+        assert_eq!(start.node(), first.to_string());
+        assert_eq!(start.offset(), 0);
+
+        let end = d
+            .selection_edge(
+                &second.to_string(),
+                second_text.len() as u32,
+                &first.to_string(),
+                0,
+                true,
+            )
+            .expect("ordered end");
+        assert_eq!(end.node(), second.to_string());
+        assert_eq!(end.offset(), second_text.len() as u32);
+        assert!(!first_text.is_empty(), "fixture sanity");
     }
 
     /// An edit survives export → re-open: type text, export to `.docx`, re-open
@@ -8118,6 +8549,7 @@ mod tests {
             edit_ids: IdGenerator::new(0x5a),
             undo: Vec::new(),
             redo: Vec::new(),
+            typing_history: None,
             revision: 0,
             galley_cache: GalleyCache::new(),
             bullet_list: None,

@@ -97,13 +97,38 @@ byte-delta the op applied (insert shifts offsets ≥ `at` by `+len`; delete by
 `−len`; split/join move across the paragraph boundary) — a `PositionMap` analogous
 to the v0 one.
 
+### User-action transaction refinement (2026-07-30)
+
+The browser must not infer atomicity by issuing several public mutations and
+hoping history later combines them. Plain-text insertion therefore crosses the
+WASM boundary as one semantic command: it may delete the current selection,
+insert text runs, and split paragraphs for normalized line breaks, but the
+engine applies that closed operation group atomically and records one inverse
+group. Paste, an IME commit, and replacing a selection with Enter all use this
+path.
+
+Typing remains incremental so every key immediately reflows and paints. The host
+assigns a bounded typing-session id to a rapid adjacent burst; the engine may
+prepend a new inverse group to the previous history entry only when both the id
+and expected caret match. A pause, caret/selection movement, pointer action, or
+non-typing command starts a new id. The engine still validates adjacency, so a
+stale or reused host id cannot merge edits at unrelated positions.
+
+History availability is engine truth (`canUndo` / `canRedo`), not inferred from
+whether a document is open. Ordered selection edges are also resolved by the
+engine because the frontend cannot compare anchors from different paragraphs.
+
 ## WASM surface (added to `casual-doc-wasm`)
 
 - `insertText(node, offset, text) -> EditResult`
+- `insertPlainText(selection, text) -> EditResult` (atomic paragraphs/paste)
+- `typeText(selection, text, session) -> EditResult` (guarded history coalescing)
 - `deleteRange(node, start, end) -> EditResult`
 - `splitParagraph(node, offset) -> EditResult`  *(slice 2)*
 - `joinParagraphs(first, second) -> EditResult` *(slice 2)*
 - `undo() -> EditResult`, `redo() -> EditResult`
+- `canUndo`, `canRedo`
+- `selectionEdge(selection, towardEnd) -> Caret`
 - `EditResult { revision, caret: Pos }` — the new revision and where the caret
   should land, so the frontend re-renders and re-places the caret. A dirty-page
   set is added when `apply` surfaces one.
@@ -113,11 +138,12 @@ Edits enter *only* through these semantic methods (I1): JS never constructs an
 
 ## Frontend (webapp)
 
-`input/` gains a keyboard handler: printable keys → `insertText` at the caret;
+`input/` gains a keyboard handler: printable keys → `typeText` at the caret;
 Backspace/Delete → `deleteRange` (or `joinParagraphs` at a ¶ boundary, slice 2);
 Enter → `splitParagraph` (slice 2); ⌘Z/⌘⇧Z → undo/redo. After each edit the caret
 advances, the affected page(s) re-render, and the caret rect is redrawn. IME
-composition is a later slice (doc 57 §12).
+composition commits through the atomic plain-text command; its preedit remains a
+host overlay until composition ends.
 
 ## Staging (prioritized pipeline)
 
@@ -125,7 +151,7 @@ composition is a later slice (doc 57 §12).
   WASM `insertText`/`deleteRange`/`deleteBackward`/`deleteForward`/`undo`/`redo`,
   keyboard typing + backspace + undo, whole-document re-pagination.
 
-- **Slice 2 — structural edits + navigation/selection (in progress).** The batch
+- **Slice 2 — DONE (foundation): structural edits + navigation/selection.** The batch
   that makes editing feel complete, in priority order:
   1. `SplitParagraph` (Enter) + `JoinParagraphs` (Backspace at ¶ start) — includes
      content **reflowing across page boundaries**; the caret follows via
@@ -139,12 +165,18 @@ composition is a later slice (doc 57 §12).
   5. **Pointer selection** — Shift+Click extends to the clicked anchor;
      double-click selects the word (`wordAt` via Unicode word segmentation).
 
-- **Slice 3 — later:** run-property edits (bold/italic…), object/table structural
-  ops, **dirty-page repaint** (repaint only changed pages), IME composition —
-  additive `Operation` variants / methods, same choke point and undo model.
+- **Slice 3 — in progress:** run/paragraph/table property edits, core table
+  structural ops, dirty-page repaint, rich run clipboard, and IME preedit/commit
+  are delivered through the same choke point. General object editing, structured
+  table/list/image clipboard fragments, and additional editing surfaces remain.
+
+- **Slice 4 — DONE:** user-action history refinement (`P1G-EDIT-CORRECTNESS-005`)
+  adds atomic plain text, guarded typing-session coalescing, ordered range-edge
+  collapse, and real history availability.
 
 ## Non-goals
 
 Collaboration/OT (the closed op set + position map are the seam that keeps it
-additive — I2/I3), rich clipboard paste, and grapheme-range mark editing are out
-of scope here.
+additive — I2/I3) and grapheme-range mark editing are out of scope here. Rich
+run clipboard support is additive; complete structured table/list/image
+clipboard fidelity remains outside this operation-set foundation.

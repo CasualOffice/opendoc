@@ -197,6 +197,12 @@ let pendingFormat = null;
 let currentName = "document.docx";
 /** True while an IME composition is active on the canvas editor surface. */
 let composingText = false;
+/** Host gesture identity for history coalescing. The engine also validates exact
+ * caret continuity, so this id is permission to merge, never the sole criterion. */
+let typingSession = 0;
+let typingSessionActive = false;
+let lastTypingAt = 0;
+const TYPING_PAUSE_MS = 1000;
 
 function focusEditorSurface() {
   pagesEl.focus({ preventScroll: true });
@@ -317,6 +323,7 @@ async function openBytes(bytes, name) {
     doc = open(bytes);
     selection = null;
     tableSelection = null;
+    breakTypingSession();
     currentName = name;
     docTitleEl.value = name;
     docTitleEl.hidden = false;
@@ -1484,12 +1491,37 @@ async function applyEditResult(res) {
   scrollCaretIntoView();
 }
 
+/** Ends the current typing gesture. The next printable key receives a fresh
+ * session id and therefore cannot merge with earlier history. */
+function breakTypingSession() {
+  typingSessionActive = false;
+  lastTypingAt = 0;
+}
+
+/** Returns the gesture id for an adjacent typing tick. A pause is a semantic
+ * boundary even if the caret has not moved. */
+function typingSessionForKey() {
+  const now = performance.now();
+  if (!typingSessionActive || now - lastTypingAt > TYPING_PAUSE_MS) {
+    typingSession = (typingSession + 1) >>> 0;
+    if (typingSession === 0) typingSession = 1;
+  }
+  typingSessionActive = true;
+  lastTypingAt = now;
+  return typingSession;
+}
+
+// Pointer interaction always establishes a new caret/selection/command gesture.
+document.addEventListener("pointerdown", breakTypingSession, { capture: true });
+
 /** Runs an edit thunk and applies its result; unsupported edits are ignored. */
-async function runEdit(thunk) {
+async function runEdit(thunk, { typing = false } = {}) {
+  if (!typing) breakTypingSession();
   let res;
   try {
     res = thunk();
   } catch (err) {
+    if (typing) breakTypingSession();
     console.warn("edit ignored:", err?.message ?? err);
     // The engine's error names (Unsupported, CrossParagraph, …) are internal
     // vocabulary, not user-facing text — a bounded, generic message is enough
@@ -1504,9 +1536,20 @@ async function runEdit(thunk) {
 /** Move the caret by arrow key. Shift extends (moves the focus); plain collapses. */
 function navCaret(dir, extend) {
   if (!selection) return;
+  breakTypingSession();
   pendingFormat = null; // caret moved → disarm typing format
-  const f = selection.focus;
-  const c = doc.moveCaret(f.node, f.offset, dir);
+  const collapseToStart = dir === "left" || dir === "wordLeft";
+  const collapseToEnd = dir === "right" || dir === "wordRight";
+  const c =
+    !extend && hasRange() && (collapseToStart || collapseToEnd)
+      ? doc.selectionEdge(
+          selection.anchor.node,
+          selection.anchor.offset,
+          selection.focus.node,
+          selection.focus.offset,
+          collapseToEnd,
+        )
+      : doc.moveCaret(selection.focus.node, selection.focus.offset, dir);
   const to = { node: c.node, offset: c.offset };
   c.free();
   selection = extend ? { anchor: selection.anchor, focus: to } : { anchor: to, focus: to };
@@ -1527,6 +1570,7 @@ function selEndpoints() {
  *  preserving the selection (formatting does not collapse it) and repainting
  *  only the dirty pages. */
 async function runToolbarEdit(thunk) {
+  breakTypingSession();
   const ends = selEndpoints();
   if (!ends) return;
   let res;
@@ -1713,8 +1757,8 @@ function updateToolbar() {
   insertLinkBtn.disabled =
     !range || selection.anchor.node !== selection.focus.node;
   // Ribbon: undo/redo/view controls need a document; the Table tab is contextual.
-  undoBtn.disabled = !doc;
-  redoBtn.disabled = !doc;
+  undoBtn.disabled = !doc || !doc.canUndo;
+  redoBtn.disabled = !doc || !doc.canRedo;
   findBtn.disabled = !doc;
   propertiesBtn.disabled = !doc;
   pageSetupBtn.disabled = !doc;
@@ -2918,6 +2962,7 @@ function navDirection(e) {
 
 /** Moves the caret to an engine Caret result (⌘↑/↓, doc bounds). Shift extends. */
 function navToPosition(caret, extend) {
+  breakTypingSession();
   pendingFormat = null; // caret moved → disarm typing format
   const to = { node: caret.node, offset: caret.offset };
   caret.free();
@@ -2930,6 +2975,7 @@ function navToPosition(caret, extend) {
 /** Selects the whole document (⌘A). */
 function selectAll() {
   if (!doc) return;
+  breakTypingSession();
   const a = doc.firstPosition();
   const b = doc.lastPosition();
   selection = {
@@ -2962,15 +3008,10 @@ async function cut(event = null) {
 async function pasteText(text) {
   if (!doc || !selection) return;
   if (!text) return;
-  if (hasRange()) {
-    const { anchor, focus } = selection;
-    await runEdit(() => doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset));
-  }
-  const lines = text.replace(/\r\n?/g, "\n").split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    if (i > 0) await runEdit(() => doc.splitParagraph(selection.focus.node, selection.focus.offset));
-    if (lines[i]) await runEdit(() => doc.insertText(selection.focus.node, selection.focus.offset, lines[i]));
-  }
+  const { anchor, focus } = selection;
+  await runEdit(() =>
+    doc.insertPlainText(anchor.node, anchor.offset, focus.node, focus.offset, text),
+  );
 }
 
 async function commitComposedText(text) {
@@ -3050,6 +3091,7 @@ document.addEventListener("paste", (e) => {
 });
 document.addEventListener("compositionstart", (e) => {
   if (!editorTextInputEvent(e)) return;
+  breakTypingSession();
   composingText = true;
   pendingFormat = null;
   if (selection) showImePreedit(selection.focus.node, selection.focus.offset, e.data || "");
@@ -3086,6 +3128,7 @@ document.addEventListener("keydown", async (e) => {
   // Clipboard, select-all, history (⌘/Ctrl based).
   if (mod && lower === "c") {
     e.preventDefault();
+    breakTypingSession();
     await copySelection();
     return;
   }
@@ -3116,6 +3159,7 @@ document.addEventListener("keydown", async (e) => {
   }
   if (mod && FORMAT_KEYS[lower]) {
     e.preventDefault();
+    breakTypingSession();
     toggleFormat(FORMAT_KEYS[lower]);
     return;
   }
@@ -3157,7 +3201,10 @@ document.addEventListener("keydown", async (e) => {
     return;
   }
 
-  if (mod) return; // leave other ⌘ shortcuts to the browser
+  if (mod) {
+    breakTypingSession();
+    return; // leave other ⌘ shortcuts to the browser
+  }
 
   const { anchor, focus } = selection;
   const range = hasRange();
@@ -3182,41 +3229,47 @@ document.addEventListener("keydown", async (e) => {
   }
   if (key === "Enter") {
     e.preventDefault();
-    if (range) {
-      // Replace the selection with a break: delete it, then split at the caret.
-      await runEdit(() => doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset));
-    }
-    await runEdit(() => doc.splitParagraph(selection.focus.node, selection.focus.offset));
+    await runEdit(() =>
+      doc.insertPlainText(anchor.node, anchor.offset, focus.node, focus.offset, "\n"),
+    );
     return;
   }
   // A printable character (single key, no modifiers).
   if (key.length === 1) {
     e.preventDefault();
+    const session = typingSessionForKey();
     if (range) {
       pendingFormat = null; // typing over a selection uses the selection's own runs
-      await runEdit(() =>
-        doc.replaceSelection(anchor.node, anchor.offset, focus.node, focus.offset, key),
+      await runEdit(
+        () => doc.typeText(anchor.node, anchor.offset, focus.node, focus.offset, key, session),
+        { typing: true },
       );
     } else if (pendingFormat) {
       const pf = pendingFormat; // armed format persists across consecutive typing
-      await runEdit(() =>
-        doc.insertStyledText(
-          focus.node,
-          focus.offset,
-          key,
-          pf.bold,
-          pf.italic,
-          pf.underline,
-          pf.strike,
-          pf.sizeHalfPoints,
-          pf.color,
-          pf.highlight,
-          pf.vertAlign,
-          pf.font,
-        ),
+      await runEdit(
+        () =>
+          doc.typeStyledText(
+            focus.node,
+            focus.offset,
+            key,
+            pf.bold,
+            pf.italic,
+            pf.underline,
+            pf.strike,
+            pf.sizeHalfPoints,
+            pf.color,
+            pf.highlight,
+            pf.vertAlign,
+            pf.font,
+            session,
+          ),
+        { typing: true },
       );
     } else {
-      await runEdit(() => doc.insertText(focus.node, focus.offset, key));
+      await runEdit(
+        () => doc.typeText(focus.node, focus.offset, focus.node, focus.offset, key, session),
+        { typing: true },
+      );
     }
   }
 });

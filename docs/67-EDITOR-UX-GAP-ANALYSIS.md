@@ -24,7 +24,7 @@ P0 means an editing session can feel broken, unsafe, or lossy. P1 means a common
 | --- | --- | --- | --- | --- | --- |
 | Focus ownership and stale gestures | P0 | Recent fixes reset pointer-cancel/lost-capture and keep the page surface focusable. | Canvas never "freezes" the caret after canceled drags, toolbar clicks, modal/chip interactions, or page-gap movement. | Add a permanent Playwright smoke suite for pointercancel, blur, hidden-tab, toolbar click-return, and canvas click/type. | Browser smoke in CI with no console errors and caret visible after each recovery path. |
 | Edit hot loop | P0 | Chrome refresh is coalesced; color/shading controls commit on `change`; table column drag previews locally and commits once. | Typing, color picking, shading, table drag, and toolbar formatting stay responsive without repeated full stats/outline/reflow work. | Add frame-budget instrumentation around typing, shading, and table drag; fail on repeated sync chrome refresh in hot paths. | Perf smoke with max edit latency and repaint count thresholds. |
-| Undo/redo user model | P0 | Core undo stack exists; UI buttons exist; many formatting operations preserve selection. | Every visible command is undoable as one user action; drag preview produces one undo entry; command names should be explainable. | Add command metadata for undo labels and group IME/composition/paste sequences into expected transactions. | Unit tests for transaction count plus browser smoke for undo after drag, paste, shading, merge/split. |
+| Undo/redo user model | P0 | Typing bursts, multiline paste, IME commits, replace-with-Enter, formatting, and table drag/property interactions now use user-action history boundaries; buttons reflect real stack availability. | Every visible command is undoable as one user action; drag preview produces one undo entry; command names should be explainable. | Audit the remaining compound commands and add command metadata for user-facing Undo/Redo labels. | Unit tests for transaction count plus browser smoke for undo after drag, paste, shading, merge/split. |
 | Native clipboard fidelity | P0 | Plain-text native event fallback exists. | Copy/cut/paste preserves rich runs, paragraphs, lists, tables, links, and HTML where safe; plain text remains fallback. | Add internal rich clipboard payload and sanitized HTML import/export bridge. | Browser clipboard-event tests for formatted text, table cells, links, lists, and plain fallback. |
 | IME live preedit | P0 | Final composition commit exists; live preedit is not painted. | CJK/Indic IME shows active composition text/caret and does not commit intermediate keystrokes. | Add host preedit overlay tied to caret rect and compositionupdate. | Browser composition smoke for interim display, cancel, commit, undo. |
 | Cross-structure delete/selection | P0 | Same-paragraph and some range edits exist; broad structural delete is incomplete. | Delete/backspace across paragraphs, tables, lists, links, fields, and sections follows Word-like safe structural rules with no silent data loss. | Define structural deletion policy and implement transactional range delete across block boundaries. | Corpus unit tests for paragraph join, table boundary, list join, hyperlink partial selection, protected unsupported nodes. |
@@ -59,9 +59,9 @@ The following daily-driver defects remain the highest-priority work:
 
 | Order | Gap | Observed behavior | Required behavior |
 | --- | --- | --- | --- |
-| 1 | Undo transaction grouping | Continuous typing creates one history entry per character; plain multiline paste creates entries per insert/split; Enter over a selection deletes and splits as two actions. | Coalesce a typing burst until a semantic boundary and commit paste, composition, and replace-with-break as one transaction each. |
-| 2 | Selection collapse and platform navigation | Plain Left/Right moves from the range focus and can step past the expected boundary. Ctrl and Command share one mapping, producing incorrect Windows word/paragraph movement. | Collapse a range to its ordered edge before moving; centralize macOS/Windows keymaps; add word deletion and Page Up/Down. |
-| 3 | History reflection | Undo/Redo are enabled whenever a document exists because the bridge exposes no `canUndo`/`canRedo`. | Reflect real history availability and, later, a user-facing command label. |
+| 1 | Undo transaction grouping | Fixed by `P1G-EDIT-CORRECTNESS-005`: rapid adjacent plain/styled typing coalesces with guarded host sessions; multiline paste, composition commits, and Enter over a selection are atomic. | Audit remaining compound commands and add user-facing history labels. |
+| 2 | Selection collapse and platform navigation | Plain Left/Right now collapses forward/backward ranges to their engine-ordered edge. Ctrl and Command still share one mapping, producing incorrect Windows word/paragraph movement. | Centralize macOS/Windows keymaps; add word deletion and Page Up/Down. |
+| 3 | History reflection | Fixed by `P1G-EDIT-CORRECTNESS-005`: `canUndo`/`canRedo` are engine truth and drive the buttons. | Add a user-facing command label when history metadata lands. |
 | 4 | Formatting semantics | Superscript/subscript set a value but do not toggle back to baseline; highlight has no reflected value; mixed paragraph/run selections are incompletely represented. | Add tri-state/mixed reflection, baseline toggles, and uniform state across all selected paragraphs. |
 | 5 | Lists | Enter cannot terminate a list, Tab changes paragraph indent rather than list level, and restart/continue/multilevel/checklist authoring are absent. | Implement complete list lifecycle before adding more gallery chrome. |
 | 6 | Paragraph property surface | The tall anchored form obscures most of a narrow document and uses menu semantics around form controls. | Move low-frequency paragraph properties into the shared live right inspector; retain only a compact spacing popover. |
@@ -83,10 +83,18 @@ live inspector. Toggle/segmented/select controls commit on change, numeric field
 commit on blur/Enter, and each completed control interaction is one undo action.
 Apply and Reset are removed; Undo is the recovery mechanism.
 
+Editing correctness was then tightened at the same command boundary. Plain-text
+paste/composition/replace-with-break is one atomic engine group; rapid adjacent
+typing coalesces only with both a matching host gesture id and exact caret
+continuity; plain Left/Right collapses a range to an engine-ordered edge; and
+Undo/Redo availability comes from the actual history stacks. Platform-specific
+navigation and deletion mappings remain separate work.
+
 ## Revised execution plan
 
-1. Editing correctness: transaction grouping, selection collapse, platform
-   navigation, word deletion, and real history availability.
+1. Finish keyboard correctness: platform-specific navigation, word deletion,
+   Page Up/Down, and user-facing history labels. Transaction grouping, horizontal
+   range collapse, and real history availability are complete.
 2. Formatting semantics: super/sub baseline toggle, highlight reflection, mixed
    selection state, and arbitrary font-size entry.
 3. Contextual properties: move paragraph properties into the same live inspector
