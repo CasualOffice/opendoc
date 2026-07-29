@@ -151,6 +151,8 @@ let renderToken = 0;
 let pages = [];
 /** Current selection as model anchors, or null. `focus` trails the pointer. */
 let selection = null; // { anchor: {node, offset}, focus: {node, offset} }
+/** Current table-cell selection overlay, separate from text ranges. */
+let tableSelection = null; // { node, mode: "row" | "column" | "table" }
 let dragging = false;
 /** Primary-pointer gesture retained until pointerup so link activation is
  * suppressed after a drag/Shift extension. */
@@ -281,6 +283,7 @@ async function openBytes(bytes, name) {
     if (doc) doc.free();
     doc = open(bytes);
     selection = null;
+    tableSelection = null;
     currentName = name;
     docTitleEl.textContent = name;
     docTitleEl.hidden = false;
@@ -453,6 +456,7 @@ function drawSelection() {
   if (!doc) return;
   clearOverlays();
   if (selection) {
+    paintTableSelection();
     paintActiveCell(selection.focus); // under the caret/highlight
     paintSelection(selection);
   }
@@ -460,6 +464,12 @@ function drawSelection() {
   updatePageNumber();
   updateRulerMarkers();
   positionSelToolbar();
+}
+
+function paintTableSelection() {
+  if (!tableSelection) return;
+  const rects = doc.tableSelectionRects(tableSelection.node, tableSelection.mode);
+  for (let i = 0; i + 4 < rects.length; i += 5) place(rects.slice(i, i + 5), "table-cell-selection");
 }
 
 /** Outlines the table cell the caret is in (nothing when not in a table), so the
@@ -650,6 +660,7 @@ function onPointerDown(page, event) {
   const anchor = anchorAt(page, event);
   if (!anchor) return;
   pendingFormat = null; // a click moves the caret → disarm typing format
+  tableSelection = null;
   dragging = true;
   pointerGesture = {
     page,
@@ -1760,6 +1771,18 @@ for (const b of tableFmtMenu.querySelectorAll("[data-table-action]")) {
     if (!run) return;
     closePopover(tablePopover);
     runEdit(() => run(selection.focus.node));
+  });
+}
+
+for (const b of tableFmtMenu.querySelectorAll("[data-table-select]")) {
+  onButton(b, () => {
+    if (!selection || !doc) return;
+    const mode = b.dataset.tableSelect;
+    tableSelection = { node: selection.focus.node, mode };
+    drawSelection();
+    closePopover(tablePopover);
+    setStatus(`Selected table ${mode}`);
+    focusEditorSurface();
   });
 }
 

@@ -1582,6 +1582,35 @@ impl WasmDocument {
             .unwrap_or_default()
     }
 
+    /// Cell rectangles for a table selection mode (`"row"`, `"column"`, `"table"`)
+    /// around `node`, flattened as `[page, x, y, w, h, …]`. This deliberately
+    /// reports cell boxes, not text ranges: table column selection is not a
+    /// contiguous document text range.
+    #[wasm_bindgen(js_name = tableSelectionRects)]
+    #[must_use]
+    pub fn table_selection_rects(&self, node: &str, mode: &str) -> Vec<i32> {
+        let Ok(nid) = NodeId::from_str(node) else {
+            return Vec::new();
+        };
+        let Some((table, row, _)) = locate_table_row(&self.document, nid) else {
+            return Vec::new();
+        };
+        let Some((_, col)) = locate_table_cell(&self.document, nid) else {
+            return Vec::new();
+        };
+        let Some(t) = find_table(&self.document, table) else {
+            return Vec::new();
+        };
+        let layout = LayoutSnapshot::new(&self.layout);
+        let mut out = Vec::new();
+        for anchor in table_selection_anchors(t, row as usize, col as usize, mode) {
+            if let Some((page, rect)) = layout.cell_rect(anchor) {
+                out.extend_from_slice(&flat_rect(page, rect));
+            }
+        }
+        out
+    }
+
     /// Sets or clears the background shading fill of the cell containing `node`.
     #[wasm_bindgen(js_name = setCellShading)]
     pub fn set_cell_shading(
@@ -4081,6 +4110,47 @@ fn table_is_regular(table: &Table) -> bool {
     })
 }
 
+fn table_selection_anchors(
+    table: &Table,
+    row_index: usize,
+    col_index: usize,
+    mode: &str,
+) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    match mode {
+        "row" => {
+            if let Some(row) = table.rows.get(row_index) {
+                for cell in &row.cells {
+                    if let Some(anchor) = first_paragraph_of_cell(cell) {
+                        out.push(anchor);
+                    }
+                }
+            }
+        }
+        "column" => {
+            if table_is_regular(table) {
+                for row in &table.rows {
+                    if let Some(anchor) = row.cells.get(col_index).and_then(first_paragraph_of_cell)
+                    {
+                        out.push(anchor);
+                    }
+                }
+            }
+        }
+        "table" => {
+            for row in &table.rows {
+                for cell in &row.cells {
+                    if let Some(anchor) = first_paragraph_of_cell(cell) {
+                        out.push(anchor);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
 /// A single top-level list level: a bullet glyph or a `1.` decimal, indented so the
 /// marker hangs to the left of the body text (Word's default 0.5″ indent with a
 /// 0.25″ hanging marker).
@@ -5391,6 +5461,26 @@ mod tests {
         assert!(!info.table().is_empty());
 
         assert!(!d.table_info(&body_para).found());
+    }
+
+    #[test]
+    fn table_selection_rects_report_cell_ranges() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let body_para = nodes
+            .iter()
+            .find(|(id, _)| !d.in_table(&id.to_string()))
+            .map(|(id, _)| id.to_string())
+            .expect("body paragraph outside tables");
+
+        let res = d.insert_table(&body_para, 2, 3).expect("insert table");
+        let caret = res.node();
+        assert_eq!(d.table_selection_rects(&caret, "row").len(), 3 * 5);
+        assert_eq!(d.table_selection_rects(&caret, "column").len(), 2 * 5);
+        assert_eq!(d.table_selection_rects(&caret, "table").len(), 6 * 5);
+        assert!(d.table_selection_rects(&body_para, "table").is_empty());
+        assert!(d.table_selection_rects(&caret, "unknown").is_empty());
     }
 
     /// Delete a whole table and undo it: the body's table count drops by one, the
