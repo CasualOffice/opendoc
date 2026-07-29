@@ -90,6 +90,7 @@ const redoBtn = document.getElementById("redoBtn");
 const viewOutlineBtn = document.getElementById("viewOutlineBtn");
 const viewZoomOut = document.getElementById("viewZoomOut");
 const viewZoomIn = document.getElementById("viewZoomIn");
+const findBtn = document.getElementById("findBtn");
 const findPanel = document.getElementById("findPanel");
 const findInput = document.getElementById("findInput");
 const replaceInput = document.getElementById("replaceInput");
@@ -98,6 +99,7 @@ const findNextBtn = document.getElementById("findNext");
 const findStatus = document.getElementById("findStatus");
 const findCase = document.getElementById("findCase");
 const replaceOneBtn = document.getElementById("replaceOne");
+const replaceAllBtn = document.getElementById("replaceAll");
 const findCloseBtn = document.getElementById("findClose");
 
 /** Shows the named ribbon tab's panel and marks its tab selected. */
@@ -274,16 +276,28 @@ async function boot() {
     return;
   }
 
-  if (new URLSearchParams(window.location.search).get("demo") === "1") {
-    try {
-      setStatus("Loading the OpenDoc sample…");
-      const response = await fetch("./demo.docx");
-      if (!response.ok) throw new Error(`sample request returned ${response.status}`);
-      await openBytes(new Uint8Array(await response.arrayBuffer()), "opendoc-demo.docx");
-    } catch (err) {
-      console.error(err);
-      setStatus("The sample could not be loaded — you can still open a local DOCX", "error");
-    }
+  const params = new URLSearchParams(window.location.search);
+  // ?demo=1 is the e2e test harness's fixture (real-producer-rich.docx, via
+  // demo.docx) — specs assert on its exact content, so it stays a distinct,
+  // explicit path. ?blank=1 opts out of the default sample for anyone who
+  // wants the empty upload state. Everyone else gets a populated document
+  // instead of a bare drop-zone on first visit.
+  if (params.get("demo") === "1") {
+    await loadStartupDocument("./demo.docx", "opendoc-demo.docx");
+  } else if (params.get("blank") !== "1") {
+    await loadStartupDocument("./sample.docx", "sample.docx");
+  }
+}
+
+async function loadStartupDocument(url, name) {
+  try {
+    setStatus("Loading the sample document…");
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`sample request returned ${response.status}`);
+    await openBytes(new Uint8Array(await response.arrayBuffer()), name);
+  } catch (err) {
+    console.error(err);
+    setStatus("The sample could not be loaded — you can still open a local DOCX", "error");
   }
 }
 
@@ -305,6 +319,7 @@ async function openBytes(bytes, name) {
     railOutline.disabled = false;
     populateStyles();
     dropEl.hidden = true;
+    document.body.classList.add("doc-loaded");
     const fontWarnings = await provisionFonts(name);
     await renderAll();
     if (fontWarnings.length > 0) {
@@ -1632,6 +1647,7 @@ function updateToolbar() {
   // Ribbon: undo/redo/view controls need a document; the Table tab is contextual.
   undoBtn.disabled = !doc;
   redoBtn.disabled = !doc;
+  findBtn.disabled = !doc;
   viewOutlineBtn.disabled = !doc;
   viewOutlineBtn.setAttribute("aria-pressed", String(!outlinePanel.hidden));
   viewZoomOut.disabled = !doc;
@@ -2301,9 +2317,76 @@ document.addEventListener("keydown", (e) => {
 });
 
 // ---- Find / replace ---------------------------------------------------------
+const FIND_SCAN_CAP = 5000;
+
 function setFindStatus(text, miss = false) {
   findStatus.textContent = text;
   findStatus.classList.toggle("miss", miss);
+}
+
+/** Scans every match in document order, starting from the top, up to
+ * FIND_SCAN_CAP — bounded like every other pagination/parse loop in this
+ * codebase, since findText wraps around and would otherwise loop forever.
+ * Once every match has been visited once, the engine's wrap fallback can
+ * re-surface *any* earlier match (not necessarily the first one), so
+ * termination checks membership in every key seen so far, not just the
+ * first — comparing only to the first match's key under-counts (it can
+ * oscillate between two later matches forever without ever revisiting the
+ * exact first one). */
+function scanAllMatches(query, matchCase) {
+  const matches = [];
+  if (!doc || !query) return matches;
+  const first = doc.firstPosition();
+  let node = first.node;
+  let offset = first.offset;
+  first.free();
+  const seen = new Set();
+  for (let i = 0; i < FIND_SCAN_CAP; i++) {
+    const match = doc.findText(query, node, offset, true, matchCase);
+    if (!match.found) {
+      match.free();
+      break;
+    }
+    const key = `${match.startNode}:${match.startOffset}`;
+    if (seen.has(key)) {
+      match.free();
+      break;
+    }
+    seen.add(key);
+    matches.push({
+      startNode: match.startNode,
+      startOffset: match.startOffset,
+      endNode: match.endNode,
+      endOffset: match.endOffset,
+    });
+    node = match.endNode;
+    offset = match.endOffset;
+    match.free();
+  }
+  return matches;
+}
+
+function updateFindStatus() {
+  const query = findInput.value;
+  if (!query) {
+    setFindStatus("");
+    return;
+  }
+  const matches = scanAllMatches(query, findCase.checked);
+  if (!matches.length) {
+    setFindStatus("No match", true);
+    return;
+  }
+  if (matches.length === 1) {
+    setFindStatus("1 match");
+    return;
+  }
+  const idx = selection
+    ? matches.findIndex(
+        (m) => m.startNode === selection.anchor.node && m.startOffset === selection.anchor.offset,
+      )
+    : -1;
+  setFindStatus(idx >= 0 ? `${idx + 1} of ${matches.length}` : `${matches.length} matches`);
 }
 
 function selectedPlainText() {
@@ -2337,7 +2420,7 @@ function selectTextMatch(match) {
   drawSelection();
   focusEditorSurface();
   scrollCaretIntoView();
-  setFindStatus("1 match");
+  updateFindStatus();
   return true;
 }
 
@@ -2372,12 +2455,44 @@ async function replaceCurrentMatch() {
   findFromSelection(true);
 }
 
+/** Replaces every match in document order. Each iteration re-finds from just
+ * past the previous replacement (not from the top), so a replacement text
+ * that itself contains the query (e.g. "cat" -> "cats") can never re-match
+ * what was just inserted and loop forever; FIND_SCAN_CAP is a bounded
+ * backstop regardless. */
+async function replaceAllMatches() {
+  if (!doc || !findInput.value) return;
+  const query = findInput.value;
+  const replacement = replaceInput.value;
+  const matchCase = findCase.checked;
+  const replacementBytes = new TextEncoder().encode(replacement).length;
+  const first = doc.firstPosition();
+  let node = first.node;
+  let offset = first.offset;
+  first.free();
+  let count = 0;
+  for (let i = 0; i < FIND_SCAN_CAP; i++) {
+    const match = doc.findText(query, node, offset, true, matchCase);
+    if (!match.found) {
+      match.free();
+      break;
+    }
+    const { startNode, startOffset, endNode, endOffset } = match;
+    match.free();
+    await runEdit(() => doc.replaceSelection(startNode, startOffset, endNode, endOffset, replacement));
+    count++;
+    node = startNode;
+    offset = startOffset + replacementBytes;
+  }
+  setFindStatus(count ? `Replaced ${count}` : "No match", count === 0);
+}
+
 function openFind() {
   if (!doc) return;
   findPanel.hidden = false;
   const selected = selectedPlainText();
   if (selected && !selected.includes("\n") && selected.length <= 80) findInput.value = selected;
-  setFindStatus("");
+  updateFindStatus();
   findInput.focus();
   findInput.select();
 }
@@ -2413,7 +2528,9 @@ findCase.addEventListener("change", () => findFromSelection(true));
 findPrevBtn.addEventListener("click", () => findFromSelection(false));
 findNextBtn.addEventListener("click", () => findFromSelection(true));
 replaceOneBtn.addEventListener("click", replaceCurrentMatch);
+replaceAllBtn.addEventListener("click", replaceAllMatches);
 findCloseBtn.addEventListener("click", closeFind);
+findBtn.addEventListener("click", () => openFind());
 document.addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
     e.preventDefault();

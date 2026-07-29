@@ -676,14 +676,14 @@ input {
   top: 84px;
   right: 18px;
   z-index: 55;
-  display: grid;
-  grid-template-columns: minmax(150px, 220px) 30px 30px auto auto minmax(150px, 220px) auto 30px;
-  align-items: center;
-  gap: 6px;
-  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 360px;
+  padding: 10px;
   background: var(--surface);
   border: 1px solid var(--line-strong);
-  border-radius: 8px;
+  border-radius: var(--radius);
   box-shadow: 0 12px 36px rgba(20, 22, 28, 0.22);
 }
 
@@ -691,11 +691,23 @@ input {
   display: none;
 }
 
+.find-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.find-replace-row {
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
 .find-panel input[type="text"] {
-  height: 30px;
+  flex: 1;
   min-width: 0;
+  height: 30px;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--ink);
   padding: 0 8px;
@@ -709,30 +721,75 @@ input {
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
+.find-panel .btn.icon-only {
+  flex: none;
+  height: 30px;
+}
+
 .find-status {
-  min-width: 62px;
+  flex: none;
+  min-width: 64px;
   color: var(--muted);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   text-align: center;
+  white-space: nowrap;
 }
 
 .find-status.miss {
-  color: var(--danger);
+  color: var(--error);
+}
+
+.find-sep {
+  flex: none;
+  width: 1px;
+  height: 20px;
+  background: var(--line-strong);
 }
 
 .find-case {
+  flex: none;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 4px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
   color: var(--muted);
   font-size: 12px;
+  font-weight: 600;
   white-space: nowrap;
+  cursor: pointer;
+}
+
+.find-case:has(input:checked) {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 .find-case input {
   width: 14px;
   height: 14px;
+}
+
+.find-replace-row .chip-btn {
+  flex: none;
+}
+
+.chip-btn-primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}
+
+.chip-btn-primary:hover {
+  filter: brightness(1.05);
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
 }
 
 /* ---- Floating selection toolbar -------------------------------------------- */
@@ -1570,7 +1627,23 @@ input {
   }
 }
 
-/* ---- Empty / drop state ---------------------------------------------------- */
+/* ---- Empty / drop state ----------------------------------------------------
+ * Before a document is open, the ribbon/toolbar, nav rail, and footer status
+ * bar have nothing to act on — showing them disabled around a small drop
+ * card read as a broken app shell. `body:not(.doc-loaded)` hides that chrome
+ * entirely; only the minimal top bar (brand + Open + Settings) remains, and
+ * the drop card becomes the whole page. `openBytes` adds `.doc-loaded` to
+ * `<body>` once a document is open, which reveals the chrome again. */
+body:not(.doc-loaded) .ribbon,
+body:not(.doc-loaded) .rail,
+body:not(.doc-loaded) .footer {
+  display: none;
+}
+
+body:not(.doc-loaded) .drop {
+  min-height: calc(100vh - 44px);
+}
+
 .drop {
   display: grid;
   place-items: center;
@@ -1587,6 +1660,11 @@ input {
   padding: 40px 32px;
 }
 
+body:not(.doc-loaded) .drop-card {
+  max-width: 480px;
+  padding: 56px 40px;
+}
+
 .drop-icon {
   width: 44px;
   height: 44px;
@@ -1594,10 +1672,19 @@ input {
   margin-bottom: 8px;
 }
 
+body:not(.doc-loaded) .drop-icon {
+  width: 56px;
+  height: 56px;
+}
+
 .drop-title {
   font-size: 17px;
   font-weight: 600;
   margin: 4px 0 6px;
+}
+
+body:not(.doc-loaded) .drop-title {
+  font-size: 20px;
 }
 
 .muted {
