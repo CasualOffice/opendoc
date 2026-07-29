@@ -1,0 +1,63 @@
+# Editor UX Gap Analysis
+
+Status: Draft for Phase 1G shell/editor planning  
+Date: 2026-07-29  
+Scope: web editor shell, canvas editing, selection, command discoverability, and Word-like editing behavior. Table-editing implementation is tracked separately in `P1G-TABLE-COMPLETE-001`.
+
+## Reference Baseline
+
+The target is a serious document editor, closer to Word desktop / Microsoft 365 than to a lightweight text box. Microsoft’s current public Word guidance confirms the baseline behaviors we should match where the OpenDoc model supports them: table selection and resizing, table properties, header rows, AutoFit/fixed-width behavior, borders/shading, and row/column/cell operations. Google Docs remains a useful interaction baseline for browser expectations: lightweight contextual toolbars, low-latency selection, non-blocking menus, and predictable keyboard handling.
+
+Reference pages:
+
+- Microsoft Support, "Resize a table, column, or row"
+- Microsoft Support, "Set or change table properties"
+- Microsoft Learn notes that non-uniform Word tables require selection APIs for rows/columns, which matches our decision to avoid pretending merged tables are regular grids.
+
+## Priority Rules
+
+P0 means an editing session can feel broken, unsafe, or lossy. P1 means a common Word/Docs workflow is missing or too slow for daily use. P2 means important parity, but not a blocker for basic document editing. P3 means polish, depth, or long-tail power behavior.
+
+## Gap Table
+
+| Area | Priority | Current state | Expected Word/Docs-class behavior | Required work | Verification gate |
+| --- | --- | --- | --- | --- | --- |
+| Focus ownership and stale gestures | P0 | Recent fixes reset pointer-cancel/lost-capture and keep the page surface focusable. | Canvas never "freezes" the caret after canceled drags, toolbar clicks, modal/chip interactions, or page-gap movement. | Add a permanent Playwright smoke suite for pointercancel, blur, hidden-tab, toolbar click-return, and canvas click/type. | Browser smoke in CI with no console errors and caret visible after each recovery path. |
+| Edit hot loop | P0 | Chrome refresh is coalesced; color/shading controls commit on `change`; table column drag previews locally and commits once. | Typing, color picking, shading, table drag, and toolbar formatting stay responsive without repeated full stats/outline/reflow work. | Add frame-budget instrumentation around typing, shading, and table drag; fail on repeated sync chrome refresh in hot paths. | Perf smoke with max edit latency and repaint count thresholds. |
+| Undo/redo user model | P0 | Core undo stack exists; UI buttons exist; many formatting operations preserve selection. | Every visible command is undoable as one user action; drag preview produces one undo entry; command names should be explainable. | Add command metadata for undo labels and group IME/composition/paste sequences into expected transactions. | Unit tests for transaction count plus browser smoke for undo after drag, paste, shading, merge/split. |
+| Native clipboard fidelity | P0 | Plain-text native event fallback exists. | Copy/cut/paste preserves rich runs, paragraphs, lists, tables, links, and HTML where safe; plain text remains fallback. | Add internal rich clipboard payload and sanitized HTML import/export bridge. | Browser clipboard-event tests for formatted text, table cells, links, lists, and plain fallback. |
+| IME live preedit | P0 | Final composition commit exists; live preedit is not painted. | CJK/Indic IME shows active composition text/caret and does not commit intermediate keystrokes. | Add host preedit overlay tied to caret rect and compositionupdate. | Browser composition smoke for interim display, cancel, commit, undo. |
+| Cross-structure delete/selection | P0 | Same-paragraph and some range edits exist; broad structural delete is incomplete. | Delete/backspace across paragraphs, tables, lists, links, fields, and sections follows Word-like safe structural rules with no silent data loss. | Define structural deletion policy and implement transactional range delete across block boundaries. | Corpus unit tests for paragraph join, table boundary, list join, hyperlink partial selection, protected unsupported nodes. |
+| Selection ergonomics | P1 | Drag selection, page gaps, word/paragraph select, table range overlays exist. | Shift-click, drag, double/triple click, keyboard selection, table handles, and scroll extension behave predictably. | Add keyboard selection expansion by word/paragraph/document; add visible page-edge auto-scroll feedback; add table row/column gutter affordances. | Browser smokes for keyboard selection and multi-page drag. |
+| Command discoverability | P1 | Ribbon, contextual popovers, command palette, right-click table menu exist. | Word-like commands are discoverable via ribbon, context menu, keyboard shortcuts, command search, and selection toolbar. | Fill command palette with all editor commands and expose disabled reasons for unavailable commands. | Snapshot test of command registry and browser smoke for invoking command palette actions. |
+| Keyboard shortcuts | P1 | Basic formatting and find shortcuts exist; table Tab handling exists. | Common Word shortcuts work: save/export, undo/redo, bold/italic/underline, find/replace, select all, copy/cut/paste, links, headings, lists, indent, page break, non-breaking space, table navigation. | Centralize shortcut registry with platform-specific labels and conflict handling. | Unit test registry plus browser shortcut smoke. |
+| Paragraph formatting parity | P1 | Alignment, spacing, indent, tabs, shading, borders, keep flags exist. | Ruler and dialogs cover left/right/hanging/first indent, tabs, spacing, borders/shading, page break controls with reflectable state. | Add richer tab leader UI, style-linked defaults display, and reset-to-style controls. | WASM reflection tests and browser menu state tests. |
+| Lists and numbering UX | P1 | Toggle list basics exist. | Bullets/numbering/multilevel lists expose gallery, indent levels, restart/continue, and style-aware numbering. | Build list gallery and level controls on top of numbering definitions. | DOCX round-trip tests and browser list workflow smoke. |
+| Styles UX | P1 | Font family/paragraph style primitives exist. | Style gallery, apply style, update style from selection, clear formatting, and style preview. | Add style catalog reflection and command surface; defer style editing if model support is incomplete. | Style apply/undo/export/reopen tests. |
+| Page/layout controls | P1 | Rendering honors sections; editor shell exposes limited layout controls. | Margins, orientation, page size, columns, breaks, headers/footers entry points are discoverable and transactional. | Add layout property command set and shell controls after section edit policy is locked. | Section property round-trip and pagination regression tests. |
+| Link/bookmark UX | P1 | Link authoring/activation and TOC navigation exist. | Insert/edit/remove links, bookmarks, cross references, and safe activation are discoverable without selection loss. | Add bookmark manager and edit-link affordance in link chip. | Browser tests for edit/remove/bookmark jump. |
+| Comments/revisions | P1 | Not a current editor workflow. | Word-like review workflows: comments, tracked changes display, accept/reject, author metadata policy owned by host. | Design review data model and host policy first; do not fake tracked-changes support. | Dedicated ADR/design doc before implementation. |
+| Find/replace depth | P1 | Text find/replace panel exists. | Replace all, formatting-aware search, whole word, wildcards/basic regex, selection-only scope. | Extend search query options and transaction grouping. | Unit tests over body/table/header/footer scopes. |
+| Tables | P1 | Dedicated table PR now covers context, selection overlays, merge/split, sizing, properties, header rows, margins/spacing. | Word-like table operations: select row/column/table, insert/delete, merge/split, resize, AutoFit/fixed, header row, borders/shading, margins/spacing. | Remaining long-tail after table PR: distribute rows/columns, split-cell dialog with arbitrary counts, table style gallery, sort, formulas, caption/alt text UI. | Table PR gates plus future long-tail issue list. |
+| Floating/contextual toolbar | P2 | Selection toolbar exists for basic formatting. | Toolbar appears near selection, stays bounded, avoids covering caret/content, and exposes high-frequency actions. | Add collision-aware placement and command registry integration. | Browser screenshots at desktop/mobile and edge selections. |
+| Accessibility | P2 | Canvas shell has limited ARIA affordance. | Keyboard users can reach commands; screen readers get document structure/status even though source of truth is model, not DOM. | Add accessible command surface, status announcements, and model-derived outline/navigation semantics. | Axe/static checks plus manual keyboard smoke. |
+| Mobile/tablet editing | P2 | Desktop-first. | Touch selection handles, keyboard-safe viewport, touch table handles, toolbar compaction. | Separate touch interaction design and viewport tests. | Mobile Playwright screenshots and touch event smokes. |
+| Collaboration/editor presence | P2 | Runtime is host-owned; no mandatory provider. | If enabled by host, remote cursors/selections and conflict-safe commands sit above transactions. | Design host extension seam; keep runtime provider-neutral. | Contract tests with fake host provider. |
+| Error/reporting UX | P2 | Some unsupported edits are ignored with console warnings. | Unsupported commands show bounded user-facing reasons and never silently do nothing. | Add structured edit errors and disabled-command explanations. | Unit tests for error codes; browser smoke for disabled reason. |
+| Performance observability | P2 | Manual browser smokes catch regressions. | Editor exposes debug/perf counters for repaint, pagination, command time, and cache hits. | Add internal telemetry hooks owned by host; no network dependency. | Perf snapshots in CI artifacts. |
+
+## Execution Plan
+
+1. Table PR: finish and review `fix/complete-table-editing-ux`. This keeps table work isolated from shell planning and gives reviewers a single table surface to test.
+2. Shell UX analysis PR: land this document plus tracker entry. It is the authoritative gap table for the next phase.
+3. Shell UX implementation PR 1: CI-backed browser smoke suite for focus, pointer cancellation, toolbar focus return, and color/shading latency. This prevents regressions in the bugs already reported.
+4. Shell UX implementation PR 2: rich clipboard + IME live preedit, because these are P0 daily editing blockers for Word-like behavior.
+5. Shell UX implementation PR 3: structural delete/selection and keyboard shortcut registry.
+6. Shell UX implementation PR 4: command discoverability: registry-backed command palette, disabled reasons, and context menus.
+
+## Open Risks
+
+- Word parity is large. The project should define "Word-like" as high-confidence behavior for common editing paths, not every long-tail Word feature in one phase.
+- Non-uniform tables must remain conservative. Some row/column operations are invalid unless the selection maps to a real rectangular grid.
+- Browser clipboard and IME behavior varies by OS/browser; the CI smoke suite must include synthetic event coverage and at least one real-browser local/manual checklist.
+- The runtime must keep the model as source of truth. Accessibility and rich clipboard bridges cannot become hidden DOM editors.
