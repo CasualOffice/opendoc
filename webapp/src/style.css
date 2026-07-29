@@ -191,13 +191,33 @@ input {
 }
 
 .doc-title {
+  font: inherit;
   font-size: 13px;
   font-weight: 550;
   color: var(--ink);
-  max-width: 42vw;
+  width: 42vw;
+  max-width: 320px;
+  padding: 3px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: text;
+}
+
+.doc-title:hover {
+  background: var(--bg-2);
+}
+
+.doc-title:focus {
+  outline: none;
+  cursor: text;
+  background: var(--surface);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+  text-overflow: clip;
 }
 
 .brand .divider[hidden],
@@ -305,6 +325,50 @@ input {
   margin-top: 4px;
   padding-top: 10px;
   border-top: 1px solid var(--line);
+}
+
+/* ---- Document properties popover -------------------------------------------- */
+.properties-panel {
+  width: 320px;
+}
+
+.prop-field {
+  display: block;
+  margin-bottom: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--faint);
+}
+
+.prop-field:last-child {
+  margin-bottom: 0;
+}
+
+.prop-field input[type="text"],
+.prop-field textarea {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: normal;
+  resize: vertical;
+}
+
+.prop-field input[type="text"]:focus,
+.prop-field textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 .oss {

@@ -19,9 +19,10 @@
 
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
-    BlockNode, Color, Document, FontName, FontRef, GridColumn, HighlightColor, Hyperlink,
-    HyperlinkTarget, InlineNode, Paragraph, ParagraphProperties, RgbColor, Run, RunProperties,
-    Table, TableCell, TableCellProperties, TableProperties, TableRow, VerticalAlignment,
+    BlockNode, Color, CoreProperties, Document, FontName, FontRef, GridColumn, HighlightColor,
+    Hyperlink, HyperlinkTarget, InlineNode, PageMargins, PageOrientation, PageSize, Paragraph,
+    ParagraphProperties, RgbColor, Run, RunProperties, SectionId, Table, TableCell,
+    TableCellProperties, TableProperties, TableRow, VerticalAlignment,
 };
 
 /// A run-property change to apply over a range: each `Some(_)` field sets that
@@ -273,6 +274,30 @@ pub enum Operation {
         /// The replacement table. Its id must match `table`.
         replacement: Box<Table>,
     },
+    /// Replace the document's core properties (`docProps/core.xml` — title,
+    /// author, subject, …). Document-global, not node-scoped. Its own inverse
+    /// (carrying the previous properties); rejected (doc left unchanged) if a
+    /// field would exceed the model's bounded length.
+    SetCoreProperties {
+        /// The properties to install.
+        properties: Box<CoreProperties>,
+    },
+    /// Replace one section's page size, margins, and orientation (the "Page
+    /// Setup" fields) — column layout, headers/footers, borders, and the
+    /// section's other properties are untouched. Its own inverse; rejected
+    /// (doc left unchanged) if a value falls outside the model's domain
+    /// (e.g. a page dimension over ~22in).
+    SetSectionGeometry {
+        /// The section to update.
+        section: SectionId,
+        /// The page size to install.
+        page_size: PageSize,
+        /// The page margins to install.
+        page_margins: PageMargins,
+        /// The orientation to install (`None` clears it — the model then
+        /// infers portrait/landscape from the page size on export).
+        orientation: Option<PageOrientation>,
+    },
 }
 
 /// Why an edit could not be applied. No partial mutation ever occurs: an op
@@ -294,6 +319,8 @@ pub enum EditError {
     Unsupported,
     /// The node-id space is exhausted.
     IdExhausted,
+    /// A field exceeds the model's bounded length (e.g. a metadata property).
+    ValueTooLarge,
 }
 
 /// Applies `op` to `doc`, returning the inverse operation (for undo). `ids` mints
@@ -650,6 +677,51 @@ pub fn apply(
             Ok(Operation::ReplaceTable {
                 table: *table,
                 replacement: Box::new(previous),
+            })
+        }
+        Operation::SetCoreProperties { properties } => {
+            let slot = doc.properties_mut();
+            let previous = std::mem::replace(&mut slot.core, (**properties).clone());
+            if let Err(_err) = doc.validate() {
+                // Roll back: no partial mutation ever survives an error.
+                doc.properties_mut().core = previous;
+                return Err(EditError::ValueTooLarge);
+            }
+            Ok(Operation::SetCoreProperties {
+                properties: Box::new(previous),
+            })
+        }
+        Operation::SetSectionGeometry {
+            section,
+            page_size,
+            page_margins,
+            orientation,
+        } => {
+            let s = doc
+                .definitions_mut()
+                .sections
+                .iter_mut()
+                .find(|s| s.id == *section)
+                .ok_or(EditError::NodeNotFound)?;
+            let previous = (s.page_size, s.page_margins, s.orientation);
+            s.page_size = *page_size;
+            s.page_margins = *page_margins;
+            s.orientation = *orientation;
+            if doc.validate().is_err() {
+                let s = doc
+                    .definitions_mut()
+                    .sections
+                    .iter_mut()
+                    .find(|s| s.id == *section)
+                    .expect("the section we just found still exists");
+                (s.page_size, s.page_margins, s.orientation) = previous;
+                return Err(EditError::ValueTooLarge);
+            }
+            Ok(Operation::SetSectionGeometry {
+                section: *section,
+                page_size: previous.0,
+                page_margins: previous.1,
+                orientation: previous.2,
             })
         }
     }
@@ -1716,7 +1788,10 @@ fn find_paragraph_mut(blocks: &mut [BlockNode], id: NodeId) -> Option<&mut Parag
 mod tests {
     use super::*;
     use casual_doc_model::IdGenerator;
-    use casual_doc_model::v1::{Definitions, ParagraphProperties};
+    use casual_doc_model::v1::{
+        Definitions, DocGrid, LineNumbering, NoteProperties, PageBorders, PageNumbering,
+        PaperSource, ParagraphProperties, SectionBoundary, SectionColumns,
+    };
 
     fn n(counter: u64) -> NodeId {
         NodeId::from_parts(7, counter).unwrap()
@@ -2333,5 +2408,185 @@ mod tests {
             casual_doc_model::v1::Definitions::default(),
         )
         .expect("document stays valid after the delete");
+    }
+
+    #[test]
+    fn set_core_properties_applies_and_inverse_restores() {
+        let mut d = doc(vec![para(2, vec![run(3, "text")])]);
+        let mut ids = IdGenerator::new(9);
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetCoreProperties {
+                properties: Box::new(CoreProperties {
+                    title: Some("Quarterly Report".to_string()),
+                    creator: Some("Ada Lovelace".to_string()),
+                    ..CoreProperties::default()
+                }),
+            },
+        )
+        .expect("core properties install");
+        assert_eq!(
+            d.properties().unwrap().core.title.as_deref(),
+            Some("Quarterly Report")
+        );
+
+        // Inverse restores the empty starting state.
+        apply(&mut d, &mut ids, &inverse).expect("undo restores previous properties");
+        assert!(d.properties().is_none_or(|p| p.core.is_empty()));
+    }
+
+    #[test]
+    fn set_core_properties_rejects_an_oversized_field_and_leaves_doc_unchanged() {
+        let mut d = doc(vec![para(2, vec![run(3, "text")])]);
+        let mut ids = IdGenerator::new(9);
+        let huge = "x".repeat(5_000); // over MAX_META_TEXT (4096)
+
+        let err = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetCoreProperties {
+                properties: Box::new(CoreProperties {
+                    title: Some(huge),
+                    ..CoreProperties::default()
+                }),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, EditError::ValueTooLarge);
+        // No partial mutation survives an error.
+        assert!(d.properties().is_none_or(|p| p.core.is_empty()));
+    }
+
+    fn section(id: u64) -> SectionBoundary {
+        SectionBoundary {
+            id: SectionId::new(n(id)),
+            page_size: PageSize {
+                width_twips: 12_240,
+                height_twips: 15_840,
+            },
+            page_margins: PageMargins {
+                top_twips: 1_440,
+                bottom_twips: 1_440,
+                start_twips: 1_440,
+                end_twips: 1_440,
+                header_twips: None,
+                footer_twips: None,
+            },
+            columns: SectionColumns {
+                count: 1,
+                space_twips: None,
+                separator: None,
+                equal_width: None,
+                columns: Vec::new(),
+            },
+            headers: Vec::new(),
+            footers: Vec::new(),
+            section_type: None,
+            title_page: None,
+            vertical_alignment: None,
+            page_numbering: PageNumbering::default(),
+            doc_grid: DocGrid::default(),
+            orientation: None,
+            paper_source: PaperSource::default(),
+            page_borders: PageBorders::default(),
+            line_numbering: LineNumbering::default(),
+            footnote_props: NoteProperties::default(),
+            endnote_props: NoteProperties::default(),
+            text_direction: None,
+            bidi: false,
+        }
+    }
+
+    fn doc_with_section(paragraphs: Vec<BlockNode>, section_id: u64) -> Document {
+        let mut definitions = Definitions::default();
+        definitions.sections.push(section(section_id));
+        Document::new(n(1000), paragraphs, definitions).expect("valid document")
+    }
+
+    #[test]
+    fn set_section_geometry_applies_and_inverse_restores() {
+        let mut d = doc_with_section(vec![para(2, vec![run(3, "text")])], 500);
+        let mut ids = IdGenerator::new(9);
+        let sid = SectionId::new(n(500));
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetSectionGeometry {
+                section: sid,
+                page_size: PageSize {
+                    width_twips: 15_840,
+                    height_twips: 12_240,
+                },
+                page_margins: PageMargins {
+                    top_twips: 720,
+                    bottom_twips: 720,
+                    start_twips: 720,
+                    end_twips: 720,
+                    header_twips: None,
+                    footer_twips: None,
+                },
+                orientation: Some(PageOrientation::Landscape),
+            },
+        )
+        .expect("section geometry install");
+
+        let installed = &d.definitions().sections[0];
+        assert_eq!(installed.page_size.width_twips, 15_840);
+        assert_eq!(installed.page_margins.top_twips, 720);
+        assert_eq!(installed.orientation, Some(PageOrientation::Landscape));
+
+        apply(&mut d, &mut ids, &inverse).expect("undo restores previous geometry");
+        let restored = &d.definitions().sections[0];
+        assert_eq!(restored.page_size.width_twips, 12_240);
+        assert_eq!(restored.page_margins.top_twips, 1_440);
+        assert_eq!(restored.orientation, None);
+    }
+
+    #[test]
+    fn set_section_geometry_rejects_an_oversized_page_and_leaves_doc_unchanged() {
+        let mut d = doc_with_section(vec![para(2, vec![run(3, "text")])], 500);
+        let mut ids = IdGenerator::new(9);
+        let sid = SectionId::new(n(500));
+
+        let original_margins = d.definitions().sections[0].page_margins;
+        let err = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetSectionGeometry {
+                section: sid,
+                page_size: PageSize {
+                    width_twips: 999_999, // over the ~22in (31_680 twip) domain bound
+                    height_twips: 15_840,
+                },
+                page_margins: original_margins,
+                orientation: None,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, EditError::ValueTooLarge);
+        assert_eq!(d.definitions().sections[0].page_size.width_twips, 12_240);
+    }
+
+    #[test]
+    fn set_section_geometry_rejects_an_unknown_section() {
+        let mut d = doc_with_section(vec![para(2, vec![run(3, "text")])], 500);
+        let mut ids = IdGenerator::new(9);
+        let original = d.definitions().sections[0].clone();
+
+        let err = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetSectionGeometry {
+                section: SectionId::new(n(999)),
+                page_size: original.page_size,
+                page_margins: original.page_margins,
+                orientation: None,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, EditError::NodeNotFound);
     }
 }

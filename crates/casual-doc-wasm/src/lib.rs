@@ -39,8 +39,9 @@ use casual_doc_model::v1::{
     CellMargins, CellVerticalAlignment, Color, Document, ExternalTarget, FontName, FontRef,
     HeightRule, HighlightColor, Hyperlink, HyperlinkTarget, Indentation, InlineNode,
     InternalTarget, LevelJustification, LevelSuffix, NumberFormat, NumberingInstance,
-    NumberingInstanceId, NumberingLevel, NumberingRef, Paragraph, ParagraphProperties, RgbColor,
-    RowHeight, Run, StyleId, StyleKind, TabAlignment, TabStop, Table, TableBorders, TableCell,
+    NumberingInstanceId, NumberingLevel, NumberingRef, PageMargins, PageOrientation,
+    PageSize as SectionPageSize, Paragraph, ParagraphProperties, RgbColor, RowHeight, Run,
+    SectionId, StyleId, StyleKind, TabAlignment, TabStop, Table, TableBorders, TableCell,
     TableCellProperties, TableLayout, TableProperties, TableRow, VerticalAlignment, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
@@ -2278,6 +2279,48 @@ impl WasmDocument {
         }
     }
 
+    /// The first section's full page-setup geometry (page size, margins, and
+    /// orientation) as a JSON object — the "Page Setup" dialog's read side.
+    /// `null` if the document has no section (should not occur for an
+    /// imported DOCX, which always carries at least one).
+    #[wasm_bindgen(js_name = pageSetup)]
+    #[must_use]
+    pub fn page_setup(&self) -> String {
+        let Some(section) = self.document.definitions().sections.first() else {
+            return "null".to_string();
+        };
+        let payload = PageSetupJson {
+            section: section.id.node_id().to_string(),
+            page_size: section.page_size,
+            page_margins: section.page_margins,
+            orientation: section.orientation,
+        };
+        serde_json::to_string(&payload).unwrap_or_else(|_| "null".to_string())
+    }
+
+    /// Installs a new page-setup geometry from a JSON object in the shape
+    /// [`page_setup`](Self::page_setup) returns — the dialog's write side. One
+    /// undoable action.
+    #[wasm_bindgen(js_name = setPageSetup)]
+    pub fn set_page_setup(&mut self, page_setup_json: &str) -> Result<EditResult, JsValue> {
+        let payload: PageSetupJson = serde_json::from_str(page_setup_json)
+            .map_err(|e| to_js(format!("invalid page setup payload: {e}")))?;
+        let section = NodeId::from_str(&payload.section)
+            .map(SectionId::new)
+            .map_err(|_| to_js("invalid section id".to_string()))?;
+        let caret = Pos::new(self.document.id(), 0);
+        self.apply_action_caret(
+            vec![Operation::SetSectionGeometry {
+                section,
+                page_size: payload.page_size,
+                page_margins: payload.page_margins,
+                orientation: payload.orientation,
+            }],
+            caret,
+        )
+        .map_err(to_js)
+    }
+
     /// The paragraph's indentation (left/right/first-line/hanging, in twips; 0 when
     /// unset) — for positioning the ruler's indent markers.
     #[wasm_bindgen(js_name = paragraphIndent)]
@@ -2341,6 +2384,42 @@ impl WasmDocument {
             paragraphs: nodes.len() as u32,
             pages: self.layout.page_count() as u32,
         }
+    }
+
+    /// The document's core properties (`docProps/core.xml` — title, author,
+    /// subject, …) as a JSON object matching the model's own camelCase field
+    /// names (e.g. `{"title":"...","creator":"...","lastModifiedBy":null,...}`).
+    /// A field is `null` when unset. Empty (`{}`) when the document carries no
+    /// core properties at all.
+    #[wasm_bindgen(js_name = documentProperties)]
+    #[must_use]
+    pub fn document_properties(&self) -> String {
+        let core = self
+            .document
+            .properties()
+            .map(|p| p.core.clone())
+            .unwrap_or_default();
+        serde_json::to_string(&core).unwrap_or_else(|_| "{}".to_string())
+    }
+
+    /// Replaces the document's core properties from a JSON object in the same
+    /// shape [`document_properties`](Self::document_properties) returns — an
+    /// absent/`null` field clears that property. One undoable action.
+    #[wasm_bindgen(js_name = setDocumentProperties)]
+    pub fn set_document_properties(
+        &mut self,
+        properties_json: &str,
+    ) -> Result<EditResult, JsValue> {
+        let core: casual_doc_model::v1::CoreProperties = serde_json::from_str(properties_json)
+            .map_err(|e| to_js(format!("invalid document properties payload: {e}")))?;
+        let caret = Pos::new(self.document.id(), 0);
+        self.apply_action_caret(
+            vec![Operation::SetCoreProperties {
+                properties: Box::new(core),
+            }],
+            caret,
+        )
+        .map_err(to_js)
     }
 
     /// Sets the paragraph background shading (`w:shd` fill) over the selection to
@@ -3034,7 +3113,7 @@ impl WasmDocument {
         for op in &ops {
             let inverse = apply_edit(&mut self.document, &mut self.edit_ids, op)
                 .map_err(|e| format!("{e:?}"))?;
-            caret = caret_after(op, &inverse);
+            caret = caret_after(op, &inverse, self.document.id());
             inverses.push(inverse);
         }
         // To undo, apply the inverses in reverse order of the forward ops.
@@ -3795,6 +3874,19 @@ impl WasmDocument {
 /// bridge payload, not a new engine type — so `copyRichRuns` and
 /// `pasteRichRuns` share exactly this shape with no separate wasm-bindgen
 /// struct to keep in sync. Field names match [`FormatDelta`]'s vocabulary.
+/// The "Page Setup" dialog's bridge payload — crosses the JS boundary as
+/// JSON, mirrors [`page_setup`](WasmDocument::page_setup)/
+/// [`set_page_setup`](WasmDocument::set_page_setup). `section` is the
+/// section's `NodeId` as a hex string, opaque to JS, passed back unchanged.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PageSetupJson {
+    section: String,
+    page_size: SectionPageSize,
+    page_margins: PageMargins,
+    orientation: Option<PageOrientation>,
+}
+
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 struct ClipboardRun {
@@ -5237,7 +5329,7 @@ fn list_level(numbered: bool) -> NumberingLevel {
     }
 }
 
-fn caret_after(op: &Operation, inverse: &Operation) -> Pos {
+fn caret_after(op: &Operation, inverse: &Operation, doc_id: NodeId) -> Pos {
     match op {
         Operation::InsertText { at, text } => Pos::new(at.node, at.offset + text.len() as u32),
         Operation::DeleteText { range } => range.start,
@@ -5275,6 +5367,13 @@ fn caret_after(op: &Operation, inverse: &Operation) -> Pos {
         Operation::SetTableCellProperties { cell, .. } => Pos::new(*cell, 0),
         Operation::SetTableProperties { table, .. } => Pos::new(*table, 0),
         Operation::ReplaceTable { table, .. } => Pos::new(*table, 0),
+        // Document-global, not node-scoped — always routed through
+        // `apply_action_caret` with the caller's own caret, so this natural
+        // position is never actually used; the document's own root id is a
+        // neutral placeholder (matches `apply_group`'s own default caret).
+        Operation::SetCoreProperties { .. } => Pos::new(doc_id, 0),
+        // Also document-global — see the SetCoreProperties comment above.
+        Operation::SetSectionGeometry { .. } => Pos::new(doc_id, 0),
     }
 }
 

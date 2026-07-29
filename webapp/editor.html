@@ -19,7 +19,16 @@
         <span class="mark">OpenDoc</span>
         <span class="testing" title="Developer test harness — not a product or supported viewer.">testing</span>
         <span class="divider" hidden id="titleDivider"></span>
-        <span class="doc-title" id="docTitle" hidden></span>
+        <input
+          class="doc-title"
+          id="docTitle"
+          type="text"
+          hidden
+          autocomplete="off"
+          spellcheck="false"
+          aria-label="Document name"
+          title="Rename document"
+        />
       </div>
       <div class="controls">
         <label class="btn btn-primary file">
@@ -31,11 +40,29 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V7zm-5 16a3 3 0 110-6 3 3 0 010 6zm3-10H5V5h10z"/></svg>
           Save
         </button>
+        <button id="propertiesBtn" type="button" class="btn icon-only" title="Document properties" aria-label="Document properties" aria-expanded="false" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 7h2v2h-2V7zm0 4h2v6h-2v-6zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>
+        </button>
         <button id="settingsBtn" type="button" class="btn icon-only" title="Settings" aria-label="Settings" aria-expanded="false">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.14 12.94c.04-.3.06-.61.06-.94s-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.49.49 0 00-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 00-.48-.41h-3.84a.48.48 0 00-.48.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 00-.59.22L2.74 8.87a.49.49 0 00.12.61l2.03 1.58c-.05.3-.07.63-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.48-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 00-.12-.61l-2.03-1.58zM12 15.6A3.6 3.6 0 1112 8.4a3.6 3.6 0 010 7.2z"/></svg>
         </button>
       </div>
     </header>
+
+    <div id="propertiesPanel" class="settings-panel properties-panel" hidden role="dialog" aria-label="Document properties">
+      <div class="settings-section">
+        <label class="prop-field">Title<input id="propTitle" type="text" maxlength="4096" /></label>
+        <label class="prop-field">Author<input id="propCreator" type="text" maxlength="4096" /></label>
+        <label class="prop-field">Subject<input id="propSubject" type="text" maxlength="4096" /></label>
+        <label class="prop-field">Category<input id="propCategory" type="text" maxlength="4096" /></label>
+        <label class="prop-field">Keywords<input id="propKeywords" type="text" maxlength="4096" /></label>
+        <label class="prop-field">Comments<textarea id="propDescription" maxlength="4096" rows="2"></textarea></label>
+      </div>
+      <div class="settings-foot">
+        <button type="button" id="propertiesCancel" class="link">Cancel</button>
+        <button type="button" id="propertiesApply" class="chip-btn chip-btn-primary">Apply</button>
+      </div>
+    </div>
 
     <div id="settingsPanel" class="settings-panel" hidden role="dialog" aria-label="Settings">
       <div class="settings-section">
@@ -192,7 +219,36 @@
             </div>
             <span class="rgroup-label">Zoom</span>
           </div>
+          <div class="rgroup">
+            <div class="rgroup-ctl">
+              <button id="pageSetupBtn" type="button" class="fmt" title="Page setup (size, margins, orientation)" aria-label="Page setup" aria-haspopup="menu" aria-expanded="false" disabled><svg viewBox="0 0 24 24"><path d="M19 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V5a2 2 0 00-2-2zm0 16H5V5h14v14zM8 8h8v2H8zm0 4h8v2H8zm0 4h5v2H8z"/></svg></button>
+            </div>
+            <span class="rgroup-label">Page setup</span>
+          </div>
         </div>
+      </div>
+    </div>
+
+    <div id="pageSetupMenu" class="context-menu spacing-menu" hidden role="menu" aria-label="Page setup">
+      <div class="menu-heading">Orientation</div>
+      <div class="segmented" id="pageOrientationSeg" role="radiogroup" aria-label="Orientation">
+        <button type="button" data-orientation="portrait">Portrait</button>
+        <button type="button" data-orientation="landscape">Landscape</button>
+      </div>
+      <div class="menu-divider"></div>
+      <div class="menu-heading">Page size</div>
+      <label class="menu-row">Width<input id="pageWidth" type="number" min="1" max="22" step="0.01" inputmode="decimal" /><span class="menu-unit">in</span></label>
+      <label class="menu-row">Height<input id="pageHeight" type="number" min="1" max="22" step="0.01" inputmode="decimal" /><span class="menu-unit">in</span></label>
+      <div class="menu-divider"></div>
+      <div class="menu-heading">Margins</div>
+      <label class="menu-row">Top<input id="pageMarginTop" type="number" min="0" max="22" step="0.01" inputmode="decimal" /><span class="menu-unit">in</span></label>
+      <label class="menu-row">Bottom<input id="pageMarginBottom" type="number" min="0" max="22" step="0.01" inputmode="decimal" /><span class="menu-unit">in</span></label>
+      <label class="menu-row">Left<input id="pageMarginLeft" type="number" min="0" max="22" step="0.01" inputmode="decimal" /><span class="menu-unit">in</span></label>
+      <label class="menu-row">Right<input id="pageMarginRight" type="number" min="0" max="22" step="0.01" inputmode="decimal" /><span class="menu-unit">in</span></label>
+      <div class="menu-divider"></div>
+      <div class="settings-foot">
+        <button type="button" id="pageSetupCancel" class="link">Cancel</button>
+        <button type="button" id="pageSetupApply" class="chip-btn chip-btn-primary">Apply</button>
       </div>
     </div>
 

@@ -312,7 +312,7 @@ async function openBytes(bytes, name) {
     selection = null;
     tableSelection = null;
     currentName = name;
-    docTitleEl.textContent = name;
+    docTitleEl.value = name;
     docTitleEl.hidden = false;
     titleDividerEl.hidden = false;
     saveBtn.disabled = false;
@@ -334,6 +334,35 @@ async function openBytes(bytes, name) {
     setStatus(`Could not open ${name}: ${err.message ?? err}`, "error");
   }
 }
+
+// ---- Document rename ---------------------------------------------------------
+// The header title is the input itself (styled as plain text until focused),
+// matching the Word/Docs "click the title to rename" convention. Renaming
+// only changes `currentName` (what Save downloads as); it never touches the
+// open document's own model or its docProps/core.xml `dc:title`.
+function commitRename() {
+  const trimmed = docTitleEl.value.trim();
+  if (!trimmed) {
+    docTitleEl.value = currentName;
+    return;
+  }
+  const named = /\.docx$/i.test(trimmed) ? trimmed : `${trimmed}.docx`;
+  currentName = named;
+  docTitleEl.value = named;
+}
+
+docTitleEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    docTitleEl.blur();
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    docTitleEl.value = currentName;
+    docTitleEl.blur();
+  }
+});
+docTitleEl.addEventListener("focus", () => docTitleEl.select());
+docTitleEl.addEventListener("blur", commitRename);
 
 // Provision the host-owned named families in one bounded batch/repagination,
 // then fetch only the script fallbacks this document's uncovered code points
@@ -1648,6 +1677,8 @@ function updateToolbar() {
   undoBtn.disabled = !doc;
   redoBtn.disabled = !doc;
   findBtn.disabled = !doc;
+  propertiesBtn.disabled = !doc;
+  pageSetupBtn.disabled = !doc;
   viewOutlineBtn.disabled = !doc;
   viewOutlineBtn.setAttribute("aria-pressed", String(!outlinePanel.hidden));
   viewZoomOut.disabled = !doc;
@@ -3128,6 +3159,172 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !settingsPanel.hidden) toggleSettings(false);
 });
 applySettings();
+
+// ---- Document properties (docProps/core.xml — title, author, subject, …) ----
+const propertiesBtn = document.getElementById("propertiesBtn");
+const propertiesPanel = document.getElementById("propertiesPanel");
+const propTitle = document.getElementById("propTitle");
+const propCreator = document.getElementById("propCreator");
+const propSubject = document.getElementById("propSubject");
+const propCategory = document.getElementById("propCategory");
+const propKeywords = document.getElementById("propKeywords");
+const propDescription = document.getElementById("propDescription");
+const propertiesApplyBtn = document.getElementById("propertiesApply");
+const propertiesCancelBtn = document.getElementById("propertiesCancel");
+
+const PROP_FIELDS = [
+  ["title", propTitle],
+  ["creator", propCreator],
+  ["subject", propSubject],
+  ["category", propCategory],
+  ["keywords", propKeywords],
+  ["description", propDescription],
+];
+
+function toggleProperties(open) {
+  const show = open ?? propertiesPanel.hidden;
+  if (show && doc) {
+    const current = JSON.parse(doc.documentProperties());
+    for (const [key, input] of PROP_FIELDS) input.value = current[key] ?? "";
+  }
+  propertiesPanel.hidden = !show;
+  propertiesBtn.setAttribute("aria-expanded", String(show));
+}
+propertiesBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  toggleProperties();
+});
+propertiesCancelBtn.addEventListener("click", () => toggleProperties(false));
+propertiesApplyBtn.addEventListener("click", async () => {
+  if (!doc) return;
+  const current = JSON.parse(doc.documentProperties());
+  for (const [key, input] of PROP_FIELDS) {
+    const value = input.value.trim();
+    current[key] = value ? value : null;
+  }
+  await runEdit(() => doc.setDocumentProperties(JSON.stringify(current)));
+  toggleProperties(false);
+});
+document.addEventListener("click", (e) => {
+  if (
+    !propertiesPanel.hidden &&
+    !propertiesPanel.contains(e.target) &&
+    e.target !== propertiesBtn
+  ) {
+    toggleProperties(false);
+  }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !propertiesPanel.hidden) toggleProperties(false);
+});
+
+// ---- Page setup (page size, margins, orientation) ----------------------------
+const pageSetupBtn = document.getElementById("pageSetupBtn");
+const pageSetupMenu = document.getElementById("pageSetupMenu");
+const pageOrientationSeg = document.getElementById("pageOrientationSeg");
+const pageWidthInput = document.getElementById("pageWidth");
+const pageHeightInput = document.getElementById("pageHeight");
+const pageMarginTopInput = document.getElementById("pageMarginTop");
+const pageMarginBottomInput = document.getElementById("pageMarginBottom");
+const pageMarginLeftInput = document.getElementById("pageMarginLeft");
+const pageMarginRightInput = document.getElementById("pageMarginRight");
+const pageSetupApplyBtn = document.getElementById("pageSetupApply");
+const pageSetupCancelBtn = document.getElementById("pageSetupCancel");
+
+let pageSetupCurrent = null; // the last-fetched {section, pageSize, pageMargins, orientation}
+
+/** Twips → inches string for a page-geometry field (unlike inchStr, 0 shows
+ * as "0" — a page dimension/margin is never meaningfully "unset"). */
+function pageInchStr(twip) {
+  return (twip / TWIPS_PER_INCH).toFixed(2).replace(/\.?0+$/, "") || "0";
+}
+
+function reflectPageSetup() {
+  if (!doc) return false;
+  const raw = doc.pageSetup();
+  pageSetupCurrent = raw === "null" ? null : JSON.parse(raw);
+  if (!pageSetupCurrent) return false;
+  const { pageSize, pageMargins, orientation } = pageSetupCurrent;
+  pageWidthInput.value = pageInchStr(pageSize.widthTwips);
+  pageHeightInput.value = pageInchStr(pageSize.heightTwips);
+  pageMarginTopInput.value = pageInchStr(pageMargins.topTwips);
+  pageMarginBottomInput.value = pageInchStr(pageMargins.bottomTwips);
+  pageMarginLeftInput.value = pageInchStr(pageMargins.startTwips);
+  pageMarginRightInput.value = pageInchStr(pageMargins.endTwips);
+  const activeOrientation =
+    orientation ?? (pageSize.widthTwips > pageSize.heightTwips ? "landscape" : "portrait");
+  for (const btn of pageOrientationSeg.querySelectorAll("button")) {
+    btn.setAttribute("aria-pressed", String(btn.dataset.orientation === activeOrientation));
+  }
+  return true;
+}
+
+function togglePageSetup(open) {
+  const show = open ?? pageSetupMenu.hidden;
+  if (show && !reflectPageSetup()) return; // no section geometry to edit
+  pageSetupMenu.hidden = !show;
+  pageSetupBtn.setAttribute("aria-expanded", String(show));
+}
+pageSetupBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  togglePageSetup();
+});
+pageSetupMenu.addEventListener("mousedown", (e) => {
+  if (!["INPUT", "SELECT", "OPTION", "BUTTON"].includes(e.target.tagName)) e.preventDefault();
+});
+pageOrientationSeg.addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-orientation]");
+  if (!btn) return;
+  for (const b of pageOrientationSeg.querySelectorAll("button")) {
+    b.setAttribute("aria-pressed", String(b === btn));
+  }
+  // Swap width/height to match, mirroring Word's orientation toggle.
+  const w = Number(pageWidthInput.value) || 0;
+  const h = Number(pageHeightInput.value) || 0;
+  const wantLandscape = btn.dataset.orientation === "landscape";
+  if (wantLandscape === w > h) return; // already matches
+  const widthTwips = inchTwips(pageWidthInput);
+  const heightTwips = inchTwips(pageHeightInput);
+  pageWidthInput.value = pageInchStr(heightTwips);
+  pageHeightInput.value = pageInchStr(widthTwips);
+});
+pageSetupCancelBtn.addEventListener("click", () => togglePageSetup(false));
+pageSetupApplyBtn.addEventListener("click", async () => {
+  if (!doc || !pageSetupCurrent) return;
+  const orientation =
+    pageOrientationSeg.querySelector('button[aria-pressed="true"]')?.dataset.orientation ??
+    "portrait";
+  const payload = {
+    section: pageSetupCurrent.section,
+    pageSize: {
+      widthTwips: inchTwips(pageWidthInput),
+      heightTwips: inchTwips(pageHeightInput),
+    },
+    pageMargins: {
+      ...pageSetupCurrent.pageMargins,
+      topTwips: inchTwips(pageMarginTopInput),
+      bottomTwips: inchTwips(pageMarginBottomInput),
+      startTwips: inchTwips(pageMarginLeftInput),
+      endTwips: inchTwips(pageMarginRightInput),
+    },
+    orientation,
+  };
+  await runEdit(() => doc.setPageSetup(JSON.stringify(payload)));
+  togglePageSetup(false);
+});
+document.addEventListener("mousedown", (e) => {
+  if (
+    !pageSetupMenu.hidden &&
+    !pageSetupMenu.contains(e.target) &&
+    e.target !== pageSetupBtn &&
+    !pageSetupBtn.contains(e.target)
+  ) {
+    togglePageSetup(false);
+  }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !pageSetupMenu.hidden) togglePageSetup(false);
+});
 
 fileEl.disabled = true;
 updateToolbar(); // start with the toolbar controls disabled (no selection yet)
