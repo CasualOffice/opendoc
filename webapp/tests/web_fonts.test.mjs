@@ -71,10 +71,12 @@ test("checkbox/dingbat symbols outside Noto Sans's coverage fall back too", () =
   assert.deepEqual(
     fallbackKeysFor([
       0x25a1, // □ WHITE SQUARE — the sample fixture's table "Result" column
-      0x2610, // ☐ BALLOT BOX — the sample fixture's checklist bullets
+      0x2610, // ☐ BALLOT BOX — unchecked sample checklist rows
+      0x2612, // ☒ BALLOT BOX WITH X — checked sample checklist rows
     ]),
     ["symbols"],
   );
+  assert.deepEqual(SCRIPT_FALLBACK_FONTS.symbols.scripts, ["Zyyy", "Latn"]);
 });
 
 test("every script fallback font resolves to a pinned, immutable Noto URL", () => {

@@ -110,17 +110,20 @@ export const SCRIPT_FALLBACK_FONTS = Object.freeze({
     url: `${NOTO}/NotoSansThai/hinted/ttf/NotoSansThai-Regular.ttf`,
     scripts: Object.freeze(["Thai"]),
   }),
-  // Not a script per se (ISO 15924 "Zsym" isn't a real value) — a synthetic
-  // bucket key for the Geometric Shapes / Miscellaneous Symbols / Dingbats
-  // blocks. Noto Sans (the Calibri/system-font substitute) doesn't cover
-  // these at all, so plain content like a "☐"/"□" checklist placeholder
+  // Bucket for the Geometric Shapes / Miscellaneous Symbols / Dingbats
+  // blocks. These scalars have the Unicode Common script (`Zyyy`), but Parley
+  // resolves Common characters beside Latin text into a Latin shaping run.
+  // Register both keys so standalone symbols and symbols embedded in labels
+  // can select the covering face. Noto Sans (the Calibri/system-font
+  // substitute) doesn't cover these at all, so plain content like a "☐"/"□"
+  // checklist placeholder
   // (as in the sample fixture's acceptance-checklist and Result-column
   // cells) tofu'd. Noto Sans Symbols 2 is the intended monochrome fallback
   // for exactly this range (full pictographic/color emoji are a separate,
   // much larger gap — see fontKeyForCodePoint's emoji comment).
   symbols: Object.freeze({
     url: `${NOTO}/NotoSansSymbols2/hinted/ttf/NotoSansSymbols2-Regular.ttf`,
-    scripts: Object.freeze(["Zsym"]),
+    scripts: Object.freeze(["Zyyy", "Latn"]),
   }),
 });
 

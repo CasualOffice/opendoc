@@ -1323,10 +1323,11 @@ body.modal-open {
   align-items: center;
   gap: 2px;
   padding: 4px 6px;
-  background: #202124;
-  border: 1px solid #202124;
-  border-radius: 9px;
-  box-shadow: 0 8px 26px rgba(20, 22, 28, 0.22);
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-popover);
+  box-shadow: var(--shadow-popover);
 }
 
 .sel-toolbar[hidden] {
@@ -1336,33 +1337,33 @@ body.modal-open {
 .sel-divider {
   width: 1px;
   height: 20px;
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--line-strong);
   margin: 0 3px;
 }
 
 .sel-toolbar .fmt {
-  color: #e8eaed;
+  color: var(--ink);
 }
 
 .sel-toolbar .fmt:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--bg-2);
 }
 
 .sel-toolbar .fmt[aria-pressed="true"] {
-  color: #ffffff;
-  background: color-mix(in srgb, var(--accent) 42%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 68%, transparent);
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
 }
 
 .sel-toolbar .ctl.swatch {
-  color: #e8eaed;
-  border-color: rgba(255, 255, 255, 0.22);
+  color: var(--ink);
+  border-color: var(--line-strong);
 }
 
 .sel-toolbar .ctl select {
-  color: #e8eaed;
-  border-color: rgba(255, 255, 255, 0.22);
-  background-color: #202124;
+  color: var(--ink);
+  border-color: var(--line-strong);
+  background-color: var(--surface);
 }
 
 /* A host-owned affordance for canvas-painted links. The engine supplies the
