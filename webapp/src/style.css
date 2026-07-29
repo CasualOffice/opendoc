@@ -1504,6 +1504,37 @@ input {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
+.overlay .table-col-resize-handle {
+  position: absolute;
+  width: 10px;
+  margin-left: -5px;
+  min-height: 18px;
+  cursor: col-resize;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.overlay .table-col-resize-handle::after {
+  content: "";
+  position: absolute;
+  inset: 0 4px;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  opacity: 0;
+}
+
+.overlay .table-col-resize-handle:hover::after {
+  opacity: 1;
+}
+
+.overlay .table-col-resize-preview {
+  position: absolute;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--surface) 80%, transparent);
+  pointer-events: none;
+}
+
 .overlay .caret {
   position: absolute;
   background: #111;

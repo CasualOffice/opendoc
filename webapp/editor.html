@@ -256,6 +256,25 @@
         </div>
       </div>
       <div class="menu-divider"></div>
+      <div class="menu-heading">Properties</div>
+      <label class="menu-check-row"><input id="tableHeaderRow" type="checkbox" />Repeat header row</label>
+      <label class="menu-check-row"><input id="tableFixedLayout" type="checkbox" />Fixed column widths</label>
+      <div class="menu-row">
+        <span>Column width</span>
+        <input id="tableColumnWidth" type="number" min="0.05" max="22" step="0.05" inputmode="decimal" />
+        <span class="menu-unit">in</span>
+      </div>
+      <div class="menu-row">
+        <span>Table width</span>
+        <input id="tableWidth" type="number" min="0" max="22" step="0.05" inputmode="decimal" />
+        <span class="menu-unit">in</span>
+      </div>
+      <div class="menu-row">
+        <span>Indent</span>
+        <input id="tableIndent" type="number" min="-22" max="22" step="0.05" inputmode="decimal" />
+        <span class="menu-unit">in</span>
+      </div>
+      <div class="menu-divider"></div>
       <button type="button" class="menu-item" data-table-action="insert-row-above">Insert row above</button>
       <button type="button" class="menu-item" data-table-action="insert-row-below">Insert row below</button>
       <button type="button" class="menu-item" data-table-action="insert-column-left">Insert column left</button>

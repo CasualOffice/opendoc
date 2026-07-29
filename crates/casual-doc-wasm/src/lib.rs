@@ -40,7 +40,8 @@ use casual_doc_model::v1::{
     Indentation, InlineNode, InternalTarget, LevelJustification, LevelSuffix, NumberFormat,
     NumberingInstance, NumberingInstanceId, NumberingLevel, NumberingRef, Paragraph,
     ParagraphProperties, RgbColor, StyleId, StyleKind, TabAlignment, TabStop, Table, TableBorders,
-    TableCell, TableCellProperties, TableProperties, TableRow, VerticalAlignment, VerticalMerge,
+    TableCell, TableCellProperties, TableLayout, TableProperties, TableRow, VerticalAlignment,
+    VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
@@ -1546,7 +1547,173 @@ impl WasmDocument {
                 .rows
                 .get(row as usize)
                 .is_some_and(|r| r.properties.header),
+            column_width_twips: active_column_width(t, col as usize).unwrap_or(-1),
+            table_width_twips: t.properties.width_twips.unwrap_or(-1),
+            table_indent_twips: t.properties.indent_twips.unwrap_or(0),
+            fixed_layout: t.properties.layout == Some(TableLayout::Fixed),
         }
+    }
+
+    /// Sets the active regular table column's preferred width in twips. Updates
+    /// the shared grid and each cell in that visual column so DOCX round-tripping
+    /// and layout stay in agreement.
+    #[wasm_bindgen(js_name = setTableColumnWidth)]
+    pub fn set_table_column_width(
+        &mut self,
+        node: &str,
+        width_twips: i32,
+    ) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let (_, col) = locate_table_cell(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        self.set_table_column_width_at(node, col, width_twips)
+    }
+
+    /// Preferred width for a specific regular-table column, or `-1` when unset.
+    #[wasm_bindgen(js_name = tableColumnWidthAt)]
+    #[must_use]
+    pub fn table_column_width_at(&self, node: &str, column: u32) -> i32 {
+        let Ok(nid) = NodeId::from_str(node) else {
+            return -1;
+        };
+        let Some((table, _)) = locate_table_cell(&self.document, nid) else {
+            return -1;
+        };
+        find_table(&self.document, table)
+            .and_then(|t| active_column_width(t, column as usize))
+            .unwrap_or(-1)
+    }
+
+    /// Sets a specific regular-table column's preferred width in twips.
+    #[wasm_bindgen(js_name = setTableColumnWidthAt)]
+    pub fn set_table_column_width_at(
+        &mut self,
+        node: &str,
+        column: u32,
+        width_twips: i32,
+    ) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let (table, _) = locate_table_cell(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        let mut replacement = find_table(&self.document, table)
+            .ok_or_else(|| to_js("table not found".into()))?
+            .clone();
+        if !table_is_regular(&replacement) {
+            return Err(to_js("column width requires a regular table".into()));
+        }
+        let col = column as usize;
+        if col >= table_column_count(&replacement) {
+            return Err(to_js("column is outside the table".into()));
+        }
+        let width_twips = width_twips.clamp(1, 31_680);
+        let columns = table_column_count(&replacement);
+        if replacement.grid.len() < columns {
+            replacement
+                .grid
+                .resize(columns, GridColumn { width_twips: None });
+        }
+        if let Some(grid_col) = replacement.grid.get_mut(col) {
+            grid_col.width_twips = Some(width_twips);
+        }
+        for row in &mut replacement.rows {
+            if let Some(cell) = row.cells.get_mut(col) {
+                cell.properties.width_twips = Some(width_twips);
+            }
+        }
+        self.apply_action(vec![Operation::ReplaceTable {
+            table,
+            replacement: Box::new(replacement),
+        }])
+        .map_err(to_js)
+    }
+
+    /// Sets or clears the current row's repeat-header flag.
+    #[wasm_bindgen(js_name = setTableHeaderRow)]
+    pub fn set_table_header_row(
+        &mut self,
+        node: &str,
+        enabled: bool,
+    ) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let (table, row, _) = locate_table_row(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        let mut replacement = find_table(&self.document, table)
+            .ok_or_else(|| to_js("table not found".into()))?
+            .clone();
+        replacement
+            .rows
+            .get_mut(row as usize)
+            .ok_or_else(|| to_js("row is outside the table".into()))?
+            .properties
+            .header = enabled;
+        self.apply_action(vec![Operation::ReplaceTable {
+            table,
+            replacement: Box::new(replacement),
+        }])
+        .map_err(to_js)
+    }
+
+    /// Sets the table's preferred width in twips, or clears it when negative.
+    #[wasm_bindgen(js_name = setTableWidth)]
+    pub fn set_table_width(&mut self, node: &str, width_twips: i32) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let (table, _) = locate_cell(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        let mut props = find_table(&self.document, table)
+            .map(|t| t.properties.clone())
+            .ok_or_else(|| to_js("table not found".into()))?;
+        props.width_twips = (width_twips >= 0).then_some(width_twips.clamp(0, 31_680));
+        self.apply_action(vec![Operation::SetTableProperties {
+            table,
+            properties: Box::new(props),
+        }])
+        .map_err(to_js)
+    }
+
+    /// Sets the table leading indent in twips.
+    #[wasm_bindgen(js_name = setTableIndent)]
+    pub fn set_table_indent(
+        &mut self,
+        node: &str,
+        indent_twips: i32,
+    ) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let (table, _) = locate_cell(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        let mut props = find_table(&self.document, table)
+            .map(|t| t.properties.clone())
+            .ok_or_else(|| to_js("table not found".into()))?;
+        props.indent_twips = Some(indent_twips.clamp(-31_680, 31_680));
+        self.apply_action(vec![Operation::SetTableProperties {
+            table,
+            properties: Box::new(props),
+        }])
+        .map_err(to_js)
+    }
+
+    /// Switches table layout between fixed-width and AutoFit-style behavior.
+    #[wasm_bindgen(js_name = setTableFixedLayout)]
+    pub fn set_table_fixed_layout(
+        &mut self,
+        node: &str,
+        fixed: bool,
+    ) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let (table, _) = locate_cell(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        let mut props = find_table(&self.document, table)
+            .map(|t| t.properties.clone())
+            .ok_or_else(|| to_js("table not found".into()))?;
+        props.layout = Some(if fixed {
+            TableLayout::Fixed
+        } else {
+            TableLayout::Autofit
+        });
+        self.apply_action(vec![Operation::SetTableProperties {
+            table,
+            properties: Box::new(props),
+        }])
+        .map_err(to_js)
     }
 
     /// Moves the caret to the next/previous editable cell in the current innermost
@@ -1607,6 +1774,58 @@ impl WasmDocument {
             if let Some((page, rect)) = layout.cell_rect(anchor) {
                 out.extend_from_slice(&flat_rect(page, rect));
             }
+        }
+        out
+    }
+
+    /// Internal column-resize edges for the active regular table, flattened as
+    /// `[page, x, y, h, column, …]` in page-local twips. `column` is the column to
+    /// the left of the edge; resizing it preserves the rest of the table.
+    #[wasm_bindgen(js_name = tableColumnResizeHandles)]
+    #[must_use]
+    pub fn table_column_resize_handles(&self, node: &str) -> Vec<i32> {
+        let Ok(nid) = NodeId::from_str(node) else {
+            return Vec::new();
+        };
+        let Some((table, _, _)) = locate_table_row(&self.document, nid) else {
+            return Vec::new();
+        };
+        let Some(t) = find_table(&self.document, table) else {
+            return Vec::new();
+        };
+        if !table_is_regular(t) {
+            return Vec::new();
+        }
+        let cols = table_column_count(t);
+        if cols < 2 {
+            return Vec::new();
+        }
+        let layout = LayoutSnapshot::new(&self.layout);
+        let mut edges: BTreeMap<(u32, usize), (i32, i32, i32)> = BTreeMap::new();
+        for row in &t.rows {
+            for col in 0..cols - 1 {
+                let Some(anchor) = row.cells.get(col).and_then(first_paragraph_of_cell) else {
+                    continue;
+                };
+                let Some((page, rect)) = layout.cell_rect(anchor) else {
+                    continue;
+                };
+                let x = rect.origin.x.raw() + rect.size.width.raw();
+                let y0 = rect.origin.y.raw();
+                let y1 = y0 + rect.size.height.raw();
+                edges
+                    .entry((page, col))
+                    .and_modify(|(edge_x, top, bottom)| {
+                        *edge_x = x;
+                        *top = (*top).min(y0);
+                        *bottom = (*bottom).max(y1);
+                    })
+                    .or_insert((x, y0, y1));
+            }
+        }
+        let mut out = Vec::with_capacity(edges.len() * 5);
+        for ((page, col), (x, y0, y1)) in edges {
+            out.extend_from_slice(&[page as i32, x, y0, y1 - y0, col as i32]);
         }
         out
     }
@@ -3914,6 +4133,10 @@ pub struct TableInfo {
     columns: u32,
     regular: bool,
     header_row: bool,
+    column_width_twips: i32,
+    table_width_twips: i32,
+    table_indent_twips: i32,
+    fixed_layout: bool,
 }
 
 impl TableInfo {
@@ -3927,6 +4150,10 @@ impl TableInfo {
             columns: 0,
             regular: false,
             header_row: false,
+            column_width_twips: -1,
+            table_width_twips: -1,
+            table_indent_twips: 0,
+            fixed_layout: false,
         }
     }
 }
@@ -3979,6 +4206,30 @@ impl TableInfo {
     #[must_use]
     pub fn header_row(&self) -> bool {
         self.header_row
+    }
+
+    #[wasm_bindgen(getter, js_name = columnWidthTwips)]
+    #[must_use]
+    pub fn column_width_twips(&self) -> i32 {
+        self.column_width_twips
+    }
+
+    #[wasm_bindgen(getter, js_name = tableWidthTwips)]
+    #[must_use]
+    pub fn table_width_twips(&self) -> i32 {
+        self.table_width_twips
+    }
+
+    #[wasm_bindgen(getter, js_name = tableIndentTwips)]
+    #[must_use]
+    pub fn table_indent_twips(&self) -> i32 {
+        self.table_indent_twips
+    }
+
+    #[wasm_bindgen(getter, js_name = fixedLayout)]
+    #[must_use]
+    pub fn fixed_layout(&self) -> bool {
+        self.fixed_layout
     }
 }
 
@@ -4172,6 +4423,19 @@ fn table_column_count(table: &Table) -> usize {
         })
         .max()
         .unwrap_or(0)
+}
+
+fn active_column_width(table: &Table, col_index: usize) -> Option<i32> {
+    table
+        .grid
+        .get(col_index)
+        .and_then(|col| col.width_twips)
+        .or_else(|| {
+            table
+                .rows
+                .iter()
+                .find_map(|row| row.cells.get(col_index)?.properties.width_twips)
+        })
 }
 
 fn table_is_regular(table: &Table) -> bool {
@@ -5697,6 +5961,7 @@ mod tests {
         assert_eq!(d.table_selection_rects(&caret, "row").len(), 3 * 5);
         assert_eq!(d.table_selection_rects(&caret, "column").len(), 2 * 5);
         assert_eq!(d.table_selection_rects(&caret, "table").len(), 6 * 5);
+        assert_eq!(d.table_column_resize_handles(&caret).len(), 2 * 5);
         assert!(d.table_selection_rects(&body_para, "table").is_empty());
         assert!(d.table_selection_rects(&caret, "unknown").is_empty());
     }
@@ -5734,6 +5999,60 @@ mod tests {
         assert!(!d.table_info(&merged_node).regular());
         d.undo().expect("undo merge");
         assert!(d.table_info(&caret).regular());
+    }
+
+    #[test]
+    fn table_properties_apply_reflect_and_undo() {
+        use casual_doc_edit::{find_table, locate_table_cell};
+
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let body_para = nodes
+            .iter()
+            .find(|(id, _)| !d.in_table(&id.to_string()))
+            .map(|(id, _)| id.to_string())
+            .expect("body paragraph outside tables");
+
+        let res = d.insert_table(&body_para, 2, 3).expect("insert table");
+        let caret = res.node();
+        let (table_id, _cell_id) =
+            locate_table_cell(&d.document, NodeId::from_str(&caret).unwrap()).unwrap();
+
+        d.set_table_column_width(&caret, 2_160)
+            .expect("set column width");
+        let t = find_table(&d.document, table_id).unwrap();
+        assert_eq!(t.grid[0].width_twips, Some(2_160));
+        assert!(
+            t.rows
+                .iter()
+                .all(|row| row.cells[0].properties.width_twips == Some(2_160))
+        );
+        assert_eq!(d.table_info(&caret).column_width_twips(), 2_160);
+
+        d.set_table_header_row(&caret, true)
+            .expect("set header row");
+        assert!(d.table_info(&caret).header_row());
+
+        d.set_table_width(&caret, 8_640).expect("set table width");
+        d.set_table_indent(&caret, 720).expect("set table indent");
+        d.set_table_fixed_layout(&caret, true)
+            .expect("set fixed layout");
+        let info = d.table_info(&caret);
+        assert_eq!(info.table_width_twips(), 8_640);
+        assert_eq!(info.table_indent_twips(), 720);
+        assert!(info.fixed_layout());
+
+        d.undo().expect("undo fixed layout");
+        assert!(!d.table_info(&caret).fixed_layout());
+        d.undo().expect("undo indent");
+        assert_eq!(d.table_info(&caret).table_indent_twips(), 0);
+        d.undo().expect("undo width");
+        assert_eq!(d.table_info(&caret).table_width_twips(), -1);
+        d.undo().expect("undo header");
+        assert!(!d.table_info(&caret).header_row());
+        d.undo().expect("undo column width");
+        assert_ne!(d.table_info(&caret).column_width_twips(), 2_160);
     }
 
     /// Delete a whole table and undo it: the body's table count drops by one, the
