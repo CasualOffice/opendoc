@@ -5,7 +5,9 @@ Date: 2026-07-30
 Depends on / extends: [doc 63](63-EDITOR-UI-UX-DESIGN-SYSTEM.md) (shell & design system, accepted direction),
 [doc 64](64-EDITOR-TOOLBAR-RIBBON-DESIGN.md) (toolbar/ribbon competitive read — Word/Docs/OnlyOffice/Notion),
 [doc 67](67-EDITOR-UX-GAP-ANALYSIS.md) (authoritative P0–P3 gap table, 2026-07-29)
-Grounded in: `webapp/editor.html` (DOM/icons), `webapp/src/style.css` (tokens/components) as of this writing.
+Grounded in: `webapp/editor.html` (DOM/icons), `webapp/src/style.css` (tokens/components),
+and `template.png` (repo root — the project's own accepted design reference per doc 63) as of
+this writing.
 
 ## 0. Scope and what this doc is not
 
@@ -14,9 +16,17 @@ menu-bar-toolbar vs floating-bar) and the owner already picked tabbed ribbon. Do
 has the authoritative **behavioral** gap list (editing, selection, clipboard, IME, etc.). This
 doc does **not** re-litigate either. It covers the remaining three axes the owner asked for that
 neither doc treats in depth: **shell chrome layout parity**, **icon design language**, and
-**typography/spacing system** — benchmarked specifically against Word 2026 desktop and
-Microsoft 365 Word for the web, with concrete recommendations and an explicit do-not-change list.
-No editor code changes ship with this doc; it is research + design only.
+**typography/spacing system** — benchmarked against Word 2026 desktop, Microsoft 365 Word for
+the web, **and** `template.png` itself (§1.5, §2.6) — with concrete recommendations and an
+explicit do-not-change list. No editor code changes ship with this doc; it is research + design
+only.
+
+**Important distinction kept throughout:** Word 2026 is an *external* competitive benchmark —
+matching it is optional, brand-dependent. `template.png` is the project's **own already-accepted**
+design target (doc 63: "Status: accepted direction... Reference: template.png"); gaps against it
+are not optional in the same way — they are unfinished work against a decision already made.
+Sections §1.5 and §2.6 below re-examine the actual image (not just docs 63/64's prose summary of
+it) and are the more load-bearing findings in this doc.
 
 ## 1. Layout
 
@@ -68,12 +78,14 @@ apps), though OpenDoc should still track desktop Word's chrome since doc 63/64 a
 
 ### 1.4 Concrete gaps and recommendations
 
-1. **No persistent Undo/Redo (and arguably Save) across ribbon tabs.** This is the single
-   biggest structural chrome gap vs Word's QAT model: a user on the Insert/Table/View tab loses
-   the visible undo affordance. *Recommend*: hoist Undo/Redo into the top `.bar` (next to
-   Open/Save), or into a slim always-visible strip directly left of the ribbon-tabs row. Either
-   reads as a lightweight QAT-equivalent without inventing a new "customizable toolbar" feature
-   nobody asked for.
+1. **No persistent Undo/Redo (and arguably Save) across ribbon tabs.** This is a real gap
+   against Word's QAT model: a user on the Insert/Table/View tab loses the visible undo
+   affordance. **Correction on re-checking `template.png` directly (§1.5):** the project's own
+   accepted reference does **not** show a persistent Undo/Redo cluster anywhere in its chrome
+   either (no QAT row, nothing near the app icon) — so this is a Word-derived nice-to-have, not
+   a template-fidelity gap. Downgraded accordingly: *optional* — hoist Undo/Redo into the top
+   `.bar` or a slim strip left of the ribbon tabs only if the owner independently values it, not
+   because the reference requires it.
 2. **⌘K has no visible entry point.** Word's discoverability fix (moving Tell Me into a
    permanent, obvious title-bar box) is exactly the gap doc 67 already names. *Recommend*: a
    small search-icon-affordance in the top `.bar` (e.g. next to Settings) that opens the same
@@ -92,6 +104,25 @@ apps), though OpenDoc should still track desktop Word's chrome since doc 63/64 a
 5. **Status bar ordering already matches Word's convention** (doc meta left, view/zoom right) —
    this is a "keep," not a gap; call it out so it isn't accidentally "fixed" into something else
    during a future refactor.
+
+### 1.5 OpenDoc vs `template.png` itself — the project's own accepted reference
+
+Docs 63/64 summarize `template.png` in prose; this re-examines the actual image against the
+current `editor.html`/`style.css`, since — unlike Word — closing gaps here is unfinished work
+against a decision already made, not an optional parity choice.
+
+| Region | `template.png` (Vellum) | OpenDoc today | Status |
+|---|---|---|---|
+| Menu bar | File Edit View Insert Format Tools Table Window Help, above the ribbon | absent | Known gap, already deferred to "menu bar (only once its items are all functional)" — doc 64 §4 item 6. Still true. |
+| Ribbon tabs | 7: Home/Insert/Draw/Layout/References/Review/View | 4: Home/Insert/Table/View | Expected — doc 64 explicitly scoped to "only tabs we can fill with functional controls." Draw has no engine support; References/Review gate on TOC-authoring and doc 68 (comments/track-changes) respectively. |
+| Clipboard group | visible Cut/Copy/Paste/Format Painter buttons in Home | none (cut/copy/paste are keyboard-only) | Known gap, doc 64 §2 already names it. Still open. |
+| Styles control | a **live-preview gallery** — Normal/Heading 1/2/3/Title rendered each in its own real type style | a plain `<select id="paragraphStyle">` with plain-text option labels | **Not previously called out this precisely.** A real, visible fidelity gap: the gallery pattern is materially richer than a dropdown and is one of the more recognizably "Word-like" details in the reference. |
+| Right context panel | Comments / Properties / Styles tabs, populated | **does not exist** — no right-hand `<aside>` in `editor.html` at all | The single largest unbuilt region from doc 63's own shell map (§2, region 4). Correctly phased for "later" (doc 63 §6 step 3), but worth stating plainly: this is 0% built, not partially built. |
+| Left nav rail | 5 icons: Outline, Pages, Comments, Bookmarks, Search | 1 icon: Outline | 4 of 5 rail destinations don't exist yet. Expected per the phased plan (doc 63 §6); quantified here for the first time. |
+| Status bar | page X/Y · words · **language selector** · **Track Changes: Off toggle** · **4-icon view-mode cluster** (list/single-page/two-page/grid) · zoom slider · **"Synced" badge** | words · paragraphs · Page X of Y · zoom −/＋/% | Missing: language selector, track-changes toggle (blocked on doc 68), view-mode icon cluster (blocked on a second view mode existing at all), a distinct sync/saved badge separate from the doc-title area. |
+| In-canvas page-break chip | a floating "Page Break / Page N of M · word count" tag sits right at the break point on the page | not present (page/word counts live only in the footer) | Small, low-cost polish item not previously identified; genuinely differentiating detail of the reference. |
+| Floating selection toolbar | `Style ▾  B I U  highlight  color  🔗  💬  ⋯` | `B I U S · highlight · text color` (doc 64 §6) | Correctly, deliberately narrower — doc 64 already reasons link/comment out for lack of a link-edit UI/comments model. Consistent, not a new gap. |
+| Command/search launcher | a docked bottom-right "Search commands (Ctrl+K)" box with a "Suggested" list | centered modal overlay (`#cmdPalette`) | Different anchoring, same function; no evidence either is objectively better — not flagging as a gap, just a layout difference worth knowing about if the shell is ever restructured. |
 
 ## 2. Icons
 
