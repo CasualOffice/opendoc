@@ -158,6 +158,26 @@ let pendingFormat = null;
 /** The open document's filename, for the Save download. */
 let currentName = "document.docx";
 
+function focusEditorSurface() {
+  pagesEl.focus({ preventScroll: true });
+}
+
+function resetPointerGesture() {
+  pointerGesture = null;
+  dragging = false;
+}
+
+function isInteractiveChromeTarget(target) {
+  if (!(target instanceof Element)) return false;
+  return !!target.closest(
+    "input, select, textarea, button, [contenteditable='true'], .context-menu, .settings-panel, .cmd-overlay, .link-chip",
+  );
+}
+
+function eventTargetsEditor(event) {
+  return event.target === pagesEl || pagesEl.contains(event.target) || document.activeElement === pagesEl;
+}
+
 function setStatus(text, kind = "") {
   statusEl.textContent = text;
   statusEl.className = `status ${kind}`;
@@ -452,6 +472,7 @@ function navigateToAnchor(node, offset, pageNumber) {
     focus: { node, offset },
   };
   drawSelection();
+  focusEditorSurface();
   pages[pageNumber - 1]?.canvas.closest(".page-wrap")?.scrollIntoView({
     block: "start",
     inline: "nearest",
@@ -546,7 +567,6 @@ function showLinkChipAt(page, event) {
   if (top + height > window.innerHeight - 12) top = event.clientY - height - 14;
   linkChip.style.left = `${Math.round(left)}px`;
   linkChip.style.top = `${Math.max(12, Math.round(top))}px`;
-  linkChipAction.focus({ preventScroll: true });
   return true;
 }
 
@@ -586,6 +606,7 @@ function activateLink(link) {
 
 function onPointerDown(page, event) {
   if (event.button !== 0) return;
+  focusEditorSurface();
   hideLinkChip();
   clearLinkHover();
   pointerGesture = null;
@@ -610,6 +631,10 @@ function onPointerDown(page, event) {
 }
 
 function onPointerMove(page, event) {
+  if (dragging && event.buttons === 0) {
+    resetPointerGesture();
+    return;
+  }
   if (!dragging) {
     scheduleLinkHover(page, event);
     return;
@@ -631,8 +656,7 @@ function onPointerMove(page, event) {
 
 function onPointerUp(event) {
   const gesture = pointerGesture;
-  pointerGesture = null;
-  dragging = false;
+  resetPointerGesture();
   if (
     gesture &&
     !gesture.shift &&
@@ -647,6 +671,7 @@ function onPointerUp(event) {
 function selectWord(page, event) {
   const a = anchorAt(page, event);
   if (!a) return;
+  focusEditorSurface();
   const bounds = doc.wordAt(a.node, a.offset); // [start, end] or []
   if (bounds.length === 2) {
     selection = {
@@ -700,6 +725,7 @@ pagesEl.addEventListener("click", (e) => {
   if (!page) return;
   const a = anchorAt(page, e);
   if (!a) return;
+  focusEditorSurface();
   selection = {
     anchor: { node: a.node, offset: 0 },
     focus: { node: a.node, offset: doc.paragraphLength(a.node) },
@@ -707,6 +733,12 @@ pagesEl.addEventListener("click", (e) => {
   drawSelection();
 });
 window.addEventListener("pointerup", onPointerUp);
+window.addEventListener("pointercancel", resetPointerGesture);
+window.addEventListener("lostpointercapture", resetPointerGesture);
+window.addEventListener("blur", resetPointerGesture);
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) resetPointerGesture();
+});
 
 linkChip.addEventListener("mousedown", (event) => {
   // Keep the model selection visible while the host control receives the click.
@@ -1581,7 +1613,7 @@ function reflectTableMenu() {
 }
 registerPopover(tableBtn, tableFmtMenu, reflectTableMenu);
 
-cellShade.addEventListener("input", () => {
+cellShade.addEventListener("change", () => {
   const [r, g, b] = hexToRgb(cellShade.value);
   runNodeEdit((n) => doc.setCellShading(n, r, g, b, false));
 });
@@ -1833,7 +1865,7 @@ function applyIndentSpecial() {
 indentSpecialSel.addEventListener("change", applyIndentSpecial);
 indentSpecialByInput.addEventListener("change", applyIndentSpecial);
 
-paraShade.addEventListener("input", () => {
+paraShade.addEventListener("change", () => {
   const [r, g, b] = hexToRgb(paraShade.value);
   runToolbarEdit((a, x, c, d) => doc.setParagraphShading(a, x, c, d, r, g, b, false));
 });
@@ -1856,7 +1888,7 @@ highlightSel.addEventListener("change", () => {
   );
   highlightSel.value = "none"; // highlight isn't reflected — keep it momentary
 });
-textColorInput.addEventListener("input", () => {
+textColorInput.addEventListener("change", () => {
   const hex = textColorInput.value;
   const [r, g, b] = hexToRgb(hex);
   armOrApplyRun({ color: hex }, () =>
@@ -1906,7 +1938,7 @@ function positionSelToolbar() {
 for (const b of selToolbar.querySelectorAll("[data-fmt]")) {
   onButton(b, () => toggleFormat(b.dataset.fmt));
 }
-selColor.addEventListener("input", () => {
+selColor.addEventListener("change", () => {
   const [r, g, b] = hexToRgb(selColor.value);
   runToolbarEdit((a, bo, c, d) => doc.setTextColor(a, bo, c, d, r, g, b));
 });
@@ -1982,6 +2014,7 @@ function navToPosition(caret, extend) {
   caret.free();
   selection = extend ? { anchor: selection.anchor, focus: to } : { anchor: to, focus: to };
   drawSelection();
+  focusEditorSurface();
   scrollCaretIntoView();
 }
 
@@ -1997,6 +2030,7 @@ function selectAll() {
   a.free();
   b.free();
   drawSelection();
+  focusEditorSurface();
 }
 
 /** Cut (⌘X): copy the selection to the clipboard, then delete it. */
@@ -2034,9 +2068,9 @@ const FORMAT_KEYS = { b: "bold", i: "italic", u: "underline" };
 
 document.addEventListener("keydown", async (e) => {
   if (!doc) return;
-  // Don't hijack keys aimed at the chrome (file picker, zoom select).
-  const tag = e.target?.tagName;
-  if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+  // The canvas editor owns keystrokes only while its focus owner is active.
+  // Chrome controls, popovers, and link chips keep normal browser semantics.
+  if (isInteractiveChromeTarget(e.target) || !eventTargetsEditor(e)) return;
 
   const mod = e.metaKey || e.ctrlKey;
   const key = e.key;

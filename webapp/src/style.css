@@ -1240,6 +1240,10 @@ input {
   gap: 22px;
 }
 
+.pages:focus {
+  outline: none;
+}
+
 /* ---- Horizontal ruler (Word/Docs style: a subtle strip with a lighter content
    span between the page margins, hairline ticks, and pentagon indent markers) - */
 .ruler {
