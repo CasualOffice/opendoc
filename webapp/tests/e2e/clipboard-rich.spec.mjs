@@ -93,7 +93,10 @@ test("pasting the internal marker round-trips without reparsing the visible HTML
 
   await page.keyboard.press(`${process.platform === "darwin" ? "Meta" : "Control"}+f`);
   await page.locator("#findInput").fill(marker);
-  await expect(page.locator("#findStatus")).toHaveText("1 match");
+  // The typed original and the pasted copy sit adjacently, so the marker
+  // genuinely occurs twice now that the status reports a real count instead
+  // of a hardcoded "1 match".
+  await expect(page.locator("#findStatus")).toHaveText(/ of 2$/);
   await page.keyboard.press("Escape");
 
   await page.locator("#undoBtn").click(); // pasted copy

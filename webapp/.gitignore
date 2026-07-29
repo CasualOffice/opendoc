@@ -2,6 +2,7 @@
 /pkg/
 /assets/
 /demo.docx
+/sample.docx
 
 # Playwright run artifacts (test-results/, HTML report) — regenerated per run.
 /playwright-report/

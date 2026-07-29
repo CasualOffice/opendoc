@@ -11,6 +11,7 @@ on:
       - "webapp/**"
       - "docs/assets/editor.jpg"
       - "fixtures/corpus/real-producer-rich.docx"
+      - "sample.docx"
       - "crates/**"
       - "Cargo.toml"
       - "Cargo.lock"

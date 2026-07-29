@@ -18,6 +18,7 @@ wasm-pack build "$repo/crates/casual-doc-wasm" \
 
 mkdir -p "$here/assets"
 cp "$repo/fixtures/corpus/real-producer-rich.docx" "$here/demo.docx"
+cp "$repo/sample.docx" "$here/sample.docx"
 cp "$repo/docs/assets/editor.jpg" "$here/assets/editor.jpg"
 
 echo "Built webapp/pkg and staged the demo/site assets."

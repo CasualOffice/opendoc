@@ -143,6 +143,12 @@
             </div>
             <span class="rgroup-label">Paragraph</span>
           </div>
+          <div class="rgroup">
+            <div class="rgroup-ctl">
+              <button id="findBtn" type="button" class="fmt" title="Find and replace (⌘F)" aria-label="Find and replace" disabled><svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg></button>
+            </div>
+            <span class="rgroup-label">Editing</span>
+          </div>
         </div>
 
         <div class="ribbon-panel" data-panel="insert" role="tabpanel" aria-label="Insert" hidden>
@@ -368,14 +374,20 @@
     </div>
 
     <div id="findPanel" class="find-panel" role="dialog" aria-label="Find and replace" hidden>
-      <input id="findInput" type="text" placeholder="Find" autocomplete="off" spellcheck="false" aria-label="Find" />
-      <button id="findPrev" type="button" class="icon-btn" title="Previous match" aria-label="Previous match"><svg viewBox="0 0 24 24"><path d="M7.41 15.41 12 10.83l4.59 4.58L18 14l-6-6-6 6z"/></svg></button>
-      <button id="findNext" type="button" class="icon-btn" title="Next match" aria-label="Next match"><svg viewBox="0 0 24 24"><path d="m7.41 8.59 4.59 4.58 4.59-4.58L18 10l-6 6-6-6z"/></svg></button>
-      <span id="findStatus" class="find-status"></span>
-      <label class="find-case"><input id="findCase" type="checkbox" /> Aa</label>
-      <input id="replaceInput" type="text" placeholder="Replace" autocomplete="off" spellcheck="false" aria-label="Replace" />
-      <button id="replaceOne" type="button" class="chip-btn">Replace</button>
-      <button id="findClose" type="button" class="icon-btn" title="Close" aria-label="Close find"><svg viewBox="0 0 24 24"><path d="m18.3 5.71-1.41-1.41L12 9.17 7.11 4.3 5.7 5.71 10.59 10.6 5.7 15.49l1.41 1.41L12 12.01l4.89 4.89 1.41-1.41-4.89-4.89z"/></svg></button>
+      <div class="find-row">
+        <input id="findInput" type="text" placeholder="Find" autocomplete="off" spellcheck="false" aria-label="Find" />
+        <span id="findStatus" class="find-status"></span>
+        <button id="findPrev" type="button" class="btn icon-only" title="Previous match (Shift+Enter)" aria-label="Previous match"><svg viewBox="0 0 24 24"><path d="M7.41 15.41 12 10.83l4.59 4.58L18 14l-6-6-6 6z"/></svg></button>
+        <button id="findNext" type="button" class="btn icon-only" title="Next match (Enter)" aria-label="Next match"><svg viewBox="0 0 24 24"><path d="m7.41 8.59 4.59 4.58 4.59-4.58L18 10l-6 6-6-6z"/></svg></button>
+        <span class="find-sep"></span>
+        <label class="find-case" title="Match case"><input id="findCase" type="checkbox" /> Aa</label>
+        <button id="findClose" type="button" class="btn icon-only" title="Close (Esc)" aria-label="Close find"><svg viewBox="0 0 24 24"><path d="m18.3 5.71-1.41-1.41L12 9.17 7.11 4.3 5.7 5.71 10.59 10.6 5.7 15.49l1.41 1.41L12 12.01l4.89 4.89 1.41-1.41-4.89-4.89z"/></svg></button>
+      </div>
+      <div class="find-row find-replace-row">
+        <input id="replaceInput" type="text" placeholder="Replace with" autocomplete="off" spellcheck="false" aria-label="Replace with" />
+        <button id="replaceOne" type="button" class="chip-btn">Replace</button>
+        <button id="replaceAll" type="button" class="chip-btn chip-btn-primary">Replace all</button>
+      </div>
     </div>
 
     <div id="selToolbar" class="sel-toolbar" role="toolbar" aria-label="Selection formatting" hidden>
