@@ -72,6 +72,10 @@ const tableFixedLayout = document.getElementById("tableFixedLayout");
 const tableColumnWidth = document.getElementById("tableColumnWidth");
 const tableWidth = document.getElementById("tableWidth");
 const tableIndent = document.getElementById("tableIndent");
+const tableRowHeight = document.getElementById("tableRowHeight");
+const tableRowHeightRule = document.getElementById("tableRowHeightRule");
+const tableCellMargin = document.getElementById("tableCellMargin");
+const tableCellSpacing = document.getElementById("tableCellSpacing");
 const insertTableBtn = document.getElementById("insertTableBtn");
 const insertLinkBtn = document.getElementById("insertLinkBtn");
 const insertTableMenu = document.getElementById("insertTableMenu");
@@ -1861,6 +1865,18 @@ function reflectTableMenu() {
     if (document.activeElement !== tableIndent) {
       tableIndent.value = inchStr(info.tableIndentTwips);
     }
+    if (document.activeElement !== tableRowHeight) {
+      tableRowHeight.value = info.rowHeightTwips >= 0 ? inchStr(info.rowHeightTwips) : "";
+    }
+    if (document.activeElement !== tableRowHeightRule) {
+      tableRowHeightRule.value = info.rowHeightRule || "auto";
+    }
+    if (document.activeElement !== tableCellMargin) {
+      tableCellMargin.value = info.cellMarginTwips >= 0 ? inchStr(info.cellMarginTwips) : "";
+    }
+    if (document.activeElement !== tableCellSpacing) {
+      tableCellSpacing.value = info.cellSpacingTwips >= 0 ? inchStr(info.cellSpacingTwips) : "";
+    }
   } else {
     tableContext.textContent = "";
     tableHeaderRow.checked = false;
@@ -1868,6 +1884,10 @@ function reflectTableMenu() {
     tableColumnWidth.value = "";
     tableWidth.value = "";
     tableIndent.value = "";
+    tableRowHeight.value = "";
+    tableRowHeightRule.value = "auto";
+    tableCellMargin.value = "";
+    tableCellSpacing.value = "";
   }
   info.free();
   const rgb = doc.cellShadingAt(node);
@@ -1983,6 +2003,23 @@ tableWidth.addEventListener("change", () => {
 });
 tableIndent.addEventListener("change", () => {
   runNodeEdit((n) => doc.setTableIndent(n, signedInchTwips(tableIndent)));
+});
+function applyTableRowHeight() {
+  const rule = tableRowHeightRule.value;
+  const twips = rule === "auto" ? -1 : inchTwips(tableRowHeight);
+  runNodeEdit((n) => doc.setTableRowHeight(n, twips, rule));
+}
+tableRowHeight.addEventListener("change", applyTableRowHeight);
+tableRowHeightRule.addEventListener("change", applyTableRowHeight);
+tableCellMargin.addEventListener("change", () => {
+  const raw = tableCellMargin.value.trim();
+  const twips = raw === "" ? -1 : inchTwips(tableCellMargin);
+  runNodeEdit((n) => doc.setTableCellMargins(n, twips));
+});
+tableCellSpacing.addEventListener("change", () => {
+  const raw = tableCellSpacing.value.trim();
+  const twips = raw === "" ? -1 : inchTwips(tableCellSpacing);
+  runNodeEdit((n) => doc.setTableCellSpacing(n, twips));
 });
 
 // -- Insert table: a hover grid picker (Google-Docs style) --------------------

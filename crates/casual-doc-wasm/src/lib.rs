@@ -36,12 +36,12 @@ use casual_doc_layout::units::{Point, Rect, Size, Twip};
 use casual_doc_model::v1::GridColumn;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, BookmarkId, BorderEdge,
-    CellVerticalAlignment, Document, ExternalTarget, HighlightColor, Hyperlink, HyperlinkTarget,
-    Indentation, InlineNode, InternalTarget, LevelJustification, LevelSuffix, NumberFormat,
-    NumberingInstance, NumberingInstanceId, NumberingLevel, NumberingRef, Paragraph,
-    ParagraphProperties, RgbColor, StyleId, StyleKind, TabAlignment, TabStop, Table, TableBorders,
-    TableCell, TableCellProperties, TableLayout, TableProperties, TableRow, VerticalAlignment,
-    VerticalMerge,
+    CellMargins, CellVerticalAlignment, Document, ExternalTarget, HeightRule, HighlightColor,
+    Hyperlink, HyperlinkTarget, Indentation, InlineNode, InternalTarget, LevelJustification,
+    LevelSuffix, NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel,
+    NumberingRef, Paragraph, ParagraphProperties, RgbColor, RowHeight, StyleId, StyleKind,
+    TabAlignment, TabStop, Table, TableBorders, TableCell, TableCellProperties, TableLayout,
+    TableProperties, TableRow, VerticalAlignment, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
@@ -1551,6 +1551,18 @@ impl WasmDocument {
             table_width_twips: t.properties.width_twips.unwrap_or(-1),
             table_indent_twips: t.properties.indent_twips.unwrap_or(0),
             fixed_layout: t.properties.layout == Some(TableLayout::Fixed),
+            row_height_twips: t
+                .rows
+                .get(row as usize)
+                .and_then(|r| r.properties.height.value_twips)
+                .map_or(-1, |v| v as i32),
+            row_height_rule: t
+                .rows
+                .get(row as usize)
+                .and_then(|r| r.properties.height.rule)
+                .map_or_else(String::new, height_rule_name),
+            cell_margin_twips: uniform_margins(t.properties.cell_margins).unwrap_or(-1),
+            cell_spacing_twips: t.properties.cell_spacing_twips.unwrap_or(-1),
         }
     }
 
@@ -1653,6 +1665,45 @@ impl WasmDocument {
         .map_err(to_js)
     }
 
+    /// Sets the active row height: `"auto"` clears the explicit value,
+    /// `"atLeast"` stores a minimum, and `"exact"` stores an exact height.
+    #[wasm_bindgen(js_name = setTableRowHeight)]
+    pub fn set_table_row_height(
+        &mut self,
+        node: &str,
+        height_twips: i32,
+        rule: &str,
+    ) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let (table, row, _) = locate_table_row(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        let mut replacement = find_table(&self.document, table)
+            .ok_or_else(|| to_js("table not found".into()))?
+            .clone();
+        let height = match rule {
+            "exact" => RowHeight {
+                value_twips: Some(height_twips.clamp(0, 31_680) as u32),
+                rule: Some(HeightRule::Exact),
+            },
+            "atLeast" | "at_least" => RowHeight {
+                value_twips: Some(height_twips.clamp(0, 31_680) as u32),
+                rule: Some(HeightRule::AtLeast),
+            },
+            _ => RowHeight::default(),
+        };
+        replacement
+            .rows
+            .get_mut(row as usize)
+            .ok_or_else(|| to_js("row is outside the table".into()))?
+            .properties
+            .height = height;
+        self.apply_action(vec![Operation::ReplaceTable {
+            table,
+            replacement: Box::new(replacement),
+        }])
+        .map_err(to_js)
+    }
+
     /// Sets the table's preferred width in twips, or clears it when negative.
     #[wasm_bindgen(js_name = setTableWidth)]
     pub fn set_table_width(&mut self, node: &str, width_twips: i32) -> Result<EditResult, JsValue> {
@@ -1709,6 +1760,59 @@ impl WasmDocument {
         } else {
             TableLayout::Autofit
         });
+        self.apply_action(vec![Operation::SetTableProperties {
+            table,
+            properties: Box::new(props),
+        }])
+        .map_err(to_js)
+    }
+
+    /// Sets uniform default cell margins on the active table; a negative value
+    /// clears the table-level default margins.
+    #[wasm_bindgen(js_name = setTableCellMargins)]
+    pub fn set_table_cell_margins(
+        &mut self,
+        node: &str,
+        margin_twips: i32,
+    ) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let (table, _) = locate_cell(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        let mut props = find_table(&self.document, table)
+            .map(|t| t.properties.clone())
+            .ok_or_else(|| to_js("table not found".into()))?;
+        props.cell_margins = if margin_twips < 0 {
+            CellMargins::default()
+        } else {
+            let twips = margin_twips.clamp(0, 31_680);
+            CellMargins {
+                top_twips: Some(twips),
+                start_twips: Some(twips),
+                bottom_twips: Some(twips),
+                end_twips: Some(twips),
+            }
+        };
+        self.apply_action(vec![Operation::SetTableProperties {
+            table,
+            properties: Box::new(props),
+        }])
+        .map_err(to_js)
+    }
+
+    /// Sets default cell spacing on the active table; a negative value clears it.
+    #[wasm_bindgen(js_name = setTableCellSpacing)]
+    pub fn set_table_cell_spacing(
+        &mut self,
+        node: &str,
+        spacing_twips: i32,
+    ) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let (table, _) = locate_cell(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        let mut props = find_table(&self.document, table)
+            .map(|t| t.properties.clone())
+            .ok_or_else(|| to_js("table not found".into()))?;
+        props.cell_spacing_twips = (spacing_twips >= 0).then_some(spacing_twips.clamp(0, 31_680));
         self.apply_action(vec![Operation::SetTableProperties {
             table,
             properties: Box::new(props),
@@ -4137,6 +4241,10 @@ pub struct TableInfo {
     table_width_twips: i32,
     table_indent_twips: i32,
     fixed_layout: bool,
+    row_height_twips: i32,
+    row_height_rule: String,
+    cell_margin_twips: i32,
+    cell_spacing_twips: i32,
 }
 
 impl TableInfo {
@@ -4154,6 +4262,10 @@ impl TableInfo {
             table_width_twips: -1,
             table_indent_twips: 0,
             fixed_layout: false,
+            row_height_twips: -1,
+            row_height_rule: String::new(),
+            cell_margin_twips: -1,
+            cell_spacing_twips: -1,
         }
     }
 }
@@ -4230,6 +4342,30 @@ impl TableInfo {
     #[must_use]
     pub fn fixed_layout(&self) -> bool {
         self.fixed_layout
+    }
+
+    #[wasm_bindgen(getter, js_name = rowHeightTwips)]
+    #[must_use]
+    pub fn row_height_twips(&self) -> i32 {
+        self.row_height_twips
+    }
+
+    #[wasm_bindgen(getter, js_name = rowHeightRule)]
+    #[must_use]
+    pub fn row_height_rule(&self) -> String {
+        self.row_height_rule.clone()
+    }
+
+    #[wasm_bindgen(getter, js_name = cellMarginTwips)]
+    #[must_use]
+    pub fn cell_margin_twips(&self) -> i32 {
+        self.cell_margin_twips
+    }
+
+    #[wasm_bindgen(getter, js_name = cellSpacingTwips)]
+    #[must_use]
+    pub fn cell_spacing_twips(&self) -> i32 {
+        self.cell_spacing_twips
     }
 }
 
@@ -4436,6 +4572,23 @@ fn active_column_width(table: &Table, col_index: usize) -> Option<i32> {
                 .iter()
                 .find_map(|row| row.cells.get(col_index)?.properties.width_twips)
         })
+}
+
+fn height_rule_name(rule: HeightRule) -> String {
+    match rule {
+        HeightRule::Auto => "auto",
+        HeightRule::AtLeast => "atLeast",
+        HeightRule::Exact => "exact",
+    }
+    .to_owned()
+}
+
+fn uniform_margins(margins: CellMargins) -> Option<i32> {
+    let top = margins.top_twips?;
+    (margins.start_twips == Some(top)
+        && margins.bottom_twips == Some(top)
+        && margins.end_twips == Some(top))
+    .then_some(top)
 }
 
 fn table_is_regular(table: &Table) -> bool {
@@ -6038,11 +6191,27 @@ mod tests {
         d.set_table_indent(&caret, 720).expect("set table indent");
         d.set_table_fixed_layout(&caret, true)
             .expect("set fixed layout");
+        d.set_table_row_height(&caret, 540, "exact")
+            .expect("set row height");
+        d.set_table_cell_margins(&caret, 144)
+            .expect("set cell margins");
+        d.set_table_cell_spacing(&caret, 72)
+            .expect("set cell spacing");
         let info = d.table_info(&caret);
         assert_eq!(info.table_width_twips(), 8_640);
         assert_eq!(info.table_indent_twips(), 720);
         assert!(info.fixed_layout());
+        assert_eq!(info.row_height_twips(), 540);
+        assert_eq!(info.row_height_rule(), "exact");
+        assert_eq!(info.cell_margin_twips(), 144);
+        assert_eq!(info.cell_spacing_twips(), 72);
 
+        d.undo().expect("undo cell spacing");
+        assert_eq!(d.table_info(&caret).cell_spacing_twips(), -1);
+        d.undo().expect("undo cell margins");
+        assert_eq!(d.table_info(&caret).cell_margin_twips(), -1);
+        d.undo().expect("undo row height");
+        assert_eq!(d.table_info(&caret).row_height_twips(), -1);
         d.undo().expect("undo fixed layout");
         assert!(!d.table_info(&caret).fixed_layout());
         d.undo().expect("undo indent");

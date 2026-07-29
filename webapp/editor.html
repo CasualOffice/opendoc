@@ -274,6 +274,25 @@
         <input id="tableIndent" type="number" min="-22" max="22" step="0.05" inputmode="decimal" />
         <span class="menu-unit">in</span>
       </div>
+      <div class="menu-row">
+        <span>Row height</span>
+        <input id="tableRowHeight" type="number" min="0" max="22" step="0.05" inputmode="decimal" />
+        <select id="tableRowHeightRule" class="menu-select" aria-label="Row height rule">
+          <option value="auto">Auto</option>
+          <option value="atLeast">At least</option>
+          <option value="exact">Exact</option>
+        </select>
+      </div>
+      <div class="menu-row">
+        <span>Cell margin</span>
+        <input id="tableCellMargin" type="number" min="0" max="2" step="0.02" inputmode="decimal" />
+        <span class="menu-unit">in</span>
+      </div>
+      <div class="menu-row">
+        <span>Cell spacing</span>
+        <input id="tableCellSpacing" type="number" min="0" max="2" step="0.02" inputmode="decimal" />
+        <span class="menu-unit">in</span>
+      </div>
       <div class="menu-divider"></div>
       <button type="button" class="menu-item" data-table-action="insert-row-above">Insert row above</button>
       <button type="button" class="menu-item" data-table-action="insert-row-below">Insert row below</button>
