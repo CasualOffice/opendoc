@@ -702,13 +702,16 @@ impl WasmDocument {
         end_node: &str,
         end_offset: u32,
     ) -> Result<EditResult, JsValue> {
+        let (start, _end) = self
+            .order_endpoints(start_node, start_offset, end_node, end_offset)
+            .map_err(to_js)?;
         let ops = self
             .selection_delete_ops(start_node, start_offset, end_node, end_offset)
             .map_err(to_js)?;
         if ops.is_empty() {
             return Err(to_js("empty selection".into()));
         }
-        self.apply_action(ops).map_err(to_js)
+        self.apply_action_caret(ops, start).map_err(to_js)
     }
 
     /// Replaces a selection with `text` (type-over) as one undoable action.
@@ -3091,6 +3094,52 @@ impl WasmDocument {
             .collect()
     }
 
+    /// Maps every paragraph to an opaque id identifying which top-level
+    /// `Vec<BlockNode>` directly owns it — the body, or one specific table
+    /// cell's `blocks`, or one specific content-control's `blocks`. Two
+    /// paragraphs can be joined (`casual_doc_edit::join_paragraphs`) only
+    /// when they share this id *and* are adjacent within it, so this map
+    /// lets a cross-paragraph delete decide, upfront, every container
+    /// boundary it must not try to cross — mirrors `join_paragraphs`'s own
+    /// recursive same-vec search (body first, else recurse into `Table`
+    /// cells / `Sdt`), minting a fresh id per cell/`Sdt` rather than reusing
+    /// the parent's.
+    fn paragraph_container_map(&self) -> BTreeMap<NodeId, usize> {
+        fn walk(
+            blocks: &[BlockNode],
+            container: usize,
+            next_id: &mut usize,
+            out: &mut BTreeMap<NodeId, usize>,
+        ) {
+            for block in blocks {
+                match block {
+                    BlockNode::Paragraph(p) => {
+                        out.insert(p.id, container);
+                    }
+                    BlockNode::Table(t) => {
+                        for row in &t.rows {
+                            for cell in &row.cells {
+                                let cell_container = *next_id;
+                                *next_id += 1;
+                                walk(&cell.blocks, cell_container, next_id, out);
+                            }
+                        }
+                    }
+                    BlockNode::Sdt(sdt) => {
+                        let sdt_container = *next_id;
+                        *next_id += 1;
+                        walk(&sdt.blocks, sdt_container, next_id, out);
+                    }
+                    BlockNode::AltChunk(_) => {}
+                }
+            }
+        }
+        let mut out = BTreeMap::new();
+        let mut next_id = 1usize; // 0 is the body root.
+        walk(self.document.body(), 0, &mut next_id, &mut out);
+        out
+    }
+
     /// Orders two selection endpoints into `(start, end)` by document position.
     fn order_endpoints(
         &self,
@@ -3121,7 +3170,9 @@ impl WasmDocument {
 
     /// The op sequence that deletes an ordered selection: one `DeleteText` within a
     /// paragraph, or (across paragraphs) delete the start tail + each whole middle
-    /// paragraph + the end head, then join them all into the start paragraph.
+    /// paragraph + the end head, then join same-container paragraphs together
+    /// (never across a table-cell/content-control boundary — see
+    /// `paragraph_container_map`).
     fn selection_delete_ops(
         &self,
         start_node: &str,
@@ -3177,12 +3228,27 @@ impl WasmDocument {
             });
         }
         // Join every following paragraph (now empty in the middle) up to and
-        // including the end paragraph into the start paragraph.
+        // including the end paragraph into its nearest preceding paragraph —
+        // but never across a container boundary (body vs. a table cell's own
+        // `blocks`, or a content control's): a generic delete must never
+        // dissolve a table/cell by trying to merge a body paragraph with one
+        // living inside it. A boundary paragraph is left in place (already
+        // emptied by the `DeleteText` ops above) and becomes the new join
+        // anchor for any further same-container run after it.
+        let containers = self.paragraph_container_map();
+        let mut anchor = start.node;
+        let mut anchor_container = containers.get(&start.node).copied().unwrap_or(0);
         for (id, _) in paras.iter().take(ei + 1).skip(si + 1) {
-            ops.push(Operation::JoinParagraphs {
-                first: start.node,
-                second: *id,
-            });
+            let container = containers.get(id).copied().unwrap_or(0);
+            if container == anchor_container {
+                ops.push(Operation::JoinParagraphs {
+                    first: anchor,
+                    second: *id,
+                });
+            } else {
+                anchor = *id;
+                anchor_container = container;
+            }
         }
         Ok(ops)
     }
@@ -6248,6 +6314,145 @@ mod tests {
         d.undo().expect("undo delete");
         d.undo().expect("undo bold");
         assert_eq!(d.copy_text(&node, 0, &node, len), text);
+    }
+
+    /// Deleting a selection spanning several consecutive *plain* paragraphs
+    /// (no formatting, no tables) — the everyday "select several paragraphs,
+    /// press Delete" case. This succeeds today; the reported "multi-page
+    /// delete doesn't work" bug turned out to be selections that cross into
+    /// a table (see docs/67's "Cross-structure delete/selection" P0 row),
+    /// not this same-container case — kept as a regression guard so the two
+    /// don't get conflated again.
+    #[test]
+    fn delete_selection_spanning_several_plain_paragraphs_succeeds() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, t)| !t.is_empty())
+            .map(|(id, _)| id.to_string())
+            .expect("a non-empty paragraph");
+
+        let mut current = node.clone();
+        for label in ["p1", "p2", "p3", "p4", "p5"] {
+            d.insert_text(&current, 0, label.to_string())
+                .expect("insert label");
+            let res = d
+                .split_paragraph(&current, label.len() as u32)
+                .expect("split after label");
+            current = res.node();
+        }
+        // `current` is now the 6th paragraph (right after "p5"), at offset 0 —
+        // the selection [node@0, current@0) spans exactly p1..p5.
+        d.delete_selection(&node, 0, &current, 0)
+            .expect("cross-paragraph delete of 5 plain paragraphs must succeed");
+    }
+
+    /// The actual reported bug: a selection starting in body text and ending
+    /// inside a *nested* table's cell ("Outer" is the outer table's cell,
+    /// "Nested A" is inside a table nested within it) must delete the
+    /// covered text without trying to dissolve either table — and one undo
+    /// restores everything exactly.
+    #[test]
+    fn delete_selection_crossing_into_a_table_clears_text_without_dissolving_it() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let (first_id, first_text) = nodes.first().cloned().expect("a first paragraph");
+        let first = first_id.to_string();
+        let (nested_a_id, nested_a_text) = nodes
+            .iter()
+            .find(|(_, t)| t == "Nested A")
+            .cloned()
+            .expect("the nested cell paragraph");
+        let nested_a = nested_a_id.to_string();
+        let nested_a_len = nested_a_text.len() as u32;
+
+        d.delete_selection(&first, 0, &nested_a, nested_a_len)
+            .expect("a body-into-table-cell delete must succeed, not `Unsupported`");
+
+        // The table survived: "Nested A" is still its own paragraph (now
+        // empty — its covered text was cleared) and "Nested B" (just past
+        // the deleted range) is completely untouched.
+        let mut after = Vec::new();
+        collect_block_text(d.document.body(), &mut after);
+        assert_eq!(
+            after
+                .iter()
+                .find(|(id, _)| *id == nested_a_id)
+                .map(|(_, t)| t.as_str()),
+            Some(""),
+            "the nested cell paragraph still exists, now empty"
+        );
+        assert!(
+            after.iter().any(|(_, t)| t == "Nested B"),
+            "an untouched cell past the deleted range is unaffected"
+        );
+
+        // One undo restores the original body text and the cell's text.
+        d.undo().expect("undo the cross-structure delete");
+        let mut restored = Vec::new();
+        collect_block_text(d.document.body(), &mut restored);
+        assert_eq!(
+            restored
+                .iter()
+                .find(|(id, _)| *id == first_id)
+                .map(|(_, t)| t.clone()),
+            Some(first_text),
+            "undo restores the first body paragraph verbatim"
+        );
+        assert_eq!(
+            restored
+                .iter()
+                .find(|(id, _)| *id == nested_a_id)
+                .map(|(_, t)| t.clone()),
+            Some(nested_a_text),
+            "undo restores the cell's text verbatim"
+        );
+    }
+
+    /// Joining two paragraphs (Backspace at a paragraph start) keeps the
+    /// *surviving* paragraph's own properties — a list item backspaced into
+    /// a plain paragraph does not turn the result into a list item, matching
+    /// Word's convention. Pins down existing `join_paragraphs` behavior
+    /// (casual-doc-edit) so a future change can't silently regress it.
+    #[test]
+    fn join_paragraphs_keeps_the_surviving_paragraphs_properties() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, t)| !t.is_empty())
+            .map(|(id, _)| id.to_string())
+            .expect("a non-empty paragraph");
+
+        // Split off a trailing paragraph and make *it* a bulleted list item;
+        // the first paragraph stays plain.
+        let split_at = d.copy_text(&node, 0, &node, 1).len() as u32;
+        let res = d.split_paragraph(&node, split_at).expect("split");
+        let second = res.node();
+        d.toggle_list(&second, 0, &second, 1, "bullet")
+            .expect("make the second paragraph a bullet item");
+        assert_eq!(
+            d.list_style_at(&second),
+            "bullet",
+            "second paragraph is now a list item"
+        );
+        assert_eq!(
+            d.list_style_at(&node),
+            "",
+            "first paragraph was never a list item"
+        );
+
+        // Backspace at the second paragraph's start joins it into the first.
+        d.delete_backward(&second, 0).expect("join via backspace");
+        assert_eq!(
+            d.list_style_at(&node),
+            "",
+            "the surviving (first) paragraph keeps its own non-list properties"
+        );
     }
 
     /// `copyRichRuns` → `pasteRichRuns` round-trips a bold run, a hyperlinked

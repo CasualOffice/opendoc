@@ -1441,6 +1441,11 @@ async function runEdit(thunk) {
     res = thunk();
   } catch (err) {
     console.warn("edit ignored:", err?.message ?? err);
+    // The engine's error names (Unsupported, CrossParagraph, …) are internal
+    // vocabulary, not user-facing text — a bounded, generic message is enough
+    // to stop this from reading as "nothing happened" (docs/67, "Error/
+    // reporting UX": never silently do nothing).
+    setStatus("That edit isn't supported for this selection yet", "error");
     return;
   }
   await applyEditResult(res);
