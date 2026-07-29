@@ -1,4 +1,4 @@
-import { test, expect, gotoEditor } from "./fixtures.mjs";
+import { test, expect, gotoEditor, clickIntoFirstPage, MOD } from "./fixtures.mjs";
 
 test("the reference typography and icons load locally", async ({ page, consoleErrors }) => {
   const chromeFontRequests = [];
@@ -62,6 +62,38 @@ test("the no-document state keeps only useful top-bar actions", async ({ page, c
   await expect(page.locator("#searchTrigger")).toBeHidden();
   await expect(page.locator("#save")).toBeHidden();
   await expect(page.locator("#propertiesBtn")).toBeHidden();
+  expect(consoleErrors).toEqual([]);
+});
+
+test("the selection formatting toolbar follows light and dark editor surfaces", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await page.keyboard.press(`${MOD}+a`);
+
+  const toolbar = page.locator("#selToolbar");
+  await expect(toolbar).toBeVisible();
+
+  const colors = async () =>
+    page.evaluate(() => ({
+      toolbarBackground: getComputedStyle(document.getElementById("selToolbar")).backgroundColor,
+      toolbarColor: getComputedStyle(document.getElementById("selToolbar")).color,
+      surfaceBackground: getComputedStyle(document.querySelector(".bar")).backgroundColor,
+      documentColor: getComputedStyle(document.body).color,
+    }));
+
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+  const light = await colors();
+  expect(light.toolbarBackground).toBe(light.surfaceBackground);
+  expect(light.toolbarColor).toBe(light.documentColor);
+
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+  const dark = await colors();
+  expect(dark.toolbarBackground).toBe(dark.surfaceBackground);
+  expect(dark.toolbarColor).toBe(dark.documentColor);
+  expect(dark.toolbarBackground).not.toBe(light.toolbarBackground);
   expect(consoleErrors).toEqual([]);
 });
 

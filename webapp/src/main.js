@@ -66,6 +66,15 @@ const cellBorderColor = document.getElementById("cellBorderColor");
 const tableBorderColor = document.getElementById("tableBorderColor");
 const tableAlign = document.getElementById("tableAlign");
 const tableContext = document.getElementById("tableContext");
+const tableRibbon = document.querySelector(".table-ribbon");
+const tableRibbonControls = [...tableRibbon.querySelectorAll("button")];
+const tablePropertiesBtn = document.getElementById("tablePropertiesBtn");
+const tablePropertiesPanel = document.getElementById("tablePropertiesPanel");
+const tablePropertiesContext = document.getElementById("tablePropertiesContext");
+const tablePropertiesApplyBtn = document.getElementById("tablePropertiesApply");
+const tablePropertiesResetBtn = document.getElementById("tablePropertiesReset");
+const tablePropertiesCloseBtn = document.getElementById("tablePropertiesClose");
+const tableColumnWidthNote = document.getElementById("tableColumnWidthNote");
 const mergeCellsBtn = document.getElementById("mergeCellsBtn");
 const splitCellBtn = document.getElementById("splitCellBtn");
 const tableHeaderRow = document.getElementById("tableHeaderRow");
@@ -1665,10 +1674,31 @@ function updateToolbar() {
   const listKind = hasSel && doc ? doc.listStyleAt(selection.focus.node) : "";
   bulletListBtn.setAttribute("aria-pressed", String(listKind === "bullet"));
   numberedListBtn.setAttribute("aria-pressed", String(listKind === "numbered"));
-  // The Table button (cell/table formatting) is enabled only inside a table;
-  // Insert-table needs just a caret to drop the new table after.
+  // The contextual Table ribbon is enabled only inside a table; regular-grid
+  // column commands stay unavailable on merged/spanned tables rather than
+  // failing after the user clicks them.
   const inTable = hasSel && doc && doc.inTable(selection.focus.node);
-  tableBtn.disabled = !inTable;
+  const tableInfo = inTable ? doc.tableInfo(selection.focus.node) : null;
+  for (const control of tableRibbonControls) control.disabled = !inTable;
+  for (const control of tableRibbon.querySelectorAll(
+    '[data-table-action*="column"]',
+  )) {
+    control.disabled = !inTable || !tableInfo?.regular;
+  }
+  mergeCellsBtn.disabled = !inTable || !tableSelection;
+  tableContext.textContent = tableInfo?.found ? tableContextLabel(tableInfo) : "";
+  const tablePropertiesKey = tableInfo?.found
+    ? `${tableInfo.table}:${tableInfo.row}:${tableInfo.column}`
+    : null;
+  if (!tablePropertiesPanel.hidden && !tablePropertiesDirty) {
+    if (!tablePropertiesKey) toggleTableProperties(false);
+    else if (tablePropertiesKey !== tablePropertiesContextKey) {
+      reflectTableProperties(selection.focus.node);
+    }
+  }
+  tableInfo?.free();
+
+  // Insert-table needs just a caret to drop the new table after.
   insertTableBtn.disabled = !(hasSel && doc);
   insertLinkBtn.disabled =
     !range || selection.anchor.node !== selection.focus.node;
@@ -1703,6 +1733,14 @@ function populateStyles() {
 // mousedown (not click) so a button never steals the selection focus mid-edit.
 function onButton(el, handler) {
   el.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    handler();
+  });
+  // Native buttons activated from the keyboard emit `click` without a preceding
+  // mouse event (`detail === 0`). Preserve the selection on pointer activation
+  // while keeping every command reachable with Enter/Space.
+  el.addEventListener("click", (e) => {
+    if (e.detail !== 0) return;
     e.preventDefault();
     handler();
   });
@@ -1786,10 +1824,23 @@ function openPopover(p) {
   for (const q of popovers) if (q !== p) closePopover(q);
   const r = p.btn.getBoundingClientRect();
   p.menu.hidden = false;
-  p.menu.style.left = `${Math.round(r.left)}px`;
-  p.menu.style.top = `${Math.round(r.bottom + 4)}px`;
   p.btn.setAttribute("aria-expanded", "true");
   p.reflect();
+  const gutter = 8;
+  const width = p.menu.offsetWidth;
+  const height = p.menu.offsetHeight;
+  const left = Math.min(
+    Math.max(gutter, r.left),
+    Math.max(gutter, window.innerWidth - width - gutter),
+  );
+  const below = r.bottom + 4;
+  const above = r.top - height - 4;
+  const top =
+    below + height <= window.innerHeight - gutter
+      ? below
+      : Math.max(gutter, above);
+  p.menu.style.left = `${Math.round(left)}px`;
+  p.menu.style.top = `${Math.round(top)}px`;
 }
 
 function closePopover(p) {
@@ -1943,13 +1994,14 @@ for (const b of paraOptsMenu.querySelectorAll(".border-btn")) {
 /** Runs a `(node) => EditResult` edit on the caret's node, preserving the selection
  *  and repainting only the dirty pages (rebuild on a page-count change). */
 function runNodeEdit(thunk) {
-  if (!selection || !doc) return;
+  if (!selection || !doc) return false;
   let res;
   try {
     res = thunk(selection.focus.node);
   } catch (err) {
     console.warn("edit ignored:", err?.message ?? err);
-    return;
+    setStatus(err?.message ?? "Table change could not be applied", "error");
+    return false;
   }
   const dirty = res.dirtyPages;
   const newCount = res.pageCount;
@@ -1960,51 +2012,16 @@ function runNodeEdit(thunk) {
     drawSelection();
   }
   scheduleChromeRefresh({ outline: true });
+  return true;
+}
+
+function tableContextLabel(info) {
+  return `${info.rows}×${info.columns} table · row ${info.row + 1}, column ${info.column + 1}${info.regular ? "" : " · merged/spanned"}`;
 }
 
 function reflectTableMenu() {
   if (!doc || !selection) return;
   const node = selection.focus.node;
-  const info = doc.tableInfo(node);
-  if (info.found) {
-    tableContext.textContent = `${info.rows}×${info.columns} table · row ${info.row + 1}, column ${info.column + 1}${info.regular ? "" : " · merged/spanned"}`;
-    tableHeaderRow.checked = info.headerRow;
-    tableFixedLayout.checked = info.fixedLayout;
-    tableColumnWidth.disabled = !info.regular;
-    if (document.activeElement !== tableColumnWidth) {
-      tableColumnWidth.value = info.columnWidthTwips > 0 ? inchStr(info.columnWidthTwips) : "";
-    }
-    if (document.activeElement !== tableWidth) {
-      tableWidth.value = info.tableWidthTwips >= 0 ? inchStr(info.tableWidthTwips) : "";
-    }
-    if (document.activeElement !== tableIndent) {
-      tableIndent.value = inchStr(info.tableIndentTwips);
-    }
-    if (document.activeElement !== tableRowHeight) {
-      tableRowHeight.value = info.rowHeightTwips >= 0 ? inchStr(info.rowHeightTwips) : "";
-    }
-    if (document.activeElement !== tableRowHeightRule) {
-      tableRowHeightRule.value = info.rowHeightRule || "auto";
-    }
-    if (document.activeElement !== tableCellMargin) {
-      tableCellMargin.value = info.cellMarginTwips >= 0 ? inchStr(info.cellMarginTwips) : "";
-    }
-    if (document.activeElement !== tableCellSpacing) {
-      tableCellSpacing.value = info.cellSpacingTwips >= 0 ? inchStr(info.cellSpacingTwips) : "";
-    }
-  } else {
-    tableContext.textContent = "";
-    tableHeaderRow.checked = false;
-    tableFixedLayout.checked = false;
-    tableColumnWidth.value = "";
-    tableWidth.value = "";
-    tableIndent.value = "";
-    tableRowHeight.value = "";
-    tableRowHeightRule.value = "auto";
-    tableCellMargin.value = "";
-    tableCellSpacing.value = "";
-  }
-  info.free();
   const rgb = doc.cellShadingAt(node);
   if (rgb >= 0 && document.activeElement !== cellShade) {
     cellShade.value = `#${rgb.toString(16).padStart(6, "0")}`;
@@ -2023,7 +2040,7 @@ function reflectTableMenu() {
 }
 const tablePopover = registerPopover(tableBtn, tableFmtMenu, reflectTableMenu);
 
-const TABLE_POPOVER_ACTIONS = {
+const TABLE_RIBBON_ACTIONS = {
   "insert-row-above": (n) => doc.insertRow(n, false),
   "insert-row-below": (n) => doc.insertRow(n, true),
   "insert-column-left": (n) => doc.insertColumn(n, false),
@@ -2033,24 +2050,24 @@ const TABLE_POPOVER_ACTIONS = {
   "delete-table": (n) => doc.deleteTable(n),
 };
 
-for (const b of tableFmtMenu.querySelectorAll("[data-table-action]")) {
+for (const b of tableRibbon.querySelectorAll("[data-table-action]")) {
   onButton(b, () => {
     if (!selection || !doc) return;
-    const run = TABLE_POPOVER_ACTIONS[b.dataset.tableAction];
+    const run = TABLE_RIBBON_ACTIONS[b.dataset.tableAction];
     if (!run) return;
-    closePopover(tablePopover);
+    tableSelection = null;
     runEdit(() => run(selection.focus.node));
   });
 }
 
-for (const b of tableFmtMenu.querySelectorAll("[data-table-select]")) {
+for (const b of tableRibbon.querySelectorAll("[data-table-select]")) {
   onButton(b, () => {
     if (!selection || !doc) return;
     const mode = b.dataset.tableSelect;
     tableSelection = { node: selection.focus.node, mode };
     drawSelection();
-    closePopover(tablePopover);
     setStatus(`Selected table ${mode}`);
+    updateToolbar();
     focusEditorSurface();
   });
 }
@@ -2061,16 +2078,16 @@ onButton(mergeCellsBtn, async () => {
     setStatus("Select a table row, column, or table first", "error");
     return;
   }
-  closePopover(tablePopover);
   await runEdit(() => doc.mergeTableSelection(tableSelection.node, tableSelection.mode));
   tableSelection = null;
+  updateToolbar();
 });
 
 onButton(splitCellBtn, async () => {
   if (!selection || !doc) return;
-  closePopover(tablePopover);
   await runEdit(() => doc.splitMergedCell(selection.focus.node));
   tableSelection = null;
+  updateToolbar();
 });
 
 cellShade.addEventListener("change", () => {
@@ -2097,44 +2114,204 @@ for (const b of tableFmtMenu.querySelectorAll("[data-tableborder]")) {
     runNodeEdit((n) => doc.setTableBorder(n, b.dataset.tableborder, r, g, bl, 8));
   });
 }
-for (const b of tableAlign.querySelectorAll("button")) {
-  onButton(b, () => runNodeEdit((n) => doc.setTableAlignment(n, b.dataset.talign)));
+
+// -- Table properties inspector ----------------------------------------------
+let tablePropertiesCurrent = null;
+let tablePropertiesNode = null;
+let tablePropertiesContextKey = null;
+let tablePropertiesDirty = false;
+
+function dialogTwipsValue(twips) {
+  return twips < 0
+    ? ""
+    : (twips / TWIPS_PER_INCH).toFixed(2).replace(/\.?0+$/, "") || "0";
 }
-tableHeaderRow.addEventListener("change", () => {
-  runNodeEdit((n) => doc.setTableHeaderRow(n, tableHeaderRow.checked));
-});
-tableFixedLayout.addEventListener("change", () => {
-  runNodeEdit((n) => doc.setTableFixedLayout(n, tableFixedLayout.checked));
-});
-tableColumnWidth.addEventListener("change", () => {
-  const raw = tableColumnWidth.value.trim();
-  if (raw === "" || !Number.isFinite(Number(raw))) return;
-  runNodeEdit((n) => doc.setTableColumnWidth(n, Math.max(1, inchTwips(tableColumnWidth))));
-});
-tableWidth.addEventListener("change", () => {
-  const raw = tableWidth.value.trim();
-  const twips = raw === "" ? -1 : inchTwips(tableWidth);
-  runNodeEdit((n) => doc.setTableWidth(n, twips));
-});
-tableIndent.addEventListener("change", () => {
-  runNodeEdit((n) => doc.setTableIndent(n, signedInchTwips(tableIndent)));
-});
-function applyTableRowHeight() {
-  const rule = tableRowHeightRule.value;
-  const twips = rule === "auto" ? -1 : inchTwips(tableRowHeight);
-  runNodeEdit((n) => doc.setTableRowHeight(n, twips, rule));
+
+function optionalDialogTwips(input) {
+  const raw = input.value.trim();
+  return raw === "" ? -1 : Math.round(Number(raw) * TWIPS_PER_INCH);
 }
-tableRowHeight.addEventListener("change", applyTableRowHeight);
-tableRowHeightRule.addEventListener("change", applyTableRowHeight);
-tableCellMargin.addEventListener("change", () => {
-  const raw = tableCellMargin.value.trim();
-  const twips = raw === "" ? -1 : inchTwips(tableCellMargin);
-  runNodeEdit((n) => doc.setTableCellMargins(n, twips));
+
+function updateTableRowHeightField() {
+  const automatic = tableRowHeightRule.value === "auto";
+  tableRowHeight.disabled = automatic;
+  tableRowHeight.required = !automatic;
+  if (automatic) tableRowHeight.setCustomValidity("");
+}
+
+function reflectTableProperties(node = selection?.focus.node) {
+  if (!doc || node == null) return false;
+  const info = doc.tableInfo(node);
+  if (!info.found) {
+    info.free();
+    return false;
+  }
+
+  tablePropertiesNode = node;
+  tablePropertiesContextKey = `${info.table}:${info.row}:${info.column}`;
+  tablePropertiesContext.textContent = tableContextLabel(info);
+  tableHeaderRow.checked = info.headerRow;
+  tableFixedLayout.checked = info.fixedLayout;
+  tableColumnWidth.disabled = !info.regular;
+  tableColumnWidth.value = dialogTwipsValue(info.columnWidthTwips);
+  tableColumnWidthNote.textContent = info.regular
+    ? "Sets the width of the current column."
+    : "Column sizing is unavailable for merged or spanned tables.";
+  tableWidth.value = dialogTwipsValue(info.tableWidthTwips);
+  tableIndent.value = dialogTwipsValue(info.tableIndentTwips);
+  tableRowHeight.value = dialogTwipsValue(info.rowHeightTwips);
+  tableRowHeightRule.value = info.rowHeightRule || "auto";
+  tableCellMargin.value = dialogTwipsValue(info.cellMarginTwips);
+  tableCellSpacing.value = dialogTwipsValue(info.cellSpacingTwips);
+  for (const button of tableAlign.querySelectorAll("button")) {
+    button.setAttribute("aria-pressed", String(button.dataset.talign === info.alignment));
+  }
+  updateTableRowHeightField();
+
+  tablePropertiesCurrent = {
+    alignment: info.alignment,
+    tableWidthTwips: optionalDialogTwips(tableWidth),
+    tableIndentTwips: signedInchTwips(tableIndent),
+    fixedLayout: info.fixedLayout,
+    headerRow: info.headerRow,
+    columnWidthTwips: optionalDialogTwips(tableColumnWidth),
+    rowHeightTwips:
+      tableRowHeightRule.value === "auto" ? -1 : optionalDialogTwips(tableRowHeight),
+    rowHeightRule: info.rowHeightRule || "auto",
+    cellMarginTwips: optionalDialogTwips(tableCellMargin),
+    cellSpacingTwips: optionalDialogTwips(tableCellSpacing),
+  };
+  tablePropertiesDirty = false;
+  info.free();
+  return true;
+}
+
+function toggleTableProperties(open) {
+  const show = open ?? tablePropertiesPanel.hidden;
+  if (show && !reflectTableProperties()) return;
+  const returnFocus = !show && tablePropertiesPanel.contains(document.activeElement);
+  tablePropertiesPanel.hidden = !show;
+  tablePropertiesBtn.setAttribute("aria-expanded", String(show));
+  if (show) {
+    closePopover(tablePopover);
+    queueMicrotask(() =>
+      tableAlign.querySelector('button[aria-pressed="true"]')?.focus(),
+    );
+  } else if (returnFocus) {
+    tablePropertiesBtn.focus({ preventScroll: true });
+  }
+}
+
+tablePropertiesBtn.addEventListener("click", (event) => {
+  event.stopPropagation();
+  toggleTableProperties();
 });
-tableCellSpacing.addEventListener("change", () => {
-  const raw = tableCellSpacing.value.trim();
-  const twips = raw === "" ? -1 : inchTwips(tableCellSpacing);
-  runNodeEdit((n) => doc.setTableCellSpacing(n, twips));
+tablePropertiesCloseBtn.addEventListener("click", () => toggleTableProperties(false));
+tablePropertiesResetBtn.addEventListener("click", () => {
+  const node =
+    selection && doc?.inTable(selection.focus.node)
+      ? selection.focus.node
+      : tablePropertiesNode;
+  reflectTableProperties(node);
+});
+tableAlign.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-talign]");
+  if (!button) return;
+  for (const candidate of tableAlign.querySelectorAll("button")) {
+    candidate.setAttribute("aria-pressed", String(candidate === button));
+  }
+  tablePropertiesDirty = true;
+});
+tableRowHeightRule.addEventListener("change", updateTableRowHeightField);
+tablePropertiesPanel.addEventListener("input", () => {
+  tablePropertiesDirty = true;
+});
+tablePropertiesPanel.addEventListener("change", () => {
+  tablePropertiesDirty = true;
+});
+
+function tablePropertiesPatch() {
+  const inputs = [
+    tableWidth,
+    tableIndent,
+    tableColumnWidth,
+    tableRowHeight,
+    tableCellMargin,
+    tableCellSpacing,
+  ].filter((input) => !input.disabled);
+  for (const input of inputs) {
+    input.setCustomValidity("");
+    if (!input.checkValidity()) {
+      input.reportValidity();
+      input.focus();
+      return null;
+    }
+  }
+  if (tableRowHeightRule.value !== "auto" && tableRowHeight.value.trim() === "") {
+    tableRowHeight.setCustomValidity("Enter a row height or choose Auto.");
+    tableRowHeight.reportValidity();
+    tableRowHeight.focus();
+    return null;
+  }
+
+  const next = {
+    alignment:
+      tableAlign.querySelector('button[aria-pressed="true"]')?.dataset.talign ?? "left",
+    tableWidthTwips: optionalDialogTwips(tableWidth),
+    tableIndentTwips: signedInchTwips(tableIndent),
+    fixedLayout: tableFixedLayout.checked,
+    headerRow: tableHeaderRow.checked,
+    columnWidthTwips: optionalDialogTwips(tableColumnWidth),
+    rowHeightTwips:
+      tableRowHeightRule.value === "auto" ? -1 : optionalDialogTwips(tableRowHeight),
+    rowHeightRule: tableRowHeightRule.value,
+    cellMarginTwips: optionalDialogTwips(tableCellMargin),
+    cellSpacingTwips: optionalDialogTwips(tableCellSpacing),
+  };
+  const patch = {};
+  for (const [key, value] of Object.entries(next)) {
+    if (key === "columnWidthTwips" && tableColumnWidth.disabled) continue;
+    if (value !== tablePropertiesCurrent[key]) patch[key] = value;
+  }
+  // The bridge requires the value and rule together whenever row height changes.
+  if ("rowHeightTwips" in patch || "rowHeightRule" in patch) {
+    patch.rowHeightTwips = next.rowHeightTwips;
+    patch.rowHeightRule = next.rowHeightRule;
+  }
+  return patch;
+}
+
+tablePropertiesApplyBtn.addEventListener("click", () => {
+  if (!doc || !tablePropertiesCurrent || !tablePropertiesNode) return;
+  const patch = tablePropertiesPatch();
+  if (!patch) return;
+  if (Object.keys(patch).length === 0) {
+    tablePropertiesDirty = false;
+    return;
+  }
+  const applied = runNodeEdit(() =>
+    doc.applyTableProperties(tablePropertiesNode, JSON.stringify(patch)),
+  );
+  if (applied) {
+    const activeNode =
+      selection && doc.inTable(selection.focus.node) ? selection.focus.node : null;
+    if (activeNode == null) toggleTableProperties(false);
+    else reflectTableProperties(activeNode);
+    setStatus("Table properties updated");
+  }
+});
+document.addEventListener("keydown", (event) => {
+  if (
+    tablePropertiesPanel.hidden ||
+    (document.activeElement !== tablePropertiesBtn &&
+      !tablePropertiesPanel.contains(document.activeElement))
+  ) {
+    return;
+  }
+  if (event.key === "Escape") {
+    event.preventDefault();
+    toggleTableProperties(false);
+  }
 });
 
 // -- Insert table: a hover grid picker (Google-Docs style) --------------------
