@@ -1708,7 +1708,27 @@ function reflectTableMenu() {
     b.setAttribute("aria-pressed", String(on));
   }
 }
-registerPopover(tableBtn, tableFmtMenu, reflectTableMenu);
+const tablePopover = registerPopover(tableBtn, tableFmtMenu, reflectTableMenu);
+
+const TABLE_POPOVER_ACTIONS = {
+  "insert-row-above": (n) => doc.insertRow(n, false),
+  "insert-row-below": (n) => doc.insertRow(n, true),
+  "insert-column-left": (n) => doc.insertColumn(n, false),
+  "insert-column-right": (n) => doc.insertColumn(n, true),
+  "delete-row": (n) => doc.deleteRow(n),
+  "delete-column": (n) => doc.deleteColumn(n),
+  "delete-table": (n) => doc.deleteTable(n),
+};
+
+for (const b of tableFmtMenu.querySelectorAll("[data-table-action]")) {
+  onButton(b, () => {
+    if (!selection || !doc) return;
+    const run = TABLE_POPOVER_ACTIONS[b.dataset.tableAction];
+    if (!run) return;
+    closePopover(tablePopover);
+    runEdit(() => run(selection.focus.node));
+  });
+}
 
 cellShade.addEventListener("change", () => {
   const [r, g, b] = hexToRgb(cellShade.value);

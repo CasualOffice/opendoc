@@ -240,6 +240,16 @@
     </div>
 
     <div id="tableMenu" class="context-menu spacing-menu" hidden role="menu" aria-label="Table and cell formatting">
+      <div class="menu-heading">Structure</div>
+      <button type="button" class="menu-item" data-table-action="insert-row-above">Insert row above</button>
+      <button type="button" class="menu-item" data-table-action="insert-row-below">Insert row below</button>
+      <button type="button" class="menu-item" data-table-action="insert-column-left">Insert column left</button>
+      <button type="button" class="menu-item" data-table-action="insert-column-right">Insert column right</button>
+      <div class="menu-divider"></div>
+      <button type="button" class="menu-item danger" data-table-action="delete-row">Delete row</button>
+      <button type="button" class="menu-item danger" data-table-action="delete-column">Delete column</button>
+      <button type="button" class="menu-item danger" data-table-action="delete-table">Delete table</button>
+      <div class="menu-divider"></div>
       <div class="menu-heading">Cell shading</div>
       <div class="menu-row shade-row">
         <label class="shade-pick"><input id="cellShade" type="color" value="#ffe08a" /><span>Fill</span></label>
