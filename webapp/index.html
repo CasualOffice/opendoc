@@ -14,9 +14,10 @@
     />
     <meta name="author" content="CasualOffice" />
     <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
-    <meta name="theme-color" content="#0b0c0f" />
+    <meta name="theme-color" content="#f4f5f7" />
     <link rel="icon" href="./opendoc-mark.svg" type="image/svg+xml" />
     <link rel="canonical" href="https://opendoc.casualoffice.org/" />
+    <link rel="stylesheet" href="./src/fonts.css" />
 
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="OpenDoc" />
@@ -99,9 +100,11 @@
 
     <main>
       <section class="hero">
-        <div class="hero-glow hero-glow-a" aria-hidden="true"></div>
-        <div class="hero-glow hero-glow-b" aria-hidden="true"></div>
         <div class="hero-copy">
+          <a class="dev-badge" href="https://github.com/CasualOffice/opendoc" aria-label="Star OpenDoc on GitHub">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 .25a8 8 0 00-2.53 15.59c.4.07.55-.17.55-.38l-.01-1.49c-2.23.48-2.7-1.08-2.7-1.08-.36-.93-.89-1.17-.89-1.17-.72-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.71 1.22 1.87.87 2.33.67.07-.52.28-.87.5-1.08-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.22 2.2.82a7.6 7.6 0 014 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48l-.01 2.2c0 .21.14.46.55.38A8 8 0 008 .25z"/></svg>
+            Star on GitHub
+          </a>
           <div class="eyebrow"><span></span> Open-source DOCX infrastructure</div>
           <h1>Own the document engine, not the dependency.</h1>
           <p class="hero-lede">
@@ -122,6 +125,7 @@
         </div>
 
         <div class="product-stage" aria-label="OpenDoc editor preview">
+          <div class="stage-ruler" aria-hidden="true"></div>
           <div class="stage-bar">
             <span class="stage-dots" aria-hidden="true"><i></i><i></i><i></i></span>
             <span>opendoc.casualoffice.org/editor.html</span>
@@ -156,6 +160,7 @@
         </div>
         <div class="capability-grid">
           <article>
+            <div class="card-ruler" aria-hidden="true"></div>
             <span class="card-number">01</span>
             <h3>Loss-aware DOCX</h3>
             <p>
@@ -169,6 +174,7 @@
             </ul>
           </article>
           <article>
+            <div class="card-ruler" aria-hidden="true"></div>
             <span class="card-number">02</span>
             <h3>Deterministic layout</h3>
             <p>
@@ -182,6 +188,7 @@
             </ul>
           </article>
           <article>
+            <div class="card-ruler" aria-hidden="true"></div>
             <span class="card-number">03</span>
             <h3>Embeddable editing</h3>
             <p>

@@ -45,8 +45,9 @@ cd webapp
 ./serve.py       # no-cache server at http://localhost:8099/
 ```
 
-`./pkg/`, `./demo.docx`, and `./assets/` are generated (git-ignored);
-`build.sh` and the Pages workflow rebuild them.
+`./pkg/`, `./demo.docx`, and `./assets/editor.jpg` are generated (git-ignored);
+`build.sh` and the Pages workflow rebuild them. `./assets/fonts/` is checked in
+because it is required for deterministic, offline-capable editor chrome.
 
 ## Deployment
 
@@ -55,7 +56,19 @@ cd webapp
 The custom domain is `opendoc.casualoffice.org`. The deployed editor remains
 pre-release; the landing page labels current support and future goals separately.
 
-## Fonts (external families and script coverage)
+## Chrome fonts and icons
+
+The landing page and editor chrome self-host **Inter** and **Material Symbols
+Outlined** from `assets/fonts/`; both routes load them through `src/fonts.css`.
+No Google Fonts request is made at runtime. Inter is licensed under the SIL
+Open Font License 1.1 and Material Symbols under Apache License 2.0; their
+license texts are stored beside the binaries.
+
+These UI assets are separate from document-content font provisioning below:
+changing the chrome font never changes DOCX layout, pagination, or exported
+font names.
+
+## Document fonts (external families and script coverage)
 
 The web build omits Roboto's four static blobs from the WASM artifact. Before
 first paint, the host fetches commit-pinned variable upright/italic faces for
@@ -87,5 +100,6 @@ dictionary).
 
 ## Attribution
 
-Toolbar icons are from **Material Symbols** by Google, licensed under the
-**Apache License 2.0**, inlined as SVG paths.
+Editor icons use **Material Symbols Outlined** by Google (Apache License 2.0).
+Editor and site chrome use **Inter** (SIL Open Font License 1.1). Both are
+self-hosted; complete license texts are in `assets/fonts/`.

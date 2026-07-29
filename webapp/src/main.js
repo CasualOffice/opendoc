@@ -2224,8 +2224,10 @@ outlineClose.addEventListener("click", toggleOutline);
 const cmdPalette = document.getElementById("cmdPalette");
 const cmdInput = document.getElementById("cmdInput");
 const cmdList = document.getElementById("cmdList");
+const searchTrigger = document.getElementById("searchTrigger");
 let cmdMatches = [];
 let cmdSel = 0;
+let cmdReturnFocus = null;
 
 /** The command set, rebuilt per open so dynamic entries (the document's styles)
  *  are current. Every command runs a real action; `noDoc` ones work with no doc. */
@@ -2312,13 +2314,18 @@ function runCommand(i) {
 }
 
 function openCmd() {
+  cmdReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   cmdPalette.hidden = false;
+  searchTrigger.setAttribute("aria-expanded", "true");
   cmdInput.value = "";
   renderCommands("");
   cmdInput.focus();
 }
 function closeCmd() {
   cmdPalette.hidden = true;
+  searchTrigger.setAttribute("aria-expanded", "false");
+  cmdReturnFocus?.focus();
+  cmdReturnFocus = null;
 }
 
 cmdInput.addEventListener("input", () => renderCommands(cmdInput.value));
@@ -2346,6 +2353,9 @@ document.addEventListener("keydown", (e) => {
     cmdPalette.hidden ? openCmd() : closeCmd();
   }
 });
+// Visible entry point for the palette (doc 69 §1.4.1): the shortcut already
+// worked, it just had no on-screen affordance to discover it.
+searchTrigger.addEventListener("click", openCmd);
 
 // ---- Find / replace ---------------------------------------------------------
 const FIND_SCAN_CAP = 5000;
@@ -3171,6 +3181,7 @@ const propKeywords = document.getElementById("propKeywords");
 const propDescription = document.getElementById("propDescription");
 const propertiesApplyBtn = document.getElementById("propertiesApply");
 const propertiesCancelBtn = document.getElementById("propertiesCancel");
+const propertiesCloseBtn = document.getElementById("propertiesClose");
 
 const PROP_FIELDS = [
   ["title", propTitle],
@@ -3181,20 +3192,54 @@ const PROP_FIELDS = [
   ["description", propDescription],
 ];
 
+function syncModalLock() {
+  const modalOpen =
+    !propertiesPanel.hidden ||
+    (typeof pageSetupMenu !== "undefined" && !pageSetupMenu.hidden);
+  document.body.classList.toggle("modal-open", modalOpen);
+}
+
+function trapModalFocus(e, modal) {
+  if (e.key !== "Tab") return;
+  const focusable = [
+    ...modal.querySelectorAll(
+      'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])',
+    ),
+  ].filter((element) => element.getClientRects().length > 0);
+  if (focusable.length === 0) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault();
+    first.focus();
+  }
+}
+
 function toggleProperties(open) {
   const show = open ?? propertiesPanel.hidden;
   if (show && doc) {
     const current = JSON.parse(doc.documentProperties());
     for (const [key, input] of PROP_FIELDS) input.value = current[key] ?? "";
   }
+  const returnFocus = !show && propertiesPanel.contains(document.activeElement);
   propertiesPanel.hidden = !show;
   propertiesBtn.setAttribute("aria-expanded", String(show));
+  syncModalLock();
+  if (show) {
+    queueMicrotask(() => propTitle.focus());
+  } else if (returnFocus) {
+    propertiesBtn.focus({ preventScroll: true });
+  }
 }
 propertiesBtn.addEventListener("click", (e) => {
   e.stopPropagation();
   toggleProperties();
 });
 propertiesCancelBtn.addEventListener("click", () => toggleProperties(false));
+propertiesCloseBtn.addEventListener("click", () => toggleProperties(false));
 propertiesApplyBtn.addEventListener("click", async () => {
   if (!doc) return;
   const current = JSON.parse(doc.documentProperties());
@@ -3205,17 +3250,18 @@ propertiesApplyBtn.addEventListener("click", async () => {
   await runEdit(() => doc.setDocumentProperties(JSON.stringify(current)));
   toggleProperties(false);
 });
-document.addEventListener("click", (e) => {
-  if (
-    !propertiesPanel.hidden &&
-    !propertiesPanel.contains(e.target) &&
-    e.target !== propertiesBtn
-  ) {
-    toggleProperties(false);
-  }
+propertiesPanel.addEventListener("mousedown", (e) => {
+  if (e.target === propertiesPanel) toggleProperties(false);
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !propertiesPanel.hidden) toggleProperties(false);
+  if (!propertiesPanel.hidden) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      toggleProperties(false);
+    } else {
+      trapModalFocus(e, propertiesPanel);
+    }
+  }
 });
 
 // ---- Page setup (page size, margins, orientation) ----------------------------
@@ -3230,6 +3276,10 @@ const pageMarginLeftInput = document.getElementById("pageMarginLeft");
 const pageMarginRightInput = document.getElementById("pageMarginRight");
 const pageSetupApplyBtn = document.getElementById("pageSetupApply");
 const pageSetupCancelBtn = document.getElementById("pageSetupCancel");
+const pageSetupCloseBtn = document.getElementById("pageSetupClose");
+const pagePreviewSheet = document.getElementById("pagePreviewSheet");
+const pagePreviewMargins = document.getElementById("pagePreviewMargins");
+const pagePreviewLabel = document.getElementById("pagePreviewLabel");
 
 let pageSetupCurrent = null; // the last-fetched {section, pageSize, pageMargins, orientation}
 
@@ -3237,6 +3287,25 @@ let pageSetupCurrent = null; // the last-fetched {section, pageSize, pageMargins
  * as "0" — a page dimension/margin is never meaningfully "unset"). */
 function pageInchStr(twip) {
   return (twip / TWIPS_PER_INCH).toFixed(2).replace(/\.?0+$/, "") || "0";
+}
+
+function updatePageSetupPreview() {
+  const width = Math.max(1, Number(pageWidthInput.value) || 1);
+  const height = Math.max(1, Number(pageHeightInput.value) || 1);
+  const top = Math.max(0, Number(pageMarginTopInput.value) || 0);
+  const bottom = Math.max(0, Number(pageMarginBottomInput.value) || 0);
+  const left = Math.max(0, Number(pageMarginLeftInput.value) || 0);
+  const right = Math.max(0, Number(pageMarginRightInput.value) || 0);
+  const previewPercent = (value, dimension) =>
+    `${Math.min(38, Math.max(3, (value / dimension) * 100))}%`;
+
+  pagePreviewSheet.dataset.orientation = width > height ? "landscape" : "portrait";
+  pagePreviewSheet.style.setProperty("--page-ratio", `${width} / ${height}`);
+  pagePreviewMargins.style.setProperty("--preview-margin-top", previewPercent(top, height));
+  pagePreviewMargins.style.setProperty("--preview-margin-bottom", previewPercent(bottom, height));
+  pagePreviewMargins.style.setProperty("--preview-margin-left", previewPercent(left, width));
+  pagePreviewMargins.style.setProperty("--preview-margin-right", previewPercent(right, width));
+  pagePreviewLabel.textContent = `${pageInchStr(width * TWIPS_PER_INCH)} × ${pageInchStr(height * TWIPS_PER_INCH)} in`;
 }
 
 function reflectPageSetup() {
@@ -3256,21 +3325,28 @@ function reflectPageSetup() {
   for (const btn of pageOrientationSeg.querySelectorAll("button")) {
     btn.setAttribute("aria-pressed", String(btn.dataset.orientation === activeOrientation));
   }
+  updatePageSetupPreview();
   return true;
 }
 
 function togglePageSetup(open) {
   const show = open ?? pageSetupMenu.hidden;
   if (show && !reflectPageSetup()) return; // no section geometry to edit
+  const returnFocus = !show && pageSetupMenu.contains(document.activeElement);
   pageSetupMenu.hidden = !show;
   pageSetupBtn.setAttribute("aria-expanded", String(show));
+  syncModalLock();
+  if (show) {
+    queueMicrotask(() =>
+      pageOrientationSeg.querySelector('button[aria-pressed="true"]')?.focus(),
+    );
+  } else if (returnFocus) {
+    pageSetupBtn.focus({ preventScroll: true });
+  }
 }
 pageSetupBtn.addEventListener("click", (e) => {
   e.stopPropagation();
   togglePageSetup();
-});
-pageSetupMenu.addEventListener("mousedown", (e) => {
-  if (!["INPUT", "SELECT", "OPTION", "BUTTON"].includes(e.target.tagName)) e.preventDefault();
 });
 pageOrientationSeg.addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-orientation]");
@@ -3287,8 +3363,20 @@ pageOrientationSeg.addEventListener("click", (e) => {
   const heightTwips = inchTwips(pageHeightInput);
   pageWidthInput.value = pageInchStr(heightTwips);
   pageHeightInput.value = pageInchStr(widthTwips);
+  updatePageSetupPreview();
 });
 pageSetupCancelBtn.addEventListener("click", () => togglePageSetup(false));
+pageSetupCloseBtn.addEventListener("click", () => togglePageSetup(false));
+for (const input of [
+  pageWidthInput,
+  pageHeightInput,
+  pageMarginTopInput,
+  pageMarginBottomInput,
+  pageMarginLeftInput,
+  pageMarginRightInput,
+]) {
+  input.addEventListener("input", updatePageSetupPreview);
+}
 pageSetupApplyBtn.addEventListener("click", async () => {
   if (!doc || !pageSetupCurrent) return;
   const orientation =
@@ -3312,18 +3400,18 @@ pageSetupApplyBtn.addEventListener("click", async () => {
   await runEdit(() => doc.setPageSetup(JSON.stringify(payload)));
   togglePageSetup(false);
 });
-document.addEventListener("mousedown", (e) => {
-  if (
-    !pageSetupMenu.hidden &&
-    !pageSetupMenu.contains(e.target) &&
-    e.target !== pageSetupBtn &&
-    !pageSetupBtn.contains(e.target)
-  ) {
-    togglePageSetup(false);
-  }
+pageSetupMenu.addEventListener("mousedown", (e) => {
+  if (e.target === pageSetupMenu) togglePageSetup(false);
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !pageSetupMenu.hidden) togglePageSetup(false);
+  if (!pageSetupMenu.hidden) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      togglePageSetup(false);
+    } else {
+      trapModalFocus(e, pageSetupMenu);
+    }
+  }
 });
 
 fileEl.disabled = true;

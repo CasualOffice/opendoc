@@ -1,7 +1,9 @@
 # 63 — Editor UI/UX Design System & Shell
 
 Status: accepted direction (living document)
-Reference: `template.png` (repo root) — a Vellum-style, Office-grade document editor.
+Reference: `docs/assets/template-reference-prototype.html` (the recovered
+`Vellum.dc.html` source behind `template.png`) — a Vellum-style, Office-grade
+document editor.
 
 This note is the **single reference for the editor's UI/UX**. Every feature we add
 to `webapp/` is placed and styled per the shell and tokens below, so the editor
@@ -22,8 +24,14 @@ Borrowed from the reference, adapted to the CasualOffice brand:
 - **Accent** — a single settable accent (Settings ⚙). Brand default is orange
   (`--accent`, casualoffice.org "Studio"); the reference's blue is one of the
   presets. Everything tints from `--accent` via `color-mix`.
-- **Type** — system UI stack (SF Pro / Inter / Segoe). Chrome text 13px; headings
-  and titles slightly heavier. Tabular numerals for measures (ruler, zoom, counts).
+- **Type** — self-hosted Inter for deterministic cross-platform chrome, with the
+  native system stack as fallback. Chrome text is 13px; headings and titles are
+  slightly heavier. Tabular numerals remain in use for measures (ruler, zoom,
+  counts).
+- **Icons** — self-hosted Material Symbols Outlined at a 16/18/20px compact,
+  control, and rail grid. Bold/italic/underline/strike remain literal typographic
+  glyphs, matching the reference. Font and license files are checked in; editor
+  chrome does not depend on a runtime font request.
 - **Neutrals** — near-white surfaces on a light-grey canvas; hairline dividers
   (`--line`); soft, low-contrast shadows for lifted surfaces (menus, panels).
 - **Shape & space** — rounded surfaces (`--radius` 8px, small controls 6–7px),
@@ -71,6 +79,12 @@ Reuse these; don't invent per-feature variants.
 - **Popover** (`.context-menu` + the shared popover manager in `main.js`) — anchored
   under its trigger, one open at a time, dismiss on outside-pointerdown / Escape;
   used for spacing, paragraph options, table & cell, insert-table.
+- **Dialog** (`.dialog-overlay` + `.dialog-card`) — centered, modal, titled, and
+  focus-contained for multi-section document actions such as Document Properties
+  and Page Setup. Dialogs use a dimmed backdrop, explicit Close/Cancel/Apply
+  actions, restore focus to their trigger, and keep the action row reachable while
+  the body scrolls on narrow screens. Do not force form-heavy workflows into
+  toolbar-sized popovers.
 - **Panel** — a bordered column (left/right) with a heading row (title + close),
   scrollable body, empty-states that are still *useful* (never dead).
 - **Segmented** (`.segmented`) — mutually-exclusive choices (theme, vertical align).
@@ -96,8 +110,9 @@ Where things live, so we stay consistent as we add features:
 
 - Keep the **single settable accent**; brand default orange, reference blue is a
   preset. Structure/spacing follow the reference; colour does not have to.
-- **Toolbar now, ribbon later**: keep the clean single toolbar and only move to
-  tabbed groups once there are enough controls to warrant it — no premature ribbon.
+- **Tabbed ribbon**: the working Home/Insert/Table/View ribbon is now the primary
+  toolbar. Tabs and controls appear only when the underlying command is real;
+  unavailable contextual commands remain visibly disabled.
 - **Comments / collaboration / Share** in the reference depend on a comments model
   and multi-user sync (later phases). We do **not** stub them; the right panel ships
   with only its functional tabs.

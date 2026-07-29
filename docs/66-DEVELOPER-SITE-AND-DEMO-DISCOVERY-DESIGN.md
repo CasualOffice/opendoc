@@ -115,3 +115,21 @@ browser smoke verified the root and demo routes at desktop and mobile
 viewports, automatic sample loading, the production WASM resources, no
 horizontal overflow, and no console errors. `robots.txt`, `sitemap.xml`, and
 `llms.txt` each returned HTTP 200 from the custom domain.
+
+## 2026-07-30 visual-system refinement
+
+The landing page now uses the editor's light paper/canvas visual language
+instead of the earlier dark-glass treatment: graphite text, neutral grey
+canvas, white bounded surfaces, one orange accent, ruler motifs, and dark
+surfaces only where they communicate engine/code content. The information
+architecture, capability claims, routes, metadata, and host-policy boundary
+are unchanged. The editor preview asset was refreshed from the completed live
+shell so the site no longer advertises stale chrome. Both site and editor use
+the same self-hosted Inter face; the font asset and OFL text are checked in, so
+the visual alignment adds no runtime Google Fonts dependency.
+
+Permanent Playwright coverage in
+`webapp/tests/e2e/site-visual-refresh.spec.mjs` checks the editor/demo routes,
+preview load, console errors, and narrow-viewport overflow. The completed
+refinement passed `webapp/build.sh`, 15 frontend unit tests, and the complete
+28-test Playwright suite.

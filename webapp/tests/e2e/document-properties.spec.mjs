@@ -138,3 +138,50 @@ test("the orientation toggle swaps width and height without applying yet", async
   await expect(page.locator("#pageWidth")).toHaveValue("8.27");
   await page.keyboard.press("Escape");
 });
+
+test("properties and page setup are keyboard-safe, mobile-bounded modal dialogs", async ({
+  page,
+  consoleErrors,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await gotoEditor(page);
+
+  const propertiesBtn = page.locator("#propertiesBtn");
+  await propertiesBtn.click();
+  const propertiesDialog = page.locator("#propertiesPanel");
+  await expect(propertiesDialog).toHaveAttribute("aria-modal", "true");
+  await expect(page.locator("#propTitle")).toBeFocused();
+  await page.locator("#propertiesClose").click();
+  await expect(propertiesBtn).toBeFocused();
+
+  await page.locator("#tabView").click();
+  const pageSetupBtn = page.locator("#pageSetupBtn");
+  await pageSetupBtn.click();
+  const setupDialog = page.locator("#pageSetupMenu");
+  await expect(setupDialog).toHaveAttribute("aria-modal", "true");
+  await expect(page.locator('button[data-orientation="portrait"]')).toBeFocused();
+
+  const cardBounds = await page.locator(".page-setup-dialog").evaluate((card) => {
+    const rect = card.getBoundingClientRect();
+    return {
+      left: rect.left,
+      top: rect.top,
+      right: rect.right,
+      bottom: rect.bottom,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    };
+  });
+  expect(cardBounds.left).toBeGreaterThanOrEqual(0);
+  expect(cardBounds.top).toBeGreaterThanOrEqual(0);
+  expect(cardBounds.right).toBeLessThanOrEqual(cardBounds.viewportWidth);
+  expect(cardBounds.bottom).toBeLessThanOrEqual(cardBounds.viewportHeight);
+  await expect(page.locator("#pageSetupApply")).toBeVisible();
+
+  await page.locator("#pageWidth").fill("10");
+  await expect(page.locator("#pagePreviewLabel")).toContainText("10 × 11.69 in");
+  await page.keyboard.press("Escape");
+  await expect(setupDialog).toBeHidden();
+  await expect(pageSetupBtn).toBeFocused();
+  expect(consoleErrors).toEqual([]);
+});
