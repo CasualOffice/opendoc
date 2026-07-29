@@ -241,6 +241,59 @@
 
     <div id="tableMenu" class="context-menu spacing-menu" hidden role="menu" aria-label="Table and cell formatting">
       <div class="menu-heading">Structure</div>
+      <div id="tableContext" class="table-context"></div>
+      <div class="menu-row">
+        <div class="chip-row" role="group" aria-label="Table selection">
+          <button type="button" class="chip-btn" data-table-select="row">Select row</button>
+          <button type="button" class="chip-btn" data-table-select="column">Select column</button>
+          <button type="button" class="chip-btn" data-table-select="table">Select table</button>
+        </div>
+      </div>
+      <div class="menu-row">
+        <div class="chip-row" role="group" aria-label="Merge and split cells">
+          <button type="button" class="chip-btn" id="mergeCellsBtn">Merge selected</button>
+          <button type="button" class="chip-btn" id="splitCellBtn">Split cell</button>
+        </div>
+      </div>
+      <div class="menu-divider"></div>
+      <div class="menu-heading">Properties</div>
+      <label class="menu-check-row"><input id="tableHeaderRow" type="checkbox" />Repeat header row</label>
+      <label class="menu-check-row"><input id="tableFixedLayout" type="checkbox" />Fixed column widths</label>
+      <div class="menu-row">
+        <span>Column width</span>
+        <input id="tableColumnWidth" type="number" min="0.05" max="22" step="0.05" inputmode="decimal" />
+        <span class="menu-unit">in</span>
+      </div>
+      <div class="menu-row">
+        <span>Table width</span>
+        <input id="tableWidth" type="number" min="0" max="22" step="0.05" inputmode="decimal" />
+        <span class="menu-unit">in</span>
+      </div>
+      <div class="menu-row">
+        <span>Indent</span>
+        <input id="tableIndent" type="number" min="-22" max="22" step="0.05" inputmode="decimal" />
+        <span class="menu-unit">in</span>
+      </div>
+      <div class="menu-row">
+        <span>Row height</span>
+        <input id="tableRowHeight" type="number" min="0" max="22" step="0.05" inputmode="decimal" />
+        <select id="tableRowHeightRule" class="menu-select" aria-label="Row height rule">
+          <option value="auto">Auto</option>
+          <option value="atLeast">At least</option>
+          <option value="exact">Exact</option>
+        </select>
+      </div>
+      <div class="menu-row">
+        <span>Cell margin</span>
+        <input id="tableCellMargin" type="number" min="0" max="2" step="0.02" inputmode="decimal" />
+        <span class="menu-unit">in</span>
+      </div>
+      <div class="menu-row">
+        <span>Cell spacing</span>
+        <input id="tableCellSpacing" type="number" min="0" max="2" step="0.02" inputmode="decimal" />
+        <span class="menu-unit">in</span>
+      </div>
+      <div class="menu-divider"></div>
       <button type="button" class="menu-item" data-table-action="insert-row-above">Insert row above</button>
       <button type="button" class="menu-item" data-table-action="insert-row-below">Insert row below</button>
       <button type="button" class="menu-item" data-table-action="insert-column-left">Insert column left</button>
