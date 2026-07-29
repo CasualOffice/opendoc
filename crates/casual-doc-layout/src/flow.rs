@@ -22,15 +22,14 @@ use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     Alignment, BlockNode, BorderEdge, BreakKind, Color, ColorScheme, DefinitionMap, Definitions,
     Document, Drawing, DrawingAnchor, DropCapFrame, DropCapMode, EmbeddedKind, EmbeddedObject,
-    Extent, FontRef, FontScheme, FrameWrap, HeightRule, HighlightColor, HorizontalAlign,
-    HorizontalAnchor, HorizontalPosition, HorizontalRule as ModelHorizontalRule,
-    HorizontalRuleAlign, Indentation, InlineNode, LevelSuffix, LineRule, MediaId, MediaReference,
-    NoteKind, NoteReference, Paragraph, ParagraphProperties, Rgba, RunProperties, SchemeColor,
-    SectionBoundary, SectionId, SectionType, ShapeStroke, StyleId, Symbol, TabAlignment, TabLeader,
-    TabStop, Table, TableBorders, TableCell, TableLayout, TableRow, TableRowProperties, TextBox,
-    TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxVerticalAnchor,
-    TextBoxVerticalOverflow, ThemeColorRef, ThemeFontRef, VerticalAlignment, VerticalAnchor,
-    VerticalMerge, VerticalPosition, WrapMode,
+    Extent, FontScheme, FrameWrap, HeightRule, HighlightColor, HorizontalAlign, HorizontalAnchor,
+    HorizontalPosition, HorizontalRule as ModelHorizontalRule, HorizontalRuleAlign, Indentation,
+    InlineNode, LevelSuffix, LineRule, MediaId, MediaReference, NoteKind, NoteReference, Paragraph,
+    ParagraphProperties, Rgba, RunProperties, SchemeColor, SectionBoundary, SectionId, SectionType,
+    ShapeStroke, StyleId, Symbol, TabAlignment, TabLeader, TabStop, Table, TableBorders, TableCell,
+    TableLayout, TableRow, TableRowProperties, TextBox, TextBoxAutoFit, TextBoxBodyProperties,
+    TextBoxHorizontalOverflow, TextBoxVerticalAnchor, TextBoxVerticalOverflow, ThemeColorRef,
+    VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition, WrapMode,
 };
 
 use crate::block::{
@@ -38,7 +37,7 @@ use crate::block::{
     CellContentMargins, CellFragment, CellVAlign, CellVerticalMerge, ParagraphDecor,
     ResolvedBorderSegment, ResolvedEdge,
 };
-use crate::cascade::StyleCascade;
+use crate::cascade::{StyleCascade, requested_font_family};
 use crate::incremental::{DirtySet, GalleyCache};
 use crate::model::{ModelPos, ModelRange};
 use crate::numbering::{self, NumberingState, PreparedMarker};
@@ -3826,43 +3825,7 @@ fn resolve_font(
 /// resolving a theme reference against the document's font scheme. `None` when the
 /// run declares no family (it inherits the default).
 fn requested_family(properties: &RunProperties, scheme: Option<&FontScheme>) -> Option<String> {
-    match properties.font_ref.as_ref()? {
-        FontRef::Named(name) => Some(name.name.clone()),
-        FontRef::Theme(theme) => theme_family(theme.slot, scheme),
-    }
-}
-
-/// Which per-script entry of a theme font collection a slot resolves against.
-enum ThemeAxis {
-    Latin,
-    EastAsia,
-    ComplexScript,
-}
-
-/// Resolves a `w:rFonts@*Theme` slot to a concrete typeface via the theme font
-/// scheme (design §3.4): `*Ascii`/`*HAnsi` → latin, `*EastAsia` → ea, `*Bidi` →
-/// cs, with an empty ea/cs typeface falling back to the latin entry.
-fn theme_family(slot: ThemeFontRef, scheme: Option<&FontScheme>) -> Option<String> {
-    let scheme = scheme?;
-    let (collection, axis) = match slot {
-        ThemeFontRef::MajorAscii | ThemeFontRef::MajorHAnsi => (&scheme.major, ThemeAxis::Latin),
-        ThemeFontRef::MajorEastAsia => (&scheme.major, ThemeAxis::EastAsia),
-        ThemeFontRef::MajorBidi => (&scheme.major, ThemeAxis::ComplexScript),
-        ThemeFontRef::MinorAscii | ThemeFontRef::MinorHAnsi => (&scheme.minor, ThemeAxis::Latin),
-        ThemeFontRef::MinorEastAsia => (&scheme.minor, ThemeAxis::EastAsia),
-        ThemeFontRef::MinorBidi => (&scheme.minor, ThemeAxis::ComplexScript),
-    };
-    let entry = match axis {
-        ThemeAxis::Latin => &collection.latin,
-        ThemeAxis::EastAsia => &collection.ea,
-        ThemeAxis::ComplexScript => &collection.cs,
-    };
-    let typeface = if entry.typeface.is_empty() {
-        &collection.latin.typeface
-    } else {
-        &entry.typeface
-    };
-    (!typeface.is_empty()).then(|| typeface.clone())
+    requested_font_family(properties, scheme)
 }
 
 /// Maps model paragraph alignment to the layout alignment.

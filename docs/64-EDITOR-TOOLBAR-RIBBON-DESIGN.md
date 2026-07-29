@@ -104,3 +104,18 @@ Behaviour: shows on a range selection, centred just above the selection's boundi
 box; hides when the selection collapses, on scroll/zoom, and during edits; never
 covers the first line (flips below when there's no room above). Reuses `.fmt`
 buttons + the popover tokens from doc 63.
+
+## 7. Formatting reflection contract
+
+Toolbar state reflects effective document formatting, not only direct run
+properties. The bridge resolves document defaults, paragraph-style inheritance,
+character-style inheritance, and direct formatting before reporting font, size,
+and run toggles. A multi-run selection reports a value only when it is uniform.
+
+The font control displays the authored/requested family, including a family
+resolved from a document theme. When the document declares no family at all, it
+displays the engine's implicit default, Roboto. Imported families not present in
+the starter dropdown are admitted as a temporary reflected option. Layout
+substitution and per-glyph coverage fallback remain renderer diagnostics; they
+must not replace an authored family in the control because selecting or resaving
+that physical fallback would change document intent.

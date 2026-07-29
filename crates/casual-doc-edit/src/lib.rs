@@ -1156,17 +1156,7 @@ pub fn format_state(document: &Document, range: Range) -> FormatState {
     if range.start.node != range.end.node || range.end.offset <= range.start.offset {
         return FormatState::default();
     }
-    let Some(para) = find_paragraph(document.body(), range.start.node) else {
-        return FormatState::default();
-    };
-    let covered: Vec<&RunProperties> = run_segments(&para.inlines)
-        .into_iter()
-        .filter(|s| s.end > range.start.offset && s.start < range.end.offset && s.start < s.end)
-        .filter_map(|s| match &para.inlines[s.idx] {
-            InlineNode::Run(run) => Some(&run.properties),
-            _ => None,
-        })
-        .collect();
+    let covered = run_properties_in_range(document, range);
     if covered.is_empty() {
         return FormatState::default();
     }
@@ -1187,7 +1177,9 @@ pub fn format_state(document: &Document, range: Range) -> FormatState {
 /// all-false.
 #[must_use]
 pub fn caret_format(document: &Document, node: NodeId, offset: u32) -> FormatState {
-    let props = caret_run_props(document, node, offset).unwrap_or_default();
+    let props = caret_run_properties(document, node, offset)
+        .cloned()
+        .unwrap_or_default();
     let on = |v: Option<bool>| v == Some(true);
     FormatState {
         bold: on(props.bold),
@@ -1202,7 +1194,7 @@ pub fn caret_format(document: &Document, node: NodeId, offset: u32) -> FormatSta
 /// arm) the same run styling a selection does. Defaults when the paragraph is empty.
 #[must_use]
 pub fn caret_run_style(document: &Document, node: NodeId, offset: u32) -> RunStyleState {
-    let Some(props) = caret_run_props(document, node, offset) else {
+    let Some(props) = caret_run_properties(document, node, offset) else {
         return RunStyleState::default();
     };
     RunStyleState {
@@ -1224,7 +1216,12 @@ pub fn caret_run_style(document: &Document, node: NodeId, offset: u32) -> RunSty
 /// (Word's rule), else the run to its right at a paragraph start, else the first
 /// run; `None` for an empty paragraph. The shared basis of the caret-format and
 /// caret-style queries (what new typing there would carry).
-fn caret_run_props(document: &Document, node: NodeId, offset: u32) -> Option<RunProperties> {
+#[must_use]
+pub fn caret_run_properties(
+    document: &Document,
+    node: NodeId,
+    offset: u32,
+) -> Option<&RunProperties> {
     let para = find_paragraph(document.body(), node)?;
     let segs = run_segments(&para.inlines);
     let seg = segs
@@ -1233,7 +1230,7 @@ fn caret_run_props(document: &Document, node: NodeId, offset: u32) -> Option<Run
         .or_else(|| segs.iter().find(|s| offset >= s.start && offset < s.end))
         .or_else(|| segs.first())?;
     match &para.inlines[seg.idx] {
-        InlineNode::Run(run) => Some(run.properties.clone()),
+        InlineNode::Run(run) => Some(&run.properties),
         _ => None,
     }
 }
@@ -1261,17 +1258,7 @@ pub fn run_style_state(document: &Document, range: Range) -> RunStyleState {
     if range.start.node != range.end.node || range.end.offset <= range.start.offset {
         return RunStyleState::default();
     }
-    let Some(para) = find_paragraph(document.body(), range.start.node) else {
-        return RunStyleState::default();
-    };
-    let covered: Vec<&RunProperties> = run_segments(&para.inlines)
-        .into_iter()
-        .filter(|s| s.end > range.start.offset && s.start < range.end.offset && s.start < s.end)
-        .filter_map(|s| match &para.inlines[s.idx] {
-            InlineNode::Run(run) => Some(&run.properties),
-            _ => None,
-        })
-        .collect();
+    let covered = run_properties_in_range(document, range);
     if covered.is_empty() {
         return RunStyleState::default();
     }
@@ -1292,6 +1279,30 @@ pub fn run_style_state(document: &Document, range: Range) -> RunStyleState {
             .iter()
             .all(|p| p.vertical_alignment == Some(VerticalAlignment::Subscript)),
     }
+}
+
+/// The direct run properties covered by a non-empty range within one paragraph.
+///
+/// This is intentionally a direct-property query: hosts that need the effective
+/// value visible to a user must pass each result through the document style
+/// cascade. Returning references keeps the editing crate independent of layout
+/// while avoiding another run-segmentation implementation at bridge layers.
+#[must_use]
+pub fn run_properties_in_range(document: &Document, range: Range) -> Vec<&RunProperties> {
+    if range.start.node != range.end.node || range.end.offset <= range.start.offset {
+        return Vec::new();
+    }
+    let Some(para) = find_paragraph(document.body(), range.start.node) else {
+        return Vec::new();
+    };
+    run_segments(&para.inlines)
+        .into_iter()
+        .filter(|s| s.end > range.start.offset && s.start < range.end.offset && s.start < s.end)
+        .filter_map(|s| match &para.inlines[s.idx] {
+            InlineNode::Run(run) => Some(&run.properties),
+            _ => None,
+        })
+        .collect()
 }
 
 /// The common value of `f` across all covered runs, or `None` if any run differs

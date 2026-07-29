@@ -85,7 +85,7 @@ test("the contextual Table ribbon exposes complete core commands and bounded for
   expect(consoleErrors).toEqual([]);
 });
 
-test("table properties reset cleanly, apply atomically, and restore focus", async ({
+test("table properties commit live, undo per interaction, and restore focus", async ({
   page,
   consoleErrors,
 }) => {
@@ -98,24 +98,26 @@ test("table properties reset cleanly, apply atomically, and restore focus", asyn
   await expect(page.locator("#tablePropertiesContext")).toContainText("2×2 table");
   await expect(page.locator("#viewport")).toBeVisible();
   await expect(page.locator("body")).not.toHaveClass(/modal-open/);
+  await expect(page.locator("#tablePropertiesApply")).toHaveCount(0);
+  await expect(page.locator("#tablePropertiesReset")).toHaveCount(0);
   const original = await tablePropertyValues(page);
-
-  await page.locator("#tableWidth").fill("4");
-  await page.locator("#tablePropertiesReset").click();
-  await expect(panel).toBeVisible();
-  expect(await tablePropertyValues(page)).toEqual(original);
 
   await page.locator('#tableAlign button[data-talign="center"]').click();
   await page.locator("#tableWidth").fill("4");
+  await page.locator("#tableWidth").press("Tab");
   await page.locator("#tableIndent").fill("0.25");
+  await page.locator("#tableIndent").press("Tab");
   await page.locator("#tableFixedLayout").check();
   await page.locator("#tableHeaderRow").check();
   await page.locator("#tableColumnWidth").fill("1.25");
+  await page.locator("#tableColumnWidth").press("Tab");
   await page.locator("#tableRowHeightRule").selectOption("exact");
   await page.locator("#tableRowHeight").fill("0.5");
+  await page.locator("#tableRowHeight").press("Tab");
   await page.locator("#tableCellMargin").fill("0.1");
+  await page.locator("#tableCellMargin").press("Tab");
   await page.locator("#tableCellSpacing").fill("0.06");
-  await page.locator("#tablePropertiesApply").click();
+  await page.locator("#tableCellSpacing").press("Tab");
   await expect(panel).toBeVisible();
   expect(await tablePropertyValues(page)).toEqual({
     alignment: "center",
@@ -129,20 +131,33 @@ test("table properties reset cleanly, apply atomically, and restore focus", asyn
     cellMargin: "0.1",
     cellSpacing: "0.06",
   });
-  await page.keyboard.press("Escape");
-  await expect(panel).toBeHidden();
-  await expect(trigger).toBeFocused();
 
-  // One undo reverses the complete multi-field Apply.
+  // Each completed control interaction is its own undo action. The last undo
+  // clears only cell spacing; the earlier live changes remain committed.
   await page.locator('[data-tab="home"]').click();
   await page.locator("#undoBtn").click();
   await page.locator("#tabTable").click();
-  await trigger.click();
-  expect(await tablePropertyValues(page)).toEqual(original);
+  expect(await tablePropertyValues(page)).toEqual({
+    alignment: "center",
+    width: "4",
+    indent: "0.25",
+    fixed: true,
+    header: true,
+    columnWidth: "1.25",
+    rowHeight: "0.5",
+    rowRule: "exact",
+    cellMargin: "0.1",
+    cellSpacing: original.cellSpacing,
+  });
+
+  await page.locator("#tableWidth").focus();
+  await page.keyboard.press("Escape");
+  await expect(panel).toBeHidden();
+  await expect(trigger).toBeFocused();
   expect(consoleErrors).toEqual([]);
 });
 
-test("table properties keep their action row reachable on a narrow viewport", async ({
+test("live table properties remain reachable on a narrow viewport", async ({
   page,
   consoleErrors,
 }) => {
@@ -151,9 +166,9 @@ test("table properties keep their action row reachable on a narrow viewport", as
   await page.locator("#tablePropertiesBtn").click();
 
   const panel = page.locator("#tablePropertiesPanel");
-  const footer = panel.locator(".table-properties-actions");
   await expect(panel).toBeVisible();
-  await expect(footer).toBeVisible();
+  await expect(panel.locator(".table-properties-actions")).toHaveCount(0);
+  await expect(page.locator("#tablePropertiesClose")).toBeVisible();
   await expect(page.locator("#viewport")).toBeVisible();
   await expect(page.locator("body")).not.toHaveClass(/modal-open/);
   const bounds = await panel.boundingBox();

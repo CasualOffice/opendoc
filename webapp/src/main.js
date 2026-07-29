@@ -71,8 +71,6 @@ const tableRibbonControls = [...tableRibbon.querySelectorAll("button")];
 const tablePropertiesBtn = document.getElementById("tablePropertiesBtn");
 const tablePropertiesPanel = document.getElementById("tablePropertiesPanel");
 const tablePropertiesContext = document.getElementById("tablePropertiesContext");
-const tablePropertiesApplyBtn = document.getElementById("tablePropertiesApply");
-const tablePropertiesResetBtn = document.getElementById("tablePropertiesReset");
 const tablePropertiesCloseBtn = document.getElementById("tablePropertiesClose");
 const tableColumnWidthNote = document.getElementById("tableColumnWidthNote");
 const mergeCellsBtn = document.getElementById("mergeCellsBtn");
@@ -1568,6 +1566,23 @@ function caretFormatState() {
   return state;
 }
 
+/** Reflects an authored font family without restricting imported documents to
+ * the toolbar's starter list. The temporary option is presentation-only: the
+ * renderer's physical substitution/fallback family is never written back as the
+ * document's requested font. */
+function reflectFontFamily(family) {
+  const previous = fontFamilySel.querySelector("option[data-reflected-font]");
+  if (previous && previous.value !== family) previous.remove();
+  if (family && ![...fontFamilySel.options].some((option) => option.value === family)) {
+    const option = document.createElement("option");
+    option.value = family;
+    option.textContent = family;
+    option.dataset.reflectedFont = "";
+    fontFamilySel.insertBefore(option, fontFamilySel.options[1] ?? null);
+  }
+  fontFamilySel.value = family;
+}
+
 /** Toggles a run toggle (`bold`/`italic`/`underline`/`strike`). With a range it
  *  formats the selection; at a collapsed caret it arms the format for typing
  *  (premium editors: press Bold, then type — the text comes out bold). */
@@ -1664,7 +1679,7 @@ function updateToolbar() {
     }
   }
   fontSizeSel.value = size;
-  fontFamilySel.value = font;
+  reflectFontFamily(font);
   superBtn.setAttribute("aria-pressed", String(sup));
   subBtn.setAttribute("aria-pressed", String(sub));
 
@@ -1687,14 +1702,9 @@ function updateToolbar() {
   }
   mergeCellsBtn.disabled = !inTable || !tableSelection;
   tableContext.textContent = tableInfo?.found ? tableContextLabel(tableInfo) : "";
-  const tablePropertiesKey = tableInfo?.found
-    ? `${tableInfo.table}:${tableInfo.row}:${tableInfo.column}`
-    : null;
-  if (!tablePropertiesPanel.hidden && !tablePropertiesDirty) {
-    if (!tablePropertiesKey) toggleTableProperties(false);
-    else if (tablePropertiesKey !== tablePropertiesContextKey) {
-      reflectTableProperties(selection.focus.node);
-    }
+  if (!tablePropertiesPanel.hidden) {
+    if (!tableInfo?.found) toggleTableProperties(false);
+    else reflectTableProperties(selection.focus.node);
   }
   tableInfo?.free();
 
@@ -2118,8 +2128,6 @@ for (const b of tableFmtMenu.querySelectorAll("[data-tableborder]")) {
 // -- Table properties inspector ----------------------------------------------
 let tablePropertiesCurrent = null;
 let tablePropertiesNode = null;
-let tablePropertiesContextKey = null;
-let tablePropertiesDirty = false;
 
 function dialogTwipsValue(twips) {
   return twips < 0
@@ -2148,7 +2156,6 @@ function reflectTableProperties(node = selection?.focus.node) {
   }
 
   tablePropertiesNode = node;
-  tablePropertiesContextKey = `${info.table}:${info.row}:${info.column}`;
   tablePropertiesContext.textContent = tableContextLabel(info);
   tableHeaderRow.checked = info.headerRow;
   tableFixedLayout.checked = info.fixedLayout;
@@ -2181,7 +2188,6 @@ function reflectTableProperties(node = selection?.focus.node) {
     cellMarginTwips: optionalDialogTwips(tableCellMargin),
     cellSpacingTwips: optionalDialogTwips(tableCellSpacing),
   };
-  tablePropertiesDirty = false;
   info.free();
   return true;
 }
@@ -2207,27 +2213,20 @@ tablePropertiesBtn.addEventListener("click", (event) => {
   toggleTableProperties();
 });
 tablePropertiesCloseBtn.addEventListener("click", () => toggleTableProperties(false));
-tablePropertiesResetBtn.addEventListener("click", () => {
-  const node =
-    selection && doc?.inTable(selection.focus.node)
-      ? selection.focus.node
-      : tablePropertiesNode;
-  reflectTableProperties(node);
-});
 tableAlign.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-talign]");
   if (!button) return;
   for (const candidate of tableAlign.querySelectorAll("button")) {
     candidate.setAttribute("aria-pressed", String(candidate === button));
   }
-  tablePropertiesDirty = true;
+  commitTableProperties();
 });
-tableRowHeightRule.addEventListener("change", updateTableRowHeightField);
-tablePropertiesPanel.addEventListener("input", () => {
-  tablePropertiesDirty = true;
-});
-tablePropertiesPanel.addEventListener("change", () => {
-  tablePropertiesDirty = true;
+tablePropertiesPanel.addEventListener("change", (event) => {
+  if (!(event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement)) {
+    return;
+  }
+  if (event.target === tableRowHeightRule) updateTableRowHeightField();
+  commitTableProperties();
 });
 
 function tablePropertiesPatch() {
@@ -2281,12 +2280,11 @@ function tablePropertiesPatch() {
   return patch;
 }
 
-tablePropertiesApplyBtn.addEventListener("click", () => {
+function commitTableProperties() {
   if (!doc || !tablePropertiesCurrent || !tablePropertiesNode) return;
   const patch = tablePropertiesPatch();
   if (!patch) return;
   if (Object.keys(patch).length === 0) {
-    tablePropertiesDirty = false;
     return;
   }
   const applied = runNodeEdit(() =>
@@ -2299,7 +2297,7 @@ tablePropertiesApplyBtn.addEventListener("click", () => {
     else reflectTableProperties(activeNode);
     setStatus("Table properties updated");
   }
-});
+}
 document.addEventListener("keydown", (event) => {
   if (
     tablePropertiesPanel.hidden ||

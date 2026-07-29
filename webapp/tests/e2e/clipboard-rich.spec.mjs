@@ -34,6 +34,16 @@ test("copying a bolded selection produces rich HTML with an internal round-trip 
   await clickIntoFirstPage(page);
   await moveCaretToDocStart(page);
 
+  // Heading 1 is effectively bold through its paragraph style. Move to the
+  // first genuinely non-bold line so clicking Bold applies (rather than clears)
+  // explicit bold formatting.
+  for (let line = 0; line < 20; line++) {
+    if ((await page.locator("#bold").getAttribute("aria-pressed")) === "false") break;
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Home");
+  }
+  await expect(page.locator("#bold")).toHaveAttribute("aria-pressed", "false");
+
   const marker = "RICHWORD";
   await page.keyboard.type(marker);
   await page.keyboard.press("Shift+Home");

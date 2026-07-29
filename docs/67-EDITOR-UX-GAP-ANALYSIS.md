@@ -1,7 +1,7 @@
 # Editor UX Gap Analysis
 
-Status: Draft for Phase 1G shell/editor planning  
-Date: 2026-07-29  
+Status: Active Phase 1G shell/editor plan; merged-main audit refreshed
+Date: 2026-07-30
 Scope: web editor shell, canvas editing, selection, command discoverability, and Word-like editing behavior. Table-editing implementation is tracked separately in `P1G-TABLE-COMPLETE-001`.
 
 ## Reference Baseline
@@ -46,14 +46,56 @@ P0 means an editing session can feel broken, unsafe, or lossy. P1 means a common
 | Error/reporting UX | P2 | Some unsupported edits are ignored with console warnings. | Unsupported commands show bounded user-facing reasons and never silently do nothing. | Add structured edit errors and disabled-command explanations. | Unit tests for error codes; browser smoke for disabled reason. |
 | Performance observability | P2 | Manual browser smokes catch regressions. | Editor exposes debug/perf counters for repaint, pagination, command time, and cache hits. | Add internal telemetry hooks owned by host; no network dependency. | Perf snapshots in CI artifacts. |
 
-## Execution Plan
+## 2026-07-30 merged-main editing audit
 
-1. Table PR: finish and review `fix/complete-table-editing-ux`. This keeps table work isolated from shell planning and gives reviewers a single table surface to test.
-2. Shell UX analysis PR: land this document plus tracker entry. It is the authoritative gap table for the next phase.
-3. Shell UX implementation PR 1: CI-backed browser smoke suite for focus, pointer cancellation, toolbar focus return, and color/shading latency. This prevents regressions in the bugs already reported.
-4. Shell UX implementation PR 2: rich clipboard + IME live preedit, because these are P0 daily editing blockers for Word-like behavior.
-5. Shell UX implementation PR 3: structural delete/selection and keyboard shortcut registry.
-6. Shell UX implementation PR 4: command discoverability: registry-backed command palette, disabled reasons, and context menus.
+This pass inspected and exercised the merged `main` rather than relying on the
+earlier planning table. Focus recovery, rich run/paragraph/link clipboard,
+IME preedit, structural deletion across a table boundary, the contextual table
+ribbon, and the right-side table inspector now have permanent browser coverage.
+They are no longer accurately described as wholly missing above; the remaining
+scope in those rows is their documented long tail.
+
+The following daily-driver defects remain the highest-priority work:
+
+| Order | Gap | Observed behavior | Required behavior |
+| --- | --- | --- | --- |
+| 1 | Undo transaction grouping | Continuous typing creates one history entry per character; plain multiline paste creates entries per insert/split; Enter over a selection deletes and splits as two actions. | Coalesce a typing burst until a semantic boundary and commit paste, composition, and replace-with-break as one transaction each. |
+| 2 | Selection collapse and platform navigation | Plain Left/Right moves from the range focus and can step past the expected boundary. Ctrl and Command share one mapping, producing incorrect Windows word/paragraph movement. | Collapse a range to its ordered edge before moving; centralize macOS/Windows keymaps; add word deletion and Page Up/Down. |
+| 3 | History reflection | Undo/Redo are enabled whenever a document exists because the bridge exposes no `canUndo`/`canRedo`. | Reflect real history availability and, later, a user-facing command label. |
+| 4 | Formatting semantics | Superscript/subscript set a value but do not toggle back to baseline; highlight has no reflected value; mixed paragraph/run selections are incompletely represented. | Add tri-state/mixed reflection, baseline toggles, and uniform state across all selected paragraphs. |
+| 5 | Lists | Enter cannot terminate a list, Tab changes paragraph indent rather than list level, and restart/continue/multilevel/checklist authoring are absent. | Implement complete list lifecycle before adding more gallery chrome. |
+| 6 | Paragraph property surface | The tall anchored form obscures most of a narrow document and uses menu semantics around form controls. | Move low-frequency paragraph properties into the shared live right inspector; retain only a compact spacing popover. |
+| 7 | Clipboard structure | Rich clipboard preserves paragraphs, runs, and links; tables, list definitions, images, and most external paragraph formatting flatten. | Add bounded structured fragments and richer sanitized HTML mapping. |
+| 8 | Command/shortcut coverage | The palette and shortcuts omit many visible commands; Command/Ctrl+K conflicts with conventional link authoring. | Use one command registry for ribbon, palette, shortcuts, disabled reasons, and context menus. |
+| 9 | Accessibility and touch | The canvas has limited model-derived accessibility semantics; touch selection handles and keyboard-safe mobile editing are absent. | Design a model-backed accessibility surface and a separate touch interaction layer. |
+| 10 | Editing scope | Body/table-cell paragraph text is editable; headers/footers, notes, text boxes, and objects are not general editing surfaces. | Add each surface through commands/transactions without making the browser DOM authoritative. |
+
+Effective formatting reflection was fixed during this audit: font, size, and
+run toggles now resolve document defaults, paragraph and character styles, and
+direct formatting. Theme font references resolve to their authored family;
+undeclared text reflects the engine default (Roboto); imported families can
+appear in the font control. Physical font substitution and glyph coverage
+fallback remain renderer diagnostics and are not written back as authored DOCX
+formatting.
+
+The table-properties inspector was also changed from a draft dialog model to a
+live inspector. Toggle/segmented/select controls commit on change, numeric fields
+commit on blur/Enter, and each completed control interaction is one undo action.
+Apply and Reset are removed; Undo is the recovery mechanism.
+
+## Revised execution plan
+
+1. Editing correctness: transaction grouping, selection collapse, platform
+   navigation, word deletion, and real history availability.
+2. Formatting semantics: super/sub baseline toggle, highlight reflection, mixed
+   selection state, and arbitrary font-size entry.
+3. Contextual properties: move paragraph properties into the same live inspector
+   system as tables.
+4. Lists/styles: complete list lifecycle, style gallery/reset-to-style, clear
+   formatting, and copy/paste formatting.
+5. Command registry: unify palette, shortcuts, menus, contextual commands, and
+   disabled reasons.
+6. Structured clipboard, accessibility/touch, and additional editing surfaces.
 
 ## Open Risks
 

@@ -14,13 +14,13 @@
 //! `device_px = twip / 1440 * dpi`.
 
 use casual_doc_edit::{
-    FormatDelta, Operation, Pos, Range as EditRange, apply as apply_edit, caret_format,
-    caret_run_style, cell_properties, find_paragraph, find_table, format_state, locate_cell,
-    locate_table_cell, locate_table_row, paragraph_properties, run_style_state,
+    FormatDelta, Operation, Pos, Range as EditRange, apply as apply_edit, caret_run_properties,
+    cell_properties, find_paragraph, find_table, locate_cell, locate_table_cell, locate_table_row,
+    paragraph_properties, run_properties_in_range,
 };
 use casual_doc_export::write_document;
 use casual_doc_import::{ImportConfig, ImportMode, import_package};
-use casual_doc_layout::cascade::StyleCascade;
+use casual_doc_layout::cascade::{StyleCascade, requested_font_family};
 use casual_doc_layout::compose::compose_page;
 use casual_doc_layout::document_layout::{
     document_page_config, paginate_document, paginate_document_cached,
@@ -41,8 +41,9 @@ use casual_doc_model::v1::{
     InternalTarget, LevelJustification, LevelSuffix, NumberFormat, NumberingInstance,
     NumberingInstanceId, NumberingLevel, NumberingRef, PageMargins, PageOrientation,
     PageSize as SectionPageSize, Paragraph, ParagraphProperties, RgbColor, RowHeight, Run,
-    SectionId, StyleId, StyleKind, TabAlignment, TabStop, Table, TableBorders, TableCell,
-    TableCellProperties, TableLayout, TableProperties, TableRow, VerticalAlignment, VerticalMerge,
+    RunProperties, SectionId, StyleId, StyleKind, TabAlignment, TabStop, Table, TableBorders,
+    TableCell, TableCellProperties, TableLayout, TableProperties, TableRow, VerticalAlignment,
+    VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
@@ -847,19 +848,8 @@ impl WasmDocument {
         let Ok(nid) = NodeId::from_str(node) else {
             return Format::default();
         };
-        let state = format_state(
-            &self.document,
-            EditRange {
-                start: Pos::new(nid, start),
-                end: Pos::new(nid, end),
-            },
-        );
-        Format {
-            bold: state.bold,
-            italic: state.italic,
-            underline: state.underline,
-            strike: state.strike,
-        }
+        let properties = effective_run_properties_in_range(&self.document, nid, start, end);
+        format_from_effective_runs(&properties)
     }
 
     /// The run formatting a collapsed caret inherits — what new typing there would
@@ -872,13 +862,10 @@ impl WasmDocument {
         let Ok(nid) = NodeId::from_str(node) else {
             return Format::default();
         };
-        let state = caret_format(&self.document, nid, offset);
-        Format {
-            bold: state.bold,
-            italic: state.italic,
-            underline: state.underline,
-            strike: state.strike,
-        }
+        effective_caret_run_properties(&self.document, nid, offset)
+            .map_or_else(Format::default, |properties| {
+                format_from_effective_runs(&[properties])
+            })
     }
 
     /// Inserts `text` at a collapsed caret carrying explicit run formatting — typing
@@ -1011,13 +998,8 @@ impl WasmDocument {
             strike: true,
         };
         for (node, s, e) in subs {
-            let st = format_state(
-                &self.document,
-                EditRange {
-                    start: Pos::new(node, s),
-                    end: Pos::new(node, e),
-                },
-            );
+            let properties = effective_run_properties_in_range(&self.document, node, s, e);
+            let st = format_from_effective_runs(&properties);
             acc.bold &= st.bold;
             acc.italic &= st.italic;
             acc.underline &= st.underline;
@@ -2836,9 +2818,9 @@ impl WasmDocument {
             .unwrap_or_default()
     }
 
-    /// The uniform run styling of the selection (size/color/font/vert-align) for
-    /// reflecting the current values in the toolbar. Blank/zero for a mixed or
-    /// cross-paragraph selection.
+    /// The uniform effective run styling of the selection
+    /// (size/color/authored-font/vert-align) for reflecting the current values in
+    /// the toolbar. Blank/zero means mixed or unset.
     #[wasm_bindgen(js_name = selectionRunStyle)]
     #[must_use]
     pub fn selection_run_style(
@@ -2852,23 +2834,32 @@ impl WasmDocument {
         else {
             return RunStyle::default();
         };
-        if start.node != end.node {
-            return RunStyle::default();
+        let mut properties = Vec::new();
+        for (node, range_start, range_end) in self.selection_subranges(start, end) {
+            properties.extend(effective_run_properties_in_range(
+                &self.document,
+                node,
+                range_start,
+                range_end,
+            ));
         }
-        let state = run_style_state(&self.document, EditRange { start, end });
-        run_style_to_wasm(&state)
+        run_style_from_effective_runs(&self.document, &properties)
     }
 
-    /// The run styling a **collapsed caret** inherits — size / font / color /
-    /// super-sub of the run new typing there would carry. Lets the toolbar reflect
-    /// (and pre-fill) those at a caret, not only over a selection.
+    /// The effective run styling a **collapsed caret** inherits — size / authored
+    /// font / color / super-sub after document defaults and style inheritance.
+    /// Renderer substitutions and glyph-coverage fallbacks are intentionally not
+    /// exposed as authored formatting.
     #[wasm_bindgen(js_name = caretRunStyle)]
     #[must_use]
     pub fn caret_run_style(&self, node: &str, offset: u32) -> RunStyle {
         let Ok(nid) = NodeId::from_str(node) else {
             return RunStyle::default();
         };
-        run_style_to_wasm(&caret_run_style(&self.document, nid, offset))
+        effective_caret_run_properties(&self.document, nid, offset)
+            .map_or_else(RunStyle::default, |properties| {
+                run_style_from_effective_runs(&self.document, &[properties])
+            })
     }
 
     /// The line-spacing percentage of the paragraph at `node` (0 if unset) — for
@@ -4420,21 +4411,113 @@ fn parse_range(
     ))
 }
 
-/// A page-local rectangle flattened to `[page, x, y, w, h]` twips.
-/// Converts an edit-crate run-style state into the WASM [`RunStyle`] the toolbar
-/// reads (shared by the selection and caret queries).
-fn run_style_to_wasm(state: &casual_doc_edit::RunStyleState) -> RunStyle {
-    RunStyle {
-        size_points: state.size_half_points.map_or(0.0, |h| h as f32 / 2.0),
-        color: state.color_rgb.map_or_else(String::new, |c| {
-            format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b)
-        }),
-        font: state.font.clone().unwrap_or_default(),
-        superscript: state.superscript,
-        subscript: state.subscript,
+/// Resolves the direct properties of each run covered by one paragraph range
+/// through the document's effective style cascade.
+fn effective_run_properties_in_range(
+    document: &Document,
+    node: NodeId,
+    start: u32,
+    end: u32,
+) -> Vec<RunProperties> {
+    let Some(paragraph) = find_paragraph(document.body(), node) else {
+        return Vec::new();
+    };
+    let cascade = StyleCascade::new(document.definitions());
+    let paragraph_style = cascade.paragraph_style(&paragraph.properties);
+    run_properties_in_range(
+        document,
+        EditRange {
+            start: Pos::new(node, start),
+            end: Pos::new(node, end),
+        },
+    )
+    .into_iter()
+    .map(|direct| cascade.resolve_run(paragraph_style, direct))
+    .collect()
+}
+
+/// Resolves the run a caret inherits, including document defaults and paragraph /
+/// character styles. Empty paragraphs still inherit their paragraph style.
+fn effective_caret_run_properties(
+    document: &Document,
+    node: NodeId,
+    offset: u32,
+) -> Option<RunProperties> {
+    let paragraph = find_paragraph(document.body(), node)?;
+    let cascade = StyleCascade::new(document.definitions());
+    let direct = caret_run_properties(document, node, offset)
+        .cloned()
+        .unwrap_or_default();
+    Some(cascade.resolve_run(cascade.paragraph_style(&paragraph.properties), &direct))
+}
+
+/// Converts effective run properties into the uniform toggle state a toolbar
+/// reflects.
+fn format_from_effective_runs(properties: &[RunProperties]) -> Format {
+    if properties.is_empty() {
+        return Format::default();
+    }
+    let all = |f: fn(&RunProperties) -> Option<bool>| {
+        properties
+            .iter()
+            .all(|properties| f(properties) == Some(true))
+    };
+    Format {
+        bold: all(|properties| properties.bold),
+        italic: all(|properties| properties.italic),
+        underline: all(|properties| properties.underline),
+        strike: all(|properties| properties.strike),
     }
 }
 
+/// Converts effective properties into the WASM [`RunStyle`] the toolbar reads.
+/// Font names are the authored/requested family, never the physical fallback
+/// selected by the renderer.
+fn run_style_from_effective_runs(document: &Document, properties: &[RunProperties]) -> RunStyle {
+    if properties.is_empty() {
+        return RunStyle::default();
+    }
+    let scheme = document.definitions().font_scheme.as_ref();
+    RunStyle {
+        size_points: uniform_effective(properties, |p| p.size_half_points)
+            .map_or(0.0, |half_points| half_points as f32 / 2.0),
+        color: uniform_effective(properties, |p| match p.color {
+            Some(Color::Rgb(color)) => Some(color),
+            _ => None,
+        })
+        .map_or_else(String::new, |c| {
+            format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b)
+        }),
+        font: uniform_effective(properties, |p| {
+            Some(
+                requested_font_family(p, scheme)
+                    .unwrap_or_else(|| casual_doc_layout::fonts::ROBOTO.name.to_owned()),
+            )
+        })
+        .unwrap_or_default(),
+        superscript: properties
+            .iter()
+            .all(|p| p.vertical_alignment == Some(VerticalAlignment::Superscript)),
+        subscript: properties
+            .iter()
+            .all(|p| p.vertical_alignment == Some(VerticalAlignment::Subscript)),
+    }
+}
+
+/// The common set value across all effective runs, or `None` for mixed/unset.
+fn uniform_effective<T: PartialEq>(
+    properties: &[RunProperties],
+    value: impl Fn(&RunProperties) -> Option<T>,
+) -> Option<T> {
+    let first = value(&properties[0])?;
+    properties
+        .iter()
+        .skip(1)
+        .all(|properties| value(properties).as_ref() == Some(&first))
+        .then_some(first)
+}
+
+/// A page-local rectangle flattened to `[page, x, y, w, h]` twips.
 fn flat_rect(page: u32, rect: Rect) -> [i32; 5] {
     [
         page as i32,
@@ -6596,9 +6679,9 @@ mod tests {
         collect_block_text(d.document.body(), &mut nodes);
         let node = nodes
             .iter()
-            .find(|(_, t)| t.len() >= 3)
+            .find(|(id, text)| text.len() >= 3 && !d.format_at(&id.to_string(), 0, 3).bold())
             .map(|(id, _)| id.to_string())
-            .expect("a paragraph with >=3 chars");
+            .expect("a non-bold paragraph with >=3 chars");
 
         assert!(!d.format_at(&node, 0, 3).bold(), "not bold initially");
         d.format_text(&node, 0, 3, Some(true), None, None, None)
@@ -6607,6 +6690,78 @@ mod tests {
 
         d.undo().expect("undo");
         assert!(!d.format_at(&node, 0, 3).bold(), "undo cleared bold");
+    }
+
+    #[test]
+    fn toolbar_style_resolves_effective_paragraph_style_font_and_format() {
+        use casual_doc_model::v1::{Definitions, RunProperties, Style};
+
+        let style_id = StyleId::new(NodeId::from_parts(82, 1).unwrap());
+        let paragraph_id = NodeId::from_parts(82, 2).unwrap();
+        let mut definitions = Definitions::default();
+        definitions.styles.insert(
+            style_id,
+            Style {
+                kind: StyleKind::Paragraph,
+                is_default: false,
+                name: Some("Imported heading".to_owned()),
+                aliases: None,
+                based_on: None,
+                next: None,
+                link: None,
+                hidden: false,
+                ui_priority: None,
+                semi_hidden: false,
+                unhide_when_used: false,
+                q_format: true,
+                locked: false,
+                paragraph: None,
+                run: Some(RunProperties {
+                    bold: Some(true),
+                    size_half_points: Some(36),
+                    font_ref: Some(FontRef::Named(FontName {
+                        name: "Imported Display Face".to_owned(),
+                    })),
+                    ..RunProperties::default()
+                }),
+                table: None,
+                table_row: None,
+                table_cell: None,
+                conditional: Vec::new(),
+            },
+        );
+        let document = Document::new(
+            NodeId::from_parts(82, 3).unwrap(),
+            vec![BlockNode::Paragraph(Paragraph {
+                id: paragraph_id,
+                properties: ParagraphProperties {
+                    style_ref: Some(style_id),
+                    ..ParagraphProperties::default()
+                },
+                inlines: vec![InlineNode::Run(Run {
+                    id: NodeId::from_parts(82, 4).unwrap(),
+                    properties: RunProperties::default(),
+                    text: "Styled".to_owned(),
+                })],
+            })],
+            definitions,
+        )
+        .expect("valid style-driven document");
+
+        let effective = effective_caret_run_properties(&document, paragraph_id, 3)
+            .expect("caret inherits its paragraph style");
+        let toolbar = run_style_from_effective_runs(&document, std::slice::from_ref(&effective));
+        let format = format_from_effective_runs(std::slice::from_ref(&effective));
+        assert_eq!(toolbar.font(), "Imported Display Face");
+        assert_eq!(toolbar.size_points(), 18.0);
+        assert!(format.bold(), "style-driven bold is reflected");
+
+        let implicit = run_style_from_effective_runs(&document, &[RunProperties::default()]);
+        assert_eq!(
+            implicit.font(),
+            "Roboto",
+            "an undeclared family reflects the engine default"
+        );
     }
 
     /// Typing with an armed format at a collapsed caret: `insertStyledText` inserts
@@ -6619,9 +6774,9 @@ mod tests {
         collect_block_text(d.document.body(), &mut nodes);
         let node = nodes
             .iter()
-            .find(|(_, t)| !t.is_empty())
+            .find(|(id, text)| !text.is_empty() && !d.caret_format(&id.to_string(), 0).bold())
             .map(|(id, _)| id.to_string())
-            .expect("a non-empty paragraph");
+            .expect("a non-empty non-bold paragraph");
 
         assert!(!d.caret_format(&node, 0).bold(), "caret not bold initially");
         // Armed bold + 20pt: both land on the typed character.

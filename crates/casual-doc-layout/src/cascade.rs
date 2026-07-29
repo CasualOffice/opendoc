@@ -21,8 +21,8 @@
 
 use casual_doc_model::v1::{DefinitionMap, Definitions};
 use casual_doc_model::v1::{
-    DocumentDefaults, Indentation, ParagraphProperties, RunProperties, Spacing, Style, StyleId,
-    StyleKind,
+    DocumentDefaults, FontRef, FontScheme, Indentation, ParagraphProperties, RunProperties,
+    Spacing, Style, StyleId, StyleKind, ThemeFontRef,
 };
 
 /// The maximum `basedOn` chain depth walked. The model rejects cycles, but the
@@ -134,6 +134,58 @@ impl<'a> StyleCascade<'a> {
         overlay_run(&mut effective, direct);
         effective
     }
+}
+
+/// The concrete authored family requested by an effective run's Latin font
+/// slots. Named values are returned unchanged; theme references resolve through
+/// the document's font scheme. This deliberately reports document intent, not
+/// the physical face selected later by the renderer's substitution/coverage
+/// fallback.
+#[must_use]
+pub fn requested_font_family(
+    properties: &RunProperties,
+    scheme: Option<&FontScheme>,
+) -> Option<String> {
+    let reference = properties
+        .font_ref
+        .as_ref()
+        .or(properties.font_ref_h_ansi.as_ref())?;
+    match reference {
+        FontRef::Named(name) => Some(name.name.clone()),
+        FontRef::Theme(theme) => theme_font_family(theme.slot, scheme),
+    }
+}
+
+/// Which per-script entry of a theme font collection a slot resolves against.
+enum ThemeAxis {
+    Latin,
+    EastAsia,
+    ComplexScript,
+}
+
+/// Resolves a `w:rFonts@*Theme` slot to a concrete typeface via the theme font
+/// scheme. Empty East-Asian/complex-script entries inherit the Latin entry.
+fn theme_font_family(slot: ThemeFontRef, scheme: Option<&FontScheme>) -> Option<String> {
+    let scheme = scheme?;
+    let (collection, axis) = match slot {
+        ThemeFontRef::MajorAscii | ThemeFontRef::MajorHAnsi => (&scheme.major, ThemeAxis::Latin),
+        ThemeFontRef::MajorEastAsia => (&scheme.major, ThemeAxis::EastAsia),
+        ThemeFontRef::MajorBidi => (&scheme.major, ThemeAxis::ComplexScript),
+        ThemeFontRef::MinorAscii | ThemeFontRef::MinorHAnsi => (&scheme.minor, ThemeAxis::Latin),
+        ThemeFontRef::MinorEastAsia => (&scheme.minor, ThemeAxis::EastAsia),
+        ThemeFontRef::MinorBidi => (&scheme.minor, ThemeAxis::ComplexScript),
+    };
+    let entry = match axis {
+        ThemeAxis::Latin => &collection.latin,
+        ThemeAxis::EastAsia => &collection.ea,
+        ThemeAxis::ComplexScript => &collection.cs,
+    };
+    let typeface = if entry.typeface.is_empty() {
+        &collection.latin.typeface
+    } else {
+        &entry.typeface
+    };
+    (!typeface.is_empty()).then(|| typeface.clone())
 }
 
 /// Overlays `over`'s set fields onto `base` (a higher-precedence run layer): every
@@ -297,7 +349,9 @@ fn merge_spacing(base: Option<Spacing>, over: Option<Spacing>) -> Option<Spacing
 mod tests {
     use super::*;
     use casual_doc_model::NodeId;
-    use casual_doc_model::v1::{Alignment, Definitions, LineRule};
+    use casual_doc_model::v1::{
+        Alignment, Definitions, FontCollection, FontName, LineRule, ThemeFont, ThemeFontEntry,
+    };
 
     fn style_id(n: u64) -> StyleId {
         StyleId::new(NodeId::from_parts(n, 1).unwrap())
@@ -375,6 +429,41 @@ mod tests {
         let overridden = cascade.resolve_run(cascade.paragraph_style(&para), &direct);
         assert_eq!(overridden.size_half_points, Some(20));
         assert_eq!(overridden.bold, Some(true), "bold still inherited");
+    }
+
+    #[test]
+    fn requested_font_reports_authored_named_or_theme_family() {
+        let named = RunProperties {
+            font_ref: Some(FontRef::Named(FontName {
+                name: "Document Sans".to_owned(),
+            })),
+            ..RunProperties::default()
+        };
+        assert_eq!(
+            requested_font_family(&named, None).as_deref(),
+            Some("Document Sans")
+        );
+
+        let themed = RunProperties {
+            font_ref_h_ansi: Some(FontRef::Theme(ThemeFont {
+                slot: ThemeFontRef::MinorHAnsi,
+            })),
+            ..RunProperties::default()
+        };
+        let scheme = FontScheme {
+            minor: FontCollection {
+                latin: ThemeFontEntry {
+                    typeface: "Aptos".to_owned(),
+                    ..ThemeFontEntry::default()
+                },
+                ..FontCollection::default()
+            },
+            ..FontScheme::default()
+        };
+        assert_eq!(
+            requested_font_family(&themed, Some(&scheme)).as_deref(),
+            Some("Aptos")
+        );
     }
 
     #[test]

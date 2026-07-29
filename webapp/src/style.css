@@ -2061,28 +2061,6 @@ body.modal-open {
   line-height: 1.45;
 }
 
-.table-properties-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-  padding: 11px 12px;
-  border-top: 1px solid var(--line);
-  background: var(--bg-2);
-}
-
-.table-properties-actions .dialog-actions {
-  width: 100%;
-}
-
-.table-properties-actions .dialog-button {
-  flex: 1;
-}
-
-.table-properties-note {
-  color: var(--muted);
-  font-size: var(--fs-caption);
-}
-
 /* Outline: a clickable heading tree, indented by level. */
 .outline-item {
   display: block;

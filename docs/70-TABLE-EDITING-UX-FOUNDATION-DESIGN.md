@@ -30,39 +30,41 @@ contains only working commands, split into five groups:
    default-cell measurements.
 
 The detailed inspector follows the shared panel contract from doc 63: titled,
-non-modal, scrollable body, fixed action row, explicit Reset/Apply, Escape/close
-dismissal, and trigger-focus restoration. On desktop it shares the work area
-with the canvas so the selected table remains visible. At narrow widths it
-becomes a viewport-bounded right drawer.
+non-modal, scrollable body, live property controls, Escape/close dismissal, and
+trigger-focus restoration. On desktop it shares the work area with the canvas
+so the selected table remains visible. At narrow widths it becomes a
+viewport-bounded right drawer.
 
 ## Mutation and undo contract
 
-The inspector is a draft form. It reads one `TableInfo` snapshot on open and does
-not mutate during input. Apply sends one bounded JSON payload to the WASM bridge.
-The bridge clones the innermost table, updates the table properties plus the
-active row/column fields, and commits one `ReplaceTable` operation. Therefore:
+The inspector is a live property surface, not a draft dialog. A valid completed
+interaction sends one bounded JSON patch to the WASM bridge. The bridge clones
+the innermost table, updates the requested table/row/column fields, and commits
+one `ReplaceTable` operation. Toggle, segmented, and select controls commit on
+change. Numeric fields commit on their native completed-change boundary
+(blur/Enter), never for every input event. Therefore:
 
-- one Apply is one undo action;
-- invalid payloads leave the document unchanged;
-- Reset is mutation-free and restores the current model snapshot;
-- the model remains the source of truth;
+- one completed control interaction is one undo action;
+- invalid or incomplete numeric input leaves the document unchanged;
+- there is no Apply/Reset footer: Undo is the recovery mechanism for committed
+  changes;
+- the model remains the source of truth and the inspector re-reflects it after
+  each successful commit;
 - regular-grid-only column sizing remains explicitly disabled/refused for
   merged or spanned tables.
 
 The retained compact formatting popover continues to use the existing
 single-command transactions because every click/change is already one visible
-user action. After a successful Apply, the inspector remains open and reflects
-the committed model values for iterative adjustment. While the draft is clean,
-moving the caret to another cell refreshes the inspector context; a dirty draft
-remains pinned to its original table cell until it is applied, reset, or closed.
+user action. After a successful change, the inspector remains open and reflects
+the committed model values for iterative adjustment. Moving the caret to another
+cell refreshes the inspector context.
 
 ## Responsive and accessibility rules
 
 - The ribbon stays one row and horizontally scrolls at narrow widths.
 - Every icon command has an accessible name and tooltip.
 - Destructive commands use the existing danger treatment without hiding them.
-- The inspector is 320 px wide on desktop; its body scrolls while actions remain
-  reachable.
+- The inspector is 320 px wide on desktop; its body scrolls independently.
 - At widths below 900 px it overlays as a bounded right drawer rather than
   collapsing the document canvas to an unusable width.
 - Fields use native labels and numeric constraints.
@@ -81,7 +83,8 @@ formulas, captions, or alt-text authoring. Those remain separate table slices.
   table and one undo restores the full prior table.
 - Browser regression: the Table ribbon exposes every structural/select/merge
   command; the formatting popover fits in the viewport; the properties inspector
-  reflects context, resets without mutation, stays non-modal and reachable at
-  narrow widths, restores focus on close, and applies through one editor command.
+  reflects context, has no draft action footer, commits each completed control
+  interaction through one editor command, stays non-modal and reachable at narrow
+  widths, and restores focus on close.
 - `cargo fmt --check`, focused WASM tests, web build/unit tests, Playwright, and
   `git diff --check`.
