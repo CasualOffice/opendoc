@@ -349,5 +349,5 @@ The completion pass also removes the accidental "Clipboard" label from an Undo/R
 keeps the no-document header limited to useful actions, and bounds the header at 390px/720px so
 the new Search control cannot create page-level horizontal overflow. Permanent Playwright
 coverage lives in `webapp/tests/e2e/shell-reference-polish.spec.mjs`. Verification: `webapp/build.sh`,
-`npm run test:unit` (15 passed), `npm run test:e2e` (28 passed), `node --check
+`npm run test:unit` (15 passed), `npm run test:e2e` (29 passed), `node --check
 webapp/src/main.js`, and `git diff --check`.

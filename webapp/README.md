@@ -45,9 +45,12 @@ cd webapp
 ./serve.py       # no-cache server at http://localhost:8099/
 ```
 
-`./pkg/`, `./demo.docx`, and `./assets/editor.jpg` are generated (git-ignored);
-`build.sh` and the Pages workflow rebuild them. `./assets/fonts/` is checked in
-because it is required for deterministic, offline-capable editor chrome.
+`./pkg/`, `./sample.docx`, `./demo.docx`, and `./assets/editor.jpg` are
+generated (git-ignored); `build.sh` and the Pages workflow rebuild them.
+`sample.docx` is the public/default document, while `demo.docx` is retained
+only for the internal `?fixture=rich` browser-test route. `./assets/fonts/` is
+checked in because it is required for deterministic, offline-capable editor
+chrome.
 
 ## Deployment
 

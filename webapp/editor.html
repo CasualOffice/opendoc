@@ -80,12 +80,41 @@
         <div class="dialog-body">
           <div class="properties-grid">
             <label class="dialog-field field-wide">Title<input id="propTitle" type="text" maxlength="4096" autocomplete="off" /></label>
-            <label class="dialog-field">Author<input id="propCreator" type="text" maxlength="4096" autocomplete="off" /></label>
+            <label class="dialog-field">Created by<input id="propCreator" type="text" maxlength="4096" autocomplete="off" /></label>
             <label class="dialog-field">Category<input id="propCategory" type="text" maxlength="4096" autocomplete="off" /></label>
             <label class="dialog-field">Subject<input id="propSubject" type="text" maxlength="4096" autocomplete="off" /></label>
             <label class="dialog-field">Keywords<input id="propKeywords" type="text" maxlength="4096" autocomplete="off" /></label>
             <label class="dialog-field field-wide">Comments<textarea id="propDescription" maxlength="4096" rows="3"></textarea></label>
           </div>
+          <section class="metadata-section" aria-labelledby="fileDetailsTitle">
+            <h3 id="fileDetailsTitle">File details</h3>
+            <dl class="metadata-facts">
+              <div><dt>Created</dt><dd id="metaCreated">Not set</dd></div>
+              <div><dt>Last modified</dt><dd id="metaModified">Not set</dd></div>
+              <div><dt>Last modified by</dt><dd id="metaLastModifiedBy">Not set</dd></div>
+              <div><dt>Last printed</dt><dd id="metaLastPrinted">Not set</dd></div>
+              <div><dt>Revision</dt><dd id="metaRevision">Not set</dd></div>
+              <div><dt>Language</dt><dd id="metaLanguage">Not set</dd></div>
+              <div><dt>Content status</dt><dd id="metaContentStatus">Not set</dd></div>
+              <div><dt>Version</dt><dd id="metaVersion">Not set</dd></div>
+            </dl>
+          </section>
+          <details class="metadata-disclosure">
+            <summary>Producer and saved statistics</summary>
+            <dl class="metadata-facts metadata-facts-compact">
+              <div><dt>Application</dt><dd id="metaApplication">Not set</dd></div>
+              <div><dt>Application version</dt><dd id="metaAppVersion">Not set</dd></div>
+              <div><dt>Template</dt><dd id="metaTemplate">Not set</dd></div>
+              <div><dt>Company</dt><dd id="metaCompany">Not set</dd></div>
+              <div><dt>Manager</dt><dd id="metaManager">Not set</dd></div>
+              <div><dt>Total editing time</dt><dd id="metaTotalTime">Not set</dd></div>
+              <div class="metadata-fact-wide"><dt>Producer-saved counts</dt><dd id="metaSavedStats">Not set</dd></div>
+            </dl>
+          </details>
+          <details id="metaCustomSection" class="metadata-disclosure" hidden>
+            <summary>Custom properties</summary>
+            <dl id="metaCustomList" class="metadata-facts metadata-facts-compact"></dl>
+          </details>
         </div>
         <footer class="dialog-foot">
           <span class="dialog-note">Changes apply as one undoable action.</span>

@@ -13,7 +13,7 @@ point instead of opening directly into an unexplained test harness:
 - `/` explains the engine, its host boundary, current capabilities, and honest
   pre-release limits;
 - `/editor.html` remains the complete browser editor;
-- `/editor.html?demo=1` opens a small redistribution-safe repository fixture
+- `/editor.html?demo=1` opens the repository-owned `sample.docx`
   without requiring a file picker;
 - the README shows the current editor shell and sends readers to the live site.
 
@@ -35,15 +35,18 @@ package, and host policy remain unchanged. A new semantic `index.html` and
 `src/marketing.css` form the landing page with no framework or build-time
 JavaScript dependency.
 
-The build copies two repository-owned assets into ignored deploy outputs:
+The build copies three repository-owned assets into ignored deploy outputs:
 
-- `fixtures/corpus/real-producer-rich.docx` → `webapp/demo.docx`;
+- `sample.docx` → `webapp/sample.docx` for both the public demo and the default
+  populated editor;
+- `fixtures/corpus/real-producer-rich.docx` → `webapp/demo.docx` for the
+  internal `?fixture=rich` browser-test route only;
 - `docs/assets/editor.jpg` → `webapp/assets/editor.jpg`.
 
-The fixture manifest records the sample as Apache-2.0 and repository-generated.
-The editor fetches it only for the explicit `?demo=1` route. Normal editor loads
-perform no document fetch and continue to accept local files without uploading
-them.
+The public `?demo=1` route and a plain editor visit both fetch `sample.docx`;
+`?blank=1` remains the explicit no-document/local-upload state. The separate
+rich corpus fixture is not linked from public UI and exists only so browser
+tests can retain a small document with stable text assertions.
 
 Rejected alternatives:
 
@@ -132,4 +135,4 @@ Permanent Playwright coverage in
 `webapp/tests/e2e/site-visual-refresh.spec.mjs` checks the editor/demo routes,
 preview load, console errors, and narrow-viewport overflow. The completed
 refinement passed `webapp/build.sh`, 15 frontend unit tests, and the complete
-28-test Playwright suite.
+29-test Playwright suite.

@@ -277,12 +277,11 @@ async function boot() {
   }
 
   const params = new URLSearchParams(window.location.search);
-  // ?demo=1 is the e2e test harness's fixture (real-producer-rich.docx, via
-  // demo.docx) — specs assert on its exact content, so it stays a distinct,
-  // explicit path. ?blank=1 opts out of the default sample for anyone who
-  // wants the empty upload state. Everyone else gets a populated document
-  // instead of a bare drop-zone on first visit.
-  if (params.get("demo") === "1") {
+  // The public demo and plain editor both open sample.docx. The smaller rich
+  // corpus remains available only through the explicit e2e fixture route,
+  // whose specs assert on its exact content. ?blank=1 opts out for the bare
+  // local-upload state.
+  if (params.get("fixture") === "rich") {
     await loadStartupDocument("./demo.docx", "opendoc-demo.docx");
   } else if (params.get("blank") !== "1") {
     await loadStartupDocument("./sample.docx", "sample.docx");
@@ -3182,6 +3181,23 @@ const propDescription = document.getElementById("propDescription");
 const propertiesApplyBtn = document.getElementById("propertiesApply");
 const propertiesCancelBtn = document.getElementById("propertiesCancel");
 const propertiesCloseBtn = document.getElementById("propertiesClose");
+const metaCreated = document.getElementById("metaCreated");
+const metaModified = document.getElementById("metaModified");
+const metaLastModifiedBy = document.getElementById("metaLastModifiedBy");
+const metaLastPrinted = document.getElementById("metaLastPrinted");
+const metaRevision = document.getElementById("metaRevision");
+const metaLanguage = document.getElementById("metaLanguage");
+const metaContentStatus = document.getElementById("metaContentStatus");
+const metaVersion = document.getElementById("metaVersion");
+const metaApplication = document.getElementById("metaApplication");
+const metaAppVersion = document.getElementById("metaAppVersion");
+const metaTemplate = document.getElementById("metaTemplate");
+const metaCompany = document.getElementById("metaCompany");
+const metaManager = document.getElementById("metaManager");
+const metaTotalTime = document.getElementById("metaTotalTime");
+const metaSavedStats = document.getElementById("metaSavedStats");
+const metaCustomSection = document.getElementById("metaCustomSection");
+const metaCustomList = document.getElementById("metaCustomList");
 
 const PROP_FIELDS = [
   ["title", propTitle],
@@ -3191,6 +3207,79 @@ const PROP_FIELDS = [
   ["keywords", propKeywords],
   ["description", propDescription],
 ];
+
+function displayMetadataValue(element, value, formatter = String) {
+  const hasValue = value !== null && value !== undefined && value !== "";
+  element.textContent = hasValue ? formatter(value) : "Not set";
+  element.classList.toggle("metadata-empty", !hasValue);
+  if (hasValue) element.title = String(value);
+  else element.removeAttribute("title");
+}
+
+function formatMetadataDate(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+}
+
+function customMetadataValue(value) {
+  if (!value || typeof value !== "object") return "";
+  if (value.type === "bool") return value.value ? "True" : "False";
+  return value.value ?? "";
+}
+
+function reflectDocumentMetadata() {
+  const metadata = JSON.parse(doc.documentMetadata());
+  const core = metadata.core ?? {};
+  const app = metadata.app ?? {};
+
+  displayMetadataValue(metaCreated, core.created, formatMetadataDate);
+  displayMetadataValue(metaModified, core.modified, formatMetadataDate);
+  displayMetadataValue(metaLastModifiedBy, core.lastModifiedBy);
+  displayMetadataValue(metaLastPrinted, core.lastPrinted, formatMetadataDate);
+  displayMetadataValue(metaRevision, core.revision);
+  displayMetadataValue(metaLanguage, core.language);
+  displayMetadataValue(metaContentStatus, core.contentStatus);
+  displayMetadataValue(metaVersion, core.version);
+
+  displayMetadataValue(metaApplication, app.application);
+  displayMetadataValue(metaAppVersion, app.appVersion);
+  displayMetadataValue(metaTemplate, app.template);
+  displayMetadataValue(metaCompany, app.company);
+  displayMetadataValue(metaManager, app.manager);
+  displayMetadataValue(
+    metaTotalTime,
+    app.totalTime,
+    (minutes) => `${Number(minutes).toLocaleString()} min`,
+  );
+
+  const savedCounts = [
+    ["pages", app.pages],
+    ["words", app.words],
+    ["characters", app.characters],
+    ["paragraphs", app.paragraphs],
+  ]
+    .filter(([, value]) => value !== null && value !== undefined)
+    .map(([label, value]) => `${Number(value).toLocaleString()} ${label}`)
+    .join(" · ");
+  displayMetadataValue(metaSavedStats, savedCounts);
+
+  metaCustomList.replaceChildren();
+  const custom = Array.isArray(metadata.custom) ? metadata.custom : [];
+  for (const property of custom) {
+    const row = document.createElement("div");
+    const name = document.createElement("dt");
+    const value = document.createElement("dd");
+    name.textContent = property.name;
+    value.textContent = customMetadataValue(property.value) || "Not set";
+    row.append(name, value);
+    metaCustomList.append(row);
+  }
+  metaCustomSection.hidden = custom.length === 0;
+}
 
 function syncModalLock() {
   const modalOpen =
@@ -3223,6 +3312,7 @@ function toggleProperties(open) {
   if (show && doc) {
     const current = JSON.parse(doc.documentProperties());
     for (const [key, input] of PROP_FIELDS) input.value = current[key] ?? "";
+    reflectDocumentMetadata();
   }
   const returnFocus = !show && propertiesPanel.contains(document.activeElement);
   propertiesPanel.hidden = !show;

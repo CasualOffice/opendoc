@@ -7,6 +7,44 @@
 // mirroring the existing copyRichRuns/pasteRichRuns convention.
 import { test, expect, gotoEditor, clickIntoFirstPage, MOD } from "./fixtures.mjs";
 
+test("the public demo opens sample.docx and exposes its real saved metadata", async ({
+  page,
+  consoleErrors,
+}) => {
+  const docxRequests = [];
+  page.on("request", (request) => {
+    if (request.url().endsWith(".docx")) docxRequests.push(request.url());
+  });
+
+  await page.goto("/editor.html?demo=1");
+  await page.waitForFunction(
+    () =>
+      document.body.classList.contains("doc-loaded") &&
+      document.getElementById("status")?.textContent === "",
+    null,
+    { timeout: 45_000 },
+  );
+
+  await expect(page.locator("#docTitle")).toHaveValue("sample.docx");
+  expect(docxRequests.some((url) => url.endsWith("/sample.docx"))).toBe(true);
+  expect(docxRequests.some((url) => url.endsWith("/demo.docx"))).toBe(false);
+
+  await page.locator("#propertiesBtn").click();
+  await expect(page.locator("#propTitle")).toHaveValue("OpenDoc Feature Test Document");
+  await expect(page.locator("#propCreator")).toHaveValue("CasualOffice");
+  await expect(page.locator("#metaCreated")).toHaveAttribute(
+    "title",
+    "2013-12-23T23:15:00Z",
+  );
+  await expect(page.locator("#metaModified")).toHaveAttribute(
+    "title",
+    "2013-12-23T23:15:00Z",
+  );
+  await expect(page.locator("#metaApplication")).toHaveText("Microsoft Macintosh Word");
+  await expect(page.locator("#metaAppVersion")).toHaveText("14.0000");
+  expect(consoleErrors).toEqual([]);
+});
+
 test("the header title renames the document and Save reflects the new name", async ({
   page,
   consoleErrors,

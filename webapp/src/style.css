@@ -609,6 +609,76 @@ body.modal-open {
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
+.metadata-section,
+.metadata-disclosure {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.metadata-section h3 {
+  margin: 0 0 12px;
+  color: var(--ink);
+  font-size: var(--fs-body);
+  font-weight: 650;
+}
+
+.metadata-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 18px;
+  margin: 0;
+}
+
+.metadata-facts > div {
+  min-width: 0;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+}
+
+.metadata-facts dt {
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+}
+
+.metadata-facts dd {
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: var(--fs-small);
+  font-weight: 550;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+}
+
+.metadata-facts dd.metadata-empty {
+  color: var(--faint);
+  font-weight: 450;
+}
+
+.metadata-disclosure summary {
+  color: var(--ink);
+  font-size: var(--fs-body);
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.metadata-disclosure[open] summary {
+  margin-bottom: 12px;
+}
+
+.metadata-facts-compact {
+  gap: 8px 12px;
+}
+
+.metadata-fact-wide {
+  grid-column: 1 / -1;
+}
+
 /* ---- Page setup dialog ----------------------------------------------------- */
 .page-setup-dialog {
   width: min(760px, 100%);
@@ -2402,11 +2472,13 @@ body:not(.doc-loaded) .drop-title {
   }
 
   .properties-grid,
-  .dialog-field-grid {
+  .dialog-field-grid,
+  .metadata-facts {
     grid-template-columns: 1fr;
   }
 
-  .field-wide {
+  .field-wide,
+  .metadata-fact-wide {
     grid-column: auto;
   }
 
