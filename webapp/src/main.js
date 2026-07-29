@@ -170,6 +170,8 @@ let pendingLinkHover = null;
 let pendingFormat = null;
 /** The open document's filename, for the Save download. */
 let currentName = "document.docx";
+/** True while an IME composition is active on the canvas editor surface. */
+let composingText = false;
 
 function focusEditorSurface() {
   pagesEl.focus({ preventScroll: true });
@@ -2300,6 +2302,10 @@ function editorClipboardEvent(event) {
   return doc && selection && !isInteractiveChromeTarget(event.target) && eventTargetsEditor(event);
 }
 
+function editorTextInputEvent(event) {
+  return doc && selection && !isInteractiveChromeTarget(event.target) && eventTargetsEditor(event);
+}
+
 /** Cut (⌘X): copy the selection to the clipboard, then delete it. */
 async function cut(event = null) {
   if (!hasRange()) return;
@@ -2321,6 +2327,12 @@ async function pasteText(text) {
     if (i > 0) await runEdit(() => doc.splitParagraph(selection.focus.node, selection.focus.offset));
     if (lines[i]) await runEdit(() => doc.insertText(selection.focus.node, selection.focus.offset, lines[i]));
   }
+}
+
+async function commitComposedText(text) {
+  if (!text) return;
+  pendingFormat = null;
+  await pasteText(text);
 }
 
 /** Paste (⌘V): insert clipboard text at the caret, replacing any selection and
@@ -2350,6 +2362,20 @@ document.addEventListener("cut", (e) => {
 document.addEventListener("paste", (e) => {
   if (editorClipboardEvent(e)) paste(e);
 });
+document.addEventListener("compositionstart", (e) => {
+  if (!editorTextInputEvent(e)) return;
+  composingText = true;
+  pendingFormat = null;
+});
+document.addEventListener("compositionend", async (e) => {
+  if (!editorTextInputEvent(e)) {
+    composingText = false;
+    return;
+  }
+  e.preventDefault();
+  composingText = false;
+  await commitComposedText(e.data || "");
+});
 
 const FORMAT_KEYS = { b: "bold", i: "italic", u: "underline" };
 
@@ -2362,6 +2388,8 @@ document.addEventListener("keydown", async (e) => {
   const mod = e.metaKey || e.ctrlKey;
   const key = e.key;
   const lower = key.toLowerCase();
+
+  if (composingText || e.isComposing || key === "Process") return;
 
   // Clipboard, select-all, history (⌘/Ctrl based).
   if (mod && lower === "c") {
