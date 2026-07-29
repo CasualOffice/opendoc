@@ -663,6 +663,71 @@ input {
   font-size: 13px;
 }
 
+/* ---- Find / replace -------------------------------------------------------- */
+.find-panel {
+  position: fixed;
+  top: 84px;
+  right: 18px;
+  z-index: 55;
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) 30px 30px auto auto minmax(150px, 220px) auto 30px;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  box-shadow: 0 12px 36px rgba(20, 22, 28, 0.22);
+}
+
+.find-panel[hidden] {
+  display: none;
+}
+
+.find-panel input[type="text"] {
+  height: 30px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  padding: 0 8px;
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.find-panel input[type="text"]:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.find-status {
+  min-width: 62px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.find-status.miss {
+  color: var(--danger);
+}
+
+.find-case {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.find-case input {
+  width: 14px;
+  height: 14px;
+}
+
 /* ---- Floating selection toolbar -------------------------------------------- */
 .sel-toolbar {
   position: fixed;
@@ -1238,6 +1303,10 @@ input {
   flex-direction: column;
   align-items: center;
   gap: 22px;
+}
+
+.pages:focus {
+  outline: none;
 }
 
 /* ---- Horizontal ruler (Word/Docs style: a subtle strip with a lighter content

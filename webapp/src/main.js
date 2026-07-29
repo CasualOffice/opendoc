@@ -77,6 +77,15 @@ const redoBtn = document.getElementById("redoBtn");
 const viewOutlineBtn = document.getElementById("viewOutlineBtn");
 const viewZoomOut = document.getElementById("viewZoomOut");
 const viewZoomIn = document.getElementById("viewZoomIn");
+const findPanel = document.getElementById("findPanel");
+const findInput = document.getElementById("findInput");
+const replaceInput = document.getElementById("replaceInput");
+const findPrevBtn = document.getElementById("findPrev");
+const findNextBtn = document.getElementById("findNext");
+const findStatus = document.getElementById("findStatus");
+const findCase = document.getElementById("findCase");
+const replaceOneBtn = document.getElementById("replaceOne");
+const findCloseBtn = document.getElementById("findClose");
 
 /** Shows the named ribbon tab's panel and marks its tab selected. */
 function selectRibbonTab(name) {
@@ -145,6 +154,10 @@ let dragging = false;
 /** Primary-pointer gesture retained until pointerup so link activation is
  * suppressed after a drag/Shift extension. */
 let pointerGesture = null;
+let selectionAutoScrollFrame = 0;
+let chromeRefreshFrame = 0;
+let chromeRefreshStats = false;
+let chromeRefreshOutline = false;
 /** The model-derived link currently represented by the host-owned link chip. */
 let activeLink = null;
 /** One-frame throttle for pointer feedback over canvas-painted link geometry. */
@@ -158,9 +171,50 @@ let pendingFormat = null;
 /** The open document's filename, for the Save download. */
 let currentName = "document.docx";
 
+function focusEditorSurface() {
+  pagesEl.focus({ preventScroll: true });
+}
+
+function resetPointerGesture() {
+  pointerGesture = null;
+  dragging = false;
+  if (selectionAutoScrollFrame) cancelAnimationFrame(selectionAutoScrollFrame);
+  selectionAutoScrollFrame = 0;
+}
+
+function isInteractiveChromeTarget(target) {
+  if (!(target instanceof Element)) return false;
+  return !!target.closest(
+    "input, select, textarea, button, [contenteditable='true'], .context-menu, .settings-panel, .cmd-overlay, .find-panel, .link-chip",
+  );
+}
+
+function eventTargetsEditor(event) {
+  return event.target === pagesEl || pagesEl.contains(event.target) || document.activeElement === pagesEl;
+}
+
+function clientPointEvent(clientX, clientY) {
+  return { clientX, clientY };
+}
+
 function setStatus(text, kind = "") {
   statusEl.textContent = text;
   statusEl.className = `status ${kind}`;
+}
+
+function scheduleChromeRefresh({ stats = false, outline = false } = {}) {
+  chromeRefreshStats ||= stats;
+  chromeRefreshOutline ||= outline;
+  if (chromeRefreshFrame) return;
+  chromeRefreshFrame = requestAnimationFrame(() => {
+    chromeRefreshFrame = 0;
+    const refreshStats = chromeRefreshStats;
+    const refreshOutline = chromeRefreshOutline;
+    chromeRefreshStats = false;
+    chromeRefreshOutline = false;
+    if (refreshStats) updateStats();
+    if (refreshOutline) buildOutline();
+  });
 }
 
 /** Refreshes the footer word / paragraph / page counts from the engine. */
@@ -452,6 +506,7 @@ function navigateToAnchor(node, offset, pageNumber) {
     focus: { node, offset },
   };
   drawSelection();
+  focusEditorSurface();
   pages[pageNumber - 1]?.canvas.closest(".page-wrap")?.scrollIntoView({
     block: "start",
     inline: "nearest",
@@ -546,7 +601,6 @@ function showLinkChipAt(page, event) {
   if (top + height > window.innerHeight - 12) top = event.clientY - height - 14;
   linkChip.style.left = `${Math.round(left)}px`;
   linkChip.style.top = `${Math.max(12, Math.round(top))}px`;
-  linkChipAction.focus({ preventScroll: true });
   return true;
 }
 
@@ -586,6 +640,7 @@ function activateLink(link) {
 
 function onPointerDown(page, event) {
   if (event.button !== 0) return;
+  focusEditorSurface();
   hideLinkChip();
   clearLinkHover();
   pointerGesture = null;
@@ -597,6 +652,8 @@ function onPointerDown(page, event) {
     page,
     clientX: event.clientX,
     clientY: event.clientY,
+    lastClientX: event.clientX,
+    lastClientY: event.clientY,
     moved: false,
     shift: event.shiftKey,
   };
@@ -606,14 +663,26 @@ function onPointerDown(page, event) {
       ? { anchor: selection.anchor, focus: anchor }
       : { anchor, focus: anchor };
   drawSelection();
+  startSelectionAutoScroll();
   event.preventDefault();
 }
 
 function onPointerMove(page, event) {
+  if (dragging && event.buttons === 0) {
+    resetPointerGesture();
+    return;
+  }
   if (!dragging) {
     scheduleLinkHover(page, event);
     return;
   }
+  updateDragSelection(event);
+}
+
+function updateDragSelection(event) {
+  if (!dragging || !pointerGesture || !selection) return;
+  pointerGesture.lastClientX = event.clientX;
+  pointerGesture.lastClientY = event.clientY;
   if (
     pointerGesture &&
     Math.hypot(
@@ -623,16 +692,50 @@ function onPointerMove(page, event) {
   ) {
     pointerGesture.moved = true;
   }
+  const page = pageFromClientPoint(event.clientX, event.clientY);
+  if (!page) return;
   const focus = anchorAt(page, event);
   if (!focus) return;
   selection = { anchor: selection.anchor, focus };
   drawSelection();
 }
 
+const AUTO_SCROLL_EDGE_PX = 56;
+const AUTO_SCROLL_MAX_PX = 24;
+
+function startSelectionAutoScroll() {
+  if (selectionAutoScrollFrame) return;
+  const tick = () => {
+    selectionAutoScrollFrame = 0;
+    if (!dragging || !pointerGesture) return;
+
+    const rect = viewportEl.getBoundingClientRect();
+    const y = pointerGesture.lastClientY;
+    let dy = 0;
+    if (y < rect.top + AUTO_SCROLL_EDGE_PX) {
+      const ratio = Math.min(1, (rect.top + AUTO_SCROLL_EDGE_PX - y) / AUTO_SCROLL_EDGE_PX);
+      dy = -Math.ceil(ratio * AUTO_SCROLL_MAX_PX);
+    } else if (y > rect.bottom - AUTO_SCROLL_EDGE_PX) {
+      const ratio = Math.min(1, (y - (rect.bottom - AUTO_SCROLL_EDGE_PX)) / AUTO_SCROLL_EDGE_PX);
+      dy = Math.ceil(ratio * AUTO_SCROLL_MAX_PX);
+    }
+
+    if (dy !== 0) {
+      const before = viewportEl.scrollTop;
+      viewportEl.scrollTop = Math.max(0, before + dy);
+      if (viewportEl.scrollTop !== before) {
+        updateDragSelection(clientPointEvent(pointerGesture.lastClientX, pointerGesture.lastClientY));
+      }
+    }
+
+    selectionAutoScrollFrame = requestAnimationFrame(tick);
+  };
+  selectionAutoScrollFrame = requestAnimationFrame(tick);
+}
+
 function onPointerUp(event) {
   const gesture = pointerGesture;
-  pointerGesture = null;
-  dragging = false;
+  resetPointerGesture();
   if (
     gesture &&
     !gesture.shift &&
@@ -647,6 +750,7 @@ function onPointerUp(event) {
 function selectWord(page, event) {
   const a = anchorAt(page, event);
   if (!a) return;
+  focusEditorSurface();
   const bounds = doc.wordAt(a.node, a.offset); // [start, end] or []
   if (bounds.length === 2) {
     selection = {
@@ -680,13 +784,40 @@ function pageFromEvent(event) {
   const idx = [...pagesEl.querySelectorAll(".page-wrap")].indexOf(wrap);
   return pages[idx] ?? null;
 }
+
+function pageFromClientPoint(clientX, clientY) {
+  const target = document.elementFromPoint(clientX, clientY);
+  const direct = target ? pageFromEvent({ target }) : null;
+  if (direct) return direct;
+  if (!pages.length) return null;
+
+  let best = null;
+  let bestDistance = Infinity;
+  for (const page of pages) {
+    const rect = page.canvas.getBoundingClientRect();
+    const dx = clientX < rect.left ? rect.left - clientX : clientX > rect.right ? clientX - rect.right : 0;
+    const dy = clientY < rect.top ? rect.top - clientY : clientY > rect.bottom ? clientY - rect.bottom : 0;
+    const dist = dx * dx + dy * dy;
+    if (dist < bestDistance) {
+      bestDistance = dist;
+      best = page;
+    }
+  }
+  return best;
+}
 pagesEl.addEventListener("pointerdown", (e) => {
   const page = pageFromEvent(e);
   if (page) onPointerDown(page, e);
 });
 pagesEl.addEventListener("pointermove", (e) => {
   const page = pageFromEvent(e);
-  if (page) onPointerMove(page, e);
+  if (page && !dragging) onPointerMove(page, e);
+});
+window.addEventListener("pointermove", (e) => {
+  if (dragging) {
+    if (e.buttons === 0) resetPointerGesture();
+    else updateDragSelection(e);
+  }
 });
 pagesEl.addEventListener("pointerleave", clearLinkHover);
 pagesEl.addEventListener("dblclick", (e) => {
@@ -700,6 +831,7 @@ pagesEl.addEventListener("click", (e) => {
   if (!page) return;
   const a = anchorAt(page, e);
   if (!a) return;
+  focusEditorSurface();
   selection = {
     anchor: { node: a.node, offset: 0 },
     focus: { node: a.node, offset: doc.paragraphLength(a.node) },
@@ -707,6 +839,12 @@ pagesEl.addEventListener("click", (e) => {
   drawSelection();
 });
 window.addEventListener("pointerup", onPointerUp);
+window.addEventListener("pointercancel", resetPointerGesture);
+window.addEventListener("lostpointercapture", resetPointerGesture);
+window.addEventListener("blur", resetPointerGesture);
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) resetPointerGesture();
+});
 
 linkChip.addEventListener("mousedown", (event) => {
   // Keep the model selection visible while the host control receives the click.
@@ -1086,8 +1224,7 @@ async function applyEditResult(res) {
     for (const i of dirty) repaintPage(i);
     drawSelection();
   }
-  updateStats(); // word/paragraph counts may have changed
-  buildOutline(); // headings may have changed (no-op when the panel is closed)
+  scheduleChromeRefresh({ stats: true, outline: true });
   scrollCaretIntoView();
 }
 
@@ -1146,7 +1283,7 @@ async function runToolbarEdit(thunk) {
     for (const i of dirty) repaintPage(i);
     drawSelection();
   }
-  buildOutline(); // a style change may add/remove a heading (no-op when closed)
+  scheduleChromeRefresh({ outline: true });
 }
 
 /** The uniform run-format state over the selection, or null if not a range. */
@@ -1558,6 +1695,7 @@ function runNodeEdit(thunk) {
     for (const i of dirty) repaintPage(i);
     drawSelection();
   }
+  scheduleChromeRefresh({ outline: true });
 }
 
 function reflectTableMenu() {
@@ -1579,9 +1717,29 @@ function reflectTableMenu() {
     b.setAttribute("aria-pressed", String(on));
   }
 }
-registerPopover(tableBtn, tableFmtMenu, reflectTableMenu);
+const tablePopover = registerPopover(tableBtn, tableFmtMenu, reflectTableMenu);
 
-cellShade.addEventListener("input", () => {
+const TABLE_POPOVER_ACTIONS = {
+  "insert-row-above": (n) => doc.insertRow(n, false),
+  "insert-row-below": (n) => doc.insertRow(n, true),
+  "insert-column-left": (n) => doc.insertColumn(n, false),
+  "insert-column-right": (n) => doc.insertColumn(n, true),
+  "delete-row": (n) => doc.deleteRow(n),
+  "delete-column": (n) => doc.deleteColumn(n),
+  "delete-table": (n) => doc.deleteTable(n),
+};
+
+for (const b of tableFmtMenu.querySelectorAll("[data-table-action]")) {
+  onButton(b, () => {
+    if (!selection || !doc) return;
+    const run = TABLE_POPOVER_ACTIONS[b.dataset.tableAction];
+    if (!run) return;
+    closePopover(tablePopover);
+    runEdit(() => run(selection.focus.node));
+  });
+}
+
+cellShade.addEventListener("change", () => {
   const [r, g, b] = hexToRgb(cellShade.value);
   runNodeEdit((n) => doc.setCellShading(n, r, g, b, false));
 });
@@ -1634,14 +1792,15 @@ gridPicker.addEventListener("pointermove", (e) => {
   if (cell) highlightGrid(Number(cell.dataset.r), Number(cell.dataset.c));
 });
 gridPicker.addEventListener("pointerleave", () => highlightGrid(0, 0));
-gridPicker.addEventListener("pointerdown", (e) => {
+gridPicker.addEventListener("pointerdown", async (e) => {
   const cell = e.target.closest(".gc");
   if (!cell || !selection || !doc) return;
   e.preventDefault();
   const rows = Number(cell.dataset.r);
   const cols = Number(cell.dataset.c);
-  runEdit(() => doc.insertTable(selection.focus.node, rows, cols));
+  await runEdit(() => doc.insertTable(selection.focus.node, rows, cols));
   closePopover(insertTablePopover);
+  focusEditorSurface();
 });
 const insertTablePopover = registerPopover(insertTableBtn, insertTableMenu, () => highlightGrid(0, 0));
 
@@ -1707,6 +1866,7 @@ function buildCommands() {
     { label: "Save (download .docx)", group: "File", kw: "export download", run: () => saveDocx() },
     { label: "Undo", group: "Edit", kw: "revert", run: () => runEdit(() => doc.undo()) },
     { label: "Redo", group: "Edit", kw: "", run: () => runEdit(() => doc.redo()) },
+    { label: "Find and replace", group: "Edit", kw: "search replace", run: () => openFind() },
     { label: "Bold", group: "Format", kw: "strong", run: fmt("bold") },
     { label: "Italic", group: "Format", kw: "emphasis", run: fmt("italic") },
     { label: "Underline", group: "Format", kw: "", run: fmt("underline") },
@@ -1816,6 +1976,127 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+// ---- Find / replace ---------------------------------------------------------
+function setFindStatus(text, miss = false) {
+  findStatus.textContent = text;
+  findStatus.classList.toggle("miss", miss);
+}
+
+function selectedPlainText() {
+  if (!selection) return "";
+  const { anchor, focus } = selection;
+  if (anchor.node === focus.node && anchor.offset === focus.offset) return "";
+  return doc.copyText(anchor.node, anchor.offset, focus.node, focus.offset);
+}
+
+function queryMatchesSelection() {
+  const query = findInput.value;
+  if (!query) return false;
+  const selected = selectedPlainText();
+  if (!selected.includes("\n")) {
+    return findCase.checked
+      ? selected === query
+      : selected.toLocaleLowerCase() === query.toLocaleLowerCase();
+  }
+  return false;
+}
+
+function selectTextMatch(match) {
+  if (!match.found) {
+    setFindStatus("No match", true);
+    return false;
+  }
+  selection = {
+    anchor: { node: match.startNode, offset: match.startOffset },
+    focus: { node: match.endNode, offset: match.endOffset },
+  };
+  drawSelection();
+  focusEditorSurface();
+  scrollCaretIntoView();
+  setFindStatus("1 match");
+  return true;
+}
+
+function findFromSelection(forward) {
+  if (!doc || !findInput.value) {
+    setFindStatus("");
+    return false;
+  }
+  let start = selection ? (forward ? selection.focus : selection.anchor) : null;
+  let ownedStart = null;
+  if (!start) {
+    ownedStart = forward ? doc.firstPosition() : doc.lastPosition();
+    start = { node: ownedStart.node, offset: ownedStart.offset };
+  }
+  const match = doc.findText(findInput.value, start.node, start.offset, forward, findCase.checked);
+  const found = selectTextMatch(match);
+  match.free();
+  ownedStart?.free();
+  return found;
+}
+
+async function replaceCurrentMatch() {
+  if (!doc || !findInput.value) return;
+  if (!queryMatchesSelection()) {
+    findFromSelection(true);
+    return;
+  }
+  const { anchor, focus } = selection;
+  await runEdit(() =>
+    doc.replaceSelection(anchor.node, anchor.offset, focus.node, focus.offset, replaceInput.value),
+  );
+  findFromSelection(true);
+}
+
+function openFind() {
+  if (!doc) return;
+  findPanel.hidden = false;
+  const selected = selectedPlainText();
+  if (selected && !selected.includes("\n") && selected.length <= 80) findInput.value = selected;
+  setFindStatus("");
+  findInput.focus();
+  findInput.select();
+}
+
+function closeFind() {
+  findPanel.hidden = true;
+  focusEditorSurface();
+}
+
+findInput.addEventListener("input", () => {
+  if (findInput.value) findFromSelection(true);
+  else setFindStatus("");
+});
+findInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    findFromSelection(!e.shiftKey);
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    closeFind();
+  }
+});
+replaceInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    replaceCurrentMatch();
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    closeFind();
+  }
+});
+findCase.addEventListener("change", () => findFromSelection(true));
+findPrevBtn.addEventListener("click", () => findFromSelection(false));
+findNextBtn.addEventListener("click", () => findFromSelection(true));
+replaceOneBtn.addEventListener("click", replaceCurrentMatch);
+findCloseBtn.addEventListener("click", closeFind);
+document.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
+    e.preventDefault();
+    openFind();
+  }
+});
+
 // Indentation: left/right absolute, and a first-line/hanging "special" indent
 // (setFirstLineIndent encodes hanging as a negative value, 0 clears both).
 indentLeftInput.addEventListener("change", () =>
@@ -1833,7 +2114,7 @@ function applyIndentSpecial() {
 indentSpecialSel.addEventListener("change", applyIndentSpecial);
 indentSpecialByInput.addEventListener("change", applyIndentSpecial);
 
-paraShade.addEventListener("input", () => {
+paraShade.addEventListener("change", () => {
   const [r, g, b] = hexToRgb(paraShade.value);
   runToolbarEdit((a, x, c, d) => doc.setParagraphShading(a, x, c, d, r, g, b, false));
 });
@@ -1856,7 +2137,7 @@ highlightSel.addEventListener("change", () => {
   );
   highlightSel.value = "none"; // highlight isn't reflected — keep it momentary
 });
-textColorInput.addEventListener("input", () => {
+textColorInput.addEventListener("change", () => {
   const hex = textColorInput.value;
   const [r, g, b] = hexToRgb(hex);
   armOrApplyRun({ color: hex }, () =>
@@ -1906,7 +2187,7 @@ function positionSelToolbar() {
 for (const b of selToolbar.querySelectorAll("[data-fmt]")) {
   onButton(b, () => toggleFormat(b.dataset.fmt));
 }
-selColor.addEventListener("input", () => {
+selColor.addEventListener("change", () => {
   const [r, g, b] = hexToRgb(selColor.value);
   runToolbarEdit((a, bo, c, d) => doc.setTextColor(a, bo, c, d, r, g, b));
 });
@@ -1982,6 +2263,7 @@ function navToPosition(caret, extend) {
   caret.free();
   selection = extend ? { anchor: selection.anchor, focus: to } : { anchor: to, focus: to };
   drawSelection();
+  focusEditorSurface();
   scrollCaretIntoView();
 }
 
@@ -1997,6 +2279,7 @@ function selectAll() {
   a.free();
   b.free();
   drawSelection();
+  focusEditorSurface();
 }
 
 /** Cut (⌘X): copy the selection to the clipboard, then delete it. */
@@ -2034,9 +2317,9 @@ const FORMAT_KEYS = { b: "bold", i: "italic", u: "underline" };
 
 document.addEventListener("keydown", async (e) => {
   if (!doc) return;
-  // Don't hijack keys aimed at the chrome (file picker, zoom select).
-  const tag = e.target?.tagName;
-  if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+  // The canvas editor owns keystrokes only while its focus owner is active.
+  // Chrome controls, popovers, and link chips keep normal browser semantics.
+  if (isInteractiveChromeTarget(e.target) || !eventTargetsEditor(e)) return;
 
   const mod = e.metaKey || e.ctrlKey;
   const key = e.key;
@@ -2102,6 +2385,15 @@ document.addEventListener("keydown", async (e) => {
   if (key === "Tab") {
     e.preventDefault();
     pendingFormat = null;
+    if (doc.inTable(selection.focus.node)) {
+      try {
+        const c = doc.moveTableCell(selection.focus.node, !e.shiftKey);
+        navToPosition(c, false);
+      } catch {
+        // First/last-cell boundaries are expected no-ops for this navigation slice.
+      }
+      return;
+    }
     await runToolbarEdit((a, b, c, d) => doc.adjustIndent(a, b, c, d, e.shiftKey ? -360 : 360));
     return;
   }

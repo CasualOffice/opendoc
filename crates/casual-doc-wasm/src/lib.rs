@@ -365,6 +365,36 @@ impl WasmDocument {
         self.copy_text_inner(range)
     }
 
+    /// Finds the next/previous literal text match from a model position. Matches
+    /// are constrained to one text-bearing node; cross-paragraph phrases remain a
+    /// later text-layer search increment.
+    #[wasm_bindgen(js_name = findText)]
+    #[must_use]
+    pub fn find_text(
+        &self,
+        query: &str,
+        start_node: &str,
+        start_offset: u32,
+        forward: bool,
+        match_case: bool,
+    ) -> TextMatch {
+        if query.is_empty() {
+            return TextMatch::none();
+        }
+        let mut nodes = Vec::new();
+        collect_block_text(self.document.body(), &mut nodes);
+        if nodes.is_empty() {
+            return TextMatch::none();
+        }
+        let start_idx = NodeId::from_str(start_node)
+            .ok()
+            .and_then(|nid| nodes.iter().position(|(id, _)| *id == nid))
+            .unwrap_or(0);
+        let start_offset = start_offset as usize;
+        find_text_match(&nodes, query, start_idx, start_offset, forward, match_case)
+            .unwrap_or_else(TextMatch::none)
+    }
+
     // ---- Editing (P1G-006) — the mutating side of the doc 58 pipeline ---------
     //
     // Edits enter ONLY through these semantic methods (I1); JS never constructs an
@@ -1484,6 +1514,24 @@ impl WasmDocument {
         NodeId::from_str(node)
             .ok()
             .is_some_and(|nid| locate_table_row(&self.document, nid).is_some())
+    }
+
+    /// Moves the caret to the next/previous editable cell in the current innermost
+    /// table. Pure navigation: no edit and no row creation at table boundaries.
+    #[wasm_bindgen(js_name = moveTableCell)]
+    pub fn move_table_cell(&self, node: &str, forward: bool) -> Result<Caret, JsValue> {
+        let nid = node_id(node)?;
+        let (table, row, _) = locate_table_row(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        let (_, col) = locate_table_cell(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        let target = self
+            .table_cell_anchor(table, row, col, forward)
+            .ok_or_else(|| to_js("no adjacent table cell".into()))?;
+        Ok(Caret {
+            node: target.to_string(),
+            offset: 0,
+        })
     }
 
     /// The active cell's border box as a flat `[page, x, y, w, h]` in page-local
@@ -2845,6 +2893,44 @@ impl WasmDocument {
         first_paragraph_of_cell(row.cells.get(target)?)
     }
 
+    /// The first paragraph of the adjacent cell in row-major order.
+    fn table_cell_anchor(
+        &self,
+        table: NodeId,
+        row: u32,
+        col: u32,
+        forward: bool,
+    ) -> Option<NodeId> {
+        let t = find_table(&self.document, table)?;
+        let row_idx = row as usize;
+        let col_idx = col as usize;
+        let target = if forward {
+            let row = t.rows.get(row_idx)?;
+            if col_idx + 1 < row.cells.len() {
+                Some((row_idx, col_idx + 1))
+            } else if row_idx + 1 < t.rows.len() {
+                Some((row_idx + 1, 0))
+            } else {
+                None
+            }
+        } else if col_idx > 0 {
+            Some((row_idx, col_idx - 1))
+        } else if row_idx > 0 {
+            let prev_row = t.rows.get(row_idx - 1)?;
+            prev_row
+                .cells
+                .len()
+                .checked_sub(1)
+                .map(|last| (row_idx - 1, last))
+        } else {
+            None
+        }?;
+        t.rows
+            .get(target.0)
+            .and_then(|r| r.cells.get(target.1))
+            .and_then(first_paragraph_of_cell)
+    }
+
     /// The id of the paragraph style with `name`, if one exists.
     fn style_id_by_name(&self, name: &str) -> Option<StyleId> {
         if name.is_empty() {
@@ -3025,6 +3111,133 @@ fn collect_block_text(blocks: &[BlockNode], out: &mut Vec<(NodeId, String)>) {
             BlockNode::AltChunk(_) => {}
         }
     }
+}
+
+fn find_text_match(
+    nodes: &[(NodeId, String)],
+    query: &str,
+    start_idx: usize,
+    start_offset: usize,
+    forward: bool,
+    match_case: bool,
+) -> Option<TextMatch> {
+    if forward {
+        if let Some(hit) = find_in_node_after(
+            nodes[start_idx].0,
+            &nodes[start_idx].1,
+            query,
+            start_offset,
+            match_case,
+        ) {
+            return Some(hit);
+        }
+        for (node, text) in nodes.iter().skip(start_idx + 1) {
+            if let Some(hit) = find_in_node_after(*node, text, query, 0, match_case) {
+                return Some(hit);
+            }
+        }
+        for (node, text) in nodes.iter().take(start_idx) {
+            if let Some(hit) = find_in_node_after(*node, text, query, 0, match_case) {
+                return Some(hit);
+            }
+        }
+        find_in_node_before(
+            nodes[start_idx].0,
+            &nodes[start_idx].1,
+            query,
+            start_offset,
+            match_case,
+        )
+    } else {
+        if let Some(hit) = find_in_node_before(
+            nodes[start_idx].0,
+            &nodes[start_idx].1,
+            query,
+            start_offset,
+            match_case,
+        ) {
+            return Some(hit);
+        }
+        for (node, text) in nodes[..start_idx].iter().rev() {
+            if let Some(hit) = find_in_node_before(*node, text, query, text.len(), match_case) {
+                return Some(hit);
+            }
+        }
+        for (node, text) in nodes.iter().skip(start_idx + 1).rev() {
+            if let Some(hit) = find_in_node_before(*node, text, query, text.len(), match_case) {
+                return Some(hit);
+            }
+        }
+        find_in_node_after(
+            nodes[start_idx].0,
+            &nodes[start_idx].1,
+            query,
+            start_offset,
+            match_case,
+        )
+    }
+}
+
+fn find_in_node_after(
+    node: NodeId,
+    text: &str,
+    query: &str,
+    min_offset: usize,
+    match_case: bool,
+) -> Option<TextMatch> {
+    find_spans(text, query, match_case)
+        .into_iter()
+        .find(|(start, _)| *start >= min_offset)
+        .map(|(start, end)| TextMatch::new(node, start, end))
+}
+
+fn find_in_node_before(
+    node: NodeId,
+    text: &str,
+    query: &str,
+    max_offset: usize,
+    match_case: bool,
+) -> Option<TextMatch> {
+    find_spans(text, query, match_case)
+        .into_iter()
+        .take_while(|(_, end)| *end <= max_offset)
+        .last()
+        .map(|(start, end)| TextMatch::new(node, start, end))
+}
+
+fn find_spans(text: &str, query: &str, match_case: bool) -> Vec<(usize, usize)> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let qchars = query.chars().count();
+    if qchars == 0 {
+        return Vec::new();
+    }
+    let query_folded = if match_case {
+        String::new()
+    } else {
+        query.to_lowercase()
+    };
+    let mut offsets: Vec<usize> = text.char_indices().map(|(idx, _)| idx).collect();
+    offsets.push(text.len());
+    if offsets.len() <= qchars {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for i in 0..=(offsets.len() - qchars - 1) {
+        let start = offsets[i];
+        let end = offsets[i + qchars];
+        let candidate = &text[start..end];
+        let matched = if match_case {
+            candidate == query
+        } else {
+            candidate.to_lowercase() == query_folded
+        };
+        if matched {
+            out.push((start, end));
+        }
+    }
+    out
 }
 
 /// A model anchor `NodeId` + byte offset, or `None` if `node` is not a valid id.
@@ -4155,6 +4368,74 @@ impl RunStyle {
     }
 }
 
+/// A find result: either no match, or a same-node byte range that can become the
+/// editor selection and feed replaceSelection.
+#[wasm_bindgen]
+#[derive(Clone, Debug)]
+pub struct TextMatch {
+    found: bool,
+    start_node: String,
+    start_offset: u32,
+    end_node: String,
+    end_offset: u32,
+}
+
+impl TextMatch {
+    fn none() -> Self {
+        Self {
+            found: false,
+            start_node: String::new(),
+            start_offset: 0,
+            end_node: String::new(),
+            end_offset: 0,
+        }
+    }
+
+    fn new(node: NodeId, start: usize, end: usize) -> Self {
+        let node = node.to_string();
+        Self {
+            found: true,
+            start_node: node.clone(),
+            start_offset: start as u32,
+            end_node: node,
+            end_offset: end as u32,
+        }
+    }
+}
+
+#[wasm_bindgen]
+impl TextMatch {
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn found(&self) -> bool {
+        self.found
+    }
+
+    #[wasm_bindgen(getter, js_name = startNode)]
+    #[must_use]
+    pub fn start_node(&self) -> String {
+        self.start_node.clone()
+    }
+
+    #[wasm_bindgen(getter, js_name = startOffset)]
+    #[must_use]
+    pub fn start_offset(&self) -> u32 {
+        self.start_offset
+    }
+
+    #[wasm_bindgen(getter, js_name = endNode)]
+    #[must_use]
+    pub fn end_node(&self) -> String {
+        self.end_node.clone()
+    }
+
+    #[wasm_bindgen(getter, js_name = endOffset)]
+    #[must_use]
+    pub fn end_offset(&self) -> u32 {
+        self.end_offset
+    }
+}
+
 /// A caret position returned by navigation (no edit): node id + byte offset.
 #[wasm_bindgen]
 #[derive(Clone, Debug)]
@@ -4372,6 +4653,61 @@ mod tests {
         // A malformed node id is an empty result, not a panic.
         assert!(doc.caret_rect("not-a-node", 0).is_empty());
         assert!(doc.copy_text("bad", 0, "bad", 1).is_empty());
+    }
+
+    #[test]
+    fn find_text_moves_through_document_order_and_wraps() {
+        let doc = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(doc.document.body(), &mut nodes);
+        let first_node = nodes.first().expect("document text").0.to_string();
+        let nested_a = nodes
+            .iter()
+            .find(|(_, t)| t == "Nested A")
+            .map(|(id, _)| id.to_string())
+            .expect("nested A cell");
+        let nested_b = nodes
+            .iter()
+            .find(|(_, t)| t == "Nested B")
+            .map(|(id, _)| id.to_string())
+            .expect("nested B cell");
+
+        let first = doc.find_text("nested", &first_node, 0, true, false);
+        assert!(first.found());
+        assert_eq!(first.start_node(), nested_a);
+        assert_eq!(first.start_offset(), 0);
+        assert_eq!(first.end_offset(), "Nested".len() as u32);
+
+        let next = doc.find_text("Nested", &first.end_node(), first.end_offset(), true, true);
+        assert!(next.found());
+        assert_eq!(next.start_node(), nested_b);
+
+        let previous = doc.find_text(
+            "Nested",
+            &next.start_node(),
+            next.start_offset(),
+            false,
+            true,
+        );
+        assert!(previous.found());
+        assert_eq!(previous.start_node(), nested_a);
+
+        let wrapped = doc.find_text("Nested", &next.end_node(), next.end_offset(), true, true);
+        assert!(wrapped.found());
+        assert_eq!(wrapped.start_node(), nested_a);
+
+        assert!(
+            doc.find_text("nESTED A", &first_node, 0, true, false)
+                .found()
+        );
+        assert!(
+            !doc.find_text("nESTED A", &first_node, 0, true, true)
+                .found()
+        );
+        assert!(
+            !doc.find_text("definitely absent", &first_node, 0, true, false)
+                .found()
+        );
     }
 
     #[test]
@@ -4838,6 +5174,50 @@ mod tests {
         assert_eq!(cols(&d), before_cols - 1);
         d.undo().expect("undo delete column");
         assert_eq!(cols(&d), before_cols);
+    }
+
+    /// Tab-style cell navigation moves row-major through the current innermost
+    /// table without mutating it.
+    #[test]
+    fn table_cell_navigation_moves_row_major_without_editing() {
+        let d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let nested_a = nodes
+            .iter()
+            .find(|(_, t)| t == "Nested A")
+            .map(|(id, _)| *id)
+            .expect("the first nested-table cell paragraph");
+        let nested_b = nodes
+            .iter()
+            .find(|(_, t)| t == "Nested B")
+            .map(|(id, _)| *id)
+            .expect("the second nested-table cell paragraph");
+
+        let next = d
+            .move_table_cell(&nested_a.to_string(), true)
+            .expect("next cell");
+        assert_eq!(next.node(), nested_b.to_string());
+        assert_eq!(next.offset(), 0);
+
+        let prev = d
+            .move_table_cell(&nested_b.to_string(), false)
+            .expect("previous cell");
+        assert_eq!(prev.node(), nested_a.to_string());
+        assert_eq!(prev.offset(), 0);
+
+        let (table, first_row, _) =
+            locate_table_row(&d.document, nested_a).expect("nested A row location");
+        let (_, first_col) = locate_table_cell(&d.document, nested_a).expect("nested A cell");
+        assert_eq!(
+            d.table_cell_anchor(table, first_row, first_col, false),
+            None
+        );
+
+        let (table, last_row, _) =
+            locate_table_row(&d.document, nested_b).expect("nested B row location");
+        let (_, last_col) = locate_table_cell(&d.document, nested_b).expect("nested B cell");
+        assert_eq!(d.table_cell_anchor(table, last_row, last_col, true), None);
     }
 
     /// Delete a whole table and undo it: the body's table count drops by one, the
