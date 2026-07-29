@@ -170,6 +170,36 @@ dirty-page set — **additively**, against this same handle.
   current `Selection` yields, so adding `Object`/`Cells` selection later is new
   geometry, not new plumbing.
 
+### 6.1 Platform keyboard contract
+
+The host owns physical-key interpretation, but it emits semantic movement/edit
+commands to the engine. Ctrl and Command are not aliases:
+
+| Intent | macOS | Windows/Linux | Engine/host action |
+| --- | --- | --- | --- |
+| previous/next character | Left/Right | Left/Right | `left` / `right` |
+| previous/next word | Option+Left/Right | Ctrl+Left/Right | `wordLeft` / `wordRight` |
+| visual line start/end | Command+Left/Right or Home/End | Home/End | `lineStart` / `lineEnd` |
+| previous/next paragraph | Command+Up/Down | Ctrl+Up/Down | `paragraphUp` / `paragraphDown` |
+| document start/end | Command+Home/End | Ctrl+Home/End | `firstPosition` / `lastPosition` |
+| one viewport upward/downward | Page Up/Down | Page Up/Down | host hit-tests one viewport-height away |
+| delete previous/next word | Option+Backspace/Delete | Ctrl+Backspace/Delete | `deleteWordBackward` / `deleteWordForward` |
+
+Shift extends every navigation action from the existing model anchor. Plain
+horizontal movement collapses a range to its ordered start/end before moving;
+vertical, paragraph, page, and document movement moves the focus normally.
+Page Up/Down uses the live viewport only to select the destination page-local
+point, then resolves that point through `hitTest`; the resulting selection is
+still a model anchor and browser scroll position never becomes document truth.
+
+This contract follows the current Microsoft Word keyboard references for
+[Windows](https://support.microsoft.com/en-us/accessibility/word/keyboard-shortcuts-in-word)
+and
+[macOS](https://support.microsoft.com/en-us/accessibility/word/keyboard-shortcuts-in-word).
+The browser key values are the W3C UI Events
+[`key` values](https://www.w3.org/TR/uievents-key/), including `PageUp`,
+`PageDown`, `Home`, and `End`.
+
 ## 7. Delivery order
 
 1. **P1G-003 (now):** text `Selection` (`Caret`/`Text`), custom-drawn caret +

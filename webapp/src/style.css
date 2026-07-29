@@ -1946,12 +1946,15 @@ body.modal-open {
   width: 252px;
   min-width: 0;
   max-width: min(252px, calc(100vw - 52px));
+  margin: 0 8px 8px;
   display: flex;
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
   background: var(--surface);
-  border-right: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-popover);
+  box-shadow: var(--shadow-sm);
 }
 
 .side-panel[hidden] {
@@ -2005,8 +2008,6 @@ body.modal-open {
   flex-basis: 320px;
   width: 320px;
   max-width: min(320px, calc(100vw - 52px));
-  border-right: none;
-  border-left: 1px solid var(--line);
 }
 
 .table-properties-head {
@@ -2595,12 +2596,12 @@ body:not(.doc-loaded) .drop-title {
     position: fixed;
     z-index: 45;
     top: calc(var(--h-header) + var(--h-tab) + var(--h-control) + 48px);
-    right: 0;
-    bottom: var(--h-footer);
-    width: min(340px, calc(100vw - 34px));
+    right: 8px;
+    bottom: calc(var(--h-footer) + 8px);
+    width: min(340px, calc(100vw - 42px));
     max-width: none;
-    border-top: 1px solid var(--line);
-    box-shadow: -12px 0 34px rgba(20, 22, 28, 0.2);
+    margin: 0;
+    box-shadow: var(--shadow-popover);
   }
 }
 

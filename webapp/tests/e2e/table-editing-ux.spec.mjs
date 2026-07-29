@@ -100,6 +100,22 @@ test("table properties commit live, undo per interaction, and restore focus", as
   await expect(page.locator("body")).not.toHaveClass(/modal-open/);
   await expect(page.locator("#tablePropertiesApply")).toHaveCount(0);
   await expect(page.locator("#tablePropertiesReset")).toHaveCount(0);
+  const surface = await panel.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      radius: style.borderRadius,
+      borders: [
+        style.borderTopWidth,
+        style.borderRightWidth,
+        style.borderBottomWidth,
+        style.borderLeftWidth,
+      ],
+      shadow: style.boxShadow,
+    };
+  });
+  expect(surface.radius).toBe("10px");
+  expect(surface.borders).toEqual(["1px", "1px", "1px", "1px"]);
+  expect(surface.shadow).not.toBe("none");
   const original = await tablePropertyValues(page);
 
   await page.locator('#tableAlign button[data-talign="center"]').click();
@@ -173,9 +189,11 @@ test("live table properties remain reachable on a narrow viewport", async ({
   await expect(page.locator("body")).not.toHaveClass(/modal-open/);
   const bounds = await panel.boundingBox();
   expect(bounds.x).toBeGreaterThanOrEqual(34);
-  expect(bounds.x + bounds.width).toBeLessThanOrEqual(390);
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(382);
   expect(bounds.y).toBeGreaterThanOrEqual(0);
-  expect(bounds.y + bounds.height).toBeLessThanOrEqual(700);
+  expect(bounds.y + bounds.height).toBeLessThanOrEqual(692);
   expect(bounds.width).toBeLessThan(390);
+  await expect(panel).toHaveCSS("border-radius", "10px");
+  await expect(panel).not.toHaveCSS("box-shadow", "none");
   expect(consoleErrors).toEqual([]);
 });

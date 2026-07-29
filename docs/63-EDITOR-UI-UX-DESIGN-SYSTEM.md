@@ -85,8 +85,11 @@ Reuse these; don't invent per-feature variants.
   actions, restore focus to their trigger, and keep the action row reachable while
   the body scrolls on narrow screens. Do not force form-heavy workflows into
   toolbar-sized popovers.
-- **Panel** — a bordered column (left/right) with a heading row (title + close),
-  scrollable body, empty-states that are still *useful* (never dead).
+- **Panel** — an inset, bordered surface (left/right) with
+  `--radius-popover`, low desktop elevation, a heading row (title + close), and
+  a scrollable body. Narrow-screen inspectors become viewport-inset drawers
+  with the same radius/border and stronger popover elevation. Docking changes;
+  surface shape does not. Empty states remain *useful* (never dead).
 - **Segmented** (`.segmented`) — mutually-exclusive choices (theme, vertical align).
 - **Chips / mini-grids** — border presets, insert-table grid picker.
 - **Inputs** — numeric fields (indent/spacing) right-aligned, tabular numerals.

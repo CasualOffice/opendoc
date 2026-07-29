@@ -87,14 +87,21 @@ Editing correctness was then tightened at the same command boundary. Plain-text
 paste/composition/replace-with-break is one atomic engine group; rapid adjacent
 typing coalesces only with both a matching host gesture id and exact caret
 continuity; plain Left/Right collapses a range to an engine-ordered edge; and
-Undo/Redo availability comes from the actual history stacks. Platform-specific
-navigation and deletion mappings remain separate work.
+Undo/Redo availability comes from the actual history stacks.
+
+The keyboard follow-up now uses an explicit platform map: Option performs word
+movement/deletion on macOS, Ctrl does so on Windows/Linux, Command/Ctrl plus
+Up/Down moves by paragraph, Command/Ctrl plus Home/End moves to document bounds,
+and Page Up/Down resolves one viewport-height away through model hit-testing.
+It also makes both side inspectors inset rounded surfaces using the
+shared border/radius/elevation tokens; responsive layout may change their
+docking, but not their visual component grammar.
 
 ## Revised execution plan
 
-1. Finish keyboard correctness: platform-specific navigation, word deletion,
-   Page Up/Down, and user-facing history labels. Transaction grouping, horizontal
-   range collapse, and real history availability are complete.
+1. Add history metadata and user-facing undo/redo labels. Transaction grouping,
+   platform navigation/deletion, Page Up/Down, horizontal range collapse, and
+   real history availability are complete.
 2. Formatting semantics: super/sub baseline toggle, highlight reflection, mixed
    selection state, and arbitrary font-size entry.
 3. Contextual properties: move paragraph properties into the same live inspector

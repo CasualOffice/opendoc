@@ -116,3 +116,74 @@ test("plain Left collapses a backward range to its ordered start", async ({
   await page.locator("#undoBtn").click(); // original typing burst
   expect(consoleErrors).toEqual([]);
 });
+
+test("native-platform word movement and deletion use one semantic engine action", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await moveCaretToDocStart(page);
+
+  const marker = "WORD_DELETE_ALPHA BETA";
+  await page.keyboard.type(marker);
+  await page.keyboard.press("Alt+ArrowLeft");
+  await page.keyboard.type("X");
+  expect(await findStatusFor(page, "WORD_DELETE_ALPHA XBETA")).toBe("1 match");
+
+  await page.keyboard.press(`${MOD}+z`); // inserted X
+  expect(await findStatusFor(page, marker)).toBe("1 match");
+  await moveCaretToDocStart(page);
+  for (let i = 0; i < marker.length; i++) await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("Alt+Backspace");
+  expect(await findStatusFor(page, marker)).toBe("No match");
+  expect(await findStatusFor(page, "WORD_DELETE_ALPHA ")).toBe("1 match");
+
+  await page.keyboard.press(`${MOD}+z`);
+  await expect(page.locator("#undoBtn")).toBeEnabled();
+  expect(await findStatusFor(page, marker)).toBe("1 match");
+  await page.keyboard.press(`${MOD}+z`); // original typing burst
+  expect(consoleErrors).toEqual([]);
+});
+
+test("Page Down moves by the editor viewport and Shift extends the model selection", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await moveCaretToDocStart(page);
+
+  const lines = Array.from(
+    { length: 90 },
+    (_, index) => `PAGE_NAVIGATION_LINE_${String(index).padStart(3, "0")}`,
+  ).join("\n");
+  await pastePlainText(page, lines);
+  await expect
+    .poll(async () => Number((await page.locator("#statPages").textContent()).match(/of (\d+)/)?.[1]))
+    .toBeGreaterThan(1);
+  await moveCaretToDocStart(page);
+
+  const caretPosition = () =>
+    page.evaluate(() => {
+      const caret = document.querySelector(".overlay .caret");
+      const wraps = [...document.querySelectorAll(".page-wrap")];
+      return caret
+        ? {
+            page: wraps.indexOf(caret.closest(".page-wrap")),
+            top: Number.parseFloat(caret.style.top),
+          }
+        : null;
+    });
+  const before = await caretPosition();
+  await page.keyboard.press("PageDown");
+  await expect.poll(caretPosition).not.toEqual(before);
+
+  await page.keyboard.press("Shift+PageDown");
+  await expect(page.locator(".overlay .highlight")).not.toHaveCount(0);
+  await page.keyboard.press("PageUp");
+  await expect(page.locator(".overlay .caret")).toHaveCount(1);
+
+  await page.locator("#undoBtn").click();
+  expect(consoleErrors).toEqual([]);
+});

@@ -14,6 +14,11 @@ import {
   packFontBytes,
 } from "./web_fonts.mjs";
 import { embedMarker, extractMarker, htmlToRuns, runsToHtml } from "./clipboard.mjs";
+import {
+  keyboardPlatform,
+  navigationDirection,
+  wordDeletionDirection,
+} from "./keyboard.mjs";
 
 /** url → Uint8Array of already-fetched font bytes (persists across documents). */
 const fontCache = new Map();
@@ -203,6 +208,7 @@ let typingSession = 0;
 let typingSessionActive = false;
 let lastTypingAt = 0;
 const TYPING_PAUSE_MS = 1000;
+const EDITOR_KEYBOARD_PLATFORM = keyboardPlatform(navigator);
 
 function focusEditorSurface() {
   pagesEl.focus({ preventScroll: true });
@@ -2938,34 +2944,41 @@ function saveDocx() {
 }
 saveBtn.addEventListener("click", saveDocx);
 
-/** The engine move direction for a navigation key, factoring in ⌘ (line/doc) and
- *  ⌥ (word) modifiers, or null if the key is not a navigation key. */
-function navDirection(e) {
-  const mod = e.metaKey || e.ctrlKey;
-  switch (e.key) {
-    case "ArrowLeft":
-      return e.altKey ? "wordLeft" : mod ? "lineStart" : "left";
-    case "ArrowRight":
-      return e.altKey ? "wordRight" : mod ? "lineEnd" : "right";
-    case "ArrowUp":
-      return mod ? "docStart" : "up";
-    case "ArrowDown":
-      return mod ? "docEnd" : "down";
-    case "Home":
-      return "lineStart";
-    case "End":
-      return "lineEnd";
-    default:
-      return null;
-  }
-}
-
-/** Moves the caret to an engine Caret result (⌘↑/↓, doc bounds). Shift extends. */
+/** Moves the caret to an engine Caret result (document bounds). Shift extends. */
 function navToPosition(caret, extend) {
   breakTypingSession();
   pendingFormat = null; // caret moved → disarm typing format
   const to = { node: caret.node, offset: caret.offset };
   caret.free();
+  selection = extend ? { anchor: selection.anchor, focus: to } : { anchor: to, focus: to };
+  drawSelection();
+  focusEditorSurface();
+  scrollCaretIntoView();
+}
+
+/** Page Up/Down moves the model caret by one visible editor viewport. Browser
+ * geometry chooses only the page-local probe; `hitTest` returns the model anchor
+ * that remains the source of truth. */
+function navByViewport(dir, extend) {
+  if (!selection) return;
+  breakTypingSession();
+  pendingFormat = null;
+  const flat = doc.caretRect(selection.focus.node, selection.focus.offset);
+  if (flat.length < 5) return;
+
+  const [pageNumber, x, y, w] = flat;
+  const caretPage = pages[pageNumber - 1];
+  if (!caretPage) return;
+  const { rect: pageRect, sx, sy } = scaleOf(caretPage);
+  const viewportRect = viewportEl.getBoundingClientRect();
+  const distance = Math.max(48, viewportRect.height - 48);
+  const targetX = pageRect.left + x * sx + Math.max(1, (w * sx) / 2);
+  const targetY = pageRect.top + y * sy + (dir === "pageUp" ? -distance : distance);
+  const page = pageFromClientPoint(targetX, targetY);
+  if (!page) return;
+  const to = anchorAt(page, clientPointEvent(targetX, targetY));
+  if (!to) return;
+
   selection = extend ? { anchor: selection.anchor, focus: to } : { anchor: to, focus: to };
   drawSelection();
   focusEditorSurface();
@@ -3166,13 +3179,18 @@ document.addEventListener("keydown", async (e) => {
 
   if (!selection) return;
 
-  // Navigation (arrows + Home/End) with ⌘ (line/doc) and ⌥ (word) granularity —
-  // handled before the generic `if (mod) return` so ⌘/⌥ + arrows work. Shift
-  // extends the selection.
-  const navDir = navDirection(e);
+  // Navigation uses an explicit macOS/Windows keymap. It runs before the
+  // generic modifier guard so the supported Ctrl/Command/Option combinations
+  // reach semantic engine moves. Shift extends every navigation intent.
+  const navDir = navigationDirection(e, EDITOR_KEYBOARD_PLATFORM);
   if (navDir === "docStart" || navDir === "docEnd") {
     e.preventDefault();
     navToPosition(navDir === "docStart" ? doc.firstPosition() : doc.lastPosition(), e.shiftKey);
+    return;
+  }
+  if (navDir === "pageUp" || navDir === "pageDown") {
+    e.preventDefault();
+    navByViewport(navDir, e.shiftKey);
     return;
   }
   if (navDir) {
@@ -3201,13 +3219,26 @@ document.addEventListener("keydown", async (e) => {
     return;
   }
 
-  if (mod) {
-    breakTypingSession();
-    return; // leave other ⌘ shortcuts to the browser
-  }
-
   const { anchor, focus } = selection;
   const range = hasRange();
+  const wordDelete = wordDeletionDirection(e, EDITOR_KEYBOARD_PLATFORM);
+
+  if (wordDelete) {
+    e.preventDefault();
+    await runEdit(() =>
+      range
+        ? doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset)
+        : wordDelete === "backward"
+          ? doc.deleteWordBackward(focus.node, focus.offset)
+          : doc.deleteWordForward(focus.node, focus.offset),
+    );
+    return;
+  }
+
+  if (mod) {
+    breakTypingSession();
+    return; // leave other ⌘/Ctrl shortcuts to the browser
+  }
 
   if (key === "Backspace") {
     e.preventDefault();

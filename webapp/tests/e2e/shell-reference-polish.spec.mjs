@@ -97,6 +97,42 @@ test("the selection formatting toolbar follows light and dark editor surfaces", 
   expect(consoleErrors).toEqual([]);
 });
 
+test("the outline inspector uses the shared rounded panel surface", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  const trigger = page.locator("#railOutline");
+  await expect(trigger).toBeEnabled();
+  await trigger.click();
+
+  const panel = page.locator("#outlinePanel");
+  await expect(panel).toBeVisible();
+  const style = await panel.evaluate((element) => {
+    const computed = getComputedStyle(element);
+    const bounds = element.getBoundingClientRect();
+    return {
+      radius: computed.borderRadius,
+      borderTop: computed.borderTopWidth,
+      borderRight: computed.borderRightWidth,
+      borderBottom: computed.borderBottomWidth,
+      borderLeft: computed.borderLeftWidth,
+      shadow: computed.boxShadow,
+      bottomGap: window.innerHeight - bounds.bottom,
+    };
+  });
+  expect(style.radius).toBe("10px");
+  expect([
+    style.borderTop,
+    style.borderRight,
+    style.borderBottom,
+    style.borderLeft,
+  ]).toEqual(["1px", "1px", "1px", "1px"]);
+  expect(style.shadow).not.toBe("none");
+  expect(style.bottomGap).toBeGreaterThanOrEqual(8);
+  expect(consoleErrors).toEqual([]);
+});
+
 for (const width of [720, 390]) {
   test(`the editor header does not create page overflow at ${width}px`, async ({
     page,

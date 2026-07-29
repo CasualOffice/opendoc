@@ -717,6 +717,54 @@ impl WasmDocument {
         .map_err(to_js)
     }
 
+    /// Deletes the Unicode word before a collapsed caret as one undoable edit.
+    /// At a paragraph boundary this has the same safe join behavior as ordinary
+    /// Backspace.
+    #[wasm_bindgen(js_name = deleteWordBackward)]
+    pub fn delete_word_backward(&mut self, node: &str, offset: u32) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        if offset == 0 {
+            return self.delete_backward(node, offset);
+        }
+        let text = self.paragraph_text(nid);
+        let end = (offset as usize).min(text.len());
+        let start = prev_word_boundary(&text, end).unwrap_or(0);
+        if start == end {
+            return Err(to_js("nothing to delete".into()));
+        }
+        self.apply(Operation::DeleteText {
+            range: EditRange {
+                start: Pos::new(nid, start as u32),
+                end: Pos::new(nid, end as u32),
+            },
+        })
+        .map_err(to_js)
+    }
+
+    /// Deletes the Unicode word after a collapsed caret as one undoable edit.
+    /// At a paragraph boundary this has the same safe join behavior as ordinary
+    /// Delete.
+    #[wasm_bindgen(js_name = deleteWordForward)]
+    pub fn delete_word_forward(&mut self, node: &str, offset: u32) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let text = self.paragraph_text(nid);
+        let start = (offset as usize).min(text.len());
+        if start == text.len() {
+            return self.delete_forward(node, offset);
+        }
+        let end = next_word_boundary(&text, start).unwrap_or(text.len());
+        if start == end {
+            return Err(to_js("nothing to delete".into()));
+        }
+        self.apply(Operation::DeleteText {
+            range: EditRange {
+                start: Pos::new(nid, start as u32),
+                end: Pos::new(nid, end as u32),
+            },
+        })
+        .map_err(to_js)
+    }
+
     /// Deletes a selection that may span paragraphs (a selection + Backspace/
     /// Delete). Same-paragraph → one delete; cross-paragraph → delete the end
     /// pieces + join, as one undoable action. Caret lands at the selection start.
@@ -4169,6 +4217,22 @@ impl WasmDocument {
                     Some(o) => (nid, o as u32),
                     None if offset == 0 => self.moved_caret(nid, 0, "left"),
                     None => (nid, 0),
+                }
+            }
+            "paragraphUp" => {
+                let paras = self.ordered_paragraphs();
+                match paras.iter().position(|(id, _)| *id == nid) {
+                    Some(_) if offset > 0 => (nid, 0),
+                    Some(i) if i > 0 => (paras[i - 1].0, 0),
+                    _ => (nid, 0),
+                }
+            }
+            "paragraphDown" => {
+                let paras = self.ordered_paragraphs();
+                match paras.iter().position(|(id, _)| *id == nid) {
+                    Some(i) if i + 1 < paras.len() => (paras[i + 1].0, 0),
+                    Some(i) => (nid, paras[i].1),
+                    None => (nid, offset),
                 }
             }
             _ => (nid, offset),
@@ -8452,6 +8516,69 @@ mod tests {
             d.copy_text(&node, 0, &node, original.len() as u32),
             original
         );
+    }
+
+    #[test]
+    fn word_delete_uses_unicode_boundaries_and_undo_restores_once() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let (node_id, _) = d
+            .ordered_paragraphs()
+            .into_iter()
+            .find(|(_, len)| *len > 0)
+            .expect("a non-empty paragraph");
+        let node = node_id.to_string();
+        let marker = "alpha café";
+        d.insert_text(&node, 0, marker.to_owned())
+            .expect("insert controlled words");
+
+        d.delete_word_backward(&node, marker.len() as u32)
+            .expect("delete previous Unicode word");
+        assert!(
+            d.paragraph_text(node_id).starts_with("alpha "),
+            "backward deletion removes the whole multi-byte word"
+        );
+        d.undo().expect("undo word deletion");
+        assert!(
+            d.paragraph_text(node_id).starts_with(marker),
+            "one undo restores the complete word"
+        );
+
+        d.delete_word_forward(&node, 0)
+            .expect("delete following word");
+        assert!(
+            d.paragraph_text(node_id).starts_with(" café"),
+            "forward deletion removes one word and preserves its following separator"
+        );
+    }
+
+    #[test]
+    fn paragraph_navigation_moves_to_model_paragraph_boundaries() {
+        let d = open_document(RICH_DOCX).expect("open corpus docx");
+        let paras = d.ordered_paragraphs();
+        let pair = paras
+            .windows(2)
+            .find(|pair| pair[0].1 > 0 && pair[1].1 > 0)
+            .expect("two adjacent non-empty paragraphs");
+        let first = pair[0];
+        let second = pair[1];
+
+        let current_start = d
+            .move_caret(&second.0.to_string(), 1, "paragraphUp")
+            .expect("move to current paragraph start");
+        assert_eq!(current_start.node(), second.0.to_string());
+        assert_eq!(current_start.offset(), 0);
+
+        let previous_start = d
+            .move_caret(&second.0.to_string(), 0, "paragraphUp")
+            .expect("move to previous paragraph start");
+        assert_eq!(previous_start.node(), first.0.to_string());
+        assert_eq!(previous_start.offset(), 0);
+
+        let next_start = d
+            .move_caret(&first.0.to_string(), 1, "paragraphDown")
+            .expect("move to next paragraph start");
+        assert_eq!(next_start.node(), second.0.to_string());
+        assert_eq!(next_start.offset(), 0);
     }
 
     /// Copy across two paragraphs joins them with a newline.

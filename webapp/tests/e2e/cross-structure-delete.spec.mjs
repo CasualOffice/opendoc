@@ -38,7 +38,7 @@ test("deleting a selection that crosses into the document's table clears text wi
   // back to the document start — a deterministic body-into-table-cell range
   // without depending on fragile pixel/line-count assumptions.
   expect(await find(page, "Nested A")).toBe("1 match");
-  await page.keyboard.press(`Shift+${MOD}+ArrowUp`);
+  await page.keyboard.press(`Shift+${MOD}+Home`);
 
   const warnings = [];
   page.on("console", (msg) => {

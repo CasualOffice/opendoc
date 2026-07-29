@@ -45,10 +45,10 @@ export async function clickIntoFirstPage(page) {
   await page.locator(".page-wrap .page").first().click({ position: { x: 60, y: 60 } });
 }
 
-// Moves the caret to the very start of the document (⌘/Ctrl+ArrowUp), so
+// Moves the caret to the very start of the document (⌘/Ctrl+Home), so
 // later assertions do not depend on where the initial click happened to land.
 export async function moveCaretToDocStart(page) {
-  await page.keyboard.press(`${MOD}+ArrowUp`);
+  await page.keyboard.press(`${MOD}+Home`);
 }
 
 // Types `marker` at the caret, rewinds to just before it, then proves the
