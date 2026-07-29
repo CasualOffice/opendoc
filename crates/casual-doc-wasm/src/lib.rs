@@ -1516,6 +1516,39 @@ impl WasmDocument {
             .is_some_and(|nid| locate_table_row(&self.document, nid).is_some())
     }
 
+    /// Metadata about the innermost table containing `node`, used by the editor's
+    /// table-selection affordances. Returns an empty/not-found object when the
+    /// node is outside a table.
+    #[wasm_bindgen(js_name = tableInfo)]
+    #[must_use]
+    pub fn table_info(&self, node: &str) -> TableInfo {
+        let Ok(nid) = NodeId::from_str(node) else {
+            return TableInfo::none();
+        };
+        let Some((table, row, _)) = locate_table_row(&self.document, nid) else {
+            return TableInfo::none();
+        };
+        let Some((_, col)) = locate_table_cell(&self.document, nid) else {
+            return TableInfo::none();
+        };
+        let Some(t) = find_table(&self.document, table) else {
+            return TableInfo::none();
+        };
+        TableInfo {
+            found: true,
+            table: table.to_string(),
+            row,
+            column: col,
+            rows: t.rows.len() as u32,
+            columns: table_column_count(t) as u32,
+            regular: table_is_regular(t),
+            header_row: t
+                .rows
+                .get(row as usize)
+                .is_some_and(|r| r.properties.header),
+        }
+    }
+
     /// Moves the caret to the next/previous editable cell in the current innermost
     /// table. Pure navigation: no edit and no row creation at table boundaries.
     #[wasm_bindgen(js_name = moveTableCell)]
@@ -3762,6 +3795,86 @@ impl LinkHit {
     }
 }
 
+/// Current table context for editor table-selection and table-property controls.
+#[wasm_bindgen]
+#[derive(Clone, Debug)]
+pub struct TableInfo {
+    found: bool,
+    table: String,
+    row: u32,
+    column: u32,
+    rows: u32,
+    columns: u32,
+    regular: bool,
+    header_row: bool,
+}
+
+impl TableInfo {
+    fn none() -> Self {
+        Self {
+            found: false,
+            table: String::new(),
+            row: 0,
+            column: 0,
+            rows: 0,
+            columns: 0,
+            regular: false,
+            header_row: false,
+        }
+    }
+}
+
+#[wasm_bindgen]
+impl TableInfo {
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn found(&self) -> bool {
+        self.found
+    }
+
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn table(&self) -> String {
+        self.table.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn row(&self) -> u32 {
+        self.row
+    }
+
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn column(&self) -> u32 {
+        self.column
+    }
+
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn rows(&self) -> u32 {
+        self.rows
+    }
+
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn columns(&self) -> u32 {
+        self.columns
+    }
+
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn regular(&self) -> bool {
+        self.regular
+    }
+
+    #[wasm_bindgen(getter, js_name = headerRow)]
+    #[must_use]
+    pub fn header_row(&self) -> bool {
+        self.header_row
+    }
+}
+
 /// A page box size in twips (doc 57 §4.2).
 #[wasm_bindgen(js_name = PageSize)]
 #[derive(Clone, Copy, Debug)]
@@ -3934,6 +4047,37 @@ fn first_paragraph_of_cell(cell: &TableCell) -> Option<NodeId> {
     cell.blocks.iter().find_map(|b| match b {
         BlockNode::Paragraph(p) => Some(p.id),
         _ => None,
+    })
+}
+
+fn table_column_count(table: &Table) -> usize {
+    if !table.grid.is_empty() {
+        return table.grid.len();
+    }
+    table
+        .rows
+        .iter()
+        .map(|row| {
+            row.cells
+                .iter()
+                .map(|cell| cell.properties.grid_span.unwrap_or(1).max(1) as usize)
+                .sum()
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+fn table_is_regular(table: &Table) -> bool {
+    let cols = table_column_count(table);
+    if cols == 0 {
+        return false;
+    }
+    table.rows.iter().all(|row| {
+        row.cells.len() == cols
+            && row.cells.iter().all(|cell| {
+                !cell.properties.grid_span.is_some_and(|span| span > 1)
+                    && cell.properties.vertical_merge.is_none()
+            })
     })
 }
 
@@ -5218,6 +5362,35 @@ mod tests {
             locate_table_row(&d.document, nested_b).expect("nested B row location");
         let (_, last_col) = locate_table_cell(&d.document, nested_b).expect("nested B cell");
         assert_eq!(d.table_cell_anchor(table, last_row, last_col, true), None);
+    }
+
+    #[test]
+    fn table_info_reports_active_regular_table_context() {
+        let d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let nested_b = nodes
+            .iter()
+            .find(|(_, t)| t == "Nested B")
+            .map(|(id, _)| id.to_string())
+            .expect("nested B cell");
+        let body_para = nodes
+            .iter()
+            .find(|(id, _)| !d.in_table(&id.to_string()))
+            .map(|(id, _)| id.to_string())
+            .expect("body paragraph outside tables");
+
+        let info = d.table_info(&nested_b);
+        assert!(info.found());
+        assert_eq!(info.row(), 0);
+        assert_eq!(info.column(), 1);
+        assert_eq!(info.rows(), 1);
+        assert_eq!(info.columns(), 2);
+        assert!(info.regular());
+        assert!(!info.header_row());
+        assert!(!info.table().is_empty());
+
+        assert!(!d.table_info(&body_para).found());
     }
 
     /// Delete a whole table and undo it: the body's table count drops by one, the

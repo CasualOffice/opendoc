@@ -64,6 +64,7 @@ const cellVAlign = document.getElementById("cellVAlign");
 const cellBorderColor = document.getElementById("cellBorderColor");
 const tableBorderColor = document.getElementById("tableBorderColor");
 const tableAlign = document.getElementById("tableAlign");
+const tableContext = document.getElementById("tableContext");
 const insertTableBtn = document.getElementById("insertTableBtn");
 const insertLinkBtn = document.getElementById("insertLinkBtn");
 const insertTableMenu = document.getElementById("insertTableMenu");
@@ -1717,6 +1718,13 @@ function runNodeEdit(thunk) {
 function reflectTableMenu() {
   if (!doc || !selection) return;
   const node = selection.focus.node;
+  const info = doc.tableInfo(node);
+  if (info.found) {
+    tableContext.textContent = `${info.rows}×${info.columns} table · row ${info.row + 1}, column ${info.column + 1}${info.regular ? "" : " · merged/spanned"}`;
+  } else {
+    tableContext.textContent = "";
+  }
+  info.free();
   const rgb = doc.cellShadingAt(node);
   if (rgb >= 0 && document.activeElement !== cellShade) {
     cellShade.value = `#${rgb.toString(16).padStart(6, "0")}`;

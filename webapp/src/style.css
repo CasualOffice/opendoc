@@ -381,6 +381,13 @@ input {
   color: var(--faint);
 }
 
+.table-context {
+  padding: 0 10px 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Line-spacing rows carry a leading check column; the check shows on the
    currently-applied value. */
 .spacing-line {
