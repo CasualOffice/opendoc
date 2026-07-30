@@ -2247,6 +2247,9 @@ body.modal-open {
 .review-composer label { font-size: 12px; font-weight: 600; }
 .review-composer textarea { width: 100%; box-sizing: border-box; resize: vertical; border: 1px solid var(--line); border-radius: 6px; padding: 7px; font: inherit; font-size: 12px; background: var(--surface); color: var(--ink); }
 .review-composer-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.review-mode { display: flex; align-items: center; gap: 4px; padding: 8px 10px 0; font-size: 11px; color: var(--muted); }
+.review-mode-button { border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
+.review-mode-button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-strong); }
 .review-filters { display: flex; gap: 4px; padding: 8px 10px 0; }
 .review-filter { border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; background: transparent; color: var(--muted); font: inherit; font-size: 11px; cursor: pointer; }
 .review-filter[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-strong); }

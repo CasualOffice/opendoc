@@ -177,6 +177,8 @@ const reviewComposer = document.getElementById("reviewComposer");
 const reviewComposerText = document.getElementById("reviewComposerText");
 const reviewComposerCancel = document.getElementById("reviewComposerCancel");
 const reviewComposerSubmit = document.getElementById("reviewComposerSubmit");
+const reviewModeButtons = [...document.querySelectorAll("[data-review-mode]")];
+let reviewMode = "editing";
 const linkChip = document.getElementById("linkChip");
 const linkChipKind = document.getElementById("linkChipKind");
 const linkChipTarget = document.getElementById("linkChipTarget");
@@ -3002,6 +3004,15 @@ for (const filter of reviewFilters) {
     buildReview();
   });
 }
+for (const mode of reviewModeButtons) {
+  mode.addEventListener("click", () => {
+    reviewMode = mode.dataset.reviewMode;
+    for (const button of reviewModeButtons) {
+      button.setAttribute("aria-pressed", String(button === mode));
+    }
+    if (reviewMode === "suggesting") toggleReview(true);
+  });
+}
 
 // ---- Command palette (⌘K) — fuzzy search over real editor actions -----------
 const cmdPalette = document.getElementById("cmdPalette");
@@ -4037,7 +4048,9 @@ document.addEventListener("keydown", async (e) => {
       );
     } else {
       await runEdit(
-        () => doc.typeText(focus.node, focus.offset, focus.node, focus.offset, key, session),
+        () => reviewMode === "suggesting"
+          ? doc.suggestInsert(focus.node, focus.offset, key, "You", new Date().toISOString())
+          : doc.typeText(focus.node, focus.offset, focus.node, focus.offset, key, session),
         { typing: true },
       );
     }

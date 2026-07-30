@@ -572,6 +572,11 @@
             <button id="reviewComposerSubmit" type="button" class="dialog-button dialog-button-primary">Comment</button>
           </div>
         </div>
+        <div class="review-mode" role="group" aria-label="Editing mode">
+          <span>Mode</span>
+          <button type="button" class="review-mode-button" data-review-mode="editing" aria-pressed="true">Editing</button>
+          <button type="button" class="review-mode-button" data-review-mode="suggesting" aria-pressed="false">Suggesting</button>
+        </div>
         <div class="review-filters" role="group" aria-label="Review filter">
           <button type="button" class="review-filter" data-review-filter="open" aria-pressed="true">Open</button>
           <button type="button" class="review-filter" data-review-filter="resolved" aria-pressed="false">Resolved</button>
