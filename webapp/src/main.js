@@ -3528,7 +3528,20 @@ document.addEventListener("keydown", async (e) => {
       }
       return;
     }
-    await runToolbarEdit((a, b, c, d) => doc.adjustIndent(a, b, c, d, e.shiftKey ? -360 : 360));
+    const listKind = doc.listStyleAt(selection.focus.node);
+    if (listKind) {
+      await runEdit(() =>
+        doc.adjustListLevel(
+          selection.anchor.node,
+          selection.anchor.offset,
+          selection.focus.node,
+          selection.focus.offset,
+          e.shiftKey ? -1 : 1,
+        ),
+      );
+    } else {
+      await runToolbarEdit((a, b, c, d) => doc.adjustIndent(a, b, c, d, e.shiftKey ? -360 : 360));
+    }
     return;
   }
 

@@ -1679,6 +1679,44 @@ impl WasmDocument {
         )
     }
 
+    /// Promotes or demotes list paragraphs by one numbering level, preserving
+    /// their list instance. Non-list paragraphs are rejected so the host can
+    /// retain ordinary indentation behavior.
+    #[wasm_bindgen(js_name = adjustListLevel)]
+    pub fn adjust_list_level(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        delta: i32,
+    ) -> Result<EditResult, JsValue> {
+        let (start, _) = self
+            .order_endpoints(start_node, start_offset, end_node, end_offset)
+            .map_err(to_js)?;
+        if paragraph_properties(&self.document, start.node)
+            .and_then(|p| p.numbering)
+            .is_none()
+        {
+            return Err(to_js(
+                "list level adjustment requires a list paragraph".into(),
+            ));
+        }
+        self.apply_paragraph_props_as(
+            start_node,
+            start_offset,
+            end_node,
+            end_offset,
+            HistoryKind::ListFormatting,
+            move |p| {
+                if let Some(mut numbering) = p.numbering {
+                    numbering.level = (i32::from(numbering.level) + delta).clamp(0, 8) as u8;
+                    p.numbering = Some(numbering);
+                }
+            },
+        )
+    }
+
     /// The list kind the paragraph belongs to: `"bullet"`, `"numbered"`, or `""` —
     /// drives the toolbar's list-button active state.
     #[wasm_bindgen(js_name = listStyleAt)]
@@ -9458,6 +9496,26 @@ mod tests {
         d.toggle_list(&node, 0, &node, 0, "numbered")
             .expect("toggle numbered on");
         assert_eq!(d.list_style_at(&node), "numbered");
+        d.adjust_list_level(&node, 0, &node, 0, 1)
+            .expect("promote list level");
+        assert_eq!(
+            paragraph_properties(&d.document, NodeId::from_str(&node).unwrap())
+                .unwrap()
+                .numbering
+                .unwrap()
+                .level,
+            1
+        );
+        d.adjust_list_level(&node, 0, &node, 0, -1)
+            .expect("demote list level");
+        assert_eq!(
+            paragraph_properties(&d.document, NodeId::from_str(&node).unwrap())
+                .unwrap()
+                .numbering
+                .unwrap()
+                .level,
+            0
+        );
         let bytes = d.export_docx().expect("export");
         let reopened = open_document(&bytes).expect("re-open");
         assert!(
