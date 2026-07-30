@@ -163,6 +163,7 @@ viewOutlineBtn.addEventListener("click", () => toggleOutline());
 viewZoomOut.addEventListener("click", () => stepZoom(-1));
 viewZoomIn.addEventListener("click", () => stepZoom(1));
 const railOutline = document.getElementById("railOutline");
+const railReview = document.getElementById("railReview");
 const outlinePanel = document.getElementById("outlinePanel");
 const outlineClose = document.getElementById("outlineClose");
 const outlineBody = document.getElementById("outlineBody");
@@ -171,6 +172,11 @@ const reviewPanel = document.getElementById("reviewPanel");
 const reviewClose = document.getElementById("reviewClose");
 const reviewBody = document.getElementById("reviewBody");
 const reviewFilters = [...document.querySelectorAll("[data-review-filter]")];
+const selComment = document.getElementById("selComment");
+const reviewComposer = document.getElementById("reviewComposer");
+const reviewComposerText = document.getElementById("reviewComposerText");
+const reviewComposerCancel = document.getElementById("reviewComposerCancel");
+const reviewComposerSubmit = document.getElementById("reviewComposerSubmit");
 const linkChip = document.getElementById("linkChip");
 const linkChipKind = document.getElementById("linkChipKind");
 const linkChipTarget = document.getElementById("linkChipTarget");
@@ -1924,6 +1930,8 @@ function updateToolbar() {
   viewOutlineBtn.setAttribute("aria-pressed", String(!outlinePanel.hidden));
   reviewBtn.disabled = !doc;
   reviewBtn.setAttribute("aria-pressed", String(!reviewPanel.hidden));
+  railReview.disabled = !doc;
+  railReview.setAttribute("aria-pressed", String(!reviewPanel.hidden));
   viewZoomOut.disabled = !doc;
   viewZoomIn.disabled = !doc;
   tabTable.disabled = !inTable;
@@ -2895,15 +2903,27 @@ function buildReview() {
     text.textContent = body;
     card.append(heading, details, text);
     reviewBody.appendChild(card);
+    return card;
   };
   for (const comment of comments) {
-    appendCard(
+    const card = appendCard(
       "review-card review-comment",
       reviewText(comment.author || comment.initials || "Comment"),
       `${comment.resolved ? "Resolved" : "Open"}${comment.date ? ` · ${reviewText(comment.date)}` : ""}`,
       reviewText(comment.text),
       comment.anchor,
     );
+    const action = document.createElement("button");
+    action.type = "button";
+    action.className = "review-card-action";
+    action.textContent = comment.resolved ? "Reopen" : "Resolve";
+    action.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      if (!doc) return;
+      await runEdit(() => doc.setCommentResolved(comment.id, !comment.resolved));
+      buildReview();
+    });
+    card.appendChild(action);
   }
   for (const revision of revisions) {
     const kind = reviewText(revision.kind);
@@ -2920,13 +2940,43 @@ function toggleReview(open) {
   const show = open ?? reviewPanel.hidden;
   reviewPanel.hidden = !show;
   reviewBtn.setAttribute("aria-pressed", String(show));
+  railReview.setAttribute("aria-pressed", String(show));
   if (show) {
     outlinePanel.hidden = true;
     buildReview();
   }
 }
 reviewBtn.addEventListener("click", () => toggleReview());
+railReview.addEventListener("click", () => toggleReview());
 reviewClose.addEventListener("click", () => toggleReview(false));
+function openReviewComposer() {
+  if (!doc || !hasRange() || !selection) return;
+  toggleReview(true);
+  reviewComposer.hidden = false;
+  reviewComposerText.value = "";
+  queueMicrotask(() => reviewComposerText.focus());
+}
+function closeReviewComposer() {
+  reviewComposer.hidden = true;
+  reviewComposerText.value = "";
+}
+selComment.addEventListener("mousedown", (event) => event.preventDefault());
+selComment.addEventListener("click", openReviewComposer);
+reviewComposerCancel.addEventListener("click", closeReviewComposer);
+reviewComposerSubmit.addEventListener("click", async () => {
+  const text = reviewComposerText.value.trim();
+  const range = selection;
+  if (!doc || !range || !hasRange() || !text) return;
+  const start = range.anchor.offset <= range.focus.offset ? range.anchor : range.focus;
+  const end = range.anchor.offset <= range.focus.offset ? range.focus : range.anchor;
+  if (start.node !== end.node) {
+    setStatus("Comments currently require a single-paragraph selection", "error");
+    return;
+  }
+  await runEdit(() => doc.addComment(start.node, start.offset, end.offset, text, "You", null, new Date().toISOString()));
+  closeReviewComposer();
+  buildReview();
+});
 for (const filter of reviewFilters) {
   filter.addEventListener("click", () => {
     reviewFilter = filter.dataset.reviewFilter;

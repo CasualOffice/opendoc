@@ -19,10 +19,11 @@
 
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
-    BlockNode, Color, CoreProperties, Document, FontName, FontRef, GridColumn, HighlightColor,
-    Hyperlink, HyperlinkTarget, InlineNode, PageMargins, PageOrientation, PageSize, Paragraph,
-    ParagraphProperties, RgbColor, Run, RunProperties, SectionColumns, SectionId, Table, TableCell,
-    TableCellProperties, TableProperties, TableRow, VerticalAlignment,
+    BlockNode, Color, Comment, CommentId, CoreProperties, DefinitionMap, Document, FontName,
+    FontRef, GridColumn, HighlightColor, Hyperlink, HyperlinkTarget, InlineNode, PageMargins,
+    PageOrientation, PageSize, Paragraph, ParagraphProperties, RgbColor, Run, RunProperties,
+    SectionColumns, SectionId, Table, TableCell, TableCellProperties, TableProperties, TableRow,
+    VerticalAlignment,
 };
 
 /// A run-property change to apply over a range: each `Some(_)` field sets that
@@ -287,6 +288,15 @@ pub enum Operation {
     SetCoreProperties {
         /// The properties to install.
         properties: Box<CoreProperties>,
+    },
+    /// Replace the body and comment definitions as one exact, undoable review
+    /// transaction. Review commands use this bounded snapshot vehicle while
+    /// comment/revision marker edits are generalized across nested containers.
+    ReplaceReviewState {
+        /// New body tree.
+        body: Vec<BlockNode>,
+        /// New comment definitions.
+        comments: DefinitionMap<CommentId, Comment>,
     },
     /// Replace one section's page size, margins, orientation, and column layout
     /// (the "Page Setup" fields) — headers/footers, borders, and the section's
@@ -729,6 +739,20 @@ pub fn apply(
             }
             Ok(Operation::SetCoreProperties {
                 properties: Box::new(previous),
+            })
+        }
+        Operation::ReplaceReviewState { body, comments } => {
+            let previous_body = std::mem::replace(doc.body_mut(), body.clone());
+            let previous_comments =
+                std::mem::replace(&mut doc.definitions_mut().comments, comments.clone());
+            if doc.validate().is_err() {
+                *doc.body_mut() = previous_body;
+                doc.definitions_mut().comments = previous_comments;
+                return Err(EditError::ValueTooLarge);
+            }
+            Ok(Operation::ReplaceReviewState {
+                body: previous_body,
+                comments: previous_comments,
             })
         }
         Operation::SetSectionGeometry {
