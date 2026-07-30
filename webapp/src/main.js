@@ -3845,23 +3845,25 @@ async function cut(event = null) {
   const copied = await copySelection(event);
   if (!copied) return;
   const { anchor, focus } = selection;
-  await runEdit(() => doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset));
+  await runEdit(() => reviewMode === "suggesting" && anchor.node === focus.node
+    ? doc.suggestDelete(anchor.node, Math.min(anchor.offset, focus.offset), Math.max(anchor.offset, focus.offset), reviewAuthor.value.trim() || "You", new Date().toISOString())
+    : doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset));
 }
 
 async function pasteText(text, actionKind = "paste") {
   if (!doc || !selection) return;
   if (!text) return;
   const { anchor, focus } = selection;
-  await runEdit(() =>
-    doc.insertPlainTextAs(
-      anchor.node,
-      anchor.offset,
-      focus.node,
-      focus.offset,
-      text,
-      actionKind,
-    ),
-  );
+  const sameParagraph = anchor.node === focus.node && !text.includes("\n");
+  if (reviewMode === "suggesting" && sameParagraph) {
+    const start = Math.min(anchor.offset, focus.offset);
+    const end = Math.max(anchor.offset, focus.offset);
+    await runEdit(() => end > start
+      ? doc.suggestReplace(anchor.node, start, end, text, reviewAuthor.value.trim() || "You", new Date().toISOString())
+      : doc.suggestInsert(anchor.node, start, text, reviewAuthor.value.trim() || "You", new Date().toISOString()));
+    return;
+  }
+  await runEdit(() => doc.insertPlainTextAs(anchor.node, anchor.offset, focus.node, focus.offset, text, actionKind));
 }
 
 async function commitComposedText(text) {
@@ -3876,6 +3878,16 @@ async function commitComposedText(text) {
  * `copyRichRuns` produces. */
 async function pasteRichRunsJson(runsJson) {
   if (!doc || !selection) return;
+  if (reviewMode === "suggesting") {
+    try {
+      const runs = JSON.parse(runsJson);
+      const text = runs.map((run) => run.paragraphBreak ? "\n" : String(run.text ?? "")).join("");
+      if (text) {
+        await pasteText(text, "paste");
+        return;
+      }
+    } catch { /* fall through to the normal rich-paste path */ }
+  }
   const { anchor, focus } = selection;
   await runEdit(() =>
     doc.pasteRichRuns(anchor.node, anchor.offset, focus.node, focus.offset, runsJson),
