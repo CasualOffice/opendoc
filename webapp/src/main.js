@@ -2861,6 +2861,7 @@ function reviewText(value) {
 }
 
 let reviewFilter = "open";
+let reviewReplyParent = null;
 
 function buildReview() {
   if (!doc || reviewPanel.hidden) return;
@@ -2926,6 +2927,23 @@ function buildReview() {
       buildReview();
     });
     card.appendChild(action);
+    const reply = document.createElement("button");
+    reply.type = "button";
+    reply.className = "review-card-action";
+    reply.textContent = "Reply";
+    reply.addEventListener("click", (event) => { event.stopPropagation(); openReviewComposer(comment.id); });
+    card.appendChild(reply);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "review-card-action";
+    remove.textContent = "Delete";
+    remove.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      if (!doc) return;
+      await runEdit(() => doc.deleteComment(comment.id));
+      buildReview();
+    });
+    card.appendChild(remove);
   }
   for (const revision of revisions) {
     const kind = reviewText(revision.kind);
@@ -2967,14 +2985,16 @@ function toggleReview(open) {
 reviewBtn.addEventListener("click", () => toggleReview());
 railReview.addEventListener("click", () => toggleReview());
 reviewClose.addEventListener("click", () => toggleReview(false));
-function openReviewComposer() {
-  if (!doc || !hasRange() || !selection) return;
+function openReviewComposer(parent = null) {
+  if (!doc || (!parent && (!hasRange() || !selection))) return;
   toggleReview(true);
+  reviewReplyParent = parent;
   reviewComposer.hidden = false;
   reviewComposerText.value = "";
   queueMicrotask(() => reviewComposerText.focus());
 }
 function closeReviewComposer() {
+  reviewReplyParent = null;
   reviewComposer.hidden = true;
   reviewComposerText.value = "";
 }
@@ -2984,7 +3004,13 @@ reviewComposerCancel.addEventListener("click", closeReviewComposer);
 reviewComposerSubmit.addEventListener("click", async () => {
   const text = reviewComposerText.value.trim();
   const range = selection;
-  if (!doc || !range || !hasRange() || !text) return;
+  if (!doc || !text || (!reviewReplyParent && (!range || !hasRange()))) return;
+  if (reviewReplyParent) {
+    await runEdit(() => doc.replyToComment(reviewReplyParent, text, "You", null, new Date().toISOString()));
+    closeReviewComposer();
+    buildReview();
+    return;
+  }
   const start = range.anchor.offset <= range.focus.offset ? range.anchor : range.focus;
   const end = range.anchor.offset <= range.focus.offset ? range.focus : range.anchor;
   if (start.node !== end.node) {

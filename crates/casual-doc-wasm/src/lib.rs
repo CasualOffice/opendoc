@@ -3687,6 +3687,99 @@ impl WasmDocument {
         .map_err(to_js)
     }
 
+    /// Adds a reply to an existing comment thread.
+    #[wasm_bindgen(js_name = replyToComment)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn reply_to_comment(
+        &mut self,
+        parent: &str,
+        text: &str,
+        author: Option<String>,
+        initials: Option<String>,
+        date: Option<String>,
+    ) -> Result<EditResult, JsValue> {
+        if text.is_empty() {
+            return Err(to_js("reply text must be non-empty".to_string()));
+        }
+        let parent = NodeId::from_str(parent)
+            .map(CommentId::new)
+            .map_err(|_| to_js("invalid comment id".to_string()))?;
+        if self.document.definitions().comments.get(&parent).is_none() {
+            return Err(to_js("comment not found".to_string()));
+        }
+        let id = CommentId::new(
+            self.edit_ids
+                .next_id()
+                .map_err(|_| to_js("id space exhausted".to_string()))?,
+        );
+        let body_id = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".to_string()))?;
+        let run_id = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".to_string()))?;
+        let mut comments = self.document.definitions().comments.clone();
+        comments.insert(
+            id,
+            Comment {
+                blocks: vec![BlockNode::Paragraph(Paragraph {
+                    id: body_id,
+                    properties: ParagraphProperties::default(),
+                    inlines: vec![InlineNode::Run(Run {
+                        id: run_id,
+                        properties: RunProperties::default(),
+                        text: text.to_owned(),
+                    })],
+                })],
+                author,
+                initials,
+                date,
+                para_id: None,
+                parent_para_id: Some(parent.node_id().to_string()),
+                done: false,
+                durable_id: None,
+                person: None,
+            },
+        );
+        self.apply_action_caret_as(
+            vec![Operation::ReplaceReviewState {
+                body: self.document.body().to_vec(),
+                comments,
+            }],
+            Pos::new(self.document.id(), 0),
+            HistoryKind::Review,
+        )
+        .map_err(to_js)
+    }
+
+    /// Removes a comment and all of its range/reference markers.
+    #[wasm_bindgen(js_name = deleteComment)]
+    pub fn delete_comment(&mut self, comment: &str) -> Result<EditResult, JsValue> {
+        let id = NodeId::from_str(comment)
+            .map(CommentId::new)
+            .map_err(|_| to_js("invalid comment id".to_string()))?;
+        let source_comments = self.document.definitions().comments.clone();
+        if source_comments.get(&id).is_none() {
+            return Err(to_js("comment not found".to_string()));
+        }
+        let mut comments = casual_doc_model::v1::DefinitionMap::default();
+        for (key, value) in source_comments.iter() {
+            if *key != id {
+                comments.insert(*key, value.clone());
+            }
+        }
+        let mut body = self.document.body().to_vec();
+        remove_review_comment_markers(&mut body, id);
+        self.apply_action_caret_as(
+            vec![Operation::ReplaceReviewState { body, comments }],
+            Pos::new(self.document.id(), 0),
+            HistoryKind::Review,
+        )
+        .map_err(to_js)
+    }
+
     /// Adds a tracked insertion at a same-paragraph caret.
     #[wasm_bindgen(js_name = suggestInsert)]
     #[allow(clippy::too_many_arguments)]
@@ -5929,6 +6022,33 @@ fn insert_review_revision(
         }
     }
     false
+}
+
+fn remove_review_comment_markers(blocks: &mut [BlockNode], comment: CommentId) {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                paragraph.inlines.retain(|inline| {
+                    !matches!(inline,
+                        InlineNode::CommentReference(reference) if reference.comment == comment
+                    ) && !matches!(inline,
+                        InlineNode::CommentRangeStart(marker) if marker.comment == comment
+                    ) && !matches!(inline,
+                        InlineNode::CommentRangeEnd(marker) if marker.comment == comment
+                    )
+                });
+            }
+            BlockNode::Table(table) => {
+                for row in &mut table.rows {
+                    for cell in &mut row.cells {
+                        remove_review_comment_markers(&mut cell.blocks, comment);
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => remove_review_comment_markers(&mut sdt.blocks, comment),
+            BlockNode::AltChunk(_) => {}
+        }
+    }
 }
 
 fn decide_review_revision(blocks: &mut [BlockNode], id: NodeId, accept: bool) -> bool {
