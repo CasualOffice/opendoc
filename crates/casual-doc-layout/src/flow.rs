@@ -1978,13 +1978,11 @@ fn collect_items<'a>(
                 }));
                 out.push(FlowItem::Run(note_reference_run(reference, ctx)));
             }
-            InlineNode::CommentReference(_) => {
-                out.push(FlowItem::Run(styled_owned_run(
-                    "[comment]".to_owned(),
-                    &comment_marker_properties(),
-                    ctx,
-                )));
-            }
+            // `w:commentReference` is a zero-width model marker. Its visible
+            // affordance belongs to the host review UI; shaping placeholder
+            // text here changes line wrapping and leaks a superscript
+            // "[comment]" glyph into the document canvas.
+            InlineNode::CommentReference(_) => {}
             InlineNode::Revision(revision) => {
                 collect_items(&revision.inlines, out, shaper, width, ctx)
             }
@@ -2074,13 +2072,6 @@ fn note_ordinal<V>(
 }
 
 fn note_reference_properties() -> RunProperties {
-    RunProperties {
-        vertical_alignment: Some(VerticalAlignment::Superscript),
-        ..RunProperties::default()
-    }
-}
-
-fn comment_marker_properties() -> RunProperties {
     RunProperties {
         vertical_alignment: Some(VerticalAlignment::Superscript),
         ..RunProperties::default()
@@ -5161,8 +5152,8 @@ mod tests {
         let items = collected_items(&definitions, &inlines);
         assert_eq!(
             run_texts(&items),
-            vec!["[x+y]", "\u{2011}", "\u{00ad}", "1", "[comment]"],
-            "modeled inline leaves get explicit visible/text-bearing flow atoms"
+            vec!["[x+y]", "\u{2011}", "\u{00ad}", "1"],
+            "visible inline leaves are shaped while comment metadata stays zero-width"
         );
         let note_run = items.iter().find_map(|item| match item {
             FlowItem::Run(run) if run.text == "1" => Some(run),
@@ -5171,6 +5162,12 @@ mod tests {
         assert!(
             note_run.is_some_and(|run| run.baseline_shift > Twip::ZERO),
             "note references use a superscript marker style"
+        );
+        assert!(
+            items
+                .iter()
+                .all(|item| !matches!(item, FlowItem::Run(run) if run.text.contains("comment"))),
+            "comment references never emit an in-document glyph"
         );
     }
 
