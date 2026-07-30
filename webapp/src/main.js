@@ -1535,10 +1535,13 @@ function repaintPage(i) {
   canvas.getContext("2d").putImageData(new ImageData(bmp.rgba, bmp.widthPx, bmp.heightPx), 0, 0);
 }
 
-/** Scroll the caret into view only if it is off-screen (no jitter while typing). */
-function scrollCaretIntoView() {
+/** Scroll the caret into view only if it is off-screen (no jitter while typing).
+ * Navigation callers can request a centered target so headings/anchors have
+ * useful reading room below the destination instead of landing on the viewport
+ * edge. */
+function scrollCaretIntoView(block = "nearest") {
   const caret = pagesEl.querySelector(".overlay .caret");
-  if (caret) caret.scrollIntoView({ block: "nearest", inline: "nearest" });
+  if (caret) caret.scrollIntoView({ block, inline: "nearest" });
 }
 
 /** Apply an EditResult: place the caret, repaint only the dirty pages (or rebuild
@@ -2800,7 +2803,7 @@ function navigateToNode(node) {
   if (!doc) return;
   selection = { anchor: { node, offset: 0 }, focus: { node, offset: 0 } };
   drawSelection();
-  scrollCaretIntoView();
+  scrollCaretIntoView("center");
 }
 
 function toggleOutline() {

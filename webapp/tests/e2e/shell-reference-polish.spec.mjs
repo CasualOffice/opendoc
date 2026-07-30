@@ -133,6 +133,27 @@ test("the outline inspector uses the shared rounded panel surface", async ({
   expect(consoleErrors).toEqual([]);
 });
 
+test("outline navigation centers the heading target", async ({ page, consoleErrors }) => {
+  await gotoEditor(page);
+  await page.locator("#railOutline").click();
+  const item = page.locator("#outlineBody .outline-item").first();
+  await expect(item).toBeVisible();
+
+  await page.evaluate(() => {
+    window.__outlineScrollBlocks = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (options) {
+      if (this.classList?.contains("caret")) window.__outlineScrollBlocks.push(options?.block);
+      return original.call(this, options);
+    };
+  });
+  await item.click();
+  await expect
+    .poll(() => page.evaluate(() => window.__outlineScrollBlocks.at(-1)))
+    .toBe("center");
+  expect(consoleErrors).toEqual([]);
+});
+
 for (const width of [720, 390]) {
   test(`the editor header does not create page overflow at ${width}px`, async ({
     page,
