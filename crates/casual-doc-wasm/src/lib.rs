@@ -4779,7 +4779,7 @@ impl WasmDocument {
         defs.abstract_numbering.insert(
             abs_id,
             AbstractNumbering {
-                levels: vec![list_level(numbered)],
+                levels: (0..=8).map(|level| list_level(numbered, level)).collect(),
             },
         );
         defs.numbering.insert(
@@ -7050,17 +7050,23 @@ fn empty_paragraph_block(ids: &mut IdGenerator) -> Result<BlockNode, String> {
     }))
 }
 
-/// A single top-level list level: a bullet glyph or a `1.` decimal, indented so the
-/// marker hangs to the left of the body text (Word's default 0.5″ indent with a
-/// 0.25″ hanging marker).
-fn list_level(numbered: bool) -> NumberingLevel {
+/// One generated list level: a bullet glyph or a nested decimal marker,
+/// indented so the marker hangs to the left of the body text. These are the
+/// nine levels accepted by `adjustListLevel` (0..=8), so editor-created lists
+/// remain valid when users promote items repeatedly and export the document.
+fn list_level(numbered: bool, level: u8) -> NumberingLevel {
     let (num_fmt, lvl_text) = if numbered {
-        (NumberFormat::Decimal, "%1.".to_string())
+        let placeholders = (1..=level + 1)
+            .map(|part| format!("%{part}"))
+            .collect::<Vec<_>>()
+            .join(".");
+        (NumberFormat::Decimal, format!("{placeholders}."))
     } else {
-        (NumberFormat::Bullet, "\u{2022}".to_string()) // •
+        let glyph = ["\u{2022}", "\u{25e6}", "\u{25aa}", "\u{2013}"][usize::from(level) % 4];
+        (NumberFormat::Bullet, glyph.to_string())
     };
     NumberingLevel {
-        level: 0,
+        level,
         start: 1,
         num_fmt: Some(num_fmt),
         lvl_text: Some(lvl_text),
@@ -7069,7 +7075,7 @@ fn list_level(numbered: bool) -> NumberingLevel {
         is_lgl: false,
         paragraph_properties: Some(ParagraphProperties {
             indentation: Some(Indentation {
-                start_twips: Some(720),
+                start_twips: Some(720 + i32::from(level) * 360),
                 end_twips: None,
                 first_line_twips: None,
                 hanging_twips: Some(360),
@@ -9615,18 +9621,24 @@ mod tests {
         d.toggle_list(&node, 0, &node, 0, "numbered")
             .expect("toggle numbered on");
         assert_eq!(d.list_style_at(&node), "numbered");
-        d.adjust_list_level(&node, 0, &node, 0, 1)
-            .expect("promote list level");
+        for _ in 0..8 {
+            d.adjust_list_level(&node, 0, &node, 0, 1)
+                .expect("promote list level");
+        }
         assert_eq!(
             paragraph_properties(&d.document, NodeId::from_str(&node).unwrap())
                 .unwrap()
                 .numbering
                 .unwrap()
                 .level,
-            1
+            8
         );
-        d.adjust_list_level(&node, 0, &node, 0, -1)
-            .expect("demote list level");
+        d.export_docx()
+            .expect("deeply promoted editor list remains exportable");
+        for _ in 0..8 {
+            d.adjust_list_level(&node, 0, &node, 0, -1)
+                .expect("demote list level");
+        }
         assert_eq!(
             paragraph_properties(&d.document, NodeId::from_str(&node).unwrap())
                 .unwrap()
