@@ -24,6 +24,8 @@ async function tablePropertyValues(page) {
     rowRule: document.getElementById("tableRowHeightRule").value,
     cellMargin: document.getElementById("tableCellMargin").value,
     cellSpacing: document.getElementById("tableCellSpacing").value,
+    caption: document.getElementById("tableCaption").value,
+    description: document.getElementById("tableDescription").value,
   }));
 }
 
@@ -148,6 +150,10 @@ test("table properties commit live, undo per interaction, and restore focus", as
   await page.locator("#tableCellMargin").press("Tab");
   await page.locator("#tableCellSpacing").fill("0.06");
   await page.locator("#tableCellSpacing").press("Tab");
+  await page.locator("#tableCaption").fill("Sales");
+  await page.locator("#tableCaption").press("Tab");
+  await page.locator("#tableDescription").fill("Quarterly sales table");
+  await page.locator("#tableDescription").press("Tab");
   await expect(panel).toBeVisible();
   expect(await tablePropertyValues(page)).toEqual({
     alignment: "center",
@@ -160,6 +166,8 @@ test("table properties commit live, undo per interaction, and restore focus", as
     rowRule: "exact",
     cellMargin: "0.1",
     cellSpacing: "0.06",
+    caption: "Sales",
+    description: "Quarterly sales table",
   });
 
   // Each completed control interaction is its own undo action. The last undo
@@ -177,7 +185,9 @@ test("table properties commit live, undo per interaction, and restore focus", as
     rowHeight: "0.5",
     rowRule: "exact",
     cellMargin: "0.1",
-    cellSpacing: original.cellSpacing,
+    cellSpacing: "0.06",
+    caption: "Sales",
+    description: "",
   });
 
   await page.locator("#tableWidth").focus();

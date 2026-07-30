@@ -106,6 +106,8 @@ const tableRowHeight = document.getElementById("tableRowHeight");
 const tableRowHeightRule = document.getElementById("tableRowHeightRule");
 const tableCellMargin = document.getElementById("tableCellMargin");
 const tableCellSpacing = document.getElementById("tableCellSpacing");
+const tableCaption = document.getElementById("tableCaption");
+const tableDescription = document.getElementById("tableDescription");
 const insertTableBtn = document.getElementById("insertTableBtn");
 const insertLinkBtn = document.getElementById("insertLinkBtn");
 const insertTableMenu = document.getElementById("insertTableMenu");
@@ -2498,6 +2500,8 @@ function reflectTableProperties(node = selection?.focus.node) {
 
   tablePropertiesNode = node;
   tablePropertiesContext.textContent = tableContextLabel(info);
+  tableCaption.value = info.caption || "";
+  tableDescription.value = info.description || "";
   tableHeaderRow.checked = info.headerRow;
   tableFixedLayout.checked = info.fixedLayout;
   tableColumnWidth.disabled = !info.regular;
@@ -2528,6 +2532,8 @@ function reflectTableProperties(node = selection?.focus.node) {
     rowHeightRule: info.rowHeightRule || "auto",
     cellMarginTwips: optionalDialogTwips(tableCellMargin),
     cellSpacingTwips: optionalDialogTwips(tableCellSpacing),
+    caption: tableCaption.value,
+    description: tableDescription.value,
   };
   info.free();
   return true;
@@ -2608,6 +2614,8 @@ function tablePropertiesPatch() {
     rowHeightRule: tableRowHeightRule.value,
     cellMarginTwips: optionalDialogTwips(tableCellMargin),
     cellSpacingTwips: optionalDialogTwips(tableCellSpacing),
+    caption: tableCaption.value,
+    description: tableDescription.value,
   };
   const patch = {};
   for (const [key, value] of Object.entries(next)) {

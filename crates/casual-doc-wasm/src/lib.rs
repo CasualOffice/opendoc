@@ -2006,6 +2006,8 @@ impl WasmDocument {
                 _ => "left",
             }
             .to_owned(),
+            caption: t.properties.caption.clone().unwrap_or_default(),
+            description: t.properties.description.clone().unwrap_or_default(),
         }
     }
 
@@ -2079,6 +2081,13 @@ impl WasmDocument {
         if let Some(spacing) = patch.cell_spacing_twips {
             ensure_optional_twips("cell spacing", spacing)?;
             replacement.properties.cell_spacing_twips = (spacing >= 0).then_some(spacing);
+        }
+        if let Some(caption) = patch.caption {
+            replacement.properties.caption = normalize_table_metadata("caption", caption)?;
+        }
+        if let Some(description) = patch.description {
+            replacement.properties.description =
+                normalize_table_metadata("description", description)?;
         }
 
         let active_row = replacement
@@ -4949,6 +4958,8 @@ struct TablePropertiesPatch {
     row_height_rule: Option<String>,
     cell_margin_twips: Option<i32>,
     cell_spacing_twips: Option<i32>,
+    caption: Option<String>,
+    description: Option<String>,
 }
 
 impl TablePropertiesPatch {
@@ -4963,6 +4974,8 @@ impl TablePropertiesPatch {
             && self.row_height_rule.is_none()
             && self.cell_margin_twips.is_none()
             && self.cell_spacing_twips.is_none()
+            && self.caption.is_none()
+            && self.description.is_none()
     }
 }
 
@@ -6005,6 +6018,8 @@ pub struct TableInfo {
     cell_margin_twips: i32,
     cell_spacing_twips: i32,
     alignment: String,
+    caption: String,
+    description: String,
 }
 
 impl TableInfo {
@@ -6027,6 +6042,8 @@ impl TableInfo {
             cell_margin_twips: -1,
             cell_spacing_twips: -1,
             alignment: "left".to_owned(),
+            caption: String::new(),
+            description: String::new(),
         }
     }
 }
@@ -6073,6 +6090,18 @@ impl TableInfo {
     #[must_use]
     pub fn regular(&self) -> bool {
         self.regular
+    }
+
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn caption(&self) -> String {
+        self.caption.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn description(&self) -> String {
+        self.description.clone()
     }
 
     #[wasm_bindgen(getter, js_name = headerRow)]
@@ -6411,6 +6440,14 @@ fn required_twips(label: &str, value: i32) -> Result<i32, JsValue> {
     } else {
         Err(to_js(format!("{label} must be between 0 and 31680 twips")))
     }
+}
+
+fn normalize_table_metadata(label: &str, value: String) -> Result<Option<String>, JsValue> {
+    let value = value.trim().to_owned();
+    if value.len() > 255 {
+        return Err(to_js(format!("{label} must be at most 255 bytes")));
+    }
+    Ok((!value.is_empty()).then_some(value))
 }
 
 fn distribute_twips(total: i64, parts: usize) -> Result<Vec<i32>, JsValue> {
@@ -8911,6 +8948,31 @@ mod tests {
         assert_eq!(d.table_column_resize_handles(&caret).len(), 2 * 5);
         assert!(d.table_selection_rects(&body_para, "table").is_empty());
         assert!(d.table_selection_rects(&caret, "unknown").is_empty());
+    }
+
+    #[test]
+    fn table_caption_and_description_apply_reflect_and_undo() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let body = nodes
+            .iter()
+            .find(|(id, _)| !d.in_table(&id.to_string()))
+            .map(|(id, _)| id.to_string())
+            .expect("body paragraph");
+        let anchor = d.insert_table(&body, 2, 2).expect("insert table").node();
+        d.apply_table_properties(
+            &anchor,
+            r#"{"caption":"Sales","description":"Quarterly sales table"}"#,
+        )
+        .expect("metadata");
+        let info = d.table_info(&anchor);
+        assert_eq!(info.caption(), "Sales");
+        assert_eq!(info.description(), "Quarterly sales table");
+        d.undo().expect("undo metadata");
+        let info = d.table_info(&anchor);
+        assert_eq!(info.caption(), "");
+        assert_eq!(info.description(), "");
     }
 
     #[test]
