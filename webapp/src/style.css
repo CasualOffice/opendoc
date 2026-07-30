@@ -2479,6 +2479,19 @@ body.modal-open {
   border-radius: 1px;
 }
 
+/* Comment range marker: interaction-only highlight over the fixed canvas. */
+.overlay .review-comment-marker {
+  position: absolute;
+  background: color-mix(in srgb, #f5c542 28%, transparent);
+  border-bottom: 2px solid color-mix(in srgb, #c58b00 70%, transparent);
+  pointer-events: auto;
+  cursor: pointer;
+}
+.overlay .review-comment-marker-active {
+  background: color-mix(in srgb, #f5c542 48%, transparent);
+  border-bottom-color: #b77900;
+}
+
 .overlay .table-cell-selection {
   position: absolute;
   border: 1px solid var(--accent);

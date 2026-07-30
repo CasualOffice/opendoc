@@ -185,6 +185,7 @@ const reviewAcceptAll = document.getElementById("reviewAcceptAll");
 const reviewRejectAll = document.getElementById("reviewRejectAll");
 let reviewMode = "editing";
 let reviewRevisionCursor = -1;
+let activeReviewCommentId = null;
 const linkChip = document.getElementById("linkChip");
 const linkChipKind = document.getElementById("linkChipKind");
 const linkChipTarget = document.getElementById("linkChipTarget");
@@ -405,6 +406,12 @@ async function openBytes(bytes, name) {
       );
     }
     buildOutline();
+    try {
+      const summary = JSON.parse(doc.reviewSummary());
+      if ((summary.comments?.length ?? 0) || (summary.revisions?.length ?? 0)) toggleReview(true);
+    } catch {
+      // Review metadata is optional and must never block document opening.
+    }
   } catch (err) {
     console.error(err);
     setStatus(`Could not open ${name}: ${err.message ?? err}`, "error");
@@ -586,12 +593,37 @@ function clearOverlays() {
   for (const p of pages) p.overlay.replaceChildren();
 }
 
+/** Paint comment ranges in the existing overlay layer. This never touches the
+ * canvas or document layout; it is the same interaction layer used by the
+ * selection highlight and caret. */
+function paintReviewMarkers() {
+  if (!doc) return;
+  let summary;
+  try { summary = JSON.parse(doc.reviewSummary()); } catch { return; }
+  for (const comment of summary.comments ?? []) {
+    if (comment.resolved || !comment.anchor?.node) continue;
+    const { node, start, end } = comment.anchor;
+    const rects = doc.selectionRects(node, Number(start) || 0, node, Number(end) || 0);
+    for (let i = 0; i < rects.length; i += 5) {
+      const el = place(rects.slice(i, i + 5), activeReviewCommentId === comment.id ? "review-comment-marker review-comment-marker-active" : "review-comment-marker");
+      if (el) {
+        el.dataset.reviewCommentId = comment.id;
+        el.addEventListener("click", (event) => {
+          event.stopPropagation();
+          focusReviewComment(comment);
+        });
+      }
+    }
+  }
+}
+
 /** Draws the current selection from engine geometry: a highlight for a real
  *  range, else a caret at the focus (so a click — or a range with no visible
  *  rects — always shows a cursor). */
 function drawSelection() {
   if (!doc) return;
   clearOverlays();
+  paintReviewMarkers();
   if (selection) {
     paintTableSelection();
     paintActiveCell(selection.focus); // under the caret/highlight
@@ -693,10 +725,10 @@ function hideImePreedit() {
 /** Places one flat `[page, x, y, w, h]` twip rect as a `kind` box on its page,
  *  converting twips → CSS px with that page's live scale. */
 function place(flat, kind) {
-  if (flat.length < 5) return;
+  if (flat.length < 5) return null;
   const [pageNumber, x, y, w, h] = flat;
   const page = pages[pageNumber - 1];
-  if (!page) return;
+  if (!page) return null;
   const { sx, sy } = scaleOf(page);
   const el = document.createElement("div");
   el.className = kind;
@@ -705,6 +737,7 @@ function place(flat, kind) {
   el.style.width = `${Math.max(w * sx, kind === "caret" ? 2 : 0)}px`;
   el.style.height = `${h * sy}px`;
   page.overlay.appendChild(el);
+  return el;
 }
 
 /** Navigates to an internal-link target and makes the target page/caret visible. */
@@ -1203,6 +1236,19 @@ document.addEventListener("pointerdown", (event) => {
 });
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") hideLinkChip();
+});
+document.addEventListener("keydown", (event) => {
+  if (!doc || event.defaultPrevented) return;
+  const mod = event.metaKey || event.ctrlKey;
+  if (mod && event.altKey && event.key.toLowerCase() === "m") {
+    event.preventDefault();
+    openReviewComposer();
+  } else if (mod && event.shiftKey && event.key.toLowerCase() === "e") {
+    event.preventDefault();
+    reviewMode = reviewMode === "suggesting" ? "editing" : "suggesting";
+    for (const button of reviewModeButtons) button.setAttribute("aria-pressed", String(button.dataset.reviewMode === reviewMode));
+    if (reviewMode === "suggesting") toggleReview(true);
+  }
 });
 viewportEl.addEventListener("scroll", hideLinkChip, { passive: true });
 window.addEventListener("resize", hideLinkChip);
@@ -2882,6 +2928,19 @@ function reviewText(value) {
 let reviewFilter = "open";
 let reviewReplyParent = null;
 
+function focusReviewComment(comment) {
+  const anchor = comment?.anchor;
+  if (!anchor?.node) return;
+  activeReviewCommentId = comment.id;
+  selection = {
+    anchor: { node: anchor.node, offset: Number(anchor.start) || 0 },
+    focus: { node: anchor.node, offset: Number(anchor.end) || Number(anchor.start) || 0 },
+  };
+  drawSelection();
+  focusEditorSurface();
+  scrollCaretIntoView("center");
+}
+
 function buildReview() {
   if (!doc || reviewPanel.hidden) return;
   const summary = JSON.parse(doc.reviewSummary());
@@ -2937,6 +2996,11 @@ function buildReview() {
       reviewText(comment.text),
       comment.anchor,
     );
+    card.dataset.reviewId = comment.id;
+    card.addEventListener("click", (event) => {
+      if (event.target instanceof HTMLButtonElement) return;
+      focusReviewComment(comment);
+    });
     const action = document.createElement("button");
     action.type = "button";
     action.className = "review-card-action";
