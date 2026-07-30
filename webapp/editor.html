@@ -701,6 +701,12 @@
                 <label class="dialog-field">Between cells<span class="number-control"><input id="tableCellSpacing" type="number" min="0" max="2" step="0.01" inputmode="decimal" /><span>in</span></span></label>
               </div>
             </fieldset>
+            <fieldset class="dialog-group table-property-section">
+              <legend>Formula result</legend>
+              <label class="dialog-field">Formula<input id="tableFormula" type="text" placeholder="=SUM(ABOVE)" /></label>
+              <button id="tableFormulaApply" type="button" class="dialog-button dialog-button-primary">Calculate formula</button>
+              <p class="dialog-field-note">Supports SUM, AVERAGE, MIN, and MAX over ABOVE or LEFT numeric cells.</p>
+            </fieldset>
           </div>
         </div>
       </aside>

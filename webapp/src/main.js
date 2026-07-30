@@ -108,6 +108,8 @@ const tableCellMargin = document.getElementById("tableCellMargin");
 const tableCellSpacing = document.getElementById("tableCellSpacing");
 const tableCaption = document.getElementById("tableCaption");
 const tableDescription = document.getElementById("tableDescription");
+const tableFormula = document.getElementById("tableFormula");
+const tableFormulaApply = document.getElementById("tableFormulaApply");
 const insertTableBtn = document.getElementById("insertTableBtn");
 const insertLinkBtn = document.getElementById("insertLinkBtn");
 const insertTableMenu = document.getElementById("insertTableMenu");
@@ -2559,6 +2561,10 @@ function toggleTableProperties(open) {
 tablePropertiesBtn.addEventListener("click", (event) => {
   event.stopPropagation();
   toggleTableProperties();
+});
+tableFormulaApply.addEventListener("click", () => {
+  if (!selection || !doc || !tableFormula.value.trim()) return;
+  runNodeEdit((node) => doc.calculateTableFormula(node, tableFormula.value));
 });
 tablePropertiesCloseBtn.addEventListener("click", () => toggleTableProperties(false));
 tableAlign.addEventListener("click", (event) => {

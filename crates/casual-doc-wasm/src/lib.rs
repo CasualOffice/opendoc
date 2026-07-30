@@ -2515,6 +2515,77 @@ impl WasmDocument {
         .map_err(to_js)
     }
 
+    /// Calculates a bounded table formula and writes its numeric result into the
+    /// active cell. Supported forms are `=SUM|AVERAGE|MIN|MAX(ABOVE|LEFT)`.
+    #[wasm_bindgen(js_name = calculateTableFormula)]
+    pub fn calculate_table_formula(
+        &mut self,
+        node: &str,
+        formula: &str,
+    ) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let (table, row, _) = locate_table_row(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        let (_, column) = locate_table_cell(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        let mut replacement = find_table(&self.document, table)
+            .ok_or_else(|| to_js("table not found".into()))?
+            .clone();
+        if !table_is_regular(&replacement) {
+            return Err(to_js("formulas require a regular table".into()));
+        }
+        let (operation, range) = parse_table_formula(formula)?;
+        let values = formula_values(&replacement, row as usize, column as usize, &range)?;
+        if values.is_empty() {
+            return Err(to_js("formula range contains no numeric cells".into()));
+        }
+        let result = match operation.as_str() {
+            "SUM" => values.iter().sum::<f64>(),
+            "AVERAGE" => values.iter().sum::<f64>() / values.len() as f64,
+            "MIN" => values.iter().copied().fold(f64::INFINITY, f64::min),
+            "MAX" => values.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+            _ => return Err(to_js("unsupported table formula operation".into())),
+        };
+        let cell = replacement
+            .rows
+            .get_mut(row as usize)
+            .and_then(|r| r.cells.get_mut(column as usize))
+            .ok_or_else(|| to_js("formula cell is outside the table".into()))?;
+        let paragraph = cell
+            .blocks
+            .first_mut()
+            .and_then(|block| match block {
+                BlockNode::Paragraph(paragraph) => Some(paragraph),
+                _ => None,
+            })
+            .ok_or_else(|| to_js("formula cell must begin with a paragraph".into()))?;
+        let run_id = paragraph
+            .inlines
+            .iter()
+            .find_map(|inline| match inline {
+                InlineNode::Run(run) => Some(run.id),
+                _ => None,
+            })
+            .unwrap_or(
+                self.edit_ids
+                    .next_id()
+                    .map_err(|_| to_js("id space exhausted".into()))?,
+            );
+        paragraph.inlines = vec![InlineNode::Run(Run {
+            id: run_id,
+            properties: RunProperties::default(),
+            text: format_number(result),
+        })];
+        self.apply_action_as(
+            vec![Operation::ReplaceTable {
+                table,
+                replacement: Box::new(replacement),
+            }],
+            HistoryKind::TableFormatting,
+        )
+        .map_err(to_js)
+    }
+
     /// Sets the table's preferred width in twips, or clears it when negative.
     #[wasm_bindgen(js_name = setTableWidth)]
     pub fn set_table_width(&mut self, node: &str, width_twips: i32) -> Result<EditResult, JsValue> {
@@ -6537,6 +6608,71 @@ fn first_cell_plain_text(row: &TableRow) -> Result<String, String> {
     Ok(node_plain_text(&paragraph.inlines))
 }
 
+fn parse_table_formula(formula: &str) -> Result<(String, String), JsValue> {
+    let formula = formula.trim().to_ascii_uppercase();
+    let (operation, rest) = formula
+        .split_once('(')
+        .ok_or_else(|| to_js("formula must look like =SUM(ABOVE)".into()))?;
+    let range = rest
+        .strip_suffix(')')
+        .ok_or_else(|| to_js("formula must end with ')'".into()))?;
+    let operation = operation.strip_prefix('=').unwrap_or(operation);
+    if !matches!(operation, "SUM" | "AVERAGE" | "MIN" | "MAX") || !matches!(range, "ABOVE" | "LEFT")
+    {
+        return Err(to_js(
+            "supported formulas are SUM, AVERAGE, MIN, or MAX over ABOVE or LEFT".into(),
+        ));
+    }
+    // Leak-free static storage is unnecessary: the owned uppercase string is
+    // represented by the caller's temporary only for this synchronous parse.
+    // Reparse from the original string using slices after validation instead.
+    let original = formula;
+    let (operation, rest) = original.split_once('(').unwrap();
+    Ok((
+        operation.strip_prefix('=').unwrap_or(operation).to_owned(),
+        rest.strip_suffix(')').unwrap().to_owned(),
+    ))
+}
+
+fn formula_values(
+    table: &Table,
+    row: usize,
+    column: usize,
+    range: &str,
+) -> Result<Vec<f64>, JsValue> {
+    let mut values = Vec::new();
+    let cells = match range {
+        "ABOVE" => table.rows[..row]
+            .iter()
+            .map(|r| &r.cells[column])
+            .collect::<Vec<_>>(),
+        "LEFT" => table.rows[row].cells[..column].iter().collect::<Vec<_>>(),
+        _ => return Err(to_js("unsupported formula range".into())),
+    };
+    for cell in cells {
+        let text = cell
+            .blocks
+            .first()
+            .and_then(|block| match block {
+                BlockNode::Paragraph(paragraph) => Some(node_plain_text(&paragraph.inlines)),
+                _ => None,
+            })
+            .ok_or_else(|| to_js("formula range contains a non-paragraph cell".into()))?;
+        if let Ok(value) = text.trim().parse::<f64>() {
+            values.push(value);
+        }
+    }
+    Ok(values)
+}
+
+fn format_number(value: f64) -> String {
+    if value.fract() == 0.0 {
+        format!("{value:.0}")
+    } else {
+        format!("{value:.2}")
+    }
+}
+
 fn merge_regular_table_selection(
     mut table: Table,
     r0: usize,
@@ -8973,6 +9109,41 @@ mod tests {
         let info = d.table_info(&anchor);
         assert_eq!(info.caption(), "");
         assert_eq!(info.description(), "");
+    }
+
+    #[test]
+    fn table_formula_sum_above_writes_result_and_undoes() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let body = nodes
+            .iter()
+            .find(|(id, _)| !d.in_table(&id.to_string()))
+            .map(|(id, _)| id.to_string())
+            .expect("body paragraph");
+        let anchor = d.insert_table(&body, 3, 2).expect("insert table").node();
+        let first_cells = |d: &WasmDocument| {
+            let (table, _) =
+                locate_table_cell(&d.document, NodeId::from_str(&anchor).expect("anchor"))
+                    .expect("table");
+            find_table(&d.document, table)
+                .unwrap()
+                .rows
+                .iter()
+                .map(|row| match row.cells[0].blocks.first().unwrap() {
+                    BlockNode::Paragraph(paragraph) => paragraph.id.to_string(),
+                    _ => panic!("cell paragraph"),
+                })
+                .collect::<Vec<_>>()
+        };
+        let cells = first_cells(&d);
+        d.insert_text(&cells[0], 0, "2".into()).expect("value 2");
+        d.insert_text(&cells[1], 0, "3".into()).expect("value 3");
+        d.calculate_table_formula(&cells[2], "=SUM(ABOVE)")
+            .expect("sum above");
+        assert_eq!(d.copy_text(&cells[2], 0, &cells[2], 1), "5");
+        d.undo().expect("undo formula");
+        assert_eq!(d.copy_text(&cells[2], 0, &cells[2], 1), "");
     }
 
     #[test]
