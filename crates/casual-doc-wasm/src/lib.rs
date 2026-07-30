@@ -181,7 +181,9 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         Operation::SplitParagraph { .. } | Operation::JoinParagraphs { .. } => {
             HistoryKind::ParagraphBreak
         }
-        Operation::FormatText { .. } | Operation::SetInlines { .. } => HistoryKind::Formatting,
+        Operation::FormatText { .. }
+        | Operation::ClearFormatting { .. }
+        | Operation::SetInlines { .. } => HistoryKind::Formatting,
         Operation::SetHyperlink { .. } => HistoryKind::LinkChange,
         Operation::SetParagraphProperties { .. } => HistoryKind::ParagraphFormatting,
         Operation::InsertRow { .. }
@@ -1157,6 +1159,25 @@ impl WasmDocument {
                 underline,
                 strike,
                 ..FormatDelta::default()
+            },
+        })
+        .map_err(to_js)
+    }
+
+    /// Clears direct character formatting over a range while preserving the
+    /// paragraph's named style. The selection remains intact in the host.
+    #[wasm_bindgen(js_name = clearFormatting)]
+    pub fn clear_formatting(
+        &mut self,
+        node: &str,
+        start: u32,
+        end: u32,
+    ) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        self.apply(Operation::ClearFormatting {
+            range: EditRange {
+                start: Pos::new(nid, start),
+                end: Pos::new(nid, end),
             },
         })
         .map_err(to_js)
@@ -7004,7 +7025,7 @@ fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos 
             _ => Pos::new(*first, 0),
         },
         // Formatting keeps the selection; the frontend does not collapse to this.
-        Operation::FormatText { range, .. } => range.start,
+        Operation::FormatText { range, .. } | Operation::ClearFormatting { range } => range.start,
         Operation::SetHyperlink { range, .. } => range.start,
         Operation::SetInlines { node, .. } | Operation::SetParagraphProperties { node, .. } => {
             Pos::new(*node, 0)

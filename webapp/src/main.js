@@ -54,6 +54,7 @@ const subBtn = document.getElementById("subscript");
 const fontSizeSel = document.getElementById("fontSize");
 const textColorInput = document.getElementById("textColor");
 const highlightSel = document.getElementById("highlight");
+const clearFormattingBtn = document.getElementById("clearFormatting");
 const spacingBtn = document.getElementById("spacingBtn");
 const spacingMenu = document.getElementById("spacingMenu");
 const spaceBeforeInput = document.getElementById("spaceBefore");
@@ -175,7 +176,7 @@ const bulletListBtn = document.getElementById("bulletList");
 const numberedListBtn = document.getElementById("numberedList");
 const fontFamilySel = document.getElementById("fontFamily");
 const paragraphStyleSel = document.getElementById("paragraphStyle");
-const runControls = [superBtn, subBtn, fontSizeSel, textColorInput, highlightSel, fontFamilySel];
+const runControls = [superBtn, subBtn, fontSizeSel, textColorInput, highlightSel, fontFamilySel, clearFormattingBtn];
 const paraControls = [
   ...Object.values(alignBtns),
   spacingBtn,
@@ -1990,6 +1991,10 @@ onButton(insertLinkBtn, editSelectionLink);
 for (const key of ["bold", "italic", "underline", "strike"]) {
   onButton(fmtButtons[key], () => toggleFormat(key));
 }
+onButton(clearFormattingBtn, () => {
+  if (!hasRange()) return;
+  runToolbarEdit((a, b, c, d) => doc.clearFormatting(a, b, c, d));
+});
 /** A run-format control: apply to a range, or arm into `pendingFormat` at a caret
  *  (so the next typed text carries it — same model as the B/I/U/S toggles). */
 function armOrApplyRun(patch, applyFn) {

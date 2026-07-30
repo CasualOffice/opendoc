@@ -154,6 +154,12 @@ pub enum Operation {
         /// The property change.
         delta: FormatDelta,
     },
+    /// Remove direct character formatting over a range, restoring the effective
+    /// document/style defaults. The paragraph style itself is preserved.
+    ClearFormatting {
+        /// The range to clear (same node for `start`/`end`).
+        range: Range,
+    },
     /// Creates, updates, or removes a hyperlink over an exact same-paragraph text
     /// range. `Some(target)` creates a wrapper (or updates the wrapper already
     /// occupying exactly `range`); `None` removes that exact wrapper while
@@ -437,6 +443,38 @@ pub fn apply(
             // Formatting a sub-range to match a neighbour (or the boundary split
             // above) can leave adjacent equal-property runs, which the model forbids;
             // merge them so the document stays re-validatable and export-clean.
+            coalesce_adjacent_runs(&mut para.inlines);
+            Ok(Operation::SetInlines { node, inlines: old })
+        }
+        Operation::ClearFormatting { range } => {
+            if range.start.node != range.end.node {
+                return Err(EditError::CrossParagraph);
+            }
+            if range.end.offset <= range.start.offset {
+                return Err(EditError::EmptyEdit);
+            }
+            let node = range.start.node;
+            let para = find_paragraph_mut(doc.body_mut(), node).ok_or(EditError::NodeNotFound)?;
+            if range.end.offset > paragraph_text_len(para) {
+                return Err(EditError::OffsetOutOfRange);
+            }
+            let old = para.inlines.clone();
+            ensure_run_boundary(&mut para.inlines, range.end.offset, ids)?;
+            ensure_run_boundary(&mut para.inlines, range.start.offset, ids)?;
+            let covered =
+                covered_top_level_indices(&para.inlines, range.start.offset, range.end.offset)?;
+            if covered.is_empty()
+                || covered
+                    .iter()
+                    .any(|index| !matches!(para.inlines[*index], InlineNode::Run(_)))
+            {
+                return Err(EditError::Unsupported);
+            }
+            for index in covered {
+                if let InlineNode::Run(run) = &mut para.inlines[index] {
+                    run.properties = RunProperties::default();
+                }
+            }
             coalesce_adjacent_runs(&mut para.inlines);
             Ok(Operation::SetInlines { node, inlines: old })
         }
@@ -2091,6 +2129,43 @@ mod tests {
         // The inverse restores the original single, unformatted run.
         apply(&mut d, &mut ids, &inverse).unwrap();
         assert_eq!(runs_of(&d, p), vec![("HelloWorld".to_string(), None)]);
+    }
+
+    #[test]
+    fn clear_formatting_restores_direct_defaults_and_undoes() {
+        let p = n(2);
+        let mut styled = run(3, "Styled text");
+        if let InlineNode::Run(run) = &mut styled {
+            run.properties.bold = Some(true);
+            run.properties.italic = Some(true);
+            run.properties.size_half_points = Some(28);
+        }
+        let original = styled.clone();
+        let mut d = doc(vec![para(2, vec![styled])]);
+        let mut ids = IdGenerator::new(9);
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::ClearFormatting {
+                range: Range {
+                    start: Pos::new(p, 0),
+                    end: Pos::new(p, 11),
+                },
+            },
+        )
+        .unwrap();
+        let BlockNode::Paragraph(paragraph) = &d.body()[0] else {
+            panic!("expected paragraph");
+        };
+        let InlineNode::Run(cleared) = &paragraph.inlines[0] else {
+            panic!("expected cleared run");
+        };
+        assert_eq!(cleared.properties, RunProperties::default());
+        apply(&mut d, &mut ids, &inverse).unwrap();
+        let BlockNode::Paragraph(paragraph) = &d.body()[0] else {
+            panic!("expected paragraph");
+        };
+        assert_eq!(paragraph.inlines[0], original);
     }
 
     #[test]
