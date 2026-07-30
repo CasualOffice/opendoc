@@ -298,6 +298,16 @@ geometry still under-paginates the four-page oracle into three pages.
 These remain separate rows. An SDT container rendering correctly does not mean
 every SDT control type is visually supported.
 
+None of the five probes in this pass contain an EMF/WMF (or other
+PNG/JPEG-unsupported) image, so this audit's page-by-page comparisons are
+unaffected either way. Noted here for completeness: a later, separate PR
+(`agent/fix-emf-wmf-placeholder`, after this audit's baseline) changed what
+`casual-doc-render` does when an inline image's bytes are present but not
+decodable by its PNG/JPEG-only path (doc 55 §8) — it now paints a visible
+placeholder box in the image's rect instead of leaving a blank gap. Real
+EMF/WMF vector-metafile decoding is still not implemented; that remains
+`P1F-28`'s follow-up.
+
 ## Fixes completed in this pass
 
 The combined implementation contains:
