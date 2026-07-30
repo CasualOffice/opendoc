@@ -330,7 +330,15 @@ function renderReviewMarginItems() {
   }
   const revisionItems = [];
   const groupedRevisions = new Map();
+  const groupedMoves = new Map();
   for (const revision of summary.revisions ?? []) {
+    if (revision.movePair?.fromStart && revision.movePair?.toStart) {
+      const moveKey = `${revision.movePair.fromStart}:${revision.movePair.toStart}`;
+      const group = groupedMoves.get(moveKey) ?? [];
+      group.push(revision);
+      groupedMoves.set(moveKey, group);
+      continue;
+    }
     const groupId = String(revision.groupId || "");
     if (groupId.startsWith("opendoc-")) {
       const group = groupedRevisions.get(groupId) ?? [];
@@ -371,11 +379,53 @@ function renderReviewMarginItems() {
       revisions,
     });
   }
+  for (const [moveKey, revisions] of groupedMoves) {
+    const source = revisions.filter((revision) => revision.kind === "move_from");
+    const destination = revisions.filter((revision) => revision.kind === "move_to");
+    const ranges = revisions.map(revisionRange).filter(Boolean);
+    if (!source.length || !destination.length || ranges.length !== revisions.length) {
+      revisionItems.push(...revisions);
+      continue;
+    }
+    const movePair = revisions[0].movePair;
+    revisionItems.push({
+      id: `move:${moveKey}`,
+      kind: "move",
+      author: revisions.find((revision) => revision.author)?.author,
+      date: revisions.find((revision) => revision.date)?.date,
+      text: destination.map((revision) => String(revision.text || "")).join(""),
+      oldText: source.map((revision) => String(revision.text || "")).join(""),
+      newText: destination.map((revision) => String(revision.text || "")).join(""),
+      anchor: source[0].anchor,
+      destinationAnchor: destination[0].anchor,
+      movePair,
+      ranges,
+      revisions,
+    });
+  }
   for (const revision of revisionItems) {
-    const range = revisionRange(revision);
-    if (!range) continue;
-    const rect = reviewRangeClientRect(range.startNode, range.startOffset, range.endNode, range.endOffset);
-    if (rect) items.push({ type: "revision", data: revision, range, rect });
+    const ranges = revision.ranges ?? [revisionRange(revision)].filter(Boolean);
+    const positioned = ranges
+      .map((range) => ({
+        range,
+        rect: reviewRangeClientRect(
+          range.startNode,
+          range.startOffset,
+          range.endNode,
+          range.endOffset,
+        ),
+      }))
+      .filter((item) => item.rect)
+      .sort((a, b) => a.rect.pageNumber - b.rect.pageNumber || a.rect.top - b.rect.top);
+    if (positioned.length) {
+      items.push({
+        type: "revision",
+        data: revision,
+        range: positioned[0].range,
+        rect: positioned[0].rect,
+        ranges: positioned.map((item) => item.range),
+      });
+    }
   }
   if (reviewComposerState?.range) {
     const { start, end } = reviewComposerState.range;
@@ -511,12 +561,18 @@ function renderReviewMarginItems() {
         body.textContent = `Replaced “${item.data.oldText}” with “${item.data.newText}”`;
       } else if (item.data.kind === "formatting") {
         body.textContent = `Changed formatting for “${item.data.newText || item.data.oldText}”`;
+      } else if (item.data.kind === "move") {
+        body.textContent = `Moved “${item.data.newText || item.data.oldText}”`;
       } else {
         const verb = item.data.kind === "deletion"
           ? "Deleted"
           : item.data.kind === "insertion"
             ? "Added"
-            : "Changed";
+            : item.data.kind === "move_from"
+              ? "Unpaired move source"
+              : item.data.kind === "move_to"
+                ? "Unpaired move destination"
+                : "Changed";
         body.textContent = `${verb} “${String(item.data.text || "")}”`;
       }
     } else {
@@ -542,19 +598,31 @@ function renderReviewMarginItems() {
           }),
         );
       }
-    } else {
+    } else if (!["move_from", "move_to"].includes(item.data.kind) || item.data.movePair) {
       actions.append(
         reviewCardButton("Accept", async () => {
-          await runEdit(() => item.data.groupId
-            ? doc.decideRevisionGroup(item.data.groupId, true)
-            : doc.decideRevision(item.data.id, true));
+          await runEdit(() => item.data.movePair
+            ? doc.decideMovePair(
+              item.data.movePair.fromStart,
+              item.data.movePair.toStart,
+              true,
+            )
+            : item.data.groupId
+              ? doc.decideRevisionGroup(item.data.groupId, true)
+              : doc.decideRevision(item.data.id, true));
           drawSelection();
           focusEditorSurface();
         }),
         reviewCardButton("Reject", async () => {
-          await runEdit(() => item.data.groupId
-            ? doc.decideRevisionGroup(item.data.groupId, false)
-            : doc.decideRevision(item.data.id, false));
+          await runEdit(() => item.data.movePair
+            ? doc.decideMovePair(
+              item.data.movePair.fromStart,
+              item.data.movePair.toStart,
+              false,
+            )
+            : item.data.groupId
+              ? doc.decideRevisionGroup(item.data.groupId, false)
+              : doc.decideRevision(item.data.id, false));
           drawSelection();
           focusEditorSurface();
         }, true),
@@ -592,6 +660,28 @@ function renderReviewMarginItems() {
       }
     });
     card.append(header, body);
+    if (item.type === "revision" && item.data.kind === "move") {
+      const path = document.createElement("div");
+      path.className = "review-move-path";
+      const source = document.createElement("span");
+      const sourceLabel = document.createElement("b");
+      sourceLabel.textContent = "From";
+      const sourceText = document.createElement("span");
+      sourceText.textContent = "Original location";
+      source.append(sourceLabel, sourceText);
+      const arrow = document.createElement("span");
+      arrow.className = "ms";
+      arrow.setAttribute("aria-hidden", "true");
+      arrow.textContent = "arrow_forward";
+      const destination = document.createElement("span");
+      const destinationLabel = document.createElement("b");
+      destinationLabel.textContent = "To";
+      const destinationText = document.createElement("span");
+      destinationText.textContent = "New location";
+      destination.append(destinationLabel, destinationText);
+      path.append(source, arrow, destination);
+      card.appendChild(path);
+    }
     if (item.type === "comment") {
       const replies = comments.filter((comment) =>
         comment.parentParaId === item.data.paraId || comment.parentParaId === item.data.id);
@@ -1129,7 +1219,16 @@ function paintReviewMarkers() {
     const range = revisionRange(revision);
     if (!range) continue;
     const rects = doc.selectionRects(range.startNode, range.startOffset, range.endNode, range.endOffset);
-    const kind = revision.kind === "deletion" ? "review-revision-marker review-deletion-marker" : "review-revision-marker review-insertion-marker";
+    const deletionLike = revision.kind === "deletion" || revision.kind === "move_from";
+    const moveItemId = revision.movePair?.fromStart && revision.movePair?.toStart
+      ? `revision:move:${revision.movePair.fromStart}:${revision.movePair.toStart}`
+      : null;
+    const active = moveItemId && activeReviewItemId === moveItemId
+      ? " review-revision-marker-active"
+      : "";
+    const kind = `${deletionLike
+      ? "review-revision-marker review-deletion-marker"
+      : "review-revision-marker review-insertion-marker"}${active}`;
     for (let i = 0; i < rects.length; i += 5) place(rects.slice(i, i + 5), kind);
   }
 }

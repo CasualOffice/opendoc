@@ -39,7 +39,7 @@ use casual_doc_model::v1::{
     CellMargins, CellVerticalAlignment, Color, Comment, CommentId, CommentRangeEnd,
     CommentRangeStart, CommentReference, DefinitionMap, Document, ExternalTarget, FontName,
     FontRef, HeightRule, HighlightColor, Hyperlink, HyperlinkTarget, Indentation, InlineNode,
-    InternalTarget, LevelJustification, LevelSuffix, NumberFormat, NumberingInstance,
+    InternalTarget, LevelJustification, LevelSuffix, MoveKind, NumberFormat, NumberingInstance,
     NumberingInstanceId, NumberingLevel, NumberingOverride, NumberingRef, PageMargins,
     PageOrientation, PageSize as SectionPageSize, Paragraph, ParagraphBorders, ParagraphProperties,
     Revision, RevisionKind, RgbColor, RowHeight, Run, RunProperties, SectionColumns, SectionId,
@@ -3568,8 +3568,10 @@ impl WasmDocument {
                 item
             })
             .collect::<Vec<_>>();
+        let move_pairs = collect_review_move_pairs(self.document.body());
+        let move_links = review_move_links(&move_pairs);
         let mut revisions = Vec::new();
-        collect_review_revisions(self.document.body(), &mut revisions);
+        collect_review_revisions(self.document.body(), &move_links, &mut revisions);
         serde_json::to_string(&serde_json::json!({
             "comments": comments,
             "revisions": revisions,
@@ -4226,6 +4228,12 @@ impl WasmDocument {
         else {
             return Err(to_js("revision not found".to_string()));
         };
+        if matches!(kind, RevisionKind::MoveFrom | RevisionKind::MoveTo) {
+            return Err(to_js(
+                "tracked moves must be accepted or rejected as one source/destination pair"
+                    .to_string(),
+            ));
+        }
         let mut body = self.document.body().to_vec();
         if !decide_review_revision(&mut body, id, accept) {
             return Err(to_js("revision not found".to_string()));
@@ -4237,6 +4245,79 @@ impl WasmDocument {
                 comments: self.document.definitions().comments.clone(),
             }],
             Pos::new(node, if keep { end } else { start }),
+            HistoryKind::Review,
+        )
+        .map_err(to_js)
+    }
+
+    /// Accepts or rejects one imported tracked move as an atomic source /
+    /// destination pair. The exact marker identities prevent an opaque or
+    /// producer-reused revision id from joining unrelated move ranges.
+    #[wasm_bindgen(js_name = decideMovePair)]
+    pub fn decide_move_pair(
+        &mut self,
+        from_start: &str,
+        to_start: &str,
+        accept: bool,
+    ) -> Result<EditResult, JsValue> {
+        let from_start = node_id(from_start)?;
+        let to_start = node_id(to_start)?;
+        let pairs = collect_review_move_pairs(self.document.body());
+        let pair = pairs
+            .iter()
+            .find(|pair| pair.from.start == from_start && pair.to.start == to_start)
+            .ok_or_else(|| to_js("complete tracked move pair not found".to_string()))?;
+        let target_ids = if accept {
+            &pair.to.revisions
+        } else {
+            &pair.from.revisions
+        };
+        let Some(target) = target_ids.first().copied() else {
+            return Err(to_js(
+                "tracked move pair has no surviving range".to_string(),
+            ));
+        };
+        let Some((node, mut offset, _, _)) =
+            find_review_revision_anchor(self.document.body(), target)
+        else {
+            return Err(to_js("tracked move pair anchor not found".to_string()));
+        };
+        let removed_ids = if accept {
+            &pair.from.revisions
+        } else {
+            &pair.to.revisions
+        };
+        for id in removed_ids {
+            if let Some((removed_node, start, end, _)) =
+                find_review_revision_anchor(self.document.body(), *id)
+                && removed_node == node
+                && start < offset
+            {
+                offset = offset.saturating_sub(end.saturating_sub(start));
+            }
+        }
+
+        let mut body = self.document.body().to_vec();
+        for id in pair
+            .from
+            .revisions
+            .iter()
+            .chain(pair.to.revisions.iter())
+            .copied()
+        {
+            if !decide_review_revision(&mut body, id, accept) {
+                return Err(to_js("tracked move pair is incomplete".to_string()));
+            }
+        }
+        let marker_ids =
+            BTreeSet::from([pair.from.start, pair.from.end, pair.to.start, pair.to.end]);
+        remove_review_move_markers(&mut body, &marker_ids);
+        self.apply_action_caret_as(
+            vec![Operation::ReplaceReviewState {
+                body,
+                comments: self.document.definitions().comments.clone(),
+            }],
+            Pos::new(node, offset),
             HistoryKind::Review,
         )
         .map_err(to_js)
@@ -4287,9 +4368,36 @@ impl WasmDocument {
         if ids.is_empty() {
             return Err(to_js("no tracked revisions".to_string()));
         }
+        let pairs = collect_review_move_pairs(self.document.body());
+        let paired_move_ids: BTreeSet<NodeId> = pairs
+            .iter()
+            .flat_map(|pair| {
+                pair.from
+                    .revisions
+                    .iter()
+                    .chain(pair.to.revisions.iter())
+                    .copied()
+            })
+            .collect();
+        for id in &ids {
+            if let Some((_, _, _, kind)) = find_review_revision_anchor(self.document.body(), *id)
+                && matches!(kind, RevisionKind::MoveFrom | RevisionKind::MoveTo)
+                && !paired_move_ids.contains(id)
+            {
+                return Err(to_js(
+                    "cannot decide all changes while an incomplete tracked move is present"
+                        .to_string(),
+                ));
+            }
+        }
         let mut body = self.document.body().to_vec();
-        for id in ids {
-            let _ = decide_review_revision(&mut body, id, accept);
+        decide_all_review_revisions(&mut body, accept);
+        let marker_ids: BTreeSet<NodeId> = pairs
+            .iter()
+            .flat_map(|pair| [pair.from.start, pair.from.end, pair.to.start, pair.to.end])
+            .collect();
+        if !marker_ids.is_empty() {
+            remove_review_move_markers(&mut body, &marker_ids);
         }
         self.apply_action_caret_as(
             vec![Operation::ReplaceReviewState {
@@ -6305,21 +6413,178 @@ fn next_comment_para_id(comments: &DefinitionMap<CommentId, Comment>) -> Result<
     Err("comment paragraph id space exhausted".to_owned())
 }
 
-fn collect_review_revisions(blocks: &[BlockNode], out: &mut Vec<serde_json::Value>) {
+#[derive(Clone, Debug)]
+struct ReviewMoveRange {
+    start: NodeId,
+    end: NodeId,
+    kind: MoveKind,
+    name: String,
+    revisions: Vec<NodeId>,
+}
+
+#[derive(Clone, Debug)]
+struct ReviewMovePair {
+    from: ReviewMoveRange,
+    to: ReviewMoveRange,
+}
+
+#[derive(Clone, Debug)]
+struct OpenReviewMoveRange {
+    start: NodeId,
+    kind: MoveKind,
+    move_id: String,
+    name: String,
+    revisions: Vec<NodeId>,
+}
+
+#[derive(Clone, Debug)]
+struct ReviewMoveLink {
+    name: String,
+    from_start: NodeId,
+    to_start: NodeId,
+}
+
+fn collect_review_move_pairs(blocks: &[BlockNode]) -> Vec<ReviewMovePair> {
+    let mut ranges = Vec::new();
+    collect_review_move_ranges(blocks, &mut ranges);
+    let mut by_name: BTreeMap<String, (Vec<ReviewMoveRange>, Vec<ReviewMoveRange>)> =
+        BTreeMap::new();
+    for range in ranges {
+        let entry = by_name.entry(range.name.clone()).or_default();
+        match range.kind {
+            MoveKind::From => entry.0.push(range),
+            MoveKind::To => entry.1.push(range),
+        }
+    }
+    let mut pairs = Vec::new();
+    for (_, (mut from, mut to)) in by_name {
+        // A move name is producer-owned. Pair only the unambiguous standard
+        // shape; guessing between duplicate source/destination ranges risks
+        // accepting unrelated document content as one change.
+        if from.len() == 1 && to.len() == 1 {
+            let from = from.remove(0);
+            let to = to.remove(0);
+            if !from.revisions.is_empty() && !to.revisions.is_empty() {
+                pairs.push(ReviewMovePair { from, to });
+            }
+        }
+    }
+    pairs
+}
+
+fn review_move_links(pairs: &[ReviewMovePair]) -> BTreeMap<NodeId, ReviewMoveLink> {
+    let mut links = BTreeMap::new();
+    for pair in pairs {
+        let link = ReviewMoveLink {
+            name: pair.from.name.clone(),
+            from_start: pair.from.start,
+            to_start: pair.to.start,
+        };
+        for id in pair.from.revisions.iter().chain(pair.to.revisions.iter()) {
+            links.insert(*id, link.clone());
+        }
+    }
+    links
+}
+
+fn collect_review_move_ranges(blocks: &[BlockNode], out: &mut Vec<ReviewMoveRange>) {
+    let mut open = Vec::new();
     for block in blocks {
         match block {
             BlockNode::Paragraph(paragraph) => {
-                let mut offset = 0;
-                collect_review_inline(&paragraph.inlines, paragraph.id, &mut offset, out);
+                collect_review_inline_move_ranges(&paragraph.inlines, &mut open, out);
             }
             BlockNode::Table(table) => {
                 for row in &table.rows {
                     for cell in &row.cells {
-                        collect_review_revisions(&cell.blocks, out);
+                        collect_review_move_ranges(&cell.blocks, out);
                     }
                 }
             }
-            BlockNode::Sdt(sdt) => collect_review_revisions(&sdt.blocks, out),
+            BlockNode::Sdt(sdt) => collect_review_move_ranges(&sdt.blocks, out),
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+}
+
+fn collect_review_inline_move_ranges(
+    inlines: &[InlineNode],
+    open: &mut Vec<OpenReviewMoveRange>,
+    out: &mut Vec<ReviewMoveRange>,
+) {
+    for inline in inlines {
+        match inline {
+            InlineNode::MoveRangeStart(marker) => open.push(OpenReviewMoveRange {
+                start: marker.id,
+                kind: marker.kind,
+                move_id: marker.move_id.clone(),
+                name: marker.name.clone(),
+                revisions: Vec::new(),
+            }),
+            InlineNode::MoveRangeEnd(marker) => {
+                if let Some(index) = open
+                    .iter()
+                    .rposition(|range| range.kind == marker.kind && range.move_id == marker.move_id)
+                {
+                    let range = open.remove(index);
+                    out.push(ReviewMoveRange {
+                        start: range.start,
+                        end: marker.id,
+                        kind: range.kind,
+                        name: range.name,
+                        revisions: range.revisions,
+                    });
+                }
+            }
+            InlineNode::Revision(revision) => {
+                let move_kind = match revision.kind {
+                    RevisionKind::MoveFrom => Some(MoveKind::From),
+                    RevisionKind::MoveTo => Some(MoveKind::To),
+                    RevisionKind::Insertion | RevisionKind::Deletion => None,
+                };
+                if let Some(move_kind) = move_kind
+                    && let Some(range) = open.iter_mut().rev().find(|range| range.kind == move_kind)
+                {
+                    range.revisions.push(revision.id);
+                }
+                collect_review_inline_move_ranges(&revision.inlines, open, out);
+            }
+            InlineNode::Hyperlink(link) => {
+                collect_review_inline_move_ranges(&link.inlines, open, out);
+            }
+            InlineNode::Sdt(sdt) => {
+                collect_review_inline_move_ranges(&sdt.inlines, open, out);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn collect_review_revisions(
+    blocks: &[BlockNode],
+    move_links: &BTreeMap<NodeId, ReviewMoveLink>,
+    out: &mut Vec<serde_json::Value>,
+) {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                let mut offset = 0;
+                collect_review_inline(
+                    &paragraph.inlines,
+                    paragraph.id,
+                    &mut offset,
+                    move_links,
+                    out,
+                );
+            }
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        collect_review_revisions(&cell.blocks, move_links, out);
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => collect_review_revisions(&sdt.blocks, move_links, out),
             BlockNode::AltChunk(_) => {}
         }
     }
@@ -6836,6 +7101,46 @@ fn remove_review_comment_markers(blocks: &mut [BlockNode], comment: CommentId) {
     }
 }
 
+fn remove_review_move_markers(blocks: &mut [BlockNode], markers: &BTreeSet<NodeId>) {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                remove_review_inline_move_markers(&mut paragraph.inlines, markers);
+            }
+            BlockNode::Table(table) => {
+                for row in &mut table.rows {
+                    for cell in &mut row.cells {
+                        remove_review_move_markers(&mut cell.blocks, markers);
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => remove_review_move_markers(&mut sdt.blocks, markers),
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+}
+
+fn remove_review_inline_move_markers(inlines: &mut Vec<InlineNode>, markers: &BTreeSet<NodeId>) {
+    inlines.retain(|inline| {
+        !matches!(inline, InlineNode::MoveRangeStart(marker) if markers.contains(&marker.id))
+            && !matches!(inline, InlineNode::MoveRangeEnd(marker) if markers.contains(&marker.id))
+    });
+    for inline in inlines {
+        match inline {
+            InlineNode::Revision(revision) => {
+                remove_review_inline_move_markers(&mut revision.inlines, markers);
+            }
+            InlineNode::Hyperlink(link) => {
+                remove_review_inline_move_markers(&mut link.inlines, markers);
+            }
+            InlineNode::Sdt(sdt) => {
+                remove_review_inline_move_markers(&mut sdt.inlines, markers);
+            }
+            _ => {}
+        }
+    }
+}
+
 fn decide_review_revision(blocks: &mut [BlockNode], id: NodeId, accept: bool) -> bool {
     for block in blocks {
         match block {
@@ -6862,6 +7167,58 @@ fn decide_review_revision(blocks: &mut [BlockNode], id: NodeId, accept: bool) ->
         }
     }
     false
+}
+
+fn decide_all_review_revisions(blocks: &mut [BlockNode], accept: bool) {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                decide_all_review_inlines(&mut paragraph.inlines, accept);
+            }
+            BlockNode::Table(table) => {
+                for row in &mut table.rows {
+                    for cell in &mut row.cells {
+                        decide_all_review_revisions(&mut cell.blocks, accept);
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => decide_all_review_revisions(&mut sdt.blocks, accept),
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+}
+
+fn decide_all_review_inlines(inlines: &mut Vec<InlineNode>, accept: bool) {
+    let mut index = 0;
+    while index < inlines.len() {
+        match &mut inlines[index] {
+            InlineNode::Revision(revision) => {
+                decide_all_review_inlines(&mut revision.inlines, accept);
+                let keep = matches!(
+                    revision.kind,
+                    RevisionKind::Insertion | RevisionKind::MoveTo
+                ) == accept;
+                let replacement = if keep {
+                    revision.inlines.clone()
+                } else {
+                    Vec::new()
+                };
+                let replacement_len = replacement.len();
+                inlines.splice(index..=index, replacement);
+                index = index.saturating_add(replacement_len);
+            }
+            InlineNode::Hyperlink(link) => {
+                decide_all_review_inlines(&mut link.inlines, accept);
+                index += 1;
+            }
+            InlineNode::Sdt(sdt) => {
+                decide_all_review_inlines(&mut sdt.inlines, accept);
+                index += 1;
+            }
+            _ => index += 1,
+        }
+    }
+    coalesce_review_runs(inlines);
 }
 
 fn find_review_revision_anchor(
@@ -7167,6 +7524,7 @@ fn collect_review_inline(
     inlines: &[InlineNode],
     node: NodeId,
     offset: &mut u32,
+    move_links: &BTreeMap<NodeId, ReviewMoveLink>,
     out: &mut Vec<serde_json::Value>,
 ) {
     for inline in inlines {
@@ -7186,7 +7544,7 @@ fn collect_review_inline(
                     RevisionKind::MoveFrom => "move_from",
                     RevisionKind::MoveTo => "move_to",
                 };
-                out.push(serde_json::json!({
+                let mut item = serde_json::json!({
                     "id": revision.id.to_string(),
                     "kind": kind,
                     "author": revision.author,
@@ -7198,14 +7556,22 @@ fn collect_review_inline(
                         "start": start,
                         "end": end,
                     },
-                }));
-                collect_review_inline(&revision.inlines, node, offset, out);
+                });
+                if let Some(link) = move_links.get(&revision.id) {
+                    item["movePair"] = serde_json::json!({
+                        "name": link.name,
+                        "fromStart": link.from_start.to_string(),
+                        "toStart": link.to_start.to_string(),
+                    });
+                }
+                out.push(item);
+                collect_review_inline(&revision.inlines, node, offset, move_links, out);
             }
             InlineNode::Hyperlink(link) => {
-                collect_review_inline(&link.inlines, node, offset, out);
+                collect_review_inline(&link.inlines, node, offset, move_links, out);
             }
             InlineNode::Sdt(sdt) => {
-                collect_review_inline(&sdt.inlines, node, offset, out);
+                collect_review_inline(&sdt.inlines, node, offset, move_links, out);
             }
             _ => *offset = offset.saturating_add(inline_anchor_len_for_review(inline)),
         }
@@ -10325,6 +10691,184 @@ mod tests {
             d.copy_text(&node, 0, &node, original.len() as u32),
             original
         );
+    }
+
+    #[test]
+    fn tracked_move_pair_is_one_card_and_one_atomic_decision() {
+        use casual_doc_model::v1::{
+            Definitions, MoveRangeEnd, MoveRangeStart, ParagraphProperties, RunProperties,
+        };
+
+        let source_id = NodeId::from_parts(91, 1).unwrap();
+        let destination_id = NodeId::from_parts(91, 2).unwrap();
+        let from_start = NodeId::from_parts(91, 3).unwrap();
+        let to_start = NodeId::from_parts(91, 7).unwrap();
+        let document = Document::new(
+            NodeId::from_parts(91, 20).unwrap(),
+            vec![
+                BlockNode::Paragraph(Paragraph {
+                    id: source_id,
+                    properties: ParagraphProperties::default(),
+                    inlines: vec![
+                        InlineNode::MoveRangeStart(MoveRangeStart {
+                            id: from_start,
+                            kind: MoveKind::From,
+                            move_id: "0".to_owned(),
+                            name: "move-review-pair".to_owned(),
+                            author: Some("Ada".to_owned()),
+                            date: Some("2026-07-31T00:00:00Z".to_owned()),
+                        }),
+                        InlineNode::Revision(Revision {
+                            id: NodeId::from_parts(91, 4).unwrap(),
+                            kind: RevisionKind::MoveFrom,
+                            author: Some("Ada".to_owned()),
+                            date: Some("2026-07-31T00:00:00Z".to_owned()),
+                            revision_id: Some("1".to_owned()),
+                            inlines: vec![InlineNode::Run(Run {
+                                id: NodeId::from_parts(91, 5).unwrap(),
+                                properties: RunProperties::default(),
+                                text: "relocated".to_owned(),
+                            })],
+                        }),
+                        InlineNode::MoveRangeEnd(MoveRangeEnd {
+                            id: NodeId::from_parts(91, 6).unwrap(),
+                            kind: MoveKind::From,
+                            move_id: "0".to_owned(),
+                        }),
+                    ],
+                }),
+                BlockNode::Paragraph(Paragraph {
+                    id: destination_id,
+                    properties: ParagraphProperties::default(),
+                    inlines: vec![
+                        InlineNode::MoveRangeStart(MoveRangeStart {
+                            id: to_start,
+                            kind: MoveKind::To,
+                            move_id: "2".to_owned(),
+                            name: "move-review-pair".to_owned(),
+                            author: Some("Ada".to_owned()),
+                            date: Some("2026-07-31T00:00:00Z".to_owned()),
+                        }),
+                        InlineNode::Revision(Revision {
+                            id: NodeId::from_parts(91, 8).unwrap(),
+                            kind: RevisionKind::MoveTo,
+                            author: Some("Ada".to_owned()),
+                            date: Some("2026-07-31T00:00:00Z".to_owned()),
+                            revision_id: Some("3".to_owned()),
+                            inlines: vec![InlineNode::Run(Run {
+                                id: NodeId::from_parts(91, 9).unwrap(),
+                                properties: RunProperties::default(),
+                                text: "relocated".to_owned(),
+                            })],
+                        }),
+                        InlineNode::MoveRangeEnd(MoveRangeEnd {
+                            id: NodeId::from_parts(91, 10).unwrap(),
+                            kind: MoveKind::To,
+                            move_id: "2".to_owned(),
+                        }),
+                    ],
+                }),
+            ],
+            Definitions::default(),
+        )
+        .expect("valid tracked move document");
+        let original = document.clone();
+        let shaper = ParleyShaper::new();
+        let layout = paginate_document(&document, &shaper);
+        let default_config = document_page_config(&document);
+        let mut d = WasmDocument {
+            document,
+            layout,
+            shaper,
+            media: BTreeMap::new(),
+            default_config,
+            edit_ids: IdGenerator::new(0x5b),
+            undo: Vec::new(),
+            redo: Vec::new(),
+            typing_history: None,
+            revision: 0,
+            galley_cache: GalleyCache::new(),
+            bullet_list: None,
+            numbered_list: None,
+        };
+
+        let summary: serde_json::Value =
+            serde_json::from_str(&d.review_summary()).expect("review summary");
+        let revisions = summary["revisions"].as_array().expect("revision array");
+        assert_eq!(revisions.len(), 2);
+        assert_eq!(
+            revisions[0]["movePair"]["fromStart"],
+            from_start.to_string()
+        );
+        assert_eq!(revisions[0]["movePair"]["toStart"], to_start.to_string());
+        assert_eq!(revisions[1]["movePair"], revisions[0]["movePair"]);
+
+        d.decide_move_pair(&from_start.to_string(), &to_start.to_string(), true)
+            .expect("accept complete move");
+        assert_eq!(
+            node_plain_text(
+                &find_paragraph(d.document.body(), source_id)
+                    .expect("source paragraph")
+                    .inlines
+            ),
+            ""
+        );
+        assert_eq!(
+            node_plain_text(
+                &find_paragraph(d.document.body(), destination_id)
+                    .expect("destination paragraph")
+                    .inlines
+            ),
+            "relocated"
+        );
+        assert!(collect_review_move_pairs(d.document.body()).is_empty());
+        d.document
+            .validate()
+            .expect("accepted tracked move remains valid");
+
+        let bytes = d.export_docx().expect("export accepted move");
+        let reopened = open_document(&bytes).expect("reopen accepted move");
+        let reopened_summary: serde_json::Value =
+            serde_json::from_str(&reopened.review_summary()).expect("reopened review summary");
+        assert_eq!(reopened_summary["revisions"], serde_json::json!([]));
+
+        d.undo().expect("one undo restores complete move pair");
+        assert_eq!(d.document, original);
+        d.decide_move_pair(&from_start.to_string(), &to_start.to_string(), false)
+            .expect("reject complete move");
+        assert_eq!(
+            node_plain_text(
+                &find_paragraph(d.document.body(), source_id)
+                    .expect("source paragraph")
+                    .inlines
+            ),
+            "relocated"
+        );
+        assert_eq!(
+            node_plain_text(
+                &find_paragraph(d.document.body(), destination_id)
+                    .expect("destination paragraph")
+                    .inlines
+            ),
+            ""
+        );
+        assert!(collect_review_move_pairs(d.document.body()).is_empty());
+        d.document
+            .validate()
+            .expect("rejected tracked move remains valid");
+
+        d.undo().expect("undo restores move before bulk decision");
+        d.decide_all_revisions(true)
+            .expect("accept-all decides a complete move pair safely");
+        assert_eq!(
+            node_plain_text(
+                &find_paragraph(d.document.body(), destination_id)
+                    .expect("destination paragraph")
+                    .inlines
+            ),
+            "relocated"
+        );
+        assert!(collect_review_move_pairs(d.document.body()).is_empty());
     }
 
     #[test]

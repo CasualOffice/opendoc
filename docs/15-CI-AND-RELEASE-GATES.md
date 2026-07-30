@@ -4,7 +4,7 @@
 **CI provider:** GitHub Actions
 **Development toolchain:** Rust 1.96.0
 **MSRV:** Rust 1.88.0
-**Last updated:** 2026-07-29
+**Last updated:** 2026-07-31
 
 ## Purpose
 
@@ -122,6 +122,34 @@ Additional gates should be added as capabilities appear:
 - public API diff checks;
 - schema migration tests.
 
+### Pending comments and suggestions gates
+
+The completeness audit in doc 81 found that the current review tests cover the
+happy-path browser workflow but are not sufficient for a production-complete
+tracked-change claim. The following gates are required before comments and
+suggestions can graduate from a partial capability:
+
+- validate exported tracked-change attributes against the WordprocessingML
+  schema, including numeric `w:id` values;
+- open and save editor-authored comments and revisions through at least Word
+  and LibreOffice compatibility oracles, then verify semantic fixed points;
+- exercise insertion, deletion, replacement, formatting, move, comment-thread,
+  and decision Undo through export/reopen tests;
+- run a mixed-revision editing matrix across normal text, pending revisions,
+  hyperlinks, inline content controls, paragraph boundaries, lists, and tables;
+- verify Original, Final, and markup projections consistently across layout,
+  hit-testing, copy, search, statistics, outline, and accessibility text;
+- enforce the Editing/Suggesting/Viewing command matrix for every public and UI
+  mutation entry point;
+- benchmark retained sidebar behavior at 100 and 1,000 review items with bounded
+  history growth during suggestion typing;
+- run keyboard, focus-retention, screen-reader, high-contrast, narrow-viewport,
+  and touch review checks.
+
+These are tracked by P1G-REVIEW-035 through P1G-REVIEW-039. Until those slices
+close the gates, CI may prove the implemented baseline but not Word/Google Docs
+parity or complete tracked-change support.
+
 ## Release Gates
 
 ### Preview
@@ -172,6 +200,7 @@ Additional gates should be added as capabilities appear:
 | Corpus tests | Package, semantic, round-trip, and generated rendering corpus implemented | Generated package/security/notes/visual fixtures plus real-producer round-trip fixtures run in workspace tests; repository policy rejects missing, unmanifested, or checksum-mismatched DOCX files. |
 | Visual regression | Initial deterministic gate implemented | Rights-safe five-page containment DOCX; collision invariants and raw RGBA hash use the bundled Roboto set at a pinned page size and 96 DPI. |
 | Benchmarking | Initial harness implemented | Package/model smoke is required; named-environment comparison is manual until a controlled runner is provisioned. |
+| Comments and suggestions integrity | Pending | Doc 81 defines the missing schema, real-consumer, projection, command-matrix, mixed-editing, scale, history, accessibility, and responsive gates. Tracked by P1G-REVIEW-035 through P1G-REVIEW-039. |
 | Release artifacts | Not started | Define before beta. |
 
 ## Failure Policy
