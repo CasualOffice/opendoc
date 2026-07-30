@@ -41,9 +41,9 @@ use casual_doc_model::v1::{
     InternalTarget, LevelJustification, LevelSuffix, NumberFormat, NumberingInstance,
     NumberingInstanceId, NumberingLevel, NumberingOverride, NumberingRef, PageMargins,
     PageOrientation, PageSize as SectionPageSize, Paragraph, ParagraphBorders, ParagraphProperties,
-    RevisionKind, RgbColor, RowHeight, Run, RunProperties, SectionId, Spacing, StyleId, StyleKind,
-    TabAlignment, TabStop, Table, TableBorders, TableCell, TableCellProperties, TableLayout,
-    TableProperties, TableRow, VerticalAlignment, VerticalMerge,
+    RevisionKind, RgbColor, RowHeight, Run, RunProperties, SectionColumns, SectionId, Spacing,
+    StyleId, StyleKind, TabAlignment, TabStop, Table, TableBorders, TableCell, TableCellProperties,
+    TableLayout, TableProperties, TableRow, VerticalAlignment, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
@@ -3231,6 +3231,7 @@ impl WasmDocument {
             page_size: section.page_size,
             page_margins: section.page_margins,
             orientation: section.orientation,
+            columns: Some(section.columns.clone()),
         };
         serde_json::to_string(&payload).unwrap_or_else(|_| "null".to_string())
     }
@@ -3265,6 +3266,7 @@ impl WasmDocument {
                     page_size: section.page_size,
                     page_margins: section.page_margins,
                     orientation: section.orientation,
+                    columns: Some(section.columns.clone()),
                 })
                 .collect(),
         };
@@ -3288,6 +3290,15 @@ impl WasmDocument {
                 page_size: payload.page_size,
                 page_margins: payload.page_margins,
                 orientation: payload.orientation,
+                columns: payload.columns.unwrap_or_else(|| {
+                    self.document
+                        .definitions()
+                        .sections
+                        .iter()
+                        .find(|candidate| candidate.id == section)
+                        .map(|candidate| candidate.columns.clone())
+                        .unwrap_or_else(default_section_columns)
+                }),
             }],
             caret,
         )
@@ -5256,6 +5267,8 @@ struct PageSetupJson {
     page_size: SectionPageSize,
     page_margins: PageMargins,
     orientation: Option<PageOrientation>,
+    #[serde(default)]
+    columns: Option<SectionColumns>,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -5263,6 +5276,16 @@ struct PageSetupJson {
 struct PageSetupSectionsJson {
     current: String,
     sections: Vec<PageSetupJson>,
+}
+
+fn default_section_columns() -> SectionColumns {
+    SectionColumns {
+        count: 1,
+        space_twips: None,
+        separator: None,
+        equal_width: None,
+        columns: Vec::new(),
+    }
 }
 
 /// Sparse draft emitted by the host's table-properties inspector. Optional fields

@@ -389,6 +389,16 @@
                 <label class="dialog-field">Right<span class="number-control"><input id="pageMarginRight" type="number" min="0" max="22" step="0.01" inputmode="decimal" /><span>in</span></span></label>
               </div>
             </fieldset>
+            <fieldset class="dialog-group">
+              <legend>Columns</legend>
+              <div class="dialog-field-grid">
+                <label class="dialog-field">Number<select id="pageColumnCount" class="dialog-select">
+                  <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
+                </select></label>
+                <label class="dialog-field">Spacing<span class="number-control"><input id="pageColumnGap" type="number" min="0" max="5" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+              </div>
+              <label class="dialog-check"><input id="pageColumnSeparator" type="checkbox" /> Line between columns</label>
+            </fieldset>
           </div>
         </div>
         <footer class="dialog-foot">
