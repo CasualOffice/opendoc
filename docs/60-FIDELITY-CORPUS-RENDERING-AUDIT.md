@@ -344,6 +344,14 @@ fixture images remain local evidence and are not committed.
    hyphens, then note-body fixed-point pagination.
 6. **Control appearance** — native checked-state presentation beyond the
    preserved cached symbol.
+7. **`w:altChunk` content flow** — none of this audit's four corpus fixtures
+   contain an altChunk (see the fixture feature inventory above), so this gap
+   was not independently verified against a fixture here; it is tracked from
+   `55-CURRENT-DOCX-FIDELITY-GAP-AUDIT.md` instead. `P1F-39b`
+   (`docs/14-EXECUTION-TRACKER.md`) closed the *silent-zero-space* half — a
+   deterministic placeholder box now reserves layout space for an altChunk
+   block — but parsing the chunk's actual embedded HTML/RTF/nested-
+   WordprocessingML content into real, flowable blocks remains open.
 
 Do not tune global margins or line height merely to force the oracle page count.
 Every page-count change must be attributable to a modeled geometry rule and keep

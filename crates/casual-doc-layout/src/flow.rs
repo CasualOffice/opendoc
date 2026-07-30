@@ -20,17 +20,17 @@ use std::hash::{Hash, Hasher};
 
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
-    Alignment, BlockNode, BorderEdge, BreakKind, Color, ColorScheme, DefinitionMap, Definitions,
-    Document, Drawing, DrawingAnchor, DropCapFrame, DropCapMode, EmbeddedKind, EmbeddedObject,
-    Extent, FontScheme, FrameWrap, HeightRule, HighlightColor, HorizontalAlign, HorizontalAnchor,
-    HorizontalPosition, HorizontalRule as ModelHorizontalRule, HorizontalRuleAlign, Indentation,
-    InlineNode, LevelSuffix, LineRule, MediaId, MediaReference, NoteKind, NoteReference, Paragraph,
-    ParagraphProperties, ReviewProjection, Rgba, RunProperties, SchemeColor, SectionBoundary,
-    SectionId, SectionType, ShapeStroke, StyleId, Symbol, TabAlignment, TabLeader, TabStop, Table,
-    TableBorders, TableCell, TableLayout, TableRow, TableRowProperties, TextBox, TextBoxAutoFit,
-    TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxVerticalAnchor,
-    TextBoxVerticalOverflow, ThemeColorRef, VerticalAlignment, VerticalAnchor, VerticalMerge,
-    VerticalPosition, WrapMode,
+    Alignment, AltChunk, BlockNode, BorderEdge, BreakKind, Color, ColorScheme, DefinitionMap,
+    Definitions, Document, Drawing, DrawingAnchor, DropCapFrame, DropCapMode, EmbeddedKind,
+    EmbeddedObject, Extent, FontScheme, FrameWrap, HeightRule, HighlightColor, HorizontalAlign,
+    HorizontalAnchor, HorizontalPosition, HorizontalRule as ModelHorizontalRule,
+    HorizontalRuleAlign, Indentation, InlineNode, LevelSuffix, LineRule, MediaId, MediaReference,
+    NoteKind, NoteReference, Paragraph, ParagraphProperties, ReviewProjection, Rgba, RunProperties,
+    SchemeColor, SectionBoundary, SectionId, SectionType, ShapeStroke, StyleId, Symbol,
+    TabAlignment, TabLeader, TabStop, Table, TableBorders, TableCell, TableLayout, TableRow,
+    TableRowProperties, TextBox, TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow,
+    TextBoxVerticalAnchor, TextBoxVerticalOverflow, ThemeColorRef, VerticalAlignment,
+    VerticalAnchor, VerticalMerge, VerticalPosition, WrapMode,
 };
 
 use crate::block::{
@@ -468,10 +468,16 @@ pub fn build_galley_cached(
                 // children are not paragraph-cached, but block SDTs are rare.)
                 galley.extend(flow_blocks(&sdt.blocks, shaper, content_width, &mut ctx));
             }
-            // TODO(altchunk): embedded part not yet flowed. The model carries no
-            // already-imported fallback blocks (only an opaque part reference),
-            // so there is nothing to recurse and we reserve no space.
-            BlockNode::AltChunk(_) => {}
+            // TODO(altchunk): the embedded part's actual content (HTML/RTF/nested
+            // WordprocessingML) is not parsed or modeled — only an opaque part
+            // reference (`P1F-28`) — so there is nothing to recurse and lay out
+            // for real. A zero-space block would still let the reader lose track
+            // of the chunk's presence, so a deterministic placeholder box claims
+            // real layout space instead; see [`alt_chunk_fragment`]. This is a
+            // visible approximation, not rendered altChunk content.
+            BlockNode::AltChunk(chunk) => {
+                galley.push(alt_chunk_fragment(chunk, shaper, content_width, &mut ctx));
+            }
         }
     }
     galley
@@ -718,9 +724,11 @@ fn flow_blocks(
                 // contexts also flow. Nested SDTs recurse naturally.
                 galley.extend(flow_blocks(&sdt.blocks, shaper, width, ctx));
             }
-            // TODO(altchunk): embedded part not yet flowed (no fallback blocks
-            // in the model to recurse; reserves nothing).
-            BlockNode::AltChunk(_) => {}
+            // TODO(altchunk): same bounded placeholder as the body-flow site
+            // above (no fallback blocks in the model to recurse into for real).
+            BlockNode::AltChunk(chunk) => {
+                galley.push(alt_chunk_fragment(chunk, shaper, width, ctx));
+            }
         }
         index += 1;
     }
@@ -1492,8 +1500,37 @@ fn block_intrinsic(blocks: &[BlockNode], shaper: &dyn LineShaper, ctx: &FlowCtx)
                 min = min.max(m);
                 preferred = preferred.max(p);
             }
-            // TODO(altchunk): embedded part not yet flowed; contributes no width.
-            BlockNode::AltChunk(_) => {}
+            // TODO(altchunk): the chunk's real embedded content contributes no
+            // measurable width (nothing is modeled to measure); the placeholder
+            // box (see `alt_chunk_fragment`) contributes its own label's
+            // intrinsic width instead, mirroring the paragraph branch above.
+            BlockNode::AltChunk(chunk) => {
+                mctx.para_style = None;
+                let run = styled_run(
+                    ALT_CHUNK_PLACEHOLDER_TEXT,
+                    &RunProperties::default(),
+                    &mut mctx,
+                );
+                let range = ModelRange::new(ModelPos::new(chunk.id, 0), ModelPos::new(chunk.id, 0));
+                let narrow = shaper.shape_paragraph(
+                    std::slice::from_ref(&run),
+                    LineConstraints {
+                        max_width: Twip(1),
+                        ..LineConstraints::default()
+                    },
+                    range,
+                );
+                let wide = shaper.shape_paragraph(
+                    &[run],
+                    LineConstraints {
+                        max_width: Twip(1_000_000),
+                        ..LineConstraints::default()
+                    },
+                    range,
+                );
+                min = min.max(max_line_width(&narrow));
+                preferred = preferred.max(max_line_width(&wide));
+            }
         }
     }
     (min, preferred)
@@ -4243,6 +4280,72 @@ fn highlight_rgba(color: HighlightColor) -> Option<[u8; 4]> {
         HighlightColor::Yellow => (255, 255, 0),
     };
     Some([r, g, b, 255])
+}
+
+/// Deterministic placeholder label for an unrendered `w:altChunk` block (see
+/// [`alt_chunk_fragment`]). Not the chunk's actual content — just a fixed,
+/// visible marker, in the spirit of [`crate::symbol_map::resolve_symbol`]'s `□`
+/// fallback for an unmapped symbol glyph.
+const ALT_CHUNK_PLACEHOLDER_TEXT: &str = "\u{2b1a} altChunk (embedded content not rendered)";
+
+/// Builds a placeholder fragment for an unrendered `w:altChunk` (aggregated
+/// external content chunk).
+///
+/// `P1F-28`: the semantic model carries only an opaque part reference for
+/// `w:altChunk` — the referenced HTML/RTF/nested-WordprocessingML part's bytes
+/// are byte-preserved by the opaque side-table, but never parsed into blocks —
+/// so there is nothing to recurse into and lay out for real. Contributing zero
+/// layout space (the prior behavior) would still leave the reader unable to
+/// tell the chunk was ever there, and would under-count pagination relative to
+/// Word. Instead, this reserves one deterministic, visible, dashed-bordered
+/// line the full column width — a fixed placeholder box, **not** a rendering of
+/// the chunk's actual embedded content. Full altChunk content flow (parsing the
+/// embedded part and laying out its real blocks) remains a separate, larger,
+/// tracked effort.
+fn alt_chunk_fragment(
+    chunk: &AltChunk,
+    shaper: &dyn LineShaper,
+    width: Twip,
+    ctx: &mut FlowCtx,
+) -> BlockFragment {
+    // Document-default styling, independent of any preceding paragraph's
+    // resolved style, so the placeholder's size/height is deterministic given
+    // the document alone.
+    ctx.para_style = None;
+    let range = ModelRange::new(ModelPos::new(chunk.id, 0), ModelPos::new(chunk.id, 0));
+    let run = styled_run(ALT_CHUNK_PLACEHOLDER_TEXT, &RunProperties::default(), ctx);
+    let props = ParagraphProperties::default();
+    let constraints = line_constraints(&props, width, ctx.line_spacing_reduction);
+    let lines = shaper.shape_paragraph(&[run], constraints, range);
+    BlockFragment::Paragraph {
+        id: chunk.id,
+        lines,
+        box_metrics: BoxMetrics::default(),
+        break_control: BreakControl::default(),
+        decor: alt_chunk_decor(width),
+    }
+}
+
+/// The [`alt_chunk_fragment`] placeholder's paint-only decoration: a dashed,
+/// neutral-gray border on all four edges, spanning the flowed column width.
+/// Dashed (rather than a plain solid rule) so the box reads as an
+/// engine-drawn approximation, not authored `w:pBdr` content.
+fn alt_chunk_decor(width: Twip) -> ParagraphDecor {
+    let edge = ResolvedEdge {
+        color: [128, 128, 128, 255],
+        width: Twip(10),
+        pattern: BorderPattern::Dashed,
+    };
+    ParagraphDecor {
+        shading: None,
+        borders: BlockBorders {
+            top: Some(edge),
+            bottom: Some(edge),
+            start: Some(edge),
+            end: Some(edge),
+        },
+        width,
+    }
 }
 
 #[cfg(test)]
