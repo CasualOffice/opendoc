@@ -934,12 +934,16 @@ body.modal-open {
 .context-menu {
   position: fixed;
   z-index: 30;
-  min-width: 190px;
+  min-width: 224px;
+  max-width: min(340px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  overflow: auto;
   padding: 5px;
   background: var(--surface);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-popover);
   box-shadow: var(--shadow-popover);
+  color: var(--ink);
 }
 
 .context-menu[hidden] {
@@ -947,7 +951,10 @@ body.modal-open {
 }
 
 .menu-item {
-  display: block;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
   width: 100%;
   text-align: left;
   padding: 7px 10px;
@@ -960,14 +967,50 @@ body.modal-open {
   white-space: nowrap;
 }
 
-.menu-item:hover {
+.menu-item:hover,
+.menu-item.active,
+.menu-item:focus-visible {
   background: var(--accent-soft);
   color: var(--accent);
+  outline: none;
 }
 
-.menu-item.danger:hover {
+.menu-item.danger:hover,
+.menu-item.danger.active,
+.menu-item.danger:focus-visible {
   background: color-mix(in srgb, var(--error) 12%, transparent);
   color: var(--error);
+}
+
+.menu-item:disabled {
+  cursor: not-allowed;
+  color: var(--faint);
+  background: transparent;
+}
+
+.menu-item-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.menu-item-hint {
+  max-width: 150px;
+  overflow: hidden;
+  color: var(--faint);
+  font-size: var(--fs-small);
+  text-overflow: ellipsis;
+}
+
+.menu-item:disabled .menu-item-hint {
+  max-width: 180px;
+  white-space: normal;
+  text-align: right;
+}
+
+.menu-divider {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--line);
 }
 
 .table-style-menu {
@@ -1007,12 +1050,6 @@ body.modal-open {
 .table-style-swatch i:nth-child(2) { background: color-mix(in srgb, var(--accent) 18%, var(--surface)); }
 .table-style-swatch i:nth-child(3) { background: var(--surface-alt); }
 .table-style-clear { font-size: 12px; }
-
-.menu-divider {
-  height: 1px;
-  margin: 5px 6px;
-  background: var(--line);
-}
 
 /* ---- Line & paragraph spacing menu ----------------------------------------- */
 .spacing-menu {
