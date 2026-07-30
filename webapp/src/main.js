@@ -13,7 +13,7 @@ import {
   fetchFontBytes,
   packFontBytes,
 } from "./web_fonts.mjs";
-import { embedMarker, extractMarker, htmlToRuns, runsToHtml } from "./clipboard.mjs";
+import { embedMarker, escapeHtml, extractMarker, htmlToRuns, runsToHtml } from "./clipboard.mjs";
 import {
   keyboardPlatform,
   navigationDirection,

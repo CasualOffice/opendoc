@@ -63,6 +63,7 @@ Blocked · In review · Done
 | M-003 | Fix casual-doc-import review findings (13 confirmed) | Claude Code | Done | 12/13 fixed (basedOn cycle, styles-part reporting, char-level rPr spacing, sz bound, style-ref kind, nested depth counters, out-of-body reporting, CDATA, report cap); remaining minor deferred (degraded-attribute detail needs a Degraded disposition). Landed with the importer decomposition. |
 | M-004 | Reconcile current DOCX fidelity gaps | Codex | Done | Merged in PR #162. `55-CURRENT-DOCX-FIDELITY-GAP-AUDIT.md` distinguishes modeled/preserved/layout/paint support, includes headers/footers and nested contexts, and defines the bounded PR order. |
 | M-005 | Validate the real-document fidelity probes | Codex | Done | `60-FIDELITY-CORPUS-RENDERING-AUDIT.md` records exact hashes, rights constraints, page-count baselines, feature counts, verified Sample/Chinese/medical failures, acceptance cases, and the core-engine work order. Probe bytes remain untracked. |
+| M-006 | Fix escapeHtml missing import in webapp main.js | Antigravity | Done | Added missing `escapeHtml` import from `./clipboard.mjs` in `webapp/src/main.js` which caused `ReferenceError` on startup when populating table styles. Unit tests pass cleanly. |
 
 ## Active Work
 
