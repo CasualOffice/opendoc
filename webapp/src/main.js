@@ -1687,7 +1687,7 @@ function finishTableColumnResize(event) {
   drag.preview.remove();
   event.preventDefault();
   if (Math.abs(drag.lastWidthTwips - drag.startWidthTwips) >= 8) {
-    runEdit(() => doc.setTableColumnWidthAt(drag.node, drag.col, drag.lastWidthTwips));
+    runEdit(() => doc.setTableColumnWidthAt(drag.node, drag.col, drag.lastWidthTwips), { gate: true });
   } else {
     drawSelection();
   }
@@ -2939,9 +2939,26 @@ function typingSessionForKey() {
 // Pointer interaction always establishes a new caret/selection/command gesture.
 document.addEventListener("pointerdown", breakTypingSession, { capture: true });
 
-/** Runs an edit thunk and applies its result; unsupported edits are ignored. */
-async function runEdit(thunk, { typing = false } = {}) {
+/** True (after showing the standard status message and returning focus to the
+ *  canvas) if Suggesting mode should block a command whose mutation cannot -
+ *  yet or ever - be represented as a tracked revision. This is the single
+ *  fail-closed gate shared by every mutation path (`runEdit`, `runNodeEdit`,
+ *  `runToolbarEdit`): a command that bypasses tracking must never silently
+ *  apply while the mode still reads Suggesting (REVIEW-GAP-004). */
+function blockUntrackedInSuggesting() {
+  if (reviewMode !== "suggesting") return false;
+  setStatus("This command cannot be tracked yet; switch to Editing to apply it", "error");
+  focusEditorSurface();
+  return true;
+}
+
+/** Runs an edit thunk and applies its result; unsupported edits are ignored.
+ *  `gate: true` marks a mutation that has no tracked-revision representation
+ *  (yet, or ever, per REVIEW-GAP-009's structural backlog): it is blocked
+ *  outright in Suggesting mode rather than silently applying untracked. */
+async function runEdit(thunk, { typing = false, gate = false } = {}) {
   if (!typing) breakTypingSession();
+  if (gate && blockUntrackedInSuggesting()) return;
   let res;
   try {
     res = thunk();
@@ -2996,11 +3013,7 @@ function selEndpoints() {
  *  only the dirty pages. */
 async function runToolbarEdit(thunk, { allowInSuggesting = false } = {}) {
   breakTypingSession();
-  if (reviewMode === "suggesting" && !allowInSuggesting) {
-    setStatus("This command cannot be tracked yet; switch to Editing to apply it", "error");
-    focusEditorSurface();
-    return;
-  }
+  if (!allowInSuggesting && blockUntrackedInSuggesting()) return;
   const ends = selEndpoints();
   if (!ends) return;
   let res;
@@ -3316,7 +3329,7 @@ tableStyleMenu.addEventListener("click", (event) => {
   const choice = event.target.closest("[data-table-style]");
   if (!choice || !selection || !doc) return;
   closePopover(tableStylePopover);
-  runEdit(() => doc.applyTableStyle(selection.focus.node, choice.dataset.tableStyle));
+  runEdit(() => doc.applyTableStyle(selection.focus.node, choice.dataset.tableStyle), { gate: true });
 });
 
 // mousedown (not click) so a button never steals the selection focus mid-edit.
@@ -3756,9 +3769,13 @@ paraSpaceAfter.addEventListener("change", () =>
 
 // -- Table & cell formatting (a single-node edit: applies to the caret's cell) --
 /** Runs a `(node) => EditResult` edit on the caret's node, preserving the selection
- *  and repainting only the dirty pages (rebuild on a page-count change). */
+ *  and repainting only the dirty pages (rebuild on a page-count change). Every
+ *  current caller is a table/list structural mutation with no tracked-revision
+ *  representation (REVIEW-GAP-009), so this always fails closed in Suggesting
+ *  mode instead of silently applying untracked (REVIEW-GAP-004). */
 function runNodeEdit(thunk) {
   if (!selection || !doc) return false;
+  if (blockUntrackedInSuggesting()) return false;
   let res;
   try {
     res = thunk(selection.focus.node);
@@ -3820,7 +3837,7 @@ for (const b of tableRibbon.querySelectorAll("[data-table-action]")) {
     const run = TABLE_RIBBON_ACTIONS[b.dataset.tableAction];
     if (!run) return;
     tableSelection = null;
-    runEdit(() => run(selection.focus.node));
+    runEdit(() => run(selection.focus.node), { gate: true });
   });
 }
 
@@ -3833,6 +3850,7 @@ for (const b of tableRibbon.querySelectorAll("[data-table-distribute]")) {
       command === "rows"
         ? doc.distributeTableRows(selection.focus.node)
         : doc.distributeTableColumns(selection.focus.node),
+      { gate: true },
     );
   });
 }
@@ -3840,7 +3858,7 @@ for (const b of tableRibbon.querySelectorAll("[data-table-distribute]")) {
 for (const b of tableRibbon.querySelectorAll("[data-table-sort]")) {
   onButton(b, () => {
     if (!selection || !doc) return;
-    runEdit(() => doc.sortTable(selection.focus.node, b.dataset.tableSort));
+    runEdit(() => doc.sortTable(selection.focus.node, b.dataset.tableSort), { gate: true });
   });
 }
 
@@ -3862,7 +3880,7 @@ onButton(mergeCellsBtn, async () => {
     setStatus("Select a table row, column, or table first", "error");
     return;
   }
-  await runEdit(() => doc.mergeTableSelection(tableSelection.node, tableSelection.mode));
+  await runEdit(() => doc.mergeTableSelection(tableSelection.node, tableSelection.mode), { gate: true });
   tableSelection = null;
   updateToolbar();
 });
@@ -3895,7 +3913,7 @@ onButton(splitCellConfirm, async () => {
     return;
   }
   splitCellColumns.setCustomValidity("");
-  await runEdit(() => doc.splitMergedCell(selection.focus.node, rows, columns));
+  await runEdit(() => doc.splitMergedCell(selection.focus.node, rows, columns), { gate: true });
   toggleSplitCellDialog(false);
   tableSelection = null;
   updateToolbar();
@@ -4155,7 +4173,7 @@ gridPicker.addEventListener("pointerdown", async (e) => {
   e.preventDefault();
   const rows = Number(cell.dataset.r);
   const cols = Number(cell.dataset.c);
-  await runEdit(() => doc.insertTable(selection.focus.node, rows, cols));
+  await runEdit(() => doc.insertTable(selection.focus.node, rows, cols), { gate: true });
   closePopover(insertTablePopover);
   focusEditorSurface();
 });
@@ -4713,7 +4731,7 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "paragraph.list.restart", label: "Restart numbering", group: "Paragraph", kw: "list restart 1", run: () => selection && runNodeEdit(() => doc.restartList(selection.focus.node)) },
     { id: "paragraph.indent.increase", label: "Increase indent", group: "Paragraph", kw: "", run: () => adjustIndentCommand(360) },
     { id: "paragraph.indent.decrease", label: "Decrease indent", group: "Paragraph", kw: "outdent", run: () => adjustIndentCommand(-360) },
-    { id: "insert.table", label: "Insert table (3×3)", group: "Insert", kw: "grid", run: () => selection && runEdit(() => doc.insertTable(selection.focus.node, 3, 3)) },
+    { id: "insert.table", label: "Insert table (3×3)", group: "Insert", kw: "grid", run: () => selection && runEdit(() => doc.insertTable(selection.focus.node, 3, 3), { gate: true }) },
     { id: "insert.link", label: "Add or edit link", group: "Insert", kw: "hyperlink url bookmark toc", run: () => editSelectionLink() },
     { id: "insert.bookmark", label: "Bookmark manager", group: "Insert", kw: "bookmarks navigate links", run: () => openBookmarkManager() },
     { id: "view.outline", label: "Toggle outline", group: "View", kw: "headings navigation", run: () => toggleOutline() },
@@ -5043,6 +5061,7 @@ function findFromSelection(forward) {
 
 async function replaceCurrentMatch() {
   if (!doc || !findInput.value) return;
+  if (blockUntrackedInSuggesting()) return;
   if (!queryMatchesSelection()) {
     findFromSelection(true);
     return;
@@ -5061,6 +5080,7 @@ async function replaceCurrentMatch() {
  * backstop regardless. */
 async function replaceAllMatches() {
   if (!doc || !findInput.value) return;
+  if (blockUntrackedInSuggesting()) return;
   const query = findInput.value;
   const replacement = replaceInput.value;
   const matchCase = findCase.checked;
@@ -5441,7 +5461,13 @@ async function pasteRichRunsJson(runsJson) {
         await pasteText(text, "paste");
         return;
       }
-    } catch { /* fall through to the normal rich-paste path */ }
+    } catch { /* extraction failed; fall through to the block below */ }
+    // No plain-text fallback could be derived (malformed clipboard payload, or
+    // an entirely non-text rich fragment) — `doc.pasteRichRuns` has no tracked
+    // representation, so this must fail closed rather than silently apply
+    // untracked (REVIEW-GAP-004).
+    blockUntrackedInSuggesting();
+    return;
   }
   const { anchor, focus } = selection;
   await runEdit(() =>
@@ -6137,7 +6163,7 @@ propertiesApplyBtn.addEventListener("click", async () => {
     const value = input.value.trim();
     current[key] = value ? value : null;
   }
-  await runEdit(() => doc.setDocumentProperties(JSON.stringify(current)));
+  await runEdit(() => doc.setDocumentProperties(JSON.stringify(current)), { gate: true });
   toggleProperties(false);
 });
 propertiesPanel.addEventListener("mousedown", (e) => {
@@ -6356,7 +6382,7 @@ pageSetupApplyBtn.addEventListener("click", async () => {
     columns: pageSetupColumnsPayload(),
     orientation,
   };
-  await runEdit(() => doc.setPageSetup(JSON.stringify(payload)));
+  await runEdit(() => doc.setPageSetup(JSON.stringify(payload)), { gate: true });
   togglePageSetup(false);
 });
 pageSetupMenu.addEventListener("mousedown", (e) => {
