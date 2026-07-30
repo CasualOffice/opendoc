@@ -1,6 +1,6 @@
 # 68 — Comments and Suggestions (Track Changes) Editor UX Design
 
-**Status:** Proposed design (Designing).
+**Status:** Accepted; sidebar-correction slice implemented.
 **Date:** 2026-07-30.
 **Depends on:** `v1::Definitions.comments`/`people` (Done, `P1A-031`/`P1F-10`/`P1F-35`), `v1::InlineNode::Revision` (Done, import/export passthrough only), `casual-doc-edit` op set (doc 59), interaction architecture (doc 58), extensibility seams I1–I4 (doc 45), design system (doc 63), toolbar/ribbon design (doc 64). Referenced by `docs/67-EDITOR-UX-GAP-ANALYSIS.md` row "Comments/revisions."
 
@@ -80,6 +80,32 @@ No caching layer is introduced; these re-walk the tree on demand, consistent wit
 `para_id`/`parent_para_id` are DOCX round-trip artifacts (paragraph ids in companion parts), not stable in-memory identity. For comments created in the editor, the design synthesizes a `para_id`-shaped value at creation time (same generation scheme as any other paragraph id) so export can always emit valid `commentsExtended.xml` threading — this is called out as an implementation risk in Open Questions rather than fully specified here, since it depends on how paragraph ids are minted elsewhere in the writer.
 
 ## UI/UX Design
+
+### 2026-07-31 reference correction
+
+The sibling `docs/docx-editor` implementation is the normative interaction
+reference for this slice. Review cards occupy a dedicated 340px column beside
+the document with a 12px page gap. Opening that column changes document
+layout; cards must never fall back over the page canvas or into a fixed
+viewport overlay. Comments and tracked changes share the column in document
+order, with collision avoidance preserving their anchor order.
+
+Only the active card is expanded. Collapsed cards retain author, date, and a
+short body; expanded comment cards expose resolve/reopen, overflow actions,
+thread replies, and an inline reply field. Expanded tracked-change cards
+expose per-change Accept and Reject. Comment creation is a temporary card in
+the same column, not a canvas popover. When the column is closed, the Review
+rail/View control remains the entry point.
+
+`CommentReference` is document metadata and is zero-width in layout. It must
+not shape visible `[comment]`, `?`, superscript, or any other in-document
+glyph. The canvas may show an interaction-only range highlight, while the
+identity and actions live in the review column.
+
+The compact Editing/Suggesting mode toggle remains in the ribbon. Previous,
+Next, Accept All, and Reject All are not exposed as a second ad-hoc toolbar in
+the Home ribbon; individual decisions belong to expanded cards until a
+purpose-designed Review surface is implemented.
 
 **Right context panel** (doc 63 §2, region 4) hosts a unified "Comments" pane: a scrollable list of threads in document order (matching Word's Reviewing Pane and Docs' margin order), each card showing author/initials (color-coded), date, body, reply affordance, and resolve/reopen. A "Resolved" filter tab hides resolved threads by default (mirrors both references). Suggestions appear as their own cards in the same panel (a Docs-style unified review list) rather than a separate pane, since opendoc's canvas is bitmap-rendered and per-line inline balloons (Word's default) would require expensive per-line layout coupling the engine doesn't have; the panel + rect-union anchoring already used by the floating toolbar is the cheaper, already-proven mechanism.
 

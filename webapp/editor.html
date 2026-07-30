@@ -244,7 +244,7 @@
           <div class="rgroup">
             <div class="rgroup-ctl">
               <button id="reviewInlineMode" type="button" class="review-mode-toggle" aria-pressed="false" disabled>Editing</button>
-              <div id="reviewInlineBar" class="review-inline-bar" role="toolbar" aria-label="Review changes" hidden>
+              <div id="reviewInlineBar" class="review-inline-bar" role="toolbar" aria-label="Review changes" hidden aria-hidden="true">
                 <button id="reviewInlinePrevious" type="button">Previous</button>
                 <button id="reviewInlineNext" type="button">Next</button>
                 <button id="reviewInlineAcceptAll" type="button">Accept all</button>
@@ -329,7 +329,7 @@
           <div class="rgroup">
             <div class="rgroup-ctl">
               <button id="viewOutlineBtn" type="button" class="fmt" title="Toggle outline" aria-label="Toggle outline" aria-pressed="false" disabled><span class="ms" aria-hidden="true">toc</span></button>
-              <button id="reviewBtn" type="button" class="fmt" title="Review comments and changes" aria-label="Review comments and changes" aria-pressed="false" disabled><span class="ms" aria-hidden="true">rate_review</span></button>
+              <button id="reviewBtn" type="button" class="fmt" title="Toggle comments and suggestions" aria-label="Toggle comments and suggestions" aria-pressed="false" disabled><span class="ms" aria-hidden="true">rate_review</span></button>
             </div>
             <span class="rgroup-label">Show</span>
           </div>
@@ -562,7 +562,7 @@
     <div class="workarea">
       <nav class="rail" aria-label="Document navigation">
         <button id="railOutline" type="button" class="rail-btn" title="Outline" aria-label="Outline" aria-pressed="false" disabled><span class="ms" aria-hidden="true">toc</span><span>Outline</span></button>
-        <button id="railReview" type="button" class="rail-btn" title="Comments and changes" aria-label="Comments and changes" aria-pressed="false" disabled><span class="ms" aria-hidden="true">rate_review</span><span>Review</span></button>
+        <button id="railReview" type="button" class="rail-btn" title="Comments and suggestions" aria-label="Toggle comments and suggestions" aria-pressed="false" disabled><span class="ms" aria-hidden="true">rate_review</span><span>Comments</span></button>
       </nav>
       <aside id="outlinePanel" class="side-panel" hidden aria-label="Outline">
         <div class="panel-head">
@@ -609,6 +609,9 @@
         </div>
         <div id="pages" class="pages" tabindex="0" aria-label="Document editing surface"></div>
       </main>
+      <aside id="reviewSidebar" class="review-sidebar" hidden aria-label="Comments and suggestions">
+        <div id="reviewSidebarBody" class="review-sidebar-body"></div>
+      </aside>
 
       <aside id="paragraphPropertiesPanel" class="side-panel properties-panel paragraph-properties-panel" hidden aria-labelledby="paragraphPropertiesTitle" aria-describedby="paragraphPropertiesDescription">
         <header class="panel-head properties-panel-head">
