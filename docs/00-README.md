@@ -99,6 +99,8 @@ The runtime is not a UI toolkit and is not a DOCX-only editor. It is a determini
 68. `68-COMMENTS-AND-SUGGESTIONS-DESIGN.md` — review-mode comments, suggestions, and host-policy design.
 69. `69-MS-WORD-2026-COMPETITIVE-DESIGN-GUIDE.md` — current Word/Vellum interaction and visual reference guidance.
 70. `70-TABLE-EDITING-UX-FOUNDATION-DESIGN.md` — contextual table ribbon, right-side properties inspector, and atomic Apply contract.
+82. `82-REVIEW-IDENTITY-AND-HISTORY-DESIGN.md` — review identity, scoped review operations, and history safety.
+83. `83-SDK-PACKAGING-EMBEDDING-AND-EXTENSIBILITY-ARCHITECTURE.md` — SDK packaging, embedding, preview mode, collaboration, MCP AI tools, and plugin extensibility architecture.
 
 Also present (not in the numbered sequence): `PHASE-1A-SEMANTIC-MODELING-TRACKER.md`.
 

@@ -71,6 +71,7 @@ Design references point at `38-SCHEMA-V1-DESIGN-REFERENCE.md` (anchor).
 
 | ID | Title | Owner | Status | Notes |
 | --- | --- | --- | --- | --- |
+| SDK-001 | OpenDoc SDK & Embedding Runtime Execution Plan | Antigravity | Done | Phase-wise execution plan & architecture blueprint for `@casualoffice/document-runtime` SDK; `83-SDK-PACKAGING-EMBEDDING-AND-EXTENSIBILITY-ARCHITECTURE.md`. |
 | P1A-001 | Semantic DOCX import design | Codex | Accepted | Architecture-level import design accepted via ADR-027 (`38-…#import-architecture`); importer gated on schema v1. |
 | P1A-002 | DOCX engine competitor source study | Codex | Done | Source-architecture study of DOCX import/edit/preservation/export; `33-DOCX-ENGINE-COMPETITOR-RESEARCH.md`, extended by `37-PHASE-1A-DECISION-RESEARCH.md`. |
 | P1A-003 | OOXML fidelity architecture | Codex | Accepted | Dual-representation fidelity + save-planning contract; `34-OOXML-FIDELITY-ARCHITECTURE.md`; ADR-027 accepted 2026-07-24 (`36-ADR-027-ACCEPTANCE-RECORD.md`). |
