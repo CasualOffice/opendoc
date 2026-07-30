@@ -3361,9 +3361,19 @@ function positionSelToolbar() {
   selToolbar.hidden = false; // must be visible to measure
   const tw = selToolbar.offsetWidth;
   const th = selToolbar.offsetHeight;
+  const viewport = viewportEl.getBoundingClientRect();
+  const topBound = Math.max(8, viewport.top + 8);
+  const bottomBound = Math.min(window.innerHeight - 8, viewport.bottom - 8);
   let x = (left + right) / 2 - tw / 2;
   let y = top - th - 8;
-  if (y < 54) y = bottom + 8; // no room above → drop below the selection
+  if (y < topBound) y = bottom + 8; // no room above → drop below the selection
+  if (y + th > bottomBound) {
+    // A selection at the viewport bottom may have no full-height slot below it;
+    // keep the bar visible and out of the browser chrome rather than allowing a
+    // fixed-position toolbar to disappear below the window.
+    y = Math.min(y, bottomBound - th);
+  }
+  y = Math.max(topBound, y);
   x = Math.max(8, Math.min(x, window.innerWidth - tw - 8));
   selToolbar.style.left = `${Math.round(x)}px`;
   selToolbar.style.top = `${Math.round(y)}px`;
