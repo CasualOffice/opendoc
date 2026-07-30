@@ -19,6 +19,11 @@ import {
   navigationDirection,
   wordDeletionDirection,
 } from "./keyboard.mjs";
+import {
+  clampContextMenuPosition,
+  moveMenuIndex,
+  normalizeMenuEntries,
+} from "./context_menu.mjs";
 
 function escapeHtml(text) {
   return String(text)
@@ -1592,7 +1597,7 @@ function startTableColumnResize(event, page, node, col) {
   event.stopPropagation();
   focusEditorSurface();
   hideLinkChip();
-  hideTableMenu();
+  hideContextMenu();
   clearLinkHover();
   resetPointerGesture();
   const startWidthTwips = doc.tableColumnWidthAt(node, col);
@@ -1936,74 +1941,619 @@ document.addEventListener("keydown", (event) => {
 viewportEl.addEventListener("scroll", hideLinkChip, { passive: true });
 window.addEventListener("resize", hideLinkChip);
 
-// ---- Right-click table menu (Google-Docs style: structure lives here, not the
-//      toolbar) -----------------------------------------------------------------
-const tableMenu = document.createElement("div");
-tableMenu.className = "context-menu";
-tableMenu.hidden = true;
-document.body.appendChild(tableMenu);
+// ---- Context-aware editor menu ---------------------------------------------
+// One surface serves prose, links, review ranges, lists, and tables. Commands
+// call the same transaction-backed actions as the ribbon and palette.
+const editorContextMenu = document.createElement("div");
+editorContextMenu.className = "context-menu editor-context-menu";
+editorContextMenu.hidden = true;
+editorContextMenu.setAttribute("role", "menu");
+editorContextMenu.setAttribute("aria-label", "Editor commands");
+document.body.appendChild(editorContextMenu);
+let contextMenuEntries = [];
+let contextMenuIndex = -1;
+let contextMenuReturnFocus = null;
 
-const TABLE_MENU_ITEMS = [
-  { label: "Insert row above", run: (n) => doc.insertRow(n, false) },
-  { label: "Insert row below", run: (n) => doc.insertRow(n, true) },
-  { label: "Insert column left", run: (n) => doc.insertColumn(n, false) },
-  { label: "Insert column right", run: (n) => doc.insertColumn(n, true) },
-  { divider: true },
-  { label: "Delete row", run: (n) => doc.deleteRow(n), danger: true },
-  { label: "Delete column", run: (n) => doc.deleteColumn(n), danger: true },
-  { label: "Delete table", run: (n) => doc.deleteTable(n), danger: true },
-];
-
-function showTableMenu(clientX, clientY, node) {
-  tableMenu.replaceChildren();
-  for (const item of TABLE_MENU_ITEMS) {
-    if (item.divider) {
-      const hr = document.createElement("div");
-      hr.className = "menu-divider";
-      tableMenu.appendChild(hr);
-      continue;
+function selectionContainsClientPoint(clientX, clientY) {
+  if (!doc || !hasRange()) return false;
+  const rects = doc.selectionRects(
+    selection.anchor.node,
+    selection.anchor.offset,
+    selection.focus.node,
+    selection.focus.offset,
+  );
+  for (let i = 0; i + 4 < rects.length; i += 5) {
+    const [pageNumber, x, y, width, height] = rects.slice(i, i + 5);
+    const page = pages[pageNumber - 1];
+    if (!page) continue;
+    const { rect, sx, sy } = scaleOf(page);
+    if (
+      clientX >= rect.left + x * sx &&
+      clientX <= rect.left + (x + width) * sx &&
+      clientY >= rect.top + y * sy &&
+      clientY <= rect.top + (y + height) * sy
+    ) {
+      return true;
     }
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = `menu-item${item.danger ? " danger" : ""}`;
-    b.textContent = item.label;
-    b.addEventListener("click", () => {
-      hideTableMenu();
-      runEdit(() => item.run(node));
-    });
-    tableMenu.appendChild(b);
   }
-  tableMenu.hidden = false;
-  // Clamp the menu into the viewport near the cursor.
-  const w = tableMenu.offsetWidth;
-  const h = tableMenu.offsetHeight;
-  tableMenu.style.left = `${Math.max(8, Math.min(clientX, window.innerWidth - w - 8))}px`;
-  tableMenu.style.top = `${Math.max(8, Math.min(clientY, window.innerHeight - h - 8))}px`;
+  return false;
 }
 
-function hideTableMenu() {
-  tableMenu.hidden = true;
+function tableSelectionContainsClientPoint(clientX, clientY) {
+  if (!doc || !tableSelection) return false;
+  const rects = doc.tableSelectionRects(
+    tableSelection.node,
+    tableSelection.mode,
+  );
+  for (let i = 0; i + 4 < rects.length; i += 5) {
+    const [pageNumber, x, y, width, height] = rects.slice(i, i + 5);
+    const page = pages[pageNumber - 1];
+    if (!page) continue;
+    const { rect, sx, sy } = scaleOf(page);
+    if (
+      clientX >= rect.left + x * sx &&
+      clientX <= rect.left + (x + width) * sx &&
+      clientY >= rect.top + y * sy &&
+      clientY <= rect.top + (y + height) * sy
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
-pagesEl.addEventListener("contextmenu", (e) => {
-  const page = pageFromEvent(e);
-  if (!page || !doc) return;
-  const anchor = anchorAt(page, e);
-  if (!anchor || !doc.inTable(anchor.node)) return; // not in a table → native menu
-  e.preventDefault();
-  selection = { anchor, focus: anchor }; // place the caret in the right-clicked cell
+function anchorInsideRange(anchor, range) {
+  return (
+    anchor &&
+    range &&
+    range.startNode === anchor.node &&
+    range.endNode === anchor.node &&
+    anchor.offset >= range.startOffset &&
+    anchor.offset <= range.endOffset
+  );
+}
+
+function reviewContextAt(anchor) {
+  if (!doc || !anchor) return { comment: null, revision: null };
+  let summary;
+  try {
+    summary = JSON.parse(doc.reviewSummary());
+  } catch {
+    return { comment: null, revision: null };
+  }
+  const comment = (summary.comments ?? []).find((item) =>
+    item.anchor?.node === anchor.node &&
+    anchor.offset >= (Number(item.anchor.start) || 0) &&
+    anchor.offset <= (Number(item.anchor.end) || Number(item.anchor.start) || 0),
+  ) ?? null;
+  const revision = (summary.revisions ?? []).find((item) =>
+    anchorInsideRange(anchor, revisionRange(item)),
+  ) ?? null;
+  return { comment, revision };
+}
+
+function plainTableInfo(node) {
+  if (!doc?.inTable(node)) return null;
+  const info = doc.tableInfo(node);
+  const value = info?.found ? {
+    found: true,
+    regular: info.regular,
+    rowHeightRule: info.rowHeightRule,
+    table: info.table,
+  } : null;
+  info?.free();
+  return value;
+}
+
+function contextAt(anchor, link = null) {
+  const review = reviewContextAt(anchor);
+  return {
+    surface: "context",
+    anchor,
+    link,
+    comment: review.comment,
+    revision: review.revision,
+    table: plainTableInfo(anchor.node),
+    listKind: doc.listStyleAt(anchor.node),
+    hasRange: hasRange(),
+    sameParagraphRange:
+      hasRange() && selection.anchor.node === selection.focus.node,
+    suggesting: reviewMode === "suggesting",
+  };
+}
+
+function decideContextRevision(revision, accept) {
+  if (!revision) return;
+  return runEdit(() =>
+    revision.movePair?.fromStart && revision.movePair?.toStart
+      ? doc.decideMovePair(
+        revision.movePair.fromStart,
+        revision.movePair.toStart,
+        accept,
+      )
+      : revision.groupId
+        ? doc.decideRevisionGroup(revision.groupId, accept)
+        : doc.decideRevision(revision.id, accept),
+  );
+}
+
+function selectTableContext(node, mode) {
+  tableSelection = { node, mode };
   drawSelection();
-  showTableMenu(e.clientX, e.clientY, anchor.node);
+  setStatus(`Selected table ${mode}`);
+  focusEditorSurface();
+}
+
+function editContextLink(link) {
+  if (!link || link.startNode !== link.endNode) return;
+  selection = {
+    anchor: { node: link.startNode, offset: link.startOffset },
+    focus: { node: link.endNode, offset: link.endOffset },
+  };
+  drawSelection();
+  const current = link.url || `#${link.anchor}`;
+  const value = window.prompt("Link URL or #bookmark:", current);
+  if (value === null || !value.trim()) return;
+  runToolbarEdit(() =>
+    doc.setHyperlink(
+      link.startNode,
+      link.startOffset,
+      link.endOffset,
+      value.trim(),
+      link.tooltip || null,
+    ),
+  );
+}
+
+function removeContextLink(link) {
+  if (!link || link.startNode !== link.endNode) return;
+  selection = {
+    anchor: { node: link.startNode, offset: link.startOffset },
+    focus: { node: link.endNode, offset: link.endOffset },
+  };
+  drawSelection();
+  runToolbarEdit(() =>
+    doc.removeHyperlink(link.startNode, link.startOffset, link.endOffset),
+  );
+}
+
+function buildContextCommands(context) {
+  const commands = editorCommands(context).filter((command) => command.contextMenu);
+  const structuralEnabled = !context.suggesting;
+  const structuralReason = structuralEnabled
+    ? ""
+    : "This structural change cannot be tracked in Suggesting mode";
+  if (context.revision) {
+    commands.push(
+      {
+        id: "review.accept",
+        label: "Accept suggestion",
+        group: "review",
+        run: () => decideContextRevision(context.revision, true),
+      },
+      {
+        id: "review.reject",
+        label: "Reject suggestion",
+        group: "review",
+        danger: true,
+        run: () => decideContextRevision(context.revision, false),
+      },
+    );
+  }
+  if (context.comment) {
+    commands.push({
+      id: "comment.open",
+      label: "Open comment",
+      group: "review",
+      run: () => focusReviewComment(context.comment),
+    });
+  } else {
+    commands.push({
+      id: "comment.add",
+      label: "Add comment",
+      group: "review",
+      shortcut: "⌘⌥M",
+      enabled: context.sameParagraphRange,
+      disabledReason: context.hasRange
+        ? "Comments currently require one paragraph"
+        : "Select text to add a comment",
+      run: () => openReviewComposer(),
+    });
+  }
+  if (context.link) {
+    commands.push(
+      {
+        id: "link.edit",
+        label: "Edit link…",
+        group: "link",
+        enabled: !context.suggesting,
+        disabledReason: context.suggesting
+          ? "Link changes cannot be tracked in Suggesting mode"
+          : "",
+        run: () => editContextLink(context.link),
+      },
+      {
+        id: "link.remove",
+        label: "Remove link",
+        group: "link",
+        enabled: !context.suggesting,
+        disabledReason: context.suggesting
+          ? "Link changes cannot be tracked in Suggesting mode"
+          : "",
+        run: () => removeContextLink(context.link),
+      },
+    );
+  } else {
+    commands.push({
+      id: "link.add",
+      label: "Add link…",
+      group: "link",
+      shortcut: "⌘K",
+      enabled: context.sameParagraphRange && !context.suggesting,
+      disabledReason: context.suggesting
+        ? "Link changes cannot be tracked in Suggesting mode"
+        : context.hasRange
+          ? "Links must stay within one paragraph"
+          : "Select text to add a link",
+      run: () => editSelectionLink(),
+    });
+  }
+  commands.push(
+    {
+      id: "paragraph.properties",
+      label: "Paragraph properties",
+      group: "paragraph",
+      enabled: structuralEnabled,
+      disabledReason: structuralReason,
+      run: () => toggleParagraphProperties(true),
+    },
+    {
+      id: "paragraph.bullets",
+      label: context.listKind === "bullet" ? "Remove bullets" : "Bulleted list",
+      group: "paragraph",
+      enabled: structuralEnabled,
+      disabledReason: structuralReason,
+      run: () => runToolbarEdit((a, b, c, d) =>
+        doc.toggleList(a, b, c, d, "bullet")),
+    },
+    {
+      id: "paragraph.numbering",
+      label: context.listKind === "numbered" ? "Remove numbering" : "Numbered list",
+      group: "paragraph",
+      enabled: structuralEnabled,
+      disabledReason: structuralReason,
+      run: () => runToolbarEdit((a, b, c, d) =>
+        doc.toggleList(a, b, c, d, "numbered")),
+    },
+    {
+      id: "paragraph.restart",
+      label: "Restart numbering",
+      group: "paragraph",
+      visible: context.listKind === "numbered",
+      enabled: structuralEnabled,
+      disabledReason: structuralReason,
+      run: () => runNodeEdit(() => doc.restartList(context.anchor.node)),
+    },
+    {
+      id: "paragraph.indent.increase",
+      label: "Increase indent",
+      group: "paragraph",
+      enabled: structuralEnabled,
+      disabledReason: structuralReason,
+      run: () => adjustIndentCommand(360),
+    },
+    {
+      id: "paragraph.indent.decrease",
+      label: "Decrease indent",
+      group: "paragraph",
+      enabled: structuralEnabled,
+      disabledReason: structuralReason,
+      run: () => adjustIndentCommand(-360),
+    },
+  );
+  if (context.table) {
+    const regular = context.table.regular;
+    const selectedTable = tableSelection
+      ? plainTableInfo(tableSelection.node)?.table
+      : "";
+    const hasTableSelection =
+      !!selectedTable && selectedTable === context.table.table;
+    const columnsReason = regular
+      ? structuralReason
+      : "Unavailable for merged or spanned tables";
+    const tableMutation = (id, label, run, options = {}) => ({
+      id,
+      label,
+      group: options.group ?? "table-structure",
+      enabled:
+        structuralEnabled &&
+        (options.regular !== true || regular) &&
+        (options.enabled ?? true),
+      disabledReason:
+        !structuralEnabled
+          ? structuralReason
+          : options.regular === true && !regular
+            ? columnsReason
+            : options.enabled === false
+              ? options.disabledReason
+              : "",
+      danger: options.danger,
+      run,
+    });
+    commands.push(
+      {
+        id: "table.select.row",
+        label: "Select row",
+        group: "table-select",
+        run: () => selectTableContext(context.anchor.node, "row"),
+      },
+      {
+        id: "table.select.column",
+        label: "Select column",
+        group: "table-select",
+        enabled: regular,
+        disabledReason: regular ? "" : columnsReason,
+        run: () => selectTableContext(context.anchor.node, "column"),
+      },
+      {
+        id: "table.select.table",
+        label: "Select table",
+        group: "table-select",
+        run: () => selectTableContext(context.anchor.node, "table"),
+      },
+      tableMutation("table.insert.rowAbove", "Insert row above",
+        () => runEdit(() => doc.insertRow(context.anchor.node, false))),
+      tableMutation("table.insert.rowBelow", "Insert row below",
+        () => runEdit(() => doc.insertRow(context.anchor.node, true))),
+      tableMutation("table.insert.columnLeft", "Insert column left",
+        () => runEdit(() => doc.insertColumn(context.anchor.node, false)),
+        { regular: true }),
+      tableMutation("table.insert.columnRight", "Insert column right",
+        () => runEdit(() => doc.insertColumn(context.anchor.node, true)),
+        { regular: true }),
+      tableMutation("table.distribute.rows", "Distribute rows",
+        () => runEdit(() => doc.distributeTableRows(context.anchor.node)),
+        {
+          regular: true,
+          enabled: ["exact", "atLeast"].includes(context.table.rowHeightRule),
+          disabledReason: "Rows need a fixed or minimum height before distribution",
+        }),
+      tableMutation("table.distribute.columns", "Distribute columns",
+        () => runEdit(() => doc.distributeTableColumns(context.anchor.node)),
+        { regular: true }),
+      tableMutation("table.sort.ascending", "Sort ascending",
+        () => runEdit(() => doc.sortTable(context.anchor.node, "ascending")),
+        { regular: true }),
+      tableMutation("table.sort.descending", "Sort descending",
+        () => runEdit(() => doc.sortTable(context.anchor.node, "descending")),
+        { regular: true }),
+      tableMutation("table.merge", "Merge selected cells",
+        async () => {
+          await runEdit(() =>
+            doc.mergeTableSelection(tableSelection.node, tableSelection.mode));
+          tableSelection = null;
+        },
+        {
+          enabled:
+            hasTableSelection,
+          disabledReason: "Select a row, column, or table before merging",
+        }),
+      tableMutation("table.split", "Split cell…",
+        () => toggleSplitCellDialog(true)),
+      {
+        id: "table.cellFormat",
+        label: "Cell formatting…",
+        group: "table-properties",
+        enabled: structuralEnabled,
+        disabledReason: structuralReason,
+        run: () => {
+          selectRibbonTab("table");
+          tableBtn.click();
+        },
+      },
+      {
+        id: "table.properties",
+        label: "Table properties",
+        group: "table-properties",
+        enabled: structuralEnabled,
+        disabledReason: structuralReason,
+        run: () => toggleTableProperties(true),
+      },
+      tableMutation("table.delete.row", "Delete row",
+        () => runEdit(() => doc.deleteRow(context.anchor.node)),
+        { group: "table-delete", danger: true }),
+      tableMutation("table.delete.column", "Delete column",
+        () => runEdit(() => doc.deleteColumn(context.anchor.node)),
+        { group: "table-delete", danger: true, regular: true }),
+      tableMutation("table.delete.table", "Delete table",
+        () => runEdit(() => doc.deleteTable(context.anchor.node)),
+        { group: "table-delete", danger: true }),
+    );
+  }
+  return commands;
+}
+
+function setContextMenuIndex(index, focus = true) {
+  contextMenuIndex = index;
+  const items = [...editorContextMenu.querySelectorAll(".menu-item")];
+  for (const item of items) {
+    const active = Number(item.dataset.menuIndex) === index;
+    item.tabIndex = active ? 0 : -1;
+    item.classList.toggle("active", active);
+    if (active && focus) {
+      item.focus({ preventScroll: true });
+      item.scrollIntoView({ block: "nearest" });
+    }
+  }
+}
+
+function hideContextMenu({ restoreFocus = false } = {}) {
+  if (editorContextMenu.hidden) return;
+  editorContextMenu.hidden = true;
+  contextMenuEntries = [];
+  contextMenuIndex = -1;
+  if (restoreFocus) {
+    const target = contextMenuReturnFocus?.isConnected
+      ? contextMenuReturnFocus
+      : pagesEl;
+    target.focus({ preventScroll: true });
+  }
+  contextMenuReturnFocus = null;
+}
+
+function runContextMenuEntry(index) {
+  const command = contextMenuEntries[index];
+  if (!command || command.separator || command.enabled === false) return;
+  hideContextMenu({ restoreFocus: true });
+  command.run();
+}
+
+function showContextMenu(clientX, clientY, context) {
+  hideContextMenu();
+  contextMenuReturnFocus =
+    document.activeElement instanceof HTMLElement ? document.activeElement : pagesEl;
+  contextMenuEntries = normalizeMenuEntries(buildContextCommands(context));
+  editorContextMenu.replaceChildren();
+  contextMenuEntries.forEach((entry, index) => {
+    if (entry.separator) {
+      const separator = document.createElement("div");
+      separator.className = "menu-divider";
+      separator.setAttribute("role", "separator");
+      editorContextMenu.appendChild(separator);
+      return;
+    }
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `menu-item${entry.danger ? " danger" : ""}`;
+    button.dataset.menuIndex = String(index);
+    button.dataset.commandId = entry.id;
+    button.setAttribute("role", "menuitem");
+    button.disabled = entry.enabled === false;
+    button.tabIndex = -1;
+    if (entry.disabledReason) button.title = entry.disabledReason;
+    const label = document.createElement("span");
+    label.className = "menu-item-label";
+    label.textContent = entry.label;
+    button.appendChild(label);
+    if (entry.shortcut || (entry.enabled === false && entry.disabledReason)) {
+      const hint = document.createElement("span");
+      hint.className = "menu-item-hint";
+      hint.textContent = entry.enabled === false
+        ? entry.disabledReason
+        : entry.shortcut;
+      button.appendChild(hint);
+    }
+    button.addEventListener("mousemove", () => {
+      if (!button.disabled) setContextMenuIndex(index, false);
+    });
+    button.addEventListener("click", () => runContextMenuEntry(index));
+    editorContextMenu.appendChild(button);
+  });
+  editorContextMenu.hidden = false;
+  const position = clampContextMenuPosition(
+    clientX,
+    clientY,
+    editorContextMenu.offsetWidth,
+    editorContextMenu.offsetHeight,
+    window.innerWidth,
+    window.innerHeight,
+  );
+  editorContextMenu.style.left = `${position.left}px`;
+  editorContextMenu.style.top = `${position.top}px`;
+  const first = moveMenuIndex(contextMenuEntries, -1, 1);
+  setContextMenuIndex(first);
+}
+
+function keyboardContextMenuPoint() {
+  if (!selection || !doc) return null;
+  const flat = doc.caretRect(selection.focus.node, selection.focus.offset);
+  if (flat.length < 5) return null;
+  const [pageNumber, x, y, width, height] = flat;
+  const page = pages[pageNumber - 1];
+  if (!page) return null;
+  const { rect, sx, sy } = scaleOf(page);
+  return {
+    x: rect.left + (x + width) * sx,
+    y: rect.top + (y + height) * sy,
+    page,
+  };
+}
+
+pagesEl.addEventListener("contextmenu", (event) => {
+  const page = pageFromEvent(event);
+  if (!page || !doc) return;
+  const anchor = anchorAt(page, event);
+  if (!anchor) return;
+  event.preventDefault();
+  const preserveSelection = selectionContainsClientPoint(
+    event.clientX,
+    event.clientY,
+  ) || tableSelectionContainsClientPoint(event.clientX, event.clientY);
+  if (!preserveSelection) {
+    selection = { anchor, focus: anchor };
+    tableSelection = null;
+    drawSelection();
+  }
+  showContextMenu(
+    event.clientX,
+    event.clientY,
+    contextAt(anchor, linkAt(page, event)),
+  );
 });
 
-document.addEventListener("pointerdown", (e) => {
-  if (!tableMenu.hidden && !tableMenu.contains(e.target)) hideTableMenu();
+document.addEventListener("pointerdown", (event) => {
+  if (!editorContextMenu.hidden && !editorContextMenu.contains(event.target)) {
+    hideContextMenu();
+  }
 });
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") hideTableMenu();
+document.addEventListener("keydown", (event) => {
+  if (!editorContextMenu.hidden) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      hideContextMenu({ restoreFocus: true });
+    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      setContextMenuIndex(
+        moveMenuIndex(
+          contextMenuEntries,
+          contextMenuIndex,
+          event.key === "ArrowDown" ? 1 : -1,
+        ),
+      );
+    } else if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      setContextMenuIndex(
+        moveMenuIndex(
+          contextMenuEntries,
+          contextMenuIndex,
+          event.key === "Home" ? "first" : "last",
+        ),
+      );
+    } else if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      runContextMenuEntry(contextMenuIndex);
+    }
+    return;
+  }
+  if (
+    doc &&
+    selection &&
+    eventTargetsEditor(event) &&
+    ((event.shiftKey && event.key === "F10") || event.key === "ContextMenu")
+  ) {
+    const point = keyboardContextMenuPoint();
+    if (!point) return;
+    event.preventDefault();
+    const anchor = selection.focus;
+    const link = linkAt(
+      point.page,
+      clientPointEvent(point.x, Math.max(point.y - 1, 0)),
+    );
+    showContextMenu(point.x, point.y, contextAt(anchor, link));
+  }
 });
-viewportEl.addEventListener("scroll", hideTableMenu, { passive: true });
-window.addEventListener("resize", hideTableMenu);
+viewportEl.addEventListener("scroll", () => hideContextMenu(), { passive: true });
+window.addEventListener("resize", () => hideContextMenu());
 
 // ---- Horizontal ruler (margins + the caret paragraph's indent markers) -------
 const ruler = document.createElement("div");
@@ -4032,44 +4582,108 @@ let cmdMatches = [];
 let cmdSel = 0;
 let cmdReturnFocus = null;
 
-/** The command set, rebuilt per open so dynamic entries (the document's styles)
- *  are current. Every command runs a real action; `noDoc` ones work with no doc. */
-function buildCommands() {
+/** Shared command descriptors for search and contextual surfaces. Dynamic
+ * entries are rebuilt so document styles and availability never go stale. */
+function editorCommands(context = { surface: "palette" }) {
   const fmt = (k) => () => toggleFormat(k);
   const align = (a) => () => runToolbarEdit((s, o, e, f) => doc.setAlignment(s, o, e, f, a));
   const cmds = [
-    { label: "Open…", group: "File", kw: "load docx", noDoc: true, run: () => fileEl.click() },
-    { label: "Save (download .docx)", group: "File", kw: "export download", run: () => saveDocx() },
-    { label: "Undo", group: "Edit", kw: "revert", run: () => runEdit(() => doc.undo()) },
-    { label: "Redo", group: "Edit", kw: "", run: () => runEdit(() => doc.redo()) },
-    { label: "Find and replace", group: "Edit", kw: "search replace", run: () => openFind() },
-    { label: "Bold", group: "Format", kw: "strong", run: fmt("bold") },
-    { label: "Italic", group: "Format", kw: "emphasis", run: fmt("italic") },
-    { label: "Underline", group: "Format", kw: "", run: fmt("underline") },
-    { label: "Strikethrough", group: "Format", kw: "strike", run: fmt("strike") },
-    { label: "Clear direct formatting", group: "Format", kw: "reset defaults", run: () => clearFormattingBtn.click() },
-    { label: "Align left", group: "Paragraph", kw: "", run: align("start") },
-    { label: "Align center", group: "Paragraph", kw: "centre", run: align("center") },
-    { label: "Align right", group: "Paragraph", kw: "", run: align("end") },
-    { label: "Justify", group: "Paragraph", kw: "align", run: align("justify") },
-    { label: "Bullet list", group: "Paragraph", kw: "unordered", run: () => runToolbarEdit((s, o, e, f) => doc.toggleList(s, o, e, f, "bullet")) },
-    { label: "Numbered list", group: "Paragraph", kw: "ordered", run: () => runToolbarEdit((s, o, e, f) => doc.toggleList(s, o, e, f, "numbered")) },
-    { label: "Restart numbering", group: "Paragraph", kw: "list restart 1", run: () => selection && runNodeEdit(() => doc.restartList(selection.focus.node)) },
-    { label: "Increase indent", group: "Paragraph", kw: "", run: () => adjustIndentCommand(360) },
-    { label: "Decrease indent", group: "Paragraph", kw: "outdent", run: () => adjustIndentCommand(-360) },
-    { label: "Insert table (3×3)", group: "Insert", kw: "grid", run: () => selection && runEdit(() => doc.insertTable(selection.focus.node, 3, 3)) },
-    { label: "Add or edit link", group: "Insert", kw: "hyperlink url bookmark toc", run: () => editSelectionLink() },
-    { label: "Bookmark manager", group: "Insert", kw: "bookmarks navigate links", run: () => openBookmarkManager() },
-    { label: "Toggle outline", group: "View", kw: "headings navigation", run: () => toggleOutline() },
-    { label: "Zoom in", group: "View", kw: "", run: () => stepZoom(1) },
-    { label: "Zoom out", group: "View", kw: "", run: () => stepZoom(-1) },
-    { label: "Settings", group: "View", kw: "theme accent dark", run: () => settingsBtn.click() },
-    { label: "Page setup", group: "Layout", kw: "margins orientation paper size", run: () => togglePageSetup(true) },
-    { label: "Paragraph properties", group: "Layout", kw: "spacing borders shading indent", run: () => toggleParagraphProperties(true) },
+    { id: "file.open", label: "Open…", group: "File", kw: "load docx", noDoc: true, run: () => fileEl.click() },
+    { id: "file.save", label: "Save (download .docx)", group: "File", kw: "export download", run: () => saveDocx() },
+    {
+      id: "edit.undo",
+      label: doc?.undoLabel ? `Undo ${doc.undoLabel}` : "Undo",
+      group: "Edit",
+      kw: "revert",
+      shortcut: "⌘Z",
+      contextMenu: true,
+      enabled: !!doc?.canUndo,
+      disabledReason: "Nothing to undo",
+      run: () => runEdit(() => doc.undo()),
+    },
+    {
+      id: "edit.redo",
+      label: doc?.redoLabel ? `Redo ${doc.redoLabel}` : "Redo",
+      group: "Edit",
+      kw: "",
+      shortcut: "⌘⇧Z",
+      contextMenu: true,
+      enabled: !!doc?.canRedo,
+      disabledReason: "Nothing to redo",
+      run: () => runEdit(() => doc.redo()),
+    },
+    {
+      id: "edit.cut",
+      label: "Cut",
+      group: "Clipboard",
+      kw: "",
+      shortcut: "⌘X",
+      contextMenu: true,
+      enabled: context.hasRange ?? hasRange(),
+      disabledReason: "Select content to cut",
+      run: () => cut(),
+    },
+    {
+      id: "edit.copy",
+      label: "Copy",
+      group: "Clipboard",
+      kw: "",
+      shortcut: "⌘C",
+      contextMenu: true,
+      enabled: context.hasRange ?? hasRange(),
+      disabledReason: "Select content to copy",
+      run: () => copySelection(),
+    },
+    {
+      id: "edit.paste",
+      label: "Paste",
+      group: "Clipboard",
+      kw: "",
+      shortcut: "⌘V",
+      contextMenu: true,
+      enabled: !!doc && !!selection,
+      disabledReason: "Place the caret before pasting",
+      run: () => paste(),
+    },
+    {
+      id: "edit.selectAll",
+      label: "Select all",
+      group: "Clipboard",
+      kw: "selection document",
+      shortcut: "⌘A",
+      contextMenu: true,
+      enabled: !!doc,
+      run: () => selectAll(),
+    },
+    { id: "edit.find", label: "Find and replace", group: "Edit", kw: "search replace", run: () => openFind() },
+    { id: "format.bold", label: "Bold", group: "Format", kw: "strong", run: fmt("bold") },
+    { id: "format.italic", label: "Italic", group: "Format", kw: "emphasis", run: fmt("italic") },
+    { id: "format.underline", label: "Underline", group: "Format", kw: "", run: fmt("underline") },
+    { id: "format.strike", label: "Strikethrough", group: "Format", kw: "strike", run: fmt("strike") },
+    { id: "format.clear", label: "Clear direct formatting", group: "Format", kw: "reset defaults", run: () => clearFormattingBtn.click() },
+    { id: "paragraph.align.start", label: "Align left", group: "Paragraph", kw: "", run: align("start") },
+    { id: "paragraph.align.center", label: "Align center", group: "Paragraph", kw: "centre", run: align("center") },
+    { id: "paragraph.align.end", label: "Align right", group: "Paragraph", kw: "", run: align("end") },
+    { id: "paragraph.align.justify", label: "Justify", group: "Paragraph", kw: "align", run: align("justify") },
+    { id: "paragraph.list.bullet", label: "Bullet list", group: "Paragraph", kw: "unordered", run: () => runToolbarEdit((s, o, e, f) => doc.toggleList(s, o, e, f, "bullet")) },
+    { id: "paragraph.list.numbered", label: "Numbered list", group: "Paragraph", kw: "ordered", run: () => runToolbarEdit((s, o, e, f) => doc.toggleList(s, o, e, f, "numbered")) },
+    { id: "paragraph.list.restart", label: "Restart numbering", group: "Paragraph", kw: "list restart 1", run: () => selection && runNodeEdit(() => doc.restartList(selection.focus.node)) },
+    { id: "paragraph.indent.increase", label: "Increase indent", group: "Paragraph", kw: "", run: () => adjustIndentCommand(360) },
+    { id: "paragraph.indent.decrease", label: "Decrease indent", group: "Paragraph", kw: "outdent", run: () => adjustIndentCommand(-360) },
+    { id: "insert.table", label: "Insert table (3×3)", group: "Insert", kw: "grid", run: () => selection && runEdit(() => doc.insertTable(selection.focus.node, 3, 3)) },
+    { id: "insert.link", label: "Add or edit link", group: "Insert", kw: "hyperlink url bookmark toc", run: () => editSelectionLink() },
+    { id: "insert.bookmark", label: "Bookmark manager", group: "Insert", kw: "bookmarks navigate links", run: () => openBookmarkManager() },
+    { id: "view.outline", label: "Toggle outline", group: "View", kw: "headings navigation", run: () => toggleOutline() },
+    { id: "view.zoomIn", label: "Zoom in", group: "View", kw: "", run: () => stepZoom(1) },
+    { id: "view.zoomOut", label: "Zoom out", group: "View", kw: "", run: () => stepZoom(-1) },
+    { id: "view.settings", label: "Settings", group: "View", kw: "theme accent dark", run: () => settingsBtn.click() },
+    { id: "layout.pageSetup", label: "Page setup", group: "Layout", kw: "margins orientation paper size", run: () => togglePageSetup(true) },
+    { id: "layout.paragraph", label: "Paragraph properties", group: "Layout", kw: "spacing borders shading indent", run: () => toggleParagraphProperties(true) },
   ];
   if (doc) {
     for (const name of doc.listStyles()) {
       cmds.push({
+        id: `style.${name}`,
         label: `Style: ${name}`,
         group: "Style",
         kw: "paragraph heading",
@@ -4077,7 +4691,11 @@ function buildCommands() {
       });
     }
   }
-  return cmds.filter((c) => doc || c.noDoc);
+  return cmds.filter((command) => doc || command.noDoc);
+}
+
+function buildCommands() {
+  return editorCommands({ surface: "palette" });
 }
 
 function openBookmarkManager() {
@@ -4104,7 +4722,7 @@ function renderCommands(query) {
   cmdMatches = q
     ? all.filter((c) => `${c.label} ${c.group} ${c.kw}`.toLowerCase().includes(q))
     : all;
-  cmdSel = 0;
+  cmdSel = cmdMatches.findIndex((command) => command.enabled !== false);
   cmdList.replaceChildren();
   if (!cmdMatches.length) {
     const empty = document.createElement("div");
@@ -4118,7 +4736,9 @@ function renderCommands(query) {
     item.type = "button";
     item.className = `cmd-item${i === cmdSel ? " sel" : ""}`;
     item.setAttribute("role", "option");
-    item.innerHTML = `<span>${c.label}</span><span class="cmd-hint">${c.group}</span>`;
+    item.disabled = c.enabled === false;
+    if (c.disabledReason) item.title = c.disabledReason;
+    item.innerHTML = `<span>${escapeHtml(c.label)}</span><span class="cmd-hint">${escapeHtml(c.enabled === false ? c.disabledReason : c.group)}</span>`;
     item.addEventListener("mousemove", () => setCmdSel(i));
     item.addEventListener("click", () => runCommand(i));
     cmdList.appendChild(item);
@@ -4126,15 +4746,28 @@ function renderCommands(query) {
 }
 
 function setCmdSel(i) {
+  if (i < 0 || cmdMatches[i]?.enabled === false) return;
   cmdSel = i;
   const items = cmdList.querySelectorAll(".cmd-item");
   items.forEach((el, k) => el.classList.toggle("sel", k === i));
   items[i]?.scrollIntoView({ block: "nearest" });
 }
 
+function moveCmdSelection(direction) {
+  if (!cmdMatches.some((command) => command.enabled !== false)) return;
+  let index = cmdSel;
+  for (let count = 0; count < cmdMatches.length; count++) {
+    index = (index + direction + cmdMatches.length) % cmdMatches.length;
+    if (cmdMatches[index].enabled !== false) {
+      setCmdSel(index);
+      return;
+    }
+  }
+}
+
 function runCommand(i) {
   const cmd = cmdMatches[i];
-  if (!cmd) return;
+  if (!cmd || cmd.enabled === false) return;
   closeCmd();
   cmd.run();
 }
@@ -4158,10 +4791,10 @@ cmdInput.addEventListener("input", () => renderCommands(cmdInput.value));
 cmdInput.addEventListener("keydown", (e) => {
   if (e.key === "ArrowDown") {
     e.preventDefault();
-    setCmdSel(Math.min(cmdSel + 1, cmdMatches.length - 1));
+    moveCmdSelection(1);
   } else if (e.key === "ArrowUp") {
     e.preventDefault();
-    setCmdSel(Math.max(cmdSel - 1, 0));
+    moveCmdSelection(-1);
   } else if (e.key === "Enter") {
     e.preventDefault();
     runCommand(cmdSel);
