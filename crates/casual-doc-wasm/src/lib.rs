@@ -3532,6 +3532,8 @@ impl WasmDocument {
     #[wasm_bindgen(js_name = reviewSummary)]
     #[must_use]
     pub fn review_summary(&self) -> String {
+        let mut anchors = Vec::new();
+        collect_review_comment_anchors(self.document.body(), &mut anchors);
         let comments = self
             .document
             .definitions()
@@ -3540,14 +3542,24 @@ impl WasmDocument {
             .map(|(id, comment)| {
                 let mut blocks = Vec::new();
                 collect_block_text(&comment.blocks, &mut blocks);
-                serde_json::json!({
+                let mut item = serde_json::json!({
                     "id": id.node_id().to_string(),
                     "author": comment.author,
                     "initials": comment.initials,
                     "date": comment.date,
                     "resolved": comment.done,
                     "text": blocks.into_iter().map(|(_, text)| text).collect::<Vec<_>>().join("\n"),
-                })
+                });
+                if let Some((_, node, start, end)) =
+                    anchors.iter().find(|(comment, _, _, _)| comment == id)
+                {
+                    item["anchor"] = serde_json::json!({
+                        "node": node.to_string(),
+                        "start": start,
+                        "end": end,
+                    });
+                }
+                item
             })
             .collect::<Vec<_>>();
         let mut revisions = Vec::new();
@@ -5541,6 +5553,93 @@ fn collect_review_revisions(blocks: &[BlockNode], out: &mut Vec<serde_json::Valu
             BlockNode::Sdt(sdt) => collect_review_revisions(&sdt.blocks, out),
             BlockNode::AltChunk(_) => {}
         }
+    }
+}
+
+fn collect_review_comment_anchors(
+    blocks: &[BlockNode],
+    out: &mut Vec<(casual_doc_model::v1::CommentId, NodeId, u32, u32)>,
+) {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                let mut offset = 0;
+                let mut starts = std::collections::BTreeMap::new();
+                for inline in &paragraph.inlines {
+                    collect_review_comment_inline(
+                        inline,
+                        paragraph.id,
+                        &mut offset,
+                        &mut starts,
+                        out,
+                    );
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        collect_review_comment_anchors(&cell.blocks, out);
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => collect_review_comment_anchors(&sdt.blocks, out),
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+}
+
+fn collect_review_comment_inline(
+    inline: &InlineNode,
+    node: NodeId,
+    offset: &mut u32,
+    starts: &mut std::collections::BTreeMap<casual_doc_model::v1::CommentId, u32>,
+    out: &mut Vec<(casual_doc_model::v1::CommentId, NodeId, u32, u32)>,
+) {
+    match inline {
+        InlineNode::CommentRangeStart(marker) => {
+            starts.insert(marker.comment, *offset);
+        }
+        InlineNode::CommentRangeEnd(marker) => {
+            if let Some(start) = starts.remove(&marker.comment) {
+                out.push((marker.comment, node, start, *offset));
+            }
+        }
+        InlineNode::Hyperlink(link) => {
+            for child in &link.inlines {
+                collect_review_comment_inline(child, node, offset, starts, out);
+            }
+        }
+        InlineNode::Revision(revision) => {
+            for child in &revision.inlines {
+                collect_review_comment_inline(child, node, offset, starts, out);
+            }
+        }
+        InlineNode::Sdt(sdt) => {
+            for child in &sdt.inlines {
+                collect_review_comment_inline(child, node, offset, starts, out);
+            }
+        }
+        _ => *offset = offset.saturating_add(inline_anchor_len_for_review(inline)),
+    }
+}
+
+fn inline_anchor_len_for_review(inline: &InlineNode) -> u32 {
+    match inline {
+        InlineNode::Run(run) => run.text.len() as u32,
+        InlineNode::Hyperlink(link) => link.inlines.iter().map(inline_anchor_len_for_review).sum(),
+        InlineNode::Revision(revision) => revision
+            .inlines
+            .iter()
+            .map(inline_anchor_len_for_review)
+            .sum(),
+        InlineNode::Sdt(sdt) => sdt.inlines.iter().map(inline_anchor_len_for_review).sum(),
+        InlineNode::CommentReference(_) => "[comment]".len() as u32,
+        InlineNode::Symbol(symbol) => {
+            char::from_u32(symbol.char).map_or(0, |ch| ch.len_utf8() as u32)
+        }
+        InlineNode::NoBreakHyphen(_) => '\u{2011}'.len_utf8() as u32,
+        InlineNode::SoftHyphen(_) => '\u{00ad}'.len_utf8() as u32,
+        _ => 0,
     }
 }
 

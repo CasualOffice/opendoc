@@ -2871,9 +2871,22 @@ function buildReview() {
   note.className = "review-readonly-note";
   note.textContent = "Review inventory is read-only. Editing and accept/reject actions are next.";
   reviewBody.appendChild(note);
-  const appendCard = (className, title, meta, body) => {
+  const appendCard = (className, title, meta, body, anchor = null) => {
     const card = document.createElement("article");
     card.className = className;
+    if (anchor?.node) {
+      card.tabIndex = 0;
+      card.setAttribute("role", "button");
+      card.title = "Go to comment range";
+      const goToAnchor = () => navigateToAnchor(anchor.node, Number(anchor.start) || 0);
+      card.addEventListener("click", goToAnchor);
+      card.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          goToAnchor();
+        }
+      });
+    }
     const heading = document.createElement("strong");
     heading.textContent = title;
     const details = document.createElement("small");
@@ -2889,6 +2902,7 @@ function buildReview() {
       reviewText(comment.author || comment.initials || "Comment"),
       `${comment.resolved ? "Resolved" : "Open"}${comment.date ? ` · ${reviewText(comment.date)}` : ""}`,
       reviewText(comment.text),
+      comment.anchor,
     );
   }
   for (const revision of revisions) {
