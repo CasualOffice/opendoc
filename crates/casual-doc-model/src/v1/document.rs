@@ -764,6 +764,10 @@ impl Document {
         // prior properties with the same rules as the current ones.
         if let Some(change) = &properties.prop_change {
             check_prop_change_meta(change, "paragraph.propChange")?;
+            check_domain(
+                change.editor_group.is_none(),
+                "paragraph.propChange.editorGroup",
+            )?;
             self.check_paragraph_property_refs(&change.prior)?;
         }
         Ok(())
@@ -828,6 +832,12 @@ impl Document {
         // prior properties with the same rules as the current ones.
         if let Some(change) = &properties.prop_change {
             check_prop_change_meta(change, "run.propChange")?;
+            if let Some(group) = change.editor_group {
+                check_domain(
+                    group.kind == RevisionGroupKind::Formatting,
+                    "run.propChange.editorGroup",
+                )?;
+            }
             self.check_run_property_refs(&change.prior)?;
         }
         Ok(())
@@ -915,6 +925,10 @@ impl Document {
         // each prior column with the same width domain as the current grid.
         if let Some(change) = &table.grid_change {
             check_prop_change_meta(change, "table.gridChange")?;
+            check_domain(
+                change.editor_group.is_none(),
+                "table.gridChange.editorGroup",
+            )?;
             for column in change.prior.iter() {
                 self.check_grid_column(column)?;
             }
@@ -976,6 +990,10 @@ impl Document {
         check_margins(&properties.cell_margins, "table.cell_margins")?;
         if let Some(change) = &properties.prop_change {
             check_prop_change_meta(change, "table.propChange")?;
+            check_domain(
+                change.editor_group.is_none(),
+                "table.propChange.editorGroup",
+            )?;
             self.check_table_properties(&change.prior)?;
         }
         Ok(())
@@ -1003,6 +1021,10 @@ impl Document {
         }
         if let Some(change) = &properties.prop_change {
             check_prop_change_meta(change, "table.row.propChange")?;
+            check_domain(
+                change.editor_group.is_none(),
+                "table.row.propChange.editorGroup",
+            )?;
             self.check_row_properties(&change.prior)?;
         }
         Ok(())
@@ -1021,6 +1043,10 @@ impl Document {
         check_margins(&properties.margins, "table.cell.margins")?;
         if let Some(change) = &properties.prop_change {
             check_prop_change_meta(change, "table.cell.propChange")?;
+            check_domain(
+                change.editor_group.is_none(),
+                "table.cell.propChange.editorGroup",
+            )?;
             self.check_cell_properties(&change.prior)?;
         }
         Ok(())

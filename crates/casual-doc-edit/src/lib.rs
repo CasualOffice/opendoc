@@ -21,9 +21,9 @@ use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     BlockNode, Color, Comment, CommentId, CoreProperties, DefinitionMap, Document, FontName,
     FontRef, GridColumn, HighlightColor, Hyperlink, HyperlinkTarget, InlineNode, PageMargins,
-    PageOrientation, PageSize, Paragraph, ParagraphProperties, RgbColor, Run, RunProperties,
-    SectionColumns, SectionId, Table, TableCell, TableCellProperties, TableProperties, TableRow,
-    VerticalAlignment,
+    PageOrientation, PageSize, Paragraph, ParagraphProperties, ReviewProjection, RgbColor, Run,
+    RunProperties, SectionColumns, SectionId, Table, TableCell, TableCellProperties,
+    TableProperties, TableRow, VerticalAlignment,
 };
 
 /// A run-property change to apply over a range: each `Some(_)` field sets that
@@ -1498,7 +1498,14 @@ fn inline_text_len(inline: &InlineNode) -> u32 {
             char::from_u32(symbol.char).map_or(0, |c| c.len_utf8() as u32)
         }
         InlineNode::Hyperlink(hyperlink) => nested_len(&hyperlink.inlines),
-        InlineNode::Revision(revision) => nested_len(&revision.inlines),
+        InlineNode::Revision(revision)
+            if revision
+                .kind
+                .contributes_to(ReviewProjection::FinalWithMarkup) =>
+        {
+            nested_len(&revision.inlines)
+        }
+        InlineNode::Revision(_) => 0,
         InlineNode::Sdt(sdt) => nested_len(&sdt.inlines),
         _ => 0,
     }
@@ -1918,7 +1925,7 @@ mod tests {
     use casual_doc_model::IdGenerator;
     use casual_doc_model::v1::{
         Definitions, DocGrid, LineNumbering, NoteProperties, PageBorders, PageNumbering,
-        PaperSource, ParagraphProperties, SectionBoundary, SectionColumns,
+        PaperSource, ParagraphProperties, Revision, RevisionKind, SectionBoundary, SectionColumns,
     };
 
     fn n(counter: u64) -> NodeId {
@@ -1930,6 +1937,18 @@ mod tests {
             id: n(id),
             properties: RunProperties::default(),
             text: text.to_string(),
+        })
+    }
+
+    fn revision(id: u64, run_id: u64, kind: RevisionKind, text: &str) -> InlineNode {
+        InlineNode::Revision(Revision {
+            id: n(id),
+            kind,
+            author: Some("Reviewer".to_owned()),
+            date: None,
+            revision_id: Some(id.to_string()),
+            editor_group: None,
+            inlines: vec![run(run_id, text)],
         })
     }
 
@@ -2013,6 +2032,34 @@ mod tests {
         // Applying the inverse restores the original text (undo).
         apply(&mut d, &mut ids, &inverse).unwrap();
         assert_eq!(text_of(&d, p), "Helloworld");
+    }
+
+    #[test]
+    fn edits_after_hidden_deletion_use_final_projected_offsets() {
+        let p = n(2);
+        let mut d = doc(vec![para(
+            2,
+            vec![
+                revision(3, 4, RevisionKind::Deletion, "removed"),
+                run(5, "B"),
+            ],
+        )]);
+        let mut ids = IdGenerator::new(9);
+        let paragraph = find_paragraph(d.body(), p).expect("paragraph");
+        assert_eq!(paragraph_text_len(paragraph), 1);
+
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertText {
+                at: Pos::new(p, 0),
+                text: "A".to_owned(),
+            },
+        )
+        .expect("insert at projected start");
+        assert_eq!(text_of(&d, p), "AB");
+        let paragraph = find_paragraph(d.body(), p).expect("paragraph");
+        assert_eq!(paragraph_text_len(paragraph), 2);
     }
 
     #[test]

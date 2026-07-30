@@ -182,6 +182,7 @@ test("replacement and formatting pairs are one atomic suggestion card", async ({
   const formatting = sidebar.locator(".review-margin-card.review-margin-formatting");
   await expect(formatting).toHaveCount(1);
   await expect(formatting).toContainText("Changed formatting for “NEW”");
+  await expect(formatting).toContainText(/Bold: (inherited|off|on) → (inherited|off|on)/);
   await formatting.click();
   await formatting.getByRole("button", { name: "Reject" }).click();
   await expect(formatting).toHaveCount(0);
@@ -189,6 +190,32 @@ test("replacement and formatting pairs are one atomic suggestion card", async ({
   await page.locator("#suggestingBanner").getByRole("button", { name: "Switch to editing" }).click();
   await expect(page.locator("#reviewInlineMode")).toHaveText("Editing");
   await expect(page.locator("#suggestingBanner")).toBeHidden();
+  expect(consoleErrors).toEqual([]);
+});
+
+test("a standalone deletion stays visible at its collapsed document anchor", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await moveCaretToDocStart(page);
+  await page.keyboard.type("DELETE_ME");
+  for (let index = 0; index < "DELETE_ME".length; index++) {
+    await page.keyboard.press("Shift+ArrowLeft");
+  }
+  await page.locator("#reviewInlineMode").click();
+  await page.keyboard.press("Backspace");
+
+  const sidebar = page.locator("#reviewSidebar");
+  const deletion = sidebar.locator(".review-margin-card.review-margin-deletion");
+  await expect(deletion).toHaveCount(1);
+  await expect(deletion).toContainText("Deleted “DELETE_ME”");
+  await expect(page.locator(".review-deletion-marker")).toHaveCount(1);
+  await deletion.click();
+  await deletion.getByRole("button", { name: "Reject" }).click();
+  await expect(deletion).toHaveCount(0);
+  await expect(page.locator(".review-deletion-marker")).toHaveCount(0);
   expect(consoleErrors).toEqual([]);
 });
 

@@ -458,6 +458,7 @@ impl PropChangeMeta {
             author: self.author,
             date: self.date,
             revision_id: self.revision_id,
+            editor_group: None,
             prior: Box::new(prior),
         }
     }

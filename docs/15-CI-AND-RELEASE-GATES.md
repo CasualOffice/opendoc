@@ -202,7 +202,7 @@ parity or complete tracked-change support.
 | Corpus tests | Package, semantic, round-trip, and generated rendering corpus implemented | Generated package/security/notes/visual fixtures plus real-producer round-trip fixtures run in workspace tests; repository policy rejects missing, unmanifested, or checksum-mismatched DOCX files. |
 | Visual regression | Initial deterministic gate implemented | Rights-safe five-page containment DOCX; collision invariants and raw RGBA hash use the bundled Roboto set at a pinned page size and 96 DPI. |
 | Benchmarking | Initial harness implemented | Package/model smoke is required; named-environment comparison is manual until a controlled runner is provisioned. |
-| Comments and suggestions integrity | Partial | P1G-REVIEW-035 supplies numeric authored inline revision ids, scoped atomic review inverses, coalesced/bounded suggestion history, and fail-closed editor-group decisions. Doc 81 retains the pending full-schema, real-consumer, projection, command-matrix, mixed-editing, scale, accessibility, and responsive gates in P1G-REVIEW-036 through P1G-REVIEW-039. |
+| Comments and suggestions integrity | Partial | P1G-REVIEW-035 supplies numeric authored inline revision ids, scoped atomic review inverses, coalesced/bounded suggestion history, and fail-closed editor-group decisions. P1G-REVIEW-036 adds one deterministic Final-with-markup byte projection and standard one-copy `w:rPrChange` formatting with structured card deltas and import/export decisions. Doc 81 retains the pending full-schema/consumer, command-matrix, mixed-editing, scale, accessibility, and responsive gates in P1G-REVIEW-037 through P1G-REVIEW-039. |
 | Release artifacts | Not started | Define before beta. |
 
 ## Failure Policy
