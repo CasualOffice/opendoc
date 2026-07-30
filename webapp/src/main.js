@@ -2921,6 +2921,10 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     cmdPalette.hidden ? openCmd() : closeCmd();
   }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s" && doc) {
+    e.preventDefault();
+    saveDocx();
+  }
 });
 // Visible entry point for the palette (doc 69 §1.4.1): the shortcut already
 // worked, it just had no on-screen affordance to discover it.
@@ -3294,7 +3298,7 @@ function navToPosition(caret, extend) {
   breakTypingSession();
   pendingFormat = null; // caret moved → disarm typing format
   const to = { node: caret.node, offset: caret.offset };
-  caret.free();
+  if (typeof caret.free === "function") caret.free();
   selection = extend ? { anchor: selection.anchor, focus: to } : { anchor: to, focus: to };
   drawSelection();
   focusEditorSurface();

@@ -69,6 +69,10 @@ test("the header title renames the document and Save reflects the new name", asy
   await page.keyboard.press("Enter");
   await expect(title).toHaveValue("Board Notes.docx");
 
+  const download = page.waitForEvent("download");
+  await page.keyboard.press(`${MOD}+s`);
+  await expect((await download).suggestedFilename()).toBe("Board Notes.docx");
+
   await title.click();
   await page.keyboard.press(`${MOD}+a`);
   await page.keyboard.press("Backspace");
