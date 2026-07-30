@@ -1763,6 +1763,19 @@ function toggleFormat(prop) {
   const state = selectionFormat();
   if (!state) return;
   runToolbarEdit((sn, so, en, eo) =>
+    reviewMode === "suggesting" && sn === en
+      ? doc.suggestFormat(
+        sn,
+        Math.min(so, eo),
+        Math.max(so, eo),
+        prop === "bold" ? !state.bold : undefined,
+        prop === "italic" ? !state.italic : undefined,
+        prop === "underline" ? !state.underline : undefined,
+        prop === "strike" ? !state.strike : undefined,
+        reviewAuthor.value.trim() || "You",
+        new Date().toISOString(),
+      )
+      :
     doc.formatSelection(
       sn,
       so,
@@ -2888,7 +2901,7 @@ function buildReview() {
   }
   const note = document.createElement("p");
   note.className = "review-readonly-note";
-  note.textContent = "Review actions are undoable. Suggestions support caret typing, replacement, deletion, and bulk decisions.";
+  note.textContent = "Review actions are undoable. Suggestions support text edits, bold/italic/underline/strike formatting, and bulk decisions.";
   reviewBody.appendChild(note);
   const appendCard = (className, title, meta, body, anchor = null) => {
     const card = document.createElement("article");
