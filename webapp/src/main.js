@@ -170,6 +170,7 @@ const reviewBtn = document.getElementById("reviewBtn");
 const reviewPanel = document.getElementById("reviewPanel");
 const reviewClose = document.getElementById("reviewClose");
 const reviewBody = document.getElementById("reviewBody");
+const reviewFilters = [...document.querySelectorAll("[data-review-filter]")];
 const linkChip = document.getElementById("linkChip");
 const linkChipKind = document.getElementById("linkChipKind");
 const linkChipTarget = document.getElementById("linkChipTarget");
@@ -2849,11 +2850,15 @@ function reviewText(value) {
   return value == null || value === "" ? "Not provided" : String(value);
 }
 
+let reviewFilter = "open";
+
 function buildReview() {
   if (!doc || reviewPanel.hidden) return;
   const summary = JSON.parse(doc.reviewSummary());
   reviewBody.replaceChildren();
-  const comments = summary.comments ?? [];
+  const comments = (summary.comments ?? []).filter((comment) =>
+    reviewFilter === "all" || (reviewFilter === "resolved" ? comment.resolved : !comment.resolved),
+  );
   const revisions = summary.revisions ?? [];
   if (!comments.length && !revisions.length) {
     const empty = document.createElement("div");
@@ -2908,6 +2913,15 @@ function toggleReview(open) {
 }
 reviewBtn.addEventListener("click", () => toggleReview());
 reviewClose.addEventListener("click", () => toggleReview(false));
+for (const filter of reviewFilters) {
+  filter.addEventListener("click", () => {
+    reviewFilter = filter.dataset.reviewFilter;
+    for (const button of reviewFilters) {
+      button.setAttribute("aria-pressed", String(button === filter));
+    }
+    buildReview();
+  });
+}
 
 // ---- Command palette (⌘K) — fuzzy search over real editor actions -----------
 const cmdPalette = document.getElementById("cmdPalette");
