@@ -186,13 +186,13 @@
                 </select>
               </label>
               <label class="ctl size" title="Font size (pt)">
-                <select id="fontSize">
-                  <option value="">Size</option>
-                  <option>8</option><option>9</option><option>10</option><option>11</option>
-                  <option>12</option><option>14</option><option>16</option><option>18</option>
-                  <option>20</option><option>24</option><option>28</option><option>32</option>
-                  <option>36</option><option>48</option><option>72</option>
-                </select>
+                <input id="fontSize" type="number" min="1" max="1638" step="0.5" inputmode="decimal" list="fontSizeSuggestions" placeholder="Size" aria-label="Font size in points" />
+                <datalist id="fontSizeSuggestions">
+                  <option value="8"></option><option value="9"></option><option value="10"></option><option value="11"></option>
+                  <option value="12"></option><option value="14"></option><option value="16"></option><option value="18"></option>
+                  <option value="20"></option><option value="24"></option><option value="28"></option><option value="32"></option>
+                  <option value="36"></option><option value="48"></option><option value="72"></option>
+                </datalist>
               </label>
             </div>
             <span class="rgroup-label">Styles &amp; font</span>
@@ -206,10 +206,11 @@
               <label class="ctl swatch" title="Text color"><span>A</span><input id="textColor" type="color" value="#000000" /></label>
               <label class="ctl" title="Highlight">
                 <select id="highlight">
-                  <option value="none">Highlight</option>
+                  <option value="">Mixed</option>
+                  <option value="none">No highlight</option>
                   <option value="yellow">Yellow</option><option value="green">Green</option>
                   <option value="cyan">Cyan</option><option value="magenta">Magenta</option>
-                  <option value="red">Red</option><option value="none">None</option>
+                  <option value="red">Red</option>
                 </select>
               </label>
               <button id="superscript" type="button" class="fmt" title="Superscript" aria-label="Superscript"><span class="ms" aria-hidden="true">superscript</span></button>
@@ -228,7 +229,7 @@
               <button id="indentInc" type="button" class="fmt" title="Increase indent (Tab)" aria-label="Increase indent"><span class="ms" aria-hidden="true">format_indent_increase</span></button>
               <button id="bulletList" type="button" class="fmt" title="Bulleted list" aria-label="Bulleted list" aria-pressed="false"><span class="ms" aria-hidden="true">format_list_bulleted</span></button>
               <button id="numberedList" type="button" class="fmt" title="Numbered list" aria-label="Numbered list" aria-pressed="false"><span class="ms" aria-hidden="true">format_list_numbered</span></button>
-              <button id="paraOptsBtn" type="button" class="fmt" title="Paragraph options (indent, shading, borders, tabs, breaks)" aria-label="Paragraph options" aria-haspopup="menu" aria-expanded="false"><span class="ms" aria-hidden="true">format_paragraph</span></button>
+              <button id="paraOptsBtn" type="button" class="fmt" title="Paragraph properties" aria-label="Paragraph properties" aria-controls="paragraphPropertiesPanel" aria-expanded="false"><span class="ms" aria-hidden="true">format_paragraph</span></button>
             </div>
             <span class="rgroup-label">Paragraph</span>
           </div>
@@ -395,44 +396,6 @@
       <label class="menu-row">Space after<input id="spaceAfter" type="number" min="0" max="720" step="1" inputmode="numeric" /><span class="menu-unit">pt</span></label>
     </div>
 
-    <div id="paraOptsMenu" class="context-menu spacing-menu" hidden role="menu" aria-label="Paragraph options">
-      <div class="menu-heading">Indentation</div>
-      <label class="menu-row">Left<input id="indentLeft" type="number" min="0" max="12" step="0.1" inputmode="decimal" /><span class="menu-unit">in</span></label>
-      <label class="menu-row">Right<input id="indentRight" type="number" min="0" max="12" step="0.1" inputmode="decimal" /><span class="menu-unit">in</span></label>
-      <div class="menu-row">
-        <select id="indentSpecial" class="menu-select" aria-label="Special indent">
-          <option value="none">None</option>
-          <option value="first">First line</option>
-          <option value="hanging">Hanging</option>
-        </select>
-        <input id="indentSpecialBy" type="number" min="0" max="12" step="0.1" inputmode="decimal" value="0.5" aria-label="Special indent amount" /><span class="menu-unit">in</span>
-      </div>
-      <div class="menu-divider"></div>
-      <div class="menu-heading">Shading</div>
-      <div class="menu-row shade-row">
-        <label class="shade-pick"><input id="paraShade" type="color" value="#ffe08a" /><span>Fill</span></label>
-        <button type="button" id="paraShadeNone" class="chip-btn">None</button>
-      </div>
-      <div class="menu-divider"></div>
-      <div class="menu-heading">Borders</div>
-      <div class="menu-row border-row">
-        <div class="border-presets" role="group" aria-label="Paragraph borders">
-          <button type="button" class="border-btn" data-border="none" title="No border" aria-pressed="false"><span class="bx"></span></button>
-          <button type="button" class="border-btn" data-border="box" title="All borders" aria-pressed="false"><span class="bx"></span></button>
-          <button type="button" class="border-btn" data-border="top" title="Top border" aria-pressed="false"><span class="bx"></span></button>
-          <button type="button" class="border-btn" data-border="bottom" title="Bottom border" aria-pressed="false"><span class="bx"></span></button>
-          <button type="button" class="border-btn" data-border="left" title="Left border" aria-pressed="false"><span class="bx"></span></button>
-          <button type="button" class="border-btn" data-border="right" title="Right border" aria-pressed="false"><span class="bx"></span></button>
-        </div>
-        <label class="border-color" title="Border color"><input id="borderColor" type="color" value="#000000" /></label>
-      </div>
-      <div class="menu-divider"></div>
-      <div class="menu-heading">Line &amp; page breaks</div>
-      <label class="menu-check-row"><input id="pgKeepNext" type="checkbox" />Keep with next</label>
-      <label class="menu-check-row"><input id="pgKeepLines" type="checkbox" />Keep lines together</label>
-      <label class="menu-check-row"><input id="pgBreakBefore" type="checkbox" />Page break before</label>
-    </div>
-
     <div id="tableMenu" class="context-menu spacing-menu table-format-menu" hidden role="dialog" aria-label="Cell and border formatting">
       <div class="menu-heading">Cell shading</div>
       <div class="menu-row shade-row">
@@ -556,6 +519,99 @@
         </div>
         <div id="pages" class="pages" tabindex="0" aria-label="Document editing surface"></div>
       </main>
+
+      <aside id="paragraphPropertiesPanel" class="side-panel properties-panel paragraph-properties-panel" hidden aria-labelledby="paragraphPropertiesTitle" aria-describedby="paragraphPropertiesDescription">
+        <header class="panel-head properties-panel-head">
+          <div class="properties-panel-heading">
+            <span class="ms properties-panel-icon" aria-hidden="true">format_paragraph</span>
+            <span>
+              <strong id="paragraphPropertiesTitle" class="panel-title">Paragraph properties</strong>
+              <small id="paragraphPropertiesContext"></small>
+            </span>
+          </div>
+          <button id="paragraphPropertiesClose" type="button" class="panel-close" title="Close" aria-label="Close paragraph properties">
+            <span class="ms" aria-hidden="true">close</span>
+          </button>
+        </header>
+        <div class="panel-body properties-panel-body">
+          <p id="paragraphPropertiesDescription" class="properties-panel-intro">Adjust all selected paragraphs. Changes apply automatically and Undo restores the previous value.</p>
+          <div class="properties-panel-grid">
+            <fieldset class="dialog-group property-section">
+              <legend>Style &amp; alignment</legend>
+              <label class="dialog-field">Style<select id="paraPanelStyle" class="dialog-select"><option value="">Style</option></select></label>
+              <div class="dialog-field">
+                <span>Alignment</span>
+                <span class="segmented paragraph-align" id="paraPanelAlign" role="radiogroup" aria-label="Paragraph alignment">
+                  <button type="button" data-palign="start" aria-label="Align left"><span class="ms" aria-hidden="true">format_align_left</span></button>
+                  <button type="button" data-palign="center" aria-label="Center"><span class="ms" aria-hidden="true">format_align_center</span></button>
+                  <button type="button" data-palign="end" aria-label="Align right"><span class="ms" aria-hidden="true">format_align_right</span></button>
+                  <button type="button" data-palign="justify" aria-label="Justify"><span class="ms" aria-hidden="true">format_align_justify</span></button>
+                </span>
+              </div>
+            </fieldset>
+
+            <fieldset class="dialog-group property-section">
+              <legend>Indentation</legend>
+              <div class="dialog-field-grid">
+                <label class="dialog-field">Left<span class="number-control"><input id="indentLeft" type="number" min="0" max="12" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+                <label class="dialog-field">Right<span class="number-control"><input id="indentRight" type="number" min="0" max="12" step="0.01" inputmode="decimal" /><span>in</span></span></label>
+              </div>
+              <div class="dialog-field-grid">
+                <label class="dialog-field">Special<select id="indentSpecial" class="dialog-select">
+                  <option value="">Mixed</option>
+                  <option value="none">None</option>
+                  <option value="first">First line</option>
+                  <option value="hanging">Hanging</option>
+                </select></label>
+                <label class="dialog-field">By<span class="number-control"><input id="indentSpecialBy" type="number" min="0" max="12" step="0.01" inputmode="decimal" value="0.5" /><span>in</span></span></label>
+              </div>
+            </fieldset>
+
+            <fieldset class="dialog-group property-section">
+              <legend>Spacing</legend>
+              <label class="dialog-field">Line spacing<select id="paraLineSpacing" class="dialog-select">
+                <option value="">Mixed or inherited</option>
+                <option value="100">Single</option>
+                <option value="115">1.15</option>
+                <option value="150">1.5</option>
+                <option value="200">Double</option>
+              </select></label>
+              <div class="dialog-field-grid">
+                <label class="dialog-field">Before<span class="number-control"><input id="paraSpaceBefore" type="number" min="0" max="720" step="1" inputmode="numeric" /><span>pt</span></span></label>
+                <label class="dialog-field">After<span class="number-control"><input id="paraSpaceAfter" type="number" min="0" max="720" step="1" inputmode="numeric" /><span>pt</span></span></label>
+              </div>
+            </fieldset>
+
+            <fieldset class="dialog-group property-section">
+              <legend>Shading &amp; borders</legend>
+              <div class="property-color-row">
+                <label class="shade-pick"><input id="paraShade" type="color" value="#ffe08a" /><span>Fill</span></label>
+                <button type="button" id="paraShadeNone" class="chip-btn">No fill</button>
+                <span id="paraShadeMixed" class="mixed-note" hidden>Mixed</span>
+              </div>
+              <div class="property-border-row">
+                <div class="border-presets" role="group" aria-label="Paragraph borders">
+                  <button type="button" class="border-btn" data-border="none" title="No border" aria-label="No border" aria-pressed="false"><span class="bx"></span></button>
+                  <button type="button" class="border-btn" data-border="box" title="All borders" aria-label="All borders" aria-pressed="false"><span class="bx"></span></button>
+                  <button type="button" class="border-btn" data-border="top" title="Top border" aria-label="Top border" aria-pressed="false"><span class="bx"></span></button>
+                  <button type="button" class="border-btn" data-border="bottom" title="Bottom border" aria-label="Bottom border" aria-pressed="false"><span class="bx"></span></button>
+                  <button type="button" class="border-btn" data-border="left" title="Left border" aria-label="Left border" aria-pressed="false"><span class="bx"></span></button>
+                  <button type="button" class="border-btn" data-border="right" title="Right border" aria-label="Right border" aria-pressed="false"><span class="bx"></span></button>
+                </div>
+                <label class="border-color" title="Border color"><input id="borderColor" type="color" value="#000000" aria-label="Border color" /></label>
+                <span id="paraBordersMixed" class="mixed-note" hidden>Mixed</span>
+              </div>
+            </fieldset>
+
+            <fieldset class="dialog-group property-section">
+              <legend>Pagination</legend>
+              <label class="dialog-check"><input id="pgKeepNext" type="checkbox" /><span><strong>Keep with next</strong><small>Keep this paragraph with the following paragraph.</small></span></label>
+              <label class="dialog-check"><input id="pgKeepLines" type="checkbox" /><span><strong>Keep lines together</strong><small>Avoid splitting the paragraph across pages.</small></span></label>
+              <label class="dialog-check"><input id="pgBreakBefore" type="checkbox" /><span><strong>Page break before</strong><small>Start each selected paragraph on a new page.</small></span></label>
+            </fieldset>
+          </div>
+        </div>
+      </aside>
 
       <aside id="tablePropertiesPanel" class="side-panel table-properties-panel" hidden aria-labelledby="tablePropertiesTitle" aria-describedby="tablePropertiesDescription">
         <header class="panel-head table-properties-head">

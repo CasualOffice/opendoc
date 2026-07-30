@@ -40,10 +40,10 @@ use casual_doc_model::v1::{
     HeightRule, HighlightColor, Hyperlink, HyperlinkTarget, Indentation, InlineNode,
     InternalTarget, LevelJustification, LevelSuffix, NumberFormat, NumberingInstance,
     NumberingInstanceId, NumberingLevel, NumberingRef, PageMargins, PageOrientation,
-    PageSize as SectionPageSize, Paragraph, ParagraphProperties, RgbColor, RowHeight, Run,
-    RunProperties, SectionId, StyleId, StyleKind, TabAlignment, TabStop, Table, TableBorders,
-    TableCell, TableCellProperties, TableLayout, TableProperties, TableRow, VerticalAlignment,
-    VerticalMerge,
+    PageSize as SectionPageSize, Paragraph, ParagraphBorders, ParagraphProperties, RgbColor,
+    RowHeight, Run, RunProperties, SectionId, Spacing, StyleId, StyleKind, TabAlignment, TabStop,
+    Table, TableBorders, TableCell, TableCellProperties, TableLayout, TableProperties, TableRow,
+    VerticalAlignment, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
@@ -97,9 +97,9 @@ pub struct WasmDocument {
     /// order they must be re-applied to undo the action (reverse of how the
     /// forward ops ran), so a multi-op action (cross-paragraph delete, type-over)
     /// undoes in a single step.
-    undo: Vec<Vec<Operation>>,
+    undo: Vec<HistoryEntry>,
     /// Redo stack — forward-op groups of undone actions; cleared on a fresh edit.
-    redo: Vec<Vec<Operation>>,
+    redo: Vec<HistoryEntry>,
     /// The last incremental typing action eligible to absorb another adjacent
     /// keystroke. The host owns gesture boundaries through `session`; the engine
     /// additionally requires exact caret continuity before coalescing history.
@@ -122,6 +122,80 @@ pub struct WasmDocument {
 struct TypingHistory {
     session: u32,
     caret: Pos,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HistoryKind {
+    Edit,
+    Typing,
+    Paste,
+    Delete,
+    Replace,
+    ParagraphBreak,
+    Formatting,
+    ParagraphFormatting,
+    ListFormatting,
+    LinkChange,
+    TableResize,
+    TableFormatting,
+    TableStructure,
+    DocumentProperties,
+    PageSetup,
+}
+
+impl HistoryKind {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Edit => "Edit",
+            Self::Typing => "Typing",
+            Self::Paste => "Paste",
+            Self::Delete => "Delete",
+            Self::Replace => "Replace",
+            Self::ParagraphBreak => "Paragraph break",
+            Self::Formatting => "Formatting",
+            Self::ParagraphFormatting => "Paragraph formatting",
+            Self::ListFormatting => "List formatting",
+            Self::LinkChange => "Link change",
+            Self::TableResize => "Table resize",
+            Self::TableFormatting => "Table formatting",
+            Self::TableStructure => "Table structure",
+            Self::DocumentProperties => "Document properties",
+            Self::PageSetup => "Page setup",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct HistoryEntry {
+    kind: HistoryKind,
+    operations: Vec<Operation>,
+}
+
+fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
+    let Some(first) = operations.first() else {
+        return HistoryKind::Edit;
+    };
+    match first {
+        Operation::InsertText { .. } => HistoryKind::Typing,
+        Operation::DeleteText { .. } => HistoryKind::Delete,
+        Operation::SplitParagraph { .. } | Operation::JoinParagraphs { .. } => {
+            HistoryKind::ParagraphBreak
+        }
+        Operation::FormatText { .. } | Operation::SetInlines { .. } => HistoryKind::Formatting,
+        Operation::SetHyperlink { .. } => HistoryKind::LinkChange,
+        Operation::SetParagraphProperties { .. } => HistoryKind::ParagraphFormatting,
+        Operation::InsertRow { .. }
+        | Operation::DeleteRow { .. }
+        | Operation::InsertColumn { .. }
+        | Operation::DeleteColumn { .. }
+        | Operation::DeleteTable { .. }
+        | Operation::InsertTable { .. } => HistoryKind::TableStructure,
+        Operation::SetTableCellProperties { .. }
+        | Operation::SetTableProperties { .. }
+        | Operation::ReplaceTable { .. } => HistoryKind::TableFormatting,
+        Operation::SetCoreProperties { .. } => HistoryKind::DocumentProperties,
+        Operation::SetSectionGeometry { .. } => HistoryKind::PageSetup,
+    }
 }
 
 impl core::fmt::Debug for WasmDocument {
@@ -170,6 +244,27 @@ impl WasmDocument {
     #[must_use]
     pub fn can_redo(&self) -> bool {
         !self.redo.is_empty()
+    }
+
+    /// User-facing label for the next undoable action, or an empty string when
+    /// history is empty. The engine owns this vocabulary so the host never has to
+    /// reverse-engineer a command from its inverse operations.
+    #[wasm_bindgen(getter, js_name = undoLabel)]
+    #[must_use]
+    pub fn undo_label(&self) -> String {
+        self.undo
+            .last()
+            .map_or_else(String::new, |entry| entry.kind.label().to_owned())
+    }
+
+    /// User-facing label for the next redoable action, or an empty string when
+    /// the redo stack is empty.
+    #[wasm_bindgen(getter, js_name = redoLabel)]
+    #[must_use]
+    pub fn redo_label(&self) -> String {
+        self.redo
+            .last()
+            .map_or_else(String::new, |entry| entry.kind.label().to_owned())
     }
 
     /// The page box size of page `index` (0-based), in twips, resolved against
@@ -512,7 +607,8 @@ impl WasmDocument {
         if ops.is_empty() {
             return Err(to_js("nothing to paste".into()));
         }
-        self.apply_action_caret(ops, cursor).map_err(to_js)
+        self.apply_action_caret_as(ops, cursor, HistoryKind::Paste)
+            .map_err(to_js)
     }
 
     /// Finds the next/previous literal text match from a model position. Matches
@@ -669,10 +765,13 @@ impl WasmDocument {
             let idx = paras.iter().position(|(id, _)| *id == nid);
             return match idx {
                 Some(i) if i > 0 => self
-                    .apply(Operation::JoinParagraphs {
-                        first: paras[i - 1].0,
-                        second: nid,
-                    })
+                    .apply_action_as(
+                        vec![Operation::JoinParagraphs {
+                            first: paras[i - 1].0,
+                            second: nid,
+                        }],
+                        HistoryKind::Delete,
+                    )
                     .map_err(to_js),
                 _ => Err(to_js("at document start".into())),
             };
@@ -699,10 +798,13 @@ impl WasmDocument {
             let idx = paras.iter().position(|(id, _)| *id == nid);
             return match idx {
                 Some(i) if i + 1 < paras.len() => self
-                    .apply(Operation::JoinParagraphs {
-                        first: nid,
-                        second: paras[i + 1].0,
-                    })
+                    .apply_action_as(
+                        vec![Operation::JoinParagraphs {
+                            first: nid,
+                            second: paras[i + 1].0,
+                        }],
+                        HistoryKind::Delete,
+                    )
                     .map_err(to_js),
                 _ => Err(to_js("at document end".into())),
             };
@@ -785,7 +887,8 @@ impl WasmDocument {
         if ops.is_empty() {
             return Err(to_js("empty selection".into()));
         }
-        self.apply_action_caret(ops, start).map_err(to_js)
+        self.apply_action_caret_as(ops, start, HistoryKind::Delete)
+            .map_err(to_js)
     }
 
     /// Replaces a selection with `text` (type-over) as one undoable action.
@@ -810,7 +913,8 @@ impl WasmDocument {
         if ops.is_empty() {
             return Err(to_js("nothing to do".into()));
         }
-        self.apply_action(ops).map_err(to_js)
+        self.apply_action_as(ops, HistoryKind::Replace)
+            .map_err(to_js)
     }
 
     /// Replaces a selection (which may be collapsed) with normalized plain text
@@ -826,6 +930,48 @@ impl WasmDocument {
         end_offset: u32,
         text: String,
     ) -> Result<EditResult, JsValue> {
+        self.insert_plain_text_action(
+            start_node,
+            start_offset,
+            end_node,
+            end_offset,
+            text,
+            HistoryKind::Typing,
+        )
+    }
+
+    /// The same atomic plain-text command with a closed semantic history kind.
+    /// The host may distinguish paste and paragraph-break gestures, but cannot
+    /// inject arbitrary history labels.
+    #[wasm_bindgen(js_name = insertPlainTextAs)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn insert_plain_text_as(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        text: String,
+        action_kind: &str,
+    ) -> Result<EditResult, JsValue> {
+        let kind = match action_kind {
+            "paste" => HistoryKind::Paste,
+            "paragraphBreak" => HistoryKind::ParagraphBreak,
+            "typing" => HistoryKind::Typing,
+            _ => return Err(to_js("unknown plain-text action kind".into())),
+        };
+        self.insert_plain_text_action(start_node, start_offset, end_node, end_offset, text, kind)
+    }
+
+    fn insert_plain_text_action(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        text: String,
+        kind: HistoryKind,
+    ) -> Result<EditResult, JsValue> {
         let (start, _end) = self
             .order_endpoints(start_node, start_offset, end_node, end_offset)
             .map_err(to_js)?;
@@ -837,7 +983,7 @@ impl WasmDocument {
         if ops.is_empty() {
             return Err(to_js("nothing to insert".into()));
         }
-        self.apply_action_caret(ops, caret).map_err(to_js)
+        self.apply_action_caret_as(ops, caret, kind).map_err(to_js)
     }
 
     /// Incremental keyboard typing with explicit host gesture identity. Each call
@@ -1165,21 +1311,16 @@ impl WasmDocument {
         if subs.is_empty() {
             return Format::default();
         }
-        let mut acc = Format {
-            bold: true,
-            italic: true,
-            underline: true,
-            strike: true,
-        };
+        let mut properties = Vec::new();
         for (node, s, e) in subs {
-            let properties = effective_run_properties_in_range(&self.document, node, s, e);
-            let st = format_from_effective_runs(&properties);
-            acc.bold &= st.bold;
-            acc.italic &= st.italic;
-            acc.underline &= st.underline;
-            acc.strike &= st.strike;
+            properties.extend(effective_run_properties_in_range(
+                &self.document,
+                node,
+                s,
+                e,
+            ));
         }
-        acc
+        format_from_effective_runs(&properties)
     }
 
     // ---- Run properties over a selection (color / highlight / size / vertAlign) --
@@ -1242,7 +1383,13 @@ impl WasmDocument {
         end_offset: u32,
         points: f32,
     ) -> Result<EditResult, JsValue> {
-        let half_points = (points * 2.0).round().max(2.0) as u32;
+        if !points.is_finite() || !(1.0..=1638.0).contains(&points) || (points * 2.0).fract() != 0.0
+        {
+            return Err(to_js(
+                "font size must be between 1 and 1638 points in 0.5 point steps".into(),
+            ));
+        }
+        let half_points = (points * 2.0).round() as u32;
         self.apply_run_format(
             start_node,
             start_offset,
@@ -1520,9 +1667,16 @@ impl WasmDocument {
             .and_then(|p| p.numbering)
             .is_some_and(|n| n.instance == instance);
         let target = (!already).then_some(NumberingRef { instance, level: 0 });
-        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
-            p.numbering = target;
-        })
+        self.apply_paragraph_props_as(
+            start_node,
+            start_offset,
+            end_node,
+            end_offset,
+            HistoryKind::ListFormatting,
+            move |p| {
+                p.numbering = target;
+            },
+        )
     }
 
     /// The list kind the paragraph belongs to: `"bullet"`, `"numbered"`, or `""` —
@@ -2050,10 +2204,13 @@ impl WasmDocument {
                 cell.properties.width_twips = Some(width_twips);
             }
         }
-        self.apply_action(vec![Operation::ReplaceTable {
-            table,
-            replacement: Box::new(replacement),
-        }])
+        self.apply_action_as(
+            vec![Operation::ReplaceTable {
+                table,
+                replacement: Box::new(replacement),
+            }],
+            HistoryKind::TableResize,
+        )
         .map_err(to_js)
     }
 
@@ -2659,6 +2816,129 @@ impl WasmDocument {
         }
     }
 
+    /// Uniform paragraph properties over every paragraph touched by the model
+    /// selection. Each value has an explicit mixed flag; booleans use state
+    /// 0=off, 1=on, 2=mixed.
+    #[wasm_bindgen(js_name = selectionParagraphState)]
+    #[must_use]
+    pub fn selection_paragraph_state(
+        &self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+    ) -> ParagraphState {
+        let Ok((start, end)) = self.order_endpoints(start_node, start_offset, end_node, end_offset)
+        else {
+            return ParagraphState::default();
+        };
+        let properties: Vec<ParagraphProperties> = self
+            .paragraphs_in_selection(start, end)
+            .into_iter()
+            .filter_map(|node| paragraph_properties(&self.document, node))
+            .collect();
+        if properties.is_empty() {
+            return ParagraphState::default();
+        }
+
+        let alignment = uniform_slice(
+            &properties
+                .iter()
+                .map(|p| p.alignment.unwrap_or(Alignment::Start))
+                .collect::<Vec<_>>(),
+        );
+        let style = uniform_slice(
+            &properties
+                .iter()
+                .map(|p| {
+                    p.style_ref
+                        .and_then(|id| self.document.definitions().styles.get(&id))
+                        .and_then(|style| style.name.clone())
+                        .unwrap_or_default()
+                })
+                .collect::<Vec<_>>(),
+        );
+        let indentation = |field: fn(Indentation) -> Option<i32>| {
+            uniform_slice(
+                &properties
+                    .iter()
+                    .map(|p| p.indentation.and_then(field).unwrap_or(0))
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let spacing = |field: fn(Spacing) -> i32, default: i32| {
+            uniform_slice(
+                &properties
+                    .iter()
+                    .map(|p| p.spacing.map(field).unwrap_or(default))
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let start_indent = indentation(|value| value.start_twips);
+        let end_indent = indentation(|value| value.end_twips);
+        let first_indent = indentation(|value| value.first_line_twips);
+        let hanging_indent = indentation(|value| value.hanging_twips);
+        let before = spacing(|value| value.before_twips.unwrap_or(-1), -1);
+        let after = spacing(|value| value.after_twips.unwrap_or(-1), -1);
+        let line_percent = spacing(
+            |value| {
+                if matches!(
+                    value.line_rule,
+                    None | Some(casual_doc_model::v1::LineRule::Auto)
+                ) {
+                    value.line_percent.map_or(0, i32::from)
+                } else {
+                    0
+                }
+            },
+            0,
+        );
+        let keep_next = bool_selection_state(&properties, |p| p.keep_next);
+        let keep_lines = bool_selection_state(&properties, |p| p.keep_lines);
+        let page_break_before = bool_selection_state(&properties, |p| p.page_break_before);
+        let shading = uniform_slice(
+            &properties
+                .iter()
+                .map(|p| p.shading.fill)
+                .collect::<Vec<_>>(),
+        );
+        let borders = uniform_slice(
+            &properties
+                .iter()
+                .map(|p| paragraph_border_mask(&p.borders))
+                .collect::<Vec<_>>(),
+        );
+
+        ParagraphState {
+            count: properties.len() as u32,
+            alignment: alignment.map(alignment_name).unwrap_or_default().to_owned(),
+            alignment_mixed: alignment.is_none(),
+            style: style.clone().unwrap_or_default(),
+            style_mixed: style.is_none(),
+            start_twip: start_indent.unwrap_or_default(),
+            start_mixed: start_indent.is_none(),
+            end_twip: end_indent.unwrap_or_default(),
+            end_mixed: end_indent.is_none(),
+            first_line_twip: first_indent.unwrap_or_default(),
+            first_line_mixed: first_indent.is_none(),
+            hanging_twip: hanging_indent.unwrap_or_default(),
+            hanging_mixed: hanging_indent.is_none(),
+            before_twip: before.unwrap_or(-1),
+            before_mixed: before.is_none(),
+            after_twip: after.unwrap_or(-1),
+            after_mixed: after.is_none(),
+            line_percent: line_percent.unwrap_or_default().max(0) as u32,
+            line_mixed: line_percent.is_none(),
+            keep_next,
+            keep_lines,
+            page_break_before,
+            shading: shading.flatten().map_or(-1, |color| pack_rgb(color) as i32),
+            shading_mixed: shading.is_none(),
+            border_edges: borders.unwrap_or_default(),
+            borders_mixed: borders.is_none(),
+        }
+    }
+
     /// Document statistics for the status footer: word count (whitespace-delimited
     /// tokens across every paragraph, body + table cells + content controls),
     /// paragraph count, and page count.
@@ -2755,7 +3035,7 @@ impl WasmDocument {
     }
 
     /// The paragraph's shading fill as a packed `0xRRGGBB` int, or `-1` when unset —
-    /// for the paragraph-options menu's shading swatch.
+    /// for the paragraph-properties inspector's shading swatch.
     #[wasm_bindgen(js_name = paragraphShadingAt)]
     #[must_use]
     pub fn paragraph_shading_at(&self, node: &str) -> i32 {
@@ -2814,7 +3094,7 @@ impl WasmDocument {
     }
 
     /// The paragraph's line-and-page-break flags (keep-with-next, keep-lines,
-    /// page-break-before) for reflecting the paragraph-options menu's checkboxes.
+    /// page-break-before) for reflecting the paragraph-properties inspector.
     #[wasm_bindgen(js_name = paragraphFlags)]
     #[must_use]
     pub fn paragraph_flags(&self, node: &str) -> ParagraphFlags {
@@ -3213,15 +3493,18 @@ impl WasmDocument {
     #[wasm_bindgen(js_name = undo)]
     pub fn undo(&mut self) -> Result<EditResult, JsValue> {
         self.typing_history = None;
-        let group = self
+        let entry = self
             .undo
             .pop()
             .ok_or_else(|| to_js("nothing to undo".into()))?;
         // `group` is stored in the order it must be re-applied to undo the action.
         let (caret, redo_group) = self
-            .apply_group(group)
+            .apply_group(entry.operations)
             .map_err(|e| to_js(format!("undo failed: {e}")))?;
-        self.redo.push(redo_group);
+        self.redo.push(HistoryEntry {
+            kind: entry.kind,
+            operations: redo_group,
+        });
         Ok(self.finish_edit(caret))
     }
 
@@ -3229,14 +3512,17 @@ impl WasmDocument {
     #[wasm_bindgen(js_name = redo)]
     pub fn redo(&mut self) -> Result<EditResult, JsValue> {
         self.typing_history = None;
-        let group = self
+        let entry = self
             .redo
             .pop()
             .ok_or_else(|| to_js("nothing to redo".into()))?;
         let (caret, undo_group) = self
-            .apply_group(group)
+            .apply_group(entry.operations)
             .map_err(|e| to_js(format!("redo failed: {e}")))?;
-        self.undo.push(undo_group);
+        self.undo.push(HistoryEntry {
+            kind: entry.kind,
+            operations: undo_group,
+        });
         Ok(self.finish_edit(caret))
     }
 
@@ -3451,14 +3737,15 @@ impl WasmDocument {
         }
         match typing_session {
             Some(session) => self.apply_typing_action(ops, caret, start, session, true, one_line),
-            None => self.apply_action_caret(ops, caret),
+            None => self.apply_action_caret_as(ops, caret, HistoryKind::Typing),
         }
     }
 
     /// Applies one forward op as a single undoable action, with the caret at that
     /// op's natural resting place.
     fn apply(&mut self, op: Operation) -> Result<EditResult, String> {
-        self.apply_action(vec![op])
+        let kind = history_kind_for_ops(core::slice::from_ref(&op));
+        self.apply_action_as(vec![op], kind)
     }
 
     /// Applies a batch of forward ops as one undoable action. The caret rests at
@@ -3467,6 +3754,15 @@ impl WasmDocument {
     /// corrupts. A single op needs no snapshot (it validates before mutating), so
     /// typing stays clone-free.
     fn apply_action(&mut self, ops: Vec<Operation>) -> Result<EditResult, String> {
+        let kind = history_kind_for_ops(&ops);
+        self.apply_action_as(ops, kind)
+    }
+
+    fn apply_action_as(
+        &mut self,
+        ops: Vec<Operation>,
+        kind: HistoryKind,
+    ) -> Result<EditResult, String> {
         self.typing_history = None;
         if ops.is_empty() {
             return Err("empty edit".into());
@@ -3474,7 +3770,10 @@ impl WasmDocument {
         let snapshot = (ops.len() > 1).then(|| self.document.clone());
         match self.apply_group(ops) {
             Ok((caret, inverses)) => {
-                self.undo.push(inverses);
+                self.undo.push(HistoryEntry {
+                    kind,
+                    operations: inverses,
+                });
                 self.redo.clear();
                 Ok(self.finish_edit(caret))
             }
@@ -3496,6 +3795,16 @@ impl WasmDocument {
         ops: Vec<Operation>,
         caret: Pos,
     ) -> Result<EditResult, String> {
+        let kind = history_kind_for_ops(&ops);
+        self.apply_action_caret_as(ops, caret, kind)
+    }
+
+    fn apply_action_caret_as(
+        &mut self,
+        ops: Vec<Operation>,
+        caret: Pos,
+        kind: HistoryKind,
+    ) -> Result<EditResult, String> {
         self.typing_history = None;
         if ops.is_empty() {
             return Err("empty edit".into());
@@ -3503,7 +3812,10 @@ impl WasmDocument {
         let snapshot = (ops.len() > 1).then(|| self.document.clone());
         match self.apply_group(ops) {
             Ok((_, inverses)) => {
-                self.undo.push(inverses);
+                self.undo.push(HistoryEntry {
+                    kind,
+                    operations: inverses,
+                });
                 self.redo.clear();
                 Ok(self.finish_edit(caret))
             }
@@ -3545,9 +3857,12 @@ impl WasmDocument {
                     });
                 if merge {
                     let mut previous = self.undo.pop().expect("history entry checked above");
-                    inverses.append(&mut previous);
+                    inverses.append(&mut previous.operations);
                 }
-                self.undo.push(inverses);
+                self.undo.push(HistoryEntry {
+                    kind: HistoryKind::Typing,
+                    operations: inverses,
+                });
                 self.redo.clear();
                 self.typing_history = keep_open.then_some(TypingHistory { session, caret });
                 Ok(self.finish_edit(caret))
@@ -3864,6 +4179,26 @@ impl WasmDocument {
         end_offset: u32,
         f: impl Fn(&mut ParagraphProperties),
     ) -> Result<EditResult, JsValue> {
+        self.apply_paragraph_props_as(
+            start_node,
+            start_offset,
+            end_node,
+            end_offset,
+            HistoryKind::ParagraphFormatting,
+            f,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn apply_paragraph_props_as(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        kind: HistoryKind,
+        f: impl Fn(&mut ParagraphProperties),
+    ) -> Result<EditResult, JsValue> {
         let (start, end) = self
             .order_endpoints(start_node, start_offset, end_node, end_offset)
             .map_err(to_js)?;
@@ -3880,7 +4215,7 @@ impl WasmDocument {
         if ops.is_empty() {
             return Err(to_js("no paragraph in selection".into()));
         }
-        self.apply_action(ops).map_err(to_js)
+        self.apply_action_as(ops, kind).map_err(to_js)
     }
 
     /// Reads the current properties of the cell containing `node`, applies `f`, and
@@ -4787,16 +5122,23 @@ fn format_from_effective_runs(properties: &[RunProperties]) -> Format {
     if properties.is_empty() {
         return Format::default();
     }
-    let all = |f: fn(&RunProperties) -> Option<bool>| {
-        properties
+    let state = |f: fn(&RunProperties) -> Option<bool>| {
+        let first = f(&properties[0]) == Some(true);
+        if properties
             .iter()
-            .all(|properties| f(properties) == Some(true))
+            .skip(1)
+            .all(|properties| (f(properties) == Some(true)) == first)
+        {
+            u8::from(first)
+        } else {
+            2
+        }
     };
     Format {
-        bold: all(|properties| properties.bold),
-        italic: all(|properties| properties.italic),
-        underline: all(|properties| properties.underline),
-        strike: all(|properties| properties.strike),
+        bold_state: state(|properties| properties.bold),
+        italic_state: state(|properties| properties.italic),
+        underline_state: state(|properties| properties.underline),
+        strike_state: state(|properties| properties.strike),
     }
 }
 
@@ -4808,43 +5150,111 @@ fn run_style_from_effective_runs(document: &Document, properties: &[RunPropertie
         return RunStyle::default();
     }
     let scheme = document.definitions().font_scheme.as_ref();
+    let size = uniform_value(properties, |p| p.size_half_points);
+    let color = uniform_value(properties, |p| p.color);
+    let font = uniform_value(properties, |p| {
+        requested_font_family(p, scheme)
+            .unwrap_or_else(|| casual_doc_layout::fonts::ROBOTO.name.to_owned())
+    });
+    let highlight = uniform_value(properties, |p| p.highlight);
+    let vertical_alignment = uniform_value(properties, |p| {
+        p.vertical_alignment.unwrap_or(VerticalAlignment::Baseline)
+    });
+    let size_mixed = size.is_none();
+    let color_mixed = color.is_none();
+    let font_mixed = font.is_none();
+    let highlight_mixed = highlight.is_none();
+    let vertical_align_mixed = vertical_alignment.is_none();
+    let vertical_align = vertical_alignment.map_or_else(String::new, |alignment| match alignment {
+        VerticalAlignment::Superscript => "super".to_owned(),
+        VerticalAlignment::Subscript => "sub".to_owned(),
+        VerticalAlignment::Baseline => "baseline".to_owned(),
+    });
     RunStyle {
-        size_points: uniform_effective(properties, |p| p.size_half_points)
+        size_points: size
+            .flatten()
             .map_or(0.0, |half_points| half_points as f32 / 2.0),
-        color: uniform_effective(properties, |p| match p.color {
-            Some(Color::Rgb(color)) => Some(color),
-            _ => None,
-        })
-        .map_or_else(String::new, |c| {
-            format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b)
+        size_mixed,
+        color: color
+            .flatten()
+            .map_or_else(String::new, |color| match color {
+                Color::Rgb(c) => format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b),
+                Color::Theme(_) => String::new(),
+            }),
+        color_mixed,
+        font: font.unwrap_or_default(),
+        font_mixed,
+        highlight: highlight.map_or_else(String::new, |value| {
+            value.map_or_else(|| "none".to_owned(), highlight_name)
         }),
-        font: uniform_effective(properties, |p| {
-            Some(
-                requested_font_family(p, scheme)
-                    .unwrap_or_else(|| casual_doc_layout::fonts::ROBOTO.name.to_owned()),
-            )
-        })
-        .unwrap_or_default(),
-        superscript: properties
-            .iter()
-            .all(|p| p.vertical_alignment == Some(VerticalAlignment::Superscript)),
-        subscript: properties
-            .iter()
-            .all(|p| p.vertical_alignment == Some(VerticalAlignment::Subscript)),
+        highlight_mixed,
+        superscript: vertical_align == "super",
+        subscript: vertical_align == "sub",
+        vertical_align,
+        vertical_align_mixed,
     }
 }
 
-/// The common set value across all effective runs, or `None` for mixed/unset.
-fn uniform_effective<T: PartialEq>(
+/// The common value across all effective runs, or `None` when values disagree.
+/// The value itself may be an `Option<T>`, which preserves uniformly-unset state
+/// instead of conflating it with mixed.
+fn uniform_value<T: Clone + PartialEq>(
     properties: &[RunProperties],
-    value: impl Fn(&RunProperties) -> Option<T>,
+    value: impl Fn(&RunProperties) -> T,
 ) -> Option<T> {
-    let first = value(&properties[0])?;
+    let first = value(&properties[0]);
     properties
         .iter()
         .skip(1)
-        .all(|properties| value(properties).as_ref() == Some(&first))
+        .all(|properties| value(properties) == first)
         .then_some(first)
+}
+
+/// The common value in a non-empty slice, or `None` when values disagree.
+fn uniform_slice<T: Clone + PartialEq>(values: &[T]) -> Option<T> {
+    let first = values.first()?.clone();
+    values
+        .iter()
+        .skip(1)
+        .all(|value| value == &first)
+        .then_some(first)
+}
+
+/// A boolean value over the selected paragraphs: 0=off, 1=on, 2=mixed.
+fn bool_selection_state(
+    properties: &[ParagraphProperties],
+    value: impl Fn(&ParagraphProperties) -> bool,
+) -> u8 {
+    let first = value(&properties[0]);
+    if properties
+        .iter()
+        .skip(1)
+        .all(|properties| value(properties) == first)
+    {
+        u8::from(first)
+    } else {
+        2
+    }
+}
+
+fn alignment_name(alignment: Alignment) -> &'static str {
+    match alignment {
+        Alignment::Start => "start",
+        Alignment::Center => "center",
+        Alignment::End => "end",
+        Alignment::Justify => "justify",
+    }
+}
+
+fn paragraph_border_mask(borders: &ParagraphBorders) -> u8 {
+    u8::from(borders.top.is_some())
+        | (u8::from(borders.bottom.is_some()) << 1)
+        | (u8::from(borders.start.is_some()) << 2)
+        | (u8::from(borders.end.is_some()) << 3)
+}
+
+fn pack_rgb(color: RgbColor) -> u32 {
+    (u32::from(color.r) << 16) | (u32::from(color.g) << 8) | u32::from(color.b)
 }
 
 /// A page-local rectangle flattened to `[page, x, y, w, h]` twips.
@@ -6125,10 +6535,10 @@ impl EditResult {
 #[wasm_bindgen]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Format {
-    bold: bool,
-    italic: bool,
-    underline: bool,
-    strike: bool,
+    bold_state: u8,
+    italic_state: u8,
+    underline_state: u8,
+    strike_state: u8,
 }
 
 #[wasm_bindgen]
@@ -6137,28 +6547,56 @@ impl Format {
     #[wasm_bindgen(getter)]
     #[must_use]
     pub fn bold(&self) -> bool {
-        self.bold
+        self.bold_state == 1
+    }
+
+    /// Bold state: 0 off, 1 on, 2 mixed.
+    #[wasm_bindgen(getter, js_name = boldState)]
+    #[must_use]
+    pub fn bold_state(&self) -> u8 {
+        self.bold_state
     }
 
     /// Every covered run is italic.
     #[wasm_bindgen(getter)]
     #[must_use]
     pub fn italic(&self) -> bool {
-        self.italic
+        self.italic_state == 1
+    }
+
+    /// Italic state: 0 off, 1 on, 2 mixed.
+    #[wasm_bindgen(getter, js_name = italicState)]
+    #[must_use]
+    pub fn italic_state(&self) -> u8 {
+        self.italic_state
     }
 
     /// Every covered run is underlined.
     #[wasm_bindgen(getter)]
     #[must_use]
     pub fn underline(&self) -> bool {
-        self.underline
+        self.underline_state == 1
+    }
+
+    /// Underline state: 0 off, 1 on, 2 mixed.
+    #[wasm_bindgen(getter, js_name = underlineState)]
+    #[must_use]
+    pub fn underline_state(&self) -> u8 {
+        self.underline_state
     }
 
     /// Every covered run is struck through.
     #[wasm_bindgen(getter)]
     #[must_use]
     pub fn strike(&self) -> bool {
-        self.strike
+        self.strike_state == 1
+    }
+
+    /// Strike-through state: 0 off, 1 on, 2 mixed.
+    #[wasm_bindgen(getter, js_name = strikeState)]
+    #[must_use]
+    pub fn strike_state(&self) -> u8 {
+        self.strike_state
     }
 }
 
@@ -6293,7 +6731,203 @@ impl ParagraphSpacing {
     }
 }
 
-/// A paragraph's line-and-page-break flags, for the paragraph-options menu.
+/// Uniform paragraph properties over every paragraph touched by a selection.
+///
+/// Values carry explicit mixed flags so the host never has to infer
+/// disagreement from a sentinel. Boolean states are 0=off, 1=on, 2=mixed.
+#[wasm_bindgen]
+#[derive(Clone, Debug, Default)]
+pub struct ParagraphState {
+    count: u32,
+    alignment: String,
+    alignment_mixed: bool,
+    style: String,
+    style_mixed: bool,
+    start_twip: i32,
+    start_mixed: bool,
+    end_twip: i32,
+    end_mixed: bool,
+    first_line_twip: i32,
+    first_line_mixed: bool,
+    hanging_twip: i32,
+    hanging_mixed: bool,
+    before_twip: i32,
+    before_mixed: bool,
+    after_twip: i32,
+    after_mixed: bool,
+    line_percent: u32,
+    line_mixed: bool,
+    keep_next: u8,
+    keep_lines: u8,
+    page_break_before: u8,
+    shading: i32,
+    shading_mixed: bool,
+    border_edges: u8,
+    borders_mixed: bool,
+}
+
+#[wasm_bindgen]
+impl ParagraphState {
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn count(&self) -> u32 {
+        self.count
+    }
+
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn alignment(&self) -> String {
+        self.alignment.clone()
+    }
+
+    #[wasm_bindgen(getter, js_name = alignmentMixed)]
+    #[must_use]
+    pub fn alignment_mixed(&self) -> bool {
+        self.alignment_mixed
+    }
+
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn style(&self) -> String {
+        self.style.clone()
+    }
+
+    #[wasm_bindgen(getter, js_name = styleMixed)]
+    #[must_use]
+    pub fn style_mixed(&self) -> bool {
+        self.style_mixed
+    }
+
+    #[wasm_bindgen(getter, js_name = startTwip)]
+    #[must_use]
+    pub fn start_twip(&self) -> i32 {
+        self.start_twip
+    }
+
+    #[wasm_bindgen(getter, js_name = startMixed)]
+    #[must_use]
+    pub fn start_mixed(&self) -> bool {
+        self.start_mixed
+    }
+
+    #[wasm_bindgen(getter, js_name = endTwip)]
+    #[must_use]
+    pub fn end_twip(&self) -> i32 {
+        self.end_twip
+    }
+
+    #[wasm_bindgen(getter, js_name = endMixed)]
+    #[must_use]
+    pub fn end_mixed(&self) -> bool {
+        self.end_mixed
+    }
+
+    #[wasm_bindgen(getter, js_name = firstLineTwip)]
+    #[must_use]
+    pub fn first_line_twip(&self) -> i32 {
+        self.first_line_twip
+    }
+
+    #[wasm_bindgen(getter, js_name = firstLineMixed)]
+    #[must_use]
+    pub fn first_line_mixed(&self) -> bool {
+        self.first_line_mixed
+    }
+
+    #[wasm_bindgen(getter, js_name = hangingTwip)]
+    #[must_use]
+    pub fn hanging_twip(&self) -> i32 {
+        self.hanging_twip
+    }
+
+    #[wasm_bindgen(getter, js_name = hangingMixed)]
+    #[must_use]
+    pub fn hanging_mixed(&self) -> bool {
+        self.hanging_mixed
+    }
+
+    #[wasm_bindgen(getter, js_name = beforeTwip)]
+    #[must_use]
+    pub fn before_twip(&self) -> i32 {
+        self.before_twip
+    }
+
+    #[wasm_bindgen(getter, js_name = beforeMixed)]
+    #[must_use]
+    pub fn before_mixed(&self) -> bool {
+        self.before_mixed
+    }
+
+    #[wasm_bindgen(getter, js_name = afterTwip)]
+    #[must_use]
+    pub fn after_twip(&self) -> i32 {
+        self.after_twip
+    }
+
+    #[wasm_bindgen(getter, js_name = afterMixed)]
+    #[must_use]
+    pub fn after_mixed(&self) -> bool {
+        self.after_mixed
+    }
+
+    #[wasm_bindgen(getter, js_name = linePercent)]
+    #[must_use]
+    pub fn line_percent(&self) -> u32 {
+        self.line_percent
+    }
+
+    #[wasm_bindgen(getter, js_name = lineMixed)]
+    #[must_use]
+    pub fn line_mixed(&self) -> bool {
+        self.line_mixed
+    }
+
+    #[wasm_bindgen(getter, js_name = keepNextState)]
+    #[must_use]
+    pub fn keep_next_state(&self) -> u8 {
+        self.keep_next
+    }
+
+    #[wasm_bindgen(getter, js_name = keepLinesState)]
+    #[must_use]
+    pub fn keep_lines_state(&self) -> u8 {
+        self.keep_lines
+    }
+
+    #[wasm_bindgen(getter, js_name = pageBreakBeforeState)]
+    #[must_use]
+    pub fn page_break_before_state(&self) -> u8 {
+        self.page_break_before
+    }
+
+    /// Packed `0xRRGGBB`, or `-1` when uniformly unset.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn shading(&self) -> i32 {
+        self.shading
+    }
+
+    #[wasm_bindgen(getter, js_name = shadingMixed)]
+    #[must_use]
+    pub fn shading_mixed(&self) -> bool {
+        self.shading_mixed
+    }
+
+    /// top=1, bottom=2, start=4, end=8.
+    #[wasm_bindgen(getter, js_name = borderEdges)]
+    #[must_use]
+    pub fn border_edges(&self) -> u8 {
+        self.border_edges
+    }
+
+    #[wasm_bindgen(getter, js_name = bordersMixed)]
+    #[must_use]
+    pub fn borders_mixed(&self) -> bool {
+        self.borders_mixed
+    }
+}
+
+/// A paragraph's line-and-page-break flags, for the paragraph-properties inspector.
 #[wasm_bindgen]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ParagraphFlags {
@@ -6360,15 +6994,23 @@ impl DocStats {
 }
 
 /// The uniform run styling of a selection, for reflecting current values in the
-/// toolbar. `sizePoints` is 0 and `color`/`font` are empty for a mixed selection.
+/// toolbar. Values and explicit mixed flags are separate so a uniformly unset
+/// property is never conflated with disagreement across the selection.
 #[wasm_bindgen]
 #[derive(Clone, Debug, Default)]
 pub struct RunStyle {
     size_points: f32,
+    size_mixed: bool,
     color: String,
+    color_mixed: bool,
     font: String,
+    font_mixed: bool,
+    highlight: String,
+    highlight_mixed: bool,
     superscript: bool,
     subscript: bool,
+    vertical_align: String,
+    vertical_align_mixed: bool,
 }
 
 #[wasm_bindgen]
@@ -6380,6 +7022,13 @@ impl RunStyle {
         self.size_points
     }
 
+    /// Whether the selection contains more than one effective font size.
+    #[wasm_bindgen(getter, js_name = sizeMixed)]
+    #[must_use]
+    pub fn size_mixed(&self) -> bool {
+        self.size_mixed
+    }
+
     /// Common text color as `#rrggbb` (empty if mixed/unset or a theme color).
     #[wasm_bindgen(getter)]
     #[must_use]
@@ -6387,11 +7036,39 @@ impl RunStyle {
         self.color.clone()
     }
 
+    /// Whether the selection contains more than one effective text color.
+    #[wasm_bindgen(getter, js_name = colorMixed)]
+    #[must_use]
+    pub fn color_mixed(&self) -> bool {
+        self.color_mixed
+    }
+
     /// Common font family (empty if mixed/unset).
     #[wasm_bindgen(getter)]
     #[must_use]
     pub fn font(&self) -> String {
         self.font.clone()
+    }
+
+    /// Whether the selection contains more than one effective font family.
+    #[wasm_bindgen(getter, js_name = fontMixed)]
+    #[must_use]
+    pub fn font_mixed(&self) -> bool {
+        self.font_mixed
+    }
+
+    /// Common highlight name, `"none"` when uniformly clear, or empty when mixed.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn highlight(&self) -> String {
+        self.highlight.clone()
+    }
+
+    /// Whether the selection contains more than one effective highlight value.
+    #[wasm_bindgen(getter, js_name = highlightMixed)]
+    #[must_use]
+    pub fn highlight_mixed(&self) -> bool {
+        self.highlight_mixed
     }
 
     /// Every covered run is superscript.
@@ -6406,6 +7083,20 @@ impl RunStyle {
     #[must_use]
     pub fn subscript(&self) -> bool {
         self.subscript
+    }
+
+    /// Common vertical alignment: `super`, `sub`, `baseline`, or empty when mixed.
+    #[wasm_bindgen(getter, js_name = verticalAlign)]
+    #[must_use]
+    pub fn vertical_align(&self) -> String {
+        self.vertical_align.clone()
+    }
+
+    /// Whether the selection mixes baseline, superscript, or subscript.
+    #[wasm_bindgen(getter, js_name = verticalAlignMixed)]
+    #[must_use]
+    pub fn vertical_align_mixed(&self) -> bool {
+        self.vertical_align_mixed
     }
 }
 
@@ -6997,6 +7688,7 @@ mod tests {
         d.type_text(&node, 1, &node, 1, "B".to_owned(), 41)
             .expect("adjacent typing tick");
         assert_eq!(d.undo.len(), 1, "one host typing session is one action");
+        assert_eq!(d.undo_label(), "Typing");
         assert!(d.can_undo());
         assert!(!d.can_redo());
 
@@ -7007,6 +7699,7 @@ mod tests {
         );
         assert!(!d.can_undo());
         assert!(d.can_redo());
+        assert_eq!(d.redo_label(), "Typing");
 
         d.redo().expect("redo typing session");
         assert_eq!(
@@ -7015,6 +7708,7 @@ mod tests {
         );
         assert!(d.can_undo());
         assert!(!d.can_redo());
+        assert_eq!(d.undo_label(), "Typing");
 
         d.type_text(&node, 2, &node, 2, "C".to_owned(), 42)
             .expect("new typing gesture");
@@ -7028,6 +7722,15 @@ mod tests {
             d.copy_text(&node, 0, &node, original.len() as u32 + 2),
             format!("AB{original}")
         );
+
+        d.set_font_size(&node, 0, &node, 1, 12.5)
+            .expect("format one character");
+        assert_eq!(d.undo_label(), "Formatting");
+        d.insert_plain_text_as(&node, 0, &node, 0, "P".to_owned(), "paste")
+            .expect("paste through the closed action-kind API");
+        assert_eq!(d.undo_label(), "Paste");
+        d.undo().expect("undo paste");
+        assert_eq!(d.redo_label(), "Paste");
     }
 
     #[test]
@@ -8456,6 +9159,91 @@ mod tests {
 
         d.undo().expect("undo");
         assert!(!d.selection_format(&a, 0, &b, 1).bold(), "undo cleared it");
+    }
+
+    #[test]
+    fn formatting_queries_distinguish_uniform_unset_from_mixed() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(id, text)| {
+                text.is_ascii()
+                    && text.len() >= 4
+                    && d.selection_format(&id.to_string(), 0, &id.to_string(), 4)
+                        .bold_state()
+                        == 0
+                    && {
+                        let style = d.selection_run_style(&id.to_string(), 0, &id.to_string(), 4);
+                        style.highlight() == "none" && !style.highlight_mixed()
+                    }
+            })
+            .map(|(id, _)| id.to_string())
+            .expect("four plain ASCII bytes");
+
+        let initial = d.selection_run_style(&node, 0, &node, 4);
+        assert_eq!(initial.highlight(), "none");
+        assert!(!initial.highlight_mixed());
+
+        d.format_selection(&node, 0, &node, 2, Some(true), None, None, None)
+            .expect("bold first half");
+        let format = d.selection_format(&node, 0, &node, 4);
+        assert_eq!(format.bold_state(), 2, "part-bold selection is mixed");
+        assert!(!format.bold(), "mixed is not reported as uniformly on");
+
+        d.set_font_size(&node, 0, &node, 2, 12.5)
+            .expect("half-point font size");
+        d.set_highlight(&node, 0, &node, 2, "yellow")
+            .expect("highlight first half");
+        let mixed = d.selection_run_style(&node, 0, &node, 4);
+        assert!(mixed.size_mixed());
+        assert!(mixed.highlight_mixed());
+        assert_eq!(mixed.highlight(), "");
+
+        d.set_vert_align(&node, 0, &node, 4, "super")
+            .expect("superscript selection");
+        let raised = d.selection_run_style(&node, 0, &node, 4);
+        assert_eq!(raised.vertical_align(), "super");
+        assert!(raised.superscript());
+        d.set_vert_align(&node, 0, &node, 4, "baseline")
+            .expect("toggle back to baseline");
+        let baseline = d.selection_run_style(&node, 0, &node, 4);
+        assert_eq!(baseline.vertical_align(), "baseline");
+        assert!(!baseline.superscript());
+        assert!(!baseline.subscript());
+    }
+
+    #[test]
+    fn paragraph_state_reports_every_selected_paragraph_and_mixed_values() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let pair = nodes
+            .windows(2)
+            .find(|window| !window[0].1.is_empty() && !window[1].1.is_empty())
+            .expect("two adjacent non-empty paragraphs");
+        let first = pair[0].0.to_string();
+        let second = pair[1].0.to_string();
+
+        d.set_left_indent(&first, 0, &first, 0, 720)
+            .expect("indent only first paragraph");
+        d.set_keep_with_next(&first, 0, &first, 0, true)
+            .expect("flag only first paragraph");
+        let mixed = d.selection_paragraph_state(&first, 0, &second, 1);
+        assert_eq!(mixed.count(), 2);
+        assert!(mixed.start_mixed());
+        assert_eq!(mixed.keep_next_state(), 2);
+
+        d.set_left_indent(&first, 0, &second, 1, 360)
+            .expect("set both selected paragraphs");
+        d.set_keep_with_next(&first, 0, &second, 1, true)
+            .expect("set flag on both");
+        let uniform = d.selection_paragraph_state(&first, 0, &second, 1);
+        assert_eq!(uniform.start_twip(), 360);
+        assert!(!uniform.start_mixed());
+        assert_eq!(uniform.keep_next_state(), 1);
+        assert_eq!(d.undo_label(), "Paragraph formatting");
     }
 
     /// Split (Enter) divides a paragraph and undo rejoins it; word selection and

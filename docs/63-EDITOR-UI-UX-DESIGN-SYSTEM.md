@@ -99,8 +99,9 @@ Reuse these; don't invent per-feature variants.
 Where things live, so we stay consistent as we add features:
 
 - **Character & paragraph formatting** → toolbar (+ floating selection toolbar).
-- **Paragraph structure** (indent/spacing/borders/tabs/breaks) → paragraph popover
-  + ruler (indents, tabs).
+- **Paragraph structure** → compact spacing popover for the frequent line/paragraph
+  spacing choices; shared live right inspector for indentation, shading, borders,
+  and line/page-break controls; ruler for direct indents and tabs.
 - **Tables** → Insert-table (toolbar grid picker); contextual Table ribbon for
   select/structure/merge; compact cell-format popover; right properties inspector
   for measurements and layout. The right-click structure menu remains an

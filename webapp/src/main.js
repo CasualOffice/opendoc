@@ -51,9 +51,18 @@ const spacingMenu = document.getElementById("spacingMenu");
 const spaceBeforeInput = document.getElementById("spaceBefore");
 const spaceAfterInput = document.getElementById("spaceAfter");
 const paraOptsBtn = document.getElementById("paraOptsBtn");
-const paraOptsMenu = document.getElementById("paraOptsMenu");
+const paragraphPropertiesPanel = document.getElementById("paragraphPropertiesPanel");
+const paragraphPropertiesContext = document.getElementById("paragraphPropertiesContext");
+const paragraphPropertiesCloseBtn = document.getElementById("paragraphPropertiesClose");
+const paraPanelStyle = document.getElementById("paraPanelStyle");
+const paraPanelAlign = document.getElementById("paraPanelAlign");
+const paraLineSpacing = document.getElementById("paraLineSpacing");
+const paraSpaceBefore = document.getElementById("paraSpaceBefore");
+const paraSpaceAfter = document.getElementById("paraSpaceAfter");
 const paraShade = document.getElementById("paraShade");
 const paraShadeNone = document.getElementById("paraShadeNone");
+const paraShadeMixed = document.getElementById("paraShadeMixed");
+const paraBordersMixed = document.getElementById("paraBordersMixed");
 const pgKeepNext = document.getElementById("pgKeepNext");
 const pgKeepLines = document.getElementById("pgKeepLines");
 const pgBreakBefore = document.getElementById("pgBreakBefore");
@@ -1602,7 +1611,16 @@ function selectionFormat() {
   if (!doc || !hasRange()) return null;
   const [sn, so, en, eo] = selEndpoints();
   const f = doc.selectionFormat(sn, so, en, eo);
-  const state = { bold: f.bold, italic: f.italic, underline: f.underline, strike: f.strike };
+  const state = {
+    bold: f.bold,
+    italic: f.italic,
+    underline: f.underline,
+    strike: f.strike,
+    boldState: f.boldState,
+    italicState: f.italicState,
+    underlineState: f.underlineState,
+    strikeState: f.strikeState,
+  };
   f.free();
   return state;
 }
@@ -1611,7 +1629,16 @@ function selectionFormat() {
 function caretFormatState() {
   if (!doc || !selection) return { bold: false, italic: false, underline: false, strike: false };
   const f = doc.caretFormat(selection.focus.node, selection.focus.offset);
-  const state = { bold: f.bold, italic: f.italic, underline: f.underline, strike: f.strike };
+  const state = {
+    bold: f.bold,
+    italic: f.italic,
+    underline: f.underline,
+    strike: f.strike,
+    boldState: f.boldState,
+    italicState: f.italicState,
+    underlineState: f.underlineState,
+    strikeState: f.strikeState,
+  };
   f.free();
   return state;
 }
@@ -1680,10 +1707,11 @@ function updateToolbar() {
   const caretFmt = !range && hasSel ? caretFormatState() : null;
   for (const key of ["bold", "italic", "underline", "strike"]) {
     fmtButtons[key].disabled = !hasSel;
+    const mixed = range && runState?.[`${key}State`] === 2;
     const pressed = range
       ? runState && runState[key]
       : (pendingFormat?.[key] ?? (caretFmt ? caretFmt[key] : false));
-    fmtButtons[key].setAttribute("aria-pressed", String(!!pressed));
+    fmtButtons[key].setAttribute("aria-pressed", mixed ? "mixed" : String(!!pressed));
   }
   // Run controls work with a range (apply) or a caret (arm for typing), so they are
   // enabled whenever there is a selection.
@@ -1702,6 +1730,12 @@ function updateToolbar() {
   let font = "";
   let sup = false;
   let sub = false;
+  let sizeMixed = false;
+  let fontMixed = false;
+  let colorMixed = false;
+  let highlight = "none";
+  let highlightMixed = false;
+  let verticalAlignMixed = false;
   if (doc && hasSel) {
     const rs = range
       ? doc.selectionRunStyle(
@@ -1712,10 +1746,16 @@ function updateToolbar() {
         )
       : doc.caretRunStyle(selection.focus.node, selection.focus.offset);
     if (rs.sizePoints) size = String(rs.sizePoints);
+    sizeMixed = rs.sizeMixed;
     font = rs.font;
+    fontMixed = rs.fontMixed;
     if (rs.color) textColorInput.value = rs.color;
+    colorMixed = rs.colorMixed;
+    highlight = rs.highlight || "none";
+    highlightMixed = rs.highlightMixed;
     sup = rs.superscript;
     sub = rs.subscript;
+    verticalAlignMixed = rs.verticalAlignMixed;
     rs.free();
   }
   // An armed (pending) run format overrides the inherited value in the display.
@@ -1723,15 +1763,27 @@ function updateToolbar() {
     if (pendingFormat.sizeHalfPoints != null) size = String(pendingFormat.sizeHalfPoints / 2);
     if (pendingFormat.font != null) font = pendingFormat.font;
     if (pendingFormat.color) textColorInput.value = pendingFormat.color;
+    if (pendingFormat.highlight != null) highlight = pendingFormat.highlight;
     if (pendingFormat.vertAlign != null) {
       sup = pendingFormat.vertAlign === "super";
       sub = pendingFormat.vertAlign === "sub";
     }
+    sizeMixed = false;
+    fontMixed = false;
+    colorMixed = false;
+    highlightMixed = false;
+    verticalAlignMixed = false;
   }
   fontSizeSel.value = size;
-  reflectFontFamily(font);
-  superBtn.setAttribute("aria-pressed", String(sup));
-  subBtn.setAttribute("aria-pressed", String(sub));
+  fontSizeSel.placeholder = sizeMixed ? "Mixed" : "Size";
+  fontSizeSel.closest(".ctl")?.classList.toggle("is-mixed", sizeMixed);
+  reflectFontFamily(fontMixed ? "" : font);
+  fontFamilySel.closest(".ctl")?.classList.toggle("is-mixed", fontMixed);
+  textColorInput.closest(".ctl")?.classList.toggle("is-mixed", colorMixed);
+  highlightSel.value = highlightMixed ? "" : highlight;
+  highlightSel.closest(".ctl")?.classList.toggle("is-mixed", highlightMixed);
+  superBtn.setAttribute("aria-pressed", verticalAlignMixed ? "mixed" : String(sup));
+  subBtn.setAttribute("aria-pressed", verticalAlignMixed ? "mixed" : String(sub));
 
   // Reflect the current paragraph style + spacing + list kind.
   paragraphStyleSel.value = hasSel && doc ? doc.paragraphStyleAt(selection.focus.node) : "";
@@ -1756,6 +1808,10 @@ function updateToolbar() {
     if (!tableInfo?.found) toggleTableProperties(false);
     else reflectTableProperties(selection.focus.node);
   }
+  if (!paragraphPropertiesPanel.hidden) {
+    if (!hasSel) toggleParagraphProperties(false);
+    else reflectParagraphProperties();
+  }
   tableInfo?.free();
 
   // Insert-table needs just a caret to drop the new table after.
@@ -1765,6 +1821,14 @@ function updateToolbar() {
   // Ribbon: undo/redo/view controls need a document; the Table tab is contextual.
   undoBtn.disabled = !doc || !doc.canUndo;
   redoBtn.disabled = !doc || !doc.canRedo;
+  const undoLabel = doc?.undoLabel || "";
+  const redoLabel = doc?.redoLabel || "";
+  const undoName = undoLabel ? `Undo ${undoLabel}` : "Undo";
+  const redoName = redoLabel ? `Redo ${redoLabel}` : "Redo";
+  undoBtn.setAttribute("aria-label", undoName);
+  redoBtn.setAttribute("aria-label", redoName);
+  undoBtn.title = `${undoName} (⌘Z)`;
+  redoBtn.title = `${redoName} (⌘⇧Z)`;
   findBtn.disabled = !doc;
   propertiesBtn.disabled = !doc;
   pageSetupBtn.disabled = !doc;
@@ -1781,12 +1845,14 @@ function updateToolbar() {
 /** Fills the paragraph-style dropdown from the open document's styles. */
 function populateStyles() {
   const styles = doc ? doc.listStyles() : [];
-  paragraphStyleSel.replaceChildren();
-  for (const [value, label] of [["", "Style"], ...styles.map((s) => [s, s])]) {
-    const opt = document.createElement("option");
-    opt.value = value;
-    opt.textContent = label;
-    paragraphStyleSel.appendChild(opt);
+  for (const select of [paragraphStyleSel, paraPanelStyle]) {
+    select.replaceChildren();
+    for (const [value, label] of [["", "Style"], ...styles.map((s) => [s, s])]) {
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = label;
+      select.appendChild(opt);
+    }
   }
 }
 
@@ -1846,16 +1912,18 @@ function armOrApplyRun(patch, applyFn) {
     updateToolbar();
   }
 }
-onButton(superBtn, () =>
-  armOrApplyRun({ vertAlign: "super" }, () =>
-    runToolbarEdit((a, b, c, d) => doc.setVertAlign(a, b, c, d, "super")),
-  ),
-);
-onButton(subBtn, () =>
-  armOrApplyRun({ vertAlign: "sub" }, () =>
-    runToolbarEdit((a, b, c, d) => doc.setVertAlign(a, b, c, d, "sub")),
-  ),
-);
+onButton(superBtn, () => {
+  const value = superBtn.getAttribute("aria-pressed") === "true" ? "baseline" : "super";
+  armOrApplyRun({ vertAlign: value }, () =>
+    runToolbarEdit((a, b, c, d) => doc.setVertAlign(a, b, c, d, value)),
+  );
+});
+onButton(subBtn, () => {
+  const value = subBtn.getAttribute("aria-pressed") === "true" ? "baseline" : "sub";
+  armOrApplyRun({ vertAlign: value }, () =>
+    runToolbarEdit((a, b, c, d) => doc.setVertAlign(a, b, c, d, value)),
+  );
+});
 for (const [key, btn] of Object.entries(alignBtns)) {
   onButton(btn, () => runToolbarEdit((a, b, c, d) => doc.setAlignment(a, b, c, d, key)));
 }
@@ -1866,13 +1934,23 @@ onButton(numberedListBtn, () => runToolbarEdit((a, b, c, d) => doc.toggleList(a,
 
 fontSizeSel.addEventListener("change", () => {
   const pt = Number(fontSizeSel.value);
-  if (pt) {
-    armOrApplyRun({ sizeHalfPoints: pt * 2 }, () =>
-      runToolbarEdit((a, b, c, d) => doc.setFontSize(a, b, c, d, pt)),
-    );
+  const valid =
+    fontSizeSel.value.trim() !== "" &&
+    Number.isFinite(pt) &&
+    pt >= 1 &&
+    pt <= 1638 &&
+    Number.isInteger(pt * 2);
+  fontSizeSel.setCustomValidity(valid ? "" : "Enter a font size from 1 to 1638 pt in 0.5 pt steps.");
+  if (!valid) {
+    fontSizeSel.reportValidity();
+    updateToolbar();
+    return;
   }
+  armOrApplyRun({ sizeHalfPoints: Math.round(pt * 2) }, () =>
+    runToolbarEdit((a, b, c, d) => doc.setFontSize(a, b, c, d, pt)),
+  );
 });
-// ---- Toolbar popovers (spacing, paragraph options) -------------------------
+// ---- Toolbar popovers (compact anchored menus such as spacing) --------------
 // One lightweight manager: anchor a menu under its button, only one open at a
 // time, dismiss on outside-pointerdown / Escape. Each popover registers a
 // `reflect()` that syncs its controls to the caret paragraph.
@@ -1978,7 +2056,7 @@ spaceAfterInput.addEventListener("change", () =>
   applySpace(spaceAfterInput, (a, b, c, d, t) => doc.setSpaceAfter(a, b, c, d, t)),
 );
 
-// -- Paragraph options (indentation + shading + line/page-break flags) --------
+// -- Paragraph properties inspector ------------------------------------------
 /** Twips → inches string, trimming trailing zeros; "" for zero. */
 function inchStr(twip) {
   if (!twip) return "";
@@ -1998,57 +2076,174 @@ function signedInchTwips(input) {
   return Math.round(Number(raw) * TWIPS_PER_INCH);
 }
 
-function reflectParaOptsMenu() {
+function setMixedCheckbox(input, state) {
+  input.indeterminate = state === 2;
+  input.checked = state === 1;
+}
+
+function reflectParagraphProperties() {
   if (!doc || !selection) return;
-  const node = selection.focus.node;
-  // Indentation (inches).
-  const ind = doc.paragraphIndent(node);
-  const editingIndent = [indentLeftInput, indentRightInput, indentSpecialByInput, indentSpecialSel].includes(
-    document.activeElement,
-  );
-  if (!editingIndent) {
-    indentLeftInput.value = inchStr(ind.startTwip);
-    indentRightInput.value = inchStr(ind.endTwip);
-    if (ind.firstLineTwip > 0) {
+  const [startNode, startOffset, endNode, endOffset] = selEndpoints();
+  const state = doc.selectionParagraphState(startNode, startOffset, endNode, endOffset);
+  paragraphPropertiesContext.textContent =
+    state.count === 1 ? "1 paragraph" : `${state.count} paragraphs`;
+
+  paraPanelStyle.options[0].textContent = state.styleMixed ? "Mixed" : "Style";
+  if (document.activeElement !== paraPanelStyle) {
+    paraPanelStyle.value = state.styleMixed ? "" : state.style;
+  }
+  for (const button of paraPanelAlign.querySelectorAll("button[data-palign]")) {
+    button.setAttribute(
+      "aria-pressed",
+      state.alignmentMixed ? "mixed" : String(button.dataset.palign === state.alignment),
+    );
+  }
+
+  if (document.activeElement !== indentLeftInput) {
+    indentLeftInput.placeholder = state.startMixed ? "Mixed" : "";
+    indentLeftInput.value = state.startMixed ? "" : inchStr(state.startTwip);
+  }
+  if (document.activeElement !== indentRightInput) {
+    indentRightInput.placeholder = state.endMixed ? "Mixed" : "";
+    indentRightInput.value = state.endMixed ? "" : inchStr(state.endTwip);
+  }
+  if (![indentSpecialByInput, indentSpecialSel].includes(document.activeElement)) {
+    if (state.firstLineMixed || state.hangingMixed) {
+      indentSpecialSel.value = "";
+      indentSpecialByInput.value = "";
+      indentSpecialByInput.placeholder = "Mixed";
+    } else if (state.firstLineTwip > 0) {
       indentSpecialSel.value = "first";
-      indentSpecialByInput.value = inchStr(ind.firstLineTwip);
-    } else if (ind.hangingTwip > 0) {
+      indentSpecialByInput.value = inchStr(state.firstLineTwip);
+      indentSpecialByInput.placeholder = "";
+    } else if (state.hangingTwip > 0) {
       indentSpecialSel.value = "hanging";
-      indentSpecialByInput.value = inchStr(ind.hangingTwip);
+      indentSpecialByInput.value = inchStr(state.hangingTwip);
+      indentSpecialByInput.placeholder = "";
     } else {
       indentSpecialSel.value = "none";
+      indentSpecialByInput.value = "";
+      indentSpecialByInput.placeholder = "";
     }
   }
-  ind.free();
-  // Line/page-break flags.
-  const f = doc.paragraphFlags(node);
-  pgKeepNext.checked = f.keepNext;
-  pgKeepLines.checked = f.keepLines;
-  pgBreakBefore.checked = f.pageBreakBefore;
-  const rgb = doc.paragraphShadingAt(node);
-  if (rgb >= 0 && document.activeElement !== paraShade) {
-    paraShade.value = `#${rgb.toString(16).padStart(6, "0")}`;
+
+  if (document.activeElement !== paraLineSpacing) {
+    paraLineSpacing.value = state.lineMixed ? "" : String(state.linePercent || "");
   }
-  // Borders: light the preset(s) matching the active edges (top=1,bottom=2,left=4,right=8).
-  const edges = doc.paragraphBorderEdges(node);
+  if (document.activeElement !== paraSpaceBefore) {
+    paraSpaceBefore.placeholder = state.beforeMixed ? "Mixed" : "";
+    paraSpaceBefore.value =
+      state.beforeMixed || state.beforeTwip < 0
+        ? ""
+        : String(Math.round(state.beforeTwip / TWIPS_PER_POINT));
+  }
+  if (document.activeElement !== paraSpaceAfter) {
+    paraSpaceAfter.placeholder = state.afterMixed ? "Mixed" : "";
+    paraSpaceAfter.value =
+      state.afterMixed || state.afterTwip < 0
+        ? ""
+        : String(Math.round(state.afterTwip / TWIPS_PER_POINT));
+  }
+
+  setMixedCheckbox(pgKeepNext, state.keepNextState);
+  setMixedCheckbox(pgKeepLines, state.keepLinesState);
+  setMixedCheckbox(pgBreakBefore, state.pageBreakBeforeState);
+  paraShadeMixed.hidden = !state.shadingMixed;
+  paraShadeNone.setAttribute(
+    "aria-pressed",
+    state.shadingMixed ? "mixed" : String(state.shading < 0),
+  );
+  if (!state.shadingMixed && state.shading >= 0 && document.activeElement !== paraShade) {
+    paraShade.value = `#${state.shading.toString(16).padStart(6, "0")}`;
+  }
+  paraBordersMixed.hidden = !state.bordersMixed;
   const bit = { top: 1, bottom: 2, left: 4, right: 8 };
-  for (const b of paraOptsMenu.querySelectorAll(".border-btn")) {
+  for (const b of paragraphPropertiesPanel.querySelectorAll(".border-btn")) {
     const k = b.dataset.border;
-    const on = k === "box" ? edges === 0b1111 : k === "none" ? edges === 0 : (edges & bit[k]) !== 0;
-    b.setAttribute("aria-pressed", String(on));
+    const on =
+      k === "box"
+        ? state.borderEdges === 0b1111
+        : k === "none"
+          ? state.borderEdges === 0
+          : (state.borderEdges & bit[k]) !== 0;
+    b.setAttribute("aria-pressed", state.bordersMixed ? "mixed" : String(on));
+  }
+  state.free();
+}
+
+function toggleParagraphProperties(open) {
+  const show = open ?? paragraphPropertiesPanel.hidden;
+  if (show && (!doc || !selection)) return;
+  const returnFocus =
+    !show && paragraphPropertiesPanel.contains(document.activeElement);
+  paragraphPropertiesPanel.hidden = !show;
+  paraOptsBtn.setAttribute("aria-expanded", String(show));
+  if (show) {
+    toggleTableProperties(false);
+    for (const popover of popovers) closePopover(popover);
+    reflectParagraphProperties();
+    queueMicrotask(() => paraPanelStyle.focus());
+  } else if (returnFocus) {
+    paraOptsBtn.focus({ preventScroll: true });
   }
 }
-registerPopover(paraOptsBtn, paraOptsMenu, reflectParaOptsMenu);
+
+paraOptsBtn.addEventListener("click", (event) => {
+  event.stopPropagation();
+  toggleParagraphProperties();
+});
+paragraphPropertiesCloseBtn.addEventListener("click", () =>
+  toggleParagraphProperties(false),
+);
+document.addEventListener("keydown", (event) => {
+  if (
+    event.key === "Escape" &&
+    !paragraphPropertiesPanel.hidden &&
+    (document.activeElement === paraOptsBtn ||
+      paragraphPropertiesPanel.contains(document.activeElement))
+  ) {
+    event.preventDefault();
+    toggleParagraphProperties(false);
+  }
+});
 
 // Borders: presets toggle edges (box = all, none = clear) in the chosen color at a
 // 1 pt single line (8 eighth-points).
-for (const b of paraOptsMenu.querySelectorAll(".border-btn")) {
+for (const b of paragraphPropertiesPanel.querySelectorAll(".border-btn")) {
   onButton(b, () => {
     const [r, g, bl] = hexToRgb(borderColorInput.value);
     runToolbarEdit((a, x, c, d) => doc.setParagraphBorder(a, x, c, d, b.dataset.border, r, g, bl, 8));
-    reflectParaOptsMenu();
+    reflectParagraphProperties();
   });
 }
+paraPanelStyle.addEventListener("change", () =>
+  runToolbarEdit((a, b, c, d) =>
+    doc.setParagraphStyle(a, b, c, d, paraPanelStyle.value),
+  ),
+);
+for (const button of paraPanelAlign.querySelectorAll("button[data-palign]")) {
+  onButton(button, () =>
+    runToolbarEdit((a, b, c, d) =>
+      doc.setAlignment(a, b, c, d, button.dataset.palign),
+    ),
+  );
+}
+paraLineSpacing.addEventListener("change", () => {
+  if (!paraLineSpacing.value) return;
+  runToolbarEdit((a, b, c, d) =>
+    doc.setLineSpacing(a, b, c, d, Number(paraLineSpacing.value)),
+  );
+});
+paraSpaceBefore.addEventListener("change", () =>
+  applySpace(paraSpaceBefore, (a, b, c, d, twips) =>
+    doc.setSpaceBefore(a, b, c, d, twips),
+  ),
+);
+paraSpaceAfter.addEventListener("change", () =>
+  applySpace(paraSpaceAfter, (a, b, c, d, twips) =>
+    doc.setSpaceAfter(a, b, c, d, twips),
+  ),
+);
 
 // -- Table & cell formatting (a single-node edit: applies to the caret's cell) --
 /** Runs a `(node) => EditResult` edit on the caret's node, preserving the selection
@@ -2249,6 +2444,7 @@ function toggleTableProperties(open) {
   tablePropertiesPanel.hidden = !show;
   tablePropertiesBtn.setAttribute("aria-expanded", String(show));
   if (show) {
+    toggleParagraphProperties(false);
     closePopover(tablePopover);
     queueMicrotask(() =>
       tableAlign.querySelector('button[aria-pressed="true"]')?.focus(),
@@ -2842,10 +3038,10 @@ for (const [box, setter] of [
 }
 highlightSel.addEventListener("change", () => {
   const name = highlightSel.value;
+  if (!name) return;
   armOrApplyRun({ highlight: name }, () =>
     runToolbarEdit((a, b, c, d) => doc.setHighlight(a, b, c, d, name)),
   );
-  highlightSel.value = "none"; // highlight isn't reflected — keep it momentary
 });
 textColorInput.addEventListener("change", () => {
   const hex = textColorInput.value;
@@ -3018,19 +3214,26 @@ async function cut(event = null) {
   await runEdit(() => doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset));
 }
 
-async function pasteText(text) {
+async function pasteText(text, actionKind = "paste") {
   if (!doc || !selection) return;
   if (!text) return;
   const { anchor, focus } = selection;
   await runEdit(() =>
-    doc.insertPlainText(anchor.node, anchor.offset, focus.node, focus.offset, text),
+    doc.insertPlainTextAs(
+      anchor.node,
+      anchor.offset,
+      focus.node,
+      focus.offset,
+      text,
+      actionKind,
+    ),
   );
 }
 
 async function commitComposedText(text) {
   if (!text) return;
   pendingFormat = null;
-  await pasteText(text);
+  await pasteText(text, "typing");
 }
 
 /** Replaces the selection with a rich-run clipboard fragment, as one
@@ -3261,7 +3464,14 @@ document.addEventListener("keydown", async (e) => {
   if (key === "Enter") {
     e.preventDefault();
     await runEdit(() =>
-      doc.insertPlainText(anchor.node, anchor.offset, focus.node, focus.offset, "\n"),
+      doc.insertPlainTextAs(
+        anchor.node,
+        anchor.offset,
+        focus.node,
+        focus.offset,
+        "\n",
+        "paragraphBreak",
+      ),
     );
     return;
   }
