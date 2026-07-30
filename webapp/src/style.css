@@ -1579,6 +1579,10 @@ body.modal-open {
   cursor: default;
 }
 
+.link-chip-danger {
+  color: var(--error);
+}
+
 /* Border presets: a row of buttons each showing a mini box with the relevant
    edge(s) emphasized (CSS-drawn — no icon assets). */
 .border-row {

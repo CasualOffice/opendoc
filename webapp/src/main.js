@@ -158,6 +158,8 @@ const linkChip = document.getElementById("linkChip");
 const linkChipKind = document.getElementById("linkChipKind");
 const linkChipTarget = document.getElementById("linkChipTarget");
 const linkChipAction = document.getElementById("linkChipAction");
+const linkChipEdit = document.getElementById("linkChipEdit");
+const linkChipRemove = document.getElementById("linkChipRemove");
 const indentDecBtn = document.getElementById("indentDec");
 const indentIncBtn = document.getElementById("indentInc");
 const bulletListBtn = document.getElementById("bulletList");
@@ -761,8 +763,10 @@ function showLinkChipAt(page, event) {
     link.tooltip || (internal ? "Document bookmark" : "External link");
   linkChipTarget.textContent = target;
   linkChipTarget.title = target;
-  linkChipAction.textContent = internal ? (resolved ? "Jump" : "Missing") : "Open";
-  linkChipAction.disabled = !resolved;
+linkChipAction.textContent = internal ? (resolved ? "Jump" : "Missing") : "Open";
+linkChipAction.disabled = !resolved;
+linkChipEdit.hidden = internal;
+linkChipRemove.hidden = internal;
   linkChip.hidden = false;
 
   const width = linkChip.offsetWidth;
@@ -1142,6 +1146,22 @@ linkChip.addEventListener("mousedown", (event) => {
   event.preventDefault();
 });
 linkChipAction.addEventListener("click", () => activateLink(activeLink));
+linkChipEdit.addEventListener("click", () => {
+  if (!activeLink || !selection) return;
+  const value = window.prompt("Link URL or #bookmark:", activeLink.url || `#${activeLink.anchor}`);
+  if (value === null) return;
+  const target = value.trim();
+  if (!target) return;
+  runToolbarEdit(() =>
+    doc.setHyperlink(activeLink.startNode, activeLink.startOffset, activeLink.endOffset, target, activeLink.tooltip || null),
+  );
+  hideLinkChip();
+});
+linkChipRemove.addEventListener("click", () => {
+  if (!activeLink || !selection || activeLink.startNode !== activeLink.endNode) return;
+  runToolbarEdit(() => doc.removeHyperlink(activeLink.startNode, activeLink.startOffset, activeLink.endOffset));
+  hideLinkChip();
+});
 document.addEventListener("pointerdown", (event) => {
   if (!linkChip.hidden && !linkChip.contains(event.target)) hideLinkChip();
 });
