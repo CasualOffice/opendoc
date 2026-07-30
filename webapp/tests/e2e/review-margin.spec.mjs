@@ -75,6 +75,14 @@ test("comments use the dedicated sidebar and an in-column composer", async ({
 
   await card.locator(":scope > .review-margin-card-head").getByRole("button", { name: "Resolve" }).click();
   await expect(card).toHaveClass(/resolved/);
+  await expect(card).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator(".review-comment-marker")).toHaveCount(0);
+  await card.click();
+  await expect(card).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator(".review-comment-marker")).not.toHaveCount(0);
+  await card.click();
+  await expect(card).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator(".review-comment-marker")).toHaveCount(0);
   await expect(page.locator("#reviewPanel")).toBeHidden();
   expect(consoleErrors).toEqual([]);
 });
@@ -90,6 +98,7 @@ test("suggestions share the sidebar and decisions appear only on the active card
   await expect(page.locator("#reviewInlineBar")).toBeHidden();
   await page.locator("#reviewInlineMode").click();
   await expect(page.locator("#reviewInlineMode")).toHaveText("Suggesting");
+  await expect(page.locator("#suggestingBanner")).toBeVisible();
   await pastePlainText(page, "TRACKED_SIDEBAR_INSERT");
 
   const sidebar = page.locator("#reviewSidebar");
@@ -97,6 +106,8 @@ test("suggestions share the sidebar and decisions appear only on the active card
   await expect(sidebar).toBeVisible();
   await expect(card).toBeVisible();
   await expect(card).toContainText("TRACKED_SIDEBAR_INSERT");
+  await page.keyboard.press("Backspace");
+  await expect(card.locator(".review-margin-body")).toHaveText("Added “TRACKED_SIDEBAR_INSER”");
   await expect(card.getByRole("button", { name: "Accept" })).toBeHidden();
   await card.click();
   await expect(card.getByRole("button", { name: "Accept" })).toBeVisible();
@@ -109,5 +120,47 @@ test("suggestions share the sidebar and decisions appear only on the active card
   await rejected.click();
   await rejected.getByRole("button", { name: "Reject" }).click();
   await expect(rejected).toHaveCount(0);
+  expect(consoleErrors).toEqual([]);
+});
+
+test("replacement and formatting pairs are one atomic suggestion card", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await moveCaretToDocStart(page);
+  await page.keyboard.type("OLD");
+  await page.keyboard.press("Shift+ArrowLeft");
+  await page.keyboard.press("Shift+ArrowLeft");
+  await page.keyboard.press("Shift+ArrowLeft");
+  await page.locator("#reviewInlineMode").click();
+  await page.locator("#alignCenter").click();
+  await expect(page.locator("#status")).toContainText("cannot be tracked");
+  await page.keyboard.type("NEW");
+
+  const sidebar = page.locator("#reviewSidebar");
+  const replacement = sidebar.locator(".review-margin-card.review-margin-replacement");
+  await expect(replacement).toHaveCount(1);
+  await expect(replacement).toContainText("Replaced “OLD” with “NEW”");
+  await replacement.click();
+  await replacement.getByRole("button", { name: "Accept" }).click();
+  await expect(replacement).toHaveCount(0);
+
+  await moveCaretToDocStart(page);
+  await page.keyboard.press("Shift+ArrowRight");
+  await page.keyboard.press("Shift+ArrowRight");
+  await page.keyboard.press("Shift+ArrowRight");
+  await page.locator("#bold").click();
+  const formatting = sidebar.locator(".review-margin-card.review-margin-formatting");
+  await expect(formatting).toHaveCount(1);
+  await expect(formatting).toContainText("Changed formatting for “NEW”");
+  await formatting.click();
+  await formatting.getByRole("button", { name: "Reject" }).click();
+  await expect(formatting).toHaveCount(0);
+
+  await page.locator("#suggestingBanner").getByRole("button", { name: "Switch to editing" }).click();
+  await expect(page.locator("#reviewInlineMode")).toHaveText("Editing");
+  await expect(page.locator("#suggestingBanner")).toBeHidden();
   expect(consoleErrors).toEqual([]);
 });
