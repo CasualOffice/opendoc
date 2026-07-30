@@ -1096,9 +1096,10 @@ function pageFromClientPoint(clientX, clientY) {
   return best;
 }
 pagesEl.addEventListener("pointerdown", (e) => {
-  // Page gaps and outer page margins are still valid caret targets: resolve
-  // them to the nearest rendered page just like drag continuation does.
-  const page = pageFromEvent(e) ?? pageFromClientPoint(e.clientX, e.clientY);
+  // Ambiguous page-gap clicks must not jump into the nearest table or other
+  // fragment. Only a hit inside a concrete page may place the caret; drag
+  // continuation still uses nearest-page resolution once a gesture exists.
+  const page = pageFromEvent(e);
   if (page) onPointerDown(page, e);
 });
 pagesEl.addEventListener("pointermove", (e) => {
