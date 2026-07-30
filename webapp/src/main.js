@@ -179,9 +179,12 @@ const reviewComposerCancel = document.getElementById("reviewComposerCancel");
 const reviewComposerSubmit = document.getElementById("reviewComposerSubmit");
 const reviewModeButtons = [...document.querySelectorAll("[data-review-mode]")];
 const reviewAuthor = document.getElementById("reviewAuthor");
+const reviewPrevious = document.getElementById("reviewPrevious");
+const reviewNext = document.getElementById("reviewNext");
 const reviewAcceptAll = document.getElementById("reviewAcceptAll");
 const reviewRejectAll = document.getElementById("reviewRejectAll");
 let reviewMode = "editing";
+let reviewRevisionCursor = -1;
 const linkChip = document.getElementById("linkChip");
 const linkChipKind = document.getElementById("linkChipKind");
 const linkChipTarget = document.getElementById("linkChipTarget");
@@ -2874,6 +2877,8 @@ function buildReview() {
     reviewFilter === "all" || (reviewFilter === "resolved" ? comment.resolved : !comment.resolved),
   );
   const revisions = summary.revisions ?? [];
+  reviewPrevious.disabled = !revisions.some((revision) => String(revision.text || "").length);
+  reviewNext.disabled = reviewPrevious.disabled;
   if (!comments.length && !revisions.length) {
     const empty = document.createElement("div");
     empty.className = "review-empty";
@@ -2975,6 +2980,28 @@ function buildReview() {
   }
 }
 
+/** Move the caret to the next/previous tracked text change.  Revision anchors
+ * are intentionally resolved through the engine's text index rather than DOM
+ * ranges, so this also works for changes inside tables and content controls. */
+function navigateReviewRevision(direction) {
+  if (!doc) return;
+  const revisions = JSON.parse(doc.reviewSummary()).revisions ?? [];
+  const usable = revisions.filter((revision) => String(revision.text || "").length);
+  if (!usable.length) return;
+  reviewRevisionCursor = (reviewRevisionCursor + (direction > 0 ? 1 : -1) + usable.length) % usable.length;
+  const revision = usable[reviewRevisionCursor];
+  const start = selection?.focus || doc.firstPosition();
+  const match = doc.findText(String(revision.text), start.node, start.offset, direction > 0, false);
+  if (start.free) start.free();
+  if (!match.found) {
+    match.free();
+    return;
+  }
+  navigateToAnchor(match.startNode, match.startOffset);
+  match.free();
+  buildReview();
+}
+
 function toggleReview(open) {
   const show = open ?? reviewPanel.hidden;
   reviewPanel.hidden = !show;
@@ -2990,6 +3017,8 @@ railReview.addEventListener("click", () => toggleReview());
 reviewClose.addEventListener("click", () => toggleReview(false));
 reviewAcceptAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(true)); buildReview(); } });
 reviewRejectAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(false)); buildReview(); } });
+reviewPrevious.addEventListener("click", () => navigateReviewRevision(-1));
+reviewNext.addEventListener("click", () => navigateReviewRevision(1));
 function openReviewComposer(parent = null) {
   if (!doc || (!parent && (!hasRange() || !selection))) return;
   toggleReview(true);
