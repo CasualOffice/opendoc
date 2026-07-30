@@ -551,6 +551,11 @@
           <span id="reviewTitle" class="panel-title">Review</span>
           <button id="reviewClose" type="button" class="panel-close" title="Close review" aria-label="Close review"><span class="ms" aria-hidden="true">close</span></button>
         </div>
+        <div class="review-filters" role="group" aria-label="Review filter">
+          <button type="button" class="review-filter" data-review-filter="open" aria-pressed="true">Open</button>
+          <button type="button" class="review-filter" data-review-filter="resolved" aria-pressed="false">Resolved</button>
+          <button type="button" class="review-filter" data-review-filter="all" aria-pressed="false">All</button>
+        </div>
         <div id="reviewBody" class="panel-body review-list"></div>
       </aside>
 

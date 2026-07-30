@@ -2243,6 +2243,9 @@ body.modal-open {
 }
 
 .review-list { display: grid; gap: 10px; align-content: start; }
+.review-filters { display: flex; gap: 4px; padding: 8px 10px 0; }
+.review-filter { border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; background: transparent; color: var(--muted); font: inherit; font-size: 11px; cursor: pointer; }
+.review-filter[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-strong); }
 .review-empty, .review-readonly-note { color: var(--muted); font-size: 12px; line-height: 1.5; }
 .review-card { border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; background: var(--surface); }
 .review-card strong, .review-card small { display: block; }
