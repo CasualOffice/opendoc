@@ -2214,6 +2214,112 @@ impl WasmDocument {
         .map_err(to_js)
     }
 
+    /// Distributes the current preferred width evenly across every regular
+    /// table column, preserving the total width as one undoable resize.
+    #[wasm_bindgen(js_name = distributeTableColumns)]
+    pub fn distribute_table_columns(&mut self, node: &str) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let (table, _) = locate_table_cell(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        let mut replacement = find_table(&self.document, table)
+            .ok_or_else(|| to_js("table not found".into()))?
+            .clone();
+        if !table_is_regular(&replacement) {
+            return Err(to_js("column distribution requires a regular table".into()));
+        }
+        let columns = table_column_count(&replacement);
+        if columns < 2 {
+            return Err(to_js(
+                "column distribution requires at least two columns".into(),
+            ));
+        }
+        let widths = replacement
+            .grid
+            .iter()
+            .take(columns)
+            .map(|column| column.width_twips)
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| to_js("column distribution requires explicit column widths".into()))?;
+        let total = widths.iter().map(|width| i64::from(*width)).sum::<i64>();
+        let distributed = distribute_twips(total, columns)?;
+        replacement
+            .grid
+            .resize(columns, GridColumn { width_twips: None });
+        for (column, width) in distributed.iter().enumerate() {
+            replacement.grid[column].width_twips = Some(*width);
+            for row in &mut replacement.rows {
+                row.cells[column].properties.width_twips = Some(*width);
+            }
+        }
+        self.apply_action_as(
+            vec![Operation::ReplaceTable {
+                table,
+                replacement: Box::new(replacement),
+            }],
+            HistoryKind::TableResize,
+        )
+        .map_err(to_js)
+    }
+
+    /// Distributes explicit row heights evenly across every regular table row.
+    /// Auto-height rows are refused because assigning an arbitrary height can
+    /// clip content without a deterministic layout measurement.
+    #[wasm_bindgen(js_name = distributeTableRows)]
+    pub fn distribute_table_rows(&mut self, node: &str) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let (table, _, _) = locate_table_row(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        let mut replacement = find_table(&self.document, table)
+            .ok_or_else(|| to_js("table not found".into()))?
+            .clone();
+        if !table_is_regular(&replacement) {
+            return Err(to_js("row distribution requires a regular table".into()));
+        }
+        let rows = replacement.rows.len();
+        if rows < 2 {
+            return Err(to_js("row distribution requires at least two rows".into()));
+        }
+        let rule = replacement.rows[0]
+            .properties
+            .height
+            .rule
+            .filter(|rule| matches!(rule, HeightRule::AtLeast | HeightRule::Exact))
+            .ok_or_else(|| to_js("row distribution requires explicit row heights".into()))?;
+        let heights = replacement
+            .rows
+            .iter()
+            .map(|row| {
+                let height = row.properties.height;
+                if height.rule != Some(rule) {
+                    return Err(to_js(
+                        "all rows must use the same explicit height rule".into(),
+                    ));
+                }
+                height
+                    .value_twips
+                    .filter(|value| *value > 0)
+                    .map(i64::from)
+                    .ok_or_else(|| to_js("row distribution requires explicit row heights".into()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let total = heights.iter().sum::<i64>();
+        let distributed = distribute_twips(total, rows)?;
+        for (row, height) in replacement.rows.iter_mut().zip(distributed) {
+            row.properties.height = RowHeight {
+                value_twips: Some(height as u32),
+                rule: Some(rule),
+            };
+        }
+        self.apply_action_as(
+            vec![Operation::ReplaceTable {
+                table,
+                replacement: Box::new(replacement),
+            }],
+            HistoryKind::TableResize,
+        )
+        .map_err(to_js)
+    }
+
     /// Sets or clears the current row's repeat-header flag.
     #[wasm_bindgen(js_name = setTableHeaderRow)]
     pub fn set_table_header_row(
@@ -6175,6 +6281,22 @@ fn required_twips(label: &str, value: i32) -> Result<i32, JsValue> {
     }
 }
 
+fn distribute_twips(total: i64, parts: usize) -> Result<Vec<i32>, JsValue> {
+    if parts == 0 || total < parts as i64 || total > i64::from(i32::MAX) {
+        return Err(to_js(
+            "table dimensions are outside the supported range".into(),
+        ));
+    }
+    let base = total / parts as i64;
+    let remainder = (total % parts as i64) as usize;
+    (0..parts)
+        .map(|index| {
+            i32::try_from(base + i64::from((index < remainder) as u8))
+                .map_err(|_| to_js("table dimensions are outside the supported range".into()))
+        })
+        .collect()
+}
+
 fn table_is_regular(table: &Table) -> bool {
     let cols = table_column_count(table);
     if cols == 0 {
@@ -8412,6 +8534,60 @@ mod tests {
         assert_eq!(cols(&d), before_cols - 1);
         d.undo().expect("undo delete column");
         assert_eq!(cols(&d), before_cols);
+    }
+
+    #[test]
+    fn table_distribution_preserves_totals_and_is_undoable() {
+        use casual_doc_edit::{find_table, locate_table_cell};
+
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let body = d
+            .first_body_paragraph()
+            .expect("body paragraph")
+            .to_string();
+        let inserted = d.insert_table(&body, 2, 3).expect("insert table");
+        let anchor = inserted.node();
+        let (table_id, _) = locate_table_cell(
+            &d.document,
+            NodeId::from_str(&anchor).expect("table anchor"),
+        )
+        .expect("table cell");
+        let widths = |d: &WasmDocument| {
+            find_table(&d.document, table_id)
+                .unwrap()
+                .grid
+                .iter()
+                .map(|column| column.width_twips.unwrap())
+                .collect::<Vec<_>>()
+        };
+        let total = widths(&d).iter().sum::<i32>();
+        d.set_table_row_height(&anchor, 600, "exact")
+            .expect("first row height");
+        let second = find_table(&d.document, table_id).unwrap().rows[1].cells[0]
+            .blocks
+            .first()
+            .and_then(|block| match block {
+                BlockNode::Paragraph(paragraph) => Some(paragraph.id),
+                _ => None,
+            })
+            .expect("second row paragraph")
+            .to_string();
+        d.set_table_row_height(&second, 1200, "exact")
+            .expect("second row height");
+        d.distribute_table_columns(&anchor)
+            .expect("distribute columns");
+        assert_eq!(widths(&d).iter().sum::<i32>(), total);
+        assert!(widths(&d).windows(2).all(|pair| pair[0] == pair[1]));
+        d.undo().expect("undo column distribution");
+        assert_eq!(widths(&d).iter().sum::<i32>(), total);
+
+        d.distribute_table_rows(&anchor).expect("distribute rows");
+        let table = find_table(&d.document, table_id).unwrap();
+        assert_eq!(
+            table.rows[0].properties.height.value_twips,
+            table.rows[1].properties.height.value_twips
+        );
+        d.undo().expect("undo row distribution");
     }
 
     /// Tab-style cell navigation moves row-major through the current innermost

@@ -1802,6 +1802,13 @@ function updateToolbar() {
   )) {
     control.disabled = !inTable || !tableInfo?.regular;
   }
+  for (const control of tableRibbon.querySelectorAll("[data-table-distribute]")) {
+    control.disabled =
+      !inTable ||
+      !tableInfo?.regular ||
+      (control.dataset.tableDistribute === "rows" &&
+        !["exact", "atLeast"].includes(tableInfo.rowHeightRule));
+  }
   mergeCellsBtn.disabled = !inTable || !tableSelection;
   tableContext.textContent = tableInfo?.found ? tableContextLabel(tableInfo) : "";
   if (!tablePropertiesPanel.hidden) {
@@ -2312,6 +2319,19 @@ for (const b of tableRibbon.querySelectorAll("[data-table-action]")) {
     if (!run) return;
     tableSelection = null;
     runEdit(() => run(selection.focus.node));
+  });
+}
+
+for (const b of tableRibbon.querySelectorAll("[data-table-distribute]")) {
+  onButton(b, () => {
+    if (!selection || !doc) return;
+    const command = b.dataset.tableDistribute;
+    tableSelection = null;
+    runEdit(() =>
+      command === "rows"
+        ? doc.distributeTableRows(selection.focus.node)
+        : doc.distributeTableColumns(selection.focus.node),
+    );
   });
 }
 

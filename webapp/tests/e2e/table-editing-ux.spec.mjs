@@ -48,6 +48,10 @@ test("the contextual Table ribbon exposes complete core commands and bounded for
   ]) {
     await expect(ribbon.locator(`[data-table-action="${action}"]`)).toBeEnabled();
   }
+  await expect(ribbon.locator('[data-table-distribute="columns"]')).toBeEnabled();
+  await expect(ribbon.locator('[data-table-distribute="rows"]')).toBeDisabled();
+  await ribbon.locator('[data-table-distribute="columns"]').click();
+  await expect(ribbon.locator('[data-table-distribute="columns"]')).toBeEnabled();
   await expect(page.locator("#splitCellBtn")).toBeEnabled();
   await expect(page.locator("#mergeCellsBtn")).toBeDisabled();
   await expect(page.locator("#tableContext")).toContainText("2×2 table");
