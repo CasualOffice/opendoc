@@ -180,19 +180,18 @@ impl<'a> LayoutSnapshot<'a> {
                 .unwrap_or(band[0]);
             (chosen, true)
         } else {
-            // Above/below all content: prefer the vertically nearest line *within the
-            // clicked column* (so clicking empty space under a short cell stays in
-            // that column), else the globally nearest.
+            // Above/below all content: choose the *geometrically* nearest line.
+            // A previous column-first scan could route a click in whitespace to a
+            // wide table cell even when a body paragraph was visibly closer. Keep
+            // column routing as a tie-breaker so blank space between two columns
+            // remains stable without making tables capture nearby clicks.
             let nearest = page_lines
                 .iter()
                 .copied()
-                .filter(|lb| lb.cell_contains_x(x) && lb.cell.is_some())
-                .min_by_key(|lb| vertical_distance(lb, y))
-                .or_else(|| {
-                    page_lines
-                        .iter()
-                        .copied()
-                        .min_by_key(|lb| vertical_distance(lb, y))
+                .min_by(|a, b| {
+                    vertical_distance(a, y)
+                        .cmp(&vertical_distance(b, y))
+                        .then_with(|| b.cell_contains_x(x).cmp(&a.cell_contains_x(x)))
                 })
                 .unwrap_or(first);
             (nearest, false)
@@ -923,6 +922,56 @@ mod tests {
             node(200),
             "click in column 2 → column 2 cell"
         );
+    }
+
+    #[test]
+    fn whitespace_between_table_and_body_prefers_the_closer_line() {
+        use crate::block::{
+            CellBorders, CellContentMargins, CellFragment, CellVAlign, CellVerticalMerge,
+        };
+        let table_cell = CellFragment {
+            id: node(11),
+            grid_span: 1,
+            x: Twip::ZERO,
+            width: Twip(3000),
+            blocks: vec![ltr_para(12, &[1])],
+            margins: CellContentMargins::default(),
+            vertical_alignment: CellVAlign::Top,
+            vertical_merge: CellVerticalMerge::None,
+            borders: CellBorders::default(),
+            shading: None,
+        };
+        let table = BlockFragment::TableRow {
+            id: node(10),
+            table: node(20),
+            cells: vec![table_cell],
+            height: Twip(500),
+            can_split: false,
+            header: false,
+            merge_keep_next: false,
+            clip: false,
+        };
+        let paginated = layout(&[table, ltr_para(30, &[1])]);
+        let snap = LayoutSnapshot::new(&paginated);
+        let lines = snap.line_boxes();
+        let table_line = lines
+            .iter()
+            .find(|lb| lb.line.range.start.node == node(12))
+            .expect("table line");
+        let body_line = lines
+            .iter()
+            .find(|lb| lb.line.range.start.node == node(30))
+            .expect("body line");
+        assert!(body_line.top.raw() > table_line.bottom());
+
+        // The x coordinate is inside the table's wide cell, but the y coordinate
+        // is in the whitespace between the blocks and closer to the body line.
+        let y = Twip((table_line.bottom() + body_line.top.raw()) / 2);
+        let hit = snap
+            .hit_test(1, Point::new(Twip(MARGIN + 500), y))
+            .expect("whitespace still resolves");
+        assert_eq!(hit.pos.node, node(30));
+        assert_eq!(hit.zone, HitZone::Outside);
     }
 
     #[test]
