@@ -2883,7 +2883,7 @@ function buildReview() {
   }
   const note = document.createElement("p");
   note.className = "review-readonly-note";
-  note.textContent = "Review actions are undoable. Suggestions currently support caret insertions; selection replacement is still direct-edit guarded.";
+  note.textContent = "Review actions are undoable. Suggestions support caret typing, replacement, deletion, and bulk decisions.";
   reviewBody.appendChild(note);
   const appendCard = (className, title, meta, body, anchor = null) => {
     const card = document.createElement("article");
