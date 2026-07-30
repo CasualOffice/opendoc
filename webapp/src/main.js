@@ -202,6 +202,7 @@ let reviewSidebarPreference = null;
 let reviewComposerState = null;
 let reviewDeleteConfirmId = null;
 let syncingReviewScroll = false;
+let suppressReviewSidebarScroll = false;
 let reviewMarginFrame = 0;
 
 function updateReviewInlineBar() {
@@ -314,6 +315,12 @@ function scheduleReviewMarginRender() {
 }
 
 function renderReviewMarginItems() {
+  // Replacing the sidebar DOM can reset its scrollTop and dispatch a delayed
+  // scroll event. Do not turn that programmatic reset into canvas navigation.
+  suppressReviewSidebarScroll = true;
+  requestAnimationFrame(() => {
+    suppressReviewSidebarScroll = false;
+  });
   reviewSidebarBody.replaceChildren();
   if (!doc || !pages.length) {
     reviewSidebar.hidden = true;
@@ -340,7 +347,8 @@ function renderReviewMarginItems() {
       continue;
     }
     const groupId = String(revision.groupId || "");
-    if (groupId.startsWith("opendoc-")) {
+    const groupKind = String(revision.groupKind || "");
+    if (groupId && ["typing", "replacement", "formatting"].includes(groupKind)) {
       const group = groupedRevisions.get(groupId) ?? [];
       group.push(revision);
       groupedRevisions.set(groupId, group);
@@ -357,9 +365,10 @@ function renderReviewMarginItems() {
     }
     const deletions = revisions.filter((revision) => revision.kind === "deletion");
     const insertions = revisions.filter((revision) => revision.kind === "insertion");
-    const kind = groupId.startsWith("opendoc-format:")
+    const groupKind = String(revisions[0]?.groupKind || "");
+    const kind = groupKind === "formatting"
       ? "formatting"
-      : groupId.startsWith("opendoc-replace:") || deletions.length > 0
+      : groupKind === "replacement" || deletions.length > 0
         ? "replacement"
         : "insertion";
     revisionItems.push({
@@ -767,7 +776,12 @@ viewportEl.addEventListener("scroll", () => {
   scheduleReviewMarginRender();
 }, { passive: true });
 reviewSidebar.addEventListener("scroll", () => {
-  if (syncingReviewScroll) return;
+  if (
+    syncingReviewScroll
+    || suppressReviewSidebarScroll
+    || reviewSidebar.hidden
+    || !reviewSidebarBody.querySelector(".review-margin-card")
+  ) return;
   syncingReviewScroll = true;
   viewportEl.scrollTop = reviewSidebar.scrollTop;
   syncingReviewScroll = false;

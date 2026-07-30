@@ -129,8 +129,9 @@ happy-path browser workflow but are not sufficient for a production-complete
 tracked-change claim. The following gates are required before comments and
 suggestions can graduate from a partial capability:
 
-- validate exported tracked-change attributes against the WordprocessingML
-  schema, including numeric `w:id` values;
+- validate all exported tracked-change attributes against the WordprocessingML
+  schema; authored inline revision `w:id` lexical form already has a numeric
+  regression gate;
 - open and save editor-authored comments and revisions through at least Word
   and LibreOffice compatibility oracles, then verify semantic fixed points;
 - exercise insertion, deletion, replacement, formatting, move, comment-thread,
@@ -141,8 +142,9 @@ suggestions can graduate from a partial capability:
   hit-testing, copy, search, statistics, outline, and accessibility text;
 - enforce the Editing/Suggesting/Viewing command matrix for every public and UI
   mutation entry point;
-- benchmark retained sidebar behavior at 100 and 1,000 review items with bounded
-  history growth during suggestion typing;
+- benchmark retained sidebar behavior at 100 and 1,000 review items; suggestion
+  typing history is already coalesced and bounded, while scale/latency gates
+  remain pending;
 - run keyboard, focus-retention, screen-reader, high-contrast, narrow-viewport,
   and touch review checks.
 
@@ -200,7 +202,7 @@ parity or complete tracked-change support.
 | Corpus tests | Package, semantic, round-trip, and generated rendering corpus implemented | Generated package/security/notes/visual fixtures plus real-producer round-trip fixtures run in workspace tests; repository policy rejects missing, unmanifested, or checksum-mismatched DOCX files. |
 | Visual regression | Initial deterministic gate implemented | Rights-safe five-page containment DOCX; collision invariants and raw RGBA hash use the bundled Roboto set at a pinned page size and 96 DPI. |
 | Benchmarking | Initial harness implemented | Package/model smoke is required; named-environment comparison is manual until a controlled runner is provisioned. |
-| Comments and suggestions integrity | Pending | Doc 81 defines the missing schema, real-consumer, projection, command-matrix, mixed-editing, scale, history, accessibility, and responsive gates. Tracked by P1G-REVIEW-035 through P1G-REVIEW-039. |
+| Comments and suggestions integrity | Partial | P1G-REVIEW-035 supplies numeric authored inline revision ids, scoped atomic review inverses, coalesced/bounded suggestion history, and fail-closed editor-group decisions. Doc 81 retains the pending full-schema, real-consumer, projection, command-matrix, mixed-editing, scale, accessibility, and responsive gates in P1G-REVIEW-036 through P1G-REVIEW-039. |
 | Release artifacts | Not started | Define before beta. |
 
 ## Failure Policy

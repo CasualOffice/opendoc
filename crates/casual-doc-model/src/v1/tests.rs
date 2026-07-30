@@ -2593,6 +2593,7 @@ fn wrap_in_revisions(depth: u32, counter: &mut u64) -> InlineNode {
         author: None,
         date: None,
         revision_id: None,
+        editor_group: None,
         inlines: vec![inner],
     })
 }
@@ -2605,11 +2606,19 @@ fn insertion_revision_round_trips_with_metadata() {
         author: Some("Bob".to_owned()),
         date: Some("2026-07-25T00:00:00Z".to_owned()),
         revision_id: Some("42".to_owned()),
+        editor_group: Some(RevisionGroup {
+            id: tid(99),
+            kind: RevisionGroupKind::Replacement,
+        }),
         inlines: vec![run_inline(tid(11), "added")],
     });
     let document = table_document(vec![revision_paragraph(tid(1), revision)]).unwrap();
-    let reloaded =
-        Document::from_json(&document.to_json().unwrap(), SnapshotLimits::default()).unwrap();
+    let json = document.to_json().unwrap();
+    let json_text = std::str::from_utf8(&json).unwrap();
+    assert!(json_text.contains("\"revisionId\":\"42\""));
+    assert!(json_text.contains("\"editorGroup\""));
+    assert!(!json_text.contains("opendoc-"));
+    let reloaded = Document::from_json(&json, SnapshotLimits::default()).unwrap();
     assert_eq!(document, reloaded);
 }
 
@@ -2621,6 +2630,7 @@ fn deletion_revision_preserves_deleted_text() {
         author: None,
         date: None,
         revision_id: None,
+        editor_group: None,
         inlines: vec![run_inline(tid(11), "gone")],
     });
     let document = table_document(vec![revision_paragraph(tid(1), revision)]).unwrap();
@@ -2648,6 +2658,7 @@ fn empty_revision_is_rejected() {
         author: None,
         date: None,
         revision_id: None,
+        editor_group: None,
         inlines: Vec::new(),
     });
     assert!(matches!(
@@ -2664,6 +2675,7 @@ fn nested_insertion_around_deletion_is_accepted() {
         author: None,
         date: None,
         revision_id: None,
+        editor_group: None,
         inlines: vec![run_inline(tid(13), "x")],
     });
     let outer = InlineNode::Revision(Revision {
@@ -2672,6 +2684,7 @@ fn nested_insertion_around_deletion_is_accepted() {
         author: None,
         date: None,
         revision_id: None,
+        editor_group: None,
         inlines: vec![inner],
     });
     assert!(table_document(vec![revision_paragraph(tid(1), outer)]).is_ok());
@@ -2702,6 +2715,7 @@ fn oversized_revision_date_is_rejected() {
         author: None,
         date: Some("0".repeat(65)),
         revision_id: None,
+        editor_group: None,
         inlines: vec![run_inline(tid(11), "t")],
     });
     assert!(matches!(
@@ -2722,6 +2736,7 @@ fn oversized_revision_id_is_rejected() {
         author: None,
         date: None,
         revision_id: Some("9".repeat(65)),
+        editor_group: None,
         inlines: vec![run_inline(tid(11), "t")],
     });
     assert!(matches!(
@@ -2742,6 +2757,7 @@ fn long_revision_author_within_bound_is_accepted() {
         author: Some("a".repeat(200)),
         date: None,
         revision_id: None,
+        editor_group: None,
         inlines: vec![run_inline(tid(11), "t")],
     });
     assert!(table_document(vec![revision_paragraph(tid(1), revision)]).is_ok());
@@ -2766,6 +2782,7 @@ fn revision_may_wrap_a_hyperlink_at_top_level() {
         author: None,
         date: None,
         revision_id: None,
+        editor_group: None,
         inlines: vec![link],
     });
     assert!(table_document(vec![revision_paragraph(tid(1), revision)]).is_ok());
@@ -2779,6 +2796,7 @@ fn revision_child_id_duplicating_the_wrapper_is_rejected() {
         author: None,
         date: None,
         revision_id: None,
+        editor_group: None,
         inlines: vec![run_inline(tid(10), "dup")],
     });
     assert!(matches!(

@@ -38,6 +38,31 @@ async function expectSidebarBesideCanvas(page) {
   expect(geometry.sidebarWidth).toBeGreaterThanOrEqual(300);
 }
 
+test("opening an empty comments sidebar preserves document scroll", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await expect(page.locator("#reviewSidebar")).toBeHidden();
+  const before = await page.locator("#viewport").evaluate((viewport) => {
+    viewport.scrollTop = Math.min(700, viewport.scrollHeight - viewport.clientHeight);
+    return viewport.scrollTop;
+  });
+  expect(before).toBeGreaterThan(0);
+
+  await page.locator("#railReview").click();
+  await expect(page.locator("#reviewSidebar")).toBeVisible();
+  await expect(page.locator(".review-sidebar-empty")).toContainText(
+    "No comments or suggestions yet",
+  );
+  await page.evaluate(() => new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  }));
+  const after = await page.locator("#viewport").evaluate((viewport) => viewport.scrollTop);
+  expect(Math.abs(after - before)).toBeLessThanOrEqual(1);
+  expect(consoleErrors).toEqual([]);
+});
+
 test("comments use the dedicated sidebar and an in-column composer", async ({
   page,
   consoleErrors,
