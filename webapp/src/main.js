@@ -537,8 +537,11 @@ function scaleOf(page) {
 function pointToTwip(page, event) {
   const { rect, sx, sy } = scaleOf(page);
   return {
-    x: Math.round((event.clientX - rect.left) / sx),
-    y: Math.round((event.clientY - rect.top) / sy),
+    // Clamp edge/gap clicks into the page box. The layout hit tester then
+    // resolves the nearest caret on that page instead of returning no hit for
+    // a point just outside the rasterized sheet.
+    x: Math.max(0, Math.min(page.wTwip, Math.round((event.clientX - rect.left) / sx))),
+    y: Math.max(0, Math.min(page.hTwip, Math.round((event.clientY - rect.top) / sy))),
   };
 }
 
@@ -1093,7 +1096,9 @@ function pageFromClientPoint(clientX, clientY) {
   return best;
 }
 pagesEl.addEventListener("pointerdown", (e) => {
-  const page = pageFromEvent(e);
+  // Page gaps and outer page margins are still valid caret targets: resolve
+  // them to the nearest rendered page just like drag continuation does.
+  const page = pageFromEvent(e) ?? pageFromClientPoint(e.clientX, e.clientY);
   if (page) onPointerDown(page, e);
 });
 pagesEl.addEventListener("pointermove", (e) => {
