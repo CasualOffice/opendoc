@@ -189,6 +189,8 @@ const reviewInlinePrevious = document.getElementById("reviewInlinePrevious");
 const reviewInlineNext = document.getElementById("reviewInlineNext");
 const reviewInlineAcceptAll = document.getElementById("reviewInlineAcceptAll");
 const reviewInlineRejectAll = document.getElementById("reviewInlineRejectAll");
+const suggestingBanner = document.getElementById("suggestingBanner");
+const suggestingBannerEdit = document.getElementById("suggestingBannerEdit");
 const reviewSidebar = document.getElementById("reviewSidebar");
 const reviewSidebarBody = document.getElementById("reviewSidebarBody");
 let reviewMode = "editing";
@@ -218,6 +220,7 @@ function updateReviewInlineBar() {
 
 function setReviewMode(mode) {
   reviewMode = mode === "suggesting" ? "suggesting" : "editing";
+  suggestingBanner.hidden = reviewMode !== "suggesting";
   for (const button of reviewModeButtons) {
     button.setAttribute("aria-pressed", String(button.dataset.reviewMode === reviewMode));
   }
@@ -325,7 +328,50 @@ function renderReviewMarginItems() {
     const rect = reviewRangeClientRect(comment.anchor.node, Number(comment.anchor.start) || 0, comment.anchor.node, Number(comment.anchor.end) || 0);
     if (rect) items.push({ type: "comment", data: comment, rect });
   }
+  const revisionItems = [];
+  const groupedRevisions = new Map();
   for (const revision of summary.revisions ?? []) {
+    const groupId = String(revision.groupId || "");
+    if (groupId.startsWith("opendoc-")) {
+      const group = groupedRevisions.get(groupId) ?? [];
+      group.push(revision);
+      groupedRevisions.set(groupId, group);
+    } else {
+      revisionItems.push(revision);
+    }
+  }
+  for (const [groupId, revisions] of groupedRevisions) {
+    const ranges = revisions.map(revisionRange).filter(Boolean);
+    const node = ranges[0]?.startNode;
+    if (!node || ranges.some((range) => range.startNode !== node || range.endNode !== node)) {
+      revisionItems.push(...revisions);
+      continue;
+    }
+    const deletions = revisions.filter((revision) => revision.kind === "deletion");
+    const insertions = revisions.filter((revision) => revision.kind === "insertion");
+    const kind = groupId.startsWith("opendoc-format:")
+      ? "formatting"
+      : groupId.startsWith("opendoc-replace:") || deletions.length > 0
+        ? "replacement"
+        : "insertion";
+    revisionItems.push({
+      id: groupId,
+      groupId,
+      kind,
+      author: revisions.find((revision) => revision.author)?.author,
+      date: revisions.find((revision) => revision.date)?.date,
+      text: (kind === "insertion" ? insertions : deletions).map((revision) => String(revision.text || "")).join(""),
+      oldText: deletions.map((revision) => String(revision.text || "")).join(""),
+      newText: insertions.map((revision) => String(revision.text || "")).join(""),
+      anchor: {
+        node,
+        start: Math.min(...ranges.map((range) => range.startOffset)),
+        end: Math.max(...ranges.map((range) => range.endOffset)),
+      },
+      revisions,
+    });
+  }
+  for (const revision of revisionItems) {
     const range = revisionRange(revision);
     if (!range) continue;
     const rect = reviewRangeClientRect(range.startNode, range.startOffset, range.endNode, range.endOffset);
@@ -436,7 +482,20 @@ function renderReviewMarginItems() {
     if (expanded && item.type === "comment") {
       header.append(
         reviewIconButton(item.data.resolved ? "undo" : "check", item.data.resolved ? "Reopen" : "Resolve", async () => {
-          await runEdit(() => doc.setCommentResolved(item.data.id, !item.data.resolved));
+          const resolving = !item.data.resolved;
+          await runEdit(() => doc.setCommentResolved(item.data.id, resolving));
+          if (resolving) {
+            activeReviewItemId = null;
+            activeReviewCommentId = null;
+            reviewDeleteConfirmId = null;
+            if (item.data.anchor?.node) {
+              const end = Number(item.data.anchor.end) || Number(item.data.anchor.start) || 0;
+              selection = {
+                anchor: { node: item.data.anchor.node, offset: end },
+                focus: { node: item.data.anchor.node, offset: end },
+              };
+            }
+          }
           drawSelection();
         }),
         reviewIconButton("more_vert", "More options", () => {
@@ -448,12 +507,18 @@ function renderReviewMarginItems() {
     const body = document.createElement("p");
     body.className = "review-margin-body";
     if (item.type === "revision") {
-      const verb = item.data.kind === "deletion"
-        ? "Deleted"
-        : item.data.kind === "insertion"
-          ? "Added"
-          : "Changed";
-      body.textContent = `${verb} “${String(item.data.text || "")}”`;
+      if (item.data.kind === "replacement") {
+        body.textContent = `Replaced “${item.data.oldText}” with “${item.data.newText}”`;
+      } else if (item.data.kind === "formatting") {
+        body.textContent = `Changed formatting for “${item.data.newText || item.data.oldText}”`;
+      } else {
+        const verb = item.data.kind === "deletion"
+          ? "Deleted"
+          : item.data.kind === "insertion"
+            ? "Added"
+            : "Changed";
+        body.textContent = `${verb} “${String(item.data.text || "")}”`;
+      }
     } else {
       body.textContent = String(item.data.text || "");
     }
@@ -480,26 +545,44 @@ function renderReviewMarginItems() {
     } else {
       actions.append(
         reviewCardButton("Accept", async () => {
-          await runEdit(() => doc.decideRevision(item.data.id, true));
+          await runEdit(() => item.data.groupId
+            ? doc.decideRevisionGroup(item.data.groupId, true)
+            : doc.decideRevision(item.data.id, true));
           drawSelection();
           focusEditorSurface();
         }),
         reviewCardButton("Reject", async () => {
-          await runEdit(() => doc.decideRevision(item.data.id, false));
+          await runEdit(() => item.data.groupId
+            ? doc.decideRevisionGroup(item.data.groupId, false)
+            : doc.decideRevision(item.data.id, false));
           drawSelection();
           focusEditorSurface();
         }, true),
       );
     }
     const focus = () => {
-      activeReviewItemId = activeReviewItemId === itemId ? null : itemId;
+      const expanding = activeReviewItemId !== itemId;
+      activeReviewItemId = expanding ? itemId : null;
       reviewDeleteConfirmId = null;
-      if (item.type === "comment") focusReviewComment(item.data, false);
-      else focusReviewRevision(item.data, false);
+      if (item.type === "comment") {
+        if (expanding) {
+          focusReviewComment(item.data, false);
+        } else if (item.data.resolved && item.data.anchor?.node) {
+          activeReviewCommentId = null;
+          const end = Number(item.data.anchor.end) || Number(item.data.anchor.start) || 0;
+          selection = {
+            anchor: { node: item.data.anchor.node, offset: end },
+            focus: { node: item.data.anchor.node, offset: end },
+          };
+          drawSelection();
+        }
+      } else {
+        focusReviewRevision(item.data, false);
+      }
       scheduleReviewMarginRender();
     };
     card.addEventListener("click", (event) => {
-      if (event.target.closest("button, textarea")) return;
+      if (event.target.closest("button, textarea, input, select")) return;
       focus();
     });
     card.addEventListener("keydown", (event) => {
@@ -510,7 +593,8 @@ function renderReviewMarginItems() {
     });
     card.append(header, body);
     if (item.type === "comment") {
-      const replies = comments.filter((comment) => comment.parentParaId === item.data.id);
+      const replies = comments.filter((comment) =>
+        comment.parentParaId === item.data.paraId || comment.parentParaId === item.data.id);
       if (replies.length) {
         const thread = document.createElement("div");
         thread.className = "review-margin-replies";
@@ -598,6 +682,13 @@ reviewSidebar.addEventListener("scroll", () => {
   viewportEl.scrollTop = reviewSidebar.scrollTop;
   syncingReviewScroll = false;
 }, { passive: true });
+reviewSidebarBody.addEventListener("click", (event) => {
+  if (event.target !== reviewSidebarBody || !activeReviewItemId) return;
+  activeReviewItemId = null;
+  activeReviewCommentId = null;
+  reviewDeleteConfirmId = null;
+  drawSelection();
+});
 window.addEventListener("resize", scheduleReviewMarginRender);
 const linkChip = document.getElementById("linkChip");
 const linkChipKind = document.getElementById("linkChipKind");
@@ -800,6 +891,7 @@ async function openBytes(bytes, name) {
     selection = null;
     tableSelection = null;
     reviewMode = "editing";
+    suggestingBanner.hidden = true;
     reviewSidebarPreference = null;
     activeReviewCommentId = null;
     activeReviewItemId = null;
@@ -1018,7 +1110,8 @@ function paintReviewMarkers() {
   let summary;
   try { summary = JSON.parse(doc.reviewSummary()); } catch { return; }
   for (const comment of summary.comments ?? []) {
-    if (comment.resolved || !comment.anchor?.node) continue;
+    const explicitlyOpen = activeReviewItemId === `comment:${comment.id}`;
+    if ((comment.resolved && !explicitlyOpen) || !comment.anchor?.node) continue;
     const { node, start, end } = comment.anchor;
     const rects = doc.selectionRects(node, Number(start) || 0, node, Number(end) || 0);
     for (let i = 0; i < rects.length; i += 5) {
@@ -1033,16 +1126,11 @@ function paintReviewMarkers() {
     }
   }
   for (const revision of summary.revisions ?? []) {
-    const text = String(revision.text || "");
-    if (!text) continue;
-    const first = doc.firstPosition();
-    const match = doc.findText(text, first.node, first.offset, true, false);
-    first.free();
-    if (!match.found) { match.free(); continue; }
-    const rects = doc.selectionRects(match.startNode, match.startOffset, match.endNode, match.endOffset);
+    const range = revisionRange(revision);
+    if (!range) continue;
+    const rects = doc.selectionRects(range.startNode, range.startOffset, range.endNode, range.endOffset);
     const kind = revision.kind === "deletion" ? "review-revision-marker review-deletion-marker" : "review-revision-marker review-insertion-marker";
     for (let i = 0; i < rects.length; i += 5) place(rects.slice(i, i + 5), kind);
-    match.free();
   }
 }
 
@@ -2155,8 +2243,13 @@ function selEndpoints() {
 /** Runs a toolbar edit thunk `(sNode, sOff, eNode, eOff) => EditResult`,
  *  preserving the selection (formatting does not collapse it) and repainting
  *  only the dirty pages. */
-async function runToolbarEdit(thunk) {
+async function runToolbarEdit(thunk, { allowInSuggesting = false } = {}) {
   breakTypingSession();
+  if (reviewMode === "suggesting" && !allowInSuggesting) {
+    setStatus("This command cannot be tracked yet; switch to Editing to apply it", "error");
+    focusEditorSurface();
+    return;
+  }
   const ends = selEndpoints();
   if (!ends) return;
   let res;
@@ -2164,6 +2257,7 @@ async function runToolbarEdit(thunk) {
     res = thunk(...ends);
   } catch (err) {
     console.warn("edit ignored:", err?.message ?? err);
+    setStatus("That tracked format is not supported for this selection yet", "error");
     return;
   }
   const dirty = res.dirtyPages;
@@ -2245,21 +2339,11 @@ function toggleFormat(prop) {
   }
   const state = selectionFormat();
   if (!state) return;
-  runToolbarEdit((sn, so, en, eo) =>
-    reviewMode === "suggesting" && sn === en
-      ? doc.suggestFormat(
-        sn,
-        Math.min(so, eo),
-        Math.max(so, eo),
-        prop === "bold" ? !state.bold : undefined,
-        prop === "italic" ? !state.italic : undefined,
-        prop === "underline" ? !state.underline : undefined,
-        prop === "strike" ? !state.strike : undefined,
-        reviewAuthor.value.trim() || "You",
-        new Date().toISOString(),
-      )
-      :
-    doc.formatSelection(
+  const patch = {
+    [prop]: !state[prop],
+  };
+  armOrApplyRun(patch, () =>
+    runToolbarEdit((sn, so, en, eo) => doc.formatSelection(
       sn,
       so,
       en,
@@ -2268,7 +2352,7 @@ function toggleFormat(prop) {
       prop === "italic" ? !state.italic : undefined,
       prop === "underline" ? !state.underline : undefined,
       prop === "strike" ? !state.strike : undefined,
-    ),
+    )),
   );
 }
 
@@ -2532,13 +2616,39 @@ for (const key of ["bold", "italic", "underline", "strike"]) {
 }
 onButton(clearFormattingBtn, () => {
   if (!hasRange()) return;
+  if (reviewMode === "suggesting") {
+    setStatus("Clear formatting is not tracked; switch to Editing to apply it", "error");
+    return;
+  }
   runToolbarEdit((a, b, c, d) => doc.clearFormatting(a, b, c, d));
 });
+function suggestRunFormat(patch) {
+  return runToolbarEdit((sn, so, en, eo) => {
+    if (sn !== en) throw new Error("Tracked formatting requires one paragraph");
+    return doc.suggestFormat(
+      sn,
+      Math.min(so, eo),
+      Math.max(so, eo),
+      patch.bold,
+      patch.italic,
+      patch.underline,
+      patch.strike,
+      patch.sizeHalfPoints,
+      patch.color,
+      patch.highlight,
+      patch.vertAlign,
+      patch.font,
+      reviewAuthor.value.trim() || "You",
+      new Date().toISOString(),
+    );
+  }, { allowInSuggesting: true });
+}
 /** A run-format control: apply to a range, or arm into `pendingFormat` at a caret
  *  (so the next typed text carries it — same model as the B/I/U/S toggles). */
 function armOrApplyRun(patch, applyFn) {
   if (hasRange()) {
-    applyFn();
+    if (reviewMode === "suggesting") suggestRunFormat(patch);
+    else applyFn();
   } else if (selection) {
     pendingFormat = { ...(pendingFormat || {}), ...patch };
     updateToolbar();
@@ -3673,6 +3783,7 @@ function toggleReview(open) {
   reviewSidebarPreference = show;
   if (!show) {
     activeReviewItemId = null;
+    activeReviewCommentId = null;
     reviewComposerState = null;
   }
   scheduleReviewMarginRender();
@@ -3687,6 +3798,7 @@ reviewNext.addEventListener("click", () => navigateReviewRevision(1));
 reviewInlinePrevious.addEventListener("click", () => navigateReviewRevision(-1));
 reviewInlineNext.addEventListener("click", () => navigateReviewRevision(1));
 reviewInlineMode.addEventListener("click", () => setReviewMode(reviewMode === "suggesting" ? "editing" : "suggesting"));
+suggestingBannerEdit.addEventListener("click", () => setReviewMode("editing"));
 reviewInlineAcceptAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(true)); closeReviewPopover(); drawSelection(); } });
 reviewInlineRejectAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(false)); closeReviewPopover(); drawSelection(); } });
 function openReviewComposer(parent = null) {
@@ -4326,11 +4438,15 @@ for (const b of selToolbar.querySelectorAll("[data-fmt]")) {
 }
 selColor.addEventListener("change", () => {
   const [r, g, b] = hexToRgb(selColor.value);
-  runToolbarEdit((a, bo, c, d) => doc.setTextColor(a, bo, c, d, r, g, b));
+  armOrApplyRun({ color: selColor.value }, () =>
+    runToolbarEdit((a, bo, c, d) => doc.setTextColor(a, bo, c, d, r, g, b)),
+  );
 });
 selHighlight.addEventListener("change", () => {
   const name = selHighlight.value;
-  runToolbarEdit((a, b, c, d) => doc.setHighlight(a, b, c, d, name));
+  armOrApplyRun({ highlight: name }, () =>
+    runToolbarEdit((a, b, c, d) => doc.setHighlight(a, b, c, d, name)),
+  );
   selHighlight.value = "none";
 });
 // Keep clicks inside the bar from collapsing the selection; hide on viewport scroll.
@@ -4442,6 +4558,10 @@ async function cut(event = null) {
   const copied = await copySelection(event);
   if (!copied) return;
   const { anchor, focus } = selection;
+  if (reviewMode === "suggesting" && anchor.node !== focus.node) {
+    setStatus("Cross-paragraph cuts cannot be tracked yet; switch to Editing to cut", "error");
+    return;
+  }
   await runEdit(() => reviewMode === "suggesting" && anchor.node === focus.node
     ? doc.suggestDelete(anchor.node, Math.min(anchor.offset, focus.offset), Math.max(anchor.offset, focus.offset), reviewAuthor.value.trim() || "You", new Date().toISOString())
     : doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset));
@@ -4458,6 +4578,10 @@ async function pasteText(text, actionKind = "paste") {
     await runEdit(() => end > start
       ? doc.suggestReplace(anchor.node, start, end, text, reviewAuthor.value.trim() || "You", new Date().toISOString())
       : doc.suggestInsert(anchor.node, start, text, reviewAuthor.value.trim() || "You", new Date().toISOString()));
+    return;
+  }
+  if (reviewMode === "suggesting") {
+    setStatus("Multi-paragraph paste cannot be tracked yet; switch to Editing to paste it", "error");
     return;
   }
   await runEdit(() => doc.insertPlainTextAs(anchor.node, anchor.offset, focus.node, focus.offset, text, actionKind));
@@ -4588,6 +4712,10 @@ document.addEventListener("keydown", async (e) => {
   // macOS keeps Ctrl+Space available to the host/input source.
   if (e.ctrlKey && !e.metaKey && key === " " && hasRange()) {
     e.preventDefault();
+    if (reviewMode === "suggesting") {
+      setStatus("Clear formatting is not tracked; switch to Editing to apply it", "error");
+      return;
+    }
     await runToolbarEdit((a, b, c, d) => doc.clearFormatting(a, b, c, d));
     return;
   }
@@ -4669,6 +4797,10 @@ document.addEventListener("keydown", async (e) => {
       }
       return;
     }
+    if (reviewMode === "suggesting") {
+      setStatus("Indent and list structure changes cannot be tracked yet; switch to Editing", "error");
+      return;
+    }
     const listKind = doc.listStyleAt(selection.focus.node);
     if (listKind) {
       await runEdit(() =>
@@ -4692,6 +4824,24 @@ document.addEventListener("keydown", async (e) => {
 
   if (wordDelete) {
     e.preventDefault();
+    if (reviewMode === "suggesting") {
+      const start = range
+        ? (anchor.offset <= focus.offset ? anchor : focus)
+        : wordDelete === "backward"
+          ? (() => { const c = doc.moveCaret(focus.node, focus.offset, "wordLeft"); const p = { node: c.node, offset: c.offset }; c.free(); return p; })()
+          : focus;
+      const end = range
+        ? (anchor.offset <= focus.offset ? focus : anchor)
+        : wordDelete === "forward"
+          ? (() => { const c = doc.moveCaret(focus.node, focus.offset, "wordRight"); const p = { node: c.node, offset: c.offset }; c.free(); return p; })()
+          : focus;
+      if (start.node === end.node && start.offset < end.offset) {
+        await runEdit(() => doc.suggestDelete(start.node, start.offset, end.offset, reviewAuthor.value.trim() || "You", new Date().toISOString()));
+      } else {
+        setStatus("This word deletion crosses a paragraph and cannot be tracked yet", "error");
+      }
+      return;
+    }
     await runEdit(() =>
       range
         ? doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset)
@@ -4728,6 +4878,8 @@ document.addEventListener("keydown", async (e) => {
         await runEdit(() => doc.suggestDelete(start.node, start.offset, end.offset, reviewAuthor.value.trim() || "You", new Date().toISOString()));
         return;
       }
+      setStatus("This deletion crosses a paragraph and cannot be tracked yet", "error");
+      return;
     }
     await runEdit(() => range ? doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset) : doc.deleteBackward(focus.node, focus.offset));
     return;
@@ -4741,12 +4893,18 @@ document.addEventListener("keydown", async (e) => {
         await runEdit(() => doc.suggestDelete(start.node, start.offset, end.offset, reviewAuthor.value.trim() || "You", new Date().toISOString()));
         return;
       }
+      setStatus("This deletion crosses a paragraph and cannot be tracked yet", "error");
+      return;
     }
     await runEdit(() => range ? doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset) : doc.deleteForward(focus.node, focus.offset));
     return;
   }
   if (key === "Enter") {
     e.preventDefault();
+    if (reviewMode === "suggesting") {
+      setStatus("Paragraph breaks cannot be tracked yet; switch to Editing to insert one", "error");
+      return;
+    }
     // Word/Docs convention: Enter on an empty list item exits the list instead
     // of creating another empty bullet/number. The current paragraph remains in
     // place, so the caret does not jump and Undo restores the list marker.
@@ -4780,17 +4938,29 @@ document.addEventListener("keydown", async (e) => {
     const session = typingSessionForKey();
     if (range) {
       pendingFormat = null; // typing over a selection uses the selection's own runs
+      if (reviewMode === "suggesting" && anchor.node !== focus.node) {
+        setStatus("Cross-paragraph replacement cannot be tracked yet; switch to Editing", "error");
+        return;
+      }
       await runEdit(
         () => reviewMode === "suggesting"
-          ? doc.suggestReplace(anchor.node, anchor.offset, focus.offset, key, reviewAuthor.value.trim() || "You", new Date().toISOString())
+          ? doc.suggestReplace(
+            anchor.node,
+            Math.min(anchor.offset, focus.offset),
+            Math.max(anchor.offset, focus.offset),
+            key,
+            reviewAuthor.value.trim() || "You",
+            new Date().toISOString(),
+            session,
+          )
           : doc.typeText(anchor.node, anchor.offset, focus.node, focus.offset, key, session),
         { typing: true },
       );
     } else if (pendingFormat) {
       const pf = pendingFormat; // armed format persists across consecutive typing
       await runEdit(
-        () =>
-          doc.typeStyledText(
+        () => reviewMode === "suggesting"
+          ? doc.suggestStyledInsert(
             focus.node,
             focus.offset,
             key,
@@ -4803,14 +4973,38 @@ document.addEventListener("keydown", async (e) => {
             pf.highlight,
             pf.vertAlign,
             pf.font,
+            reviewAuthor.value.trim() || "You",
+            new Date().toISOString(),
             session,
-          ),
+          )
+          : doc.typeStyledText(
+              focus.node,
+              focus.offset,
+              key,
+              pf.bold,
+              pf.italic,
+              pf.underline,
+              pf.strike,
+              pf.sizeHalfPoints,
+              pf.color,
+              pf.highlight,
+              pf.vertAlign,
+              pf.font,
+              session,
+            ),
         { typing: true },
       );
     } else {
       await runEdit(
         () => reviewMode === "suggesting"
-          ? doc.suggestInsert(focus.node, focus.offset, key, reviewAuthor.value.trim() || "You", new Date().toISOString())
+          ? doc.suggestInsert(
+            focus.node,
+            focus.offset,
+            key,
+            reviewAuthor.value.trim() || "You",
+            new Date().toISOString(),
+            session,
+          )
           : doc.typeText(focus.node, focus.offset, focus.node, focus.offset, key, session),
         { typing: true },
       );

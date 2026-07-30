@@ -1,6 +1,6 @@
 # 68 — Comments and Suggestions (Track Changes) Editor UX Design
 
-**Status:** Accepted; sidebar-correction slice implemented.
+**Status:** Accepted; implemented through the workflow-completeness audit (P1G-REVIEW-033).
 **Date:** 2026-07-30.
 **Depends on:** `v1::Definitions.comments`/`people` (Done, `P1A-031`/`P1F-10`/`P1F-35`), `v1::InlineNode::Revision` (Done, import/export passthrough only), `casual-doc-edit` op set (doc 59), interaction architecture (doc 58), extensibility seams I1–I4 (doc 45), design system (doc 63), toolbar/ribbon design (doc 64). Referenced by `docs/67-EDITOR-UX-GAP-ANALYSIS.md` row "Comments/revisions."
 
@@ -107,7 +107,32 @@ Next, Accept All, and Reject All are not exposed as a second ad-hoc toolbar in
 the Home ribbon; individual decisions belong to expanded cards until a
 purpose-designed Review surface is implemented.
 
-**Right context panel** (doc 63 §2, region 4) hosts a unified "Comments" pane: a scrollable list of threads in document order (matching Word's Reviewing Pane and Docs' margin order), each card showing author/initials (color-coded), date, body, reply affordance, and resolve/reopen. A "Resolved" filter tab hides resolved threads by default (mirrors both references). Suggestions appear as their own cards in the same panel (a Docs-style unified review list) rather than a separate pane, since opendoc's canvas is bitmap-rendered and per-line inline balloons (Word's default) would require expensive per-line layout coupling the engine doesn't have; the panel + rect-union anchoring already used by the floating toolbar is the cheaper, already-proven mechanism.
+### 2026-07-31 workflow-completeness correction
+
+The sidebar migration also exposed engine-level correctness gaps. Editor-authored
+comments now receive unique eight-hex-digit `para_id` join keys; replies point to
+the root's `para_id`, imported replies group through that same key, and deleting a
+root cascades through descendants. This is covered by an author→export→reopen
+threading test. Comment references are zero-width in layout and in every WASM
+anchor walk, so no hidden `[comment]` bytes distort a later selection or revision
+anchor.
+
+Resolved cards collapse immediately and suppress their range highlight until the
+user explicitly expands the card. Clicking the sidebar gutter collapses the active
+card. Replacement and formatting suggestions use an opaque editor group id:
+their deletion/insertion model pair appears as one card, is accepted or rejected
+atomically, and is restored by one Undo. Consecutive suggestion typing shares one
+group, and Backspace/Delete over the current author's pending insertion edits that
+insertion rather than creating a deletion-of-an-insertion.
+
+The tracked run-format surface covers bold, italic, underline, strike, font
+family, size, text color, highlight, and superscript/subscript, including formatting
+armed before typing. A visible Suggesting banner makes the mode persistent.
+Structural operations that do not yet have a safe revision representation
+(cross-paragraph replacement/cut/paste, paragraph breaks, and list/indent changes)
+are rejected with an explanation instead of silently bypassing tracking.
+
+**Dedicated review sidebar** hosts the unified comment/suggestion stream in document order. Each comment card shows author/initials, date, body, replies, and resolve/reopen. Suggestions appear as cards in the same stream rather than a separate panel. The sidebar plus exact model-anchor rects avoid coupling review UX to the bitmap canvas or searching for duplicate text.
 
 **Comment creation**: selecting a range surfaces a "Comment" button on the existing floating selection toolbar (P1G-034 explicitly deferred this pending a comments model — now unblocked) alongside B/I/U/S/color/highlight. Clicking opens a small inline composer anchored at the selection; submitting creates the comment, highlights the range in a soft highlight distinct from selection/find (matching Docs' anchor-highlight convention), and opens/focuses the panel thread.
 
@@ -128,12 +153,12 @@ Per AGENTS.md ("Host applications own policy: storage, network, auth, telemetry"
 
 This slots alongside doc 67's existing execution plan; it does not require reordering the already-accepted PR3 (structural delete/keyboard shortcuts).
 
-## Open Questions
+## Decisions and Remaining Questions
 
-1. How should in-editor-created comments synthesize a valid `para_id` for `commentsExtended.xml` round-trip, given that field is currently only populated by the importer from companion-part paragraph ids?
-2. Should Slice B treat `FormatText` tracking as in-scope from the start, or defer all formatting-only tracked changes to Slice C (Word models this as a distinct "Formatting" revision category)?
-3. Does accepting/rejecting one side of a `MoveFrom`/`MoveTo` pair need to force the paired action on the other side, or can they be independent? (Word treats a move as one atomic reviewable unit.)
-4. Region-4 panel real estate: doc 63 anticipates other future tabs there — does Comments get a dedicated always-present tab, or share a tabbed panel with future occupants?
+1. **Resolved:** editor-authored comments allocate the next unused eight-hex-digit `para_id`; replies use the root key. Import/export remains opaque for producer-authored ids.
+2. **Resolved:** character-format suggestions cover the complete exposed run-format surface and use one atomic deletion/insertion group.
+3. **Remaining:** imported `MoveFrom`/`MoveTo` revisions preserve correct individual accept/reject semantics, but a product-level paired-move card and forced paired decision remain deferred.
+4. **Resolved:** Comments owns a dedicated 340px sibling sidebar, not the generic region-4 properties panel and never a canvas overlay.
 
 ## Verification Gates
 

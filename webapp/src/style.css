@@ -2058,6 +2058,33 @@ body.modal-open {
 .review-mode-toggle:disabled { opacity: 0.45; cursor: default; }
 .review-mode-toggle:not(:disabled):hover,
 .review-inline-bar button:hover { background: var(--accent-soft); border-color: var(--accent); }
+.suggesting-banner {
+  min-height: 32px;
+  margin: 6px 8px 0;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, #f9ab00 42%, var(--line));
+  border-radius: 8px;
+  background: color-mix(in srgb, #fbbc04 16%, var(--surface));
+  color: var(--ink);
+  font-size: 12px;
+}
+.suggesting-banner[hidden] { display: none; }
+.suggesting-banner .ms { color: #b06000; font-size: 17px; }
+.suggesting-banner button {
+  border: 0;
+  padding: 3px 6px;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--accent-strong);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+.suggesting-banner button:hover { background: var(--accent-soft); }
 
 .review-sidebar {
   flex: 0 0 340px;
@@ -2121,6 +2148,8 @@ body.modal-open {
 .review-margin-revision p { padding-left: 8px; border-left: 3px solid var(--accent); }
 .review-margin-insertion p { border-left-color: #188038; color: #137333; }
 .review-margin-deletion p { border-left-color: #d93025; color: #b3261e; text-decoration: line-through; }
+.review-margin-replacement p { border-left-color: #1a73e8; }
+.review-margin-formatting p { border-left-color: #9334e6; }
 .review-margin-revision:has(.review-margin-title small) { border-color: var(--line-strong); }
 .review-margin-card-actions { display: flex; gap: 5px; flex-wrap: wrap; }
 .review-margin-card:not(.expanded) .review-margin-card-actions,
@@ -2191,10 +2220,6 @@ body.modal-open {
     margin-right: 8px;
   }
 }
-@media (max-width: 900px) {
-  .review-margin-card { width: 250px; opacity: 0.96; }
-}
-
 .panel-head {
   display: flex;
   min-width: 0;

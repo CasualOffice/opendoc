@@ -37,19 +37,19 @@ use casual_doc_model::v1::GridColumn;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, BookmarkId, BorderEdge,
     CellMargins, CellVerticalAlignment, Color, Comment, CommentId, CommentRangeEnd,
-    CommentRangeStart, CommentReference, Document, ExternalTarget, FontName, FontRef, HeightRule,
-    HighlightColor, Hyperlink, HyperlinkTarget, Indentation, InlineNode, InternalTarget,
-    LevelJustification, LevelSuffix, NumberFormat, NumberingInstance, NumberingInstanceId,
-    NumberingLevel, NumberingOverride, NumberingRef, PageMargins, PageOrientation,
-    PageSize as SectionPageSize, Paragraph, ParagraphBorders, ParagraphProperties, Revision,
-    RevisionKind, RgbColor, RowHeight, Run, RunProperties, SectionColumns, SectionId, Spacing,
-    StyleId, StyleKind, TabAlignment, TabStop, Table, TableBorders, TableCell, TableCellProperties,
-    TableLayout, TableProperties, TableRow, VerticalAlignment, VerticalMerge,
+    CommentRangeStart, CommentReference, DefinitionMap, Document, ExternalTarget, FontName,
+    FontRef, HeightRule, HighlightColor, Hyperlink, HyperlinkTarget, Indentation, InlineNode,
+    InternalTarget, LevelJustification, LevelSuffix, NumberFormat, NumberingInstance,
+    NumberingInstanceId, NumberingLevel, NumberingOverride, NumberingRef, PageMargins,
+    PageOrientation, PageSize as SectionPageSize, Paragraph, ParagraphBorders, ParagraphProperties,
+    Revision, RevisionKind, RgbColor, RowHeight, Run, RunProperties, SectionColumns, SectionId,
+    Spacing, StyleId, StyleKind, TabAlignment, TabStop, Table, TableBorders, TableCell,
+    TableCellProperties, TableLayout, TableProperties, TableRow, VerticalAlignment, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
 use casual_doc_render::{MediaSource, RegistryFontSource, Surface, render};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
 use wasm_bindgen::Clamped;
 use wasm_bindgen::prelude::*;
@@ -3552,6 +3552,7 @@ impl WasmDocument {
                     "initials": comment.initials,
                     "date": comment.date,
                     "resolved": comment.done,
+                    "paraId": comment.para_id,
                     "parentParaId": comment.parent_para_id,
                     "text": blocks.into_iter().map(|(_, text)| text).collect::<Vec<_>>().join("\n"),
                 });
@@ -3631,6 +3632,7 @@ impl WasmDocument {
             ));
         }
         let mut comments = self.document.definitions().comments.clone();
+        let para_id = next_comment_para_id(&comments).map_err(to_js)?;
         comments.insert(
             comment,
             Comment {
@@ -3646,7 +3648,7 @@ impl WasmDocument {
                 author,
                 initials,
                 date,
-                para_id: None,
+                para_id: Some(para_id),
                 parent_para_id: None,
                 done: false,
                 durable_id: None,
@@ -3705,9 +3707,20 @@ impl WasmDocument {
         let parent = NodeId::from_str(parent)
             .map(CommentId::new)
             .map_err(|_| to_js("invalid comment id".to_string()))?;
-        if self.document.definitions().comments.get(&parent).is_none() {
+        let mut comments = self.document.definitions().comments.clone();
+        let Some(mut parent_comment) = comments.get(&parent).cloned() else {
             return Err(to_js("comment not found".to_string()));
-        }
+        };
+        let parent_para_id = match parent_comment.para_id.clone() {
+            Some(para_id) => para_id,
+            None => {
+                let para_id = next_comment_para_id(&comments).map_err(to_js)?;
+                parent_comment.para_id = Some(para_id.clone());
+                comments.insert(parent, parent_comment);
+                para_id
+            }
+        };
+        let para_id = next_comment_para_id(&comments).map_err(to_js)?;
         let id = CommentId::new(
             self.edit_ids
                 .next_id()
@@ -3721,7 +3734,6 @@ impl WasmDocument {
             .edit_ids
             .next_id()
             .map_err(|_| to_js("id space exhausted".to_string()))?;
-        let mut comments = self.document.definitions().comments.clone();
         comments.insert(
             id,
             Comment {
@@ -3737,8 +3749,8 @@ impl WasmDocument {
                 author,
                 initials,
                 date,
-                para_id: None,
-                parent_para_id: Some(parent.node_id().to_string()),
+                para_id: Some(para_id),
+                parent_para_id: Some(parent_para_id),
                 done: false,
                 durable_id: None,
                 person: None,
@@ -3755,7 +3767,7 @@ impl WasmDocument {
         .map_err(to_js)
     }
 
-    /// Removes a comment and all of its range/reference markers.
+    /// Removes a comment thread and all of its range/reference markers.
     #[wasm_bindgen(js_name = deleteComment)]
     pub fn delete_comment(&mut self, comment: &str) -> Result<EditResult, JsValue> {
         let id = NodeId::from_str(comment)
@@ -3765,14 +3777,45 @@ impl WasmDocument {
         if source_comments.get(&id).is_none() {
             return Err(to_js("comment not found".to_string()));
         }
-        let mut comments = casual_doc_model::v1::DefinitionMap::default();
+        let mut removed = BTreeSet::from([id]);
+        let mut parent_keys = BTreeSet::from([id.node_id().to_string()]);
+        if let Some(para_id) = source_comments
+            .get(&id)
+            .and_then(|comment| comment.para_id.clone())
+        {
+            parent_keys.insert(para_id);
+        }
+        loop {
+            let mut changed = false;
+            for (key, value) in source_comments.iter() {
+                if !removed.contains(key)
+                    && value
+                        .parent_para_id
+                        .as_ref()
+                        .is_some_and(|parent| parent_keys.contains(parent))
+                {
+                    removed.insert(*key);
+                    parent_keys.insert(key.node_id().to_string());
+                    if let Some(para_id) = value.para_id.clone() {
+                        parent_keys.insert(para_id);
+                    }
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        let mut comments = DefinitionMap::default();
         for (key, value) in source_comments.iter() {
-            if *key != id {
+            if !removed.contains(key) {
                 comments.insert(*key, value.clone());
             }
         }
         let mut body = self.document.body().to_vec();
-        remove_review_comment_markers(&mut body, id);
+        for removed_id in removed {
+            remove_review_comment_markers(&mut body, removed_id);
+        }
         self.apply_action_caret_as(
             vec![Operation::ReplaceReviewState { body, comments }],
             Pos::new(self.document.id(), 0),
@@ -3791,6 +3834,7 @@ impl WasmDocument {
         text: &str,
         author: Option<String>,
         date: Option<String>,
+        typing_session: Option<u32>,
     ) -> Result<EditResult, JsValue> {
         if text.is_empty() {
             return Err(to_js("suggested text must be non-empty".to_string()));
@@ -3804,6 +3848,10 @@ impl WasmDocument {
             .edit_ids
             .next_id()
             .map_err(|_| to_js("id space exhausted".to_string()))?;
+        let group = typing_session.map_or_else(
+            || format!("opendoc-insert:{revision}"),
+            |session| format!("opendoc-typing:{session}"),
+        );
         let mut body = self.document.body().to_vec();
         if !insert_review_revision(
             &mut body,
@@ -3814,7 +3862,7 @@ impl WasmDocument {
                 kind: RevisionKind::Insertion,
                 author,
                 date,
-                revision_id: None,
+                revision_id: Some(group),
                 inlines: vec![InlineNode::Run(Run {
                     id: run,
                     properties: RunProperties::default(),
@@ -3838,8 +3886,95 @@ impl WasmDocument {
         .map_err(to_js)
     }
 
+    /// Adds a tracked insertion carrying the typing format armed at the caret.
+    #[wasm_bindgen(js_name = suggestStyledInsert)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn suggest_styled_insert(
+        &mut self,
+        node: &str,
+        offset: u32,
+        text: &str,
+        bold: Option<bool>,
+        italic: Option<bool>,
+        underline: Option<bool>,
+        strike: Option<bool>,
+        size_half_points: Option<u32>,
+        color: Option<String>,
+        highlight: Option<String>,
+        vert_align: Option<String>,
+        font: Option<String>,
+        author: Option<String>,
+        date: Option<String>,
+        typing_session: Option<u32>,
+    ) -> Result<EditResult, JsValue> {
+        if text.is_empty() {
+            return Err(to_js("suggested text must be non-empty".to_string()));
+        }
+        let node = node_id(node)?;
+        let revision = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".to_string()))?;
+        let run = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".to_string()))?;
+        let group = typing_session.map_or_else(
+            || format!("opendoc-insert:{revision}"),
+            |session| format!("opendoc-typing:{session}"),
+        );
+        let mut inlines = vec![InlineNode::Run(Run {
+            id: run,
+            properties: RunProperties::default(),
+            text: text.to_owned(),
+        })];
+        apply_review_delta(
+            &mut inlines,
+            &review_format_delta(
+                bold,
+                italic,
+                underline,
+                strike,
+                size_half_points,
+                color,
+                highlight,
+                vert_align,
+                font,
+            ),
+        );
+        let mut body = self.document.body().to_vec();
+        if !insert_review_revision(
+            &mut body,
+            node,
+            offset,
+            Revision {
+                id: revision,
+                kind: RevisionKind::Insertion,
+                author,
+                date,
+                revision_id: Some(group),
+                inlines,
+            },
+            &mut self.edit_ids,
+        ) {
+            return Err(to_js(
+                "suggestion requires a top-level paragraph text caret".to_string(),
+            ));
+        }
+        self.apply_action_caret_as(
+            vec![Operation::ReplaceReviewState {
+                body,
+                comments: self.document.definitions().comments.clone(),
+            }],
+            Pos::new(node, offset + text.len() as u32),
+            HistoryKind::Review,
+        )
+        .map_err(to_js)
+    }
+
     /// Replaces a selected range with a tracked deletion plus tracked insertion.
     #[wasm_bindgen(js_name = suggestReplace)]
+    #[allow(clippy::too_many_arguments)]
     pub fn suggest_replace(
         &mut self,
         node: &str,
@@ -3848,6 +3983,7 @@ impl WasmDocument {
         text: &str,
         author: Option<String>,
         date: Option<String>,
+        typing_session: Option<u32>,
     ) -> Result<EditResult, JsValue> {
         if start >= end || text.is_empty() {
             return Err(to_js(
@@ -3867,6 +4003,10 @@ impl WasmDocument {
             .edit_ids
             .next_id()
             .map_err(|_| to_js("id space exhausted".to_string()))?;
+        let group = typing_session.map_or_else(
+            || format!("opendoc-replace:{deletion}"),
+            |session| format!("opendoc-typing:{session}"),
+        );
         let mut body = self.document.body().to_vec();
         if !wrap_review_deletion(
             &mut body,
@@ -3878,7 +4018,7 @@ impl WasmDocument {
                 kind: RevisionKind::Deletion,
                 author: author.clone(),
                 date: date.clone(),
-                revision_id: None,
+                revision_id: Some(group.clone()),
                 inlines: Vec::new(),
             },
             &mut self.edit_ids,
@@ -3896,7 +4036,7 @@ impl WasmDocument {
                 kind: RevisionKind::Insertion,
                 author,
                 date,
-                revision_id: None,
+                revision_id: Some(group),
                 inlines: vec![InlineNode::Run(Run {
                     id: run,
                     properties: RunProperties::default(),
@@ -3912,7 +4052,10 @@ impl WasmDocument {
                 body,
                 comments: self.document.definitions().comments.clone(),
             }],
-            Pos::new(node, start + text.len() as u32),
+            Pos::new(
+                node,
+                start.saturating_add(u32::try_from(text.len()).unwrap_or(u32::MAX)),
+            ),
             HistoryKind::Review,
         )
         .map_err(to_js)
@@ -3931,11 +4074,23 @@ impl WasmDocument {
             return Err(to_js("suggested deletion requires a range".to_string()));
         }
         let node = node_id(node)?;
+        let mut body = self.document.body().to_vec();
+        if remove_authored_review_insertion(&mut body, node, start, end, author.as_deref()) {
+            return self
+                .apply_action_caret_as(
+                    vec![Operation::ReplaceReviewState {
+                        body,
+                        comments: self.document.definitions().comments.clone(),
+                    }],
+                    Pos::new(node, start),
+                    HistoryKind::Review,
+                )
+                .map_err(to_js);
+        }
         let revision = self
             .edit_ids
             .next_id()
             .map_err(|_| to_js("id space exhausted".to_string()))?;
-        let mut body = self.document.body().to_vec();
         if !wrap_review_deletion(
             &mut body,
             node,
@@ -3980,13 +4135,24 @@ impl WasmDocument {
         italic: Option<bool>,
         underline: Option<bool>,
         strike: Option<bool>,
+        size_half_points: Option<u32>,
+        color: Option<String>,
+        highlight: Option<String>,
+        vert_align: Option<String>,
+        font: Option<String>,
         author: Option<String>,
         date: Option<String>,
     ) -> Result<EditResult, JsValue> {
         if start >= end
-            || [bold, italic, underline, strike]
-                .iter()
-                .all(Option::is_none)
+            || (bold.is_none()
+                && italic.is_none()
+                && underline.is_none()
+                && strike.is_none()
+                && size_half_points.is_none()
+                && color.is_none()
+                && highlight.is_none()
+                && vert_align.is_none()
+                && font.is_none())
         {
             return Err(to_js(
                 "suggested formatting requires a range and change".to_string(),
@@ -4001,25 +4167,30 @@ impl WasmDocument {
             .edit_ids
             .next_id()
             .map_err(|_| to_js("id space exhausted".to_string()))?;
+        let group = format!("opendoc-format:{deletion}");
         let mut body = self.document.body().to_vec();
         if !wrap_review_format(
             &mut body,
             node,
             start,
             end,
-            FormatDelta {
+            review_format_delta(
                 bold,
                 italic,
                 underline,
                 strike,
-                ..FormatDelta::default()
-            },
+                size_half_points,
+                color,
+                highlight,
+                vert_align,
+                font,
+            ),
             Revision {
                 id: deletion,
                 kind: RevisionKind::Deletion,
                 author: author.clone(),
                 date: date.clone(),
-                revision_id: None,
+                revision_id: Some(group.clone()),
                 inlines: Vec::new(),
             },
             Revision {
@@ -4027,7 +4198,7 @@ impl WasmDocument {
                 kind: RevisionKind::Insertion,
                 author,
                 date,
-                revision_id: None,
+                revision_id: Some(group),
                 inlines: Vec::new(),
             },
             &mut self.edit_ids,
@@ -4066,6 +4237,44 @@ impl WasmDocument {
                 comments: self.document.definitions().comments.clone(),
             }],
             Pos::new(node, if keep { end } else { start }),
+            HistoryKind::Review,
+        )
+        .map_err(to_js)
+    }
+
+    /// Accepts or rejects every editor-authored revision in one logical group.
+    /// Replacement and formatting suggestions are represented by a deletion /
+    /// insertion pair but remain one review decision and one undo action.
+    #[wasm_bindgen(js_name = decideRevisionGroup)]
+    pub fn decide_revision_group(
+        &mut self,
+        group: &str,
+        accept: bool,
+    ) -> Result<EditResult, JsValue> {
+        if !group.starts_with("opendoc-") {
+            return Err(to_js("unsupported revision group".to_string()));
+        }
+        let mut ids = Vec::new();
+        collect_review_revision_group_ids(self.document.body(), group, &mut ids);
+        let Some(first) = ids.first().copied() else {
+            return Err(to_js("revision group not found".to_string()));
+        };
+        let Some((node, start, _, _)) = find_review_revision_anchor(self.document.body(), first)
+        else {
+            return Err(to_js("revision group anchor not found".to_string()));
+        };
+        let mut body = self.document.body().to_vec();
+        for id in ids {
+            if !decide_review_revision(&mut body, id, accept) {
+                return Err(to_js("revision group is incomplete".to_string()));
+            }
+        }
+        self.apply_action_caret_as(
+            vec![Operation::ReplaceReviewState {
+                body,
+                comments: self.document.definitions().comments.clone(),
+            }],
+            Pos::new(node, start),
             HistoryKind::Review,
         )
         .map_err(to_js)
@@ -6061,6 +6270,41 @@ fn collect_block_text(blocks: &[BlockNode], out: &mut Vec<(NodeId, String)>) {
     }
 }
 
+/// Allocates the eight-hex-digit paragraph join key required by the DOCX
+/// comments companion parts. Imported keys remain untouched; editor-authored
+/// comments use the next unused value so replies survive export and reopen.
+fn next_comment_para_id(comments: &DefinitionMap<CommentId, Comment>) -> Result<String, String> {
+    let used: BTreeSet<u32> = comments
+        .iter()
+        .filter_map(|(_, comment)| {
+            comment
+                .para_id
+                .as_deref()
+                .filter(|value| value.len() == 8)
+                .and_then(|value| u32::from_str_radix(value, 16).ok())
+        })
+        .collect();
+    let mut candidate = used
+        .iter()
+        .next_back()
+        .copied()
+        .unwrap_or(0)
+        .wrapping_add(1);
+    if candidate == 0 {
+        candidate = 1;
+    }
+    for _ in 0..=used.len() {
+        if !used.contains(&candidate) {
+            return Ok(format!("{candidate:08X}"));
+        }
+        candidate = candidate.wrapping_add(1);
+        if candidate == 0 {
+            candidate = 1;
+        }
+    }
+    Err("comment paragraph id space exhausted".to_owned())
+}
+
 fn collect_review_revisions(blocks: &[BlockNode], out: &mut Vec<serde_json::Value>) {
     for block in blocks {
         match block {
@@ -6228,10 +6472,9 @@ fn insert_review_revision(
                             .insert(index, InlineNode::Revision(revision));
                         return true;
                     }
-                    let Some(InlineNode::Run(run)) = paragraph.inlines.get(index) else {
-                        continue;
-                    };
-                    cursor = cursor.saturating_add(run.text.len() as u32);
+                    if let Some(inline) = paragraph.inlines.get(index) {
+                        cursor = cursor.saturating_add(inline_anchor_len_for_review(inline));
+                    }
                 }
                 return false;
             }
@@ -6335,6 +6578,93 @@ fn wrap_review_deletion(
                 );
             }
             BlockNode::AltChunk(_) => continue,
+        }
+    }
+    false
+}
+
+/// Backspace/Delete over the current author's pending insertion edits that
+/// insertion in place, matching Word/Docs behavior. It must not create a
+/// deletion-of-an-insertion pair for text that has never been accepted.
+fn remove_authored_review_insertion(
+    blocks: &mut [BlockNode],
+    node: NodeId,
+    start: u32,
+    end: u32,
+    author: Option<&str>,
+) -> bool {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) if paragraph.id == node => {
+                let mut cursor = 0_u32;
+                let mut edits = Vec::new();
+                for (index, inline) in paragraph.inlines.iter().enumerate() {
+                    let next = cursor.saturating_add(inline_anchor_len_for_review(inline));
+                    if next > start && cursor < end {
+                        let InlineNode::Revision(revision) = inline else {
+                            return false;
+                        };
+                        if revision.kind != RevisionKind::Insertion
+                            || revision.author.as_deref() != author
+                            || !revision
+                                .revision_id
+                                .as_deref()
+                                .is_some_and(|group| group.starts_with("opendoc-"))
+                        {
+                            return false;
+                        }
+                        let local_start = start.saturating_sub(cursor);
+                        let local_end = end.min(next).saturating_sub(cursor);
+                        let [InlineNode::Run(run)] = revision.inlines.as_slice() else {
+                            return false;
+                        };
+                        let local_start_usize = local_start as usize;
+                        let local_end_usize = local_end as usize;
+                        if local_start >= local_end
+                            || local_end_usize > run.text.len()
+                            || !run.text.is_char_boundary(local_start_usize)
+                            || !run.text.is_char_boundary(local_end_usize)
+                        {
+                            return false;
+                        }
+                        edits.push((index, local_start_usize, local_end_usize));
+                    }
+                    cursor = next;
+                }
+                if edits.is_empty() || cursor < end {
+                    return false;
+                }
+                for (index, local_start, local_end) in edits.into_iter().rev() {
+                    let InlineNode::Revision(revision) = &mut paragraph.inlines[index] else {
+                        return false;
+                    };
+                    let [InlineNode::Run(run)] = revision.inlines.as_mut_slice() else {
+                        return false;
+                    };
+                    run.text.replace_range(local_start..local_end, "");
+                    if run.text.is_empty() {
+                        paragraph.inlines.remove(index);
+                    }
+                }
+                coalesce_review_runs(&mut paragraph.inlines);
+                return true;
+            }
+            BlockNode::Paragraph(_) => continue,
+            BlockNode::Table(table) => {
+                if table.rows.iter_mut().any(|row| {
+                    row.cells.iter_mut().any(|cell| {
+                        remove_authored_review_insertion(&mut cell.blocks, node, start, end, author)
+                    })
+                }) {
+                    return true;
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if remove_authored_review_insertion(&mut sdt.blocks, node, start, end, author) {
+                    return true;
+                }
+            }
+            BlockNode::AltChunk(_) => {}
         }
     }
     false
@@ -6491,6 +6821,7 @@ fn remove_review_comment_markers(blocks: &mut [BlockNode], comment: CommentId) {
                         InlineNode::CommentRangeEnd(marker) if marker.comment == comment
                     )
                 });
+                coalesce_review_runs(&mut paragraph.inlines);
             }
             BlockNode::Table(table) => {
                 for row in &mut table.rows {
@@ -6625,6 +6956,47 @@ fn collect_review_revision_ids(blocks: &[BlockNode], out: &mut Vec<NodeId>) {
     }
 }
 
+fn collect_review_revision_group_ids(blocks: &[BlockNode], group: &str, out: &mut Vec<NodeId>) {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                collect_review_inline_group_ids(&paragraph.inlines, group, out);
+            }
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        collect_review_revision_group_ids(&cell.blocks, group, out);
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                collect_review_revision_group_ids(&sdt.blocks, group, out);
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+}
+
+fn collect_review_inline_group_ids(inlines: &[InlineNode], group: &str, out: &mut Vec<NodeId>) {
+    for inline in inlines {
+        match inline {
+            InlineNode::Revision(revision) => {
+                if revision.revision_id.as_deref() == Some(group) {
+                    out.push(revision.id);
+                }
+                collect_review_inline_group_ids(&revision.inlines, group, out);
+            }
+            InlineNode::Hyperlink(link) => {
+                collect_review_inline_group_ids(&link.inlines, group, out);
+            }
+            InlineNode::Sdt(sdt) => {
+                collect_review_inline_group_ids(&sdt.inlines, group, out);
+            }
+            _ => {}
+        }
+    }
+}
+
 fn collect_review_inline_ids(inlines: &[InlineNode], out: &mut Vec<NodeId>) {
     for inline in inlines {
         match inline {
@@ -6644,7 +7016,10 @@ fn decide_review_inline(inlines: &mut Vec<InlineNode>, id: NodeId, accept: bool)
         if let InlineNode::Revision(revision) = &inlines[index]
             && revision.id == id
         {
-            let keep = matches!(revision.kind, RevisionKind::Insertion) == accept;
+            let keep = matches!(
+                revision.kind,
+                RevisionKind::Insertion | RevisionKind::MoveTo
+            ) == accept;
             let replacement = if keep {
                 revision.inlines.clone()
             } else {
@@ -6697,14 +7072,14 @@ fn review_split_top_level_run(
 ) -> bool {
     let mut cursor: u32 = 0;
     for index in 0..inlines.len() {
-        let InlineNode::Run(run) = &inlines[index] else {
-            continue;
-        };
-        let next = cursor.saturating_add(run.text.len() as u32);
+        let next = cursor.saturating_add(inline_anchor_len_for_review(&inlines[index]));
         if offset == cursor || offset == next {
             return true;
         }
-        if offset > cursor && offset < next {
+        if offset > cursor
+            && offset < next
+            && let InlineNode::Run(run) = &inlines[index]
+        {
             let split = (offset - cursor) as usize;
             if !run.text.is_char_boundary(split) {
                 return false;
@@ -6724,6 +7099,9 @@ fn review_split_top_level_run(
             });
             inlines.insert(index + 1, InlineNode::Run(right));
             return true;
+        }
+        if offset > cursor && offset < next {
+            return false;
         }
         cursor = next;
     }
@@ -6775,7 +7153,7 @@ fn inline_anchor_len_for_review(inline: &InlineNode) -> u32 {
             .map(inline_anchor_len_for_review)
             .sum(),
         InlineNode::Sdt(sdt) => sdt.inlines.iter().map(inline_anchor_len_for_review).sum(),
-        InlineNode::CommentReference(_) => "[comment]".len() as u32,
+        InlineNode::CommentReference(_) => 0,
         InlineNode::Symbol(symbol) => {
             char::from_u32(symbol.char).map_or(0, |ch| ch.len_utf8() as u32)
         }
@@ -6813,6 +7191,7 @@ fn collect_review_inline(
                     "kind": kind,
                     "author": revision.author,
                     "date": revision.date,
+                    "groupId": revision.revision_id,
                     "text": node_plain_text(&revision.inlines),
                     "anchor": {
                         "node": node.to_string(),
@@ -7369,7 +7748,7 @@ fn inline_anchor_len(document: &Document, inline: &InlineNode) -> u32 {
                 .map_or_else(|| "?".to_owned(), |index| (index + 1).to_string());
             ordinal.len() as u32
         }
-        InlineNode::CommentReference(_) => "[comment]".len() as u32,
+        InlineNode::CommentReference(_) => 0,
         InlineNode::Math(math) => {
             if math.text.is_empty() {
                 "[equation]".len() as u32
@@ -7968,6 +8347,35 @@ fn parse_highlight(name: &str) -> HighlightColor {
         "darkgray" | "gray" | "grey" => HighlightColor::DarkGray,
         "lightgray" => HighlightColor::LightGray,
         _ => HighlightColor::Yellow,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn review_format_delta(
+    bold: Option<bool>,
+    italic: Option<bool>,
+    underline: Option<bool>,
+    strike: Option<bool>,
+    size_half_points: Option<u32>,
+    color: Option<String>,
+    highlight: Option<String>,
+    vert_align: Option<String>,
+    font: Option<String>,
+) -> FormatDelta {
+    FormatDelta {
+        bold,
+        italic,
+        underline,
+        strike,
+        color: color.as_deref().and_then(parse_hex_color),
+        highlight: highlight.as_deref().map(parse_highlight),
+        size_half_points,
+        vertical_alignment: vert_align.as_deref().map(|value| match value {
+            "super" => VerticalAlignment::Superscript,
+            "sub" => VerticalAlignment::Subscript,
+            _ => VerticalAlignment::Baseline,
+        }),
+        font,
     }
 }
 
@@ -9798,6 +10206,11 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
+            None,
+            None,
+            None,
             Some("Tester".to_owned()),
             None,
         )
@@ -9822,7 +10235,7 @@ mod tests {
             .map(|(id, _)| id.to_string())
             .expect("a non-empty paragraph");
 
-        d.suggest_insert(&node, 0, "tracked", Some("Tester".to_owned()), None)
+        d.suggest_insert(&node, 0, "tracked", Some("Tester".to_owned()), None, None)
             .expect("suggest insert");
         let mut revisions = Vec::new();
         collect_review_revision_ids(d.document.body(), &mut revisions);
@@ -9835,6 +10248,83 @@ mod tests {
         revisions.clear();
         collect_review_revision_ids(accepted.body(), &mut revisions);
         assert!(revisions.is_empty());
+    }
+
+    #[test]
+    fn deleting_own_pending_insertion_edits_the_suggestion() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, text)| !text.is_empty())
+            .map(|(id, _)| id.to_string())
+            .expect("a non-empty paragraph");
+        d.suggest_insert(&node, 0, "ABC", Some("Tester".to_owned()), None, None)
+            .expect("suggest insertion");
+        d.suggest_delete(&node, 2, 3, Some("Tester".to_owned()), None)
+            .expect("backspace pending insertion");
+
+        let summary: serde_json::Value =
+            serde_json::from_str(&d.review_summary()).expect("review summary");
+        let revisions = summary["revisions"].as_array().expect("revision array");
+        assert_eq!(revisions.len(), 1);
+        assert_eq!(revisions[0]["kind"], "insertion");
+        assert_eq!(revisions[0]["text"], "AB");
+        d.undo().expect("undo insertion edit");
+        let summary: serde_json::Value =
+            serde_json::from_str(&d.review_summary()).expect("review summary");
+        assert_eq!(summary["revisions"][0]["text"], "ABC");
+    }
+
+    #[test]
+    fn suggested_replacement_is_one_atomic_review_decision() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let (node_id, original) = nodes
+            .iter()
+            .find(|(_, text)| !text.is_empty())
+            .map(|(id, text)| (*id, text.clone()))
+            .expect("a non-empty paragraph");
+        let first_len = original.chars().next().map(char::len_utf8).unwrap_or(1) as u32;
+        let node = node_id.to_string();
+
+        d.suggest_replace(
+            &node,
+            0,
+            first_len,
+            "Q",
+            Some("Tester".to_owned()),
+            None,
+            None,
+        )
+        .expect("suggest replacement");
+        let summary: serde_json::Value =
+            serde_json::from_str(&d.review_summary()).expect("review summary");
+        let revisions = summary["revisions"].as_array().expect("revision array");
+        assert_eq!(revisions.len(), 2);
+        let group = revisions[0]["groupId"]
+            .as_str()
+            .expect("editor replacement group");
+        assert_eq!(revisions[1]["groupId"], group);
+
+        d.decide_revision_group(group, true)
+            .expect("accept replacement group");
+        let mut ids = Vec::new();
+        collect_review_revision_ids(d.document.body(), &mut ids);
+        assert!(ids.is_empty(), "both halves are decided together");
+        assert_eq!(d.copy_text(&node, 0, &node, 1), "Q");
+
+        d.undo().expect("undo group decision");
+        ids.clear();
+        collect_review_revision_ids(d.document.body(), &mut ids);
+        assert_eq!(ids.len(), 2, "one undo restores the whole pair");
+        d.undo().expect("undo suggestion creation");
+        assert_eq!(
+            d.copy_text(&node, 0, &node, original.len() as u32),
+            original
+        );
     }
 
     #[test]
@@ -9865,6 +10355,122 @@ mod tests {
         assert_eq!(summary["comments"][0]["text"], "Margin comment");
         assert_eq!(summary["comments"][0]["anchor"]["start"], 0);
         assert_eq!(summary["comments"][0]["anchor"]["end"], marker.len() as u64);
+    }
+
+    #[test]
+    fn authored_comment_thread_survives_export_and_reopen() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, text)| !text.is_empty())
+            .map(|(id, _)| id.to_string())
+            .expect("a non-empty paragraph");
+        d.add_comment(
+            &node,
+            0,
+            1,
+            "Thread root",
+            Some("Reviewer".to_owned()),
+            Some("R".to_owned()),
+            None,
+        )
+        .expect("add root");
+        let root = d
+            .document
+            .definitions()
+            .comments
+            .iter()
+            .find_map(|(id, comment)| {
+                let mut blocks = Vec::new();
+                collect_block_text(&comment.blocks, &mut blocks);
+                (blocks.iter().any(|(_, text)| text == "Thread root")).then_some(*id)
+            })
+            .expect("root id");
+        d.reply_to_comment(
+            &root.node_id().to_string(),
+            "Thread reply",
+            Some("Responder".to_owned()),
+            Some("R".to_owned()),
+            None,
+        )
+        .expect("add reply");
+
+        let root_para_id = d
+            .document
+            .definitions()
+            .comments
+            .get(&root)
+            .and_then(|comment| comment.para_id.clone())
+            .expect("root para id");
+        assert_eq!(root_para_id.len(), 8);
+        let reply = d
+            .document
+            .definitions()
+            .comments
+            .iter()
+            .find(|(_, comment)| comment.parent_para_id.as_deref() == Some(&root_para_id))
+            .map(|(_, comment)| comment)
+            .expect("threaded reply");
+        assert!(reply.para_id.is_some());
+
+        let bytes = d.export_docx().expect("export threaded comments");
+        let reopened = open_document(&bytes).expect("reopen threaded comments");
+        let reopened_root = reopened
+            .document
+            .definitions()
+            .comments
+            .iter()
+            .find(|(_, comment)| comment.para_id.as_deref() == Some(&root_para_id))
+            .map(|(_, comment)| comment)
+            .expect("reopened root");
+        assert!(reopened_root.parent_para_id.is_none());
+        assert!(
+            reopened
+                .document
+                .definitions()
+                .comments
+                .iter()
+                .any(|(_, comment)| comment.parent_para_id.as_deref() == Some(&root_para_id))
+        );
+    }
+
+    #[test]
+    fn deleting_comment_root_cascades_through_replies() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, text)| !text.is_empty())
+            .map(|(id, _)| id.to_string())
+            .expect("a non-empty paragraph");
+        let baseline = d.document.definitions().comments.len();
+        d.add_comment(&node, 0, 1, "Root", None, None, None)
+            .expect("add root");
+        let root = *d
+            .document
+            .definitions()
+            .comments
+            .iter()
+            .find(|(_, comment)| comment.parent_para_id.is_none())
+            .map(|(id, _)| id)
+            .expect("root");
+        d.reply_to_comment(&root.node_id().to_string(), "Reply", None, None, None)
+            .expect("add reply");
+        assert_eq!(d.document.definitions().comments.len(), baseline + 2);
+
+        d.delete_comment(&root.node_id().to_string())
+            .expect("delete thread");
+        assert_eq!(d.document.definitions().comments.len(), baseline);
+        let summary: serde_json::Value =
+            serde_json::from_str(&d.review_summary()).expect("review summary");
+        assert!(summary["comments"].as_array().is_some_and(|comments| {
+            comments
+                .iter()
+                .all(|comment| comment["text"] != "Root" && comment["text"] != "Reply")
+        }));
     }
 
     /// Rapid adjacent typing is one user action, while a different host gesture
