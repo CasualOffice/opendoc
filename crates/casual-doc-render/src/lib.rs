@@ -56,7 +56,8 @@ pub trait GlyphSource {
 /// here, keeping this crate independent of how the package is opened.
 pub trait MediaSource {
     /// The encoded image bytes for `media` (its package part name), or `None` if
-    /// unknown (the image renders nothing).
+    /// unknown (the image renders nothing — bytes present but undecodable
+    /// instead render a visible placeholder box, not a blank gap).
     fn media_bytes(&self, media: &str) -> Option<&[u8]>;
 }
 
@@ -109,7 +110,9 @@ impl Surface {
 /// Renders `list` onto `surface`, applying the device scale `dpi` (device pixels
 /// per inch × zoom) to the twip-space display list. Glyph outlines are taken from
 /// `fonts`; a glyph whose font is unknown is skipped. Inline-image bytes are taken
-/// from `media`; an image whose media is unknown or undecodable renders nothing.
+/// from `media`; an image whose media is unknown renders nothing, while one with
+/// bytes present but an undecodable format (e.g. EMF/WMF) renders a visible
+/// placeholder box instead.
 pub fn render(
     list: &DisplayList,
     surface: &mut Surface,
@@ -216,9 +219,21 @@ pub fn render(
 }
 
 /// Decodes an inline image's bytes and blits them, scaled, into `rect` (twips,
-/// scaled to device pixels here) under the current `clip`. Unknown media, an
-/// unsupported/undecodable format (e.g. EMF/WMF vector metafiles — deferred to
-/// `P1F-28`), or a degenerate box all render nothing without panicking.
+/// scaled to device pixels here) under the current `clip`. Two distinct
+/// no-media-drawn cases are handled differently (`docs/55` §8):
+///
+/// - **No bytes at all** (`media.media_bytes` misses): there is genuinely
+///   nothing to show, so nothing is painted.
+/// - **Bytes present but the format isn't decodable** by the PNG/JPEG-only
+///   path below (e.g. an EMF/WMF vector metafile — real metafile decoding
+///   remains future work, `P1F-28`): the picture's box is fully known even
+///   though its content isn't, so a visible placeholder (a bordered box with
+///   a diagonal cross, the "broken image" convention) is painted in `rect`
+///   instead of a silent blank gap — the same never-silently-drop spirit as
+///   `casual-doc-layout`'s `.notdef` glyph box.
+///
+/// A degenerate box (zero/negative device size) renders nothing in either
+/// case; there is no area to paint into.
 fn render_image(
     media_id: &str,
     rect: Rect,
@@ -231,6 +246,7 @@ fn render_image(
         return;
     };
     let Some(source) = decode_to_pixmap(bytes) else {
+        render_undecodable_placeholder(rect, surface, dpi, clip);
         return;
     };
     let (src_w, src_h) = (source.width() as f32, source.height() as f32);
@@ -254,6 +270,63 @@ fn render_image(
     surface
         .pixmap
         .draw_pixmap(0, 0, source.as_ref(), &paint, transform, clip);
+}
+
+/// The placeholder's stroke color: a neutral mid-gray, visible against a white
+/// page without being mistaken for real ink (glyphs/borders are usually
+/// darker or a document color).
+const PLACEHOLDER_STROKE: (u8, u8, u8, u8) = (150, 150, 150, 255);
+
+/// Paints a visible, deterministic "unsupported image" placeholder filling
+/// `rect`: a stroked border box with a diagonal cross, the conventional
+/// "broken image" glyph. Used when media bytes are present but not decodable
+/// by [`decode_to_pixmap`] (e.g. EMF/WMF), so a reader sees "there was a
+/// picture here" rather than a blank gap. A degenerate device box paints
+/// nothing (mirrors the decoded-image path).
+fn render_undecodable_placeholder(
+    rect: Rect,
+    surface: &mut Surface,
+    dpi: f32,
+    clip: Option<&Mask>,
+) {
+    let dx = rect.origin.x.to_device_px(dpi);
+    let dy = rect.origin.y.to_device_px(dpi);
+    let dw = rect.size.width.to_device_px(dpi);
+    let dh = rect.size.height.to_device_px(dpi);
+    if dw <= 0.0 || dh <= 0.0 {
+        return;
+    }
+    let mut paint = Paint::default();
+    let (r, g, b, a) = PLACEHOLDER_STROKE;
+    paint.set_color_rgba8(r, g, b, a);
+    paint.anti_alias = true;
+    let stroke = Stroke {
+        width: (dw.min(dh) * 0.02).max(1.0),
+        ..Stroke::default()
+    };
+
+    // The border.
+    if let Some(border) = SkRect::from_xywh(dx, dy, dw, dh) {
+        let mut builder = PathBuilder::new();
+        builder.push_rect(border);
+        if let Some(path) = builder.finish() {
+            surface
+                .pixmap
+                .stroke_path(&path, &paint, &stroke, Transform::identity(), clip);
+        }
+    }
+
+    // The diagonal cross, corner to corner.
+    let mut cross = PathBuilder::new();
+    cross.move_to(dx, dy);
+    cross.line_to(dx + dw, dy + dh);
+    cross.move_to(dx + dw, dy);
+    cross.line_to(dx, dy + dh);
+    if let Some(path) = cross.finish() {
+        surface
+            .pixmap
+            .stroke_path(&path, &paint, &stroke, Transform::identity(), clip);
+    }
 }
 
 /// Decodes PNG/JPEG bytes to a premultiplied-RGBA `tiny-skia` pixmap.
@@ -1001,15 +1074,18 @@ mod tests {
     }
 
     #[test]
-    fn an_image_over_the_dimension_limit_is_skipped_before_decode() {
+    fn an_image_over_the_dimension_limit_is_rejected_before_decode_and_placeholdered() {
         // A very wide but shallow PNG keeps the regression fixture small while
-        // proving that encoded byte size alone cannot admit an extreme raster.
+        // proving that encoded byte size alone cannot admit an extreme raster:
+        // the full decode never runs (the dimension check rejects it first),
+        // but the bytes were present, so — like any other undecodable media —
+        // it now paints the visible placeholder rather than a silent blank.
         let bytes = solid_image(32_769, 1, [200, 30, 30, 255], image::ImageFormat::Png);
         let surface = render_one_image(bytes);
-        assert_eq!(
-            dark_pixel_count(&surface),
-            0,
-            "an image wider than the 32,768-pixel decode limit paints nothing"
+        assert!(
+            dark_pixel_count(&surface) > 0,
+            "an image over the 32,768-pixel decode limit is rejected but still \
+             placeholdered, not silently blank"
         );
     }
 
@@ -1023,14 +1099,15 @@ mod tests {
     }
 
     #[test]
-    fn unknown_or_undecodable_media_renders_nothing_and_does_not_panic() {
+    fn unknown_media_renders_nothing_and_does_not_panic() {
+        // No source bytes at all (the media id isn't in the source): there is
+        // genuinely nothing to show, so this stays a blank gap, unlike the
+        // present-but-undecodable case below.
         use casual_doc_layout::units::Size;
         let rect = Rect::new(
             Point::new(Twip(10), Twip(10)),
             Size::new(Twip(20), Twip(20)),
         );
-
-        // Unknown media id: no source bytes -> nothing painted.
         let mut list = DisplayList::new();
         list.push(PaintItem::Image {
             media: "missing".to_owned(),
@@ -1047,23 +1124,46 @@ mod tests {
         assert_eq!(
             dark_pixel_count(&surface),
             0,
-            "unknown media paints nothing"
+            "unknown media (no bytes at all) paints nothing"
         );
+    }
 
-        // Present but undecodable bytes (not PNG/JPEG, e.g. an EMF stub): skipped.
+    #[test]
+    fn undecodable_media_with_bytes_present_paints_a_visible_placeholder() {
+        // Present but undecodable bytes (not PNG/JPEG, e.g. an EMF stub): the
+        // box is fully known even though the content isn't, so a visible
+        // placeholder is painted instead of a silent blank gap.
+        use casual_doc_layout::units::Size;
+        let rect = Rect::new(
+            Point::new(Twip(10), Twip(10)),
+            Size::new(Twip(20), Twip(20)),
+        );
         let mut media = MapMediaSource::new();
         media.insert("junk", vec![1, 2, 3, 4, 5, 6, 7, 8]);
-        let mut list2 = DisplayList::new();
-        list2.push(PaintItem::Image {
+        let mut list = DisplayList::new();
+        list.push(PaintItem::Image {
             media: "junk".to_owned(),
             rect,
         });
-        let mut surface2 = Surface::new(50, 50).unwrap();
-        render(&list2, &mut surface2, 1440.0, &BundledFontSource, &media);
+        let mut surface = Surface::new(50, 50).unwrap();
+        render(&list, &mut surface, 1440.0, &BundledFontSource, &media);
+
+        assert!(
+            dark_pixel_count(&surface) > 0,
+            "undecodable-but-present media paints a visible placeholder, not nothing"
+        );
+        // The rect is device px [10,30)^2 at this dpi; the placeholder's two
+        // diagonals cross exactly at the box center.
+        let center = pixel_at(&surface, 50, 20, 20);
+        assert!(
+            center[0] < 220 && center[1] < 220 && center[2] < 220,
+            "the placeholder's diagonal cross lands on the box center (got {center:?})"
+        );
+        // Well outside the box: untouched background, same as before.
         assert_eq!(
-            dark_pixel_count(&surface2),
-            0,
-            "undecodable media paints nothing"
+            pixel_at(&surface, 50, 2, 2),
+            [255, 255, 255, 255],
+            "the placeholder stays within the image's own rect"
         );
     }
 

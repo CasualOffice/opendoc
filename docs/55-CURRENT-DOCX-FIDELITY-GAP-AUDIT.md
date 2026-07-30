@@ -341,10 +341,24 @@ VML CSS box contains width and height. Such an image survives import but renders
 nothing.
 
 The CPU backend deliberately enables only PNG and JPEG codecs. EMF/WMF, SVG,
-GIF, BMP, and TIFF are currently unsupported/undecodable and therefore paint
-nothing. A production document engine needs an explicit safe policy per format:
-native decode, bounded vector conversion, host-provided rasterization, or a
-visible unsupported-media placeholder.
+GIF, BMP, and TIFF are currently unsupported/undecodable. Real decoding of any
+of these remains future work (`P1F-28`'s metafile-decode follow-up). As of
+`agent/fix-emf-wmf-placeholder`, an image whose bytes are present but not
+decodable by the PNG/JPEG-only path (any of the above formats, a corrupt file,
+or one rejected by the dimension/pixel-budget guard) no longer paints nothing:
+`casual-doc-render`'s `render_image` paints a visible, deterministic
+placeholder (a bordered box with a diagonal cross) filling the image's known
+rect, so a reader sees "there was a picture here" instead of a blank gap. Media
+with no bytes at all is unchanged (still paints nothing — there is genuinely
+nothing to show). This is the "visible unsupported-media placeholder" leg of
+the safe-policy-per-format list below; native decode, bounded vector
+conversion, and host-provided rasterization for these formats remain open. The
+placeholder is also not yet wired into the import-time `CompatibilityReport`
+(`casual-doc-import/src/report.rs`) — that mechanism doesn't currently reach
+render time, so an undecodable image is visually flagged on the page but not
+(yet) surfaced in the compatibility report. A production document engine needs
+an explicit safe policy per format: native decode, bounded vector conversion,
+host-provided rasterization, or a visible unsupported-media placeholder.
 
 The inline picture model does not yet carry the full DrawingML appearance
 surface, including crop/source rectangle, rotation/flip, and picture effects.
