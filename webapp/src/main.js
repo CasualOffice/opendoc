@@ -2012,8 +2012,19 @@ onButton(subBtn, () => {
 for (const [key, btn] of Object.entries(alignBtns)) {
   onButton(btn, () => runToolbarEdit((a, b, c, d) => doc.setAlignment(a, b, c, d, key)));
 }
-onButton(indentDecBtn, () => runToolbarEdit((a, b, c, d) => doc.adjustIndent(a, b, c, d, -360)));
-onButton(indentIncBtn, () => runToolbarEdit((a, b, c, d) => doc.adjustIndent(a, b, c, d, 360)));
+/** Word-style indent commands: list items change numbering level, while ordinary
+ * paragraphs retain the existing 0.25in paragraph-indent behavior. */
+function adjustIndentCommand(delta) {
+  if (!selection || !doc) return;
+  const listKind = doc.listStyleAt(selection.focus.node);
+  runToolbarEdit((a, b, c, d) =>
+    listKind
+      ? doc.adjustListLevel(a, b, c, d, delta > 0 ? 1 : -1)
+      : doc.adjustIndent(a, b, c, d, delta),
+  );
+}
+onButton(indentDecBtn, () => adjustIndentCommand(-360));
+onButton(indentIncBtn, () => adjustIndentCommand(360));
 onButton(bulletListBtn, () => runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "bullet")));
 onButton(numberedListBtn, () => runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "numbered")));
 
