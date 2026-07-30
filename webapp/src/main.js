@@ -3611,6 +3611,14 @@ document.addEventListener("keydown", async (e) => {
 
   if (composingText || e.isComposing || key === "Process") return;
 
+  // Word's Windows/Linux shortcut for clearing direct character formatting.
+  // macOS keeps Ctrl+Space available to the host/input source.
+  if (e.ctrlKey && !e.metaKey && key === " " && hasRange()) {
+    e.preventDefault();
+    await runToolbarEdit((a, b, c, d) => doc.clearFormatting(a, b, c, d));
+    return;
+  }
+
   // Clipboard, select-all, history (⌘/Ctrl based).
   if (mod && lower === "c") {
     e.preventDefault();
