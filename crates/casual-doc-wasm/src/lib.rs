@@ -42,8 +42,8 @@ use casual_doc_model::v1::{
     NumberingInstanceId, NumberingLevel, NumberingOverride, NumberingRef, PageMargins,
     PageOrientation, PageSize as SectionPageSize, Paragraph, ParagraphBorders, ParagraphProperties,
     RgbColor, RowHeight, Run, RunProperties, SectionId, Spacing, StyleId, StyleKind, TabAlignment,
-    TabLeader, TabStop, Table, TableBorders, TableCell, TableCellProperties, TableLayout,
-    TableProperties, TableRow, VerticalAlignment, VerticalMerge,
+    TabStop, Table, TableBorders, TableCell, TableCellProperties, TableLayout, TableProperties,
+    TableRow, VerticalAlignment, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
@@ -7929,6 +7929,7 @@ fn dirty_pages(old: &PaginatedLayout, new: &PaginatedLayout) -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use casual_doc_model::v1::TabLeader;
 
     const RICH_DOCX: &[u8] = include_bytes!("../../../fixtures/corpus/real-producer-rich.docx");
     const SAMPLE_DOCX: &[u8] = include_bytes!("../../../sample.docx");
