@@ -2260,6 +2260,7 @@ body.modal-open {
 .review-card p { margin: 7px 0 0; color: var(--ink); font-size: 12px; line-height: 1.45; white-space: pre-wrap; }
 .review-card-action { margin-top: 8px; border: 1px solid var(--line); border-radius: 5px; padding: 3px 7px; background: transparent; color: var(--ink); font: inherit; font-size: 11px; cursor: pointer; }
 .review-reply { margin-left: 14px; border-left: 3px solid var(--accent); }
+.review-bulk-actions { display: flex; gap: 6px; padding: 8px 10px 0; }
 .review-revision-actions { display: flex; gap: 6px; }
 
 .viewport {

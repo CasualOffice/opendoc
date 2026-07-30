@@ -3985,6 +3985,28 @@ impl WasmDocument {
         .map_err(to_js)
     }
 
+    #[wasm_bindgen(js_name = decideAllRevisions)]
+    pub fn decide_all_revisions(&mut self, accept: bool) -> Result<EditResult, JsValue> {
+        let mut ids = Vec::new();
+        collect_review_revision_ids(self.document.body(), &mut ids);
+        if ids.is_empty() {
+            return Err(to_js("no tracked revisions".to_string()));
+        }
+        let mut body = self.document.body().to_vec();
+        for id in ids {
+            let _ = decide_review_revision(&mut body, id, accept);
+        }
+        self.apply_action_caret_as(
+            vec![Operation::ReplaceReviewState {
+                body,
+                comments: self.document.definitions().comments.clone(),
+            }],
+            Pos::new(self.document.id(), 0),
+            HistoryKind::Review,
+        )
+        .map_err(to_js)
+    }
+
     /// Replaces the document's core properties from a JSON object in the same
     /// shape [`document_properties`](Self::document_properties) returns — an
     /// absent/`null` field clears that property. One undoable action.
@@ -6282,6 +6304,37 @@ fn decide_review_revision(blocks: &mut [BlockNode], id: NodeId, accept: bool) ->
         }
     }
     false
+}
+
+fn collect_review_revision_ids(blocks: &[BlockNode], out: &mut Vec<NodeId>) {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => collect_review_inline_ids(&paragraph.inlines, out),
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        collect_review_revision_ids(&cell.blocks, out);
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => collect_review_revision_ids(&sdt.blocks, out),
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+}
+
+fn collect_review_inline_ids(inlines: &[InlineNode], out: &mut Vec<NodeId>) {
+    for inline in inlines {
+        match inline {
+            InlineNode::Revision(revision) => {
+                out.push(revision.id);
+                collect_review_inline_ids(&revision.inlines, out);
+            }
+            InlineNode::Hyperlink(link) => collect_review_inline_ids(&link.inlines, out),
+            InlineNode::Sdt(sdt) => collect_review_inline_ids(&sdt.inlines, out),
+            _ => {}
+        }
+    }
 }
 
 fn decide_review_inline(inlines: &mut Vec<InlineNode>, id: NodeId, accept: bool) -> bool {

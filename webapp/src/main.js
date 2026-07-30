@@ -179,6 +179,8 @@ const reviewComposerCancel = document.getElementById("reviewComposerCancel");
 const reviewComposerSubmit = document.getElementById("reviewComposerSubmit");
 const reviewModeButtons = [...document.querySelectorAll("[data-review-mode]")];
 const reviewAuthor = document.getElementById("reviewAuthor");
+const reviewAcceptAll = document.getElementById("reviewAcceptAll");
+const reviewRejectAll = document.getElementById("reviewRejectAll");
 let reviewMode = "editing";
 const linkChip = document.getElementById("linkChip");
 const linkChipKind = document.getElementById("linkChipKind");
@@ -2986,6 +2988,8 @@ function toggleReview(open) {
 reviewBtn.addEventListener("click", () => toggleReview());
 railReview.addEventListener("click", () => toggleReview());
 reviewClose.addEventListener("click", () => toggleReview(false));
+reviewAcceptAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(true)); buildReview(); } });
+reviewRejectAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(false)); buildReview(); } });
 function openReviewComposer(parent = null) {
   if (!doc || (!parent && (!hasRange() || !selection))) return;
   toggleReview(true);
