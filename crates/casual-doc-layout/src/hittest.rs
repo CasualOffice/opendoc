@@ -115,6 +115,19 @@ impl<'a> LineBox<'a> {
             Some(_) => 0,
         }
     }
+
+    /// Whether the line paints anything users can target. Empty paragraphs still
+    /// retain a caret slot, but should not win a nearest-content fallback when a
+    /// real paragraph is also available on the page.
+    fn has_paintable_content(&self) -> bool {
+        self.line.runs.iter().any(|run| !run.glyphs.is_empty())
+            || !self.line.images.is_empty()
+            || !self.line.fields.is_empty()
+            || !self.line.notes.is_empty()
+            || !self.line.text_boxes.is_empty()
+            || !self.line.rules.is_empty()
+            || !self.line.bars.is_empty()
+    }
 }
 
 /// A read-only view over a [`PaginatedLayout`] that maps between screen geometry
@@ -188,10 +201,18 @@ impl<'a> LayoutSnapshot<'a> {
             let nearest = page_lines
                 .iter()
                 .copied()
+                .filter(|lb| lb.has_paintable_content())
                 .min_by(|a, b| {
                     vertical_distance(a, y)
                         .cmp(&vertical_distance(b, y))
                         .then_with(|| b.cell_contains_x(x).cmp(&a.cell_contains_x(x)))
+                })
+                .or_else(|| {
+                    page_lines.iter().copied().min_by(|a, b| {
+                        vertical_distance(a, y)
+                            .cmp(&vertical_distance(b, y))
+                            .then_with(|| b.cell_contains_x(x).cmp(&a.cell_contains_x(x)))
+                    })
                 })
                 .unwrap_or(first);
             (nearest, false)
@@ -1112,6 +1133,17 @@ mod tests {
         let paginated = PaginatedLayout::default();
         let snap = LayoutSnapshot::new(&paginated);
         assert!(snap.hit_test(1, Point::default()).is_none());
+    }
+
+    #[test]
+    fn nearest_fallback_skips_empty_paragraph_lines_when_content_exists() {
+        let paginated = layout(&[ltr_para(1, &[0]), ltr_para(2, &[3])]);
+        let snap = LayoutSnapshot::new(&paginated);
+        let hit = snap
+            .hit_test(1, Point::new(Twip(MARGIN), Twip(0)))
+            .expect("page has caret lines");
+        assert_eq!(hit.pos.node, node(2));
+        assert_eq!(hit.zone, HitZone::Outside);
     }
 
     #[test]

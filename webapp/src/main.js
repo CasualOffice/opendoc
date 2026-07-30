@@ -3772,6 +3772,18 @@ document.addEventListener("keydown", async (e) => {
 
   if (key === "Backspace") {
     e.preventDefault();
+    if (!range && focus.offset === 0) {
+      const listKind = doc.listStyleAt(focus.node);
+      if (listKind) {
+        const level = doc.listLevelAt?.(focus.node) ?? 0;
+        await runToolbarEdit((a, b, c, d) =>
+          level > 0
+            ? doc.adjustListLevel(a, b, c, d, -1)
+            : doc.toggleList(a, b, c, d, listKind),
+        );
+        return;
+      }
+    }
     await runEdit(() =>
       range
         ? doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset)
@@ -3796,7 +3808,12 @@ document.addEventListener("keydown", async (e) => {
     if (!range) {
       const listKind = doc.listStyleAt(focus.node);
       if (listKind && doc.paragraphLength(focus.node) === 0) {
-        await runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, listKind));
+        const level = doc.listLevelAt?.(focus.node) ?? 0;
+        await runToolbarEdit((a, b, c, d) =>
+          level > 0
+            ? doc.adjustListLevel(a, b, c, d, -1)
+            : doc.toggleList(a, b, c, d, listKind),
+        );
         return;
       }
     }

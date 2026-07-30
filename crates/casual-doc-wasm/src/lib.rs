@@ -1987,6 +1987,20 @@ impl WasmDocument {
         })
     }
 
+    /// The paragraph's numbering level (0 for a top-level item), or `-1` when
+    /// the paragraph is not part of a list. The host uses this to apply the
+    /// Word-style Backspace/Enter boundary rule without inspecting model data.
+    #[wasm_bindgen(js_name = listLevelAt)]
+    #[must_use]
+    pub fn list_level_at(&self, node: &str) -> i32 {
+        let Ok(nid) = NodeId::from_str(node) else {
+            return -1;
+        };
+        paragraph_properties(&self.document, nid)
+            .and_then(|p| p.numbering)
+            .map_or(-1, |reference| i32::from(reference.level))
+    }
+
     /// Inserts a fresh `rows`×`cols` table into the body right after the caret's
     /// top-level block, with equal columns spanning the content width and a thin
     /// single-line grid so it is visible. The caret lands in the first cell.
@@ -9627,6 +9641,7 @@ mod tests {
         d.toggle_list(&node, 0, &node, 0, "numbered")
             .expect("toggle numbered on");
         assert_eq!(d.list_style_at(&node), "numbered");
+        assert_eq!(d.list_level_at(&node), 0);
         for _ in 0..8 {
             d.adjust_list_level(&node, 0, &node, 0, 1)
                 .expect("promote list level");
