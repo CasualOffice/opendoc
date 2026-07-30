@@ -1219,6 +1219,33 @@ pub enum RevisionKind {
     MoveTo,
 }
 
+/// OpenDoc-only logical grouping for revisions that form one review decision.
+///
+/// This metadata is deliberately separate from [`Revision::revision_id`]:
+/// `revision_id` is the producer-facing WordprocessingML `w:id`, while this
+/// value controls editor card composition and atomic decisions. The semantic
+/// DOCX writer does not serialize it as `w:id`.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RevisionGroup {
+    /// Stable opaque identity for the editor decision group.
+    pub id: NodeId,
+    /// The member/composition contract enforced before an atomic decision.
+    pub kind: RevisionGroupKind,
+}
+
+/// Closed composition kinds for editor-authored revision groups.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RevisionGroupKind {
+    /// One or more adjacent insertions created by one typing gesture.
+    Typing,
+    /// Exactly one deletion followed by one insertion.
+    Replacement,
+    /// Exactly one deletion plus one insertion of the same text with new props.
+    Formatting,
+}
+
 /// A tracked-change (revision) range wrapping inline content (`w:ins`/`w:del`).
 ///
 /// Author/date/id are retained as the producer wrote them (opaque, bounded),
@@ -1240,9 +1267,13 @@ pub struct Revision {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub date: Option<String>,
     /// The producer's revision id (`w:id`) as written, if declared (<= 64 bytes).
-    /// Opaque and non-unique across ranges — a grouping key, not a node identity.
+    /// Opaque and non-unique across imported ranges; editor-authored values are
+    /// unique decimal strings. This is not an OpenDoc decision-group identity.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub revision_id: Option<String>,
+    /// OpenDoc-only card/decision grouping, separate from serialized `w:id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub editor_group: Option<RevisionGroup>,
     /// The wrapped inline content (non-empty; may include a nested revision).
     pub inlines: Vec<InlineNode>,
 }

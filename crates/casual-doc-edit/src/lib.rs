@@ -113,6 +113,19 @@ pub struct Range {
     pub end: Pos,
 }
 
+/// One paragraph-local replacement carried by an atomic review command.
+///
+/// Review authoring/decisions can rewrite wrapper and marker structure while
+/// leaving every other paragraph untouched. Carrying complete inlines for only
+/// the affected paragraph gives Undo an exact, bounded inverse.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReviewParagraphState {
+    /// Paragraph whose inline tree is replaced.
+    pub node: NodeId,
+    /// Complete replacement inline tree.
+    pub inlines: Vec<InlineNode>,
+}
+
 /// The closed editing op set (I2). Slice 1 carries the two text ops; structural
 /// and object ops are additive variants (doc 59).
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -289,14 +302,15 @@ pub enum Operation {
         /// The properties to install.
         properties: Box<CoreProperties>,
     },
-    /// Replace the body and comment definitions as one exact, undoable review
-    /// transaction. Review commands use this bounded snapshot vehicle while
-    /// comment/revision marker edits are generalized across nested containers.
-    ReplaceReviewState {
-        /// New body tree.
-        body: Vec<BlockNode>,
-        /// New comment definitions.
-        comments: DefinitionMap<CommentId, Comment>,
+    /// Atomically replace only review-touched paragraph inlines and, when
+    /// necessary, the comments map. Its inverse carries the exact prior scoped
+    /// values rather than a whole-document body snapshot.
+    UpdateReviewState {
+        /// Paragraph-local inline replacements. Node ids must be unique.
+        paragraphs: Vec<ReviewParagraphState>,
+        /// Replacement comments map, or `None` when revision-only editing leaves
+        /// comment definitions untouched.
+        comments: Option<DefinitionMap<CommentId, Comment>>,
     },
     /// Replace one section's page size, margins, orientation, and column layout
     /// (the "Page Setup" fields) — headers/footers, borders, and the section's
@@ -741,17 +755,48 @@ pub fn apply(
                 properties: Box::new(previous),
             })
         }
-        Operation::ReplaceReviewState { body, comments } => {
-            let previous_body = std::mem::replace(doc.body_mut(), body.clone());
-            let previous_comments =
-                std::mem::replace(&mut doc.definitions_mut().comments, comments.clone());
+        Operation::UpdateReviewState {
+            paragraphs,
+            comments,
+        } => {
+            if paragraphs.is_empty() && comments.is_none() {
+                return Err(EditError::EmptyEdit);
+            }
+            for (index, paragraph) in paragraphs.iter().enumerate() {
+                if paragraphs[..index]
+                    .iter()
+                    .any(|previous| previous.node == paragraph.node)
+                    || find_paragraph(doc.body(), paragraph.node).is_none()
+                {
+                    return Err(EditError::NodeNotFound);
+                }
+            }
+
+            let mut previous_paragraphs = Vec::with_capacity(paragraphs.len());
+            for replacement in paragraphs {
+                let paragraph = find_paragraph_mut(doc.body_mut(), replacement.node)
+                    .ok_or(EditError::NodeNotFound)?;
+                previous_paragraphs.push(ReviewParagraphState {
+                    node: replacement.node,
+                    inlines: std::mem::replace(&mut paragraph.inlines, replacement.inlines.clone()),
+                });
+            }
+            let previous_comments = comments.as_ref().map(|replacement| {
+                std::mem::replace(&mut doc.definitions_mut().comments, replacement.clone())
+            });
             if doc.validate().is_err() {
-                *doc.body_mut() = previous_body;
-                doc.definitions_mut().comments = previous_comments;
+                for previous in &previous_paragraphs {
+                    let paragraph = find_paragraph_mut(doc.body_mut(), previous.node)
+                        .expect("review paragraph was prevalidated");
+                    paragraph.inlines = previous.inlines.clone();
+                }
+                if let Some(previous) = previous_comments {
+                    doc.definitions_mut().comments = previous;
+                }
                 return Err(EditError::ValueTooLarge);
             }
-            Ok(Operation::ReplaceReviewState {
-                body: previous_body,
+            Ok(Operation::UpdateReviewState {
+                paragraphs: previous_paragraphs,
                 comments: previous_comments,
             })
         }
@@ -2577,6 +2622,57 @@ mod tests {
         assert_eq!(err, EditError::ValueTooLarge);
         // No partial mutation survives an error.
         assert!(d.properties().is_none_or(|p| p.core.is_empty()));
+    }
+
+    #[test]
+    fn scoped_review_state_applies_inverts_and_rolls_back_atomically() {
+        let paragraph = n(2);
+        let mut d = doc(vec![
+            para(2, vec![run(3, "before")]),
+            para(4, vec![run(5, "untouched")]),
+        ]);
+        let original = d.clone();
+        let mut ids = IdGenerator::new(9);
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::UpdateReviewState {
+                paragraphs: vec![ReviewParagraphState {
+                    node: paragraph,
+                    inlines: vec![run(6, "after")],
+                }],
+                comments: None,
+            },
+        )
+        .expect("scoped review update");
+        assert_eq!(text_of(&d, paragraph), "after");
+        assert_eq!(text_of(&d, n(4)), "untouched");
+        assert!(matches!(
+            &inverse,
+            Operation::UpdateReviewState {
+                paragraphs,
+                comments: None,
+            } if paragraphs.len() == 1 && paragraphs[0].node == paragraph
+        ));
+
+        apply(&mut d, &mut ids, &inverse).expect("exact review undo");
+        assert_eq!(d, original);
+
+        let invalid = Operation::UpdateReviewState {
+            paragraphs: vec![ReviewParagraphState {
+                node: paragraph,
+                // Adjacent runs with equal properties violate the normalized
+                // model invariant and must roll the entire operation back.
+                inlines: vec![run(10, "a"), run(11, "b")],
+            }],
+            comments: None,
+        };
+        assert_eq!(
+            apply(&mut d, &mut ids, &invalid),
+            Err(EditError::ValueTooLarge)
+        );
+        assert_eq!(d, original, "failed review update leaves no partial state");
     }
 
     fn section(id: u64) -> SectionBoundary {

@@ -176,6 +176,9 @@ This slots alongside doc 67's existing execution plan; it does not require reord
    shared move-range name plus exact source/destination marker identities. The
    card and decision are atomic and remove the consumed range markers.
 4. **Resolved:** Comments owns a dedicated 340px sibling sidebar, not the generic region-4 properties panel and never a canvas overlay.
+5. **Resolved for P1G-REVIEW-035:** `w:id` is producer-facing numeric revision
+   identity. OpenDoc card/decision grouping is separate typed model metadata,
+   and doc 82 defines its scoped history and validation contract.
 
 ## Verification Gates
 

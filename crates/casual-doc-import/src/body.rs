@@ -5749,6 +5749,7 @@ impl BodyParser<'_> {
                     author,
                     date,
                     revision_id,
+                    editor_group: None,
                     inlines,
                 }))
             }

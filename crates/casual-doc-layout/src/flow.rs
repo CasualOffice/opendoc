@@ -5092,6 +5092,7 @@ mod tests {
             author: None,
             date: None,
             revision_id: None,
+            editor_group: None,
             inlines: vec![run_node(41, " inserted", RunProperties::default())],
         });
         let doc = document(vec![paragraph(10, vec![link, rev])]);

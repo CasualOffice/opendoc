@@ -14,9 +14,9 @@
 //! `device_px = twip / 1440 * dpi`.
 
 use casual_doc_edit::{
-    FormatDelta, Operation, Pos, Range as EditRange, apply as apply_edit, caret_run_properties,
-    cell_properties, find_paragraph, find_table, locate_cell, locate_table_cell, locate_table_row,
-    paragraph_properties, run_properties_in_range,
+    FormatDelta, Operation, Pos, Range as EditRange, ReviewParagraphState, apply as apply_edit,
+    caret_run_properties, cell_properties, find_paragraph, find_table, locate_cell,
+    locate_table_cell, locate_table_row, paragraph_properties, run_properties_in_range,
 };
 use casual_doc_export::write_document;
 use casual_doc_import::{ImportConfig, ImportMode, import_package};
@@ -42,9 +42,10 @@ use casual_doc_model::v1::{
     InternalTarget, LevelJustification, LevelSuffix, MoveKind, NumberFormat, NumberingInstance,
     NumberingInstanceId, NumberingLevel, NumberingOverride, NumberingRef, PageMargins,
     PageOrientation, PageSize as SectionPageSize, Paragraph, ParagraphBorders, ParagraphProperties,
-    Revision, RevisionKind, RgbColor, RowHeight, Run, RunProperties, SectionColumns, SectionId,
-    Spacing, StyleId, StyleKind, TabAlignment, TabStop, Table, TableBorders, TableCell,
-    TableCellProperties, TableLayout, TableProperties, TableRow, VerticalAlignment, VerticalMerge,
+    Revision, RevisionGroup, RevisionGroupKind, RevisionKind, RgbColor, RowHeight, Run,
+    RunProperties, SectionColumns, SectionId, Spacing, StyleId, StyleKind, TabAlignment, TabStop,
+    Table, TableBorders, TableCell, TableCellProperties, TableLayout, TableProperties, TableRow,
+    VerticalAlignment, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
@@ -105,6 +106,10 @@ pub struct WasmDocument {
     /// keystroke. The host owns gesture boundaries through `session`; the engine
     /// additionally requires exact caret continuity before coalescing history.
     typing_history: Option<TypingHistory>,
+    /// Numeric `w:id` allocator for editor-authored revisions. Imported opaque
+    /// ids remain untouched; allocated values are never reused within a session,
+    /// including after Undo.
+    revision_ids: RevisionIdAllocator,
     /// Monotonic model revision, bumped on every applied edit.
     revision: u32,
     /// Shaped-paragraph cache for the incremental edit path: an edit re-shapes only
@@ -123,6 +128,47 @@ pub struct WasmDocument {
 struct TypingHistory {
     session: u32,
     caret: Pos,
+    review_group: Option<RevisionGroup>,
+}
+
+const MAX_HISTORY_ENTRIES: usize = 256;
+
+#[derive(Clone, Debug)]
+struct RevisionIdAllocator {
+    used: BTreeSet<u128>,
+    next: u128,
+}
+
+impl RevisionIdAllocator {
+    fn from_document(document: &Document) -> Self {
+        let mut values = Vec::new();
+        collect_review_revision_serial_ids(document.body(), &mut values);
+        let used = values
+            .into_iter()
+            .filter_map(|value| value.parse::<u128>().ok())
+            .collect::<BTreeSet<_>>();
+        let mut next = 0_u128;
+        while used.contains(&next) {
+            let Some(candidate) = next.checked_add(1) else {
+                break;
+            };
+            next = candidate;
+        }
+        Self { used, next }
+    }
+
+    fn allocate(&mut self) -> Result<String, String> {
+        let mut candidate = self.next;
+        loop {
+            if self.used.insert(candidate) {
+                self.next = candidate.checked_add(1).unwrap_or(candidate);
+                return Ok(candidate.to_string());
+            }
+            candidate = candidate
+                .checked_add(1)
+                .ok_or_else(|| "revision id space exhausted".to_owned())?;
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -143,6 +189,7 @@ enum HistoryKind {
     DocumentProperties,
     PageSetup,
     Review,
+    ReviewTyping,
 }
 
 impl HistoryKind {
@@ -164,6 +211,7 @@ impl HistoryKind {
             Self::DocumentProperties => "Document properties",
             Self::PageSetup => "Page setup",
             Self::Review => "Review",
+            Self::ReviewTyping => "Review typing",
         }
     }
 }
@@ -172,6 +220,13 @@ impl HistoryKind {
 struct HistoryEntry {
     kind: HistoryKind,
     operations: Vec<Operation>,
+}
+
+fn push_history(stack: &mut Vec<HistoryEntry>, entry: HistoryEntry) {
+    if stack.len() == MAX_HISTORY_ENTRIES {
+        stack.remove(0);
+    }
+    stack.push(entry);
 }
 
 fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
@@ -199,7 +254,7 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         | Operation::SetTableProperties { .. }
         | Operation::ReplaceTable { .. } => HistoryKind::TableFormatting,
         Operation::SetCoreProperties { .. } => HistoryKind::DocumentProperties,
-        Operation::ReplaceReviewState { .. } => HistoryKind::Review,
+        Operation::UpdateReviewState { .. } => HistoryKind::Review,
         Operation::SetSectionGeometry { .. } => HistoryKind::PageSetup,
     }
 }
@@ -3609,7 +3664,7 @@ impl WasmDocument {
         let reference_id = next_id(&mut self.edit_ids)?;
         let body_id = next_id(&mut self.edit_ids)?;
         let run_id = next_id(&mut self.edit_ids)?;
-        let mut body = self.document.body().to_vec();
+        let mut body = review_paragraph_body(&self.document, node).map_err(to_js)?;
         if !insert_review_comment_markers(
             &mut body,
             node,
@@ -3657,12 +3712,10 @@ impl WasmDocument {
                 person: None,
             },
         );
-        self.apply_action_caret_as(
-            vec![Operation::ReplaceReviewState { body, comments }],
-            Pos::new(node, end),
-            HistoryKind::Review,
-        )
-        .map_err(to_js)
+        let operation =
+            update_review_operation(&self.document, &body, Some(comments)).map_err(to_js)?;
+        self.apply_action_caret_as(vec![operation], Pos::new(node, end), HistoryKind::Review)
+            .map_err(to_js)
     }
 
     /// Resolves or reopens an existing comment as one undoable review action.
@@ -3682,9 +3735,9 @@ impl WasmDocument {
         value.done = done;
         comments.insert(id, value);
         self.apply_action_caret_as(
-            vec![Operation::ReplaceReviewState {
-                body: self.document.body().to_vec(),
-                comments,
+            vec![Operation::UpdateReviewState {
+                paragraphs: Vec::new(),
+                comments: Some(comments),
             }],
             Pos::new(self.document.id(), 0),
             HistoryKind::Review,
@@ -3759,9 +3812,9 @@ impl WasmDocument {
             },
         );
         self.apply_action_caret_as(
-            vec![Operation::ReplaceReviewState {
-                body: self.document.body().to_vec(),
-                comments,
+            vec![Operation::UpdateReviewState {
+                paragraphs: Vec::new(),
+                comments: Some(comments),
             }],
             Pos::new(self.document.id(), 0),
             HistoryKind::Review,
@@ -3818,8 +3871,10 @@ impl WasmDocument {
         for removed_id in removed {
             remove_review_comment_markers(&mut body, removed_id);
         }
+        let operation =
+            update_review_operation(&self.document, &body, Some(comments)).map_err(to_js)?;
         self.apply_action_caret_as(
-            vec![Operation::ReplaceReviewState { body, comments }],
+            vec![operation],
             Pos::new(self.document.id(), 0),
             HistoryKind::Review,
         )
@@ -3841,51 +3896,81 @@ impl WasmDocument {
         if text.is_empty() {
             return Err(to_js("suggested text must be non-empty".to_string()));
         }
+        validate_authored_revision_author(author.as_deref()).map_err(to_js)?;
         let node = node_id(node)?;
-        let revision = self
-            .edit_ids
-            .next_id()
-            .map_err(|_| to_js("id space exhausted".to_string()))?;
+        let start = Pos::new(node, offset);
+        let continuing_group = typing_session.and_then(|session| {
+            self.typing_history
+                .filter(|history| history.session == session && history.caret == start)
+                .and_then(|history| history.review_group)
+        });
+        let group = match continuing_group {
+            Some(group) => group,
+            None => RevisionGroup {
+                id: self
+                    .edit_ids
+                    .next_id()
+                    .map_err(|_| to_js("id space exhausted".to_string()))?,
+                kind: RevisionGroupKind::Typing,
+            },
+        };
         let run = self
             .edit_ids
             .next_id()
             .map_err(|_| to_js("id space exhausted".to_string()))?;
-        let group = typing_session.map_or_else(
-            || format!("opendoc-insert:{revision}"),
-            |session| format!("opendoc-typing:{session}"),
-        );
-        let mut body = self.document.body().to_vec();
-        if !insert_review_revision(
-            &mut body,
-            node,
-            offset,
-            Revision {
-                id: revision,
-                kind: RevisionKind::Insertion,
-                author,
-                date,
-                revision_id: Some(group),
-                inlines: vec![InlineNode::Run(Run {
-                    id: run,
-                    properties: RunProperties::default(),
-                    text: text.to_owned(),
-                })],
-            },
-            &mut self.edit_ids,
-        ) {
+        let addition = vec![InlineNode::Run(Run {
+            id: run,
+            properties: RunProperties::default(),
+            text: text.to_owned(),
+        })];
+        let mut body = review_paragraph_body(&self.document, node).map_err(to_js)?;
+        let changed = if continuing_group.is_some() {
+            extend_review_group_insertion(&mut body, node, offset, group, addition)
+        } else {
+            let revision = self
+                .edit_ids
+                .next_id()
+                .map_err(|_| to_js("id space exhausted".to_string()))?;
+            let revision_id = self.revision_ids.allocate().map_err(to_js)?;
+            insert_review_revision(
+                &mut body,
+                node,
+                offset,
+                Revision {
+                    id: revision,
+                    kind: RevisionKind::Insertion,
+                    author,
+                    date,
+                    revision_id: Some(revision_id),
+                    editor_group: Some(group),
+                    inlines: addition,
+                },
+                &mut self.edit_ids,
+            )
+        };
+        if !changed {
             return Err(to_js(
                 "suggestion requires a top-level paragraph text caret".to_string(),
             ));
         }
-        self.apply_action_caret_as(
-            vec![Operation::ReplaceReviewState {
-                body,
-                comments: self.document.definitions().comments.clone(),
-            }],
-            Pos::new(node, offset + text.len() as u32),
-            HistoryKind::Review,
-        )
-        .map_err(to_js)
+        let operation = update_review_operation(&self.document, &body, None).map_err(to_js)?;
+        let caret = Pos::new(node, offset + text.len() as u32);
+        match typing_session {
+            Some(session) => self
+                .apply_review_typing_action(
+                    vec![operation],
+                    caret,
+                    start,
+                    session,
+                    group,
+                    true,
+                    true,
+                )
+                .map_err(to_js),
+            None => self
+                .apply_action_caret_as(vec![operation], caret, HistoryKind::Review)
+                .map_err(to_js),
+        }
     }
 
     /// Adds a tracked insertion carrying the typing format armed at the caret.
@@ -3912,19 +3997,28 @@ impl WasmDocument {
         if text.is_empty() {
             return Err(to_js("suggested text must be non-empty".to_string()));
         }
+        validate_authored_revision_author(author.as_deref()).map_err(to_js)?;
         let node = node_id(node)?;
-        let revision = self
-            .edit_ids
-            .next_id()
-            .map_err(|_| to_js("id space exhausted".to_string()))?;
+        let start = Pos::new(node, offset);
+        let continuing_group = typing_session.and_then(|session| {
+            self.typing_history
+                .filter(|history| history.session == session && history.caret == start)
+                .and_then(|history| history.review_group)
+        });
+        let group = match continuing_group {
+            Some(group) => group,
+            None => RevisionGroup {
+                id: self
+                    .edit_ids
+                    .next_id()
+                    .map_err(|_| to_js("id space exhausted".to_string()))?,
+                kind: RevisionGroupKind::Typing,
+            },
+        };
         let run = self
             .edit_ids
             .next_id()
             .map_err(|_| to_js("id space exhausted".to_string()))?;
-        let group = typing_session.map_or_else(
-            || format!("opendoc-insert:{revision}"),
-            |session| format!("opendoc-typing:{session}"),
-        );
         let mut inlines = vec![InlineNode::Run(Run {
             id: run,
             properties: RunProperties::default(),
@@ -3944,34 +4038,54 @@ impl WasmDocument {
                 font,
             ),
         );
-        let mut body = self.document.body().to_vec();
-        if !insert_review_revision(
-            &mut body,
-            node,
-            offset,
-            Revision {
-                id: revision,
-                kind: RevisionKind::Insertion,
-                author,
-                date,
-                revision_id: Some(group),
-                inlines,
-            },
-            &mut self.edit_ids,
-        ) {
+        let mut body = review_paragraph_body(&self.document, node).map_err(to_js)?;
+        let changed = if continuing_group.is_some() {
+            extend_review_group_insertion(&mut body, node, offset, group, inlines)
+        } else {
+            let revision = self
+                .edit_ids
+                .next_id()
+                .map_err(|_| to_js("id space exhausted".to_string()))?;
+            let revision_id = self.revision_ids.allocate().map_err(to_js)?;
+            insert_review_revision(
+                &mut body,
+                node,
+                offset,
+                Revision {
+                    id: revision,
+                    kind: RevisionKind::Insertion,
+                    author,
+                    date,
+                    revision_id: Some(revision_id),
+                    editor_group: Some(group),
+                    inlines,
+                },
+                &mut self.edit_ids,
+            )
+        };
+        if !changed {
             return Err(to_js(
                 "suggestion requires a top-level paragraph text caret".to_string(),
             ));
         }
-        self.apply_action_caret_as(
-            vec![Operation::ReplaceReviewState {
-                body,
-                comments: self.document.definitions().comments.clone(),
-            }],
-            Pos::new(node, offset + text.len() as u32),
-            HistoryKind::Review,
-        )
-        .map_err(to_js)
+        let operation = update_review_operation(&self.document, &body, None).map_err(to_js)?;
+        let caret = Pos::new(node, offset + text.len() as u32);
+        match typing_session {
+            Some(session) => self
+                .apply_review_typing_action(
+                    vec![operation],
+                    caret,
+                    start,
+                    session,
+                    group,
+                    true,
+                    true,
+                )
+                .map_err(to_js),
+            None => self
+                .apply_action_caret_as(vec![operation], caret, HistoryKind::Review)
+                .map_err(to_js),
+        }
     }
 
     /// Replaces a selected range with a tracked deletion plus tracked insertion.
@@ -3992,7 +4106,15 @@ impl WasmDocument {
                 "suggested replacement requires a range and text".to_string(),
             ));
         }
+        validate_authored_revision_author(author.as_deref()).map_err(to_js)?;
         let node = node_id(node)?;
+        let group = RevisionGroup {
+            id: self
+                .edit_ids
+                .next_id()
+                .map_err(|_| to_js("id space exhausted".to_string()))?,
+            kind: RevisionGroupKind::Replacement,
+        };
         let deletion = self
             .edit_ids
             .next_id()
@@ -4005,11 +4127,9 @@ impl WasmDocument {
             .edit_ids
             .next_id()
             .map_err(|_| to_js("id space exhausted".to_string()))?;
-        let group = typing_session.map_or_else(
-            || format!("opendoc-replace:{deletion}"),
-            |session| format!("opendoc-typing:{session}"),
-        );
-        let mut body = self.document.body().to_vec();
+        let deletion_revision_id = self.revision_ids.allocate().map_err(to_js)?;
+        let insertion_revision_id = self.revision_ids.allocate().map_err(to_js)?;
+        let mut body = review_paragraph_body(&self.document, node).map_err(to_js)?;
         if !wrap_review_deletion(
             &mut body,
             node,
@@ -4020,7 +4140,8 @@ impl WasmDocument {
                 kind: RevisionKind::Deletion,
                 author: author.clone(),
                 date: date.clone(),
-                revision_id: Some(group.clone()),
+                revision_id: Some(deletion_revision_id),
+                editor_group: Some(group),
                 inlines: Vec::new(),
             },
             &mut self.edit_ids,
@@ -4038,7 +4159,8 @@ impl WasmDocument {
                 kind: RevisionKind::Insertion,
                 author,
                 date,
-                revision_id: Some(group),
+                revision_id: Some(insertion_revision_id),
+                editor_group: Some(group),
                 inlines: vec![InlineNode::Run(Run {
                     id: run,
                     properties: RunProperties::default(),
@@ -4049,18 +4171,27 @@ impl WasmDocument {
         ) {
             return Err(to_js("suggested replacement insertion failed".to_string()));
         }
-        self.apply_action_caret_as(
-            vec![Operation::ReplaceReviewState {
-                body,
-                comments: self.document.definitions().comments.clone(),
-            }],
-            Pos::new(
-                node,
-                start.saturating_add(u32::try_from(text.len()).unwrap_or(u32::MAX)),
-            ),
-            HistoryKind::Review,
-        )
-        .map_err(to_js)
+        let operation = update_review_operation(&self.document, &body, None).map_err(to_js)?;
+        let caret = Pos::new(
+            node,
+            start.saturating_add(u32::try_from(text.len()).unwrap_or(u32::MAX)),
+        );
+        match typing_session {
+            Some(session) => self
+                .apply_review_typing_action(
+                    vec![operation],
+                    caret,
+                    Pos::new(node, start),
+                    session,
+                    group,
+                    false,
+                    true,
+                )
+                .map_err(to_js),
+            None => self
+                .apply_action_caret_as(vec![operation], caret, HistoryKind::Review)
+                .map_err(to_js),
+        }
     }
 
     #[wasm_bindgen(js_name = suggestDelete)]
@@ -4075,24 +4206,20 @@ impl WasmDocument {
         if start >= end {
             return Err(to_js("suggested deletion requires a range".to_string()));
         }
+        validate_authored_revision_author(author.as_deref()).map_err(to_js)?;
         let node = node_id(node)?;
-        let mut body = self.document.body().to_vec();
+        let mut body = review_paragraph_body(&self.document, node).map_err(to_js)?;
         if remove_authored_review_insertion(&mut body, node, start, end, author.as_deref()) {
+            let operation = update_review_operation(&self.document, &body, None).map_err(to_js)?;
             return self
-                .apply_action_caret_as(
-                    vec![Operation::ReplaceReviewState {
-                        body,
-                        comments: self.document.definitions().comments.clone(),
-                    }],
-                    Pos::new(node, start),
-                    HistoryKind::Review,
-                )
+                .apply_action_caret_as(vec![operation], Pos::new(node, start), HistoryKind::Review)
                 .map_err(to_js);
         }
         let revision = self
             .edit_ids
             .next_id()
             .map_err(|_| to_js("id space exhausted".to_string()))?;
+        let revision_id = self.revision_ids.allocate().map_err(to_js)?;
         if !wrap_review_deletion(
             &mut body,
             node,
@@ -4103,7 +4230,8 @@ impl WasmDocument {
                 kind: RevisionKind::Deletion,
                 author,
                 date,
-                revision_id: None,
+                revision_id: Some(revision_id),
+                editor_group: None,
                 inlines: Vec::new(),
             },
             &mut self.edit_ids,
@@ -4112,15 +4240,9 @@ impl WasmDocument {
                 "suggested deletion requires top-level paragraph text".to_string(),
             ));
         }
-        self.apply_action_caret_as(
-            vec![Operation::ReplaceReviewState {
-                body,
-                comments: self.document.definitions().comments.clone(),
-            }],
-            Pos::new(node, start),
-            HistoryKind::Review,
-        )
-        .map_err(to_js)
+        let operation = update_review_operation(&self.document, &body, None).map_err(to_js)?;
+        self.apply_action_caret_as(vec![operation], Pos::new(node, start), HistoryKind::Review)
+            .map_err(to_js)
     }
 
     /// Tracks a character-formatting change as a deletion of the original
@@ -4160,7 +4282,15 @@ impl WasmDocument {
                 "suggested formatting requires a range and change".to_string(),
             ));
         }
+        validate_authored_revision_author(author.as_deref()).map_err(to_js)?;
         let node = node_id(node)?;
+        let group = RevisionGroup {
+            id: self
+                .edit_ids
+                .next_id()
+                .map_err(|_| to_js("id space exhausted".to_string()))?,
+            kind: RevisionGroupKind::Formatting,
+        };
         let deletion = self
             .edit_ids
             .next_id()
@@ -4169,8 +4299,9 @@ impl WasmDocument {
             .edit_ids
             .next_id()
             .map_err(|_| to_js("id space exhausted".to_string()))?;
-        let group = format!("opendoc-format:{deletion}");
-        let mut body = self.document.body().to_vec();
+        let deletion_revision_id = self.revision_ids.allocate().map_err(to_js)?;
+        let insertion_revision_id = self.revision_ids.allocate().map_err(to_js)?;
+        let mut body = review_paragraph_body(&self.document, node).map_err(to_js)?;
         if !wrap_review_format(
             &mut body,
             node,
@@ -4192,7 +4323,8 @@ impl WasmDocument {
                 kind: RevisionKind::Deletion,
                 author: author.clone(),
                 date: date.clone(),
-                revision_id: Some(group.clone()),
+                revision_id: Some(deletion_revision_id),
+                editor_group: Some(group),
                 inlines: Vec::new(),
             },
             Revision {
@@ -4200,7 +4332,8 @@ impl WasmDocument {
                 kind: RevisionKind::Insertion,
                 author,
                 date,
-                revision_id: Some(group),
+                revision_id: Some(insertion_revision_id),
+                editor_group: Some(group),
                 inlines: Vec::new(),
             },
             &mut self.edit_ids,
@@ -4209,15 +4342,9 @@ impl WasmDocument {
                 "suggested formatting requires a top-level paragraph text range".to_string(),
             ));
         }
-        self.apply_action_caret_as(
-            vec![Operation::ReplaceReviewState {
-                body,
-                comments: self.document.definitions().comments.clone(),
-            }],
-            Pos::new(node, start),
-            HistoryKind::Review,
-        )
-        .map_err(to_js)
+        let operation = update_review_operation(&self.document, &body, None).map_err(to_js)?;
+        self.apply_action_caret_as(vec![operation], Pos::new(node, start), HistoryKind::Review)
+            .map_err(to_js)
     }
 
     /// Accepts or rejects a tracked revision by inline node id.
@@ -4234,16 +4361,22 @@ impl WasmDocument {
                     .to_string(),
             ));
         }
-        let mut body = self.document.body().to_vec();
+        if find_review_revision(self.document.body(), id)
+            .and_then(|revision| revision.editor_group)
+            .is_some()
+        {
+            return Err(to_js(
+                "editor-authored grouped revisions must be decided atomically".to_string(),
+            ));
+        }
+        let mut body = review_paragraph_body(&self.document, node).map_err(to_js)?;
         if !decide_review_revision(&mut body, id, accept) {
             return Err(to_js("revision not found".to_string()));
         }
         let keep = matches!(kind, RevisionKind::Insertion | RevisionKind::MoveTo) == accept;
+        let operation = update_review_operation(&self.document, &body, None).map_err(to_js)?;
         self.apply_action_caret_as(
-            vec![Operation::ReplaceReviewState {
-                body,
-                comments: self.document.definitions().comments.clone(),
-            }],
+            vec![operation],
             Pos::new(node, if keep { end } else { start }),
             HistoryKind::Review,
         )
@@ -4312,15 +4445,9 @@ impl WasmDocument {
         let marker_ids =
             BTreeSet::from([pair.from.start, pair.from.end, pair.to.start, pair.to.end]);
         remove_review_move_markers(&mut body, &marker_ids);
-        self.apply_action_caret_as(
-            vec![Operation::ReplaceReviewState {
-                body,
-                comments: self.document.definitions().comments.clone(),
-            }],
-            Pos::new(node, offset),
-            HistoryKind::Review,
-        )
-        .map_err(to_js)
+        let operation = update_review_operation(&self.document, &body, None).map_err(to_js)?;
+        self.apply_action_caret_as(vec![operation], Pos::new(node, offset), HistoryKind::Review)
+            .map_err(to_js)
     }
 
     /// Accepts or rejects every editor-authored revision in one logical group.
@@ -4332,30 +4459,18 @@ impl WasmDocument {
         group: &str,
         accept: bool,
     ) -> Result<EditResult, JsValue> {
-        if !group.starts_with("opendoc-") {
-            return Err(to_js("unsupported revision group".to_string()));
-        }
-        let mut ids = Vec::new();
-        collect_review_revision_group_ids(self.document.body(), group, &mut ids);
-        let Some(first) = ids.first().copied() else {
-            return Err(to_js("revision group not found".to_string()));
-        };
-        let Some((node, start, _, _)) = find_review_revision_anchor(self.document.body(), first)
-        else {
-            return Err(to_js("revision group anchor not found".to_string()));
-        };
-        let mut body = self.document.body().to_vec();
-        for id in ids {
+        let group = node_id(group)?;
+        let validated = validate_review_group(self.document.body(), group).map_err(to_js)?;
+        let mut body = review_paragraph_body(&self.document, validated.node).map_err(to_js)?;
+        for id in validated.ids {
             if !decide_review_revision(&mut body, id, accept) {
                 return Err(to_js("revision group is incomplete".to_string()));
             }
         }
+        let operation = update_review_operation(&self.document, &body, None).map_err(to_js)?;
         self.apply_action_caret_as(
-            vec![Operation::ReplaceReviewState {
-                body,
-                comments: self.document.definitions().comments.clone(),
-            }],
-            Pos::new(node, start),
+            vec![operation],
+            Pos::new(validated.node, validated.start),
             HistoryKind::Review,
         )
         .map_err(to_js)
@@ -4390,6 +4505,11 @@ impl WasmDocument {
                 ));
             }
         }
+        let mut editor_groups = BTreeSet::new();
+        collect_review_editor_group_ids(self.document.body(), &mut editor_groups);
+        for group in editor_groups {
+            validate_review_group(self.document.body(), group).map_err(to_js)?;
+        }
         let mut body = self.document.body().to_vec();
         decide_all_review_revisions(&mut body, accept);
         let marker_ids: BTreeSet<NodeId> = pairs
@@ -4399,11 +4519,9 @@ impl WasmDocument {
         if !marker_ids.is_empty() {
             remove_review_move_markers(&mut body, &marker_ids);
         }
+        let operation = update_review_operation(&self.document, &body, None).map_err(to_js)?;
         self.apply_action_caret_as(
-            vec![Operation::ReplaceReviewState {
-                body,
-                comments: self.document.definitions().comments.clone(),
-            }],
+            vec![operation],
             Pos::new(self.document.id(), 0),
             HistoryKind::Review,
         )
@@ -4926,10 +5044,13 @@ impl WasmDocument {
         let (caret, redo_group) = self
             .apply_group(entry.operations)
             .map_err(|e| to_js(format!("undo failed: {e}")))?;
-        self.redo.push(HistoryEntry {
-            kind: entry.kind,
-            operations: redo_group,
-        });
+        push_history(
+            &mut self.redo,
+            HistoryEntry {
+                kind: entry.kind,
+                operations: redo_group,
+            },
+        );
         Ok(self.finish_edit(caret))
     }
 
@@ -4944,10 +5065,13 @@ impl WasmDocument {
         let (caret, undo_group) = self
             .apply_group(entry.operations)
             .map_err(|e| to_js(format!("redo failed: {e}")))?;
-        self.undo.push(HistoryEntry {
-            kind: entry.kind,
-            operations: undo_group,
-        });
+        push_history(
+            &mut self.undo,
+            HistoryEntry {
+                kind: entry.kind,
+                operations: undo_group,
+            },
+        );
         Ok(self.finish_edit(caret))
     }
 
@@ -5195,10 +5319,13 @@ impl WasmDocument {
         let snapshot = (ops.len() > 1).then(|| self.document.clone());
         match self.apply_group(ops) {
             Ok((caret, inverses)) => {
-                self.undo.push(HistoryEntry {
-                    kind,
-                    operations: inverses,
-                });
+                push_history(
+                    &mut self.undo,
+                    HistoryEntry {
+                        kind,
+                        operations: inverses,
+                    },
+                );
                 self.redo.clear();
                 Ok(self.finish_edit(caret))
             }
@@ -5237,10 +5364,13 @@ impl WasmDocument {
         let snapshot = (ops.len() > 1).then(|| self.document.clone());
         match self.apply_group(ops) {
             Ok((_, inverses)) => {
-                self.undo.push(HistoryEntry {
-                    kind,
-                    operations: inverses,
-                });
+                push_history(
+                    &mut self.undo,
+                    HistoryEntry {
+                        kind,
+                        operations: inverses,
+                    },
+                );
                 self.redo.clear();
                 Ok(self.finish_edit(caret))
             }
@@ -5284,18 +5414,83 @@ impl WasmDocument {
                     let mut previous = self.undo.pop().expect("history entry checked above");
                     inverses.append(&mut previous.operations);
                 }
-                self.undo.push(HistoryEntry {
-                    kind: HistoryKind::Typing,
-                    operations: inverses,
-                });
+                push_history(
+                    &mut self.undo,
+                    HistoryEntry {
+                        kind: HistoryKind::Typing,
+                        operations: inverses,
+                    },
+                );
                 self.redo.clear();
-                self.typing_history = keep_open.then_some(TypingHistory { session, caret });
+                self.typing_history = keep_open.then_some(TypingHistory {
+                    session,
+                    caret,
+                    review_group: None,
+                });
                 Ok(self.finish_edit(caret))
             }
             Err(error) => {
                 if let Some(snapshot) = snapshot {
                     self.document = snapshot;
                 }
+                self.typing_history = None;
+                Err(error)
+            }
+        }
+    }
+
+    /// Review-mode counterpart to [`Self::apply_typing_action`]. A continuing
+    /// gesture keeps only the first paragraph inverse: later intermediate
+    /// paragraph snapshots are discarded, so one word does not retain one
+    /// snapshot per character.
+    #[allow(clippy::too_many_arguments)]
+    fn apply_review_typing_action(
+        &mut self,
+        ops: Vec<Operation>,
+        caret: Pos,
+        start: Pos,
+        session: u32,
+        group: RevisionGroup,
+        may_merge: bool,
+        keep_open: bool,
+    ) -> Result<EditResult, String> {
+        if ops.is_empty() {
+            return Err("empty review typing edit".into());
+        }
+        match self.apply_group(ops) {
+            Ok((_, inverses)) => {
+                let merge = may_merge
+                    && self.redo.is_empty()
+                    && self.undo.last().is_some()
+                    && self.typing_history.is_some_and(|previous| {
+                        previous.session == session
+                            && previous.caret == start
+                            && previous.review_group == Some(group)
+                    });
+                let operations = if merge {
+                    self.undo
+                        .pop()
+                        .expect("history entry checked above")
+                        .operations
+                } else {
+                    inverses
+                };
+                push_history(
+                    &mut self.undo,
+                    HistoryEntry {
+                        kind: HistoryKind::ReviewTyping,
+                        operations,
+                    },
+                );
+                self.redo.clear();
+                self.typing_history = keep_open.then_some(TypingHistory {
+                    session,
+                    caret,
+                    review_group: Some(group),
+                });
+                Ok(self.finish_edit(caret))
+            }
+            Err(error) => {
                 self.typing_history = None;
                 Err(error)
             }
@@ -6622,6 +6817,69 @@ fn collect_review_comment_anchors(
     }
 }
 
+fn review_paragraph_body(document: &Document, node: NodeId) -> Result<Vec<BlockNode>, String> {
+    let paragraph =
+        find_paragraph(document.body(), node).ok_or_else(|| "paragraph not found".to_owned())?;
+    Ok(vec![BlockNode::Paragraph(paragraph.clone())])
+}
+
+fn collect_changed_review_paragraphs(
+    document: &Document,
+    blocks: &[BlockNode],
+    out: &mut Vec<ReviewParagraphState>,
+) -> Result<(), String> {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                let previous = find_paragraph(document.body(), paragraph.id)
+                    .ok_or_else(|| "review command introduced an unknown paragraph".to_owned())?;
+                if previous.inlines != paragraph.inlines {
+                    out.push(ReviewParagraphState {
+                        node: paragraph.id,
+                        inlines: paragraph.inlines.clone(),
+                    });
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        collect_changed_review_paragraphs(document, &cell.blocks, out)?;
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                collect_changed_review_paragraphs(document, &sdt.blocks, out)?;
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    Ok(())
+}
+
+fn update_review_operation(
+    document: &Document,
+    body: &[BlockNode],
+    comments: Option<DefinitionMap<CommentId, Comment>>,
+) -> Result<Operation, String> {
+    let mut paragraphs = Vec::new();
+    collect_changed_review_paragraphs(document, body, &mut paragraphs)?;
+    if paragraphs.is_empty() && comments.is_none() {
+        return Err("review command made no change".to_owned());
+    }
+    Ok(Operation::UpdateReviewState {
+        paragraphs,
+        comments,
+    })
+}
+
+fn validate_authored_revision_author(author: Option<&str>) -> Result<(), String> {
+    if author.is_some_and(|value| !value.is_empty() && value.len() <= 255) {
+        Ok(())
+    } else {
+        Err("editor-authored suggestions require a non-empty author".to_owned())
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn insert_review_comment_markers(
     blocks: &mut [BlockNode],
@@ -6772,6 +7030,61 @@ fn insert_review_revision(
     false
 }
 
+fn extend_review_group_insertion(
+    blocks: &mut [BlockNode],
+    node: NodeId,
+    offset: u32,
+    group: RevisionGroup,
+    addition: Vec<InlineNode>,
+) -> bool {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) if paragraph.id == node => {
+                let mut cursor = 0_u32;
+                for inline in &mut paragraph.inlines {
+                    let next = cursor.saturating_add(inline_anchor_len_for_review(inline));
+                    if next == offset
+                        && let InlineNode::Revision(revision) = inline
+                        && revision.kind == RevisionKind::Insertion
+                        && revision.editor_group == Some(group)
+                    {
+                        revision.inlines.extend(addition);
+                        coalesce_review_runs(&mut revision.inlines);
+                        return true;
+                    }
+                    cursor = next;
+                }
+                return false;
+            }
+            BlockNode::Paragraph(_) => continue,
+            BlockNode::Table(table) => {
+                return table.rows.iter_mut().any(|row| {
+                    row.cells.iter_mut().any(|cell| {
+                        extend_review_group_insertion(
+                            &mut cell.blocks,
+                            node,
+                            offset,
+                            group,
+                            addition.clone(),
+                        )
+                    })
+                });
+            }
+            BlockNode::Sdt(sdt) => {
+                return extend_review_group_insertion(
+                    &mut sdt.blocks,
+                    node,
+                    offset,
+                    group,
+                    addition,
+                );
+            }
+            BlockNode::AltChunk(_) => continue,
+        }
+    }
+    false
+}
+
 fn wrap_review_deletion(
     blocks: &mut [BlockNode],
     node: NodeId,
@@ -6871,10 +7184,7 @@ fn remove_authored_review_insertion(
                         };
                         if revision.kind != RevisionKind::Insertion
                             || revision.author.as_deref() != author
-                            || !revision
-                                .revision_id
-                                .as_deref()
-                                .is_some_and(|group| group.starts_with("opendoc-"))
+                            || revision.editor_group.is_none()
                         {
                             return false;
                         }
@@ -7313,44 +7623,313 @@ fn collect_review_revision_ids(blocks: &[BlockNode], out: &mut Vec<NodeId>) {
     }
 }
 
-fn collect_review_revision_group_ids(blocks: &[BlockNode], group: &str, out: &mut Vec<NodeId>) {
+fn collect_review_revision_serial_ids(blocks: &[BlockNode], out: &mut Vec<String>) {
     for block in blocks {
         match block {
             BlockNode::Paragraph(paragraph) => {
-                collect_review_inline_group_ids(&paragraph.inlines, group, out);
+                collect_review_inline_serial_ids(&paragraph.inlines, out);
             }
             BlockNode::Table(table) => {
                 for row in &table.rows {
                     for cell in &row.cells {
-                        collect_review_revision_group_ids(&cell.blocks, group, out);
+                        collect_review_revision_serial_ids(&cell.blocks, out);
                     }
                 }
             }
             BlockNode::Sdt(sdt) => {
-                collect_review_revision_group_ids(&sdt.blocks, group, out);
+                collect_review_revision_serial_ids(&sdt.blocks, out);
             }
             BlockNode::AltChunk(_) => {}
         }
     }
 }
 
-fn collect_review_inline_group_ids(inlines: &[InlineNode], group: &str, out: &mut Vec<NodeId>) {
+fn collect_review_editor_group_ids(blocks: &[BlockNode], out: &mut BTreeSet<NodeId>) {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                collect_review_inline_editor_group_ids(&paragraph.inlines, out);
+            }
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        collect_review_editor_group_ids(&cell.blocks, out);
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => collect_review_editor_group_ids(&sdt.blocks, out),
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+}
+
+fn collect_review_inline_editor_group_ids(inlines: &[InlineNode], out: &mut BTreeSet<NodeId>) {
     for inline in inlines {
         match inline {
             InlineNode::Revision(revision) => {
-                if revision.revision_id.as_deref() == Some(group) {
-                    out.push(revision.id);
+                if let Some(group) = revision.editor_group {
+                    out.insert(group.id);
                 }
-                collect_review_inline_group_ids(&revision.inlines, group, out);
+                collect_review_inline_editor_group_ids(&revision.inlines, out);
             }
             InlineNode::Hyperlink(link) => {
-                collect_review_inline_group_ids(&link.inlines, group, out);
+                collect_review_inline_editor_group_ids(&link.inlines, out);
             }
             InlineNode::Sdt(sdt) => {
-                collect_review_inline_group_ids(&sdt.inlines, group, out);
+                collect_review_inline_editor_group_ids(&sdt.inlines, out);
             }
             _ => {}
         }
+    }
+}
+
+fn collect_review_inline_serial_ids(inlines: &[InlineNode], out: &mut Vec<String>) {
+    for inline in inlines {
+        match inline {
+            InlineNode::Revision(revision) => {
+                if let Some(id) = &revision.revision_id {
+                    out.push(id.clone());
+                }
+                collect_review_inline_serial_ids(&revision.inlines, out);
+            }
+            InlineNode::Hyperlink(link) => {
+                collect_review_inline_serial_ids(&link.inlines, out);
+            }
+            InlineNode::Sdt(sdt) => {
+                collect_review_inline_serial_ids(&sdt.inlines, out);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn find_review_revision(blocks: &[BlockNode], id: NodeId) -> Option<&Revision> {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                if let Some(revision) = find_review_inline_revision(&paragraph.inlines, id) {
+                    return Some(revision);
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        if let Some(revision) = find_review_revision(&cell.blocks, id) {
+                            return Some(revision);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(revision) = find_review_revision(&sdt.blocks, id) {
+                    return Some(revision);
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    None
+}
+
+fn find_review_inline_revision(inlines: &[InlineNode], id: NodeId) -> Option<&Revision> {
+    for inline in inlines {
+        match inline {
+            InlineNode::Revision(revision) => {
+                if revision.id == id {
+                    return Some(revision);
+                }
+                if let Some(found) = find_review_inline_revision(&revision.inlines, id) {
+                    return Some(found);
+                }
+            }
+            InlineNode::Hyperlink(link) => {
+                if let Some(found) = find_review_inline_revision(&link.inlines, id) {
+                    return Some(found);
+                }
+            }
+            InlineNode::Sdt(sdt) => {
+                if let Some(found) = find_review_inline_revision(&sdt.inlines, id) {
+                    return Some(found);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+#[derive(Clone, Debug)]
+struct ReviewGroupMember {
+    id: NodeId,
+    group: RevisionGroup,
+    node: NodeId,
+    start: u32,
+    end: u32,
+    kind: RevisionKind,
+    author: Option<String>,
+    date: Option<String>,
+    revision_id: Option<String>,
+    text: String,
+    top_level_index: Option<usize>,
+}
+
+#[derive(Clone, Debug)]
+struct ValidatedReviewGroup {
+    node: NodeId,
+    start: u32,
+    ids: Vec<NodeId>,
+}
+
+fn validate_review_group(
+    blocks: &[BlockNode],
+    group_id: NodeId,
+) -> Result<ValidatedReviewGroup, String> {
+    let mut members = Vec::new();
+    collect_review_group_members(blocks, group_id, &mut members);
+    if members.is_empty() {
+        return Err("revision group not found".to_owned());
+    }
+    let group = members[0].group;
+    if members.iter().any(|member| {
+        member.group != group
+            || member.node != members[0].node
+            || member.top_level_index.is_none()
+            || member.end <= member.start
+            || member.author.as_deref().is_none_or(str::is_empty)
+            || member.author != members[0].author
+            || member.date != members[0].date
+            || !member
+                .revision_id
+                .as_deref()
+                .is_some_and(|id| !id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit()))
+    }) {
+        return Err("revision group metadata or placement is inconsistent".to_owned());
+    }
+    members.sort_by_key(|member| member.top_level_index);
+    if members.windows(2).any(|pair| {
+        pair[1].top_level_index.expect("checked top-level")
+            != pair[0].top_level_index.expect("checked top-level") + 1
+    }) {
+        return Err("revision group members are not contiguous".to_owned());
+    }
+
+    let insertions = members
+        .iter()
+        .filter(|member| member.kind == RevisionKind::Insertion)
+        .count();
+    let deletions = members
+        .iter()
+        .filter(|member| member.kind == RevisionKind::Deletion)
+        .count();
+    match group.kind {
+        RevisionGroupKind::Typing if members.len() == 1 && insertions == 1 => {}
+        RevisionGroupKind::Replacement
+            if members.len() == 2 && insertions == 1 && deletions == 1 => {}
+        RevisionGroupKind::Formatting
+            if members.len() == 2
+                && insertions == 1
+                && deletions == 1
+                && members
+                    .iter()
+                    .find(|member| member.kind == RevisionKind::Insertion)
+                    .map(|member| &member.text)
+                    == members
+                        .iter()
+                        .find(|member| member.kind == RevisionKind::Deletion)
+                        .map(|member| &member.text) => {}
+        _ => return Err("revision group has an invalid member composition".to_owned()),
+    }
+
+    Ok(ValidatedReviewGroup {
+        node: members[0].node,
+        start: members.iter().map(|member| member.start).min().unwrap_or(0),
+        ids: members.into_iter().map(|member| member.id).collect(),
+    })
+}
+
+fn collect_review_group_members(
+    blocks: &[BlockNode],
+    group_id: NodeId,
+    out: &mut Vec<ReviewGroupMember>,
+) {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                let mut offset = 0_u32;
+                for (index, inline) in paragraph.inlines.iter().enumerate() {
+                    collect_review_group_inline(
+                        inline,
+                        paragraph.id,
+                        &mut offset,
+                        group_id,
+                        Some(index),
+                        out,
+                    );
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        collect_review_group_members(&cell.blocks, group_id, out);
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => collect_review_group_members(&sdt.blocks, group_id, out),
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+}
+
+fn collect_review_group_inline(
+    inline: &InlineNode,
+    node: NodeId,
+    offset: &mut u32,
+    group_id: NodeId,
+    top_level_index: Option<usize>,
+    out: &mut Vec<ReviewGroupMember>,
+) {
+    match inline {
+        InlineNode::Revision(revision) => {
+            let start = *offset;
+            let end = start.saturating_add(
+                revision
+                    .inlines
+                    .iter()
+                    .map(inline_anchor_len_for_review)
+                    .sum::<u32>(),
+            );
+            if let Some(group) = revision.editor_group
+                && group.id == group_id
+            {
+                out.push(ReviewGroupMember {
+                    id: revision.id,
+                    group,
+                    node,
+                    start,
+                    end,
+                    kind: revision.kind,
+                    author: revision.author.clone(),
+                    date: revision.date.clone(),
+                    revision_id: revision.revision_id.clone(),
+                    text: node_plain_text(&revision.inlines),
+                    top_level_index,
+                });
+            }
+            for child in &revision.inlines {
+                collect_review_group_inline(child, node, offset, group_id, None, out);
+            }
+        }
+        InlineNode::Hyperlink(link) => {
+            for child in &link.inlines {
+                collect_review_group_inline(child, node, offset, group_id, None, out);
+            }
+        }
+        InlineNode::Sdt(sdt) => {
+            for child in &sdt.inlines {
+                collect_review_group_inline(child, node, offset, group_id, None, out);
+            }
+        }
+        _ => *offset = offset.saturating_add(inline_anchor_len_for_review(inline)),
     }
 }
 
@@ -7544,12 +8123,20 @@ fn collect_review_inline(
                     RevisionKind::MoveFrom => "move_from",
                     RevisionKind::MoveTo => "move_to",
                 };
+                let group_id = revision.editor_group.map(|group| group.id.to_string());
+                let group_kind = revision.editor_group.map(|group| match group.kind {
+                    RevisionGroupKind::Typing => "typing",
+                    RevisionGroupKind::Replacement => "replacement",
+                    RevisionGroupKind::Formatting => "formatting",
+                });
                 let mut item = serde_json::json!({
                     "id": revision.id.to_string(),
                     "kind": kind,
                     "author": revision.author,
                     "date": revision.date,
-                    "groupId": revision.revision_id,
+                    "groupId": group_id,
+                    "groupKind": group_kind,
+                    "revisionId": revision.revision_id,
                     "text": node_plain_text(&revision.inlines),
                     "anchor": {
                         "node": node.to_string(),
@@ -8656,6 +9243,7 @@ fn open_document(bytes: &[u8]) -> Result<WasmDocument, String> {
     // Edits allocate run ids in a namespace derived from — but distinct from —
     // the document's own, so a new run can never collide with an imported node.
     let edit_namespace = ((document.id().as_u128() >> 64) as u64) ^ 0xED17_ED17_ED17_ED17;
+    let revision_ids = RevisionIdAllocator::from_document(&document);
 
     Ok(WasmDocument {
         document,
@@ -8667,6 +9255,7 @@ fn open_document(bytes: &[u8]) -> Result<WasmDocument, String> {
         undo: Vec::new(),
         redo: Vec::new(),
         typing_history: None,
+        revision_ids,
         revision: 0,
         // Populated lazily on the first edit's incremental re-pagination; the open
         // above uses the full path since there is nothing yet to reuse.
@@ -9339,7 +9928,7 @@ fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos 
         // position is never actually used; the document's own root id is a
         // neutral placeholder (matches `apply_group`'s own default caret).
         Operation::SetCoreProperties { .. } => Pos::new(doc_id, 0),
-        Operation::ReplaceReviewState { .. } => Pos::new(doc_id, 0),
+        Operation::UpdateReviewState { .. } => Pos::new(doc_id, 0),
         // Also document-global — see the SetCoreProperties comment above.
         Operation::SetSectionGeometry { .. } => Pos::new(doc_id, 0),
     }
@@ -10617,6 +11206,78 @@ mod tests {
     }
 
     #[test]
+    fn suggested_typing_uses_numeric_ids_one_scoped_inverse_and_one_undo() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let (node_id, original) = nodes
+            .iter()
+            .find(|(_, text)| !text.is_empty())
+            .map(|(id, text)| (*id, text.clone()))
+            .expect("a non-empty paragraph");
+        let node = node_id.to_string();
+
+        d.suggest_insert(&node, 0, "a", Some("Tester".to_owned()), None, Some(41))
+            .expect("first suggested character");
+        d.suggest_insert(&node, 1, "b", Some("Tester".to_owned()), None, Some(41))
+            .expect("second suggested character");
+        d.suggest_insert(&node, 2, "c", Some("Tester".to_owned()), None, Some(41))
+            .expect("third suggested character");
+
+        assert_eq!(d.undo.len(), 1, "one typing gesture is one history entry");
+        assert!(matches!(
+            d.undo[0].operations.as_slice(),
+            [Operation::UpdateReviewState {
+                paragraphs,
+                comments: None,
+            }] if paragraphs.len() == 1 && paragraphs[0].node == node_id
+        ));
+        let summary: serde_json::Value =
+            serde_json::from_str(&d.review_summary()).expect("review summary");
+        let revisions = summary["revisions"].as_array().expect("revision array");
+        assert_eq!(revisions.len(), 1, "typing extends one insertion wrapper");
+        assert_eq!(revisions[0]["text"], "abc");
+        assert_eq!(revisions[0]["groupKind"], "typing");
+        let revision_id = revisions[0]["revisionId"]
+            .as_str()
+            .expect("serialized revision id");
+        assert!(
+            revision_id.bytes().all(|byte| byte.is_ascii_digit()),
+            "editor-authored w:id is decimal"
+        );
+        let group_id = revisions[0]["groupId"]
+            .as_str()
+            .expect("separate editor group");
+        assert_ne!(group_id, revision_id);
+
+        let bytes = d.export_docx().expect("export suggested typing");
+        let mut package =
+            DocxPackage::open(&bytes, viewer_limits()).expect("open exported package");
+        let document_xml = String::from_utf8(
+            package
+                .read_part("word/document.xml")
+                .expect("read document xml"),
+        )
+        .expect("document xml is utf-8");
+        assert!(document_xml.contains(&format!("w:id=\"{revision_id}\"")));
+        assert!(!document_xml.contains("opendoc-"));
+        assert!(
+            !document_xml.contains(group_id),
+            "editor grouping is not overloaded into OOXML identity"
+        );
+
+        d.undo().expect("one undo removes the whole word");
+        assert_eq!(
+            d.copy_text(&node, 0, &node, original.len() as u32),
+            original
+        );
+        d.redo().expect("one redo restores the whole word");
+        let summary: serde_json::Value =
+            serde_json::from_str(&d.review_summary()).expect("redo review summary");
+        assert_eq!(summary["revisions"][0]["text"], "abc");
+    }
+
+    #[test]
     fn deleting_own_pending_insertion_edits_the_suggestion() {
         let mut d = open_document(RICH_DOCX).expect("open corpus docx");
         let mut nodes = Vec::new();
@@ -10674,6 +11335,22 @@ mod tests {
             .as_str()
             .expect("editor replacement group");
         assert_eq!(revisions[1]["groupId"], group);
+        assert_eq!(revisions[0]["groupKind"], "replacement");
+        assert_eq!(revisions[1]["groupKind"], "replacement");
+        let revision_ids = revisions
+            .iter()
+            .map(|revision| {
+                revision["revisionId"]
+                    .as_str()
+                    .expect("numeric revision id")
+            })
+            .collect::<Vec<_>>();
+        assert_ne!(revision_ids[0], revision_ids[1]);
+        assert!(
+            revision_ids
+                .iter()
+                .all(|id| { !id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit()) })
+        );
 
         d.decide_revision_group(group, true)
             .expect("accept replacement group");
@@ -10691,6 +11368,140 @@ mod tests {
             d.copy_text(&node, 0, &node, original.len() as u32),
             original
         );
+    }
+
+    #[test]
+    fn damaged_editor_revision_groups_fail_validation() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let (node_id, text) = nodes
+            .iter()
+            .find(|(_, text)| !text.is_empty())
+            .map(|(id, text)| (*id, text.clone()))
+            .expect("a non-empty paragraph");
+        let first_len = text.chars().next().map(char::len_utf8).unwrap_or(1) as u32;
+        d.suggest_replace(
+            &node_id.to_string(),
+            0,
+            first_len,
+            "Q",
+            Some("Tester".to_owned()),
+            None,
+            None,
+        )
+        .expect("suggest replacement");
+        let summary: serde_json::Value =
+            serde_json::from_str(&d.review_summary()).expect("review summary");
+        let revisions = summary["revisions"].as_array().expect("revision array");
+        let group = NodeId::from_str(revisions[0]["groupId"].as_str().expect("editor group id"))
+            .expect("valid group id");
+        validate_review_group(d.document.body(), group).expect("complete group validates");
+
+        let first = NodeId::from_str(revisions[0]["id"].as_str().expect("revision id"))
+            .expect("valid revision node id");
+        let mut damaged = d.document.body().to_vec();
+        assert!(decide_review_revision(&mut damaged, first, true));
+        assert!(
+            validate_review_group(&damaged, group).is_err(),
+            "a missing half fails closed"
+        );
+
+        fn alter_group_kind(inlines: &mut [InlineNode], group: NodeId) -> bool {
+            for inline in inlines {
+                match inline {
+                    InlineNode::Revision(revision)
+                        if revision.editor_group.is_some_and(|value| value.id == group) =>
+                    {
+                        revision.editor_group = Some(RevisionGroup {
+                            id: group,
+                            kind: RevisionGroupKind::Typing,
+                        });
+                        return true;
+                    }
+                    InlineNode::Revision(revision) => {
+                        if alter_group_kind(&mut revision.inlines, group) {
+                            return true;
+                        }
+                    }
+                    InlineNode::Hyperlink(link) => {
+                        if alter_group_kind(&mut link.inlines, group) {
+                            return true;
+                        }
+                    }
+                    InlineNode::Sdt(sdt) => {
+                        if alter_group_kind(&mut sdt.inlines, group) {
+                            return true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            false
+        }
+        let mut mixed = d.document.body().to_vec();
+        let paragraph = match mixed
+            .iter_mut()
+            .find(|block| matches!(block, BlockNode::Paragraph(value) if value.id == node_id))
+        {
+            Some(BlockNode::Paragraph(paragraph)) => paragraph,
+            _ => panic!("review paragraph"),
+        };
+        assert!(alter_group_kind(&mut paragraph.inlines, group));
+        assert!(
+            validate_review_group(&mixed, group).is_err(),
+            "mixed group kinds fail closed"
+        );
+
+        let mut crossed = d.document.body().to_vec();
+        let moved_member = {
+            let source = match crossed
+                .iter_mut()
+                .find(|block| matches!(block, BlockNode::Paragraph(value) if value.id == node_id))
+            {
+                Some(BlockNode::Paragraph(paragraph)) => paragraph,
+                _ => panic!("review paragraph"),
+            };
+            let member_index = source
+                .inlines
+                .iter()
+                .position(|inline| {
+                    matches!(
+                        inline,
+                        InlineNode::Revision(revision)
+                            if revision.editor_group.is_some_and(|value| value.id == group)
+                    )
+                })
+                .expect("top-level grouped revision");
+            source.inlines.remove(member_index)
+        };
+        let target = crossed
+            .iter_mut()
+            .find_map(|block| match block {
+                BlockNode::Paragraph(paragraph) if paragraph.id != node_id => Some(paragraph),
+                _ => None,
+            })
+            .expect("a second top-level paragraph");
+        target.inlines.insert(0, moved_member);
+        assert!(
+            validate_review_group(&crossed, group).is_err(),
+            "cross-paragraph groups fail closed"
+        );
+    }
+
+    #[test]
+    fn history_stack_drops_the_oldest_entry_at_the_bound() {
+        let mut history = Vec::new();
+        for _ in 0..=MAX_HISTORY_ENTRIES {
+            push_history(
+                &mut history,
+                HistoryEntry {
+                    kind: HistoryKind::Edit,
+                    operations: Vec::new(),
+                },
+            );
+        }
+        assert_eq!(history.len(), MAX_HISTORY_ENTRIES);
     }
 
     #[test]
@@ -10724,6 +11535,7 @@ mod tests {
                             author: Some("Ada".to_owned()),
                             date: Some("2026-07-31T00:00:00Z".to_owned()),
                             revision_id: Some("1".to_owned()),
+                            editor_group: None,
                             inlines: vec![InlineNode::Run(Run {
                                 id: NodeId::from_parts(91, 5).unwrap(),
                                 properties: RunProperties::default(),
@@ -10755,6 +11567,7 @@ mod tests {
                             author: Some("Ada".to_owned()),
                             date: Some("2026-07-31T00:00:00Z".to_owned()),
                             revision_id: Some("3".to_owned()),
+                            editor_group: None,
                             inlines: vec![InlineNode::Run(Run {
                                 id: NodeId::from_parts(91, 9).unwrap(),
                                 properties: RunProperties::default(),
@@ -10776,6 +11589,7 @@ mod tests {
         let shaper = ParleyShaper::new();
         let layout = paginate_document(&document, &shaper);
         let default_config = document_page_config(&document);
+        let revision_ids = RevisionIdAllocator::from_document(&document);
         let mut d = WasmDocument {
             document,
             layout,
@@ -10786,6 +11600,7 @@ mod tests {
             undo: Vec::new(),
             redo: Vec::new(),
             typing_history: None,
+            revision_ids,
             revision: 0,
             galley_cache: GalleyCache::new(),
             bullet_list: None,
@@ -13090,6 +13905,7 @@ mod tests {
         let shaper = ParleyShaper::new();
         let layout = paginate_document(&document, &shaper);
         let default_config = document_page_config(&document);
+        let revision_ids = RevisionIdAllocator::from_document(&document);
         let handle = WasmDocument {
             document,
             layout,
@@ -13100,6 +13916,7 @@ mod tests {
             undo: Vec::new(),
             redo: Vec::new(),
             typing_history: None,
+            revision_ids,
             revision: 0,
             galley_cache: GalleyCache::new(),
             bullet_list: None,
