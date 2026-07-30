@@ -1912,6 +1912,7 @@ function updateToolbar() {
   if (tabTable.disabled && tabTable.getAttribute("aria-selected") === "true") {
     selectRibbonTab("home");
   }
+  if (!outlinePanel.hidden) reflectOutlineSelection();
 }
 
 /** Fills the paragraph-style dropdown from the open document's styles. */
@@ -2791,10 +2792,23 @@ function buildOutline() {
     const item = document.createElement("button");
     item.type = "button";
     item.className = `outline-item lvl-${level}`;
+    item.dataset.node = node;
     item.textContent = text;
     item.title = text;
     item.addEventListener("click", () => navigateToNode(node));
     outlineBody.appendChild(item);
+  }
+  reflectOutlineSelection();
+}
+
+/** Keeps the outline's active row synchronized with the model-backed caret. */
+function reflectOutlineSelection() {
+  const activeNode = selection?.focus?.node ?? "";
+  for (const item of outlineBody.querySelectorAll(".outline-item")) {
+    const active = item.dataset.node === activeNode;
+    item.classList.toggle("is-active", active);
+    if (active) item.setAttribute("aria-current", "location");
+    else item.removeAttribute("aria-current");
   }
 }
 

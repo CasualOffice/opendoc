@@ -151,6 +151,8 @@ test("outline navigation centers the heading target", async ({ page, consoleErro
   await expect
     .poll(() => page.evaluate(() => window.__outlineScrollBlocks.at(-1)))
     .toBe("center");
+  await expect(item).toHaveClass(/is-active/);
+  await expect(item).toHaveAttribute("aria-current", "location");
   expect(consoleErrors).toEqual([]);
 });
 

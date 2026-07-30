@@ -2209,6 +2209,12 @@ body.modal-open {
   color: var(--accent);
 }
 
+.outline-item.is-active {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+  font-weight: 650;
+}
+
 .outline-item.lvl-1 {
   font-weight: 600;
 }
