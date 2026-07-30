@@ -2665,7 +2665,12 @@ impl WasmDocument {
     /// into normal cells. The top-left cell keeps the merged content; recreated
     /// cells are empty but valid.
     #[wasm_bindgen(js_name = splitMergedCell)]
-    pub fn split_merged_cell(&mut self, node: &str) -> Result<EditResult, JsValue> {
+    pub fn split_merged_cell(
+        &mut self,
+        node: &str,
+        requested_rows: Option<u32>,
+        requested_columns: Option<u32>,
+    ) -> Result<EditResult, JsValue> {
         let nid = node_id(node)?;
         let (table, row, _) = locate_table_row(&self.document, nid)
             .ok_or_else(|| to_js("caret is not inside a table".into()))?;
@@ -2674,9 +2679,15 @@ impl WasmDocument {
         let original = find_table(&self.document, table)
             .ok_or_else(|| to_js("table not found".into()))?
             .clone();
-        let replacement =
-            split_table_cell(original, row as usize, col as usize, &mut self.edit_ids)
-                .map_err(to_js)?;
+        let replacement = split_table_cell_counts(
+            original,
+            row as usize,
+            col as usize,
+            requested_rows.unwrap_or(0) as usize,
+            requested_columns.unwrap_or(0) as usize,
+            &mut self.edit_ids,
+        )
+        .map_err(to_js)?;
         let caret = replacement
             .rows
             .get(row as usize)
@@ -6470,6 +6481,87 @@ fn split_table_cell(
     Ok(table)
 }
 
+fn split_table_cell_counts(
+    table: Table,
+    row_index: usize,
+    col_index: usize,
+    requested_rows: usize,
+    requested_columns: usize,
+    ids: &mut IdGenerator,
+) -> Result<Table, String> {
+    if requested_rows == 0 && requested_columns == 0 {
+        return split_table_cell(table, row_index, col_index, ids);
+    }
+    let mut table = table;
+    let row = table
+        .rows
+        .get(row_index)
+        .ok_or_else(|| "cell row is outside the table".to_owned())?;
+    let cell = row
+        .cells
+        .get(col_index)
+        .ok_or_else(|| "cell column is outside the table".to_owned())?;
+    if cell.properties.vertical_merge.is_some() {
+        return Err("custom split counts currently require a horizontal merged cell".into());
+    }
+    let width = cell.properties.grid_span.unwrap_or(1).max(1) as usize;
+    if width == 1 {
+        return Err("cell is not merged".into());
+    }
+    let columns = if requested_columns == 0 {
+        width
+    } else {
+        requested_columns
+    };
+    let rows = if requested_rows == 0 {
+        1
+    } else {
+        requested_rows
+    };
+    if rows != 1 || columns < width || columns > 20 {
+        return Err("custom split supports one row and at least the current column span".into());
+    }
+    let grid_widths = table
+        .grid
+        .get(col_index..col_index + width)
+        .ok_or_else(|| "merged cell is outside the table grid".to_owned())?
+        .iter()
+        .map(|column| column.width_twips.unwrap_or(1))
+        .sum::<i32>();
+    let widths = distribute_twips(i64::from(grid_widths), columns)
+        .map_err(|_| "merged cell width is outside the supported range".to_owned())?;
+    table.grid.splice(
+        col_index..col_index + width,
+        widths.iter().map(|width| GridColumn {
+            width_twips: Some(*width),
+        }),
+    );
+    for row in &mut table.rows {
+        if row.cells.len() < col_index + 1 {
+            return Err("merged cell is outside the row".into());
+        }
+        let merged = row.cells[col_index].properties.grid_span.unwrap_or(1) > 1;
+        if merged {
+            let anchor = row.cells.remove(col_index);
+            let mut cells = Vec::with_capacity(columns);
+            let mut first = anchor;
+            first.properties.grid_span = None;
+            first.properties.width_twips = Some(widths[0]);
+            cells.push(first);
+            for width in widths.iter().skip(1) {
+                cells.push(empty_table_cell(ids, Some(*width))?);
+            }
+            row.cells.splice(col_index..col_index, cells);
+        } else {
+            for width in widths.iter().skip(width) {
+                row.cells
+                    .insert(col_index + 1, empty_table_cell(ids, Some(*width))?);
+            }
+        }
+    }
+    Ok(table)
+}
+
 fn empty_table_cell(ids: &mut IdGenerator, width_twips: Option<i32>) -> Result<TableCell, String> {
     let cell_id = ids.next_id().map_err(|_| "id space exhausted".to_owned())?;
     Ok(TableCell {
@@ -8708,7 +8800,16 @@ mod tests {
         assert!(!info.regular(), "merged row is no longer a regular grid");
         assert_eq!(d.table_selection_rects(&merged_node, "row").len(), 5);
 
-        let split = d.split_merged_cell(&merged_node).expect("split merged row");
+        let custom = d
+            .split_merged_cell(&merged_node, Some(1), Some(4))
+            .expect("split merged row into four columns");
+        assert_eq!(d.table_info(&custom.node()).columns(), 4);
+        assert!(d.table_info(&custom.node()).regular());
+        d.undo().expect("undo custom split");
+
+        let split = d
+            .split_merged_cell(&merged_node, None, None)
+            .expect("split merged row");
         let split_node = split.node();
         assert!(d.table_info(&split_node).regular());
         assert_eq!(d.table_selection_rects(&split_node, "table").len(), 6 * 5);

@@ -26,3 +26,8 @@ redo restore the complete table snapshot as a single history entry.
 Selection-scoped distribution, merged-cell distribution, and layout-aware
 auto-height measurement remain out of scope until the runtime has a
 deterministic layout measurement API.
+
+The next table increment adds a count-aware split dialog. The first safe
+geometry slice supports horizontal merged cells and preserves all unaffected
+rows; vertical and multi-row subdivision remains explicitly rejected until
+row insertion/removal can be made container-safe.

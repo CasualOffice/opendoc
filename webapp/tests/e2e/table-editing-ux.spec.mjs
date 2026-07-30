@@ -67,6 +67,10 @@ test("the contextual Table ribbon exposes complete core commands and bounded for
   await page.locator("#mergeCellsBtn").click();
   await expect(page.locator("#tableContext")).toContainText("merged/spanned");
   await page.locator("#splitCellBtn").click();
+  await expect(page.locator("#splitCellDialog")).toBeVisible();
+  await page.locator("#splitCellRows").fill("1");
+  await page.locator("#splitCellColumns").fill("3");
+  await page.locator("#splitCellConfirm").click();
   await expect(page.locator("#tableContext")).not.toContainText("merged/spanned");
   await expect(
     ribbon.locator('[data-table-action="insert-column-right"]'),

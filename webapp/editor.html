@@ -444,6 +444,23 @@
       <div id="gridLabel" class="grid-label">Insert table</div>
     </div>
 
+    <div id="splitCellDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="splitCellTitle" aria-describedby="splitCellDescription">
+      <section class="dialog-card" style="max-width: 360px">
+        <header class="dialog-head">
+          <div class="dialog-heading"><span class="ms dialog-heading-icon" aria-hidden="true">splitscreen</span><span><strong id="splitCellTitle" class="dialog-title">Split cell</strong><small id="splitCellDescription">Choose how many columns to create.</small></span></div>
+          <button id="splitCellClose" type="button" class="dialog-close" title="Close" aria-label="Close split cell dialog"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <div class="dialog-body">
+          <div class="dialog-field-grid">
+            <label class="dialog-field">Rows<input id="splitCellRows" type="number" min="1" max="20" step="1" value="1" /></label>
+            <label class="dialog-field">Columns<input id="splitCellColumns" type="number" min="1" max="20" step="1" value="2" /></label>
+          </div>
+          <p id="splitCellNote" class="dialog-field-note">Horizontal merged cells can be split into additional columns. Vertical or multi-row splits are not available yet.</p>
+        </div>
+        <footer class="dialog-foot"><span class="dialog-note">One undoable table edit.</span><div class="dialog-actions"><button id="splitCellCancel" type="button" class="dialog-button">Cancel</button><button id="splitCellConfirm" type="button" class="dialog-button dialog-button-primary">Split</button></div></footer>
+      </section>
+    </div>
+
     <div id="cmdPalette" class="cmd-overlay" hidden>
       <div class="cmd-box" role="dialog" aria-label="Command palette" aria-modal="true">
         <div class="cmd-search">

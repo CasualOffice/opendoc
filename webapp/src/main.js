@@ -89,6 +89,12 @@ const tablePropertiesCloseBtn = document.getElementById("tablePropertiesClose");
 const tableColumnWidthNote = document.getElementById("tableColumnWidthNote");
 const mergeCellsBtn = document.getElementById("mergeCellsBtn");
 const splitCellBtn = document.getElementById("splitCellBtn");
+const splitCellDialog = document.getElementById("splitCellDialog");
+const splitCellClose = document.getElementById("splitCellClose");
+const splitCellCancel = document.getElementById("splitCellCancel");
+const splitCellConfirm = document.getElementById("splitCellConfirm");
+const splitCellRows = document.getElementById("splitCellRows");
+const splitCellColumns = document.getElementById("splitCellColumns");
 const tableHeaderRow = document.getElementById("tableHeaderRow");
 const tableFixedLayout = document.getElementById("tableFixedLayout");
 const tableColumnWidth = document.getElementById("tableColumnWidth");
@@ -2358,9 +2364,36 @@ onButton(mergeCellsBtn, async () => {
   updateToolbar();
 });
 
-onButton(splitCellBtn, async () => {
+function toggleSplitCellDialog(open) {
+  splitCellDialog.hidden = !open;
+  if (open) {
+    splitCellRows.value = "1";
+    splitCellColumns.value = "2";
+    splitCellColumns.focus();
+  } else {
+    splitCellBtn.focus({ preventScroll: true });
+  }
+}
+
+onButton(splitCellBtn, () => {
   if (!selection || !doc) return;
-  await runEdit(() => doc.splitMergedCell(selection.focus.node));
+  toggleSplitCellDialog(true);
+});
+
+onButton(splitCellClose, () => toggleSplitCellDialog(false));
+onButton(splitCellCancel, () => toggleSplitCellDialog(false));
+onButton(splitCellConfirm, async () => {
+  if (!selection || !doc) return;
+  const rows = Number.parseInt(splitCellRows.value, 10);
+  const columns = Number.parseInt(splitCellColumns.value, 10);
+  if (!Number.isInteger(rows) || !Number.isInteger(columns) || rows < 1 || columns < 1 || rows > 20 || columns > 20) {
+    splitCellColumns.setCustomValidity("Enter whole numbers from 1 to 20.");
+    splitCellColumns.reportValidity();
+    return;
+  }
+  splitCellColumns.setCustomValidity("");
+  await runEdit(() => doc.splitMergedCell(selection.focus.node, rows, columns));
+  toggleSplitCellDialog(false);
   tableSelection = null;
   updateToolbar();
 });
