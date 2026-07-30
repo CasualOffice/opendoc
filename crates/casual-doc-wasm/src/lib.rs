@@ -39,11 +39,11 @@ use casual_doc_model::v1::{
     CellMargins, CellVerticalAlignment, Color, Document, ExternalTarget, FontName, FontRef,
     HeightRule, HighlightColor, Hyperlink, HyperlinkTarget, Indentation, InlineNode,
     InternalTarget, LevelJustification, LevelSuffix, NumberFormat, NumberingInstance,
-    NumberingInstanceId, NumberingLevel, NumberingRef, PageMargins, PageOrientation,
-    PageSize as SectionPageSize, Paragraph, ParagraphBorders, ParagraphProperties, RgbColor,
-    RowHeight, Run, RunProperties, SectionId, Spacing, StyleId, StyleKind, TabAlignment, TabStop,
-    Table, TableBorders, TableCell, TableCellProperties, TableLayout, TableProperties, TableRow,
-    VerticalAlignment, VerticalMerge,
+    NumberingInstanceId, NumberingLevel, NumberingOverride, NumberingRef, PageMargins,
+    PageOrientation, PageSize as SectionPageSize, Paragraph, ParagraphBorders, ParagraphProperties,
+    RgbColor, RowHeight, Run, RunProperties, SectionId, Spacing, StyleId, StyleKind, TabAlignment,
+    TabStop, Table, TableBorders, TableCell, TableCellProperties, TableLayout, TableProperties,
+    TableRow, VerticalAlignment, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
@@ -1761,6 +1761,79 @@ impl WasmDocument {
                 }
             },
         )
+    }
+
+    /// Restarts a numbered list at the caret's paragraph and carries the new
+    /// numbering instance through the contiguous following items at the same
+    /// level. Bullets and non-list paragraphs are rejected.
+    #[wasm_bindgen(js_name = restartList)]
+    pub fn restart_list(&mut self, node: &str) -> Result<EditResult, JsValue> {
+        let start_node = node_id(node)?;
+        let Some(current) =
+            paragraph_properties(&self.document, start_node).and_then(|p| p.numbering)
+        else {
+            return Err(to_js(
+                "restart numbering requires a numbered list item".into(),
+            ));
+        };
+        if self.list_format(current.instance) == Some(NumberFormat::Bullet) {
+            return Err(to_js(
+                "restart numbering requires a numbered list item".into(),
+            ));
+        }
+        let abstract_ref = self
+            .document
+            .definitions()
+            .numbering
+            .get(&current.instance)
+            .ok_or_else(|| to_js("numbering definition not found".into()))?
+            .abstract_ref;
+        let new_instance = NumberingInstanceId::new(
+            self.edit_ids
+                .next_id()
+                .map_err(|_| to_js("id space exhausted".into()))?,
+        );
+        self.document.definitions_mut().numbering.insert(
+            new_instance,
+            NumberingInstance {
+                abstract_ref,
+                overrides: vec![NumberingOverride {
+                    level: current.level,
+                    start: Some(1),
+                }],
+            },
+        );
+
+        let ordered = self.ordered_paragraphs();
+        let Some(index) = ordered.iter().position(|(id, _)| *id == start_node) else {
+            return Err(to_js("paragraph not found".into()));
+        };
+        let mut ops = Vec::new();
+        for (id, _) in ordered.into_iter().skip(index) {
+            let Some(properties) = paragraph_properties(&self.document, id) else {
+                continue;
+            };
+            let Some(numbering) = properties.numbering else {
+                break;
+            };
+            if numbering.instance != current.instance || numbering.level != current.level {
+                break;
+            }
+            let mut next = properties.clone();
+            next.numbering = Some(NumberingRef {
+                instance: new_instance,
+                level: current.level,
+            });
+            ops.push(Operation::SetParagraphProperties {
+                node: id,
+                properties: Box::new(next),
+            });
+        }
+        if ops.is_empty() {
+            return Err(to_js("no contiguous numbered items to restart".into()));
+        }
+        self.apply_action_caret_as(ops, Pos::new(start_node, 0), HistoryKind::ListFormatting)
+            .map_err(to_js)
     }
 
     /// The list kind the paragraph belongs to: `"bullet"`, `"numbered"`, or `""` —
@@ -9591,6 +9664,52 @@ mod tests {
         d.toggle_list(&empty, 0, &empty, 0, "bullet")
             .expect("exit empty list item");
         assert_eq!(d.list_style_at(&empty), "");
+    }
+
+    #[test]
+    fn restarting_numbered_list_carries_contiguous_items() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, text)| !text.is_empty())
+            .map(|(id, _)| id.to_string())
+            .expect("a non-empty paragraph");
+        d.toggle_list(&node, 0, &node, 0, "numbered")
+            .expect("toggle numbered on");
+        let split = d
+            .split_paragraph(&node, d.paragraph_length(&node))
+            .expect("split numbered item");
+        let second = split.node();
+        let before = paragraph_properties(&d.document, NodeId::from_str(&node).unwrap())
+            .unwrap()
+            .numbering
+            .unwrap()
+            .instance;
+        d.restart_list(&second).expect("restart numbered list");
+        let first_after = paragraph_properties(&d.document, NodeId::from_str(&node).unwrap())
+            .unwrap()
+            .numbering
+            .unwrap()
+            .instance;
+        let second_after = paragraph_properties(&d.document, NodeId::from_str(&second).unwrap())
+            .unwrap()
+            .numbering
+            .unwrap()
+            .instance;
+        assert_eq!(first_after, before);
+        assert_ne!(before, second_after);
+        assert_eq!(
+            d.document
+                .definitions()
+                .numbering
+                .get(&second_after)
+                .unwrap()
+                .overrides[0]
+                .start,
+            Some(1)
+        );
     }
 
     /// Paragraph and run properties apply and undo: alignment (with a query),

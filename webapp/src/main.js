@@ -176,6 +176,7 @@ const indentDecBtn = document.getElementById("indentDec");
 const indentIncBtn = document.getElementById("indentInc");
 const bulletListBtn = document.getElementById("bulletList");
 const numberedListBtn = document.getElementById("numberedList");
+const restartListBtn = document.getElementById("restartList");
 const fontFamilySel = document.getElementById("fontFamily");
 const paragraphStyleSel = document.getElementById("paragraphStyle");
 const runControls = [superBtn, subBtn, fontSizeSel, textColorInput, highlightSel, fontFamilySel, clearFormattingBtn];
@@ -187,6 +188,7 @@ const paraControls = [
   indentIncBtn,
   bulletListBtn,
   numberedListBtn,
+  restartListBtn,
   paragraphStyleSel,
 ];
 const saveBtn = document.getElementById("save");
@@ -1844,6 +1846,7 @@ function updateToolbar() {
   const listKind = hasSel && doc ? doc.listStyleAt(selection.focus.node) : "";
   bulletListBtn.setAttribute("aria-pressed", String(listKind === "bullet"));
   numberedListBtn.setAttribute("aria-pressed", String(listKind === "numbered"));
+  restartListBtn.disabled = !hasSel || listKind !== "numbered";
   // The contextual Table ribbon is enabled only inside a table; regular-grid
   // column commands stay unavailable on merged/spanned tables rather than
   // failing after the user clicks them.
@@ -2037,6 +2040,9 @@ onButton(indentDecBtn, () => adjustIndentCommand(-360));
 onButton(indentIncBtn, () => adjustIndentCommand(360));
 onButton(bulletListBtn, () => runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "bullet")));
 onButton(numberedListBtn, () => runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "numbered")));
+onButton(restartListBtn, () => {
+  if (selection && doc) runNodeEdit(() => doc.restartList(selection.focus.node));
+});
 
 fontSizeSel.addEventListener("change", () => {
   const pt = Number(fontSizeSel.value);
@@ -2836,6 +2842,7 @@ function buildCommands() {
     { label: "Justify", group: "Paragraph", kw: "align", run: align("justify") },
     { label: "Bullet list", group: "Paragraph", kw: "unordered", run: () => runToolbarEdit((s, o, e, f) => doc.toggleList(s, o, e, f, "bullet")) },
     { label: "Numbered list", group: "Paragraph", kw: "ordered", run: () => runToolbarEdit((s, o, e, f) => doc.toggleList(s, o, e, f, "numbered")) },
+    { label: "Restart numbering", group: "Paragraph", kw: "list restart 1", run: () => selection && runNodeEdit(() => doc.restartList(selection.focus.node)) },
     { label: "Increase indent", group: "Paragraph", kw: "", run: () => adjustIndentCommand(360) },
     { label: "Decrease indent", group: "Paragraph", kw: "outdent", run: () => adjustIndentCommand(-360) },
     { label: "Insert table (3×3)", group: "Insert", kw: "grid", run: () => selection && runEdit(() => doc.insertTable(selection.focus.node, 3, 3)) },
