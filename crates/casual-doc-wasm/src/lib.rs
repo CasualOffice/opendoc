@@ -41,9 +41,9 @@ use casual_doc_model::v1::{
     HighlightColor, Hyperlink, HyperlinkTarget, Indentation, InlineNode, InternalTarget,
     LevelJustification, LevelSuffix, NumberFormat, NumberingInstance, NumberingInstanceId,
     NumberingLevel, NumberingOverride, NumberingRef, PageMargins, PageOrientation,
-    PageSize as SectionPageSize, Paragraph, ParagraphBorders, ParagraphProperties, RevisionKind,
-    RgbColor, RowHeight, Run, RunProperties, SectionColumns, SectionId, Spacing, StyleId,
-    StyleKind, TabAlignment, TabStop, Table, TableBorders, TableCell, TableCellProperties,
+    PageSize as SectionPageSize, Paragraph, ParagraphBorders, ParagraphProperties, Revision,
+    RevisionKind, RgbColor, RowHeight, Run, RunProperties, SectionColumns, SectionId, Spacing,
+    StyleId, StyleKind, TabAlignment, TabStop, Table, TableBorders, TableCell, TableCellProperties,
     TableLayout, TableProperties, TableRow, VerticalAlignment, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
@@ -3578,6 +3578,7 @@ impl WasmDocument {
     /// Creates a comment over a same-paragraph selection. The marker and
     /// definition changes are one undoable review transaction.
     #[wasm_bindgen(js_name = addComment)]
+    #[allow(clippy::too_many_arguments)]
     pub fn add_comment(
         &mut self,
         node: &str,
@@ -3679,6 +3680,82 @@ impl WasmDocument {
             vec![Operation::ReplaceReviewState {
                 body: self.document.body().to_vec(),
                 comments,
+            }],
+            Pos::new(self.document.id(), 0),
+            HistoryKind::Review,
+        )
+        .map_err(to_js)
+    }
+
+    /// Adds a tracked insertion at a same-paragraph caret.
+    #[wasm_bindgen(js_name = suggestInsert)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn suggest_insert(
+        &mut self,
+        node: &str,
+        offset: u32,
+        text: &str,
+        author: Option<String>,
+        date: Option<String>,
+    ) -> Result<EditResult, JsValue> {
+        if text.is_empty() {
+            return Err(to_js("suggested text must be non-empty".to_string()));
+        }
+        let node = node_id(node)?;
+        let revision = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".to_string()))?;
+        let run = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".to_string()))?;
+        let mut body = self.document.body().to_vec();
+        if !insert_review_revision(
+            &mut body,
+            node,
+            offset,
+            Revision {
+                id: revision,
+                kind: RevisionKind::Insertion,
+                author,
+                date,
+                revision_id: None,
+                inlines: vec![InlineNode::Run(Run {
+                    id: run,
+                    properties: RunProperties::default(),
+                    text: text.to_owned(),
+                })],
+            },
+            &mut self.edit_ids,
+        ) {
+            return Err(to_js(
+                "suggestion requires a top-level paragraph text caret".to_string(),
+            ));
+        }
+        self.apply_action_caret_as(
+            vec![Operation::ReplaceReviewState {
+                body,
+                comments: self.document.definitions().comments.clone(),
+            }],
+            Pos::new(node, offset + text.len() as u32),
+            HistoryKind::Review,
+        )
+        .map_err(to_js)
+    }
+
+    /// Accepts or rejects a tracked revision by inline node id.
+    #[wasm_bindgen(js_name = decideRevision)]
+    pub fn decide_revision(&mut self, revision: &str, accept: bool) -> Result<EditResult, JsValue> {
+        let id = node_id(revision)?;
+        let mut body = self.document.body().to_vec();
+        if !decide_review_revision(&mut body, id, accept) {
+            return Err(to_js("revision not found".to_string()));
+        }
+        self.apply_action_caret_as(
+            vec![Operation::ReplaceReviewState {
+                body,
+                comments: self.document.definitions().comments.clone(),
             }],
             Pos::new(self.document.id(), 0),
             HistoryKind::Review,
@@ -5703,6 +5780,7 @@ fn collect_review_comment_anchors(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn insert_review_comment_markers(
     blocks: &mut [BlockNode],
     node: NodeId,
@@ -5791,6 +5869,120 @@ fn insert_review_comment_markers(
                 }
             }
             _ => {}
+        }
+    }
+    false
+}
+
+fn insert_review_revision(
+    blocks: &mut [BlockNode],
+    node: NodeId,
+    offset: u32,
+    revision: Revision,
+    ids: &mut IdGenerator,
+) -> bool {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) if paragraph.id == node => {
+                if !review_split_top_level_run(&mut paragraph.inlines, offset, ids) {
+                    return false;
+                }
+                let mut cursor = 0;
+                for index in 0..=paragraph.inlines.len() {
+                    if cursor == offset {
+                        paragraph
+                            .inlines
+                            .insert(index, InlineNode::Revision(revision));
+                        return true;
+                    }
+                    let Some(InlineNode::Run(run)) = paragraph.inlines.get(index) else {
+                        continue;
+                    };
+                    cursor = cursor.saturating_add(run.text.len() as u32);
+                }
+                return false;
+            }
+            BlockNode::Paragraph(_) => continue,
+            BlockNode::Table(table) => {
+                return table.rows.iter_mut().any(|row| {
+                    row.cells.iter_mut().any(|cell| {
+                        insert_review_revision(
+                            &mut cell.blocks,
+                            node,
+                            offset,
+                            revision.clone(),
+                            ids,
+                        )
+                    })
+                });
+            }
+            BlockNode::Sdt(sdt) => {
+                return insert_review_revision(
+                    &mut sdt.blocks,
+                    node,
+                    offset,
+                    revision.clone(),
+                    ids,
+                );
+            }
+            BlockNode::AltChunk(_) => continue,
+        }
+    }
+    false
+}
+
+fn decide_review_revision(blocks: &mut [BlockNode], id: NodeId, accept: bool) -> bool {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                if decide_review_inline(&mut paragraph.inlines, id, accept) {
+                    return true;
+                }
+            }
+            BlockNode::Table(table) => {
+                if table.rows.iter_mut().any(|row| {
+                    row.cells
+                        .iter_mut()
+                        .any(|cell| decide_review_revision(&mut cell.blocks, id, accept))
+                }) {
+                    return true;
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if decide_review_revision(&mut sdt.blocks, id, accept) {
+                    return true;
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    false
+}
+
+fn decide_review_inline(inlines: &mut Vec<InlineNode>, id: NodeId, accept: bool) -> bool {
+    for index in 0..inlines.len() {
+        if let InlineNode::Revision(revision) = &inlines[index]
+            && revision.id == id
+        {
+            let keep = matches!(revision.kind, RevisionKind::Insertion) == accept;
+            let replacement = if keep {
+                revision.inlines.clone()
+            } else {
+                Vec::new()
+            };
+            inlines.splice(index..=index, replacement);
+            return true;
+        }
+        let nested = match &mut inlines[index] {
+            InlineNode::Hyperlink(link) => decide_review_inline(&mut link.inlines, id, accept),
+            InlineNode::Revision(revision) => {
+                decide_review_inline(&mut revision.inlines, id, accept)
+            }
+            InlineNode::Sdt(sdt) => decide_review_inline(&mut sdt.inlines, id, accept),
+            _ => false,
+        };
+        if nested {
+            return true;
         }
     }
     false

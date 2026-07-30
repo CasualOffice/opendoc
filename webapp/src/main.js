@@ -2927,12 +2927,28 @@ function buildReview() {
   }
   for (const revision of revisions) {
     const kind = reviewText(revision.kind);
-    appendCard(
+    const card = appendCard(
       `review-card review-revision review-${kind.replaceAll("_", "-")}`,
       kind.replaceAll("_", " "),
       `${reviewText(revision.author)}${revision.date ? ` · ${reviewText(revision.date)}` : ""}`,
       reviewText(revision.text),
     );
+    const actions = document.createElement("span");
+    actions.className = "review-revision-actions";
+    for (const [label, accept] of [["Accept", true], ["Reject", false]]) {
+      const action = document.createElement("button");
+      action.type = "button";
+      action.className = "review-card-action";
+      action.textContent = label;
+      action.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        if (!doc) return;
+        await runEdit(() => doc.decideRevision(revision.id, accept));
+        buildReview();
+      });
+      actions.appendChild(action);
+    }
+    card.appendChild(actions);
   }
 }
 
