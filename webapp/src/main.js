@@ -1049,7 +1049,12 @@ function onPointerUp(event) {
     !gesture.moved &&
     Math.hypot(event.clientX - gesture.clientX, event.clientY - gesture.clientY) <= 4
   ) {
-    showLinkChipAt(gesture.page, event);
+    const link = linkAt(gesture.page, event);
+    if (link?.kind === "internal" && link.targetNode && link.targetPage) {
+      activateLink(link);
+    } else {
+      showLinkChipAt(gesture.page, event);
+    }
   }
 }
 
