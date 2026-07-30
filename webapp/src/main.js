@@ -2852,6 +2852,8 @@ function buildCommands() {
     { label: "Zoom in", group: "View", kw: "", run: () => stepZoom(1) },
     { label: "Zoom out", group: "View", kw: "", run: () => stepZoom(-1) },
     { label: "Settings", group: "View", kw: "theme accent dark", run: () => settingsBtn.click() },
+    { label: "Page setup", group: "Layout", kw: "margins orientation paper size", run: () => togglePageSetup(true) },
+    { label: "Paragraph properties", group: "Layout", kw: "spacing borders shading indent", run: () => toggleParagraphProperties(true) },
   ];
   if (doc) {
     for (const name of doc.listStyles()) {
