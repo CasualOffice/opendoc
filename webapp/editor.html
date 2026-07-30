@@ -317,6 +317,7 @@
           <div class="rgroup">
             <div class="rgroup-ctl">
               <button id="viewOutlineBtn" type="button" class="fmt" title="Toggle outline" aria-label="Toggle outline" aria-pressed="false" disabled><span class="ms" aria-hidden="true">toc</span></button>
+              <button id="reviewBtn" type="button" class="fmt" title="Review comments and changes" aria-label="Review comments and changes" aria-pressed="false" disabled><span class="ms" aria-hidden="true">rate_review</span></button>
             </div>
             <span class="rgroup-label">Show</span>
           </div>
@@ -361,6 +362,10 @@
             <span id="pagePreviewLabel" class="page-preview-label">8.27 × 11.69 in</span>
           </div>
           <div class="page-setup-fields">
+            <fieldset class="dialog-group">
+              <legend>Apply to</legend>
+              <label class="dialog-field">Section<select id="pageSetupSection" class="dialog-select"></select></label>
+            </fieldset>
             <fieldset class="dialog-group">
               <legend>Orientation</legend>
               <div class="segmented orientation-segmented" id="pageOrientationSeg" role="radiogroup" aria-label="Orientation">
@@ -540,6 +545,13 @@
           <button id="outlineClose" type="button" class="panel-close" title="Close outline" aria-label="Close outline"><span class="ms" aria-hidden="true">close</span></button>
         </div>
         <div id="outlineBody" class="panel-body outline-list"></div>
+      </aside>
+      <aside id="reviewPanel" class="side-panel review-panel" hidden aria-labelledby="reviewTitle">
+        <div class="panel-head">
+          <span id="reviewTitle" class="panel-title">Review</span>
+          <button id="reviewClose" type="button" class="panel-close" title="Close review" aria-label="Close review"><span class="ms" aria-hidden="true">close</span></button>
+        </div>
+        <div id="reviewBody" class="panel-body review-list"></div>
       </aside>
 
       <main id="viewport" class="viewport">

@@ -41,9 +41,9 @@ use casual_doc_model::v1::{
     InternalTarget, LevelJustification, LevelSuffix, NumberFormat, NumberingInstance,
     NumberingInstanceId, NumberingLevel, NumberingOverride, NumberingRef, PageMargins,
     PageOrientation, PageSize as SectionPageSize, Paragraph, ParagraphBorders, ParagraphProperties,
-    RgbColor, RowHeight, Run, RunProperties, SectionId, Spacing, StyleId, StyleKind, TabAlignment,
-    TabStop, Table, TableBorders, TableCell, TableCellProperties, TableLayout, TableProperties,
-    TableRow, VerticalAlignment, VerticalMerge,
+    RevisionKind, RgbColor, RowHeight, Run, RunProperties, SectionId, Spacing, StyleId, StyleKind,
+    TabAlignment, TabStop, Table, TableBorders, TableCell, TableCellProperties, TableLayout,
+    TableProperties, TableRow, VerticalAlignment, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
@@ -3235,6 +3235,42 @@ impl WasmDocument {
         serde_json::to_string(&payload).unwrap_or_else(|_| "null".to_string())
     }
 
+    /// All section geometries plus the section containing `node` as the current
+    /// selection context. The host uses this to make Page Setup explicitly
+    /// section-aware instead of silently editing only the first section.
+    #[wasm_bindgen(js_name = pageSetupSections)]
+    #[must_use]
+    pub fn page_setup_sections(&self, node: &str) -> String {
+        let sections = &self.document.definitions().sections;
+        if sections.is_empty() {
+            return "null".to_string();
+        }
+        let mut current = sections[0].id.node_id();
+        for (paragraph, _) in self.ordered_paragraphs() {
+            if paragraph.to_string() == node {
+                break;
+            }
+            if let Some(section) = paragraph_properties(&self.document, paragraph)
+                .and_then(|properties| properties.section_break)
+            {
+                current = section.node_id();
+            }
+        }
+        let payload = PageSetupSectionsJson {
+            current: current.to_string(),
+            sections: sections
+                .iter()
+                .map(|section| PageSetupJson {
+                    section: section.id.node_id().to_string(),
+                    page_size: section.page_size,
+                    page_margins: section.page_margins,
+                    orientation: section.orientation,
+                })
+                .collect(),
+        };
+        serde_json::to_string(&payload).unwrap_or_else(|_| "null".to_string())
+    }
+
     /// Installs a new page-setup geometry from a JSON object in the shape
     /// [`page_setup`](Self::page_setup) returns — the dialog's write side. One
     /// undoable action.
@@ -3477,6 +3513,39 @@ impl WasmDocument {
             "custom": metadata.custom,
         }))
         .unwrap_or_else(|_| r#"{"core":{},"app":{},"custom":[]}"#.to_string())
+    }
+
+    /// Read-only review inventory for the editor's Review pane. Comments and
+    /// revisions are currently preserved/imported data; authoring and
+    /// accept/reject mutations remain a later transaction slice.
+    #[wasm_bindgen(js_name = reviewSummary)]
+    #[must_use]
+    pub fn review_summary(&self) -> String {
+        let comments = self
+            .document
+            .definitions()
+            .comments
+            .iter()
+            .map(|(id, comment)| {
+                let mut blocks = Vec::new();
+                collect_block_text(&comment.blocks, &mut blocks);
+                serde_json::json!({
+                    "id": id.node_id().to_string(),
+                    "author": comment.author,
+                    "initials": comment.initials,
+                    "date": comment.date,
+                    "resolved": comment.done,
+                    "text": blocks.into_iter().map(|(_, text)| text).collect::<Vec<_>>().join("\n"),
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut revisions = Vec::new();
+        collect_review_revisions(self.document.body(), &mut revisions);
+        serde_json::to_string(&serde_json::json!({
+            "comments": comments,
+            "revisions": revisions,
+        }))
+        .unwrap_or_else(|_| "{\"comments\":[],\"revisions\":[]}".to_string())
     }
 
     /// Replaces the document's core properties from a JSON object in the same
@@ -5189,6 +5258,13 @@ struct PageSetupJson {
     orientation: Option<PageOrientation>,
 }
 
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PageSetupSectionsJson {
+    current: String,
+    sections: Vec<PageSetupJson>,
+}
+
 /// Sparse draft emitted by the host's table-properties inspector. Optional fields
 /// mean "leave the current model value untouched"; numeric `-1` values clear an
 /// optional measurement.
@@ -5424,6 +5500,49 @@ fn collect_block_text(blocks: &[BlockNode], out: &mut Vec<(NodeId, String)>) {
             }
             BlockNode::Sdt(sdt) => collect_block_text(&sdt.blocks, out),
             BlockNode::AltChunk(_) => {}
+        }
+    }
+}
+
+fn collect_review_revisions(blocks: &[BlockNode], out: &mut Vec<serde_json::Value>) {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => collect_review_inline(&paragraph.inlines, out),
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        collect_review_revisions(&cell.blocks, out);
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => collect_review_revisions(&sdt.blocks, out),
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+}
+
+fn collect_review_inline(inlines: &[InlineNode], out: &mut Vec<serde_json::Value>) {
+    for inline in inlines {
+        match inline {
+            InlineNode::Revision(revision) => {
+                let kind = match revision.kind {
+                    RevisionKind::Insertion => "insertion",
+                    RevisionKind::Deletion => "deletion",
+                    RevisionKind::MoveFrom => "move_from",
+                    RevisionKind::MoveTo => "move_to",
+                };
+                out.push(serde_json::json!({
+                    "id": revision.id.to_string(),
+                    "kind": kind,
+                    "author": revision.author,
+                    "date": revision.date,
+                    "text": node_plain_text(&revision.inlines),
+                }));
+                collect_review_inline(&revision.inlines, out);
+            }
+            InlineNode::Hyperlink(link) => collect_review_inline(&link.inlines, out),
+            InlineNode::Sdt(sdt) => collect_review_inline(&sdt.inlines, out),
+            _ => {}
         }
     }
 }

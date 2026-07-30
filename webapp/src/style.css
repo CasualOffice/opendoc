@@ -2242,6 +2242,13 @@ body.modal-open {
   line-height: 1.5;
 }
 
+.review-list { display: grid; gap: 10px; align-content: start; }
+.review-empty, .review-readonly-note { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.review-card { border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; background: var(--surface); }
+.review-card strong, .review-card small { display: block; }
+.review-card small { color: var(--muted); font-size: 11px; margin-top: 2px; }
+.review-card p { margin: 7px 0 0; color: var(--ink); font-size: 12px; line-height: 1.45; white-space: pre-wrap; }
+
 .viewport {
   flex: 1;
   min-width: 0;

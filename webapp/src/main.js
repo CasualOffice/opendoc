@@ -166,6 +166,10 @@ const railOutline = document.getElementById("railOutline");
 const outlinePanel = document.getElementById("outlinePanel");
 const outlineClose = document.getElementById("outlineClose");
 const outlineBody = document.getElementById("outlineBody");
+const reviewBtn = document.getElementById("reviewBtn");
+const reviewPanel = document.getElementById("reviewPanel");
+const reviewClose = document.getElementById("reviewClose");
+const reviewBody = document.getElementById("reviewBody");
 const linkChip = document.getElementById("linkChip");
 const linkChipKind = document.getElementById("linkChipKind");
 const linkChipTarget = document.getElementById("linkChipTarget");
@@ -1917,6 +1921,8 @@ function updateToolbar() {
   pageSetupBtn.disabled = !doc;
   viewOutlineBtn.disabled = !doc;
   viewOutlineBtn.setAttribute("aria-pressed", String(!outlinePanel.hidden));
+  reviewBtn.disabled = !doc;
+  reviewBtn.setAttribute("aria-pressed", String(!reviewPanel.hidden));
   viewZoomOut.disabled = !doc;
   viewZoomIn.disabled = !doc;
   tabTable.disabled = !inTable;
@@ -2838,6 +2844,70 @@ function toggleOutline() {
 }
 railOutline.addEventListener("click", toggleOutline);
 outlineClose.addEventListener("click", toggleOutline);
+
+function reviewText(value) {
+  return value == null || value === "" ? "Not provided" : String(value);
+}
+
+function buildReview() {
+  if (!doc || reviewPanel.hidden) return;
+  const summary = JSON.parse(doc.reviewSummary());
+  reviewBody.replaceChildren();
+  const comments = summary.comments ?? [];
+  const revisions = summary.revisions ?? [];
+  if (!comments.length && !revisions.length) {
+    const empty = document.createElement("div");
+    empty.className = "review-empty";
+    empty.textContent = "No comments or tracked changes in this document.";
+    reviewBody.appendChild(empty);
+    return;
+  }
+  const note = document.createElement("p");
+  note.className = "review-readonly-note";
+  note.textContent = "Review inventory is read-only. Editing and accept/reject actions are next.";
+  reviewBody.appendChild(note);
+  const appendCard = (className, title, meta, body) => {
+    const card = document.createElement("article");
+    card.className = className;
+    const heading = document.createElement("strong");
+    heading.textContent = title;
+    const details = document.createElement("small");
+    details.textContent = meta;
+    const text = document.createElement("p");
+    text.textContent = body;
+    card.append(heading, details, text);
+    reviewBody.appendChild(card);
+  };
+  for (const comment of comments) {
+    appendCard(
+      "review-card review-comment",
+      reviewText(comment.author || comment.initials || "Comment"),
+      `${comment.resolved ? "Resolved" : "Open"}${comment.date ? ` · ${reviewText(comment.date)}` : ""}`,
+      reviewText(comment.text),
+    );
+  }
+  for (const revision of revisions) {
+    const kind = reviewText(revision.kind);
+    appendCard(
+      `review-card review-revision review-${kind.replaceAll("_", "-")}`,
+      kind.replaceAll("_", " "),
+      `${reviewText(revision.author)}${revision.date ? ` · ${reviewText(revision.date)}` : ""}`,
+      reviewText(revision.text),
+    );
+  }
+}
+
+function toggleReview(open) {
+  const show = open ?? reviewPanel.hidden;
+  reviewPanel.hidden = !show;
+  reviewBtn.setAttribute("aria-pressed", String(show));
+  if (show) {
+    outlinePanel.hidden = true;
+    buildReview();
+  }
+}
+reviewBtn.addEventListener("click", () => toggleReview());
+reviewClose.addEventListener("click", () => toggleReview(false));
 
 // ---- Command palette (⌘K) — fuzzy search over real editor actions -----------
 const cmdPalette = document.getElementById("cmdPalette");
@@ -4204,6 +4274,7 @@ const pageSetupCloseBtn = document.getElementById("pageSetupClose");
 const pagePreviewSheet = document.getElementById("pagePreviewSheet");
 const pagePreviewMargins = document.getElementById("pagePreviewMargins");
 const pagePreviewLabel = document.getElementById("pagePreviewLabel");
+const pageSetupSection = document.getElementById("pageSetupSection");
 
 let pageSetupCurrent = null; // the last-fetched {section, pageSize, pageMargins, orientation}
 
@@ -4234,9 +4305,18 @@ function updatePageSetupPreview() {
 
 function reflectPageSetup() {
   if (!doc) return false;
-  const raw = doc.pageSetup();
-  pageSetupCurrent = raw === "null" ? null : JSON.parse(raw);
-  if (!pageSetupCurrent) return false;
+  const raw = doc.pageSetupSections(selection?.focus?.node ?? "");
+  const list = raw === "null" ? null : JSON.parse(raw);
+  if (!list?.sections?.length) return false;
+  pageSetupSection.replaceChildren();
+  for (const [index, section] of list.sections.entries()) {
+    const option = document.createElement("option");
+    option.value = section.section;
+    option.textContent = `Section ${index + 1}`;
+    pageSetupSection.appendChild(option);
+  }
+  pageSetupSection.value = list.current;
+  pageSetupCurrent = list.sections.find((section) => section.section === list.current) ?? list.sections[0];
   const { pageSize, pageMargins, orientation } = pageSetupCurrent;
   pageWidthInput.value = pageInchStr(pageSize.widthTwips);
   pageHeightInput.value = pageInchStr(pageSize.heightTwips);
@@ -4252,6 +4332,26 @@ function reflectPageSetup() {
   updatePageSetupPreview();
   return true;
 }
+
+pageSetupSection.addEventListener("change", () => {
+  if (!doc) return;
+  const raw = doc.pageSetupSections(selection?.focus?.node ?? "");
+  const list = raw === "null" ? null : JSON.parse(raw);
+  pageSetupCurrent = list?.sections?.find((section) => section.section === pageSetupSection.value) ?? null;
+  if (!pageSetupCurrent) return;
+  const { pageSize, pageMargins, orientation } = pageSetupCurrent;
+  pageWidthInput.value = pageInchStr(pageSize.widthTwips);
+  pageHeightInput.value = pageInchStr(pageSize.heightTwips);
+  pageMarginTopInput.value = pageInchStr(pageMargins.topTwips);
+  pageMarginBottomInput.value = pageInchStr(pageMargins.bottomTwips);
+  pageMarginLeftInput.value = pageInchStr(pageMargins.startTwips);
+  pageMarginRightInput.value = pageInchStr(pageMargins.endTwips);
+  const activeOrientation = orientation ?? (pageSize.widthTwips > pageSize.heightTwips ? "landscape" : "portrait");
+  for (const btn of pageOrientationSeg.querySelectorAll("button")) {
+    btn.setAttribute("aria-pressed", String(btn.dataset.orientation === activeOrientation));
+  }
+  updatePageSetupPreview();
+});
 
 function togglePageSetup(open) {
   const show = open ?? pageSetupMenu.hidden;
