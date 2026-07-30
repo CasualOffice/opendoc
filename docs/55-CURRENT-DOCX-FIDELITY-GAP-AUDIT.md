@@ -104,7 +104,7 @@ still use bounded approximations.
 | Priority | Gap | User-visible consequence | Primary evidence |
 | --- | --- | --- | --- |
 | P0 | Modeled inline leaves are omitted by layout | Object previews, math fallback, and special hyphens can be invisible | `flow.rs::collect_items` catch-all |
-| P0 | `altChunk` occupies no layout space | Referenced HTML/RTF/text/sub-document content is preserved but absent from render | `flow.rs` `BlockNode::AltChunk(_) => {}` |
+| P0 (partly closed, P1F-39b) | `altChunk`'s real embedded content is never parsed/laid out | Referenced HTML/RTF/text/sub-document content is preserved but never rendered; a deterministic bordered placeholder box now reserves its layout space and is visually distinguishable from real content, closing the *silent-zero-space* half of this gap — the content-flow half remains open | `flow.rs` `alt_chunk_fragment`/`alt_chunk_decor` (placeholder only, not a parser for the embedded part) |
 | P1 | Footnote/endnote placement is bounded, not Word-complete | Common note references and bodies render, but separator customization, footnote-only trailing pages, and full section policy remain approximations | `notes.rs`; `62-FOOTNOTE-ENDNOTE-PAGINATION-DESIGN.md` |
 | P1 | Square-family exclusion is only local/bounded | Cross-paragraph, page-relative, contour, and overlapping-float cases can still diverge | `flow.rs::shape_with_float_exclusions` |
 | P1 | Table style cascade and advanced table geometry are not consumed | Styled tables lose conditional fills/borders/fonts; floating/bidi/spaced tables become inline approximations | `cascade.rs`; `flow.rs::flow_table` |
@@ -138,9 +138,16 @@ controls because those wrappers recurse into the same function. The same
 function is used from body paragraphs, table cells, text boxes, headers, and
 footers, so the gap is not body-only.
 
-`BlockNode::AltChunk` is likewise an explicit no-op in fresh flow, cached flow,
-intrinsic sizing, and float discovery. Its referenced part is preserved and
-relinked, but it contributes zero height and no fallback representation.
+`BlockNode::AltChunk` (`P1F-39b`, `docs/14-EXECUTION-TRACKER.md`) no longer
+occupies zero space: `flow.rs`'s three sites (fresh body flow, table-cell/nested
+flow, intrinsic sizing) now build a deterministic, dashed-bordered one-line
+placeholder box (`alt_chunk_fragment`/`alt_chunk_decor`) instead of a no-op arm.
+Its referenced part is still preserved and relinked, and the placeholder is
+**not** a rendering of the chunk's real content — the referenced HTML/RTF/
+nested-WordprocessingML part is still never parsed into blocks, so there is
+still nothing to recurse into for a true render. Float discovery (`anchor.rs`)
+is unaffected: an altChunk cannot carry inline floats, so its no-op arm there
+is correct as-is, not a gap.
 
 **Required direction:** add small leaf-specific slices, never a generic
 “stringify every unknown node” fallback. At minimum:
@@ -149,7 +156,11 @@ relinked, but it contributes zero height and no fallback representation.
 2. math text fallback with a compatibility marker;
 3. embedded-object preview through the existing image pipeline, with a visible
    bounded placeholder when no preview is available;
-4. explicit `altChunk` placeholder or a host-provided conversion seam.
+4. ~~explicit `altChunk` placeholder~~ done (`P1F-39b`) — a bounded, deterministic
+   placeholder box reserves layout space and is visually marked as an
+   approximation; parsing the chunk's actual embedded content into real,
+   flowable blocks (or a host-provided conversion seam) remains open and is a
+   materially larger, separate effort.
 
 Each slice needs body, header, footer, nested-cell, and text-box tests where the
 node is valid in that context.
