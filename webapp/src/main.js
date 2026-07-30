@@ -3717,6 +3717,16 @@ document.addEventListener("keydown", async (e) => {
   }
   if (key === "Enter") {
     e.preventDefault();
+    // Word/Docs convention: Enter on an empty list item exits the list instead
+    // of creating another empty bullet/number. The current paragraph remains in
+    // place, so the caret does not jump and Undo restores the list marker.
+    if (!range) {
+      const listKind = doc.listStyleAt(focus.node);
+      if (listKind && doc.paragraphLength(focus.node) === 0) {
+        await runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, listKind));
+        return;
+      }
+    }
     await runEdit(() =>
       doc.insertPlainTextAs(
         anchor.node,

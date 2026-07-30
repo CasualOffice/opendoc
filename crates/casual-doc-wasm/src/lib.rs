@@ -9570,6 +9570,29 @@ mod tests {
         );
     }
 
+    #[test]
+    fn toggling_an_empty_list_item_exits_the_list() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, text)| !text.is_empty())
+            .map(|(id, _)| id.to_string())
+            .expect("a non-empty paragraph");
+        d.toggle_list(&node, 0, &node, 0, "bullet")
+            .expect("toggle bullet on");
+        let split = d
+            .split_paragraph(&node, d.paragraph_length(&node))
+            .expect("split list item");
+        let empty = split.node();
+        assert_eq!(d.paragraph_length(&empty), 0);
+        assert_eq!(d.list_style_at(&empty), "bullet");
+        d.toggle_list(&empty, 0, &empty, 0, "bullet")
+            .expect("exit empty list item");
+        assert_eq!(d.list_style_at(&empty), "");
+    }
+
     /// Paragraph and run properties apply and undo: alignment (with a query),
     /// plus line spacing / indent / shading / color / size / vert-align without
     /// error, all reversible, leaving the text intact.
