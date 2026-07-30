@@ -50,6 +50,8 @@ test("the contextual Table ribbon exposes complete core commands and bounded for
   }
   await expect(ribbon.locator('[data-table-distribute="columns"]')).toBeEnabled();
   await expect(ribbon.locator('[data-table-distribute="rows"]')).toBeDisabled();
+  await expect(ribbon.locator('[data-table-sort="ascending"]')).toBeEnabled();
+  await expect(ribbon.locator('[data-table-sort="descending"]')).toBeEnabled();
   await ribbon.locator('[data-table-distribute="columns"]').click();
   await expect(ribbon.locator('[data-table-distribute="columns"]')).toBeEnabled();
   await expect(page.locator("#splitCellBtn")).toBeEnabled();

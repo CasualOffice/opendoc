@@ -2452,6 +2452,60 @@ impl WasmDocument {
         .map_err(to_js)
     }
 
+    /// Sorts regular-table rows by the first cell's plain text as one undoable edit.
+    #[wasm_bindgen(js_name = sortTable)]
+    pub fn sort_table(&mut self, node: &str, direction: &str) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let (table, _) = locate_table_cell(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        let mut replacement = find_table(&self.document, table)
+            .ok_or_else(|| to_js("table not found".into()))?
+            .clone();
+        if !table_is_regular(&replacement) {
+            return Err(to_js("sorting requires a regular table".into()));
+        }
+        let descending = match direction {
+            "ascending" | "asc" => false,
+            "descending" | "desc" => true,
+            _ => {
+                return Err(to_js(
+                    "sort direction must be ascending or descending".into(),
+                ));
+            }
+        };
+        let header = replacement
+            .rows
+            .first()
+            .is_some_and(|row| row.properties.header);
+        let start = usize::from(header);
+        if replacement.rows.len().saturating_sub(start) < 2 {
+            return Err(to_js("sorting requires at least two data rows".into()));
+        }
+        let mut keyed = replacement.rows.split_off(start);
+        for row in &keyed {
+            first_cell_plain_text(row).map_err(to_js)?;
+        }
+        keyed.sort_by(|left, right| {
+            let left_key = first_cell_plain_text(left)
+                .unwrap_or_default()
+                .to_lowercase();
+            let right_key = first_cell_plain_text(right)
+                .unwrap_or_default()
+                .to_lowercase();
+            let order = left_key.cmp(&right_key);
+            if descending { order.reverse() } else { order }
+        });
+        replacement.rows.extend(keyed);
+        self.apply_action_as(
+            vec![Operation::ReplaceTable {
+                table,
+                replacement: Box::new(replacement),
+            }],
+            HistoryKind::TableStructure,
+        )
+        .map_err(to_js)
+    }
+
     /// Sets the table's preferred width in twips, or clears it when negative.
     #[wasm_bindgen(js_name = setTableWidth)]
     pub fn set_table_width(&mut self, node: &str, width_twips: i32) -> Result<EditResult, JsValue> {
@@ -6430,6 +6484,22 @@ fn table_selection_anchors(
     out
 }
 
+fn first_cell_plain_text(row: &TableRow) -> Result<String, String> {
+    let cell = row
+        .cells
+        .first()
+        .ok_or_else(|| "row has no first cell".to_owned())?;
+    let paragraph = cell
+        .blocks
+        .first()
+        .and_then(|block| match block {
+            BlockNode::Paragraph(paragraph) => Some(paragraph),
+            _ => None,
+        })
+        .ok_or_else(|| "sorting requires paragraph text in the first cell".to_owned())?;
+    Ok(node_plain_text(&paragraph.inlines))
+}
+
 fn merge_regular_table_selection(
     mut table: Table,
     r0: usize,
@@ -8885,6 +8955,52 @@ mod tests {
         assert!(!d.table_info(&merged_node).regular());
         d.undo().expect("undo merge");
         assert!(d.table_info(&caret).regular());
+    }
+
+    #[test]
+    fn table_sort_reorders_rows_and_undoes_as_one_action() {
+        use casual_doc_edit::{find_table, locate_table_cell};
+
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let body = nodes
+            .iter()
+            .find(|(id, _)| !d.in_table(&id.to_string()))
+            .map(|(id, _)| id.to_string())
+            .expect("body paragraph");
+        let inserted = d.insert_table(&body, 3, 2).expect("insert table");
+        let anchor = inserted.node();
+        let (table_id, _) = locate_table_cell(
+            &d.document,
+            NodeId::from_str(&anchor).expect("table anchor"),
+        )
+        .expect("table cell");
+        let first_cell_paragraphs = |d: &WasmDocument| {
+            find_table(&d.document, table_id)
+                .unwrap()
+                .rows
+                .iter()
+                .map(|row| match row.cells[0].blocks.first().unwrap() {
+                    BlockNode::Paragraph(paragraph) => paragraph.id.to_string(),
+                    _ => panic!("first cell paragraph"),
+                })
+                .collect::<Vec<_>>()
+        };
+        for (node, value) in first_cell_paragraphs(&d)
+            .into_iter()
+            .zip(["Bravo", "Alpha", "Charlie"])
+        {
+            d.insert_text(&node, 0, value.to_owned())
+                .expect("cell text");
+        }
+        d.sort_table(&anchor, "ascending").expect("sort ascending");
+        let sorted = first_cell_paragraphs(&d);
+        assert_eq!(d.copy_text(&sorted[0], 0, &sorted[0], 5), "Alpha");
+        assert_eq!(d.copy_text(&sorted[1], 0, &sorted[1], 6), "Bravo");
+        d.undo().expect("undo sort");
+        let restored = first_cell_paragraphs(&d);
+        assert_eq!(d.copy_text(&restored[0], 0, &restored[0], 6), "Bravo");
     }
 
     #[test]

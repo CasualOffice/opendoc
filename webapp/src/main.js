@@ -1821,6 +1821,9 @@ function updateToolbar() {
       (control.dataset.tableDistribute === "rows" &&
         !["exact", "atLeast"].includes(tableInfo.rowHeightRule));
   }
+  for (const control of tableRibbon.querySelectorAll("[data-table-sort]")) {
+    control.disabled = !inTable || !tableInfo?.regular;
+  }
   mergeCellsBtn.disabled = !inTable || !tableSelection;
   tableContext.textContent = tableInfo?.found ? tableContextLabel(tableInfo) : "";
   if (!tablePropertiesPanel.hidden) {
@@ -2371,6 +2374,13 @@ for (const b of tableRibbon.querySelectorAll("[data-table-distribute]")) {
         ? doc.distributeTableRows(selection.focus.node)
         : doc.distributeTableColumns(selection.focus.node),
     );
+  });
+}
+
+for (const b of tableRibbon.querySelectorAll("[data-table-sort]")) {
+  onButton(b, () => {
+    if (!selection || !doc) return;
+    runEdit(() => doc.sortTable(selection.focus.node, b.dataset.tableSort));
   });
 }
 
