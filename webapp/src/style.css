@@ -2034,7 +2034,8 @@ body.modal-open {
 
 /* Review is an inline/margin interaction, not a permanent side panel. */
 #reviewPanel,
-#railReview { display: none !important; }
+#railReview,
+#reviewBtn { display: none !important; }
 
 .review-popover {
   position: fixed;
@@ -2052,22 +2053,64 @@ body.modal-open {
 .review-popover-body { margin: 8px 0; font-size: 12px; line-height: 1.45; white-space: pre-wrap; }
 .review-popover-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .review-inline-bar {
-  position: fixed;
-  left: 50%;
-  bottom: 16px;
-  transform: translateX(-50%);
-  z-index: 70;
   display: flex;
-  gap: 6px;
-  padding: 7px;
-  border: 1px solid var(--line-strong);
-  border-radius: 999px;
-  background: var(--surface);
-  box-shadow: var(--shadow-md);
+  gap: 4px;
+  align-items: center;
 }
 .review-inline-bar[hidden] { display: none; }
-.review-inline-bar button { border: 1px solid var(--line); border-radius: 999px; padding: 5px 9px; background: transparent; color: var(--ink); font: inherit; font-size: 11px; cursor: pointer; }
+.review-mode-toggle,
+.review-inline-bar button { border: 1px solid var(--line); border-radius: 999px; padding: 5px 9px; background: transparent; color: var(--ink); font: inherit; font-size: 11px; cursor: pointer; white-space: nowrap; }
+.review-mode-toggle[aria-pressed="true"] { color: #137333; border-color: #188038; background: color-mix(in srgb, #188038 10%, transparent); }
+.review-mode-toggle:disabled { opacity: 0.45; cursor: default; }
+.review-mode-toggle:not(:disabled):hover,
 .review-inline-bar button:hover { background: var(--accent-soft); border-color: var(--accent); }
+
+.review-margin-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  pointer-events: none;
+  overflow: hidden;
+}
+.review-margin-card {
+  position: absolute;
+  width: 292px;
+  box-sizing: border-box;
+  padding: 11px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-md);
+  pointer-events: auto;
+  cursor: default;
+}
+.review-margin-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.review-margin-card.resolved { opacity: 0.72; }
+.review-margin-card-head { display: flex; align-items: flex-start; gap: 9px; }
+.review-margin-avatar { width: 26px; height: 26px; flex: 0 0 26px; display: grid; place-items: center; border-radius: 50%; background: var(--accent-soft); color: var(--accent-strong); font-size: 11px; font-weight: 700; }
+.review-margin-title { min-width: 0; display: grid; gap: 1px; }
+.review-margin-title strong { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.review-margin-title small { color: var(--muted); font-size: 10px; text-transform: capitalize; }
+.review-margin-card p { margin: 8px 0; font-size: 12px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.review-margin-revision p { padding-left: 8px; border-left: 3px solid var(--accent); }
+.review-margin-insertion p { border-left-color: #188038; color: #137333; }
+.review-margin-deletion p { border-left-color: #d93025; color: #b3261e; text-decoration: line-through; }
+.review-margin-revision:has(.review-margin-title small) { border-color: var(--line-strong); }
+.review-margin-card-actions { display: flex; gap: 5px; flex-wrap: wrap; }
+.review-margin-replies { display: grid; gap: 8px; margin: 10px -2px 9px 34px; padding-left: 10px; border-left: 2px solid var(--line); }
+.review-margin-reply { display: grid; gap: 4px; }
+.review-margin-reply.resolved { opacity: 0.65; }
+.review-margin-reply-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.review-margin-reply-head strong { font-size: 11px; }
+.review-margin-reply-head small { color: var(--muted); font-size: 9px; }
+.review-margin-reply p { margin: 0; padding: 0; border: 0; color: var(--ink); font-size: 11px; text-decoration: none; }
+.review-margin-action { border: 1px solid var(--line); border-radius: 999px; padding: 4px 8px; background: transparent; color: var(--ink); font: inherit; font-size: 10px; cursor: pointer; }
+.review-margin-action:hover { background: var(--accent-soft); border-color: var(--accent); }
+.review-margin-action.danger { color: var(--danger, #b3261e); }
+@media (max-width: 900px) {
+  .review-margin-card { width: 250px; opacity: 0.96; }
+}
 
 .panel-head {
   display: flex;

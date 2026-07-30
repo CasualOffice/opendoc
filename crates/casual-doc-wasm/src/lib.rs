@@ -4051,16 +4051,21 @@ impl WasmDocument {
     #[wasm_bindgen(js_name = decideRevision)]
     pub fn decide_revision(&mut self, revision: &str, accept: bool) -> Result<EditResult, JsValue> {
         let id = node_id(revision)?;
+        let Some((node, start, end, kind)) = find_review_revision_anchor(self.document.body(), id)
+        else {
+            return Err(to_js("revision not found".to_string()));
+        };
         let mut body = self.document.body().to_vec();
         if !decide_review_revision(&mut body, id, accept) {
             return Err(to_js("revision not found".to_string()));
         }
+        let keep = matches!(kind, RevisionKind::Insertion | RevisionKind::MoveTo) == accept;
         self.apply_action_caret_as(
             vec![Operation::ReplaceReviewState {
                 body,
                 comments: self.document.definitions().comments.clone(),
             }],
-            Pos::new(self.document.id(), 0),
+            Pos::new(node, if keep { end } else { start }),
             HistoryKind::Review,
         )
         .map_err(to_js)
@@ -6059,7 +6064,10 @@ fn collect_block_text(blocks: &[BlockNode], out: &mut Vec<(NodeId, String)>) {
 fn collect_review_revisions(blocks: &[BlockNode], out: &mut Vec<serde_json::Value>) {
     for block in blocks {
         match block {
-            BlockNode::Paragraph(paragraph) => collect_review_inline(&paragraph.inlines, out),
+            BlockNode::Paragraph(paragraph) => {
+                let mut offset = 0;
+                collect_review_inline(&paragraph.inlines, paragraph.id, &mut offset, out);
+            }
             BlockNode::Table(table) => {
                 for row in &table.rows {
                     for cell in &row.cells {
@@ -6525,6 +6533,81 @@ fn decide_review_revision(blocks: &mut [BlockNode], id: NodeId, accept: bool) ->
     false
 }
 
+fn find_review_revision_anchor(
+    blocks: &[BlockNode],
+    id: NodeId,
+) -> Option<(NodeId, u32, u32, RevisionKind)> {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                let mut offset = 0;
+                if let Some(anchor) =
+                    find_review_inline_anchor(&paragraph.inlines, paragraph.id, id, &mut offset)
+                {
+                    return Some(anchor);
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        if let Some(anchor) = find_review_revision_anchor(&cell.blocks, id) {
+                            return Some(anchor);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(anchor) = find_review_revision_anchor(&sdt.blocks, id) {
+                    return Some(anchor);
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    None
+}
+
+fn find_review_inline_anchor(
+    inlines: &[InlineNode],
+    node: NodeId,
+    id: NodeId,
+    offset: &mut u32,
+) -> Option<(NodeId, u32, u32, RevisionKind)> {
+    for inline in inlines {
+        match inline {
+            InlineNode::Revision(revision) => {
+                let start = *offset;
+                let end = start.saturating_add(
+                    revision
+                        .inlines
+                        .iter()
+                        .map(inline_anchor_len_for_review)
+                        .sum::<u32>(),
+                );
+                if revision.id == id {
+                    return Some((node, start, end, revision.kind));
+                }
+                if let Some(anchor) = find_review_inline_anchor(&revision.inlines, node, id, offset)
+                {
+                    return Some(anchor);
+                }
+            }
+            InlineNode::Hyperlink(link) => {
+                if let Some(anchor) = find_review_inline_anchor(&link.inlines, node, id, offset) {
+                    return Some(anchor);
+                }
+            }
+            InlineNode::Sdt(sdt) => {
+                if let Some(anchor) = find_review_inline_anchor(&sdt.inlines, node, id, offset) {
+                    return Some(anchor);
+                }
+            }
+            _ => *offset = offset.saturating_add(inline_anchor_len_for_review(inline)),
+        }
+    }
+    None
+}
+
 fn collect_review_revision_ids(blocks: &[BlockNode], out: &mut Vec<NodeId>) {
     for block in blocks {
         match block {
@@ -6568,6 +6651,7 @@ fn decide_review_inline(inlines: &mut Vec<InlineNode>, id: NodeId, accept: bool)
                 Vec::new()
             };
             inlines.splice(index..=index, replacement);
+            coalesce_review_runs(inlines);
             return true;
         }
         let nested = match &mut inlines[index] {
@@ -6583,6 +6667,27 @@ fn decide_review_inline(inlines: &mut Vec<InlineNode>, id: NodeId, accept: bool)
         }
     }
     false
+}
+
+fn coalesce_review_runs(inlines: &mut Vec<InlineNode>) {
+    let mut index = 0;
+    while index + 1 < inlines.len() {
+        let mergeable = matches!(
+            (&inlines[index], &inlines[index + 1]),
+            (InlineNode::Run(left), InlineNode::Run(right))
+                if left.properties == right.properties
+        );
+        if mergeable {
+            let InlineNode::Run(next) = inlines.remove(index + 1) else {
+                unreachable!("the adjacent inline was matched as a run");
+            };
+            if let InlineNode::Run(current) = &mut inlines[index] {
+                current.text.push_str(&next.text);
+            }
+        } else {
+            index += 1;
+        }
+    }
 }
 
 fn review_split_top_level_run(
@@ -6680,10 +6785,23 @@ fn inline_anchor_len_for_review(inline: &InlineNode) -> u32 {
     }
 }
 
-fn collect_review_inline(inlines: &[InlineNode], out: &mut Vec<serde_json::Value>) {
+fn collect_review_inline(
+    inlines: &[InlineNode],
+    node: NodeId,
+    offset: &mut u32,
+    out: &mut Vec<serde_json::Value>,
+) {
     for inline in inlines {
         match inline {
             InlineNode::Revision(revision) => {
+                let start = *offset;
+                let end = start.saturating_add(
+                    revision
+                        .inlines
+                        .iter()
+                        .map(inline_anchor_len_for_review)
+                        .sum::<u32>(),
+                );
                 let kind = match revision.kind {
                     RevisionKind::Insertion => "insertion",
                     RevisionKind::Deletion => "deletion",
@@ -6696,12 +6814,21 @@ fn collect_review_inline(inlines: &[InlineNode], out: &mut Vec<serde_json::Value
                     "author": revision.author,
                     "date": revision.date,
                     "text": node_plain_text(&revision.inlines),
+                    "anchor": {
+                        "node": node.to_string(),
+                        "start": start,
+                        "end": end,
+                    },
                 }));
-                collect_review_inline(&revision.inlines, out);
+                collect_review_inline(&revision.inlines, node, offset, out);
             }
-            InlineNode::Hyperlink(link) => collect_review_inline(&link.inlines, out),
-            InlineNode::Sdt(sdt) => collect_review_inline(&sdt.inlines, out),
-            _ => {}
+            InlineNode::Hyperlink(link) => {
+                collect_review_inline(&link.inlines, node, offset, out);
+            }
+            InlineNode::Sdt(sdt) => {
+                collect_review_inline(&sdt.inlines, node, offset, out);
+            }
+            _ => *offset = offset.saturating_add(inline_anchor_len_for_review(inline)),
         }
     }
 }
@@ -9682,6 +9809,62 @@ mod tests {
         revisions.clear();
         collect_review_revision_ids(d.document.body(), &mut revisions);
         assert!(revisions.is_empty());
+    }
+
+    #[test]
+    fn suggested_insert_can_be_accepted_in_rich_producer_document() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, text)| !text.is_empty())
+            .map(|(id, _)| id.to_string())
+            .expect("a non-empty paragraph");
+
+        d.suggest_insert(&node, 0, "tracked", Some("Tester".to_owned()), None)
+            .expect("suggest insert");
+        let mut revisions = Vec::new();
+        collect_review_revision_ids(d.document.body(), &mut revisions);
+        assert_eq!(revisions.len(), 1);
+        let mut body = d.document.body().to_vec();
+        assert!(decide_review_revision(&mut body, revisions[0], true));
+        let mut accepted = d.document.clone();
+        *accepted.body_mut() = body;
+        accepted.validate().expect("accepted review state is valid");
+        revisions.clear();
+        collect_review_revision_ids(accepted.body(), &mut revisions);
+        assert!(revisions.is_empty());
+    }
+
+    #[test]
+    fn comment_can_be_added_to_new_text_in_rich_producer_document() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, text)| !text.is_empty())
+            .map(|(id, _)| id.to_string())
+            .expect("a non-empty paragraph");
+        let marker = "COMMENT_TARGET";
+        d.insert_text(&node, 0, marker.to_owned())
+            .expect("insert comment target");
+        d.add_comment(
+            &node,
+            0,
+            marker.len() as u32,
+            "Margin comment",
+            Some("Tester".to_owned()),
+            Some("T".to_owned()),
+            None,
+        )
+        .expect("add comment");
+        let summary: serde_json::Value =
+            serde_json::from_str(&d.review_summary()).expect("review summary");
+        assert_eq!(summary["comments"][0]["text"], "Margin comment");
+        assert_eq!(summary["comments"][0]["anchor"]["start"], 0);
+        assert_eq!(summary["comments"][0]["anchor"]["end"], marker.len() as u64);
     }
 
     /// Rapid adjacent typing is one user action, while a different host gesture
