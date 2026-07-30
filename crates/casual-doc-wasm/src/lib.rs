@@ -36,11 +36,12 @@ use casual_doc_layout::units::{Point, Rect, Size, Twip};
 use casual_doc_model::v1::GridColumn;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, BookmarkId, BorderEdge,
-    CellMargins, CellVerticalAlignment, Color, Document, ExternalTarget, FontName, FontRef,
-    HeightRule, HighlightColor, Hyperlink, HyperlinkTarget, Indentation, InlineNode,
-    InternalTarget, LevelJustification, LevelSuffix, NumberFormat, NumberingInstance,
-    NumberingInstanceId, NumberingLevel, NumberingOverride, NumberingRef, PageMargins,
-    PageOrientation, PageSize as SectionPageSize, Paragraph, ParagraphBorders, ParagraphProperties,
+    CellMargins, CellVerticalAlignment, Color, Comment, CommentId, CommentRangeEnd,
+    CommentRangeStart, CommentReference, Document, ExternalTarget, FontName, FontRef, HeightRule,
+    HighlightColor, Hyperlink, HyperlinkTarget, Indentation, InlineNode, InternalTarget,
+    LevelJustification, LevelSuffix, NumberFormat, NumberingInstance, NumberingInstanceId,
+    NumberingLevel, NumberingOverride, NumberingRef, PageMargins, PageOrientation,
+    PageSize as SectionPageSize, Paragraph, ParagraphBorders, ParagraphProperties, Revision,
     RevisionKind, RgbColor, RowHeight, Run, RunProperties, SectionColumns, SectionId, Spacing,
     StyleId, StyleKind, TabAlignment, TabStop, Table, TableBorders, TableCell, TableCellProperties,
     TableLayout, TableProperties, TableRow, VerticalAlignment, VerticalMerge,
@@ -141,6 +142,7 @@ enum HistoryKind {
     TableStructure,
     DocumentProperties,
     PageSetup,
+    Review,
 }
 
 impl HistoryKind {
@@ -161,6 +163,7 @@ impl HistoryKind {
             Self::TableStructure => "Table structure",
             Self::DocumentProperties => "Document properties",
             Self::PageSetup => "Page setup",
+            Self::Review => "Review",
         }
     }
 }
@@ -196,6 +199,7 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         | Operation::SetTableProperties { .. }
         | Operation::ReplaceTable { .. } => HistoryKind::TableFormatting,
         Operation::SetCoreProperties { .. } => HistoryKind::DocumentProperties,
+        Operation::ReplaceReviewState { .. } => HistoryKind::Review,
         Operation::SetSectionGeometry { .. } => HistoryKind::PageSetup,
     }
 }
@@ -3532,6 +3536,8 @@ impl WasmDocument {
     #[wasm_bindgen(js_name = reviewSummary)]
     #[must_use]
     pub fn review_summary(&self) -> String {
+        let mut anchors = Vec::new();
+        collect_review_comment_anchors(self.document.body(), &mut anchors);
         let comments = self
             .document
             .definitions()
@@ -3540,14 +3546,25 @@ impl WasmDocument {
             .map(|(id, comment)| {
                 let mut blocks = Vec::new();
                 collect_block_text(&comment.blocks, &mut blocks);
-                serde_json::json!({
+                let mut item = serde_json::json!({
                     "id": id.node_id().to_string(),
                     "author": comment.author,
                     "initials": comment.initials,
                     "date": comment.date,
                     "resolved": comment.done,
+                    "parentParaId": comment.parent_para_id,
                     "text": blocks.into_iter().map(|(_, text)| text).collect::<Vec<_>>().join("\n"),
-                })
+                });
+                if let Some((_, node, start, end)) =
+                    anchors.iter().find(|(comment, _, _, _)| comment == id)
+                {
+                    item["anchor"] = serde_json::json!({
+                        "node": node.to_string(),
+                        "start": start,
+                        "end": end,
+                    });
+                }
+                item
             })
             .collect::<Vec<_>>();
         let mut revisions = Vec::new();
@@ -3557,6 +3574,437 @@ impl WasmDocument {
             "revisions": revisions,
         }))
         .unwrap_or_else(|_| "{\"comments\":[],\"revisions\":[]}".to_string())
+    }
+
+    /// Creates a comment over a same-paragraph selection. The marker and
+    /// definition changes are one undoable review transaction.
+    #[wasm_bindgen(js_name = addComment)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_comment(
+        &mut self,
+        node: &str,
+        start: u32,
+        end: u32,
+        text: &str,
+        author: Option<String>,
+        initials: Option<String>,
+        date: Option<String>,
+    ) -> Result<EditResult, JsValue> {
+        if start >= end || text.is_empty() {
+            return Err(to_js(
+                "comment range and text must be non-empty".to_string(),
+            ));
+        }
+        let node = node_id(node)?;
+        let next_id = |ids: &mut IdGenerator| {
+            ids.next_id()
+                .map_err(|_| to_js("id space exhausted".to_string()))
+        };
+        let comment = CommentId::new(next_id(&mut self.edit_ids)?);
+        let start_id = next_id(&mut self.edit_ids)?;
+        let end_id = next_id(&mut self.edit_ids)?;
+        let reference_id = next_id(&mut self.edit_ids)?;
+        let body_id = next_id(&mut self.edit_ids)?;
+        let run_id = next_id(&mut self.edit_ids)?;
+        let mut body = self.document.body().to_vec();
+        if !insert_review_comment_markers(
+            &mut body,
+            node,
+            start,
+            end,
+            CommentRangeStart {
+                id: start_id,
+                comment,
+            },
+            CommentRangeEnd {
+                id: end_id,
+                comment,
+            },
+            CommentReference {
+                id: reference_id,
+                comment,
+            },
+            &mut self.edit_ids,
+        ) {
+            return Err(to_js(
+                "comment range must cover editable top-level text".to_string(),
+            ));
+        }
+        let mut comments = self.document.definitions().comments.clone();
+        comments.insert(
+            comment,
+            Comment {
+                blocks: vec![BlockNode::Paragraph(Paragraph {
+                    id: body_id,
+                    properties: ParagraphProperties::default(),
+                    inlines: vec![InlineNode::Run(Run {
+                        id: run_id,
+                        properties: RunProperties::default(),
+                        text: text.to_owned(),
+                    })],
+                })],
+                author,
+                initials,
+                date,
+                para_id: None,
+                parent_para_id: None,
+                done: false,
+                durable_id: None,
+                person: None,
+            },
+        );
+        self.apply_action_caret_as(
+            vec![Operation::ReplaceReviewState { body, comments }],
+            Pos::new(node, end),
+            HistoryKind::Review,
+        )
+        .map_err(to_js)
+    }
+
+    /// Resolves or reopens an existing comment as one undoable review action.
+    #[wasm_bindgen(js_name = setCommentResolved)]
+    pub fn set_comment_resolved(
+        &mut self,
+        comment: &str,
+        done: bool,
+    ) -> Result<EditResult, JsValue> {
+        let id = NodeId::from_str(comment)
+            .map(CommentId::new)
+            .map_err(|_| to_js("invalid comment id".to_string()))?;
+        let mut comments = self.document.definitions().comments.clone();
+        let Some(mut value) = comments.get(&id).cloned() else {
+            return Err(to_js("comment not found".to_string()));
+        };
+        value.done = done;
+        comments.insert(id, value);
+        self.apply_action_caret_as(
+            vec![Operation::ReplaceReviewState {
+                body: self.document.body().to_vec(),
+                comments,
+            }],
+            Pos::new(self.document.id(), 0),
+            HistoryKind::Review,
+        )
+        .map_err(to_js)
+    }
+
+    /// Adds a reply to an existing comment thread.
+    #[wasm_bindgen(js_name = replyToComment)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn reply_to_comment(
+        &mut self,
+        parent: &str,
+        text: &str,
+        author: Option<String>,
+        initials: Option<String>,
+        date: Option<String>,
+    ) -> Result<EditResult, JsValue> {
+        if text.is_empty() {
+            return Err(to_js("reply text must be non-empty".to_string()));
+        }
+        let parent = NodeId::from_str(parent)
+            .map(CommentId::new)
+            .map_err(|_| to_js("invalid comment id".to_string()))?;
+        if self.document.definitions().comments.get(&parent).is_none() {
+            return Err(to_js("comment not found".to_string()));
+        }
+        let id = CommentId::new(
+            self.edit_ids
+                .next_id()
+                .map_err(|_| to_js("id space exhausted".to_string()))?,
+        );
+        let body_id = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".to_string()))?;
+        let run_id = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".to_string()))?;
+        let mut comments = self.document.definitions().comments.clone();
+        comments.insert(
+            id,
+            Comment {
+                blocks: vec![BlockNode::Paragraph(Paragraph {
+                    id: body_id,
+                    properties: ParagraphProperties::default(),
+                    inlines: vec![InlineNode::Run(Run {
+                        id: run_id,
+                        properties: RunProperties::default(),
+                        text: text.to_owned(),
+                    })],
+                })],
+                author,
+                initials,
+                date,
+                para_id: None,
+                parent_para_id: Some(parent.node_id().to_string()),
+                done: false,
+                durable_id: None,
+                person: None,
+            },
+        );
+        self.apply_action_caret_as(
+            vec![Operation::ReplaceReviewState {
+                body: self.document.body().to_vec(),
+                comments,
+            }],
+            Pos::new(self.document.id(), 0),
+            HistoryKind::Review,
+        )
+        .map_err(to_js)
+    }
+
+    /// Removes a comment and all of its range/reference markers.
+    #[wasm_bindgen(js_name = deleteComment)]
+    pub fn delete_comment(&mut self, comment: &str) -> Result<EditResult, JsValue> {
+        let id = NodeId::from_str(comment)
+            .map(CommentId::new)
+            .map_err(|_| to_js("invalid comment id".to_string()))?;
+        let source_comments = self.document.definitions().comments.clone();
+        if source_comments.get(&id).is_none() {
+            return Err(to_js("comment not found".to_string()));
+        }
+        let mut comments = casual_doc_model::v1::DefinitionMap::default();
+        for (key, value) in source_comments.iter() {
+            if *key != id {
+                comments.insert(*key, value.clone());
+            }
+        }
+        let mut body = self.document.body().to_vec();
+        remove_review_comment_markers(&mut body, id);
+        self.apply_action_caret_as(
+            vec![Operation::ReplaceReviewState { body, comments }],
+            Pos::new(self.document.id(), 0),
+            HistoryKind::Review,
+        )
+        .map_err(to_js)
+    }
+
+    /// Adds a tracked insertion at a same-paragraph caret.
+    #[wasm_bindgen(js_name = suggestInsert)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn suggest_insert(
+        &mut self,
+        node: &str,
+        offset: u32,
+        text: &str,
+        author: Option<String>,
+        date: Option<String>,
+    ) -> Result<EditResult, JsValue> {
+        if text.is_empty() {
+            return Err(to_js("suggested text must be non-empty".to_string()));
+        }
+        let node = node_id(node)?;
+        let revision = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".to_string()))?;
+        let run = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".to_string()))?;
+        let mut body = self.document.body().to_vec();
+        if !insert_review_revision(
+            &mut body,
+            node,
+            offset,
+            Revision {
+                id: revision,
+                kind: RevisionKind::Insertion,
+                author,
+                date,
+                revision_id: None,
+                inlines: vec![InlineNode::Run(Run {
+                    id: run,
+                    properties: RunProperties::default(),
+                    text: text.to_owned(),
+                })],
+            },
+            &mut self.edit_ids,
+        ) {
+            return Err(to_js(
+                "suggestion requires a top-level paragraph text caret".to_string(),
+            ));
+        }
+        self.apply_action_caret_as(
+            vec![Operation::ReplaceReviewState {
+                body,
+                comments: self.document.definitions().comments.clone(),
+            }],
+            Pos::new(node, offset + text.len() as u32),
+            HistoryKind::Review,
+        )
+        .map_err(to_js)
+    }
+
+    /// Replaces a selected range with a tracked deletion plus tracked insertion.
+    #[wasm_bindgen(js_name = suggestReplace)]
+    pub fn suggest_replace(
+        &mut self,
+        node: &str,
+        start: u32,
+        end: u32,
+        text: &str,
+        author: Option<String>,
+        date: Option<String>,
+    ) -> Result<EditResult, JsValue> {
+        if start >= end || text.is_empty() {
+            return Err(to_js(
+                "suggested replacement requires a range and text".to_string(),
+            ));
+        }
+        let node = node_id(node)?;
+        let deletion = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".to_string()))?;
+        let insertion = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".to_string()))?;
+        let run = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".to_string()))?;
+        let mut body = self.document.body().to_vec();
+        if !wrap_review_deletion(
+            &mut body,
+            node,
+            start,
+            end,
+            Revision {
+                id: deletion,
+                kind: RevisionKind::Deletion,
+                author: author.clone(),
+                date: date.clone(),
+                revision_id: None,
+                inlines: Vec::new(),
+            },
+            &mut self.edit_ids,
+        ) {
+            return Err(to_js(
+                "suggested replacement requires top-level paragraph text".to_string(),
+            ));
+        }
+        if !insert_review_revision(
+            &mut body,
+            node,
+            start,
+            Revision {
+                id: insertion,
+                kind: RevisionKind::Insertion,
+                author,
+                date,
+                revision_id: None,
+                inlines: vec![InlineNode::Run(Run {
+                    id: run,
+                    properties: RunProperties::default(),
+                    text: text.to_owned(),
+                })],
+            },
+            &mut self.edit_ids,
+        ) {
+            return Err(to_js("suggested replacement insertion failed".to_string()));
+        }
+        self.apply_action_caret_as(
+            vec![Operation::ReplaceReviewState {
+                body,
+                comments: self.document.definitions().comments.clone(),
+            }],
+            Pos::new(node, start + text.len() as u32),
+            HistoryKind::Review,
+        )
+        .map_err(to_js)
+    }
+
+    #[wasm_bindgen(js_name = suggestDelete)]
+    pub fn suggest_delete(
+        &mut self,
+        node: &str,
+        start: u32,
+        end: u32,
+        author: Option<String>,
+        date: Option<String>,
+    ) -> Result<EditResult, JsValue> {
+        if start >= end {
+            return Err(to_js("suggested deletion requires a range".to_string()));
+        }
+        let node = node_id(node)?;
+        let revision = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".to_string()))?;
+        let mut body = self.document.body().to_vec();
+        if !wrap_review_deletion(
+            &mut body,
+            node,
+            start,
+            end,
+            Revision {
+                id: revision,
+                kind: RevisionKind::Deletion,
+                author,
+                date,
+                revision_id: None,
+                inlines: Vec::new(),
+            },
+            &mut self.edit_ids,
+        ) {
+            return Err(to_js(
+                "suggested deletion requires top-level paragraph text".to_string(),
+            ));
+        }
+        self.apply_action_caret_as(
+            vec![Operation::ReplaceReviewState {
+                body,
+                comments: self.document.definitions().comments.clone(),
+            }],
+            Pos::new(node, start),
+            HistoryKind::Review,
+        )
+        .map_err(to_js)
+    }
+
+    /// Accepts or rejects a tracked revision by inline node id.
+    #[wasm_bindgen(js_name = decideRevision)]
+    pub fn decide_revision(&mut self, revision: &str, accept: bool) -> Result<EditResult, JsValue> {
+        let id = node_id(revision)?;
+        let mut body = self.document.body().to_vec();
+        if !decide_review_revision(&mut body, id, accept) {
+            return Err(to_js("revision not found".to_string()));
+        }
+        self.apply_action_caret_as(
+            vec![Operation::ReplaceReviewState {
+                body,
+                comments: self.document.definitions().comments.clone(),
+            }],
+            Pos::new(self.document.id(), 0),
+            HistoryKind::Review,
+        )
+        .map_err(to_js)
+    }
+
+    #[wasm_bindgen(js_name = decideAllRevisions)]
+    pub fn decide_all_revisions(&mut self, accept: bool) -> Result<EditResult, JsValue> {
+        let mut ids = Vec::new();
+        collect_review_revision_ids(self.document.body(), &mut ids);
+        if ids.is_empty() {
+            return Err(to_js("no tracked revisions".to_string()));
+        }
+        let mut body = self.document.body().to_vec();
+        for id in ids {
+            let _ = decide_review_revision(&mut body, id, accept);
+        }
+        self.apply_action_caret_as(
+            vec![Operation::ReplaceReviewState {
+                body,
+                comments: self.document.definitions().comments.clone(),
+            }],
+            Pos::new(self.document.id(), 0),
+            HistoryKind::Review,
+        )
+        .map_err(to_js)
     }
 
     /// Replaces the document's core properties from a JSON object in the same
@@ -5544,6 +5992,475 @@ fn collect_review_revisions(blocks: &[BlockNode], out: &mut Vec<serde_json::Valu
     }
 }
 
+fn collect_review_comment_anchors(
+    blocks: &[BlockNode],
+    out: &mut Vec<(casual_doc_model::v1::CommentId, NodeId, u32, u32)>,
+) {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                let mut offset = 0;
+                let mut starts = std::collections::BTreeMap::new();
+                for inline in &paragraph.inlines {
+                    collect_review_comment_inline(
+                        inline,
+                        paragraph.id,
+                        &mut offset,
+                        &mut starts,
+                        out,
+                    );
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        collect_review_comment_anchors(&cell.blocks, out);
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => collect_review_comment_anchors(&sdt.blocks, out),
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn insert_review_comment_markers(
+    blocks: &mut [BlockNode],
+    node: NodeId,
+    start: u32,
+    end: u32,
+    range_start: CommentRangeStart,
+    range_end: CommentRangeEnd,
+    reference: CommentReference,
+    ids: &mut IdGenerator,
+) -> bool {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) if paragraph.id == node => {
+                if !review_split_top_level_run(&mut paragraph.inlines, start, ids)
+                    || !review_split_top_level_run(&mut paragraph.inlines, end, ids)
+                {
+                    return false;
+                }
+                let mut offset = 0;
+                let mut start_index = None;
+                let mut end_index = None;
+                for (index, inline) in paragraph.inlines.iter().enumerate() {
+                    if offset == start {
+                        start_index = Some(index);
+                    }
+                    if offset == end {
+                        end_index = Some(index);
+                        break;
+                    }
+                    if let InlineNode::Run(run) = inline {
+                        offset = offset.saturating_add(run.text.len() as u32);
+                    } else {
+                        return false;
+                    }
+                }
+                let Some(start_index) = start_index else {
+                    return false;
+                };
+                let Some(mut end_index) =
+                    end_index.or_else(|| (offset == end).then_some(paragraph.inlines.len()))
+                else {
+                    return false;
+                };
+                paragraph
+                    .inlines
+                    .insert(start_index, InlineNode::CommentRangeStart(range_start));
+                end_index += 1;
+                paragraph
+                    .inlines
+                    .insert(end_index, InlineNode::CommentRangeEnd(range_end));
+                paragraph
+                    .inlines
+                    .insert(end_index + 1, InlineNode::CommentReference(reference));
+                return true;
+            }
+            BlockNode::Table(table) => {
+                for row in &mut table.rows {
+                    for cell in &mut row.cells {
+                        if insert_review_comment_markers(
+                            &mut cell.blocks,
+                            node,
+                            start,
+                            end,
+                            range_start,
+                            range_end,
+                            reference,
+                            ids,
+                        ) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if insert_review_comment_markers(
+                    &mut sdt.blocks,
+                    node,
+                    start,
+                    end,
+                    range_start,
+                    range_end,
+                    reference,
+                    ids,
+                ) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+fn insert_review_revision(
+    blocks: &mut [BlockNode],
+    node: NodeId,
+    offset: u32,
+    revision: Revision,
+    ids: &mut IdGenerator,
+) -> bool {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) if paragraph.id == node => {
+                if !review_split_top_level_run(&mut paragraph.inlines, offset, ids) {
+                    return false;
+                }
+                let mut cursor = 0;
+                for index in 0..=paragraph.inlines.len() {
+                    if cursor == offset {
+                        paragraph
+                            .inlines
+                            .insert(index, InlineNode::Revision(revision));
+                        return true;
+                    }
+                    let Some(InlineNode::Run(run)) = paragraph.inlines.get(index) else {
+                        continue;
+                    };
+                    cursor = cursor.saturating_add(run.text.len() as u32);
+                }
+                return false;
+            }
+            BlockNode::Paragraph(_) => continue,
+            BlockNode::Table(table) => {
+                return table.rows.iter_mut().any(|row| {
+                    row.cells.iter_mut().any(|cell| {
+                        insert_review_revision(
+                            &mut cell.blocks,
+                            node,
+                            offset,
+                            revision.clone(),
+                            ids,
+                        )
+                    })
+                });
+            }
+            BlockNode::Sdt(sdt) => {
+                return insert_review_revision(
+                    &mut sdt.blocks,
+                    node,
+                    offset,
+                    revision.clone(),
+                    ids,
+                );
+            }
+            BlockNode::AltChunk(_) => continue,
+        }
+    }
+    false
+}
+
+fn wrap_review_deletion(
+    blocks: &mut [BlockNode],
+    node: NodeId,
+    start: u32,
+    end: u32,
+    revision: Revision,
+    ids: &mut IdGenerator,
+) -> bool {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) if paragraph.id == node => {
+                if !review_split_top_level_run(&mut paragraph.inlines, start, ids)
+                    || !review_split_top_level_run(&mut paragraph.inlines, end, ids)
+                {
+                    return false;
+                }
+                let mut cursor = 0;
+                let mut first = None;
+                let mut last = None;
+                for (index, inline) in paragraph.inlines.iter().enumerate() {
+                    let InlineNode::Run(run) = inline else {
+                        continue;
+                    };
+                    if cursor == start {
+                        first = Some(index);
+                    }
+                    cursor = cursor.saturating_add(run.text.len() as u32);
+                    if cursor == end {
+                        last = Some(index);
+                        break;
+                    }
+                }
+                let (Some(first), Some(last)) = (first, last) else {
+                    return false;
+                };
+                let children = paragraph.inlines.drain(first..=last).collect();
+                paragraph.inlines.insert(
+                    first,
+                    InlineNode::Revision(Revision {
+                        inlines: children,
+                        ..revision
+                    }),
+                );
+                return true;
+            }
+            BlockNode::Paragraph(_) => continue,
+            BlockNode::Table(table) => {
+                return table.rows.iter_mut().any(|row| {
+                    row.cells.iter_mut().any(|cell| {
+                        wrap_review_deletion(
+                            &mut cell.blocks,
+                            node,
+                            start,
+                            end,
+                            revision.clone(),
+                            ids,
+                        )
+                    })
+                });
+            }
+            BlockNode::Sdt(sdt) => {
+                return wrap_review_deletion(
+                    &mut sdt.blocks,
+                    node,
+                    start,
+                    end,
+                    revision.clone(),
+                    ids,
+                );
+            }
+            BlockNode::AltChunk(_) => continue,
+        }
+    }
+    false
+}
+
+fn remove_review_comment_markers(blocks: &mut [BlockNode], comment: CommentId) {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                paragraph.inlines.retain(|inline| {
+                    !matches!(inline,
+                        InlineNode::CommentReference(reference) if reference.comment == comment
+                    ) && !matches!(inline,
+                        InlineNode::CommentRangeStart(marker) if marker.comment == comment
+                    ) && !matches!(inline,
+                        InlineNode::CommentRangeEnd(marker) if marker.comment == comment
+                    )
+                });
+            }
+            BlockNode::Table(table) => {
+                for row in &mut table.rows {
+                    for cell in &mut row.cells {
+                        remove_review_comment_markers(&mut cell.blocks, comment);
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => remove_review_comment_markers(&mut sdt.blocks, comment),
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+}
+
+fn decide_review_revision(blocks: &mut [BlockNode], id: NodeId, accept: bool) -> bool {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                if decide_review_inline(&mut paragraph.inlines, id, accept) {
+                    return true;
+                }
+            }
+            BlockNode::Table(table) => {
+                if table.rows.iter_mut().any(|row| {
+                    row.cells
+                        .iter_mut()
+                        .any(|cell| decide_review_revision(&mut cell.blocks, id, accept))
+                }) {
+                    return true;
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if decide_review_revision(&mut sdt.blocks, id, accept) {
+                    return true;
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    false
+}
+
+fn collect_review_revision_ids(blocks: &[BlockNode], out: &mut Vec<NodeId>) {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => collect_review_inline_ids(&paragraph.inlines, out),
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        collect_review_revision_ids(&cell.blocks, out);
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => collect_review_revision_ids(&sdt.blocks, out),
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+}
+
+fn collect_review_inline_ids(inlines: &[InlineNode], out: &mut Vec<NodeId>) {
+    for inline in inlines {
+        match inline {
+            InlineNode::Revision(revision) => {
+                out.push(revision.id);
+                collect_review_inline_ids(&revision.inlines, out);
+            }
+            InlineNode::Hyperlink(link) => collect_review_inline_ids(&link.inlines, out),
+            InlineNode::Sdt(sdt) => collect_review_inline_ids(&sdt.inlines, out),
+            _ => {}
+        }
+    }
+}
+
+fn decide_review_inline(inlines: &mut Vec<InlineNode>, id: NodeId, accept: bool) -> bool {
+    for index in 0..inlines.len() {
+        if let InlineNode::Revision(revision) = &inlines[index]
+            && revision.id == id
+        {
+            let keep = matches!(revision.kind, RevisionKind::Insertion) == accept;
+            let replacement = if keep {
+                revision.inlines.clone()
+            } else {
+                Vec::new()
+            };
+            inlines.splice(index..=index, replacement);
+            return true;
+        }
+        let nested = match &mut inlines[index] {
+            InlineNode::Hyperlink(link) => decide_review_inline(&mut link.inlines, id, accept),
+            InlineNode::Revision(revision) => {
+                decide_review_inline(&mut revision.inlines, id, accept)
+            }
+            InlineNode::Sdt(sdt) => decide_review_inline(&mut sdt.inlines, id, accept),
+            _ => false,
+        };
+        if nested {
+            return true;
+        }
+    }
+    false
+}
+
+fn review_split_top_level_run(
+    inlines: &mut Vec<InlineNode>,
+    offset: u32,
+    ids: &mut IdGenerator,
+) -> bool {
+    let mut cursor: u32 = 0;
+    for index in 0..inlines.len() {
+        let InlineNode::Run(run) = &inlines[index] else {
+            continue;
+        };
+        let next = cursor.saturating_add(run.text.len() as u32);
+        if offset == cursor || offset == next {
+            return true;
+        }
+        if offset > cursor && offset < next {
+            let split = (offset - cursor) as usize;
+            if !run.text.is_char_boundary(split) {
+                return false;
+            }
+            let mut right = run.clone();
+            right.id = match ids.next_id() {
+                Ok(id) => id,
+                Err(_) => return false,
+            };
+            right.text = run.text[split..].to_owned();
+            if right.text.is_empty() {
+                return false;
+            }
+            inlines[index] = InlineNode::Run(Run {
+                text: run.text[..split].to_owned(),
+                ..run.clone()
+            });
+            inlines.insert(index + 1, InlineNode::Run(right));
+            return true;
+        }
+        cursor = next;
+    }
+    offset == cursor
+}
+
+fn collect_review_comment_inline(
+    inline: &InlineNode,
+    node: NodeId,
+    offset: &mut u32,
+    starts: &mut std::collections::BTreeMap<casual_doc_model::v1::CommentId, u32>,
+    out: &mut Vec<(casual_doc_model::v1::CommentId, NodeId, u32, u32)>,
+) {
+    match inline {
+        InlineNode::CommentRangeStart(marker) => {
+            starts.insert(marker.comment, *offset);
+        }
+        InlineNode::CommentRangeEnd(marker) => {
+            if let Some(start) = starts.remove(&marker.comment) {
+                out.push((marker.comment, node, start, *offset));
+            }
+        }
+        InlineNode::Hyperlink(link) => {
+            for child in &link.inlines {
+                collect_review_comment_inline(child, node, offset, starts, out);
+            }
+        }
+        InlineNode::Revision(revision) => {
+            for child in &revision.inlines {
+                collect_review_comment_inline(child, node, offset, starts, out);
+            }
+        }
+        InlineNode::Sdt(sdt) => {
+            for child in &sdt.inlines {
+                collect_review_comment_inline(child, node, offset, starts, out);
+            }
+        }
+        _ => *offset = offset.saturating_add(inline_anchor_len_for_review(inline)),
+    }
+}
+
+fn inline_anchor_len_for_review(inline: &InlineNode) -> u32 {
+    match inline {
+        InlineNode::Run(run) => run.text.len() as u32,
+        InlineNode::Hyperlink(link) => link.inlines.iter().map(inline_anchor_len_for_review).sum(),
+        InlineNode::Revision(revision) => revision
+            .inlines
+            .iter()
+            .map(inline_anchor_len_for_review)
+            .sum(),
+        InlineNode::Sdt(sdt) => sdt.inlines.iter().map(inline_anchor_len_for_review).sum(),
+        InlineNode::CommentReference(_) => "[comment]".len() as u32,
+        InlineNode::Symbol(symbol) => {
+            char::from_u32(symbol.char).map_or(0, |ch| ch.len_utf8() as u32)
+        }
+        InlineNode::NoBreakHyphen(_) => '\u{2011}'.len_utf8() as u32,
+        InlineNode::SoftHyphen(_) => '\u{00ad}'.len_utf8() as u32,
+        _ => 0,
+    }
+}
+
 fn collect_review_inline(inlines: &[InlineNode], out: &mut Vec<serde_json::Value>) {
     for inline in inlines {
         match inline {
@@ -7302,6 +8219,7 @@ fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos 
         // position is never actually used; the document's own root id is a
         // neutral placeholder (matches `apply_group`'s own default caret).
         Operation::SetCoreProperties { .. } => Pos::new(doc_id, 0),
+        Operation::ReplaceReviewState { .. } => Pos::new(doc_id, 0),
         // Also document-global — see the SetCoreProperties comment above.
         Operation::SetSectionGeometry { .. } => Pos::new(doc_id, 0),
     }

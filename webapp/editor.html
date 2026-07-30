@@ -530,6 +530,8 @@
           <option value="red">Red</option><option value="none">None</option>
         </select>
       </label>
+      <span class="sel-divider"></span>
+      <button id="selComment" type="button" class="fmt" title="Add comment" aria-label="Add comment"><span class="ms" aria-hidden="true">add_comment</span></button>
     </div>
 
     <div id="linkChip" class="link-chip" role="dialog" aria-label="Document link" hidden>
@@ -548,6 +550,7 @@
     <div class="workarea">
       <nav class="rail" aria-label="Document navigation">
         <button id="railOutline" type="button" class="rail-btn" title="Outline" aria-label="Outline" aria-pressed="false" disabled><span class="ms" aria-hidden="true">toc</span><span>Outline</span></button>
+        <button id="railReview" type="button" class="rail-btn" title="Comments and changes" aria-label="Comments and changes" aria-pressed="false" disabled><span class="ms" aria-hidden="true">rate_review</span><span>Review</span></button>
       </nav>
       <aside id="outlinePanel" class="side-panel" hidden aria-label="Outline">
         <div class="panel-head">
@@ -561,6 +564,21 @@
           <span id="reviewTitle" class="panel-title">Review</span>
           <button id="reviewClose" type="button" class="panel-close" title="Close review" aria-label="Close review"><span class="ms" aria-hidden="true">close</span></button>
         </div>
+        <div id="reviewComposer" class="review-composer" hidden>
+          <label for="reviewComposerText">Comment</label>
+          <textarea id="reviewComposerText" rows="3" maxlength="4096" placeholder="Add a comment…"></textarea>
+          <div class="review-composer-actions">
+            <button id="reviewComposerCancel" type="button" class="dialog-button">Cancel</button>
+            <button id="reviewComposerSubmit" type="button" class="dialog-button dialog-button-primary">Comment</button>
+          </div>
+        </div>
+        <div class="review-mode" role="group" aria-label="Editing mode">
+          <span>Mode</span>
+          <button type="button" class="review-mode-button" data-review-mode="editing" aria-pressed="true">Editing</button>
+          <button type="button" class="review-mode-button" data-review-mode="suggesting" aria-pressed="false">Suggesting</button>
+        </div>
+        <label class="review-author">Author<input id="reviewAuthor" type="text" value="You" maxlength="255" /></label>
+        <div class="review-bulk-actions"><button id="reviewPrevious" type="button" class="review-card-action" title="Previous tracked change">Previous</button><button id="reviewNext" type="button" class="review-card-action" title="Next tracked change">Next</button><button id="reviewAcceptAll" type="button" class="review-card-action">Accept all changes</button><button id="reviewRejectAll" type="button" class="review-card-action">Reject all changes</button></div>
         <div class="review-filters" role="group" aria-label="Review filter">
           <button type="button" class="review-filter" data-review-filter="open" aria-pressed="true">Open</button>
           <button type="button" class="review-filter" data-review-filter="resolved" aria-pressed="false">Resolved</button>

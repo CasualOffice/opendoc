@@ -163,6 +163,7 @@ viewOutlineBtn.addEventListener("click", () => toggleOutline());
 viewZoomOut.addEventListener("click", () => stepZoom(-1));
 viewZoomIn.addEventListener("click", () => stepZoom(1));
 const railOutline = document.getElementById("railOutline");
+const railReview = document.getElementById("railReview");
 const outlinePanel = document.getElementById("outlinePanel");
 const outlineClose = document.getElementById("outlineClose");
 const outlineBody = document.getElementById("outlineBody");
@@ -171,6 +172,19 @@ const reviewPanel = document.getElementById("reviewPanel");
 const reviewClose = document.getElementById("reviewClose");
 const reviewBody = document.getElementById("reviewBody");
 const reviewFilters = [...document.querySelectorAll("[data-review-filter]")];
+const selComment = document.getElementById("selComment");
+const reviewComposer = document.getElementById("reviewComposer");
+const reviewComposerText = document.getElementById("reviewComposerText");
+const reviewComposerCancel = document.getElementById("reviewComposerCancel");
+const reviewComposerSubmit = document.getElementById("reviewComposerSubmit");
+const reviewModeButtons = [...document.querySelectorAll("[data-review-mode]")];
+const reviewAuthor = document.getElementById("reviewAuthor");
+const reviewPrevious = document.getElementById("reviewPrevious");
+const reviewNext = document.getElementById("reviewNext");
+const reviewAcceptAll = document.getElementById("reviewAcceptAll");
+const reviewRejectAll = document.getElementById("reviewRejectAll");
+let reviewMode = "editing";
+let reviewRevisionCursor = -1;
 const linkChip = document.getElementById("linkChip");
 const linkChipKind = document.getElementById("linkChipKind");
 const linkChipTarget = document.getElementById("linkChipTarget");
@@ -1924,6 +1938,8 @@ function updateToolbar() {
   viewOutlineBtn.setAttribute("aria-pressed", String(!outlinePanel.hidden));
   reviewBtn.disabled = !doc;
   reviewBtn.setAttribute("aria-pressed", String(!reviewPanel.hidden));
+  railReview.disabled = !doc;
+  railReview.setAttribute("aria-pressed", String(!reviewPanel.hidden));
   viewZoomOut.disabled = !doc;
   viewZoomIn.disabled = !doc;
   tabTable.disabled = !inTable;
@@ -2851,6 +2867,7 @@ function reviewText(value) {
 }
 
 let reviewFilter = "open";
+let reviewReplyParent = null;
 
 function buildReview() {
   if (!doc || reviewPanel.hidden) return;
@@ -2860,6 +2877,8 @@ function buildReview() {
     reviewFilter === "all" || (reviewFilter === "resolved" ? comment.resolved : !comment.resolved),
   );
   const revisions = summary.revisions ?? [];
+  reviewPrevious.disabled = !revisions.some((revision) => String(revision.text || "").length);
+  reviewNext.disabled = reviewPrevious.disabled;
   if (!comments.length && !revisions.length) {
     const empty = document.createElement("div");
     empty.className = "review-empty";
@@ -2869,11 +2888,24 @@ function buildReview() {
   }
   const note = document.createElement("p");
   note.className = "review-readonly-note";
-  note.textContent = "Review inventory is read-only. Editing and accept/reject actions are next.";
+  note.textContent = "Review actions are undoable. Suggestions support caret typing, replacement, deletion, and bulk decisions.";
   reviewBody.appendChild(note);
-  const appendCard = (className, title, meta, body) => {
+  const appendCard = (className, title, meta, body, anchor = null) => {
     const card = document.createElement("article");
     card.className = className;
+    if (anchor?.node) {
+      card.tabIndex = 0;
+      card.setAttribute("role", "button");
+      card.title = "Go to comment range";
+      const goToAnchor = () => navigateToAnchor(anchor.node, Number(anchor.start) || 0);
+      card.addEventListener("click", goToAnchor);
+      card.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          goToAnchor();
+        }
+      });
+    }
     const heading = document.createElement("strong");
     heading.textContent = title;
     const details = document.createElement("small");
@@ -2882,37 +2914,147 @@ function buildReview() {
     text.textContent = body;
     card.append(heading, details, text);
     reviewBody.appendChild(card);
+    return card;
   };
   for (const comment of comments) {
-    appendCard(
-      "review-card review-comment",
-      reviewText(comment.author || comment.initials || "Comment"),
+    const card = appendCard(
+      `review-card review-comment${comment.parentParaId ? " review-reply" : ""}`,
+      `${comment.parentParaId ? "Reply · " : ""}${reviewText(comment.author || comment.initials || "Comment")}`,
       `${comment.resolved ? "Resolved" : "Open"}${comment.date ? ` · ${reviewText(comment.date)}` : ""}`,
       reviewText(comment.text),
+      comment.anchor,
     );
+    const action = document.createElement("button");
+    action.type = "button";
+    action.className = "review-card-action";
+    action.textContent = comment.resolved ? "Reopen" : "Resolve";
+    action.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      if (!doc) return;
+      await runEdit(() => doc.setCommentResolved(comment.id, !comment.resolved));
+      buildReview();
+    });
+    card.appendChild(action);
+    const reply = document.createElement("button");
+    reply.type = "button";
+    reply.className = "review-card-action";
+    reply.textContent = "Reply";
+    reply.addEventListener("click", (event) => { event.stopPropagation(); openReviewComposer(comment.id); });
+    card.appendChild(reply);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "review-card-action";
+    remove.textContent = "Delete";
+    remove.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      if (!doc) return;
+      await runEdit(() => doc.deleteComment(comment.id));
+      buildReview();
+    });
+    card.appendChild(remove);
   }
   for (const revision of revisions) {
     const kind = reviewText(revision.kind);
-    appendCard(
+    const card = appendCard(
       `review-card review-revision review-${kind.replaceAll("_", "-")}`,
       kind.replaceAll("_", " "),
       `${reviewText(revision.author)}${revision.date ? ` · ${reviewText(revision.date)}` : ""}`,
       reviewText(revision.text),
     );
+    const actions = document.createElement("span");
+    actions.className = "review-revision-actions";
+    for (const [label, accept] of [["Accept", true], ["Reject", false]]) {
+      const action = document.createElement("button");
+      action.type = "button";
+      action.className = "review-card-action";
+      action.textContent = label;
+      action.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        if (!doc) return;
+        await runEdit(() => doc.decideRevision(revision.id, accept));
+        buildReview();
+      });
+      actions.appendChild(action);
+    }
+    card.appendChild(actions);
   }
+}
+
+/** Move the caret to the next/previous tracked text change.  Revision anchors
+ * are intentionally resolved through the engine's text index rather than DOM
+ * ranges, so this also works for changes inside tables and content controls. */
+function navigateReviewRevision(direction) {
+  if (!doc) return;
+  const revisions = JSON.parse(doc.reviewSummary()).revisions ?? [];
+  const usable = revisions.filter((revision) => String(revision.text || "").length);
+  if (!usable.length) return;
+  reviewRevisionCursor = (reviewRevisionCursor + (direction > 0 ? 1 : -1) + usable.length) % usable.length;
+  const revision = usable[reviewRevisionCursor];
+  const start = selection?.focus || doc.firstPosition();
+  const match = doc.findText(String(revision.text), start.node, start.offset, direction > 0, false);
+  if (start.free) start.free();
+  if (!match.found) {
+    match.free();
+    return;
+  }
+  navigateToAnchor(match.startNode, match.startOffset);
+  match.free();
+  buildReview();
 }
 
 function toggleReview(open) {
   const show = open ?? reviewPanel.hidden;
   reviewPanel.hidden = !show;
   reviewBtn.setAttribute("aria-pressed", String(show));
+  railReview.setAttribute("aria-pressed", String(show));
   if (show) {
     outlinePanel.hidden = true;
     buildReview();
   }
 }
 reviewBtn.addEventListener("click", () => toggleReview());
+railReview.addEventListener("click", () => toggleReview());
 reviewClose.addEventListener("click", () => toggleReview(false));
+reviewAcceptAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(true)); buildReview(); } });
+reviewRejectAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(false)); buildReview(); } });
+reviewPrevious.addEventListener("click", () => navigateReviewRevision(-1));
+reviewNext.addEventListener("click", () => navigateReviewRevision(1));
+function openReviewComposer(parent = null) {
+  if (!doc || (!parent && (!hasRange() || !selection))) return;
+  toggleReview(true);
+  reviewReplyParent = parent;
+  reviewComposer.hidden = false;
+  reviewComposerText.value = "";
+  queueMicrotask(() => reviewComposerText.focus());
+}
+function closeReviewComposer() {
+  reviewReplyParent = null;
+  reviewComposer.hidden = true;
+  reviewComposerText.value = "";
+}
+selComment.addEventListener("mousedown", (event) => event.preventDefault());
+selComment.addEventListener("click", openReviewComposer);
+reviewComposerCancel.addEventListener("click", closeReviewComposer);
+reviewComposerSubmit.addEventListener("click", async () => {
+  const text = reviewComposerText.value.trim();
+  const range = selection;
+  if (!doc || !text || (!reviewReplyParent && (!range || !hasRange()))) return;
+  if (reviewReplyParent) {
+    await runEdit(() => doc.replyToComment(reviewReplyParent, text, reviewAuthor.value.trim() || "You", null, new Date().toISOString()));
+    closeReviewComposer();
+    buildReview();
+    return;
+  }
+  const start = range.anchor.offset <= range.focus.offset ? range.anchor : range.focus;
+  const end = range.anchor.offset <= range.focus.offset ? range.focus : range.anchor;
+  if (start.node !== end.node) {
+    setStatus("Comments currently require a single-paragraph selection", "error");
+    return;
+  }
+  await runEdit(() => doc.addComment(start.node, start.offset, end.offset, text, reviewAuthor.value.trim() || "You", null, new Date().toISOString()));
+  closeReviewComposer();
+  buildReview();
+});
 for (const filter of reviewFilters) {
   filter.addEventListener("click", () => {
     reviewFilter = filter.dataset.reviewFilter;
@@ -2920,6 +3062,15 @@ for (const filter of reviewFilters) {
       button.setAttribute("aria-pressed", String(button === filter));
     }
     buildReview();
+  });
+}
+for (const mode of reviewModeButtons) {
+  mode.addEventListener("click", () => {
+    reviewMode = mode.dataset.reviewMode;
+    for (const button of reviewModeButtons) {
+      button.setAttribute("aria-pressed", String(button === mode));
+    }
+    if (reviewMode === "suggesting") toggleReview(true);
   });
 }
 
@@ -3879,20 +4030,28 @@ document.addEventListener("keydown", async (e) => {
         return;
       }
     }
-    await runEdit(() =>
-      range
-        ? doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset)
-        : doc.deleteBackward(focus.node, focus.offset),
-    );
+    if (reviewMode === "suggesting") {
+      const start = range ? (anchor.offset <= focus.offset ? anchor : focus) : (() => { const c = doc.moveCaret(focus.node, focus.offset, "left"); const p = { node: c.node, offset: c.offset }; c.free(); return p; })();
+      const end = range ? (anchor.offset <= focus.offset ? focus : anchor) : focus;
+      if (start.node === end.node && start.offset < end.offset) {
+        await runEdit(() => doc.suggestDelete(start.node, start.offset, end.offset, reviewAuthor.value.trim() || "You", new Date().toISOString()));
+        return;
+      }
+    }
+    await runEdit(() => range ? doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset) : doc.deleteBackward(focus.node, focus.offset));
     return;
   }
   if (key === "Delete") {
     e.preventDefault();
-    await runEdit(() =>
-      range
-        ? doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset)
-        : doc.deleteForward(focus.node, focus.offset),
-    );
+    if (reviewMode === "suggesting") {
+      const start = range ? (anchor.offset <= focus.offset ? anchor : focus) : focus;
+      const end = range ? (anchor.offset <= focus.offset ? focus : anchor) : (() => { const c = doc.moveCaret(focus.node, focus.offset, "right"); const p = { node: c.node, offset: c.offset }; c.free(); return p; })();
+      if (start.node === end.node && start.offset < end.offset) {
+        await runEdit(() => doc.suggestDelete(start.node, start.offset, end.offset, reviewAuthor.value.trim() || "You", new Date().toISOString()));
+        return;
+      }
+    }
+    await runEdit(() => range ? doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset) : doc.deleteForward(focus.node, focus.offset));
     return;
   }
   if (key === "Enter") {
@@ -3931,7 +4090,9 @@ document.addEventListener("keydown", async (e) => {
     if (range) {
       pendingFormat = null; // typing over a selection uses the selection's own runs
       await runEdit(
-        () => doc.typeText(anchor.node, anchor.offset, focus.node, focus.offset, key, session),
+        () => reviewMode === "suggesting"
+          ? doc.suggestReplace(anchor.node, anchor.offset, focus.offset, key, reviewAuthor.value.trim() || "You", new Date().toISOString())
+          : doc.typeText(anchor.node, anchor.offset, focus.node, focus.offset, key, session),
         { typing: true },
       );
     } else if (pendingFormat) {
@@ -3957,7 +4118,9 @@ document.addEventListener("keydown", async (e) => {
       );
     } else {
       await runEdit(
-        () => doc.typeText(focus.node, focus.offset, focus.node, focus.offset, key, session),
+        () => reviewMode === "suggesting"
+          ? doc.suggestInsert(focus.node, focus.offset, key, reviewAuthor.value.trim() || "You", new Date().toISOString())
+          : doc.typeText(focus.node, focus.offset, focus.node, focus.offset, key, session),
         { typing: true },
       );
     }
