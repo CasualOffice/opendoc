@@ -241,6 +241,18 @@
             </div>
             <span class="rgroup-label">Editing</span>
           </div>
+          <div class="rgroup">
+            <div class="rgroup-ctl">
+              <button id="reviewInlineMode" type="button" class="review-mode-toggle" aria-pressed="false" disabled>Editing</button>
+              <div id="reviewInlineBar" class="review-inline-bar" role="toolbar" aria-label="Review changes" hidden>
+                <button id="reviewInlinePrevious" type="button">Previous</button>
+                <button id="reviewInlineNext" type="button">Next</button>
+                <button id="reviewInlineAcceptAll" type="button">Accept all</button>
+                <button id="reviewInlineRejectAll" type="button">Reject all</button>
+              </div>
+            </div>
+            <span class="rgroup-label">Review</span>
+          </div>
         </div>
 
         <div class="ribbon-panel" data-panel="insert" role="tabpanel" aria-label="Insert" hidden>
@@ -532,13 +544,6 @@
       </label>
       <span class="sel-divider"></span>
       <button id="selComment" type="button" class="fmt" title="Add comment" aria-label="Add comment"><span class="ms" aria-hidden="true">add_comment</span></button>
-    </div>
-
-    <div id="reviewInlineBar" class="review-inline-bar" role="toolbar" aria-label="Review changes" hidden>
-      <button id="reviewInlinePrevious" type="button">Previous change</button>
-      <button id="reviewInlineNext" type="button">Next change</button>
-      <button id="reviewInlineAcceptAll" type="button">Accept all</button>
-      <button id="reviewInlineRejectAll" type="button">Reject all</button>
     </div>
 
     <div id="linkChip" class="link-chip" role="dialog" aria-label="Document link" hidden>

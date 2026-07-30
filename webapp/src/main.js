@@ -184,6 +184,7 @@ const reviewNext = document.getElementById("reviewNext");
 const reviewAcceptAll = document.getElementById("reviewAcceptAll");
 const reviewRejectAll = document.getElementById("reviewRejectAll");
 const reviewInlineBar = document.getElementById("reviewInlineBar");
+const reviewInlineMode = document.getElementById("reviewInlineMode");
 const reviewInlinePrevious = document.getElementById("reviewInlinePrevious");
 const reviewInlineNext = document.getElementById("reviewInlineNext");
 const reviewInlineAcceptAll = document.getElementById("reviewInlineAcceptAll");
@@ -192,17 +193,230 @@ let reviewMode = "editing";
 let reviewRevisionCursor = -1;
 let activeReviewCommentId = null;
 let reviewPopover = null;
+const reviewMarginLayer = document.createElement("div");
+reviewMarginLayer.className = "review-margin-layer";
+reviewMarginLayer.setAttribute("aria-label", "Comments and suggestions");
+document.body.appendChild(reviewMarginLayer);
+let reviewMarginFrame = 0;
 
 function updateReviewInlineBar() {
   if (!reviewInlineBar || !doc) return;
   let count = 0;
   try { count = (JSON.parse(doc.reviewSummary()).revisions ?? []).length; } catch { count = 0; }
-  reviewInlineBar.hidden = count === 0 && reviewMode !== "suggesting";
+  reviewInlineBar.hidden = count === 0;
+  reviewInlineMode.disabled = false;
   reviewInlinePrevious.disabled = count === 0;
   reviewInlineNext.disabled = count === 0;
   reviewInlineAcceptAll.disabled = count === 0;
   reviewInlineRejectAll.disabled = count === 0;
+  reviewInlineMode.textContent = reviewMode === "suggesting" ? "Suggesting" : "Editing";
+  reviewInlineMode.setAttribute("aria-pressed", String(reviewMode === "suggesting"));
 }
+
+function setReviewMode(mode) {
+  reviewMode = mode === "suggesting" ? "suggesting" : "editing";
+  for (const button of reviewModeButtons) {
+    button.setAttribute("aria-pressed", String(button.dataset.reviewMode === reviewMode));
+  }
+  updateReviewInlineBar();
+  drawSelection();
+  // Toolbar controls must not retain focus after changing mode: clipboard,
+  // typing, and deletion events are deliberately accepted only while the
+  // canvas editor owns focus.
+  focusEditorSurface();
+}
+
+function reviewRangeClientRect(startNode, startOffset, endNode, endOffset) {
+  const rects = doc?.selectionRects(startNode, startOffset, endNode, endOffset) ?? [];
+  if (rects.length < 5) return null;
+  const [pageNumber, x, y, width, height] = rects;
+  const page = pages[pageNumber - 1];
+  if (!page) return null;
+  const canvasRect = page.canvas.getBoundingClientRect();
+  const { sx, sy } = scaleOf(page);
+  return {
+    pageNumber,
+    left: canvasRect.left + x * sx,
+    right: canvasRect.left + (x + width) * sx,
+    top: canvasRect.top + y * sy,
+    bottom: canvasRect.top + (y + height) * sy,
+    pageRight: canvasRect.right,
+  };
+}
+
+function revisionRange(revision) {
+  if (revision?.anchor?.node) {
+    return {
+      startNode: revision.anchor.node,
+      startOffset: Number(revision.anchor.start) || 0,
+      endNode: revision.anchor.node,
+      endOffset: Number(revision.anchor.end) || Number(revision.anchor.start) || 0,
+    };
+  }
+  const text = String(revision?.text || "");
+  if (!doc || !text) return null;
+  const first = doc.firstPosition();
+  const match = doc.findText(text, first.node, first.offset, true, false);
+  first.free();
+  if (!match.found) { match.free(); return null; }
+  const range = {
+    startNode: match.startNode,
+    startOffset: match.startOffset,
+    endNode: match.endNode,
+    endOffset: match.endOffset,
+  };
+  match.free();
+  return range;
+}
+
+function reviewCardButton(label, action, danger = false) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `review-margin-action${danger ? " danger" : ""}`;
+  button.textContent = label;
+  button.addEventListener("click", async (event) => {
+    event.stopPropagation();
+    await action();
+  });
+  return button;
+}
+
+function scheduleReviewMarginRender() {
+  if (reviewMarginFrame) return;
+  reviewMarginFrame = requestAnimationFrame(() => {
+    reviewMarginFrame = 0;
+    renderReviewMarginItems();
+  });
+}
+
+function renderReviewMarginItems() {
+  reviewMarginLayer.replaceChildren();
+  if (!doc || !pages.length) return;
+  let summary;
+  try { summary = JSON.parse(doc.reviewSummary()); } catch { return; }
+  const items = [];
+  const comments = summary.comments ?? [];
+  for (const comment of comments) {
+    if (!comment.anchor?.node) continue;
+    const rect = reviewRangeClientRect(comment.anchor.node, Number(comment.anchor.start) || 0, comment.anchor.node, Number(comment.anchor.end) || 0);
+    if (rect) items.push({ type: "comment", data: comment, rect });
+  }
+  for (const revision of summary.revisions ?? []) {
+    const range = revisionRange(revision);
+    if (!range) continue;
+    const rect = reviewRangeClientRect(range.startNode, range.startOffset, range.endNode, range.endOffset);
+    if (rect) items.push({ type: "revision", data: revision, range, rect });
+  }
+  items.sort((a, b) => a.rect.top - b.rect.top || a.rect.pageNumber - b.rect.pageNumber);
+  const nextY = new Map();
+  for (const item of items) {
+    if (item.rect.bottom < 0 || item.rect.top > window.innerHeight) continue;
+    const card = document.createElement("article");
+    const revisionKind = item.type === "revision" ? ` review-margin-${String(item.data.kind || "change").replaceAll("_", "-")}` : "";
+    card.className = `review-margin-card review-margin-${item.type}${revisionKind}${item.data.resolved ? " resolved" : ""}`;
+    card.tabIndex = 0;
+    const header = document.createElement("div");
+    header.className = "review-margin-card-head";
+    const avatar = document.createElement("span");
+    avatar.className = "review-margin-avatar";
+    const authorName = item.data.author || item.data.initials || "You";
+    avatar.textContent = authorName.trim().slice(0, 1).toUpperCase() || "U";
+    const title = document.createElement("div");
+    title.className = "review-margin-title";
+    const author = document.createElement("strong");
+    author.textContent = authorName;
+    const meta = document.createElement("small");
+    meta.textContent = item.type === "revision"
+      ? `${String(item.data.kind || "change").replaceAll("_", " ")}${item.data.date ? ` · ${item.data.date}` : ""}`
+      : `${item.data.resolved ? "Resolved" : "Comment"}${item.data.date ? ` · ${item.data.date}` : ""}`;
+    title.append(author, meta);
+    header.append(avatar, title);
+    const body = document.createElement("p");
+    body.textContent = String(item.data.text || "");
+    const actions = document.createElement("div");
+    actions.className = "review-margin-card-actions";
+    if (item.type === "comment") {
+      actions.append(
+        reviewCardButton("Reply", () => openReviewComposer(item.data.id)),
+        reviewCardButton(item.data.resolved ? "Reopen" : "Resolve", async () => {
+          await runEdit(() => doc.setCommentResolved(item.data.id, !item.data.resolved));
+          drawSelection();
+        }),
+        reviewCardButton("Delete", async () => { await runEdit(() => doc.deleteComment(item.data.id)); drawSelection(); }, true),
+      );
+      const focus = () => focusReviewComment(item.data);
+      card.addEventListener("click", (event) => { if (!(event.target instanceof HTMLButtonElement)) focus(); });
+      card.addEventListener("keydown", (event) => { if (event.key === "Enter") focus(); });
+    } else {
+      actions.append(
+        reviewCardButton("Accept", async () => {
+          await runEdit(() => doc.decideRevision(item.data.id, true));
+          drawSelection();
+          focusEditorSurface();
+        }),
+        reviewCardButton("Reject", async () => {
+          await runEdit(() => doc.decideRevision(item.data.id, false));
+          drawSelection();
+          focusEditorSurface();
+        }, true),
+      );
+      const focus = () => focusReviewRevision(item.data);
+      card.addEventListener("click", (event) => { if (!(event.target instanceof HTMLButtonElement)) focus(); });
+      card.addEventListener("keydown", (event) => { if (event.key === "Enter") focus(); });
+    }
+    card.append(header, body);
+    if (item.type === "comment") {
+      const replies = comments.filter((comment) => comment.parentParaId === item.data.id);
+      if (replies.length) {
+        const thread = document.createElement("div");
+        thread.className = "review-margin-replies";
+        for (const reply of replies) {
+          const replyItem = document.createElement("div");
+          replyItem.className = `review-margin-reply${reply.resolved ? " resolved" : ""}`;
+          const replyHead = document.createElement("div");
+          replyHead.className = "review-margin-reply-head";
+          const replyAuthor = document.createElement("strong");
+          replyAuthor.textContent = reply.author || reply.initials || "You";
+          const replyDate = document.createElement("small");
+          replyDate.textContent = reply.date || (reply.resolved ? "Resolved" : "Reply");
+          replyHead.append(replyAuthor, replyDate);
+          const replyBody = document.createElement("p");
+          replyBody.textContent = String(reply.text || "");
+          const replyActions = document.createElement("div");
+          replyActions.className = "review-margin-card-actions";
+          replyActions.append(
+            reviewCardButton(reply.resolved ? "Reopen" : "Resolve", async () => {
+              await runEdit(() => doc.setCommentResolved(reply.id, !reply.resolved));
+              drawSelection();
+            }),
+            reviewCardButton("Delete", async () => {
+              await runEdit(() => doc.deleteComment(reply.id));
+              drawSelection();
+            }, true),
+          );
+          replyItem.append(replyHead, replyBody, replyActions);
+          thread.appendChild(replyItem);
+        }
+        card.appendChild(thread);
+      }
+    }
+    card.appendChild(actions);
+    reviewMarginLayer.appendChild(card);
+    const cardWidth = 292;
+    const preferredX = item.rect.pageRight + 14;
+    const x = preferredX + cardWidth <= window.innerWidth - 10
+      ? preferredX
+      : Math.max(10, item.rect.pageRight - cardWidth - 12);
+    const prior = nextY.get(item.rect.pageNumber) ?? 8;
+    const y = Math.max(8, item.rect.top, prior);
+    card.style.left = `${Math.round(x)}px`;
+    card.style.top = `${Math.round(Math.min(y, window.innerHeight - card.offsetHeight - 8))}px`;
+    nextY.set(item.rect.pageNumber, y + card.offsetHeight + 8);
+  }
+}
+
+viewportEl.addEventListener("scroll", scheduleReviewMarginRender, { passive: true });
+window.addEventListener("resize", scheduleReviewMarginRender);
 const linkChip = document.getElementById("linkChip");
 const linkChipKind = document.getElementById("linkChipKind");
 const linkChipTarget = document.getElementById("linkChipTarget");
@@ -403,6 +617,10 @@ async function openBytes(bytes, name) {
     doc = open(bytes);
     selection = null;
     tableSelection = null;
+    reviewMode = "editing";
+    for (const button of reviewModeButtons) {
+      button.setAttribute("aria-pressed", String(button.dataset.reviewMode === reviewMode));
+    }
     breakTypingSession();
     currentName = name;
     docTitleEl.value = name;
@@ -423,12 +641,7 @@ async function openBytes(bytes, name) {
       );
     }
     buildOutline();
-    try {
-      const summary = JSON.parse(doc.reviewSummary());
-      if ((summary.comments?.length ?? 0) || (summary.revisions?.length ?? 0)) toggleReview(true);
-    } catch {
-      // Review metadata is optional and must never block document opening.
-    }
+    drawSelection();
   } catch (err) {
     console.error(err);
     setStatus(`Could not open ${name}: ${err.message ?? err}`, "error");
@@ -661,6 +874,7 @@ function drawSelection() {
   }
   updateToolbar();
   updateReviewInlineBar();
+  scheduleReviewMarginRender();
   updatePageNumber();
   updateRulerMarkers();
   positionSelToolbar();
@@ -1283,9 +1497,7 @@ document.addEventListener("keydown", (event) => {
     openReviewComposer();
   } else if (mod && event.shiftKey && event.key.toLowerCase() === "e") {
     event.preventDefault();
-    reviewMode = reviewMode === "suggesting" ? "editing" : "suggesting";
-    for (const button of reviewModeButtons) button.setAttribute("aria-pressed", String(button.dataset.reviewMode === reviewMode));
-    if (reviewMode === "suggesting") toggleReview(true);
+    setReviewMode(reviewMode === "suggesting" ? "editing" : "suggesting");
   }
 });
 viewportEl.addEventListener("scroll", hideLinkChip, { passive: true });
@@ -2963,6 +3175,18 @@ function reviewText(value) {
   return value == null || value === "" ? "Not provided" : String(value);
 }
 
+function currentReviewAuthor() {
+  const author = reviewAuthor.value.trim() || "You";
+  const initials = author
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase() || "Y";
+  return { author, initials, date: new Date().toISOString() };
+}
+
 let reviewFilter = "open";
 let reviewReplyParent = null;
 
@@ -2977,7 +3201,6 @@ function focusReviewComment(comment) {
   drawSelection();
   focusEditorSurface();
   scrollCaretIntoView("center");
-  showReviewPopover(comment);
 }
 
 function closeReviewPopover() {
@@ -3179,6 +3402,18 @@ function navigateReviewRevision(direction) {
   if (!usable.length) return;
   reviewRevisionCursor = (reviewRevisionCursor + (direction > 0 ? 1 : -1) + usable.length) % usable.length;
   const revision = usable[reviewRevisionCursor];
+  const range = revisionRange(revision);
+  if (range) {
+    selection = {
+      anchor: { node: range.startNode, offset: range.startOffset },
+      focus: { node: range.endNode, offset: range.endOffset },
+    };
+    drawSelection();
+    focusEditorSurface();
+    scrollCaretIntoView("center");
+    buildReview();
+    return;
+  }
   const start = selection?.focus || doc.firstPosition();
   const match = doc.findText(String(revision.text), start.node, start.offset, direction > 0, false);
   if (start.free) start.free();
@@ -3199,6 +3434,17 @@ function navigateReviewRevision(direction) {
 
 function focusReviewRevision(revision) {
   if (!doc || !revision?.text) return;
+  const range = revisionRange(revision);
+  if (range) {
+    selection = {
+      anchor: { node: range.startNode, offset: range.startOffset },
+      focus: { node: range.endNode, offset: range.endOffset },
+    };
+    drawSelection();
+    focusEditorSurface();
+    scrollCaretIntoView("center");
+    return;
+  }
   const first = selection?.focus || doc.firstPosition();
   const match = doc.findText(String(revision.text), first.node, first.offset, true, false);
   if (first.free) first.free();
@@ -3210,7 +3456,6 @@ function focusReviewRevision(revision) {
   drawSelection();
   focusEditorSurface();
   scrollCaretIntoView("center");
-  showReviewPopover(revision);
   match.free();
 }
 
@@ -3233,14 +3478,21 @@ reviewPrevious.addEventListener("click", () => navigateReviewRevision(-1));
 reviewNext.addEventListener("click", () => navigateReviewRevision(1));
 reviewInlinePrevious.addEventListener("click", () => navigateReviewRevision(-1));
 reviewInlineNext.addEventListener("click", () => navigateReviewRevision(1));
+reviewInlineMode.addEventListener("click", () => setReviewMode(reviewMode === "suggesting" ? "editing" : "suggesting"));
 reviewInlineAcceptAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(true)); closeReviewPopover(); drawSelection(); } });
 reviewInlineRejectAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(false)); closeReviewPopover(); drawSelection(); } });
 function openReviewComposer(parent = null) {
   if (!doc || (!parent && (!hasRange() || !selection))) return;
+  const commentRange = selection ? {
+    anchor: { ...selection.anchor },
+    focus: { ...selection.focus },
+  } : null;
   reviewReplyParent = parent;
   closeReviewPopover();
   const popover = document.createElement("div");
   popover.className = "review-popover";
+  popover.setAttribute("role", "dialog");
+  popover.setAttribute("aria-label", parent ? "Reply to comment" : "Add comment");
   const label = document.createElement("label");
   label.textContent = parent ? "Reply" : "Comment";
   const textarea = document.createElement("textarea");
@@ -3252,22 +3504,35 @@ function openReviewComposer(parent = null) {
   actions.className = "review-popover-actions";
   const cancel = document.createElement("button");
   cancel.type = "button"; cancel.className = "review-card-action"; cancel.textContent = "Cancel";
+  cancel.dataset.testid = "review-comment-cancel";
   cancel.addEventListener("click", closeReviewPopover);
   const submit = document.createElement("button");
   submit.type = "button"; submit.className = "review-card-action"; submit.textContent = parent ? "Reply" : "Comment";
+  submit.dataset.testid = "review-comment-submit";
   submit.addEventListener("click", async () => {
     const text = textarea.value.trim();
     if (!text) return;
+    const metadata = currentReviewAuthor();
     if (parent) {
-      await runEdit(() => doc.replyToComment(parent, text, reviewAuthor.value.trim() || "You", null, new Date().toISOString()));
+      await runEdit(() => doc.replyToComment(parent, text, metadata.author, metadata.initials, metadata.date));
     } else {
-      const start = selection.anchor.offset <= selection.focus.offset ? selection.anchor : selection.focus;
-      const end = selection.anchor.offset <= selection.focus.offset ? selection.focus : selection.anchor;
+      if (!commentRange) return;
+      const start = commentRange.anchor.offset <= commentRange.focus.offset ? commentRange.anchor : commentRange.focus;
+      const end = commentRange.anchor.offset <= commentRange.focus.offset ? commentRange.focus : commentRange.anchor;
       if (start.node !== end.node) { setStatus("Comments currently require a single-paragraph selection", "error"); return; }
-      await runEdit(() => doc.addComment(start.node, start.offset, end.offset, text, reviewAuthor.value.trim() || "You", null, new Date().toISOString()));
+      await runEdit(() => doc.addComment(start.node, start.offset, end.offset, text, metadata.author, metadata.initials, metadata.date));
     }
     closeReviewPopover();
     drawSelection();
+  });
+  textarea.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeReviewPopover();
+    } else if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      event.preventDefault();
+      submit.click();
+    }
   });
   actions.append(cancel, submit);
   popover.append(label, textarea, actions);
@@ -3289,14 +3554,15 @@ function closeReviewComposer() {
   reviewComposerText.value = "";
 }
 selComment.addEventListener("mousedown", (event) => event.preventDefault());
-selComment.addEventListener("click", openReviewComposer);
+selComment.addEventListener("click", () => openReviewComposer());
 reviewComposerCancel.addEventListener("click", closeReviewComposer);
 reviewComposerSubmit.addEventListener("click", async () => {
   const text = reviewComposerText.value.trim();
   const range = selection;
   if (!doc || !text || (!reviewReplyParent && (!range || !hasRange()))) return;
+  const metadata = currentReviewAuthor();
   if (reviewReplyParent) {
-    await runEdit(() => doc.replyToComment(reviewReplyParent, text, reviewAuthor.value.trim() || "You", null, new Date().toISOString()));
+    await runEdit(() => doc.replyToComment(reviewReplyParent, text, metadata.author, metadata.initials, metadata.date));
     closeReviewComposer();
     buildReview();
     return;
@@ -3307,7 +3573,7 @@ reviewComposerSubmit.addEventListener("click", async () => {
     setStatus("Comments currently require a single-paragraph selection", "error");
     return;
   }
-  await runEdit(() => doc.addComment(start.node, start.offset, end.offset, text, reviewAuthor.value.trim() || "You", null, new Date().toISOString()));
+  await runEdit(() => doc.addComment(start.node, start.offset, end.offset, text, metadata.author, metadata.initials, metadata.date));
   closeReviewComposer();
   buildReview();
 });
@@ -3321,13 +3587,7 @@ for (const filter of reviewFilters) {
   });
 }
 for (const mode of reviewModeButtons) {
-  mode.addEventListener("click", () => {
-    reviewMode = mode.dataset.reviewMode;
-    for (const button of reviewModeButtons) {
-      button.setAttribute("aria-pressed", String(button === mode));
-    }
-    if (reviewMode === "suggesting") toggleReview(true);
-  });
+  mode.addEventListener("click", () => setReviewMode(mode.dataset.reviewMode));
 }
 
 // ---- Command palette (⌘K) — fuzzy search over real editor actions -----------
