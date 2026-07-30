@@ -83,7 +83,8 @@ const tableContext = document.getElementById("tableContext");
 const tableRibbon = document.querySelector(".table-ribbon");
 const tableRibbonControls = [...tableRibbon.querySelectorAll("button")];
 const tablePropertiesBtn = document.getElementById("tablePropertiesBtn");
-const tableStyleSel = document.getElementById("tableStyle");
+const tableStyleBtn = document.getElementById("tableStyleBtn");
+const tableStyleMenu = document.getElementById("tableStyleMenu");
 const tablePropertiesPanel = document.getElementById("tablePropertiesPanel");
 const tablePropertiesContext = document.getElementById("tablePropertiesContext");
 const tablePropertiesCloseBtn = document.getElementById("tablePropertiesClose");
@@ -1805,8 +1806,9 @@ function updateToolbar() {
   const inTable = hasSel && doc && doc.inTable(selection.focus.node);
   const tableInfo = inTable ? doc.tableInfo(selection.focus.node) : null;
   for (const control of tableRibbonControls) control.disabled = !inTable;
-  tableStyleSel.disabled = !inTable;
-  tableStyleSel.value = inTable && tableInfo?.found ? (doc.tableStyleAt?.(selection.focus.node) || "") : "";
+  tableStyleBtn.disabled = !inTable;
+  const activeTableStyle = inTable && tableInfo?.found ? (doc.tableStyleAt?.(selection.focus.node) || "") : "";
+  tableStyleBtn.title = activeTableStyle ? `Table style: ${activeTableStyle}` : "Choose table style";
   for (const control of tableRibbon.querySelectorAll(
     '[data-table-action*="column"]',
   )) {
@@ -1874,15 +1876,28 @@ function populateStyles() {
 }
 
 function populateTableStyles() {
-  tableStyleSel.replaceChildren(new Option("Table style", ""));
+  tableStyleMenu.replaceChildren();
+  const clear = document.createElement("button");
+  clear.type = "button";
+  clear.className = "table-style-choice table-style-clear";
+  clear.dataset.tableStyle = "";
+  clear.textContent = "No table style";
+  tableStyleMenu.appendChild(clear);
   for (const style of doc?.listTableStyles?.() || []) {
-    tableStyleSel.appendChild(new Option(style, style));
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "table-style-choice";
+    button.dataset.tableStyle = style;
+    button.innerHTML = `<span class="table-style-swatch" aria-hidden="true"><i></i><i></i><i></i></span><span>${escapeHtml(style)}</span>`;
+    tableStyleMenu.appendChild(button);
   }
 }
-
-tableStyleSel.addEventListener("change", () => {
-  if (!selection || !doc) return;
-  runEdit(() => doc.applyTableStyle(selection.focus.node, tableStyleSel.value));
+let tableStylePopover;
+tableStyleMenu.addEventListener("click", (event) => {
+  const choice = event.target.closest("[data-table-style]");
+  if (!choice || !selection || !doc) return;
+  closePopover(tableStylePopover);
+  runEdit(() => doc.applyTableStyle(selection.focus.node, choice.dataset.tableStyle));
 });
 
 // mousedown (not click) so a button never steals the selection focus mid-edit.
@@ -2026,6 +2041,8 @@ function registerPopover(btn, menu, reflect) {
   });
   return p;
 }
+
+tableStylePopover = registerPopover(tableStyleBtn, tableStyleMenu, () => {});
 
 document.addEventListener("mousedown", (e) => {
   for (const p of popovers) {

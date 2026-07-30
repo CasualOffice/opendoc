@@ -970,6 +970,44 @@ body.modal-open {
   color: var(--error);
 }
 
+.table-style-menu {
+  min-width: 220px;
+  display: grid;
+  gap: 4px;
+}
+
+.table-style-choice {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  border: 0;
+  border-radius: 7px;
+  padding: 7px 9px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.table-style-choice:hover {
+  background: var(--accent-soft);
+}
+
+.table-style-swatch {
+  display: grid;
+  grid-template-rows: repeat(3, 4px);
+  width: 42px;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+}
+
+.table-style-swatch i:nth-child(1) { background: var(--accent); }
+.table-style-swatch i:nth-child(2) { background: color-mix(in srgb, var(--accent) 18%, var(--surface)); }
+.table-style-swatch i:nth-child(3) { background: var(--surface-alt); }
+.table-style-clear { font-size: 12px; }
+
 .menu-divider {
   height: 1px;
   margin: 5px 6px;

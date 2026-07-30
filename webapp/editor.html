@@ -301,7 +301,7 @@
             <span class="rgroup-label">Properties</span>
           </div>
           <div class="rgroup">
-            <div class="rgroup-ctl"><select id="tableStyle" class="ribbon-select" aria-label="Table style" disabled><option value="">Table style</option></select></div>
+            <div class="rgroup-ctl"><button id="tableStyleBtn" type="button" class="fmt" title="Choose table style" aria-label="Choose table style" aria-haspopup="menu" aria-expanded="false" disabled><span class="ms" aria-hidden="true">palette</span></button></div>
             <span class="rgroup-label">Style</span>
           </div>
           <div class="rgroup table-context-group" aria-live="polite">
@@ -447,6 +447,7 @@
       <div id="gridPicker" class="grid-cells"></div>
       <div id="gridLabel" class="grid-label">Insert table</div>
     </div>
+    <div id="tableStyleMenu" class="context-menu table-style-menu" hidden role="menu" aria-label="Table styles"></div>
 
     <div id="splitCellDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="splitCellTitle" aria-describedby="splitCellDescription">
       <section class="dialog-card" style="max-width: 360px">

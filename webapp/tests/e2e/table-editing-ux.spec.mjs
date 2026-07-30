@@ -55,6 +55,10 @@ test("the contextual Table ribbon exposes complete core commands and bounded for
   await expect(page.locator("#splitCellBtn")).toBeEnabled();
   await expect(page.locator("#mergeCellsBtn")).toBeDisabled();
   await expect(page.locator("#tableContext")).toContainText("2×2 table");
+  await page.locator("#tableStyleBtn").click();
+  await expect(page.locator("#tableStyleMenu")).toBeVisible();
+  await expect(page.locator("#tableStyleMenu [data-table-style]")).toHaveCount(1);
+  await page.locator("#tableStyleMenu [data-table-style]").click();
 
   await ribbon.locator('[data-table-action="insert-row-below"]').click();
   await expect(page.locator("#tableContext")).toContainText("3×2 table");
