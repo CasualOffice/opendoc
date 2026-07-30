@@ -42,8 +42,8 @@ use casual_doc_model::v1::{
     NumberingInstanceId, NumberingLevel, NumberingOverride, NumberingRef, PageMargins,
     PageOrientation, PageSize as SectionPageSize, Paragraph, ParagraphBorders, ParagraphProperties,
     RgbColor, RowHeight, Run, RunProperties, SectionId, Spacing, StyleId, StyleKind, TabAlignment,
-    TabStop, Table, TableBorders, TableCell, TableCellProperties, TableLayout, TableProperties,
-    TableRow, VerticalAlignment, VerticalMerge,
+    TabLeader, TabStop, Table, TableBorders, TableCell, TableCellProperties, TableLayout,
+    TableProperties, TableRow, VerticalAlignment, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
@@ -3669,11 +3669,16 @@ impl WasmDocument {
     ) -> Result<EditResult, JsValue> {
         let alignment = tab_alignment_from_code(align_code);
         self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
+            let leader = p
+                .tabs
+                .iter()
+                .find(|t| t.position_twips == position_twips)
+                .and_then(|t| t.leader);
             p.tabs.retain(|t| t.position_twips != position_twips);
             p.tabs.push(TabStop {
                 position_twips,
                 alignment,
-                leader: None,
+                leader,
             });
             p.tabs.sort_by_key(|t| t.position_twips);
         })
@@ -9895,10 +9900,29 @@ mod tests {
         // Replace at 1440 with center (a "cycle").
         d.set_tab_stop(&node, 0, &node, 0, 1440, 1).expect("cycle");
         assert_eq!(d.paragraph_tabs(&node), vec![720, 2, 1440, 1]);
+        d.apply_paragraph_props(&node, 0, &node, 0, |p| {
+            p.tabs
+                .iter_mut()
+                .find(|t| t.position_twips == 1440)
+                .expect("tab exists")
+                .leader = Some(TabLeader::Dot);
+        })
+        .expect("add tab leader");
+        d.set_tab_stop(&node, 0, &node, 0, 1440, 2)
+            .expect("change alignment without dropping leader");
+        assert_eq!(
+            paragraph_properties(&d.document, NodeId::from_str(&node).unwrap())
+                .unwrap()
+                .tabs
+                .iter()
+                .find(|t| t.position_twips == 1440)
+                .and_then(|t| t.leader),
+            Some(TabLeader::Dot)
+        );
         // Move 720 -> 2160.
         d.move_tab_stop(&node, 0, &node, 0, 720, 2160)
             .expect("move");
-        assert_eq!(d.paragraph_tabs(&node), vec![1440, 1, 2160, 2]);
+        assert_eq!(d.paragraph_tabs(&node), vec![1440, 2, 2160, 2]);
         // Remove 1440.
         d.remove_tab_stop(&node, 0, &node, 0, 1440).expect("remove");
         assert_eq!(d.paragraph_tabs(&node), vec![2160, 2]);
