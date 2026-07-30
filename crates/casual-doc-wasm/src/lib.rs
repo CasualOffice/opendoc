@@ -42,10 +42,10 @@ use casual_doc_model::v1::{
     InternalTarget, LevelJustification, LevelSuffix, MoveKind, NumberFormat, NumberingInstance,
     NumberingInstanceId, NumberingLevel, NumberingOverride, NumberingRef, PageMargins,
     PageOrientation, PageSize as SectionPageSize, Paragraph, ParagraphBorders, ParagraphProperties,
-    Revision, RevisionGroup, RevisionGroupKind, RevisionKind, RgbColor, RowHeight, Run,
-    RunProperties, SectionColumns, SectionId, Spacing, StyleId, StyleKind, TabAlignment, TabStop,
-    Table, TableBorders, TableCell, TableCellProperties, TableLayout, TableProperties, TableRow,
-    VerticalAlignment, VerticalMerge,
+    PropChange, ReviewProjection, Revision, RevisionGroup, RevisionGroupKind, RevisionKind,
+    RgbColor, RowHeight, Run, RunProperties, SectionColumns, SectionId, Spacing, StyleId,
+    StyleKind, TabAlignment, TabStop, Table, TableBorders, TableCell, TableCellProperties,
+    TableLayout, TableProperties, TableRow, VerticalAlignment, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
@@ -3585,9 +3585,8 @@ impl WasmDocument {
         .unwrap_or_else(|_| r#"{"core":{},"app":{},"custom":[]}"#.to_string())
     }
 
-    /// Read-only review inventory for the editor's Review pane. Comments and
-    /// revisions are currently preserved/imported data; authoring and
-    /// accept/reject mutations remain a later transaction slice.
+    /// Review inventory for the margin UI. Anchors use the same final-with-markup
+    /// byte projection as layout/editing, including collapsed deleted ranges.
     #[wasm_bindgen(js_name = reviewSummary)]
     #[must_use]
     pub fn review_summary(&self) -> String {
@@ -4245,9 +4244,9 @@ impl WasmDocument {
             .map_err(to_js)
     }
 
-    /// Tracks a character-formatting change as a deletion of the original
-    /// runs plus an insertion carrying the updated run properties. Accepting
-    /// keeps the formatted copy; rejecting restores the original copy.
+    /// Tracks a character-formatting change as standard `w:rPrChange` metadata:
+    /// each selected run exists once, carries its current properties, and retains
+    /// the complete prior snapshot for Reject.
     #[wasm_bindgen(js_name = suggestFormat)]
     #[allow(clippy::too_many_arguments)]
     pub fn suggest_format(
@@ -4291,18 +4290,8 @@ impl WasmDocument {
                 .map_err(|_| to_js("id space exhausted".to_string()))?,
             kind: RevisionGroupKind::Formatting,
         };
-        let deletion = self
-            .edit_ids
-            .next_id()
-            .map_err(|_| to_js("id space exhausted".to_string()))?;
-        let insertion = self
-            .edit_ids
-            .next_id()
-            .map_err(|_| to_js("id space exhausted".to_string()))?;
-        let deletion_revision_id = self.revision_ids.allocate().map_err(to_js)?;
-        let insertion_revision_id = self.revision_ids.allocate().map_err(to_js)?;
         let mut body = review_paragraph_body(&self.document, node).map_err(to_js)?;
-        if !wrap_review_format(
+        if !apply_review_format_change(
             &mut body,
             node,
             start,
@@ -4318,26 +4307,14 @@ impl WasmDocument {
                 vert_align,
                 font,
             ),
-            Revision {
-                id: deletion,
-                kind: RevisionKind::Deletion,
-                author: author.clone(),
-                date: date.clone(),
-                revision_id: Some(deletion_revision_id),
-                editor_group: Some(group),
-                inlines: Vec::new(),
-            },
-            Revision {
-                id: insertion,
-                kind: RevisionKind::Insertion,
-                author,
-                date,
-                revision_id: Some(insertion_revision_id),
-                editor_group: Some(group),
-                inlines: Vec::new(),
-            },
+            author,
+            date,
+            group,
+            &mut self.revision_ids,
             &mut self.edit_ids,
-        ) {
+        )
+        .map_err(to_js)?
+        {
             return Err(to_js(
                 "suggested formatting requires a top-level paragraph text range".to_string(),
             ));
@@ -4351,6 +4328,28 @@ impl WasmDocument {
     #[wasm_bindgen(js_name = decideRevision)]
     pub fn decide_revision(&mut self, revision: &str, accept: bool) -> Result<EditResult, JsValue> {
         let id = node_id(revision)?;
+        if let Some((node, start, end)) = find_review_format_anchor(self.document.body(), id) {
+            if find_review_format_change(self.document.body(), id)
+                .and_then(|change| change.editor_group)
+                .is_some()
+            {
+                return Err(to_js(
+                    "editor-authored grouped formatting must be decided atomically".to_string(),
+                ));
+            }
+            let mut body = review_paragraph_body(&self.document, node).map_err(to_js)?;
+            if !decide_review_format_change(&mut body, id, accept) {
+                return Err(to_js("formatting change not found".to_string()));
+            }
+            let operation = update_review_operation(&self.document, &body, None).map_err(to_js)?;
+            return self
+                .apply_action_caret_as(
+                    vec![operation],
+                    Pos::new(node, if accept { end } else { start }),
+                    HistoryKind::Review,
+                )
+                .map_err(to_js);
+        }
         let Some((node, start, end, kind)) = find_review_revision_anchor(self.document.body(), id)
         else {
             return Err(to_js("revision not found".to_string()));
@@ -4451,8 +4450,8 @@ impl WasmDocument {
     }
 
     /// Accepts or rejects every editor-authored revision in one logical group.
-    /// Replacement and formatting suggestions are represented by a deletion /
-    /// insertion pair but remain one review decision and one undo action.
+    /// Replacements are deletion/insertion pairs; formatting groups contain one
+    /// or more standard run-property changes without duplicating text.
     #[wasm_bindgen(js_name = decideRevisionGroup)]
     pub fn decide_revision_group(
         &mut self,
@@ -4462,8 +4461,14 @@ impl WasmDocument {
         let group = node_id(group)?;
         let validated = validate_review_group(self.document.body(), group).map_err(to_js)?;
         let mut body = review_paragraph_body(&self.document, validated.node).map_err(to_js)?;
-        for id in validated.ids {
-            if !decide_review_revision(&mut body, id, accept) {
+        for target in validated.targets {
+            let decided = match target {
+                ReviewDecisionTarget::Revision(id) => decide_review_revision(&mut body, id, accept),
+                ReviewDecisionTarget::RunFormatting(id) => {
+                    decide_review_format_change(&mut body, id, accept)
+                }
+            };
+            if !decided {
                 return Err(to_js("revision group is incomplete".to_string()));
             }
         }
@@ -4480,7 +4485,9 @@ impl WasmDocument {
     pub fn decide_all_revisions(&mut self, accept: bool) -> Result<EditResult, JsValue> {
         let mut ids = Vec::new();
         collect_review_revision_ids(self.document.body(), &mut ids);
-        if ids.is_empty() {
+        let mut format_ids = Vec::new();
+        collect_review_format_ids(self.document.body(), &mut format_ids);
+        if ids.is_empty() && format_ids.is_empty() {
             return Err(to_js("no tracked revisions".to_string()));
         }
         let pairs = collect_review_move_pairs(self.document.body());
@@ -6461,7 +6468,11 @@ fn walk_inlines_rich(
                     out,
                 );
             }
-            InlineNode::Revision(revision) => {
+            InlineNode::Revision(revision)
+                if revision
+                    .kind
+                    .contributes_to(ReviewProjection::FinalWithMarkup) =>
+            {
                 walk_inlines_rich(
                     document,
                     &revision.inlines,
@@ -6473,6 +6484,7 @@ fn walk_inlines_rich(
                     out,
                 );
             }
+            InlineNode::Revision(_) => {}
             InlineNode::Sdt(sdt) => {
                 walk_inlines_rich(document, &sdt.inlines, href, offset, lo, hi, full_text, out);
             }
@@ -6768,6 +6780,7 @@ fn collect_review_revisions(
                     &paragraph.inlines,
                     paragraph.id,
                     &mut offset,
+                    true,
                     move_links,
                     out,
                 );
@@ -6799,6 +6812,7 @@ fn collect_review_comment_anchors(
                         inline,
                         paragraph.id,
                         &mut offset,
+                        true,
                         &mut starts,
                         out,
                     );
@@ -7246,134 +7260,159 @@ fn remove_authored_review_insertion(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn wrap_review_format(
+fn apply_review_format_change(
     blocks: &mut [BlockNode],
     node: NodeId,
     start: u32,
     end: u32,
     delta: FormatDelta,
-    mut deletion: Revision,
-    mut insertion: Revision,
+    author: Option<String>,
+    date: Option<String>,
+    group: RevisionGroup,
+    revision_ids: &mut RevisionIdAllocator,
     ids: &mut IdGenerator,
-) -> bool {
+) -> Result<bool, String> {
     for block in blocks {
         match block {
             BlockNode::Paragraph(paragraph) if paragraph.id == node => {
                 if !review_split_top_level_run(&mut paragraph.inlines, start, ids)
                     || !review_split_top_level_run(&mut paragraph.inlines, end, ids)
                 {
-                    return false;
+                    return Ok(false);
                 }
-                let mut cursor = 0;
-                let mut first = None;
-                let mut last = None;
+                let mut cursor = 0_u32;
+                let mut selected = Vec::new();
                 for (index, inline) in paragraph.inlines.iter().enumerate() {
-                    let InlineNode::Run(run) = inline else {
-                        continue;
-                    };
-                    if cursor == start {
-                        first = Some(index);
-                    }
-                    cursor = cursor.saturating_add(run.text.len() as u32);
-                    if cursor == end {
-                        last = Some(index);
-                        break;
-                    }
-                }
-                let (Some(first), Some(last)) = (first, last) else {
-                    return false;
-                };
-                let original: Vec<InlineNode> = paragraph.inlines.drain(first..=last).collect();
-                let mut formatted = original.clone();
-                for inline in &mut formatted {
-                    if let InlineNode::Run(run) = inline {
-                        run.id = match ids.next_id() {
-                            Ok(id) => id,
-                            Err(_) => return false,
+                    let next = cursor.saturating_add(inline_anchor_len_for_review(inline));
+                    if cursor < end && next > start {
+                        let InlineNode::Run(run) = inline else {
+                            return Ok(false);
                         };
+                        if cursor < start || next > end || run.properties.prop_change.is_some() {
+                            return Ok(false);
+                        }
+                        selected.push(index);
+                    }
+                    cursor = next;
+                }
+                if selected.is_empty() || cursor < end {
+                    return Ok(false);
+                }
+
+                let mut changes = Vec::with_capacity(selected.len());
+                for index in selected {
+                    let InlineNode::Run(run) = &paragraph.inlines[index] else {
+                        return Ok(false);
+                    };
+                    let mut current = run.properties.clone();
+                    current.prop_change = None;
+                    let prior = current.clone();
+                    apply_review_delta_to_properties(&mut current, &delta);
+                    if current != prior {
+                        changes.push((index, current, prior));
                     }
                 }
-                apply_review_delta(&mut formatted, &delta);
-                deletion.inlines = original;
-                insertion.inlines = formatted;
-                paragraph
-                    .inlines
-                    .insert(first, InlineNode::Revision(deletion));
-                paragraph
-                    .inlines
-                    .insert(first + 1, InlineNode::Revision(insertion));
-                return true;
+                if changes.is_empty() {
+                    return Ok(false);
+                }
+
+                for (index, mut current, prior) in changes {
+                    current.prop_change = Some(PropChange {
+                        author: author.clone(),
+                        date: date.clone(),
+                        revision_id: Some(revision_ids.allocate()?),
+                        editor_group: Some(group),
+                        prior: Box::new(prior),
+                    });
+                    let InlineNode::Run(run) = &mut paragraph.inlines[index] else {
+                        return Ok(false);
+                    };
+                    run.properties = current;
+                }
+                return Ok(true);
             }
             BlockNode::Paragraph(_) => continue,
             BlockNode::Table(table) => {
-                return table.rows.iter_mut().any(|row| {
-                    row.cells.iter_mut().any(|cell| {
-                        wrap_review_format(
+                for row in &mut table.rows {
+                    for cell in &mut row.cells {
+                        if apply_review_format_change(
                             &mut cell.blocks,
                             node,
                             start,
                             end,
                             delta.clone(),
-                            deletion.clone(),
-                            insertion.clone(),
+                            author.clone(),
+                            date.clone(),
+                            group,
+                            revision_ids,
                             ids,
-                        )
-                    })
-                });
+                        )? {
+                            return Ok(true);
+                        }
+                    }
+                }
             }
             BlockNode::Sdt(sdt) => {
-                return wrap_review_format(
+                if apply_review_format_change(
                     &mut sdt.blocks,
                     node,
                     start,
                     end,
                     delta.clone(),
-                    deletion.clone(),
-                    insertion.clone(),
+                    author.clone(),
+                    date.clone(),
+                    group,
+                    revision_ids,
                     ids,
-                );
+                )? {
+                    return Ok(true);
+                }
             }
             BlockNode::AltChunk(_) => continue,
         }
     }
-    false
+    Ok(false)
+}
+
+fn apply_review_delta_to_properties(properties: &mut RunProperties, delta: &FormatDelta) {
+    if let Some(value) = delta.bold {
+        properties.bold = Some(value);
+    }
+    if let Some(value) = delta.italic {
+        properties.italic = Some(value);
+    }
+    if let Some(value) = delta.underline {
+        properties.underline = Some(value);
+    }
+    if let Some(value) = delta.strike {
+        properties.strike = Some(value);
+    }
+    if let Some(value) = delta.color {
+        properties.color = Some(Color::Rgb(value));
+    }
+    if let Some(value) = delta.highlight {
+        properties.highlight = Some(value);
+    }
+    if let Some(value) = delta.size_half_points {
+        properties.size_half_points = Some(value);
+    }
+    if let Some(value) = delta.vertical_alignment {
+        properties.vertical_alignment = Some(value);
+    }
+    if let Some(family) = &delta.font {
+        let font = FontRef::Named(FontName {
+            name: family.clone(),
+        });
+        properties.font_ref = Some(font.clone());
+        properties.font_ref_h_ansi = Some(font);
+    }
 }
 
 fn apply_review_delta(inlines: &mut [InlineNode], delta: &FormatDelta) {
     for inline in inlines {
         match inline {
             InlineNode::Run(run) => {
-                if let Some(value) = delta.bold {
-                    run.properties.bold = Some(value);
-                }
-                if let Some(value) = delta.italic {
-                    run.properties.italic = Some(value);
-                }
-                if let Some(value) = delta.underline {
-                    run.properties.underline = Some(value);
-                }
-                if let Some(value) = delta.strike {
-                    run.properties.strike = Some(value);
-                }
-                if let Some(value) = delta.color {
-                    run.properties.color = Some(Color::Rgb(value));
-                }
-                if let Some(value) = delta.highlight {
-                    run.properties.highlight = Some(value);
-                }
-                if let Some(value) = delta.size_half_points {
-                    run.properties.size_half_points = Some(value);
-                }
-                if let Some(value) = delta.vertical_alignment {
-                    run.properties.vertical_alignment = Some(value);
-                }
-                if let Some(family) = &delta.font {
-                    let font = FontRef::Named(FontName {
-                        name: family.clone(),
-                    });
-                    run.properties.font_ref = Some(font.clone());
-                    run.properties.font_ref_h_ansi = Some(font);
-                }
+                apply_review_delta_to_properties(&mut run.properties, delta);
             }
             InlineNode::Revision(revision) => apply_review_delta(&mut revision.inlines, delta),
             InlineNode::Hyperlink(link) => apply_review_delta(&mut link.inlines, delta),
@@ -7502,6 +7541,16 @@ fn decide_all_review_inlines(inlines: &mut Vec<InlineNode>, accept: bool) {
     let mut index = 0;
     while index < inlines.len() {
         match &mut inlines[index] {
+            InlineNode::Run(run) => {
+                if let Some(change) = run.properties.prop_change.take()
+                    && !accept
+                {
+                    let mut prior = *change.prior;
+                    prior.prop_change = None;
+                    run.properties = prior;
+                }
+                index += 1;
+            }
             InlineNode::Revision(revision) => {
                 decide_all_review_inlines(&mut revision.inlines, accept);
                 let keep = matches!(
@@ -7539,9 +7588,13 @@ fn find_review_revision_anchor(
         match block {
             BlockNode::Paragraph(paragraph) => {
                 let mut offset = 0;
-                if let Some(anchor) =
-                    find_review_inline_anchor(&paragraph.inlines, paragraph.id, id, &mut offset)
-                {
+                if let Some(anchor) = find_review_inline_anchor(
+                    &paragraph.inlines,
+                    paragraph.id,
+                    id,
+                    &mut offset,
+                    true,
+                ) {
                     return Some(anchor);
                 }
             }
@@ -7570,37 +7623,62 @@ fn find_review_inline_anchor(
     node: NodeId,
     id: NodeId,
     offset: &mut u32,
+    projected: bool,
 ) -> Option<(NodeId, u32, u32, RevisionKind)> {
     for inline in inlines {
         match inline {
             InlineNode::Revision(revision) => {
                 let start = *offset;
-                let end = start.saturating_add(
-                    revision
-                        .inlines
-                        .iter()
-                        .map(inline_anchor_len_for_review)
-                        .sum::<u32>(),
-                );
+                let visible = projected
+                    && revision
+                        .kind
+                        .contributes_to(ReviewProjection::FinalWithMarkup);
+                let end = if visible {
+                    start.saturating_add(projected_revision_len(revision))
+                } else {
+                    start
+                };
                 if revision.id == id {
                     return Some((node, start, end, revision.kind));
                 }
-                if let Some(anchor) = find_review_inline_anchor(&revision.inlines, node, id, offset)
+                if visible {
+                    if let Some(anchor) =
+                        find_review_inline_anchor(&revision.inlines, node, id, offset, true)
+                    {
+                        return Some(anchor);
+                    }
+                } else {
+                    let mut hidden_offset = start;
+                    if let Some(anchor) = find_review_inline_anchor(
+                        &revision.inlines,
+                        node,
+                        id,
+                        &mut hidden_offset,
+                        false,
+                    ) {
+                        return Some(anchor);
+                    }
+                }
+                *offset = end;
+            }
+            InlineNode::Hyperlink(link) => {
+                if let Some(anchor) =
+                    find_review_inline_anchor(&link.inlines, node, id, offset, projected)
                 {
                     return Some(anchor);
                 }
             }
-            InlineNode::Hyperlink(link) => {
-                if let Some(anchor) = find_review_inline_anchor(&link.inlines, node, id, offset) {
-                    return Some(anchor);
-                }
-            }
             InlineNode::Sdt(sdt) => {
-                if let Some(anchor) = find_review_inline_anchor(&sdt.inlines, node, id, offset) {
+                if let Some(anchor) =
+                    find_review_inline_anchor(&sdt.inlines, node, id, offset, projected)
+                {
                     return Some(anchor);
                 }
             }
-            _ => *offset = offset.saturating_add(inline_anchor_len_for_review(inline)),
+            _ if projected => {
+                *offset = offset.saturating_add(inline_anchor_len_for_review(inline));
+            }
+            _ => {}
         }
     }
     None
@@ -7666,6 +7744,16 @@ fn collect_review_editor_group_ids(blocks: &[BlockNode], out: &mut BTreeSet<Node
 fn collect_review_inline_editor_group_ids(inlines: &[InlineNode], out: &mut BTreeSet<NodeId>) {
     for inline in inlines {
         match inline {
+            InlineNode::Run(run) => {
+                if let Some(group) = run
+                    .properties
+                    .prop_change
+                    .as_ref()
+                    .and_then(|change| change.editor_group)
+                {
+                    out.insert(group.id);
+                }
+            }
             InlineNode::Revision(revision) => {
                 if let Some(group) = revision.editor_group {
                     out.insert(group.id);
@@ -7686,6 +7774,16 @@ fn collect_review_inline_editor_group_ids(inlines: &[InlineNode], out: &mut BTre
 fn collect_review_inline_serial_ids(inlines: &[InlineNode], out: &mut Vec<String>) {
     for inline in inlines {
         match inline {
+            InlineNode::Run(run) => {
+                if let Some(id) = run
+                    .properties
+                    .prop_change
+                    .as_ref()
+                    .and_then(|change| change.revision_id.as_ref())
+                {
+                    out.push(id.clone());
+                }
+            }
             InlineNode::Revision(revision) => {
                 if let Some(id) = &revision.revision_id {
                     out.push(id.clone());
@@ -7758,26 +7856,310 @@ fn find_review_inline_revision(inlines: &[InlineNode], id: NodeId) -> Option<&Re
     None
 }
 
+fn find_review_format_change(
+    blocks: &[BlockNode],
+    run_id: NodeId,
+) -> Option<&PropChange<RunProperties>> {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                if let Some(change) = find_review_inline_format_change(&paragraph.inlines, run_id) {
+                    return Some(change);
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        if let Some(change) = find_review_format_change(&cell.blocks, run_id) {
+                            return Some(change);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(change) = find_review_format_change(&sdt.blocks, run_id) {
+                    return Some(change);
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    None
+}
+
+fn find_review_inline_format_change(
+    inlines: &[InlineNode],
+    run_id: NodeId,
+) -> Option<&PropChange<RunProperties>> {
+    for inline in inlines {
+        match inline {
+            InlineNode::Run(run) if run.id == run_id => {
+                if let Some(change) = &run.properties.prop_change {
+                    return Some(change);
+                }
+            }
+            InlineNode::Revision(revision) => {
+                if let Some(change) = find_review_inline_format_change(&revision.inlines, run_id) {
+                    return Some(change);
+                }
+            }
+            InlineNode::Hyperlink(link) => {
+                if let Some(change) = find_review_inline_format_change(&link.inlines, run_id) {
+                    return Some(change);
+                }
+            }
+            InlineNode::Sdt(sdt) => {
+                if let Some(change) = find_review_inline_format_change(&sdt.inlines, run_id) {
+                    return Some(change);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn find_review_format_anchor(blocks: &[BlockNode], run_id: NodeId) -> Option<(NodeId, u32, u32)> {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                let mut offset = 0;
+                if let Some(anchor) = find_review_inline_format_anchor(
+                    &paragraph.inlines,
+                    paragraph.id,
+                    run_id,
+                    &mut offset,
+                    true,
+                ) {
+                    return Some(anchor);
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        if let Some(anchor) = find_review_format_anchor(&cell.blocks, run_id) {
+                            return Some(anchor);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(anchor) = find_review_format_anchor(&sdt.blocks, run_id) {
+                    return Some(anchor);
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    None
+}
+
+fn find_review_inline_format_anchor(
+    inlines: &[InlineNode],
+    node: NodeId,
+    run_id: NodeId,
+    offset: &mut u32,
+    projected: bool,
+) -> Option<(NodeId, u32, u32)> {
+    for inline in inlines {
+        match inline {
+            InlineNode::Run(run) => {
+                let start = *offset;
+                let end = if projected {
+                    start.saturating_add(run.text.len() as u32)
+                } else {
+                    start
+                };
+                if run.id == run_id && run.properties.prop_change.is_some() {
+                    return Some((node, start, end));
+                }
+                *offset = end;
+            }
+            InlineNode::Revision(revision) => {
+                let visible = projected
+                    && revision
+                        .kind
+                        .contributes_to(ReviewProjection::FinalWithMarkup);
+                if visible {
+                    if let Some(anchor) = find_review_inline_format_anchor(
+                        &revision.inlines,
+                        node,
+                        run_id,
+                        offset,
+                        true,
+                    ) {
+                        return Some(anchor);
+                    }
+                } else {
+                    let mut hidden_offset = *offset;
+                    if let Some(anchor) = find_review_inline_format_anchor(
+                        &revision.inlines,
+                        node,
+                        run_id,
+                        &mut hidden_offset,
+                        false,
+                    ) {
+                        return Some(anchor);
+                    }
+                }
+            }
+            InlineNode::Hyperlink(link) => {
+                if let Some(anchor) =
+                    find_review_inline_format_anchor(&link.inlines, node, run_id, offset, projected)
+                {
+                    return Some(anchor);
+                }
+            }
+            InlineNode::Sdt(sdt) => {
+                if let Some(anchor) =
+                    find_review_inline_format_anchor(&sdt.inlines, node, run_id, offset, projected)
+                {
+                    return Some(anchor);
+                }
+            }
+            _ if projected => {
+                *offset = offset.saturating_add(inline_anchor_len_for_review(inline));
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn decide_review_format_change(blocks: &mut [BlockNode], run_id: NodeId, accept: bool) -> bool {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                if decide_review_inline_format_change(&mut paragraph.inlines, run_id, accept) {
+                    coalesce_review_runs(&mut paragraph.inlines);
+                    return true;
+                }
+            }
+            BlockNode::Table(table) => {
+                if table.rows.iter_mut().any(|row| {
+                    row.cells
+                        .iter_mut()
+                        .any(|cell| decide_review_format_change(&mut cell.blocks, run_id, accept))
+                }) {
+                    return true;
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if decide_review_format_change(&mut sdt.blocks, run_id, accept) {
+                    return true;
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    false
+}
+
+fn decide_review_inline_format_change(
+    inlines: &mut [InlineNode],
+    run_id: NodeId,
+    accept: bool,
+) -> bool {
+    for inline in inlines {
+        match inline {
+            InlineNode::Run(run) if run.id == run_id => {
+                let Some(change) = run.properties.prop_change.take() else {
+                    return false;
+                };
+                if !accept {
+                    let mut prior = *change.prior;
+                    prior.prop_change = None;
+                    run.properties = prior;
+                }
+                return true;
+            }
+            InlineNode::Revision(revision) => {
+                if decide_review_inline_format_change(&mut revision.inlines, run_id, accept) {
+                    return true;
+                }
+            }
+            InlineNode::Hyperlink(link) => {
+                if decide_review_inline_format_change(&mut link.inlines, run_id, accept) {
+                    return true;
+                }
+            }
+            InlineNode::Sdt(sdt) => {
+                if decide_review_inline_format_change(&mut sdt.inlines, run_id, accept) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+fn collect_review_format_ids(blocks: &[BlockNode], out: &mut Vec<NodeId>) {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                collect_review_inline_format_ids(&paragraph.inlines, out);
+            }
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        collect_review_format_ids(&cell.blocks, out);
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => collect_review_format_ids(&sdt.blocks, out),
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+}
+
+fn collect_review_inline_format_ids(inlines: &[InlineNode], out: &mut Vec<NodeId>) {
+    for inline in inlines {
+        match inline {
+            InlineNode::Run(run) if run.properties.prop_change.is_some() => out.push(run.id),
+            InlineNode::Revision(revision) => {
+                collect_review_inline_format_ids(&revision.inlines, out);
+            }
+            InlineNode::Hyperlink(link) => collect_review_inline_format_ids(&link.inlines, out),
+            InlineNode::Sdt(sdt) => collect_review_inline_format_ids(&sdt.inlines, out),
+            _ => {}
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct ReviewGroupMember {
-    id: NodeId,
+    target: ReviewDecisionTarget,
     group: RevisionGroup,
     node: NodeId,
     start: u32,
     end: u32,
-    kind: RevisionKind,
+    kind: ReviewMemberKind,
     author: Option<String>,
     date: Option<String>,
     revision_id: Option<String>,
     text: String,
     top_level_index: Option<usize>,
+    prior_is_nested: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReviewMemberKind {
+    Revision(RevisionKind),
+    Formatting,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReviewDecisionTarget {
+    Revision(NodeId),
+    RunFormatting(NodeId),
 }
 
 #[derive(Clone, Debug)]
 struct ValidatedReviewGroup {
     node: NodeId,
     start: u32,
-    ids: Vec<NodeId>,
+    targets: Vec<ReviewDecisionTarget>,
 }
 
 fn validate_review_group(
@@ -7794,10 +8176,16 @@ fn validate_review_group(
         member.group != group
             || member.node != members[0].node
             || member.top_level_index.is_none()
-            || member.end <= member.start
+            || member.end < member.start
+            || (member.end == member.start
+                && !matches!(
+                    member.kind,
+                    ReviewMemberKind::Revision(RevisionKind::Deletion | RevisionKind::MoveFrom)
+                ))
             || member.author.as_deref().is_none_or(str::is_empty)
             || member.author != members[0].author
             || member.date != members[0].date
+            || member.prior_is_nested
             || !member
                 .revision_id
                 .as_deref()
@@ -7815,27 +8203,39 @@ fn validate_review_group(
 
     let insertions = members
         .iter()
-        .filter(|member| member.kind == RevisionKind::Insertion)
+        .filter(|member| member.kind == ReviewMemberKind::Revision(RevisionKind::Insertion))
         .count();
     let deletions = members
         .iter()
-        .filter(|member| member.kind == RevisionKind::Deletion)
+        .filter(|member| member.kind == ReviewMemberKind::Revision(RevisionKind::Deletion))
+        .count();
+    let formatting = members
+        .iter()
+        .filter(|member| member.kind == ReviewMemberKind::Formatting)
         .count();
     match group.kind {
-        RevisionGroupKind::Typing if members.len() == 1 && insertions == 1 => {}
+        RevisionGroupKind::Typing if members.len() == 1 && insertions == 1 && formatting == 0 => {}
         RevisionGroupKind::Replacement
-            if members.len() == 2 && insertions == 1 && deletions == 1 => {}
+            if members.len() == 2 && insertions == 1 && deletions == 1 && formatting == 0 => {}
+        RevisionGroupKind::Formatting if formatting == members.len() && !members.is_empty() => {}
+        // Accept an in-memory pre-doc-83 formatting pair. New authoring uses
+        // `RunProperties.prop_change` and never creates this representation.
         RevisionGroupKind::Formatting
-            if members.len() == 2
+            if formatting == 0
+                && members.len() == 2
                 && insertions == 1
                 && deletions == 1
                 && members
                     .iter()
-                    .find(|member| member.kind == RevisionKind::Insertion)
+                    .find(|member| {
+                        member.kind == ReviewMemberKind::Revision(RevisionKind::Insertion)
+                    })
                     .map(|member| &member.text)
                     == members
                         .iter()
-                        .find(|member| member.kind == RevisionKind::Deletion)
+                        .find(|member| {
+                            member.kind == ReviewMemberKind::Revision(RevisionKind::Deletion)
+                        })
                         .map(|member| &member.text) => {}
         _ => return Err("revision group has an invalid member composition".to_owned()),
     }
@@ -7843,7 +8243,7 @@ fn validate_review_group(
     Ok(ValidatedReviewGroup {
         node: members[0].node,
         start: members.iter().map(|member| member.start).min().unwrap_or(0),
-        ids: members.into_iter().map(|member| member.id).collect(),
+        targets: members.into_iter().map(|member| member.target).collect(),
     })
 }
 
@@ -7861,6 +8261,7 @@ fn collect_review_group_members(
                         inline,
                         paragraph.id,
                         &mut offset,
+                        true,
                         group_id,
                         Some(index),
                         out,
@@ -7884,6 +8285,7 @@ fn collect_review_group_inline(
     inline: &InlineNode,
     node: NodeId,
     offset: &mut u32,
+    projected: bool,
     group_id: NodeId,
     top_level_index: Option<usize>,
     out: &mut Vec<ReviewGroupMember>,
@@ -7891,45 +8293,95 @@ fn collect_review_group_inline(
     match inline {
         InlineNode::Revision(revision) => {
             let start = *offset;
-            let end = start.saturating_add(
-                revision
-                    .inlines
-                    .iter()
-                    .map(inline_anchor_len_for_review)
-                    .sum::<u32>(),
-            );
+            let visible = projected
+                && revision
+                    .kind
+                    .contributes_to(ReviewProjection::FinalWithMarkup);
+            let end = if visible {
+                start.saturating_add(projected_revision_len(revision))
+            } else {
+                start
+            };
             if let Some(group) = revision.editor_group
                 && group.id == group_id
             {
                 out.push(ReviewGroupMember {
-                    id: revision.id,
+                    target: ReviewDecisionTarget::Revision(revision.id),
                     group,
                     node,
                     start,
                     end,
-                    kind: revision.kind,
+                    kind: ReviewMemberKind::Revision(revision.kind),
                     author: revision.author.clone(),
                     date: revision.date.clone(),
                     revision_id: revision.revision_id.clone(),
                     text: node_plain_text(&revision.inlines),
                     top_level_index,
+                    prior_is_nested: false,
                 });
             }
-            for child in &revision.inlines {
-                collect_review_group_inline(child, node, offset, group_id, None, out);
+            if visible {
+                for child in &revision.inlines {
+                    collect_review_group_inline(child, node, offset, true, group_id, None, out);
+                }
+            } else {
+                let mut hidden_offset = start;
+                for child in &revision.inlines {
+                    collect_review_group_inline(
+                        child,
+                        node,
+                        &mut hidden_offset,
+                        false,
+                        group_id,
+                        None,
+                        out,
+                    );
+                }
             }
+            *offset = end;
+        }
+        InlineNode::Run(run) => {
+            let start = *offset;
+            let end = if projected {
+                start.saturating_add(run.text.len() as u32)
+            } else {
+                start
+            };
+            if let Some(change) = &run.properties.prop_change
+                && let Some(group) = change.editor_group
+                && group.id == group_id
+            {
+                out.push(ReviewGroupMember {
+                    target: ReviewDecisionTarget::RunFormatting(run.id),
+                    group,
+                    node,
+                    start,
+                    end,
+                    kind: ReviewMemberKind::Formatting,
+                    author: change.author.clone(),
+                    date: change.date.clone(),
+                    revision_id: change.revision_id.clone(),
+                    text: run.text.clone(),
+                    top_level_index,
+                    prior_is_nested: change.prior.prop_change.is_some(),
+                });
+            }
+            *offset = end;
         }
         InlineNode::Hyperlink(link) => {
             for child in &link.inlines {
-                collect_review_group_inline(child, node, offset, group_id, None, out);
+                collect_review_group_inline(child, node, offset, projected, group_id, None, out);
             }
         }
         InlineNode::Sdt(sdt) => {
             for child in &sdt.inlines {
-                collect_review_group_inline(child, node, offset, group_id, None, out);
+                collect_review_group_inline(child, node, offset, projected, group_id, None, out);
             }
         }
-        _ => *offset = offset.saturating_add(inline_anchor_len_for_review(inline)),
+        _ if projected => {
+            *offset = offset.saturating_add(inline_anchor_len_for_review(inline));
+        }
+        _ => {}
     }
 }
 
@@ -8048,6 +8500,7 @@ fn collect_review_comment_inline(
     inline: &InlineNode,
     node: NodeId,
     offset: &mut u32,
+    projected: bool,
     starts: &mut std::collections::BTreeMap<casual_doc_model::v1::CommentId, u32>,
     out: &mut Vec<(casual_doc_model::v1::CommentId, NodeId, u32, u32)>,
 ) {
@@ -8062,20 +8515,27 @@ fn collect_review_comment_inline(
         }
         InlineNode::Hyperlink(link) => {
             for child in &link.inlines {
-                collect_review_comment_inline(child, node, offset, starts, out);
+                collect_review_comment_inline(child, node, offset, projected, starts, out);
             }
         }
         InlineNode::Revision(revision) => {
+            let child_projected = projected
+                && revision
+                    .kind
+                    .contributes_to(ReviewProjection::FinalWithMarkup);
             for child in &revision.inlines {
-                collect_review_comment_inline(child, node, offset, starts, out);
+                collect_review_comment_inline(child, node, offset, child_projected, starts, out);
             }
         }
         InlineNode::Sdt(sdt) => {
             for child in &sdt.inlines {
-                collect_review_comment_inline(child, node, offset, starts, out);
+                collect_review_comment_inline(child, node, offset, projected, starts, out);
             }
         }
-        _ => *offset = offset.saturating_add(inline_anchor_len_for_review(inline)),
+        _ if projected => {
+            *offset = offset.saturating_add(inline_anchor_len_for_review(inline));
+        }
+        _ => {}
     }
 }
 
@@ -8083,11 +8543,18 @@ fn inline_anchor_len_for_review(inline: &InlineNode) -> u32 {
     match inline {
         InlineNode::Run(run) => run.text.len() as u32,
         InlineNode::Hyperlink(link) => link.inlines.iter().map(inline_anchor_len_for_review).sum(),
-        InlineNode::Revision(revision) => revision
-            .inlines
-            .iter()
-            .map(inline_anchor_len_for_review)
-            .sum(),
+        InlineNode::Revision(revision)
+            if revision
+                .kind
+                .contributes_to(ReviewProjection::FinalWithMarkup) =>
+        {
+            revision
+                .inlines
+                .iter()
+                .map(inline_anchor_len_for_review)
+                .sum()
+        }
+        InlineNode::Revision(_) => 0,
         InlineNode::Sdt(sdt) => sdt.inlines.iter().map(inline_anchor_len_for_review).sum(),
         InlineNode::CommentReference(_) => 0,
         InlineNode::Symbol(symbol) => {
@@ -8099,24 +8566,75 @@ fn inline_anchor_len_for_review(inline: &InlineNode) -> u32 {
     }
 }
 
+fn projected_revision_len(revision: &Revision) -> u32 {
+    if revision
+        .kind
+        .contributes_to(ReviewProjection::FinalWithMarkup)
+    {
+        revision
+            .inlines
+            .iter()
+            .map(inline_anchor_len_for_review)
+            .sum()
+    } else {
+        0
+    }
+}
+
 fn collect_review_inline(
     inlines: &[InlineNode],
     node: NodeId,
     offset: &mut u32,
+    projected: bool,
     move_links: &BTreeMap<NodeId, ReviewMoveLink>,
     out: &mut Vec<serde_json::Value>,
 ) {
     for inline in inlines {
         match inline {
+            InlineNode::Run(run) if run.properties.prop_change.is_some() => {
+                let start = *offset;
+                let end = if projected {
+                    start.saturating_add(run.text.len() as u32)
+                } else {
+                    start
+                };
+                let change = run
+                    .properties
+                    .prop_change
+                    .as_ref()
+                    .expect("matched property change");
+                out.push(serde_json::json!({
+                    "id": run.id.to_string(),
+                    "kind": "formatting",
+                    "author": change.author,
+                    "date": change.date,
+                    "groupId": change.editor_group.map(|group| group.id.to_string()),
+                    "groupKind": change.editor_group.map(|_| "formatting"),
+                    "revisionId": change.revision_id,
+                    "text": run.text,
+                    "formattingDelta": formatting_delta_json(
+                        &run.properties,
+                        change.prior.as_ref(),
+                    ),
+                    "anchor": {
+                        "node": node.to_string(),
+                        "start": start,
+                        "end": end,
+                    },
+                }));
+                *offset = end;
+            }
             InlineNode::Revision(revision) => {
                 let start = *offset;
-                let end = start.saturating_add(
-                    revision
-                        .inlines
-                        .iter()
-                        .map(inline_anchor_len_for_review)
-                        .sum::<u32>(),
-                );
+                let visible = projected
+                    && revision
+                        .kind
+                        .contributes_to(ReviewProjection::FinalWithMarkup);
+                let end = if visible {
+                    start.saturating_add(projected_revision_len(revision))
+                } else {
+                    start
+                };
                 let kind = match revision.kind {
                     RevisionKind::Insertion => "insertion",
                     RevisionKind::Deletion => "deletion",
@@ -8152,17 +8670,92 @@ fn collect_review_inline(
                     });
                 }
                 out.push(item);
-                collect_review_inline(&revision.inlines, node, offset, move_links, out);
+                if visible {
+                    collect_review_inline(&revision.inlines, node, offset, true, move_links, out);
+                } else {
+                    let mut hidden_offset = start;
+                    collect_review_inline(
+                        &revision.inlines,
+                        node,
+                        &mut hidden_offset,
+                        false,
+                        move_links,
+                        out,
+                    );
+                }
+                *offset = end;
             }
             InlineNode::Hyperlink(link) => {
-                collect_review_inline(&link.inlines, node, offset, move_links, out);
+                collect_review_inline(&link.inlines, node, offset, projected, move_links, out);
             }
             InlineNode::Sdt(sdt) => {
-                collect_review_inline(&sdt.inlines, node, offset, move_links, out);
+                collect_review_inline(&sdt.inlines, node, offset, projected, move_links, out);
             }
-            _ => *offset = offset.saturating_add(inline_anchor_len_for_review(inline)),
+            _ if projected => {
+                *offset = offset.saturating_add(inline_anchor_len_for_review(inline));
+            }
+            _ => {}
         }
     }
+}
+
+fn formatting_delta_json(current: &RunProperties, prior: &RunProperties) -> serde_json::Value {
+    let mut changes = Vec::new();
+    let mut push = |property: &str, before: serde_json::Value, after: serde_json::Value| {
+        if before != after {
+            changes.push(serde_json::json!({
+                "property": property,
+                "before": before,
+                "after": after,
+            }));
+        }
+    };
+    push(
+        "bold",
+        serde_json::json!(prior.bold),
+        serde_json::json!(current.bold),
+    );
+    push(
+        "italic",
+        serde_json::json!(prior.italic),
+        serde_json::json!(current.italic),
+    );
+    push(
+        "underline",
+        serde_json::json!(prior.underline),
+        serde_json::json!(current.underline),
+    );
+    push(
+        "strike",
+        serde_json::json!(prior.strike),
+        serde_json::json!(current.strike),
+    );
+    push(
+        "font",
+        serde_json::to_value(&prior.font_ref).unwrap_or(serde_json::Value::Null),
+        serde_json::to_value(&current.font_ref).unwrap_or(serde_json::Value::Null),
+    );
+    push(
+        "sizeHalfPoints",
+        serde_json::json!(prior.size_half_points),
+        serde_json::json!(current.size_half_points),
+    );
+    push(
+        "color",
+        serde_json::to_value(prior.color).unwrap_or(serde_json::Value::Null),
+        serde_json::to_value(current.color).unwrap_or(serde_json::Value::Null),
+    );
+    push(
+        "highlight",
+        serde_json::to_value(prior.highlight).unwrap_or(serde_json::Value::Null),
+        serde_json::to_value(current.highlight).unwrap_or(serde_json::Value::Null),
+    );
+    push(
+        "verticalAlignment",
+        serde_json::to_value(prior.vertical_alignment).unwrap_or(serde_json::Value::Null),
+        serde_json::to_value(current.vertical_alignment).unwrap_or(serde_json::Value::Null),
+    );
+    serde_json::Value::Array(changes)
 }
 
 fn find_text_match(
@@ -8629,8 +9222,8 @@ struct ParagraphLink<'a> {
 }
 
 /// Collects hyperlink wrappers with ranges in the same byte-anchor space used by
-/// shaping and hit-testing. Revisions and inline content controls are transparent,
-/// matching the layout flattener.
+/// shaping and hit-testing. Visible revisions and inline content controls are
+/// transparent; hidden revisions contribute neither links nor bytes.
 fn paragraph_links<'a>(document: &Document, paragraph: &'a Paragraph) -> Vec<ParagraphLink<'a>> {
     fn walk<'a>(
         document: &Document,
@@ -8652,9 +9245,14 @@ fn paragraph_links<'a>(document: &Document, paragraph: &'a Paragraph) -> Vec<Par
                         ),
                     });
                 }
-                InlineNode::Revision(revision) => {
+                InlineNode::Revision(revision)
+                    if revision
+                        .kind
+                        .contributes_to(ReviewProjection::FinalWithMarkup) =>
+                {
                     walk(document, &revision.inlines, node, offset, out)
                 }
+                InlineNode::Revision(_) => {}
                 InlineNode::Sdt(sdt) => walk(document, &sdt.inlines, node, offset, out),
                 _ => {
                     *offset = offset.saturating_add(inline_anchor_len(document, inline));
@@ -8687,7 +9285,14 @@ fn inline_anchor_len(document: &Document, inline: &InlineNode) -> u32 {
             char::from_u32(symbol.char).map_or(0, |ch| ch.len_utf8() as u32)
         }
         InlineNode::Hyperlink(link) => inlines_anchor_len(document, &link.inlines),
-        InlineNode::Revision(revision) => inlines_anchor_len(document, &revision.inlines),
+        InlineNode::Revision(revision)
+            if revision
+                .kind
+                .contributes_to(ReviewProjection::FinalWithMarkup) =>
+        {
+            inlines_anchor_len(document, &revision.inlines)
+        }
+        InlineNode::Revision(_) => 0,
         InlineNode::Sdt(sdt) => inlines_anchor_len(document, &sdt.inlines),
         InlineNode::Field(field) => field_anchor_len(field),
         InlineNode::NoteReference(reference) => {
@@ -8779,11 +9384,23 @@ fn resolve_bookmark(document: &Document, anchor: &str) -> Option<ModelPos> {
                         return Some(pos);
                     }
                 }
-                InlineNode::Revision(revision) => {
+                InlineNode::Revision(revision)
+                    if revision
+                        .kind
+                        .contributes_to(ReviewProjection::FinalWithMarkup) =>
+                {
                     if let Some(pos) =
                         inlines_pos(document, &revision.inlines, node, bookmark, offset)
                     {
                         return Some(pos);
+                    }
+                }
+                InlineNode::Revision(revision) => {
+                    let mut collapsed = *offset;
+                    if let Some(pos) =
+                        inlines_pos(document, &revision.inlines, node, bookmark, &mut collapsed)
+                    {
+                        return Some(ModelPos::new(pos.node, *offset));
                     }
                 }
                 InlineNode::Sdt(sdt) => {
@@ -11143,7 +11760,7 @@ mod tests {
     }
 
     #[test]
-    fn suggested_format_creates_review_pair_and_undoes() {
+    fn suggested_format_uses_one_copy_rpr_change_and_decides_atomically() {
         let mut d = open_document(RICH_DOCX).expect("open corpus docx");
         let mut nodes = Vec::new();
         collect_block_text(d.document.body(), &mut nodes);
@@ -11172,11 +11789,166 @@ mod tests {
         .expect("suggest format");
         let mut revisions = Vec::new();
         collect_review_revision_ids(d.document.body(), &mut revisions);
-        assert_eq!(revisions.len(), 2);
+        assert!(
+            revisions.is_empty(),
+            "formatting does not duplicate text into revision wrappers"
+        );
+        let mut format_ids = Vec::new();
+        collect_review_format_ids(d.document.body(), &mut format_ids);
+        assert_eq!(format_ids.len(), 1);
+        assert_eq!(
+            d.copy_text(&node, 0, &node, text.len() as u32),
+            text,
+            "the projected document contains exactly one text copy"
+        );
+
+        let summary: serde_json::Value =
+            serde_json::from_str(&d.review_summary()).expect("review summary");
+        let items = summary["revisions"].as_array().expect("revision array");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["kind"], "formatting");
+        assert_eq!(items[0]["text"], text.chars().next().unwrap().to_string());
+        assert_eq!(items[0]["formattingDelta"][0]["property"], "bold");
+        assert_eq!(items[0]["formattingDelta"][0]["after"], true);
+        let group_id = items[0]["groupId"]
+            .as_str()
+            .expect("editor formatting group")
+            .to_owned();
+
+        let bytes = d.export_docx().expect("export suggested formatting");
+        let mut package =
+            DocxPackage::open(&bytes, viewer_limits()).expect("open exported package");
+        let document_xml = String::from_utf8(
+            package
+                .read_part("word/document.xml")
+                .expect("read document xml"),
+        )
+        .expect("document xml is utf-8");
+        assert_eq!(document_xml.matches("<w:rPrChange").count(), 1);
+
+        let mut reopened = open_document(&bytes).expect("reopen exported formatting change");
+        let imported_summary: serde_json::Value =
+            serde_json::from_str(&reopened.review_summary()).expect("imported review summary");
+        let imported = &imported_summary["revisions"][0];
+        assert_eq!(imported["kind"], "formatting");
+        assert_eq!(imported["groupId"], serde_json::Value::Null);
+        assert_eq!(imported["formattingDelta"][0]["property"], "bold");
+        reopened
+            .decide_revision(
+                imported["id"].as_str().expect("imported formatting id"),
+                false,
+            )
+            .expect("reject imported property change");
+        assert!(
+            serde_json::from_str::<serde_json::Value>(&reopened.review_summary())
+                .expect("post-decision review summary")["revisions"]
+                .as_array()
+                .expect("revision array")
+                .is_empty()
+        );
+
+        d.decide_revision_group(&group_id, false)
+            .expect("reject formatting group");
+        format_ids.clear();
+        collect_review_format_ids(d.document.body(), &mut format_ids);
+        assert!(
+            format_ids.is_empty(),
+            "reject clears property-change metadata"
+        );
+        assert_eq!(d.copy_text(&node, 0, &node, text.len() as u32), text);
+
+        d.undo().expect("undo reject restores suggestion");
+        format_ids.clear();
+        collect_review_format_ids(d.document.body(), &mut format_ids);
+        assert_eq!(format_ids.len(), 1);
         d.undo().expect("undo suggested format");
-        revisions.clear();
-        collect_review_revision_ids(d.document.body(), &mut revisions);
-        assert!(revisions.is_empty());
+        format_ids.clear();
+        collect_review_format_ids(d.document.body(), &mut format_ids);
+        assert!(format_ids.is_empty());
+    }
+
+    #[test]
+    fn multi_run_formatting_group_is_one_atomic_decision() {
+        use casual_doc_model::v1::Definitions;
+
+        let paragraph = NodeId::from_parts(94, 1).unwrap();
+        let document = Document::new(
+            NodeId::from_parts(94, 9).unwrap(),
+            vec![BlockNode::Paragraph(Paragraph {
+                id: paragraph,
+                properties: ParagraphProperties::default(),
+                inlines: vec![
+                    InlineNode::Run(Run {
+                        id: NodeId::from_parts(94, 2).unwrap(),
+                        properties: RunProperties::default(),
+                        text: "A".to_owned(),
+                    }),
+                    InlineNode::Run(Run {
+                        id: NodeId::from_parts(94, 3).unwrap(),
+                        properties: RunProperties {
+                            italic: Some(true),
+                            ..RunProperties::default()
+                        },
+                        text: "B".to_owned(),
+                    }),
+                ],
+            })],
+            Definitions::default(),
+        )
+        .expect("valid multi-run document");
+        let shaper = ParleyShaper::new();
+        let layout = paginate_document(&document, &shaper);
+        let default_config = document_page_config(&document);
+        let revision_ids = RevisionIdAllocator::from_document(&document);
+        let mut d = WasmDocument {
+            document,
+            layout,
+            shaper,
+            media: BTreeMap::new(),
+            default_config,
+            edit_ids: IdGenerator::new(0x5d),
+            undo: Vec::new(),
+            redo: Vec::new(),
+            typing_history: None,
+            revision_ids,
+            revision: 0,
+            galley_cache: GalleyCache::new(),
+            bullet_list: None,
+            numbered_list: None,
+        };
+        let node = paragraph.to_string();
+
+        d.suggest_format(
+            &node,
+            0,
+            2,
+            Some(true),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("Tester".to_owned()),
+            None,
+        )
+        .expect("suggest formatting across two runs");
+        let summary: serde_json::Value =
+            serde_json::from_str(&d.review_summary()).expect("review summary");
+        let revisions = summary["revisions"].as_array().expect("revision array");
+        assert_eq!(revisions.len(), 2);
+        let group = revisions[0]["groupId"].as_str().expect("formatting group");
+        assert_eq!(revisions[1]["groupId"], group);
+        assert_eq!(d.copy_text(&node, 0, &node, 2), "AB");
+
+        d.decide_revision_group(group, false)
+            .expect("reject complete formatting group");
+        let mut format_ids = Vec::new();
+        collect_review_format_ids(d.document.body(), &mut format_ids);
+        assert!(format_ids.is_empty());
+        assert_eq!(d.copy_text(&node, 0, &node, 2), "AB");
     }
 
     #[test]
@@ -11367,6 +12139,226 @@ mod tests {
         assert_eq!(
             d.copy_text(&node, 0, &node, original.len() as u32),
             original
+        );
+    }
+
+    #[test]
+    fn suggested_deletion_is_zero_width_but_remains_decidable() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let (node_id, original) = nodes
+            .iter()
+            .find(|(_, text)| !text.is_empty())
+            .map(|(id, text)| (*id, text.clone()))
+            .expect("a non-empty paragraph");
+        let first_len = original.chars().next().map(char::len_utf8).unwrap_or(1) as u32;
+        let node = node_id.to_string();
+
+        d.suggest_delete(&node, 0, first_len, Some("Tester".to_owned()), None)
+            .expect("suggest deletion");
+        let summary: serde_json::Value =
+            serde_json::from_str(&d.review_summary()).expect("review summary");
+        let deletion = &summary["revisions"][0];
+        assert_eq!(deletion["kind"], "deletion");
+        assert_eq!(deletion["anchor"]["start"], 0);
+        assert_eq!(deletion["anchor"]["end"], 0);
+        assert_eq!(
+            d.copy_text(&node, 0, &node, original.len() as u32 - first_len,),
+            original[first_len as usize..],
+            "copy uses final projected bytes while deletion metadata remains"
+        );
+
+        d.decide_revision(deletion["id"].as_str().expect("revision id"), false)
+            .expect("reject deletion");
+        assert_eq!(
+            d.copy_text(&node, 0, &node, original.len() as u32),
+            original
+        );
+    }
+
+    #[test]
+    fn hidden_revision_ancestors_collapse_nested_review_anchors() {
+        let paragraph = NodeId::from_parts(91, 1).unwrap();
+        let nested = Revision {
+            id: NodeId::from_parts(91, 4).unwrap(),
+            kind: RevisionKind::Insertion,
+            author: Some("Reviewer".to_owned()),
+            date: None,
+            revision_id: Some("2".to_owned()),
+            editor_group: None,
+            inlines: vec![InlineNode::Run(Run {
+                id: NodeId::from_parts(91, 5).unwrap(),
+                properties: RunProperties::default(),
+                text: "nested".to_owned(),
+            })],
+        };
+        let inlines = vec![
+            InlineNode::Revision(Revision {
+                id: NodeId::from_parts(91, 2).unwrap(),
+                kind: RevisionKind::Deletion,
+                author: Some("Reviewer".to_owned()),
+                date: None,
+                revision_id: Some("1".to_owned()),
+                editor_group: None,
+                inlines: vec![InlineNode::Revision(nested)],
+            }),
+            InlineNode::Run(Run {
+                id: NodeId::from_parts(91, 6).unwrap(),
+                properties: RunProperties::default(),
+                text: "A".to_owned(),
+            }),
+        ];
+        let mut offset = 0;
+        let mut items = Vec::new();
+        collect_review_inline(
+            &inlines,
+            paragraph,
+            &mut offset,
+            true,
+            &BTreeMap::new(),
+            &mut items,
+        );
+        assert_eq!(offset, 1);
+        assert_eq!(items.len(), 2);
+        assert!(
+            items
+                .iter()
+                .all(|item| { item["anchor"]["start"] == 0 && item["anchor"]["end"] == 0 }),
+            "a hidden ancestor suppresses every descendant's projected width"
+        );
+    }
+
+    #[test]
+    fn comment_inside_hidden_deletion_has_a_collapsed_projected_anchor() {
+        let paragraph = NodeId::from_parts(93, 1).unwrap();
+        let comment = CommentId::new(NodeId::from_parts(93, 2).unwrap());
+        let inlines = vec![InlineNode::Revision(Revision {
+            id: NodeId::from_parts(93, 3).unwrap(),
+            kind: RevisionKind::Deletion,
+            author: Some("Reviewer".to_owned()),
+            date: None,
+            revision_id: Some("1".to_owned()),
+            editor_group: None,
+            inlines: vec![
+                InlineNode::CommentRangeStart(CommentRangeStart {
+                    id: NodeId::from_parts(93, 4).unwrap(),
+                    comment,
+                }),
+                InlineNode::Run(Run {
+                    id: NodeId::from_parts(93, 5).unwrap(),
+                    properties: RunProperties::default(),
+                    text: "hidden".to_owned(),
+                }),
+                InlineNode::CommentRangeEnd(CommentRangeEnd {
+                    id: NodeId::from_parts(93, 6).unwrap(),
+                    comment,
+                }),
+            ],
+        })];
+        let mut offset = 0;
+        let mut starts = BTreeMap::new();
+        let mut anchors = Vec::new();
+        for inline in &inlines {
+            collect_review_comment_inline(
+                inline,
+                paragraph,
+                &mut offset,
+                true,
+                &mut starts,
+                &mut anchors,
+            );
+        }
+        assert_eq!(offset, 0);
+        assert_eq!(anchors, vec![(comment, paragraph, 0, 0)]);
+    }
+
+    #[test]
+    fn replacement_projection_drives_copy_find_stats_and_outline() {
+        use casual_doc_model::v1::Definitions;
+
+        let paragraph = NodeId::from_parts(92, 1).unwrap();
+        let document = Document::new(
+            NodeId::from_parts(92, 9).unwrap(),
+            vec![BlockNode::Paragraph(Paragraph {
+                id: paragraph,
+                properties: ParagraphProperties {
+                    outline_level: Some(0),
+                    ..ParagraphProperties::default()
+                },
+                inlines: vec![
+                    InlineNode::Revision(Revision {
+                        id: NodeId::from_parts(92, 2).unwrap(),
+                        kind: RevisionKind::Deletion,
+                        author: Some("Reviewer".to_owned()),
+                        date: None,
+                        revision_id: Some("1".to_owned()),
+                        editor_group: None,
+                        inlines: vec![InlineNode::Run(Run {
+                            id: NodeId::from_parts(92, 3).unwrap(),
+                            properties: RunProperties::default(),
+                            text: "obsolete words".to_owned(),
+                        })],
+                    }),
+                    InlineNode::Revision(Revision {
+                        id: NodeId::from_parts(92, 4).unwrap(),
+                        kind: RevisionKind::Insertion,
+                        author: Some("Reviewer".to_owned()),
+                        date: None,
+                        revision_id: Some("2".to_owned()),
+                        editor_group: None,
+                        inlines: vec![InlineNode::Run(Run {
+                            id: NodeId::from_parts(92, 5).unwrap(),
+                            properties: RunProperties::default(),
+                            text: "final heading".to_owned(),
+                        })],
+                    }),
+                ],
+            })],
+            Definitions::default(),
+        )
+        .expect("valid replacement document");
+        let shaper = ParleyShaper::new();
+        let layout = paginate_document(&document, &shaper);
+        let default_config = document_page_config(&document);
+        let revision_ids = RevisionIdAllocator::from_document(&document);
+        let d = WasmDocument {
+            document,
+            layout,
+            shaper,
+            media: BTreeMap::new(),
+            default_config,
+            edit_ids: IdGenerator::new(0x5c),
+            undo: Vec::new(),
+            redo: Vec::new(),
+            typing_history: None,
+            revision_ids,
+            revision: 0,
+            galley_cache: GalleyCache::new(),
+            bullet_list: None,
+            numbered_list: None,
+        };
+        let node = paragraph.to_string();
+
+        assert_eq!(d.copy_text(&node, 0, &node, 13), "final heading");
+        let caret = d.caret_rect(&node, 13);
+        let hit = d
+            .hit_test(
+                caret[0] as u32,
+                caret[1].saturating_add(10),
+                caret[2].saturating_add(10),
+            )
+            .expect("hit at projected line end");
+        assert_eq!(hit.node(), node);
+        assert_eq!(hit.offset(), 13);
+        assert!(!d.find_text("obsolete", &node, 0, true, false).found());
+        assert!(d.find_text("final", &node, 0, true, false).found());
+        assert_eq!(d.document_stats().words(), 2);
+        assert_eq!(
+            d.document_outline()
+                .first()
+                .and_then(|row| row.splitn(3, '\t').nth(2)),
+            Some("final heading")
         );
     }
 

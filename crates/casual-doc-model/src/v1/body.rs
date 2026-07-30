@@ -1219,6 +1219,38 @@ pub enum RevisionKind {
     MoveTo,
 }
 
+/// The text/content projection used when reading tracked revisions.
+///
+/// The active editor uses [`FinalWithMarkup`](Self::FinalWithMarkup): accepted
+/// content is not mutated, but insertion/destination text contributes to the
+/// active byte space while deletion/source text is zero-width. `Original` and
+/// `Final` make the contract explicit for future read-only view switching.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ReviewProjection {
+    /// Content before pending tracked changes.
+    Original,
+    /// Content after pending tracked changes, without requiring review chrome.
+    Final,
+    /// Final content while comments/revision metadata remain visible.
+    #[default]
+    FinalWithMarkup,
+}
+
+impl RevisionKind {
+    /// Whether this revision contributes content to `projection`.
+    #[must_use]
+    pub const fn contributes_to(self, projection: ReviewProjection) -> bool {
+        match projection {
+            ReviewProjection::Original => {
+                matches!(self, Self::Deletion | Self::MoveFrom)
+            }
+            ReviewProjection::Final | ReviewProjection::FinalWithMarkup => {
+                matches!(self, Self::Insertion | Self::MoveTo)
+            }
+        }
+    }
+}
+
 /// OpenDoc-only logical grouping for revisions that form one review decision.
 ///
 /// This metadata is deliberately separate from [`Revision::revision_id`]:
@@ -1242,7 +1274,10 @@ pub enum RevisionGroupKind {
     Typing,
     /// Exactly one deletion followed by one insertion.
     Replacement,
-    /// Exactly one deletion plus one insertion of the same text with new props.
+    /// One or more contiguous `w:rPrChange` runs authored as one format action.
+    ///
+    /// The runtime can still validate an older in-memory deletion/insertion pair
+    /// long enough to decide it, but new documents never author that shape.
     Formatting,
 }
 

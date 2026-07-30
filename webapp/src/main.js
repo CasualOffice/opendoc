@@ -234,7 +234,10 @@ function setReviewMode(mode) {
 }
 
 function reviewRangeClientRect(startNode, startOffset, endNode, endOffset) {
-  const rects = doc?.selectionRects(startNode, startOffset, endNode, endOffset) ?? [];
+  let rects = doc?.selectionRects(startNode, startOffset, endNode, endOffset) ?? [];
+  if (rects.length < 5 && startNode === endNode && startOffset === endOffset) {
+    rects = doc?.caretRect(startNode, startOffset) ?? [];
+  }
   if (rects.length < 5) return null;
   const [pageNumber, x, y, width, height] = rects;
   const page = pages[pageNumber - 1];
@@ -249,6 +252,39 @@ function reviewRangeClientRect(startNode, startOffset, endNode, endOffset) {
     bottom: canvasRect.top + (y + height) * sy,
     pageRight: canvasRect.right,
   };
+}
+
+function reviewFormattingValue(property, value) {
+  if (value == null) return "inherited";
+  if (typeof value === "boolean") return value ? "on" : "off";
+  if (property === "sizeHalfPoints" && Number.isFinite(Number(value))) {
+    return `${Number(value) / 2} pt`;
+  }
+  if (typeof value === "object") {
+    const scalar = Object.values(value).find((candidate) =>
+      ["string", "number", "boolean"].includes(typeof candidate));
+    return scalar == null ? "custom" : String(scalar);
+  }
+  return String(value);
+}
+
+function reviewFormattingDescription(changes) {
+  const labels = {
+    bold: "Bold",
+    italic: "Italic",
+    underline: "Underline",
+    strike: "Strikethrough",
+    font: "Font",
+    sizeHalfPoints: "Font size",
+    color: "Text color",
+    highlight: "Highlight",
+    verticalAlignment: "Vertical alignment",
+  };
+  return (changes ?? []).map((change) => {
+    const property = String(change?.property || "");
+    const label = labels[property] || property || "Formatting";
+    return `${label}: ${reviewFormattingValue(property, change?.before)} → ${reviewFormattingValue(property, change?.after)}`;
+  }).join("\n");
 }
 
 function revisionRange(revision) {
@@ -365,6 +401,7 @@ function renderReviewMarginItems() {
     }
     const deletions = revisions.filter((revision) => revision.kind === "deletion");
     const insertions = revisions.filter((revision) => revision.kind === "insertion");
+    const formatting = revisions.filter((revision) => revision.kind === "formatting");
     const groupKind = String(revisions[0]?.groupKind || "");
     const kind = groupKind === "formatting"
       ? "formatting"
@@ -377,9 +414,12 @@ function renderReviewMarginItems() {
       kind,
       author: revisions.find((revision) => revision.author)?.author,
       date: revisions.find((revision) => revision.date)?.date,
-      text: (kind === "insertion" ? insertions : deletions).map((revision) => String(revision.text || "")).join(""),
+      text: (kind === "formatting" ? formatting : kind === "insertion" ? insertions : deletions)
+        .map((revision) => String(revision.text || "")).join(""),
       oldText: deletions.map((revision) => String(revision.text || "")).join(""),
       newText: insertions.map((revision) => String(revision.text || "")).join(""),
+      formattingDelta: formatting.flatMap((revision) =>
+        Array.isArray(revision.formattingDelta) ? revision.formattingDelta : []),
       anchor: {
         node,
         start: Math.min(...ranges.map((range) => range.startOffset)),
@@ -569,7 +609,9 @@ function renderReviewMarginItems() {
       if (item.data.kind === "replacement") {
         body.textContent = `Replaced “${item.data.oldText}” with “${item.data.newText}”`;
       } else if (item.data.kind === "formatting") {
-        body.textContent = `Changed formatting for “${item.data.newText || item.data.oldText}”`;
+        const target = item.data.text || item.data.newText || item.data.oldText;
+        const details = reviewFormattingDescription(item.data.formattingDelta);
+        body.textContent = `Changed formatting for “${target}”${details ? `\n${details}` : ""}`;
       } else if (item.data.kind === "move") {
         body.textContent = `Moved “${item.data.newText || item.data.oldText}”`;
       } else {
@@ -1232,8 +1274,11 @@ function paintReviewMarkers() {
   for (const revision of summary.revisions ?? []) {
     const range = revisionRange(revision);
     if (!range) continue;
-    const rects = doc.selectionRects(range.startNode, range.startOffset, range.endNode, range.endOffset);
     const deletionLike = revision.kind === "deletion" || revision.kind === "move_from";
+    let rects = doc.selectionRects(range.startNode, range.startOffset, range.endNode, range.endOffset);
+    if (rects.length < 5 && deletionLike && range.startNode === range.endNode) {
+      rects = doc.caretRect(range.startNode, range.startOffset);
+    }
     const moveItemId = revision.movePair?.fromStart && revision.movePair?.toStart
       ? `revision:move:${revision.movePair.fromStart}:${revision.movePair.toStart}`
       : null;

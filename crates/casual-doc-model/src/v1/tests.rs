@@ -310,6 +310,51 @@ fn run_property_change_round_trips_and_is_validated() {
             property: "run.size_half_points"
         }
     ));
+
+    let grouped = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{"type":"paragraph","id":"00000000000000030000000000000002","properties":{},
+              "inlines":[{"type":"run","id":"00000000000000030000000000000003",
+                "properties":{"bold":true,"propChange":{"author":"Ann","revisionId":"8",
+                  "editorGroup":{"id":"00000000000000030000000000000004","kind":"formatting"},
+                  "prior":{}}},"text":"x"}]}],
+            "definitions":{}}"#;
+    let grouped = Document::from_json(grouped, SnapshotLimits::default()).unwrap();
+    assert_eq!(
+        Document::from_json(&grouped.to_json().unwrap(), SnapshotLimits::default())
+            .unwrap()
+            .to_json()
+            .unwrap(),
+        grouped.to_json().unwrap()
+    );
+
+    let wrong_group_kind = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{"type":"paragraph","id":"00000000000000030000000000000002","properties":{},
+              "inlines":[{"type":"run","id":"00000000000000030000000000000003",
+                "properties":{"propChange":{"author":"Ann",
+                  "editorGroup":{"id":"00000000000000030000000000000004","kind":"typing"},
+                  "prior":{}}},"text":"x"}]}],
+            "definitions":{}}"#;
+    assert!(matches!(
+        expect_invalid(wrong_group_kind),
+        ModelError::PropertyValueOutOfDomain {
+            property: "run.propChange.editorGroup"
+        }
+    ));
+
+    let non_run_group = br#"{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{"type":"paragraph","id":"00000000000000030000000000000002",
+              "properties":{"propChange":{
+                "editorGroup":{"id":"00000000000000030000000000000004","kind":"formatting"},
+                "prior":{}}},
+              "inlines":[{"type":"run","id":"00000000000000030000000000000003",
+                "properties":{},"text":"x"}]}],
+            "definitions":{}}"#;
+    assert!(matches!(
+        expect_invalid(non_run_group),
+        ModelError::PropertyValueOutOfDomain {
+            property: "paragraph.propChange.editorGroup"
+        }
+    ));
 }
 
 fn expect_invalid(json: &[u8]) -> ModelError {

@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{BorderEdge, NumberingInstanceId, SectionId, Shading, StyleId};
+use super::{BorderEdge, NumberingInstanceId, RevisionGroup, SectionId, Shading, StyleId};
 
 /// A format-change tracked revision (`w:rPrChange`, `w:pPrChange`,
 /// `w:tblPrChange`, `w:trPrChange`, `w:tcPrChange`, `w:tblGridChange`): the
@@ -29,6 +29,12 @@ pub struct PropChange<P> {
     /// Opaque and non-unique across changes — a grouping key, not a node identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revision_id: Option<String>,
+    /// OpenDoc-only atomic decision grouping, separate from serialized `w:id`.
+    ///
+    /// Used by editor-authored run-format changes; imported property changes
+    /// leave it absent. The semantic DOCX writer does not serialize this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub editor_group: Option<RevisionGroup>,
     /// The prior properties snapshot (the values the change replaced).
     pub prior: Box<P>,
 }

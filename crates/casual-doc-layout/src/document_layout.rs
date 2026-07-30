@@ -393,7 +393,14 @@ fn collect_inline_endnotes(inlines: &[InlineNode], out: &mut Vec<NoteId>) {
                 }
             }
             InlineNode::Group(group) => collect_group_endnotes(&group.children, out),
-            InlineNode::Revision(revision) => collect_inline_endnotes(&revision.inlines, out),
+            InlineNode::Revision(revision)
+                if revision
+                    .kind
+                    .contributes_to(casual_doc_model::v1::ReviewProjection::FinalWithMarkup) =>
+            {
+                collect_inline_endnotes(&revision.inlines, out);
+            }
+            InlineNode::Revision(_) => {}
             InlineNode::Sdt(sdt) => collect_inline_endnotes(&sdt.inlines, out),
             InlineNode::Run(_)
             | InlineNode::Tab(_)

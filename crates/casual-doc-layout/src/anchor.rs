@@ -25,8 +25,9 @@
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     BlockNode, Document, DrawingAnchor, Extent, GroupChild, HorizontalAlign, HorizontalAnchor,
-    HorizontalPosition, InlineNode, Rgba, SectionBoundary, SectionId, ShapeGeometry, ShapeStroke,
-    VerticalAlign, VerticalAnchor, VerticalPosition, WordprocessingGroup, WrapDistances, WrapMode,
+    HorizontalPosition, InlineNode, ReviewProjection, Rgba, SectionBoundary, SectionId,
+    ShapeGeometry, ShapeStroke, VerticalAlign, VerticalAnchor, VerticalPosition,
+    WordprocessingGroup, WrapDistances, WrapMode,
 };
 
 use crate::block::BlockFragment;
@@ -196,9 +197,14 @@ fn collect_body_wrap_inlines(
             InlineNode::Field(field) => {
                 collect_body_wrap_inlines(layout, ctx, paragraph, section, &field.inlines, out)
             }
-            InlineNode::Revision(revision) => {
+            InlineNode::Revision(revision)
+                if revision
+                    .kind
+                    .contributes_to(ReviewProjection::FinalWithMarkup) =>
+            {
                 collect_body_wrap_inlines(layout, ctx, paragraph, section, &revision.inlines, out)
             }
+            InlineNode::Revision(_) => {}
             InlineNode::Sdt(sdt) => {
                 collect_body_wrap_inlines(layout, ctx, paragraph, section, &sdt.inlines, out)
             }
@@ -380,7 +386,14 @@ fn float_extent_inlines(
             }
             InlineNode::Hyperlink(link) => float_extent_inlines(ctx, &link.inlines, refs, bottom),
             InlineNode::Field(field) => float_extent_inlines(ctx, &field.inlines, refs, bottom),
-            InlineNode::Revision(rev) => float_extent_inlines(ctx, &rev.inlines, refs, bottom),
+            InlineNode::Revision(revision)
+                if revision
+                    .kind
+                    .contributes_to(ReviewProjection::FinalWithMarkup) =>
+            {
+                float_extent_inlines(ctx, &revision.inlines, refs, bottom);
+            }
+            InlineNode::Revision(_) => {}
             InlineNode::Sdt(sdt) => float_extent_inlines(ctx, &sdt.inlines, refs, bottom),
             _ => {}
         }
@@ -652,7 +665,11 @@ fn collect_inlines(
                     known_target,
                 );
             }
-            InlineNode::Revision(revision) => {
+            InlineNode::Revision(revision)
+                if revision
+                    .kind
+                    .contributes_to(ReviewProjection::FinalWithMarkup) =>
+            {
                 collect_inlines(
                     layout,
                     ctx,
@@ -663,6 +680,7 @@ fn collect_inlines(
                     known_target,
                 );
             }
+            InlineNode::Revision(_) => {}
             InlineNode::Sdt(sdt) => {
                 collect_inlines(
                     layout,

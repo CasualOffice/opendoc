@@ -25,11 +25,12 @@ use casual_doc_model::v1::{
     Extent, FontScheme, FrameWrap, HeightRule, HighlightColor, HorizontalAlign, HorizontalAnchor,
     HorizontalPosition, HorizontalRule as ModelHorizontalRule, HorizontalRuleAlign, Indentation,
     InlineNode, LevelSuffix, LineRule, MediaId, MediaReference, NoteKind, NoteReference, Paragraph,
-    ParagraphProperties, Rgba, RunProperties, SchemeColor, SectionBoundary, SectionId, SectionType,
-    ShapeStroke, StyleId, Symbol, TabAlignment, TabLeader, TabStop, Table, TableBorders, TableCell,
-    TableLayout, TableRow, TableRowProperties, TextBox, TextBoxAutoFit, TextBoxBodyProperties,
-    TextBoxHorizontalOverflow, TextBoxVerticalAnchor, TextBoxVerticalOverflow, ThemeColorRef,
-    VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition, WrapMode,
+    ParagraphProperties, ReviewProjection, Rgba, RunProperties, SchemeColor, SectionBoundary,
+    SectionId, SectionType, ShapeStroke, StyleId, Symbol, TabAlignment, TabLeader, TabStop, Table,
+    TableBorders, TableCell, TableLayout, TableRow, TableRowProperties, TextBox, TextBoxAutoFit,
+    TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxVerticalAnchor,
+    TextBoxVerticalOverflow, ThemeColorRef, VerticalAlignment, VerticalAnchor, VerticalMerge,
+    VerticalPosition, WrapMode,
 };
 
 use crate::block::{
@@ -1855,16 +1856,30 @@ fn border_rank(edge: &BorderEdge) -> (u32, u32, u32) {
 /// (`crate::hittest`, `ModelPos::offset`) slices this string at the caret the
 /// user clicked. This is the authoritative source for copy-in-view: it mirrors
 /// `collect_runs`'s text contributions exactly (`Run` text, `Tab` → `\t`,
-/// `Symbol` → its code point, and recursion through `Hyperlink`/`Revision`/`Sdt`
-/// wrappers); every other inline kind contributes no shaped text bytes.
+/// `Symbol` → its code point, and recursion through visible
+/// `Hyperlink`/`Revision`/`Sdt` wrappers); every other inline kind contributes
+/// no shaped text bytes.
 #[must_use]
 pub fn node_plain_text(inlines: &[InlineNode]) -> String {
+    node_plain_text_with_projection(inlines, ReviewProjection::FinalWithMarkup)
+}
+
+/// The plain text contributed by `inlines` under an explicit review projection.
+///
+/// Runtime editing uses [`ReviewProjection::FinalWithMarkup`]; the parameterized
+/// form keeps the Original/Final contract testable without enabling an unsafe
+/// view switcher before position mapping and editing policy are implemented.
+#[must_use]
+pub fn node_plain_text_with_projection(
+    inlines: &[InlineNode],
+    projection: ReviewProjection,
+) -> String {
     let mut out = String::new();
-    append_node_plain_text(inlines, &mut out);
+    append_node_plain_text(inlines, projection, &mut out);
     out
 }
 
-fn append_node_plain_text(inlines: &[InlineNode], out: &mut String) {
+fn append_node_plain_text(inlines: &[InlineNode], projection: ReviewProjection, out: &mut String) {
     for inline in inlines {
         match inline {
             InlineNode::Run(run) => out.push_str(&run.text),
@@ -1874,9 +1889,14 @@ fn append_node_plain_text(inlines: &[InlineNode], out: &mut String) {
                     out.push(ch);
                 }
             }
-            InlineNode::Hyperlink(hyperlink) => append_node_plain_text(&hyperlink.inlines, out),
-            InlineNode::Revision(revision) => append_node_plain_text(&revision.inlines, out),
-            InlineNode::Sdt(sdt) => append_node_plain_text(&sdt.inlines, out),
+            InlineNode::Hyperlink(hyperlink) => {
+                append_node_plain_text(&hyperlink.inlines, projection, out);
+            }
+            InlineNode::Revision(revision) if revision.kind.contributes_to(projection) => {
+                append_node_plain_text(&revision.inlines, projection, out);
+            }
+            InlineNode::Revision(_) => {}
+            InlineNode::Sdt(sdt) => append_node_plain_text(&sdt.inlines, projection, out),
             _ => {}
         }
     }
@@ -1901,7 +1921,14 @@ fn collect_runs<'a>(inlines: &'a [InlineNode], out: &mut Vec<StyledRun<'a>>, ctx
             }
             InlineNode::Symbol(symbol) => out.push(symbol_glyph_run(symbol, ctx)),
             InlineNode::Hyperlink(hyperlink) => collect_runs(&hyperlink.inlines, out, ctx),
-            InlineNode::Revision(revision) => collect_runs(&revision.inlines, out, ctx),
+            InlineNode::Revision(revision)
+                if revision
+                    .kind
+                    .contributes_to(ReviewProjection::FinalWithMarkup) =>
+            {
+                collect_runs(&revision.inlines, out, ctx);
+            }
+            InlineNode::Revision(_) => {}
             InlineNode::Sdt(sdt) => collect_runs(&sdt.inlines, out, ctx),
             _ => {}
         }
@@ -1983,9 +2010,14 @@ fn collect_items<'a>(
             // text here changes line wrapping and leaks a superscript
             // "[comment]" glyph into the document canvas.
             InlineNode::CommentReference(_) => {}
-            InlineNode::Revision(revision) => {
+            InlineNode::Revision(revision)
+                if revision
+                    .kind
+                    .contributes_to(ReviewProjection::FinalWithMarkup) =>
+            {
                 collect_items(&revision.inlines, out, shaper, width, ctx)
             }
+            InlineNode::Revision(_) => {}
             InlineNode::Sdt(sdt) => collect_items(&sdt.inlines, out, shaper, width, ctx),
             InlineNode::Math(math) => {
                 let text = if math.text.is_empty() {
@@ -5110,6 +5142,58 @@ mod tests {
         assert!(
             glyphs >= 12,
             "hyperlink + revision text both shaped (got {glyphs})"
+        );
+    }
+
+    #[test]
+    fn tracked_changes_share_one_projected_text_and_layout_byte_space() {
+        use casual_doc_model::v1::{Revision, RevisionKind};
+
+        let revision = |id, run_id, kind, text| {
+            InlineNode::Revision(Revision {
+                id: NodeId::from_parts(id, 1).unwrap(),
+                kind,
+                author: Some("Reviewer".to_owned()),
+                date: None,
+                revision_id: Some(id.to_string()),
+                editor_group: None,
+                inlines: vec![run_node(run_id, text, RunProperties::default())],
+            })
+        };
+        let inlines = vec![
+            run_node(11, "A", RunProperties::default()),
+            revision(12, 13, RevisionKind::Deletion, "old"),
+            revision(14, 15, RevisionKind::Insertion, "new"),
+            revision(16, 17, RevisionKind::MoveFrom, "source"),
+            revision(18, 19, RevisionKind::MoveTo, "target"),
+            run_node(20, "Z", RunProperties::default()),
+        ];
+        assert_eq!(
+            node_plain_text_with_projection(&inlines, ReviewProjection::Original),
+            "AoldsourceZ"
+        );
+        assert_eq!(
+            node_plain_text_with_projection(&inlines, ReviewProjection::Final),
+            "AnewtargetZ"
+        );
+        assert_eq!(node_plain_text(&inlines), "AnewtargetZ");
+
+        let doc = document(vec![paragraph(10, inlines)]);
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&doc, &shaper, Twip::from_points(400));
+        let BlockFragment::Paragraph { lines, .. } = &galley[0] else {
+            panic!();
+        };
+        assert_eq!(
+            lines
+                .lines
+                .last()
+                .expect("one shaped line")
+                .range
+                .end
+                .offset,
+            "AnewtargetZ".len() as u32,
+            "hit-testing and editing offsets end at the projected byte length"
         );
     }
 
