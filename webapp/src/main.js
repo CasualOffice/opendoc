@@ -183,10 +183,26 @@ const reviewPrevious = document.getElementById("reviewPrevious");
 const reviewNext = document.getElementById("reviewNext");
 const reviewAcceptAll = document.getElementById("reviewAcceptAll");
 const reviewRejectAll = document.getElementById("reviewRejectAll");
+const reviewInlineBar = document.getElementById("reviewInlineBar");
+const reviewInlinePrevious = document.getElementById("reviewInlinePrevious");
+const reviewInlineNext = document.getElementById("reviewInlineNext");
+const reviewInlineAcceptAll = document.getElementById("reviewInlineAcceptAll");
+const reviewInlineRejectAll = document.getElementById("reviewInlineRejectAll");
 let reviewMode = "editing";
 let reviewRevisionCursor = -1;
 let activeReviewCommentId = null;
 let reviewPopover = null;
+
+function updateReviewInlineBar() {
+  if (!reviewInlineBar || !doc) return;
+  let count = 0;
+  try { count = (JSON.parse(doc.reviewSummary()).revisions ?? []).length; } catch { count = 0; }
+  reviewInlineBar.hidden = count === 0 && reviewMode !== "suggesting";
+  reviewInlinePrevious.disabled = count === 0;
+  reviewInlineNext.disabled = count === 0;
+  reviewInlineAcceptAll.disabled = count === 0;
+  reviewInlineRejectAll.disabled = count === 0;
+}
 const linkChip = document.getElementById("linkChip");
 const linkChipKind = document.getElementById("linkChipKind");
 const linkChipTarget = document.getElementById("linkChipTarget");
@@ -616,6 +632,18 @@ function paintReviewMarkers() {
       }
     }
   }
+  for (const revision of summary.revisions ?? []) {
+    const text = String(revision.text || "");
+    if (!text) continue;
+    const first = doc.firstPosition();
+    const match = doc.findText(text, first.node, first.offset, true, false);
+    first.free();
+    if (!match.found) { match.free(); continue; }
+    const rects = doc.selectionRects(match.startNode, match.startOffset, match.endNode, match.endOffset);
+    const kind = revision.kind === "deletion" ? "review-revision-marker review-deletion-marker" : "review-revision-marker review-insertion-marker";
+    for (let i = 0; i < rects.length; i += 5) place(rects.slice(i, i + 5), kind);
+    match.free();
+  }
 }
 
 /** Draws the current selection from engine geometry: a highlight for a real
@@ -632,6 +660,7 @@ function drawSelection() {
     paintTableResizeHandles(selection.focus);
   }
   updateToolbar();
+  updateReviewInlineBar();
   updatePageNumber();
   updateRulerMarkers();
   positionSelToolbar();
@@ -3202,6 +3231,10 @@ reviewAcceptAll.addEventListener("click", async () => { if (doc) { await runEdit
 reviewRejectAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(false)); buildReview(); } });
 reviewPrevious.addEventListener("click", () => navigateReviewRevision(-1));
 reviewNext.addEventListener("click", () => navigateReviewRevision(1));
+reviewInlinePrevious.addEventListener("click", () => navigateReviewRevision(-1));
+reviewInlineNext.addEventListener("click", () => navigateReviewRevision(1));
+reviewInlineAcceptAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(true)); closeReviewPopover(); drawSelection(); } });
+reviewInlineRejectAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(false)); closeReviewPopover(); drawSelection(); } });
 function openReviewComposer(parent = null) {
   if (!doc || (!parent && (!hasRange() || !selection))) return;
   reviewReplyParent = parent;
