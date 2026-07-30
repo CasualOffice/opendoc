@@ -2804,6 +2804,7 @@ function buildCommands() {
     { label: "Decrease indent", group: "Paragraph", kw: "outdent", run: () => runToolbarEdit((s, o, e, f) => doc.adjustIndent(s, o, e, f, -360)) },
     { label: "Insert table (3×3)", group: "Insert", kw: "grid", run: () => selection && runEdit(() => doc.insertTable(selection.focus.node, 3, 3)) },
     { label: "Add or edit link", group: "Insert", kw: "hyperlink url bookmark toc", run: () => editSelectionLink() },
+    { label: "Bookmark manager", group: "Insert", kw: "bookmarks navigate links", run: () => openBookmarkManager() },
     { label: "Toggle outline", group: "View", kw: "headings navigation", run: () => toggleOutline() },
     { label: "Zoom in", group: "View", kw: "", run: () => stepZoom(1) },
     { label: "Zoom out", group: "View", kw: "", run: () => stepZoom(-1) },
@@ -2820,6 +2821,24 @@ function buildCommands() {
     }
   }
   return cmds.filter((c) => doc || c.noDoc);
+}
+
+function openBookmarkManager() {
+  if (!doc) return;
+  const names = doc.listBookmarks?.() || [];
+  if (!names.length) {
+    setStatus("No bookmarks in this document");
+    return;
+  }
+  const choice = window.prompt(`Bookmarks:\n${names.join("\n")}\n\nEnter a bookmark name to jump:`, names[0]);
+  if (choice === null) return;
+  const encoded = doc.bookmarkPosition(choice.trim());
+  const [node, offset] = encoded.split("\t");
+  if (!node || !offset) {
+    setStatus(`Bookmark “${choice.trim()}” was not found`, "error");
+    return;
+  }
+  navToPosition({ node, offset: Number(offset) }, false);
 }
 
 function renderCommands(query) {

@@ -739,6 +739,31 @@ impl WasmDocument {
         .map_err(to_js)
     }
 
+    /// Authored bookmark names, sorted for host navigation surfaces.
+    #[wasm_bindgen(js_name = listBookmarks)]
+    #[must_use]
+    pub fn list_bookmarks(&self) -> Vec<String> {
+        let mut names = self
+            .document
+            .definitions()
+            .bookmarks
+            .iter()
+            .map(|(_, bookmark)| bookmark.name.clone())
+            .collect::<Vec<_>>();
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    /// Resolves an authored bookmark to `node\toffset`, or an empty string.
+    #[wasm_bindgen(js_name = bookmarkPosition)]
+    #[must_use]
+    pub fn bookmark_position(&self, name: &str) -> String {
+        resolve_bookmark(&self.document, name)
+            .map(|position| format!("{}\t{}", position.node, position.offset))
+            .unwrap_or_default()
+    }
+
     /// Splits the paragraph at the caret into two (Enter). The caret lands at the
     /// start of the new trailing paragraph.
     #[wasm_bindgen(js_name = splitParagraph)]
