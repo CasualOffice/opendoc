@@ -21,8 +21,9 @@ The audit nevertheless found correctness, interoperability, editing, scale,
 accessibility, and code-debt gaps. P1G-REVIEW-035 closed REVIEW-GAP-001,
 REVIEW-GAP-002, and REVIEW-GAP-017. P1G-REVIEW-036 closed REVIEW-GAP-003 and
 REVIEW-GAP-006 and completed the formatting-delta half of REVIEW-GAP-016.
-Twenty-four gaps remain; the remaining P0 rows below are release blockers for
-any claim of complete tracked-change support.
+P1G-REVIEW-041 closed REVIEW-GAP-005. Twenty-three gaps remain; the remaining
+P0 rows below are release blockers for any claim of complete tracked-change
+support.
 
 The sibling `docs/docx-editor` repository was used only as the requested
 interaction reference. Its card composition, reply controls, resolved markers,
@@ -48,7 +49,7 @@ Classification:
 | REVIEW-GAP-002 | Closed | Resolved | P1G-REVIEW-035 replaces whole-body review snapshots with paragraph-scoped atomic operations, coalesces one suggestion-typing gesture into one Undo/Redo action, and caps each history stack at 256 actions. | Closed by scoped apply/inverse/rollback, retained-inverse, one-gesture Undo/Redo, and history-cap tests. |
 | REVIEW-GAP-003 | Closed | Resolved | P1G-REVIEW-036 authors character-format suggestions as one text copy with current run properties plus the standard `w:rPrChange` prior snapshot. Formatting cards expose structured old/new deltas, and imported property changes use the same inventory and decision path. | Closed by one-copy model/layout checks, multi-run atomic Accept/Reject and Undo coverage, `w:rPrChange` export/reopen, imported decision coverage, release WASM, and browser formatting-card tests. |
 | REVIEW-GAP-004 | P0 | Incorrect | Suggesting mode is a JavaScript flag and only `runToolbarEdit` enforces it. Visible table style/width/sort/merge/split/insert actions, Find/Replace, command-palette Insert Table/Restart List, document properties, and page setup have direct `runEdit`/`runNodeEdit` paths. They can silently mutate while the mode still says Suggesting. | Route every mutation through one mode-aware command dispatcher. Each command must be tracked, explicitly allowed as non-trackable metadata, or rejected before mutation. Add a command-matrix test. |
-| REVIEW-GAP-005 | P0 | Incorrect | Comment highlights have pointer events and stop propagation. Clicking commented text selects the whole comment range and opens its card instead of placing the caret where the user clicked. This directly damages the normal editing experience. | Keep document hit-testing authoritative. Derive card expansion from the resulting caret/range; use a non-blocking margin affordance when an explicit comment target is needed. |
+| REVIEW-GAP-005 | Closed | Resolved | P1G-REVIEW-041 removes the marker's click handler entirely; `onPointerDown`'s hit-test is the only path that ever sets `selection`, so clicking on or inside commented text places the caret exactly like clicking anywhere else. Card expansion/highlight is now derived from the resulting caret (`syncActiveReviewCommentToCaret`) as a non-blocking side effect, never the other way around. | Closed by removing the marker click listener/`stopPropagation`, deriving card expansion from the post-hit-test caret, and a Playwright regression that clicks a specific offset inside a commented range and asserts the caret (not a full-range selection) lands there. |
 | REVIEW-GAP-006 | Closed | Resolved | P1G-REVIEW-036 defines one Final-with-markup UTF-8 byte space: insertion/move-destination content contributes; deletion/move-source content is zero-width while its review metadata remains. Layout, hit-testing, edit ranges, copy, rich copy, Find, statistics, Outline, links, bookmarks, notes/floats, comments, and review anchors share the closed projection predicate, including nested hidden revisions. Original and expanded All-Markup editing remain explicitly deferred presentation modes. | Closed at the audit's documented minimum by doc 83, Original/Final predicate tests, projected layout/hit/edit/query tests, collapsed deletion/comment/review-anchor tests, release WASM, and browser deletion-card coverage. |
 | REVIEW-GAP-007 | P0 | Partial | Review split/wrap helpers operate on top-level `Run` nodes. Typing inside an existing pending insertion, deleting a selection spanning pending and normal text, formatting a pending suggestion, or editing through a revision/hyperlink/inline-SDT boundary fails instead of behaving like a mature editor. | Implement revision-aware range splitting and normalization across supported inline wrappers, with exact inverse operations and mixed accepted/pending-author tests. |
 | REVIEW-GAP-008 | P1 | Partial | Rich paste in Suggesting mode is flattened to plain text; multi-paragraph paste is rejected. Cut copies to the clipboard before discovering that a cross-paragraph tracked delete is unsupported, so the command partially executes from the user's perspective. | Stage validation before clipboard mutation, preserve supported rich runs in tracked insertions, and represent paragraph insertion/deletion safely. |
@@ -95,7 +96,8 @@ The move-specific deferral found before this audit is closed:
    Final-with-markup editing projection; Original/expanded All-Markup view
    switching remains a separately designed presentation feature.
 2. **P1G-REVIEW-037 — Mode-safe command routing and editing coverage.**
-   Fix REVIEW-GAP-004/005/007/008/009/010/014 with a tested command matrix.
+   Fix REVIEW-GAP-004/007/008/009/010/014 with a tested command matrix.
+   REVIEW-GAP-005 was closed separately by P1G-REVIEW-041.
 3. **P1G-REVIEW-038 — Complete comment/reviewer workflow.**
    Fix REVIEW-GAP-011/012/013/015/016/019/021/022 and define host policy.
 4. **P1G-REVIEW-039 — Scale, accessibility, cleanup, and interoperability.**

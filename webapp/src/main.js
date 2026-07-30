@@ -1253,9 +1253,54 @@ function clearOverlays() {
   for (const p of pages) p.overlay.replaceChildren();
 }
 
+/** Reads the current comment list once (JSON round-trip), or `[]` on
+ *  failure. Shared by marker rendering and by the caret-driven activation
+ *  below so both agree on the same anchors. */
+function reviewComments() {
+  if (!doc) return [];
+  try { return JSON.parse(doc.reviewSummary()).comments ?? []; } catch { return []; }
+}
+
+/** The comment (if any) whose anchor range contains `anchor` (a `{node,
+ *  offset}` model position), matching the same open/resolved visibility rule
+ *  `paintReviewMarkers` uses. Resolved comments only match while their card
+ *  is already explicitly expanded. */
+function reviewCommentAtAnchor(anchor) {
+  if (!anchor?.node) return null;
+  for (const comment of reviewComments()) {
+    const explicitlyOpen = activeReviewItemId === `comment:${comment.id}`;
+    if ((comment.resolved && !explicitlyOpen) || !comment.anchor?.node) continue;
+    if (comment.anchor.node !== anchor.node) continue;
+    const start = Number(comment.anchor.start) || 0;
+    const end = Number(comment.anchor.end) || 0;
+    if (anchor.offset >= start && anchor.offset <= end) return comment;
+  }
+  return null;
+}
+
+/** Non-blocking side effect of an authoritative caret placement
+ *  (REVIEW-GAP-005, docs/81): if the resulting caret lands inside a
+ *  commented range, expand/surface that comment's card. This never touches
+ *  `selection` — document hit-testing (docs/80) is always the sole source
+ *  of truth for where the caret lands; card expansion is derived from the
+ *  resulting caret, never the other way around, and never blocks or delays
+ *  caret placement. */
+function syncActiveReviewCommentToCaret(anchor) {
+  const comment = reviewCommentAtAnchor(anchor);
+  if (!comment) return;
+  activeReviewCommentId = comment.id;
+  activeReviewItemId = `comment:${comment.id}`;
+  reviewSidebarPreference = true;
+  scheduleReviewMarginRender();
+}
+
 /** Paint comment ranges in the existing overlay layer. This never touches the
  * canvas or document layout; it is the same interaction layer used by the
- * selection highlight and caret. */
+ * selection highlight and caret. These markers are a pure visual affordance:
+ * they intentionally carry no click handler of their own, so a pointer event
+ * always falls through to the page's normal pointerdown hit-testing (see
+ * `onPointerDown` / `syncActiveReviewCommentToCaret`) instead of hijacking
+ * caret placement (REVIEW-GAP-005). */
 function paintReviewMarkers() {
   if (!doc) return;
   let summary;
@@ -1267,13 +1312,7 @@ function paintReviewMarkers() {
     const rects = doc.selectionRects(node, Number(start) || 0, node, Number(end) || 0);
     for (let i = 0; i < rects.length; i += 5) {
       const el = place(rects.slice(i, i + 5), activeReviewCommentId === comment.id ? "review-comment-marker review-comment-marker-active" : "review-comment-marker");
-      if (el) {
-        el.dataset.reviewCommentId = comment.id;
-        el.addEventListener("click", (event) => {
-          event.stopPropagation();
-          focusReviewComment(comment);
-        });
-      }
+      if (el) el.dataset.reviewCommentId = comment.id;
     }
   }
   for (const revision of summary.revisions ?? []) {
@@ -1586,6 +1625,10 @@ function onPointerDown(page, event) {
     event.shiftKey && selection
       ? { anchor: selection.anchor, focus: anchor }
       : { anchor, focus: anchor };
+  // Non-blocking secondary effect (REVIEW-GAP-005): surface the sidebar card
+  // for a comment the click landed inside, without altering the caret/range
+  // hit-testing just computed above.
+  syncActiveReviewCommentToCaret(anchor);
   drawSelection();
   startSelectionAutoScroll();
   event.preventDefault();
