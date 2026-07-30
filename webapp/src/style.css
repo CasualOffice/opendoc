@@ -2032,6 +2032,26 @@ body.modal-open {
   display: none;
 }
 
+/* Review is an inline/margin interaction, not a permanent side panel. */
+#reviewPanel,
+#railReview { display: none !important; }
+
+.review-popover {
+  position: fixed;
+  z-index: 80;
+  width: min(320px, calc(100vw - 24px));
+  padding: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-popover);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-lg);
+}
+.review-popover-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.review-popover-meta { color: var(--muted); font-size: 11px; }
+.review-popover-body { margin: 8px 0; font-size: 12px; line-height: 1.45; white-space: pre-wrap; }
+.review-popover-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
 .panel-head {
   display: flex;
   min-width: 0;
