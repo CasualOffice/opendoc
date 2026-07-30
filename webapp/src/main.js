@@ -141,6 +141,8 @@ const findNextBtn = document.getElementById("findNext");
 const findStatus = document.getElementById("findStatus");
 const findCase = document.getElementById("findCase");
 const findWholeWord = document.getElementById("findWholeWord");
+const findSelection = document.getElementById("findSelection");
+let findScope = null;
 const replaceOneBtn = document.getElementById("replaceOne");
 const replaceAllBtn = document.getElementById("replaceAll");
 const findCloseBtn = document.getElementById("findClose");
@@ -3017,6 +3019,12 @@ function clearFindParagraphCache() {
   findParagraphTextCache.clear();
 }
 
+function matchInFindSelection(match) {
+  if (!findSelection.checked) return true;
+  if (!findScope) return false;
+  return match.startNode === findScope.node && match.startOffset >= findScope.start && match.endOffset <= findScope.end;
+}
+
 function scanAllMatches(query, matchCase, wholeWord = false) {
   const matches = [];
   if (!doc || !query) return matches;
@@ -3043,7 +3051,9 @@ function scanAllMatches(query, matchCase, wholeWord = false) {
       endNode: match.endNode,
       endOffset: match.endOffset,
     };
-    if (!wholeWord || isWholeWordMatch(candidate, query)) matches.push(candidate);
+    if ((!wholeWord || isWholeWordMatch(candidate, query)) && matchInFindSelection(candidate)) {
+      matches.push(candidate);
+    }
     node = match.endNode;
     offset = match.endOffset;
     match.free();
@@ -3157,7 +3167,7 @@ async function replaceAllMatches() {
   const query = findInput.value;
   const replacement = replaceInput.value;
   const matchCase = findCase.checked;
-  const wholeWord = findWholeWord.checked;
+const wholeWord = findWholeWord.checked;
   const replacementBytes = new TextEncoder().encode(replacement).length;
   const first = doc.firstPosition();
   let node = first.node;
@@ -3178,7 +3188,10 @@ async function replaceAllMatches() {
     };
     const { startNode, startOffset, endNode, endOffset } = candidate;
     match.free();
-    if (wholeWord && !isWholeWordMatch(candidate, query)) {
+    if (
+      (wholeWord && !isWholeWordMatch(candidate, query)) ||
+      !matchInFindSelection(candidate)
+    ) {
       node = endNode;
       offset = endOffset;
       continue;
@@ -3194,6 +3207,7 @@ async function replaceAllMatches() {
 function openFind() {
   if (!doc) return;
   findPanel.hidden = false;
+  if (findSelection.checked) findSelection.dispatchEvent(new Event("change"));
   const selected = selectedPlainText();
   if (selected && !selected.includes("\n") && selected.length <= 80) findInput.value = selected;
   updateFindStatus();
@@ -3212,6 +3226,21 @@ findInput.addEventListener("input", () => {
 });
 findCase.addEventListener("change", () => updateFindStatus());
 findWholeWord.addEventListener("change", () => updateFindStatus());
+findSelection.addEventListener("change", () => {
+  if (findSelection.checked) {
+    findScope =
+      selection && hasRange() && selection.anchor.node === selection.focus.node
+        ? {
+            node: selection.anchor.node,
+            start: Math.min(selection.anchor.offset, selection.focus.offset),
+            end: Math.max(selection.anchor.offset, selection.focus.offset),
+          }
+        : null;
+  } else {
+    findScope = null;
+  }
+  updateFindStatus();
+});
 findInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
     e.preventDefault();
