@@ -3966,6 +3966,87 @@ impl WasmDocument {
         .map_err(to_js)
     }
 
+    /// Tracks a character-formatting change as a deletion of the original
+    /// runs plus an insertion carrying the updated run properties. Accepting
+    /// keeps the formatted copy; rejecting restores the original copy.
+    #[wasm_bindgen(js_name = suggestFormat)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn suggest_format(
+        &mut self,
+        node: &str,
+        start: u32,
+        end: u32,
+        bold: Option<bool>,
+        italic: Option<bool>,
+        underline: Option<bool>,
+        strike: Option<bool>,
+        author: Option<String>,
+        date: Option<String>,
+    ) -> Result<EditResult, JsValue> {
+        if start >= end
+            || [bold, italic, underline, strike]
+                .iter()
+                .all(Option::is_none)
+        {
+            return Err(to_js(
+                "suggested formatting requires a range and change".to_string(),
+            ));
+        }
+        let node = node_id(node)?;
+        let deletion = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".to_string()))?;
+        let insertion = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".to_string()))?;
+        let mut body = self.document.body().to_vec();
+        if !wrap_review_format(
+            &mut body,
+            node,
+            start,
+            end,
+            FormatDelta {
+                bold,
+                italic,
+                underline,
+                strike,
+                ..FormatDelta::default()
+            },
+            Revision {
+                id: deletion,
+                kind: RevisionKind::Deletion,
+                author: author.clone(),
+                date: date.clone(),
+                revision_id: None,
+                inlines: Vec::new(),
+            },
+            Revision {
+                id: insertion,
+                kind: RevisionKind::Insertion,
+                author,
+                date,
+                revision_id: None,
+                inlines: Vec::new(),
+            },
+            &mut self.edit_ids,
+        ) {
+            return Err(to_js(
+                "suggested formatting requires a top-level paragraph text range".to_string(),
+            ));
+        }
+        self.apply_action_caret_as(
+            vec![Operation::ReplaceReviewState {
+                body,
+                comments: self.document.definitions().comments.clone(),
+            }],
+            Pos::new(node, start),
+            HistoryKind::Review,
+        )
+        .map_err(to_js)
+    }
+
     /// Accepts or rejects a tracked revision by inline node id.
     #[wasm_bindgen(js_name = decideRevision)]
     pub fn decide_revision(&mut self, revision: &str, accept: bool) -> Result<EditResult, JsValue> {
@@ -6249,6 +6330,144 @@ fn wrap_review_deletion(
         }
     }
     false
+}
+
+#[allow(clippy::too_many_arguments)]
+fn wrap_review_format(
+    blocks: &mut [BlockNode],
+    node: NodeId,
+    start: u32,
+    end: u32,
+    delta: FormatDelta,
+    mut deletion: Revision,
+    mut insertion: Revision,
+    ids: &mut IdGenerator,
+) -> bool {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) if paragraph.id == node => {
+                if !review_split_top_level_run(&mut paragraph.inlines, start, ids)
+                    || !review_split_top_level_run(&mut paragraph.inlines, end, ids)
+                {
+                    return false;
+                }
+                let mut cursor = 0;
+                let mut first = None;
+                let mut last = None;
+                for (index, inline) in paragraph.inlines.iter().enumerate() {
+                    let InlineNode::Run(run) = inline else {
+                        continue;
+                    };
+                    if cursor == start {
+                        first = Some(index);
+                    }
+                    cursor = cursor.saturating_add(run.text.len() as u32);
+                    if cursor == end {
+                        last = Some(index);
+                        break;
+                    }
+                }
+                let (Some(first), Some(last)) = (first, last) else {
+                    return false;
+                };
+                let original: Vec<InlineNode> = paragraph.inlines.drain(first..=last).collect();
+                let mut formatted = original.clone();
+                for inline in &mut formatted {
+                    if let InlineNode::Run(run) = inline {
+                        run.id = match ids.next_id() {
+                            Ok(id) => id,
+                            Err(_) => return false,
+                        };
+                    }
+                }
+                apply_review_delta(&mut formatted, &delta);
+                deletion.inlines = original;
+                insertion.inlines = formatted;
+                paragraph
+                    .inlines
+                    .insert(first, InlineNode::Revision(deletion));
+                paragraph
+                    .inlines
+                    .insert(first + 1, InlineNode::Revision(insertion));
+                return true;
+            }
+            BlockNode::Paragraph(_) => continue,
+            BlockNode::Table(table) => {
+                return table.rows.iter_mut().any(|row| {
+                    row.cells.iter_mut().any(|cell| {
+                        wrap_review_format(
+                            &mut cell.blocks,
+                            node,
+                            start,
+                            end,
+                            delta.clone(),
+                            deletion.clone(),
+                            insertion.clone(),
+                            ids,
+                        )
+                    })
+                });
+            }
+            BlockNode::Sdt(sdt) => {
+                return wrap_review_format(
+                    &mut sdt.blocks,
+                    node,
+                    start,
+                    end,
+                    delta.clone(),
+                    deletion.clone(),
+                    insertion.clone(),
+                    ids,
+                );
+            }
+            BlockNode::AltChunk(_) => continue,
+        }
+    }
+    false
+}
+
+fn apply_review_delta(inlines: &mut [InlineNode], delta: &FormatDelta) {
+    for inline in inlines {
+        match inline {
+            InlineNode::Run(run) => {
+                if let Some(value) = delta.bold {
+                    run.properties.bold = Some(value);
+                }
+                if let Some(value) = delta.italic {
+                    run.properties.italic = Some(value);
+                }
+                if let Some(value) = delta.underline {
+                    run.properties.underline = Some(value);
+                }
+                if let Some(value) = delta.strike {
+                    run.properties.strike = Some(value);
+                }
+                if let Some(value) = delta.color {
+                    run.properties.color = Some(Color::Rgb(value));
+                }
+                if let Some(value) = delta.highlight {
+                    run.properties.highlight = Some(value);
+                }
+                if let Some(value) = delta.size_half_points {
+                    run.properties.size_half_points = Some(value);
+                }
+                if let Some(value) = delta.vertical_alignment {
+                    run.properties.vertical_alignment = Some(value);
+                }
+                if let Some(family) = &delta.font {
+                    let font = FontRef::Named(FontName {
+                        name: family.clone(),
+                    });
+                    run.properties.font_ref = Some(font.clone());
+                    run.properties.font_ref_h_ansi = Some(font);
+                }
+            }
+            InlineNode::Revision(revision) => apply_review_delta(&mut revision.inlines, delta),
+            InlineNode::Hyperlink(link) => apply_review_delta(&mut link.inlines, delta),
+            InlineNode::Sdt(sdt) => apply_review_delta(&mut sdt.inlines, delta),
+            _ => {}
+        }
+    }
 }
 
 fn remove_review_comment_markers(blocks: &mut [BlockNode], comment: CommentId) {
@@ -9431,6 +9650,38 @@ mod tests {
             d.copy_text(&node, 0, &node, end + 1),
             format!("Z{original}")
         );
+    }
+
+    #[test]
+    fn suggested_format_creates_review_pair_and_undoes() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let (node_id, text) = nodes
+            .iter()
+            .find(|(_, text)| !text.is_empty())
+            .map(|(id, text)| (*id, text.clone()))
+            .expect("a non-empty paragraph");
+        let node = node_id.to_string();
+        d.suggest_format(
+            &node,
+            0,
+            text.chars().next().map(char::len_utf8).unwrap_or(1) as u32,
+            Some(true),
+            None,
+            None,
+            None,
+            Some("Tester".to_owned()),
+            None,
+        )
+        .expect("suggest format");
+        let mut revisions = Vec::new();
+        collect_review_revision_ids(d.document.body(), &mut revisions);
+        assert_eq!(revisions.len(), 2);
+        d.undo().expect("undo suggested format");
+        revisions.clear();
+        collect_review_revision_ids(d.document.body(), &mut revisions);
+        assert!(revisions.is_empty());
     }
 
     /// Rapid adjacent typing is one user action, while a different host gesture

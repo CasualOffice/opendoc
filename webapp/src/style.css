@@ -2032,6 +2032,43 @@ body.modal-open {
   display: none;
 }
 
+/* Review is an inline/margin interaction, not a permanent side panel. */
+#reviewPanel,
+#railReview { display: none !important; }
+
+.review-popover {
+  position: fixed;
+  z-index: 80;
+  width: min(320px, calc(100vw - 24px));
+  padding: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-popover);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-lg);
+}
+.review-popover-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.review-popover-meta { color: var(--muted); font-size: 11px; }
+.review-popover-body { margin: 8px 0; font-size: 12px; line-height: 1.45; white-space: pre-wrap; }
+.review-popover-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.review-inline-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 70;
+  display: flex;
+  gap: 6px;
+  padding: 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+}
+.review-inline-bar[hidden] { display: none; }
+.review-inline-bar button { border: 1px solid var(--line); border-radius: 999px; padding: 5px 9px; background: transparent; color: var(--ink); font: inherit; font-size: 11px; cursor: pointer; }
+.review-inline-bar button:hover { background: var(--accent-soft); border-color: var(--accent); }
+
 .panel-head {
   display: flex;
   min-width: 0;
@@ -2478,6 +2515,22 @@ body.modal-open {
   background: color-mix(in srgb, var(--accent) 24%, transparent);
   border-radius: 1px;
 }
+
+/* Comment range marker: interaction-only highlight over the fixed canvas. */
+.overlay .review-comment-marker {
+  position: absolute;
+  background: color-mix(in srgb, #f5c542 28%, transparent);
+  border-bottom: 2px solid color-mix(in srgb, #c58b00 70%, transparent);
+  pointer-events: auto;
+  cursor: pointer;
+}
+.overlay .review-comment-marker-active {
+  background: color-mix(in srgb, #f5c542 48%, transparent);
+  border-bottom-color: #b77900;
+}
+.overlay .review-revision-marker { position: absolute; pointer-events: none; }
+.overlay .review-insertion-marker { border-bottom: 2px solid color-mix(in srgb, #188038 80%, transparent); }
+.overlay .review-deletion-marker { background: color-mix(in srgb, #d93025 18%, transparent); border-bottom: 2px solid color-mix(in srgb, #d93025 80%, transparent); }
 
 .overlay .table-cell-selection {
   position: absolute;

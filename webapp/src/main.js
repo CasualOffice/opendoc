@@ -183,8 +183,26 @@ const reviewPrevious = document.getElementById("reviewPrevious");
 const reviewNext = document.getElementById("reviewNext");
 const reviewAcceptAll = document.getElementById("reviewAcceptAll");
 const reviewRejectAll = document.getElementById("reviewRejectAll");
+const reviewInlineBar = document.getElementById("reviewInlineBar");
+const reviewInlinePrevious = document.getElementById("reviewInlinePrevious");
+const reviewInlineNext = document.getElementById("reviewInlineNext");
+const reviewInlineAcceptAll = document.getElementById("reviewInlineAcceptAll");
+const reviewInlineRejectAll = document.getElementById("reviewInlineRejectAll");
 let reviewMode = "editing";
 let reviewRevisionCursor = -1;
+let activeReviewCommentId = null;
+let reviewPopover = null;
+
+function updateReviewInlineBar() {
+  if (!reviewInlineBar || !doc) return;
+  let count = 0;
+  try { count = (JSON.parse(doc.reviewSummary()).revisions ?? []).length; } catch { count = 0; }
+  reviewInlineBar.hidden = count === 0 && reviewMode !== "suggesting";
+  reviewInlinePrevious.disabled = count === 0;
+  reviewInlineNext.disabled = count === 0;
+  reviewInlineAcceptAll.disabled = count === 0;
+  reviewInlineRejectAll.disabled = count === 0;
+}
 const linkChip = document.getElementById("linkChip");
 const linkChipKind = document.getElementById("linkChipKind");
 const linkChipTarget = document.getElementById("linkChipTarget");
@@ -405,6 +423,12 @@ async function openBytes(bytes, name) {
       );
     }
     buildOutline();
+    try {
+      const summary = JSON.parse(doc.reviewSummary());
+      if ((summary.comments?.length ?? 0) || (summary.revisions?.length ?? 0)) toggleReview(true);
+    } catch {
+      // Review metadata is optional and must never block document opening.
+    }
   } catch (err) {
     console.error(err);
     setStatus(`Could not open ${name}: ${err.message ?? err}`, "error");
@@ -586,12 +610,49 @@ function clearOverlays() {
   for (const p of pages) p.overlay.replaceChildren();
 }
 
+/** Paint comment ranges in the existing overlay layer. This never touches the
+ * canvas or document layout; it is the same interaction layer used by the
+ * selection highlight and caret. */
+function paintReviewMarkers() {
+  if (!doc) return;
+  let summary;
+  try { summary = JSON.parse(doc.reviewSummary()); } catch { return; }
+  for (const comment of summary.comments ?? []) {
+    if (comment.resolved || !comment.anchor?.node) continue;
+    const { node, start, end } = comment.anchor;
+    const rects = doc.selectionRects(node, Number(start) || 0, node, Number(end) || 0);
+    for (let i = 0; i < rects.length; i += 5) {
+      const el = place(rects.slice(i, i + 5), activeReviewCommentId === comment.id ? "review-comment-marker review-comment-marker-active" : "review-comment-marker");
+      if (el) {
+        el.dataset.reviewCommentId = comment.id;
+        el.addEventListener("click", (event) => {
+          event.stopPropagation();
+          focusReviewComment(comment);
+        });
+      }
+    }
+  }
+  for (const revision of summary.revisions ?? []) {
+    const text = String(revision.text || "");
+    if (!text) continue;
+    const first = doc.firstPosition();
+    const match = doc.findText(text, first.node, first.offset, true, false);
+    first.free();
+    if (!match.found) { match.free(); continue; }
+    const rects = doc.selectionRects(match.startNode, match.startOffset, match.endNode, match.endOffset);
+    const kind = revision.kind === "deletion" ? "review-revision-marker review-deletion-marker" : "review-revision-marker review-insertion-marker";
+    for (let i = 0; i < rects.length; i += 5) place(rects.slice(i, i + 5), kind);
+    match.free();
+  }
+}
+
 /** Draws the current selection from engine geometry: a highlight for a real
  *  range, else a caret at the focus (so a click — or a range with no visible
  *  rects — always shows a cursor). */
 function drawSelection() {
   if (!doc) return;
   clearOverlays();
+  paintReviewMarkers();
   if (selection) {
     paintTableSelection();
     paintActiveCell(selection.focus); // under the caret/highlight
@@ -599,6 +660,7 @@ function drawSelection() {
     paintTableResizeHandles(selection.focus);
   }
   updateToolbar();
+  updateReviewInlineBar();
   updatePageNumber();
   updateRulerMarkers();
   positionSelToolbar();
@@ -693,10 +755,10 @@ function hideImePreedit() {
 /** Places one flat `[page, x, y, w, h]` twip rect as a `kind` box on its page,
  *  converting twips → CSS px with that page's live scale. */
 function place(flat, kind) {
-  if (flat.length < 5) return;
+  if (flat.length < 5) return null;
   const [pageNumber, x, y, w, h] = flat;
   const page = pages[pageNumber - 1];
-  if (!page) return;
+  if (!page) return null;
   const { sx, sy } = scaleOf(page);
   const el = document.createElement("div");
   el.className = kind;
@@ -705,6 +767,7 @@ function place(flat, kind) {
   el.style.width = `${Math.max(w * sx, kind === "caret" ? 2 : 0)}px`;
   el.style.height = `${h * sy}px`;
   page.overlay.appendChild(el);
+  return el;
 }
 
 /** Navigates to an internal-link target and makes the target page/caret visible. */
@@ -1016,7 +1079,12 @@ function onPointerUp(event) {
     !gesture.moved &&
     Math.hypot(event.clientX - gesture.clientX, event.clientY - gesture.clientY) <= 4
   ) {
-    showLinkChipAt(gesture.page, event);
+    const link = linkAt(gesture.page, event);
+    if (link?.kind === "internal" && link.targetNode && link.targetPage) {
+      activateLink(link);
+    } else {
+      showLinkChipAt(gesture.page, event);
+    }
   }
 }
 
@@ -1202,7 +1270,23 @@ document.addEventListener("pointerdown", (event) => {
   if (!linkChip.hidden && !linkChip.contains(event.target)) hideLinkChip();
 });
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") hideLinkChip();
+  if (event.key === "Escape") {
+    hideLinkChip();
+    closeReviewPopover();
+  }
+});
+document.addEventListener("keydown", (event) => {
+  if (!doc || event.defaultPrevented) return;
+  const mod = event.metaKey || event.ctrlKey;
+  if (mod && event.altKey && event.key.toLowerCase() === "m") {
+    event.preventDefault();
+    openReviewComposer();
+  } else if (mod && event.shiftKey && event.key.toLowerCase() === "e") {
+    event.preventDefault();
+    reviewMode = reviewMode === "suggesting" ? "editing" : "suggesting";
+    for (const button of reviewModeButtons) button.setAttribute("aria-pressed", String(button.dataset.reviewMode === reviewMode));
+    if (reviewMode === "suggesting") toggleReview(true);
+  }
 });
 viewportEl.addEventListener("scroll", hideLinkChip, { passive: true });
 window.addEventListener("resize", hideLinkChip);
@@ -1763,6 +1847,19 @@ function toggleFormat(prop) {
   const state = selectionFormat();
   if (!state) return;
   runToolbarEdit((sn, so, en, eo) =>
+    reviewMode === "suggesting" && sn === en
+      ? doc.suggestFormat(
+        sn,
+        Math.min(so, eo),
+        Math.max(so, eo),
+        prop === "bold" ? !state.bold : undefined,
+        prop === "italic" ? !state.italic : undefined,
+        prop === "underline" ? !state.underline : undefined,
+        prop === "strike" ? !state.strike : undefined,
+        reviewAuthor.value.trim() || "You",
+        new Date().toISOString(),
+      )
+      :
     doc.formatSelection(
       sn,
       so,
@@ -2869,6 +2966,80 @@ function reviewText(value) {
 let reviewFilter = "open";
 let reviewReplyParent = null;
 
+function focusReviewComment(comment) {
+  const anchor = comment?.anchor;
+  if (!anchor?.node) return;
+  activeReviewCommentId = comment.id;
+  selection = {
+    anchor: { node: anchor.node, offset: Number(anchor.start) || 0 },
+    focus: { node: anchor.node, offset: Number(anchor.end) || Number(anchor.start) || 0 },
+  };
+  drawSelection();
+  focusEditorSurface();
+  scrollCaretIntoView("center");
+  showReviewPopover(comment);
+}
+
+function closeReviewPopover() {
+  reviewPopover?.remove();
+  reviewPopover = null;
+}
+
+function showReviewPopover(item) {
+  closeReviewPopover();
+  if (!item) return;
+  const popover = document.createElement("div");
+  popover.className = "review-popover";
+  popover.setAttribute("role", "dialog");
+  const head = document.createElement("div");
+  head.className = "review-popover-head";
+  const author = document.createElement("strong");
+  author.textContent = item.author || item.initials || (item.kind ? item.kind.replaceAll("_", " ") : "Comment");
+  const meta = document.createElement("span");
+  meta.className = "review-popover-meta";
+  meta.textContent = item.date || (item.resolved ? "Resolved" : "Open");
+  head.append(author, meta);
+  const body = document.createElement("div");
+  body.className = "review-popover-body";
+  body.textContent = String(item.text || "");
+  const actions = document.createElement("div");
+  actions.className = "review-popover-actions";
+  const addAction = (label, handler) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "review-card-action";
+    button.textContent = label;
+    button.addEventListener("click", async (event) => { event.stopPropagation(); await handler(); });
+    actions.appendChild(button);
+  };
+  if (item.kind) {
+    addAction("Accept", async () => { await runEdit(() => doc.decideRevision(item.id, true)); closeReviewPopover(); });
+    addAction("Reject", async () => { await runEdit(() => doc.decideRevision(item.id, false)); closeReviewPopover(); });
+  } else {
+    addAction(item.resolved ? "Reopen" : "Resolve", async () => { await runEdit(() => doc.setCommentResolved(item.id, !item.resolved)); closeReviewPopover(); });
+    addAction("Reply", async () => { closeReviewPopover(); openReviewComposer(item.id); });
+    addAction("Delete", async () => { await runEdit(() => doc.deleteComment(item.id)); closeReviewPopover(); });
+  }
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "panel-close";
+  close.setAttribute("aria-label", "Close review item");
+  close.textContent = "×";
+  close.addEventListener("click", closeReviewPopover);
+  head.appendChild(close);
+  popover.append(head, body, actions);
+  document.body.appendChild(popover);
+  reviewPopover = popover;
+  const rect = selection && doc ? doc.caretRect(selection.focus.node, selection.focus.offset) : [];
+  const page = rect.length >= 5 ? pages[rect[0] - 1] : null;
+  const scale = page ? scaleOf(page) : { sx: 1, sy: 1 };
+  const pageRect = page?.canvas.getBoundingClientRect();
+  const left = pageRect && rect.length >= 5 ? pageRect.left + rect[1] * scale.sx : window.innerWidth / 2;
+  const top = pageRect && rect.length >= 5 ? pageRect.top + rect[2] * scale.sy : window.innerHeight / 2;
+  popover.style.left = `${Math.max(12, Math.min(window.innerWidth - popover.offsetWidth - 12, left))}px`;
+  popover.style.top = `${Math.max(12, Math.min(window.innerHeight - popover.offsetHeight - 12, top + 18))}px`;
+}
+
 function buildReview() {
   if (!doc || reviewPanel.hidden) return;
   const summary = JSON.parse(doc.reviewSummary());
@@ -2888,7 +3059,7 @@ function buildReview() {
   }
   const note = document.createElement("p");
   note.className = "review-readonly-note";
-  note.textContent = "Review actions are undoable. Suggestions support caret typing, replacement, deletion, and bulk decisions.";
+  note.textContent = "Review actions are undoable. Suggestions support text edits, bold/italic/underline/strike formatting, and bulk decisions.";
   reviewBody.appendChild(note);
   const appendCard = (className, title, meta, body, anchor = null) => {
     const card = document.createElement("article");
@@ -2924,6 +3095,11 @@ function buildReview() {
       reviewText(comment.text),
       comment.anchor,
     );
+    card.dataset.reviewId = comment.id;
+    card.addEventListener("click", (event) => {
+      if (event.target instanceof HTMLButtonElement) return;
+      focusReviewComment(comment);
+    });
     const action = document.createElement("button");
     action.type = "button";
     action.className = "review-card-action";
@@ -2961,6 +3137,19 @@ function buildReview() {
       `${reviewText(revision.author)}${revision.date ? ` · ${reviewText(revision.date)}` : ""}`,
       reviewText(revision.text),
     );
+    card.tabIndex = 0;
+    card.setAttribute("role", "button");
+    card.title = "Select this tracked change";
+    card.addEventListener("click", (event) => {
+      if (event.target instanceof HTMLButtonElement) return;
+      focusReviewRevision(revision);
+    });
+    card.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        focusReviewRevision(revision);
+      }
+    });
     const actions = document.createElement("span");
     actions.className = "review-revision-actions";
     for (const [label, accept] of [["Accept", true], ["Reject", false]]) {
@@ -2997,9 +3186,32 @@ function navigateReviewRevision(direction) {
     match.free();
     return;
   }
-  navigateToAnchor(match.startNode, match.startOffset);
+  selection = {
+    anchor: { node: match.startNode, offset: match.startOffset },
+    focus: { node: match.endNode, offset: match.endOffset },
+  };
+  drawSelection();
+  focusEditorSurface();
+  scrollCaretIntoView("center");
   match.free();
   buildReview();
+}
+
+function focusReviewRevision(revision) {
+  if (!doc || !revision?.text) return;
+  const first = selection?.focus || doc.firstPosition();
+  const match = doc.findText(String(revision.text), first.node, first.offset, true, false);
+  if (first.free) first.free();
+  if (!match.found) { match.free(); return; }
+  selection = {
+    anchor: { node: match.startNode, offset: match.startOffset },
+    focus: { node: match.endNode, offset: match.endOffset },
+  };
+  drawSelection();
+  focusEditorSurface();
+  scrollCaretIntoView("center");
+  showReviewPopover(revision);
+  match.free();
 }
 
 function toggleReview(open) {
@@ -3019,13 +3231,57 @@ reviewAcceptAll.addEventListener("click", async () => { if (doc) { await runEdit
 reviewRejectAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(false)); buildReview(); } });
 reviewPrevious.addEventListener("click", () => navigateReviewRevision(-1));
 reviewNext.addEventListener("click", () => navigateReviewRevision(1));
+reviewInlinePrevious.addEventListener("click", () => navigateReviewRevision(-1));
+reviewInlineNext.addEventListener("click", () => navigateReviewRevision(1));
+reviewInlineAcceptAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(true)); closeReviewPopover(); drawSelection(); } });
+reviewInlineRejectAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(false)); closeReviewPopover(); drawSelection(); } });
 function openReviewComposer(parent = null) {
   if (!doc || (!parent && (!hasRange() || !selection))) return;
-  toggleReview(true);
   reviewReplyParent = parent;
-  reviewComposer.hidden = false;
-  reviewComposerText.value = "";
-  queueMicrotask(() => reviewComposerText.focus());
+  closeReviewPopover();
+  const popover = document.createElement("div");
+  popover.className = "review-popover";
+  const label = document.createElement("label");
+  label.textContent = parent ? "Reply" : "Comment";
+  const textarea = document.createElement("textarea");
+  textarea.rows = 3;
+  textarea.maxLength = 4096;
+  textarea.placeholder = parent ? "Reply…" : "Add a comment…";
+  textarea.style.cssText = "width:100%;box-sizing:border-box;margin:8px 0;padding:7px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink);font:inherit;resize:vertical";
+  const actions = document.createElement("div");
+  actions.className = "review-popover-actions";
+  const cancel = document.createElement("button");
+  cancel.type = "button"; cancel.className = "review-card-action"; cancel.textContent = "Cancel";
+  cancel.addEventListener("click", closeReviewPopover);
+  const submit = document.createElement("button");
+  submit.type = "button"; submit.className = "review-card-action"; submit.textContent = parent ? "Reply" : "Comment";
+  submit.addEventListener("click", async () => {
+    const text = textarea.value.trim();
+    if (!text) return;
+    if (parent) {
+      await runEdit(() => doc.replyToComment(parent, text, reviewAuthor.value.trim() || "You", null, new Date().toISOString()));
+    } else {
+      const start = selection.anchor.offset <= selection.focus.offset ? selection.anchor : selection.focus;
+      const end = selection.anchor.offset <= selection.focus.offset ? selection.focus : selection.anchor;
+      if (start.node !== end.node) { setStatus("Comments currently require a single-paragraph selection", "error"); return; }
+      await runEdit(() => doc.addComment(start.node, start.offset, end.offset, text, reviewAuthor.value.trim() || "You", null, new Date().toISOString()));
+    }
+    closeReviewPopover();
+    drawSelection();
+  });
+  actions.append(cancel, submit);
+  popover.append(label, textarea, actions);
+  document.body.appendChild(popover);
+  reviewPopover = popover;
+  const rect = selection && doc ? doc.caretRect(selection.focus.node, selection.focus.offset) : [];
+  const page = rect.length >= 5 ? pages[rect[0] - 1] : null;
+  const scale = page ? scaleOf(page) : { sx: 1, sy: 1 };
+  const pageRect = page?.canvas.getBoundingClientRect();
+  const left = pageRect && rect.length >= 5 ? pageRect.left + rect[1] * scale.sx : window.innerWidth / 2;
+  const top = pageRect && rect.length >= 5 ? pageRect.top + rect[2] * scale.sy : window.innerHeight / 2;
+  popover.style.left = `${Math.max(12, Math.min(window.innerWidth - popover.offsetWidth - 12, left))}px`;
+  popover.style.top = `${Math.max(12, Math.min(window.innerHeight - popover.offsetHeight - 12, top + 18))}px`;
+  textarea.focus();
 }
 function closeReviewComposer() {
   reviewReplyParent = null;
@@ -3763,23 +4019,25 @@ async function cut(event = null) {
   const copied = await copySelection(event);
   if (!copied) return;
   const { anchor, focus } = selection;
-  await runEdit(() => doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset));
+  await runEdit(() => reviewMode === "suggesting" && anchor.node === focus.node
+    ? doc.suggestDelete(anchor.node, Math.min(anchor.offset, focus.offset), Math.max(anchor.offset, focus.offset), reviewAuthor.value.trim() || "You", new Date().toISOString())
+    : doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset));
 }
 
 async function pasteText(text, actionKind = "paste") {
   if (!doc || !selection) return;
   if (!text) return;
   const { anchor, focus } = selection;
-  await runEdit(() =>
-    doc.insertPlainTextAs(
-      anchor.node,
-      anchor.offset,
-      focus.node,
-      focus.offset,
-      text,
-      actionKind,
-    ),
-  );
+  const sameParagraph = anchor.node === focus.node && !text.includes("\n");
+  if (reviewMode === "suggesting" && sameParagraph) {
+    const start = Math.min(anchor.offset, focus.offset);
+    const end = Math.max(anchor.offset, focus.offset);
+    await runEdit(() => end > start
+      ? doc.suggestReplace(anchor.node, start, end, text, reviewAuthor.value.trim() || "You", new Date().toISOString())
+      : doc.suggestInsert(anchor.node, start, text, reviewAuthor.value.trim() || "You", new Date().toISOString()));
+    return;
+  }
+  await runEdit(() => doc.insertPlainTextAs(anchor.node, anchor.offset, focus.node, focus.offset, text, actionKind));
 }
 
 async function commitComposedText(text) {
@@ -3794,6 +4052,16 @@ async function commitComposedText(text) {
  * `copyRichRuns` produces. */
 async function pasteRichRunsJson(runsJson) {
   if (!doc || !selection) return;
+  if (reviewMode === "suggesting") {
+    try {
+      const runs = JSON.parse(runsJson);
+      const text = runs.map((run) => run.paragraphBreak ? "\n" : String(run.text ?? "")).join("");
+      if (text) {
+        await pasteText(text, "paste");
+        return;
+      }
+    } catch { /* fall through to the normal rich-paste path */ }
+  }
   const { anchor, focus } = selection;
   await runEdit(() =>
     doc.pasteRichRuns(anchor.node, anchor.offset, focus.node, focus.offset, runsJson),
