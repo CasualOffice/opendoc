@@ -3552,6 +3552,7 @@ impl WasmDocument {
                     "initials": comment.initials,
                     "date": comment.date,
                     "resolved": comment.done,
+                    "parentParaId": comment.parent_para_id,
                     "text": blocks.into_iter().map(|(_, text)| text).collect::<Vec<_>>().join("\n"),
                 });
                 if let Some((_, node, start, end)) =
@@ -3832,6 +3833,134 @@ impl WasmDocument {
                 comments: self.document.definitions().comments.clone(),
             }],
             Pos::new(node, offset + text.len() as u32),
+            HistoryKind::Review,
+        )
+        .map_err(to_js)
+    }
+
+    /// Replaces a selected range with a tracked deletion plus tracked insertion.
+    #[wasm_bindgen(js_name = suggestReplace)]
+    pub fn suggest_replace(
+        &mut self,
+        node: &str,
+        start: u32,
+        end: u32,
+        text: &str,
+        author: Option<String>,
+        date: Option<String>,
+    ) -> Result<EditResult, JsValue> {
+        if start >= end || text.is_empty() {
+            return Err(to_js(
+                "suggested replacement requires a range and text".to_string(),
+            ));
+        }
+        let node = node_id(node)?;
+        let deletion = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".to_string()))?;
+        let insertion = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".to_string()))?;
+        let run = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".to_string()))?;
+        let mut body = self.document.body().to_vec();
+        if !wrap_review_deletion(
+            &mut body,
+            node,
+            start,
+            end,
+            Revision {
+                id: deletion,
+                kind: RevisionKind::Deletion,
+                author: author.clone(),
+                date: date.clone(),
+                revision_id: None,
+                inlines: Vec::new(),
+            },
+            &mut self.edit_ids,
+        ) {
+            return Err(to_js(
+                "suggested replacement requires top-level paragraph text".to_string(),
+            ));
+        }
+        if !insert_review_revision(
+            &mut body,
+            node,
+            start,
+            Revision {
+                id: insertion,
+                kind: RevisionKind::Insertion,
+                author,
+                date,
+                revision_id: None,
+                inlines: vec![InlineNode::Run(Run {
+                    id: run,
+                    properties: RunProperties::default(),
+                    text: text.to_owned(),
+                })],
+            },
+            &mut self.edit_ids,
+        ) {
+            return Err(to_js("suggested replacement insertion failed".to_string()));
+        }
+        self.apply_action_caret_as(
+            vec![Operation::ReplaceReviewState {
+                body,
+                comments: self.document.definitions().comments.clone(),
+            }],
+            Pos::new(node, start + text.len() as u32),
+            HistoryKind::Review,
+        )
+        .map_err(to_js)
+    }
+
+    #[wasm_bindgen(js_name = suggestDelete)]
+    pub fn suggest_delete(
+        &mut self,
+        node: &str,
+        start: u32,
+        end: u32,
+        author: Option<String>,
+        date: Option<String>,
+    ) -> Result<EditResult, JsValue> {
+        if start >= end {
+            return Err(to_js("suggested deletion requires a range".to_string()));
+        }
+        let node = node_id(node)?;
+        let revision = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".to_string()))?;
+        let mut body = self.document.body().to_vec();
+        if !wrap_review_deletion(
+            &mut body,
+            node,
+            start,
+            end,
+            Revision {
+                id: revision,
+                kind: RevisionKind::Deletion,
+                author,
+                date,
+                revision_id: None,
+                inlines: Vec::new(),
+            },
+            &mut self.edit_ids,
+        ) {
+            return Err(to_js(
+                "suggested deletion requires top-level paragraph text".to_string(),
+            ));
+        }
+        self.apply_action_caret_as(
+            vec![Operation::ReplaceReviewState {
+                body,
+                comments: self.document.definitions().comments.clone(),
+            }],
+            Pos::new(node, start),
             HistoryKind::Review,
         )
         .map_err(to_js)
@@ -6014,6 +6143,82 @@ fn insert_review_revision(
                     &mut sdt.blocks,
                     node,
                     offset,
+                    revision.clone(),
+                    ids,
+                );
+            }
+            BlockNode::AltChunk(_) => continue,
+        }
+    }
+    false
+}
+
+fn wrap_review_deletion(
+    blocks: &mut [BlockNode],
+    node: NodeId,
+    start: u32,
+    end: u32,
+    revision: Revision,
+    ids: &mut IdGenerator,
+) -> bool {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) if paragraph.id == node => {
+                if !review_split_top_level_run(&mut paragraph.inlines, start, ids)
+                    || !review_split_top_level_run(&mut paragraph.inlines, end, ids)
+                {
+                    return false;
+                }
+                let mut cursor = 0;
+                let mut first = None;
+                let mut last = None;
+                for (index, inline) in paragraph.inlines.iter().enumerate() {
+                    let InlineNode::Run(run) = inline else {
+                        continue;
+                    };
+                    if cursor == start {
+                        first = Some(index);
+                    }
+                    cursor = cursor.saturating_add(run.text.len() as u32);
+                    if cursor == end {
+                        last = Some(index);
+                        break;
+                    }
+                }
+                let (Some(first), Some(last)) = (first, last) else {
+                    return false;
+                };
+                let children = paragraph.inlines.drain(first..=last).collect();
+                paragraph.inlines.insert(
+                    first,
+                    InlineNode::Revision(Revision {
+                        inlines: children,
+                        ..revision
+                    }),
+                );
+                return true;
+            }
+            BlockNode::Paragraph(_) => continue,
+            BlockNode::Table(table) => {
+                return table.rows.iter_mut().any(|row| {
+                    row.cells.iter_mut().any(|cell| {
+                        wrap_review_deletion(
+                            &mut cell.blocks,
+                            node,
+                            start,
+                            end,
+                            revision.clone(),
+                            ids,
+                        )
+                    })
+                });
+            }
+            BlockNode::Sdt(sdt) => {
+                return wrap_review_deletion(
+                    &mut sdt.blocks,
+                    node,
+                    start,
+                    end,
                     revision.clone(),
                     ids,
                 );

@@ -178,6 +178,7 @@ const reviewComposerText = document.getElementById("reviewComposerText");
 const reviewComposerCancel = document.getElementById("reviewComposerCancel");
 const reviewComposerSubmit = document.getElementById("reviewComposerSubmit");
 const reviewModeButtons = [...document.querySelectorAll("[data-review-mode]")];
+const reviewAuthor = document.getElementById("reviewAuthor");
 let reviewMode = "editing";
 const linkChip = document.getElementById("linkChip");
 const linkChipKind = document.getElementById("linkChipKind");
@@ -2910,8 +2911,8 @@ function buildReview() {
   };
   for (const comment of comments) {
     const card = appendCard(
-      "review-card review-comment",
-      reviewText(comment.author || comment.initials || "Comment"),
+      `review-card review-comment${comment.parentParaId ? " review-reply" : ""}`,
+      `${comment.parentParaId ? "Reply · " : ""}${reviewText(comment.author || comment.initials || "Comment")}`,
       `${comment.resolved ? "Resolved" : "Open"}${comment.date ? ` · ${reviewText(comment.date)}` : ""}`,
       reviewText(comment.text),
       comment.anchor,
@@ -3006,7 +3007,7 @@ reviewComposerSubmit.addEventListener("click", async () => {
   const range = selection;
   if (!doc || !text || (!reviewReplyParent && (!range || !hasRange()))) return;
   if (reviewReplyParent) {
-    await runEdit(() => doc.replyToComment(reviewReplyParent, text, "You", null, new Date().toISOString()));
+    await runEdit(() => doc.replyToComment(reviewReplyParent, text, reviewAuthor.value.trim() || "You", null, new Date().toISOString()));
     closeReviewComposer();
     buildReview();
     return;
@@ -3017,7 +3018,7 @@ reviewComposerSubmit.addEventListener("click", async () => {
     setStatus("Comments currently require a single-paragraph selection", "error");
     return;
   }
-  await runEdit(() => doc.addComment(start.node, start.offset, end.offset, text, "You", null, new Date().toISOString()));
+  await runEdit(() => doc.addComment(start.node, start.offset, end.offset, text, reviewAuthor.value.trim() || "You", null, new Date().toISOString()));
   closeReviewComposer();
   buildReview();
 });
@@ -3996,20 +3997,28 @@ document.addEventListener("keydown", async (e) => {
         return;
       }
     }
-    await runEdit(() =>
-      range
-        ? doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset)
-        : doc.deleteBackward(focus.node, focus.offset),
-    );
+    if (reviewMode === "suggesting") {
+      const start = range ? (anchor.offset <= focus.offset ? anchor : focus) : (() => { const c = doc.moveCaret(focus.node, focus.offset, "left"); const p = { node: c.node, offset: c.offset }; c.free(); return p; })();
+      const end = range ? (anchor.offset <= focus.offset ? focus : anchor) : focus;
+      if (start.node === end.node && start.offset < end.offset) {
+        await runEdit(() => doc.suggestDelete(start.node, start.offset, end.offset, reviewAuthor.value.trim() || "You", new Date().toISOString()));
+        return;
+      }
+    }
+    await runEdit(() => range ? doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset) : doc.deleteBackward(focus.node, focus.offset));
     return;
   }
   if (key === "Delete") {
     e.preventDefault();
-    await runEdit(() =>
-      range
-        ? doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset)
-        : doc.deleteForward(focus.node, focus.offset),
-    );
+    if (reviewMode === "suggesting") {
+      const start = range ? (anchor.offset <= focus.offset ? anchor : focus) : focus;
+      const end = range ? (anchor.offset <= focus.offset ? focus : anchor) : (() => { const c = doc.moveCaret(focus.node, focus.offset, "right"); const p = { node: c.node, offset: c.offset }; c.free(); return p; })();
+      if (start.node === end.node && start.offset < end.offset) {
+        await runEdit(() => doc.suggestDelete(start.node, start.offset, end.offset, reviewAuthor.value.trim() || "You", new Date().toISOString()));
+        return;
+      }
+    }
+    await runEdit(() => range ? doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset) : doc.deleteForward(focus.node, focus.offset));
     return;
   }
   if (key === "Enter") {
@@ -4048,7 +4057,9 @@ document.addEventListener("keydown", async (e) => {
     if (range) {
       pendingFormat = null; // typing over a selection uses the selection's own runs
       await runEdit(
-        () => doc.typeText(anchor.node, anchor.offset, focus.node, focus.offset, key, session),
+        () => reviewMode === "suggesting"
+          ? doc.suggestReplace(anchor.node, anchor.offset, focus.offset, key, reviewAuthor.value.trim() || "You", new Date().toISOString())
+          : doc.typeText(anchor.node, anchor.offset, focus.node, focus.offset, key, session),
         { typing: true },
       );
     } else if (pendingFormat) {
@@ -4075,7 +4086,7 @@ document.addEventListener("keydown", async (e) => {
     } else {
       await runEdit(
         () => reviewMode === "suggesting"
-          ? doc.suggestInsert(focus.node, focus.offset, key, "You", new Date().toISOString())
+          ? doc.suggestInsert(focus.node, focus.offset, key, reviewAuthor.value.trim() || "You", new Date().toISOString())
           : doc.typeText(focus.node, focus.offset, focus.node, focus.offset, key, session),
         { typing: true },
       );
