@@ -13,12 +13,20 @@ import {
   fetchFontBytes,
   packFontBytes,
 } from "./web_fonts.mjs";
-import { embedMarker, escapeHtml, extractMarker, htmlToRuns, runsToHtml } from "./clipboard.mjs";
+import { embedMarker, extractMarker, htmlToRuns, runsToHtml } from "./clipboard.mjs";
 import {
   keyboardPlatform,
   navigationDirection,
   wordDeletionDirection,
 } from "./keyboard.mjs";
+
+function escapeHtml(text) {
+  return String(text)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
 
 /** url → Uint8Array of already-fetched font bytes (persists across documents). */
 const fontCache = new Map();
