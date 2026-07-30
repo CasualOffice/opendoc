@@ -1,6 +1,7 @@
 # 68 — Comments and Suggestions (Track Changes) Editor UX Design
 
-**Status:** Accepted; implemented through the workflow-completeness audit (P1G-REVIEW-033).
+**Status:** Accepted; partially implemented through paired tracked-move review
+(P1G-REVIEW-034). Remaining production gaps are tracked in doc 81.
 **Date:** 2026-07-30.
 **Depends on:** `v1::Definitions.comments`/`people` (Done, `P1A-031`/`P1F-10`/`P1F-35`), `v1::InlineNode::Revision` (Done, import/export passthrough only), `casual-doc-edit` op set (doc 59), interaction architecture (doc 58), extensibility seams I1–I4 (doc 45), design system (doc 63), toolbar/ribbon design (doc 64). Referenced by `docs/67-EDITOR-UX-GAP-ANALYSIS.md` row "Comments/revisions."
 
@@ -32,7 +33,6 @@ Both converge on the same shape: inline colored markup for the change itself, a 
 - Real-time multi-user collaboration transport, presence cursors, or conflict resolution — host-owned per I4/doc 45; this doc only defines the data/identity seam collaboration would plug into.
 - Notification/email delivery for @mentions, assignee workflows, or approval routing.
 - Legal redlining / compare-two-documents mode.
-- Move-tracking UX (`MoveFrom`/`MoveTo`) beyond preserving it on round-trip — deferred to a later slice (see Phasing, Slice D).
 - Full Word ribbon "Review" tab (markup-view modes, Show Markup filters, Accept-All/Reject-All) — the first suggesting-mode slice ships a minimal Docs-style toggle; ribbon depth is a follow-up once usage warrants the extra chrome.
 
 ## Current State Recap
@@ -132,6 +132,21 @@ Structural operations that do not yet have a safe revision representation
 (cross-paragraph replacement/cut/paste, paragraph breaks, and list/indent changes)
 are rejected with an explanation instead of silently bypassing tracking.
 
+### 2026-07-31 paired-move correction
+
+Imported `MoveFrom`/`MoveTo` revisions are one logical suggestion, not two
+independent changes. The producer's revision `w:id` is not a pairing key: the
+source and destination commonly have different values. Pairing therefore uses
+the shared `w:name` carried by their enclosing move-range starts and retains the
+exact source/destination marker node ids as the decision token.
+
+The sidebar renders one "Moved …" card containing both the source and destination
+anchors. Accept removes the source and keeps the destination; Reject keeps the
+source and removes the destination. Either choice removes all four consumed
+move-range markers, commits as one review transaction, and is restored by one
+Undo. Incomplete or ambiguous producer markup remains visible as individual
+read-only-safe move items rather than being guessed into an unrelated pair.
+
 **Dedicated review sidebar** hosts the unified comment/suggestion stream in document order. Each comment card shows author/initials, date, body, replies, and resolve/reopen. Suggestions appear as cards in the same stream rather than a separate panel. The sidebar plus exact model-anchor rects avoid coupling review UX to the bitmap canvas or searching for duplicate text.
 
 **Comment creation**: selecting a range surfaces a "Comment" button on the existing floating selection toolbar (P1G-034 explicitly deferred this pending a comments model — now unblocked) alongside B/I/U/S/color/highlight. Clicking opens a small inline composer anchored at the selection; submitting creates the comment, highlights the range in a soft highlight distinct from selection/find (matching Docs' anchor-highlight convention), and opens/focuses the panel thread.
@@ -149,7 +164,7 @@ Per AGENTS.md ("Host applications own policy: storage, network, auth, telemetry"
 - **Slice A — Comments.** New comment `Operation` variants, WASM query/mutate surface, anchor rendering, right-panel thread UI, floating-toolbar Comment button. Independent of suggesting-mode work; ships first since the data model is already complete.
 - **Slice B — Suggesting-mode foundation.** Host identity seam, `tracking` attribution on `InsertText`/`DeleteText`/`FormatText`, inline suggestion rendering, single-item Accept/Reject, mode toggle.
 - **Slice C — Suggesting-mode depth.** Formatting-only tracked changes, Accept All/Reject All, resolved/pending filters, per-author color legend, Next/Prev navigation polish.
-- **Slice D — Deferred.** Move-tracking UX (`MoveFrom`/`MoveTo` shown as "moved from/to"), @mentions/assignees, reactions, ribbon Review tab depth (markup-view modes, Show Markup filters).
+- **Slice D — Partially complete.** Paired move review is implemented. @mentions/assignees, reactions, and ribbon Review tab depth (markup-view modes, Show Markup filters) remain outside the current product slice.
 
 This slots alongside doc 67's existing execution plan; it does not require reordering the already-accepted PR3 (structural delete/keyboard shortcuts).
 
@@ -157,7 +172,9 @@ This slots alongside doc 67's existing execution plan; it does not require reord
 
 1. **Resolved:** editor-authored comments allocate the next unused eight-hex-digit `para_id`; replies use the root key. Import/export remains opaque for producer-authored ids.
 2. **Resolved:** character-format suggestions cover the complete exposed run-format surface and use one atomic deletion/insertion group.
-3. **Remaining:** imported `MoveFrom`/`MoveTo` revisions preserve correct individual accept/reject semantics, but a product-level paired-move card and forced paired decision remain deferred.
+3. **Resolved:** imported `MoveFrom`/`MoveTo` revisions pair through their
+   shared move-range name plus exact source/destination marker identities. The
+   card and decision are atomic and remove the consumed range markers.
 4. **Resolved:** Comments owns a dedicated 340px sibling sidebar, not the generic region-4 properties panel and never a canvas overlay.
 
 ## Verification Gates
