@@ -4289,8 +4289,44 @@ const pagePreviewSheet = document.getElementById("pagePreviewSheet");
 const pagePreviewMargins = document.getElementById("pagePreviewMargins");
 const pagePreviewLabel = document.getElementById("pagePreviewLabel");
 const pageSetupSection = document.getElementById("pageSetupSection");
+const pageColumnCount = document.getElementById("pageColumnCount");
+const pageColumnGap = document.getElementById("pageColumnGap");
+const pageColumnSeparator = document.getElementById("pageColumnSeparator");
 
 let pageSetupCurrent = null; // the last-fetched {section, pageSize, pageMargins, orientation}
+
+function reflectPageSetupColumns(columns) {
+  const value = columns ?? { count: 1, spaceTwips: 0, separator: false };
+  pageColumnCount.value = String(Math.min(4, Math.max(1, value.count ?? 1)));
+  pageColumnGap.value = pageInchStr(value.spaceTwips ?? 0);
+  pageColumnSeparator.checked = value.separator === true;
+}
+
+function pageSetupColumnsPayload() {
+  const current = pageSetupCurrent.columns;
+  const count = Number(pageColumnCount.value) || 1;
+  const spaceTwips = inchTwips(pageColumnGap);
+  const separator = pageColumnSeparator.checked;
+  // Opening Page Setup and changing only page size/margins must not erase
+  // explicit unequal column widths. Normalize to equal columns only when a
+  // column control itself actually changed.
+  if (
+    current &&
+    count === current.count &&
+    spaceTwips === (current.spaceTwips ?? 0) &&
+    separator === (current.separator === true)
+  ) {
+    return current;
+  }
+  return {
+    ...(current ?? {}),
+    count,
+    spaceTwips,
+    separator,
+    equalWidth: true,
+    columns: [],
+  };
+}
 
 /** Twips → inches string for a page-geometry field (unlike inchStr, 0 shows
  * as "0" — a page dimension/margin is never meaningfully "unset"). */
@@ -4338,6 +4374,7 @@ function reflectPageSetup() {
   pageMarginBottomInput.value = pageInchStr(pageMargins.bottomTwips);
   pageMarginLeftInput.value = pageInchStr(pageMargins.startTwips);
   pageMarginRightInput.value = pageInchStr(pageMargins.endTwips);
+  reflectPageSetupColumns(pageSetupCurrent.columns);
   const activeOrientation =
     orientation ?? (pageSize.widthTwips > pageSize.heightTwips ? "landscape" : "portrait");
   for (const btn of pageOrientationSeg.querySelectorAll("button")) {
@@ -4360,6 +4397,7 @@ pageSetupSection.addEventListener("change", () => {
   pageMarginBottomInput.value = pageInchStr(pageMargins.bottomTwips);
   pageMarginLeftInput.value = pageInchStr(pageMargins.startTwips);
   pageMarginRightInput.value = pageInchStr(pageMargins.endTwips);
+  reflectPageSetupColumns(pageSetupCurrent.columns);
   const activeOrientation = orientation ?? (pageSize.widthTwips > pageSize.heightTwips ? "landscape" : "portrait");
   for (const btn of pageOrientationSeg.querySelectorAll("button")) {
     btn.setAttribute("aria-pressed", String(btn.dataset.orientation === activeOrientation));
@@ -4433,6 +4471,7 @@ pageSetupApplyBtn.addEventListener("click", async () => {
       startTwips: inchTwips(pageMarginLeftInput),
       endTwips: inchTwips(pageMarginRightInput),
     },
+    columns: pageSetupColumnsPayload(),
     orientation,
   };
   await runEdit(() => doc.setPageSetup(JSON.stringify(payload)));

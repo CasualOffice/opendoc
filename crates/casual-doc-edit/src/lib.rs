@@ -21,7 +21,7 @@ use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     BlockNode, Color, CoreProperties, Document, FontName, FontRef, GridColumn, HighlightColor,
     Hyperlink, HyperlinkTarget, InlineNode, PageMargins, PageOrientation, PageSize, Paragraph,
-    ParagraphProperties, RgbColor, Run, RunProperties, SectionId, Table, TableCell,
+    ParagraphProperties, RgbColor, Run, RunProperties, SectionColumns, SectionId, Table, TableCell,
     TableCellProperties, TableProperties, TableRow, VerticalAlignment,
 };
 
@@ -288,9 +288,9 @@ pub enum Operation {
         /// The properties to install.
         properties: Box<CoreProperties>,
     },
-    /// Replace one section's page size, margins, and orientation (the "Page
-    /// Setup" fields) — column layout, headers/footers, borders, and the
-    /// section's other properties are untouched. Its own inverse; rejected
+    /// Replace one section's page size, margins, orientation, and column layout
+    /// (the "Page Setup" fields) — headers/footers, borders, and the section's
+    /// other properties are untouched. Its own inverse; rejected
     /// (doc left unchanged) if a value falls outside the model's domain
     /// (e.g. a page dimension over ~22in).
     SetSectionGeometry {
@@ -303,6 +303,8 @@ pub enum Operation {
         /// The orientation to install (`None` clears it — the model then
         /// infers portrait/landscape from the page size on export).
         orientation: Option<PageOrientation>,
+        /// The column layout to install.
+        columns: SectionColumns,
     },
 }
 
@@ -734,6 +736,7 @@ pub fn apply(
             page_size,
             page_margins,
             orientation,
+            columns,
         } => {
             let s = doc
                 .definitions_mut()
@@ -741,10 +744,16 @@ pub fn apply(
                 .iter_mut()
                 .find(|s| s.id == *section)
                 .ok_or(EditError::NodeNotFound)?;
-            let previous = (s.page_size, s.page_margins, s.orientation);
+            let previous = (
+                s.page_size,
+                s.page_margins,
+                s.orientation,
+                s.columns.clone(),
+            );
             s.page_size = *page_size;
             s.page_margins = *page_margins;
             s.orientation = *orientation;
+            s.columns = columns.clone();
             if doc.validate().is_err() {
                 let s = doc
                     .definitions_mut()
@@ -752,7 +761,7 @@ pub fn apply(
                     .iter_mut()
                     .find(|s| s.id == *section)
                     .expect("the section we just found still exists");
-                (s.page_size, s.page_margins, s.orientation) = previous;
+                (s.page_size, s.page_margins, s.orientation, s.columns) = previous;
                 return Err(EditError::ValueTooLarge);
             }
             Ok(Operation::SetSectionGeometry {
@@ -760,6 +769,7 @@ pub fn apply(
                 page_size: previous.0,
                 page_margins: previous.1,
                 orientation: previous.2,
+                columns: previous.3,
             })
         }
     }
@@ -2596,6 +2606,14 @@ mod tests {
         let mut d = doc_with_section(vec![para(2, vec![run(3, "text")])], 500);
         let mut ids = IdGenerator::new(9);
         let sid = SectionId::new(n(500));
+        let previous_columns = d.definitions().sections[0].columns.clone();
+        let columns = SectionColumns {
+            count: 2,
+            space_twips: Some(360),
+            separator: Some(true),
+            equal_width: Some(true),
+            columns: Vec::new(),
+        };
 
         let inverse = apply(
             &mut d,
@@ -2615,6 +2633,7 @@ mod tests {
                     footer_twips: None,
                 },
                 orientation: Some(PageOrientation::Landscape),
+                columns,
             },
         )
         .expect("section geometry install");
@@ -2623,12 +2642,16 @@ mod tests {
         assert_eq!(installed.page_size.width_twips, 15_840);
         assert_eq!(installed.page_margins.top_twips, 720);
         assert_eq!(installed.orientation, Some(PageOrientation::Landscape));
+        assert_eq!(installed.columns.count, 2);
+        assert_eq!(installed.columns.space_twips, Some(360));
+        assert_eq!(installed.columns.separator, Some(true));
 
         apply(&mut d, &mut ids, &inverse).expect("undo restores previous geometry");
         let restored = &d.definitions().sections[0];
         assert_eq!(restored.page_size.width_twips, 12_240);
         assert_eq!(restored.page_margins.top_twips, 1_440);
         assert_eq!(restored.orientation, None);
+        assert_eq!(restored.columns, previous_columns);
     }
 
     #[test]
@@ -2636,6 +2659,7 @@ mod tests {
         let mut d = doc_with_section(vec![para(2, vec![run(3, "text")])], 500);
         let mut ids = IdGenerator::new(9);
         let sid = SectionId::new(n(500));
+        let columns = d.definitions().sections[0].columns.clone();
 
         let original_margins = d.definitions().sections[0].page_margins;
         let err = apply(
@@ -2649,6 +2673,7 @@ mod tests {
                 },
                 page_margins: original_margins,
                 orientation: None,
+                columns,
             },
         )
         .unwrap_err();
@@ -2670,6 +2695,7 @@ mod tests {
                 page_size: original.page_size,
                 page_margins: original.page_margins,
                 orientation: None,
+                columns: original.columns.clone(),
             },
         )
         .unwrap_err();
