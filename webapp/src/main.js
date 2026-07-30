@@ -139,6 +139,7 @@ const findPrevBtn = document.getElementById("findPrev");
 const findNextBtn = document.getElementById("findNext");
 const findStatus = document.getElementById("findStatus");
 const findCase = document.getElementById("findCase");
+const findWholeWord = document.getElementById("findWholeWord");
 const replaceOneBtn = document.getElementById("replaceOne");
 const replaceAllBtn = document.getElementById("replaceAll");
 const findCloseBtn = document.getElementById("findClose");
@@ -463,6 +464,7 @@ async function provisionFonts(name) {
 
 async function renderAll() {
   if (!doc) return;
+  clearFindParagraphCache();
   const token = ++renderToken;
   const zoom = Number(zoomEl.value);
   const dpr = window.devicePixelRatio || 1;
@@ -1542,6 +1544,7 @@ async function applyEditResult(res) {
   const dirty = res.dirtyPages;
   const newCount = res.pageCount;
   res.free();
+  clearFindParagraphCache();
   selection = { anchor: { node, offset }, focus: { node, offset } };
   if (newCount !== pages.length) {
     await renderAll(); // structural change (page added/removed): rebuild the list
@@ -2972,7 +2975,43 @@ function setFindStatus(text, miss = false) {
  * first — comparing only to the first match's key under-counts (it can
  * oscillate between two later matches forever without ever revisiting the
  * exact first one). */
-function scanAllMatches(query, matchCase) {
+const findTextEncoder = new TextEncoder();
+const findParagraphTextCache = new Map();
+
+function paragraphTextForFind(node) {
+  if (!findParagraphTextCache.has(node)) {
+    const length = doc.paragraphLength(node);
+    findParagraphTextCache.set(node, doc.copyText(node, 0, node, length));
+  }
+  return findParagraphTextCache.get(node);
+}
+
+function byteOffsetToStringIndex(text, byteOffset) {
+  if (byteOffset <= 0) return 0;
+  let bytes = 0;
+  for (let i = 0; i < text.length; ) {
+    if (bytes >= byteOffset) return i;
+    const cp = text.codePointAt(i);
+    const width = findTextEncoder.encode(String.fromCodePoint(cp)).length;
+    bytes += width;
+    i += cp > 0xffff ? 2 : 1;
+  }
+  return text.length;
+}
+
+function isWholeWordMatch(match, query) {
+  const text = paragraphTextForFind(match.startNode);
+  const start = byteOffsetToStringIndex(text, match.startOffset);
+  const end = byteOffsetToStringIndex(text, match.endOffset);
+  const word = /[\p{L}\p{N}_]/u;
+  return !word.test(text[start - 1] || "") && !word.test(text[end] || "");
+}
+
+function clearFindParagraphCache() {
+  findParagraphTextCache.clear();
+}
+
+function scanAllMatches(query, matchCase, wholeWord = false) {
   const matches = [];
   if (!doc || !query) return matches;
   const first = doc.firstPosition();
@@ -2992,12 +3031,13 @@ function scanAllMatches(query, matchCase) {
       break;
     }
     seen.add(key);
-    matches.push({
+    const candidate = {
       startNode: match.startNode,
       startOffset: match.startOffset,
       endNode: match.endNode,
       endOffset: match.endOffset,
-    });
+    };
+    if (!wholeWord || isWholeWordMatch(candidate, query)) matches.push(candidate);
     node = match.endNode;
     offset = match.endOffset;
     match.free();
@@ -3011,7 +3051,7 @@ function updateFindStatus() {
     setFindStatus("");
     return;
   }
-  const matches = scanAllMatches(query, findCase.checked);
+  const matches = scanAllMatches(query, findCase.checked, findWholeWord.checked);
   if (!matches.length) {
     setFindStatus("No match", true);
     return;
@@ -3048,7 +3088,7 @@ function queryMatchesSelection() {
 }
 
 function selectTextMatch(match) {
-  if (!match.found) {
+  if (!match || match.found === false) {
     setFindStatus("No match", true);
     return false;
   }
@@ -3072,17 +3112,20 @@ function findFromSelection(forward) {
     setFindStatus("");
     return false;
   }
-  let start = selection ? (forward ? selection.focus : selection.anchor) : null;
-  let ownedStart = null;
-  if (!start) {
-    ownedStart = forward ? doc.firstPosition() : doc.lastPosition();
-    start = { node: ownedStart.node, offset: ownedStart.offset };
+  const matches = scanAllMatches(findInput.value, findCase.checked, findWholeWord.checked);
+  if (!matches.length) {
+    setFindStatus("No match", true);
+    return false;
   }
-  const match = doc.findText(findInput.value, start.node, start.offset, forward, findCase.checked);
-  const found = selectTextMatch(match);
-  match.free();
-  ownedStart?.free();
-  return found;
+  const current = selection
+    ? matches.findIndex(
+        (m) => m.startNode === selection.anchor.node && m.startOffset === selection.anchor.offset,
+      )
+    : -1;
+  const index = current >= 0
+    ? (current + (forward ? 1 : matches.length - 1)) % matches.length
+    : forward ? 0 : matches.length - 1;
+  return selectTextMatch(matches[index]);
 }
 
 async function replaceCurrentMatch() {
@@ -3108,6 +3151,7 @@ async function replaceAllMatches() {
   const query = findInput.value;
   const replacement = replaceInput.value;
   const matchCase = findCase.checked;
+  const wholeWord = findWholeWord.checked;
   const replacementBytes = new TextEncoder().encode(replacement).length;
   const first = doc.firstPosition();
   let node = first.node;
@@ -3120,8 +3164,19 @@ async function replaceAllMatches() {
       match.free();
       break;
     }
-    const { startNode, startOffset, endNode, endOffset } = match;
+    const candidate = {
+      startNode: match.startNode,
+      startOffset: match.startOffset,
+      endNode: match.endNode,
+      endOffset: match.endOffset,
+    };
+    const { startNode, startOffset, endNode, endOffset } = candidate;
     match.free();
+    if (wholeWord && !isWholeWordMatch(candidate, query)) {
+      node = endNode;
+      offset = endOffset;
+      continue;
+    }
     await runEdit(() => doc.replaceSelection(startNode, startOffset, endNode, endOffset, replacement));
     count++;
     node = startNode;
@@ -3149,6 +3204,8 @@ findInput.addEventListener("input", () => {
   if (findInput.value) findFromSelection(true);
   else setFindStatus("");
 });
+findCase.addEventListener("change", () => updateFindStatus());
+findWholeWord.addEventListener("change", () => updateFindStatus());
 findInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
     e.preventDefault();
