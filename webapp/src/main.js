@@ -83,6 +83,7 @@ const tableContext = document.getElementById("tableContext");
 const tableRibbon = document.querySelector(".table-ribbon");
 const tableRibbonControls = [...tableRibbon.querySelectorAll("button")];
 const tablePropertiesBtn = document.getElementById("tablePropertiesBtn");
+const tableStyleSel = document.getElementById("tableStyle");
 const tablePropertiesPanel = document.getElementById("tablePropertiesPanel");
 const tablePropertiesContext = document.getElementById("tablePropertiesContext");
 const tablePropertiesCloseBtn = document.getElementById("tablePropertiesClose");
@@ -352,6 +353,7 @@ async function openBytes(bytes, name) {
     saveBtn.disabled = false;
     railOutline.disabled = false;
     populateStyles();
+    populateTableStyles();
     dropEl.hidden = true;
     document.body.classList.add("doc-loaded");
     const fontWarnings = await provisionFonts(name);
@@ -1803,6 +1805,8 @@ function updateToolbar() {
   const inTable = hasSel && doc && doc.inTable(selection.focus.node);
   const tableInfo = inTable ? doc.tableInfo(selection.focus.node) : null;
   for (const control of tableRibbonControls) control.disabled = !inTable;
+  tableStyleSel.disabled = !inTable;
+  tableStyleSel.value = inTable && tableInfo?.found ? (doc.tableStyleAt?.(selection.focus.node) || "") : "";
   for (const control of tableRibbon.querySelectorAll(
     '[data-table-action*="column"]',
   )) {
@@ -1868,6 +1872,18 @@ function populateStyles() {
     }
   }
 }
+
+function populateTableStyles() {
+  tableStyleSel.replaceChildren(new Option("Table style", ""));
+  for (const style of doc?.listTableStyles?.() || []) {
+    tableStyleSel.appendChild(new Option(style, style));
+  }
+}
+
+tableStyleSel.addEventListener("change", () => {
+  if (!selection || !doc) return;
+  runEdit(() => doc.applyTableStyle(selection.focus.node, tableStyleSel.value));
+});
 
 // mousedown (not click) so a button never steals the selection focus mid-edit.
 function onButton(el, handler) {

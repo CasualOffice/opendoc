@@ -2385,6 +2385,73 @@ impl WasmDocument {
         .map_err(to_js)
     }
 
+    /// The named table styles defined by the document, sorted for a gallery.
+    #[wasm_bindgen(js_name = listTableStyles)]
+    #[must_use]
+    pub fn list_table_styles(&self) -> Vec<String> {
+        let mut names = self
+            .document
+            .definitions()
+            .styles
+            .iter()
+            .map(|(_, style)| style)
+            .filter(|style| style.kind == StyleKind::Table && !style.hidden)
+            .filter_map(|style| style.name.clone())
+            .collect::<Vec<_>>();
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    #[wasm_bindgen(js_name = tableStyleAt)]
+    #[must_use]
+    pub fn table_style_at(&self, node: &str) -> String {
+        let Ok(nid) = NodeId::from_str(node) else {
+            return String::new();
+        };
+        let Some((table, _)) = locate_table_cell(&self.document, nid) else {
+            return String::new();
+        };
+        find_table(&self.document, table)
+            .and_then(|table| table.properties.style_ref)
+            .and_then(|id| self.document.definitions().styles.get(&id))
+            .and_then(|style| style.name.clone())
+            .unwrap_or_default()
+    }
+
+    /// Applies a named table style, or clears the table style when `name` is empty.
+    #[wasm_bindgen(js_name = applyTableStyle)]
+    pub fn apply_table_style(&mut self, node: &str, name: &str) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let (table, _) = locate_table_cell(&self.document, nid)
+            .ok_or_else(|| to_js("caret is not inside a table".into()))?;
+        let style_ref = if name.is_empty() {
+            None
+        } else {
+            let id = self
+                .document
+                .definitions()
+                .styles
+                .iter()
+                .find(|(_, style)| {
+                    style.kind == StyleKind::Table && style.name.as_deref() == Some(name)
+                })
+                .map(|(id, _)| *id)
+                .ok_or_else(|| to_js(format!("no table style named {name:?}")))?;
+            Some(id)
+        };
+        let mut properties = find_table(&self.document, table)
+            .ok_or_else(|| to_js("table not found".into()))?
+            .properties
+            .clone();
+        properties.style_ref = style_ref;
+        self.apply_action(vec![Operation::SetTableProperties {
+            table,
+            properties: Box::new(properties),
+        }])
+        .map_err(to_js)
+    }
+
     /// Sets the table's preferred width in twips, or clears it when negative.
     #[wasm_bindgen(js_name = setTableWidth)]
     pub fn set_table_width(&mut self, node: &str, width_twips: i32) -> Result<EditResult, JsValue> {

@@ -31,3 +31,8 @@ The next table increment adds a count-aware split dialog. The first safe
 geometry slice supports horizontal merged cells and preserves all unaffected
 rows; vertical and multi-row subdivision remains explicitly rejected until
 row insertion/removal can be made container-safe.
+
+The table style slice reuses authored `w:style` table definitions rather than
+inventing CSS-only presets. The gallery reflects the active style name and
+commits style changes through `SetTableProperties`, preserving DOCX round-trip
+fidelity and making each selection one undoable action.
