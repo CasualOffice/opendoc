@@ -698,11 +698,7 @@ function navigateToAnchor(node, offset, pageNumber) {
   };
   drawSelection();
   focusEditorSurface();
-  pages[pageNumber - 1]?.canvas.closest(".page-wrap")?.scrollIntoView({
-    block: "start",
-    inline: "nearest",
-  });
-  scrollCaretIntoView();
+  scrollCaretIntoView("center");
 }
 
 /** Copies a WASM-owned link hit into an ordinary JS value, then frees it. */
@@ -1535,13 +1531,28 @@ function repaintPage(i) {
   canvas.getContext("2d").putImageData(new ImageData(bmp.rgba, bmp.widthPx, bmp.heightPx), 0, 0);
 }
 
-/** Scroll the caret into view only if it is off-screen (no jitter while typing).
+/** Scroll the caret in the editor viewport (not an arbitrary page ancestor).
  * Navigation callers can request a centered target so headings/anchors have
  * useful reading room below the destination instead of landing on the viewport
- * edge. */
+ * edge. Normal caret movement keeps nearest-only behavior to avoid jitter. */
 function scrollCaretIntoView(block = "nearest") {
   const caret = pagesEl.querySelector(".overlay .caret");
-  if (caret) caret.scrollIntoView({ block, inline: "nearest" });
+  if (!caret) return;
+  const caretRect = caret.getBoundingClientRect();
+  const viewportRect = viewportEl.getBoundingClientRect();
+  const current = viewportEl.scrollTop;
+  const max = Math.max(0, viewportEl.scrollHeight - viewportEl.clientHeight);
+  let target = current;
+  if (block === "center") {
+    target = current + caretRect.top + caretRect.height / 2 - (viewportRect.top + viewportRect.height / 2);
+  } else if (caretRect.top < viewportRect.top) {
+    target = current + caretRect.top - viewportRect.top;
+  } else if (caretRect.bottom > viewportRect.bottom) {
+    target = current + caretRect.bottom - viewportRect.bottom;
+  } else {
+    return;
+  }
+  viewportEl.scrollTo({ top: Math.max(0, Math.min(max, target)), behavior: "auto" });
 }
 
 /** Apply an EditResult: place the caret, repaint only the dirty pages (or rebuild

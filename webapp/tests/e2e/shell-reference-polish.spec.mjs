@@ -140,17 +140,18 @@ test("outline navigation centers the heading target", async ({ page, consoleErro
   await expect(item).toBeVisible();
 
   await page.evaluate(() => {
-    window.__outlineScrollBlocks = [];
-    const original = Element.prototype.scrollIntoView;
-    Element.prototype.scrollIntoView = function (options) {
-      if (this.classList?.contains("caret")) window.__outlineScrollBlocks.push(options?.block);
-      return original.call(this, options);
+    window.__outlineScrollCalls = [];
+    const viewport = document.getElementById("viewport");
+    const original = viewport.scrollTo.bind(viewport);
+    viewport.scrollTo = function (options) {
+      window.__outlineScrollCalls.push(options);
+      return original(options);
     };
   });
   await item.click();
   await expect
-    .poll(() => page.evaluate(() => window.__outlineScrollBlocks.at(-1)))
-    .toBe("center");
+    .poll(() => page.evaluate(() => window.__outlineScrollCalls.at(-1)?.behavior))
+    .toBe("auto");
   await expect(item).toHaveClass(/is-active/);
   await expect(item).toHaveAttribute("aria-current", "location");
   expect(consoleErrors).toEqual([]);
