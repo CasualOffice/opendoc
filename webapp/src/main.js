@@ -210,10 +210,23 @@ let syncingReviewScroll = false;
 let suppressReviewSidebarScroll = false;
 let reviewMarginFrame = 0;
 
+/** Reads the typed comment/revision review data (docs/81 REVIEW-GAP-022's
+ *  `listComments`/`listRevisions`), shaped like the legacy combined
+ *  `reviewSummary()` payload so `summary.comments`/`summary.revisions` call
+ *  sites are unchanged. Prefer `doc.listComments()`/`doc.listRevisions()`
+ *  directly when only one of the two is needed. */
+function readReviewData(doc) {
+  let comments = [];
+  let revisions = [];
+  try { comments = JSON.parse(doc.listComments()) ?? []; } catch { comments = []; }
+  try { revisions = JSON.parse(doc.listRevisions()) ?? []; } catch { revisions = []; }
+  return { comments, revisions };
+}
+
 function updateReviewInlineBar() {
   if (!reviewInlineBar || !doc) return;
   let count = 0;
-  try { count = (JSON.parse(doc.reviewSummary()).revisions ?? []).length; } catch { count = 0; }
+  try { count = (JSON.parse(doc.listRevisions()) ?? []).length; } catch { count = 0; }
   reviewInlineBar.hidden = true;
   reviewInlineMode.disabled = false;
   reviewInlinePrevious.disabled = count === 0;
@@ -367,8 +380,7 @@ function renderReviewMarginItems() {
     reviewSidebar.hidden = true;
     return;
   }
-  let summary;
-  try { summary = JSON.parse(doc.reviewSummary()); } catch { return; }
+  const summary = readReviewData(doc);
   const items = [];
   const comments = summary.comments ?? [];
   for (const comment of comments) {
@@ -1258,7 +1270,7 @@ function clearOverlays() {
  *  below so both agree on the same anchors. */
 function reviewComments() {
   if (!doc) return [];
-  try { return JSON.parse(doc.reviewSummary()).comments ?? []; } catch { return []; }
+  try { return JSON.parse(doc.listComments()) ?? []; } catch { return []; }
 }
 
 /** The comment (if any) whose anchor range contains `anchor` (a `{node,
@@ -1303,8 +1315,7 @@ function syncActiveReviewCommentToCaret(anchor) {
  * caret placement (REVIEW-GAP-005). */
 function paintReviewMarkers() {
   if (!doc) return;
-  let summary;
-  try { summary = JSON.parse(doc.reviewSummary()); } catch { return; }
+  const summary = readReviewData(doc);
   for (const comment of summary.comments ?? []) {
     const explicitlyOpen = activeReviewItemId === `comment:${comment.id}`;
     if ((comment.resolved && !explicitlyOpen) || !comment.anchor?.node) continue;
@@ -2058,12 +2069,7 @@ function anchorInsideRange(anchor, range) {
 
 function reviewContextAt(anchor) {
   if (!doc || !anchor) return { comment: null, revision: null };
-  let summary;
-  try {
-    summary = JSON.parse(doc.reviewSummary());
-  } catch {
-    return { comment: null, revision: null };
-  }
+  const summary = readReviewData(doc);
   const comment = (summary.comments ?? []).find((item) =>
     item.anchor?.node === anchor.node &&
     anchor.offset >= (Number(item.anchor.start) || 0) &&
@@ -4349,7 +4355,7 @@ function showReviewPopover(item) {
 
 function buildReview() {
   if (!doc || reviewPanel.hidden) return;
-  const summary = JSON.parse(doc.reviewSummary());
+  const summary = readReviewData(doc);
   reviewBody.replaceChildren();
   const comments = (summary.comments ?? []).filter((comment) =>
     reviewFilter === "all" || (reviewFilter === "resolved" ? comment.resolved : !comment.resolved),
@@ -4481,7 +4487,7 @@ function buildReview() {
  * ranges, so this also works for changes inside tables and content controls. */
 function navigateReviewRevision(direction) {
   if (!doc) return;
-  const revisions = JSON.parse(doc.reviewSummary()).revisions ?? [];
+  const revisions = JSON.parse(doc.listRevisions()) ?? [];
   const usable = revisions.filter((revision) => String(revision.text || "").length);
   if (!usable.length) return;
   reviewRevisionCursor = (reviewRevisionCursor + (direction > 0 ? 1 : -1) + usable.length) % usable.length;

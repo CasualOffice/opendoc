@@ -78,6 +78,53 @@ let session = engine.open_normalized_json(
 let deterministic_bytes = session.export_normalized_json()?;
 ```
 
+## Phase 1G Implemented Subset — `casual-doc-wasm` review query surface
+
+The `casual-doc-sdk` facade above is the **target** v1 API and is not what
+`webapp/` drives today; the browser/webview bridge is the separate
+`casual-doc-wasm` crate (docs/68 §"Host surface"). This subsection documents
+that crate's actual, shipped review query methods so this spec stays accurate
+about what a host can call today, closing docs/81 REVIEW-GAP-022
+(P1G-REVIEW-042):
+
+```ts
+// All three cross the JS boundary as one JSON string per call, the same
+// convention as every other multi-record casual-doc-wasm query (e.g.
+// `documentOutline`, `copyRichRuns`) — see that crate's Cargo.toml for the
+// documented rationale. `reviewSummary()` (below) remains available,
+// unchanged, for existing callers; the three methods here are the first-class
+// typed replacement for its nested `comments`/`revisions` arrays.
+
+// Every comment or threaded reply. `anchor` is present only if the marker
+// pair resolved in the live tree.
+doc.listComments(): string; // JSON: Array<{
+  //   id: string; author?: string; initials?: string; date?: string;
+  //   resolved: boolean; paraId?: string; parentParaId?: string; text: string;
+  //   anchor?: { node: string; start: number; end: number };
+  // }>
+
+// Every tracked-change/formatting revision, document order.
+doc.listRevisions(): string; // JSON: Array<{
+  //   id: string;
+  //   kind: "insertion" | "deletion" | "move_from" | "move_to" | "formatting";
+  //   author?: string; date?: string; groupId?: string;
+  //   groupKind?: "typing" | "replacement" | "formatting";
+  //   revisionId?: string; text: string;
+  //   anchor: { node: string; start: number; end: number };
+  //   movePair?: { name: string; fromStart: string; toStart: string };
+  //   formattingDelta?: unknown;
+  // }>
+
+// One thread: `comment`'s root plus every descendant reply, root-first in
+// creation order. Resolves any member id (including a reply-to-a-reply) to
+// its thread root first. Throws if `comment` is not a known comment id.
+doc.commentThread(comment: string): string; // JSON: Array<...same shape as listComments()>
+
+// Legacy combined query, unchanged: `{ comments: [...], revisions: [...] }`
+// using the same per-item shapes as above.
+doc.reviewSummary(): string;
+```
+
 ## 1. Target API layers
 
 ### Rust native API

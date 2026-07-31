@@ -75,6 +75,21 @@ Comment-range and revision-range resolution reuse `resolve_bookmark`'s live-walk
 
 No caching layer is introduced; these re-walk the tree on demand, consistent with every other position query in the codebase today.
 
+**Implemented by P1G-REVIEW-042 (docs/81 REVIEW-GAP-022), 2026-07-31.** The
+codebase's established convention crosses the JS boundary as one JSON string
+per call (see `casual-doc-wasm/Cargo.toml`'s note on the clipboard bridge)
+rather than a bespoke `wasm_bindgen` struct array, so the three methods above
+shipped as `listComments() -> String`, `listRevisions() -> String`, and
+`commentThread(comment: &str) -> Result<String, JsValue>` — each JSON array
+element backed by a named, `serde`-derived Rust struct
+(`ReviewCommentSummaryJson`/`ReviewRevisionSummaryJson`) instead of an ad hoc
+`serde_json::json!` literal, so the field set is compile-time checked and
+documented rather than implicit. `commentThread` resolves any thread member
+(including a reply-to-a-reply) to its root first, mirroring `deleteComment`'s
+existing parent-chain cascade, and errs on an unknown/invalid id. The prior
+combined `reviewSummary()` remains unchanged for existing callers; see
+docs/05 §8 for the exact field schemas.
+
 ### 4. Threading model
 
 `para_id`/`parent_para_id` are DOCX round-trip artifacts (paragraph ids in companion parts), not stable in-memory identity. For comments created in the editor, the design synthesizes a `para_id`-shaped value at creation time (same generation scheme as any other paragraph id) so export can always emit valid `commentsExtended.xml` threading — this is called out as an implementation risk in Open Questions rather than fully specified here, since it depends on how paragraph ids are minted elsewhere in the writer.
