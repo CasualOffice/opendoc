@@ -210,8 +210,6 @@ let reviewPopover = null;
 let reviewSidebarPreference = null;
 let reviewComposerState = null;
 let reviewDeleteConfirmId = null;
-let syncingReviewScroll = false;
-let suppressReviewSidebarScroll = false;
 let reviewMarginFrame = 0;
 
 /** Reads the typed comment/revision review data (docs/81 REVIEW-GAP-022's
@@ -379,15 +377,10 @@ function scheduleReviewMarginRender() {
 }
 
 function renderReviewMarginItems() {
-  // Replacing the sidebar DOM can reset its scrollTop and dispatch a delayed
-  // scroll event. Do not turn that programmatic reset into canvas navigation.
-  suppressReviewSidebarScroll = true;
-  requestAnimationFrame(() => {
-    suppressReviewSidebarScroll = false;
-  });
   reviewSidebarBody.replaceChildren();
   if (!doc || !pages.length) {
     reviewSidebar.hidden = true;
+    viewportEl.classList.remove("has-review-sidebar");
     return;
   }
   const summary = readReviewData(doc);
@@ -512,18 +505,19 @@ function renderReviewMarginItems() {
 
   const show = reviewSidebarPreference ?? items.length > 0;
   reviewSidebar.hidden = !show;
+  // Reserve the comment column's width in the page stack only while the column
+  // is shown, so pages stay centered-ish and the single `.viewport` scrollbar
+  // sits past the comments (never between the canvas and the comments).
+  viewportEl.classList.toggle("has-review-sidebar", show);
   reviewBtn.setAttribute("aria-pressed", String(show));
   railReview.setAttribute("aria-pressed", String(show));
   if (!show) return;
 
+  // The comment layer rides inside `.viewport`'s single scroll context; its body
+  // spans the page-stack height so the transparent margin remains click-to-
+  // deselect and cards are never clipped. No scrollTop sync: one scroll owner.
   const viewportRect = viewportEl.getBoundingClientRect();
-  const contentHeight = Math.max(viewportEl.scrollHeight, pagesEl.scrollHeight + 24, reviewSidebar.clientHeight);
-  reviewSidebarBody.style.height = `${contentHeight}px`;
-  if (Math.abs(reviewSidebar.scrollTop - viewportEl.scrollTop) > 1) {
-    syncingReviewScroll = true;
-    reviewSidebar.scrollTop = viewportEl.scrollTop;
-    syncingReviewScroll = false;
-  }
+  reviewSidebarBody.style.height = `${Math.max(pagesEl.scrollHeight, viewportEl.clientHeight)}px`;
 
   if (!items.length) {
     const empty = document.createElement("div");
@@ -836,25 +830,11 @@ function renderReviewMarginItems() {
   }
 }
 
-viewportEl.addEventListener("scroll", () => {
-  if (!reviewSidebar.hidden && !syncingReviewScroll) {
-    syncingReviewScroll = true;
-    reviewSidebar.scrollTop = viewportEl.scrollTop;
-    syncingReviewScroll = false;
-  }
-  scheduleReviewMarginRender();
-}, { passive: true });
-reviewSidebar.addEventListener("scroll", () => {
-  if (
-    syncingReviewScroll
-    || suppressReviewSidebarScroll
-    || reviewSidebar.hidden
-    || !reviewSidebarBody.querySelector(".review-margin-card")
-  ) return;
-  syncingReviewScroll = true;
-  viewportEl.scrollTop = reviewSidebar.scrollTop;
-  syncingReviewScroll = false;
-}, { passive: true });
+// One scroll owner: the comment layer lives inside `.viewport` and rides its
+// scroll context natively, so cards stay pinned to their anchored text without
+// any scroll-sync or per-frame re-render (that eliminates the momentum drift and
+// the between-canvas scrollbar). Cards are positioned in document-scroll
+// coordinates; only content edits and resizes re-render them.
 reviewSidebarBody.addEventListener("click", (event) => {
   if (event.target !== reviewSidebarBody || !activeReviewItemId) return;
   activeReviewItemId = null;

@@ -42,6 +42,8 @@
   --faint: #9aa0a8;
   --line: #e3e6ea;
   --line-strong: #d3d7dd;
+  --scrollbar-thumb: rgba(60, 64, 67, 0.32);
+  --scrollbar-thumb-hover: rgba(60, 64, 67, 0.55);
   --shadow-sm: 0 1px 2px rgba(20, 22, 28, 0.06);
   --shadow-page: 0 1px 3px rgba(20, 22, 28, 0.13), 0 10px 30px rgba(20, 22, 28, 0.09);
   color-scheme: light;
@@ -58,6 +60,8 @@
     --faint: #6b7178;
     --line: #2e323a;
     --line-strong: #383d46;
+    --scrollbar-thumb: rgba(232, 234, 237, 0.28);
+    --scrollbar-thumb-hover: rgba(232, 234, 237, 0.5);
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
     --shadow-page: 0 1px 3px rgba(0, 0, 0, 0.4), 0 10px 30px rgba(0, 0, 0, 0.35);
     color-scheme: dark;
@@ -73,6 +77,8 @@
   --faint: #6b7178;
   --line: #2e323a;
   --line-strong: #383d46;
+  --scrollbar-thumb: rgba(232, 234, 237, 0.28);
+  --scrollbar-thumb-hover: rgba(232, 234, 237, 0.5);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
   --shadow-page: 0 1px 3px rgba(0, 0, 0, 0.4), 0 10px 30px rgba(0, 0, 0, 0.35);
   color-scheme: dark;
@@ -80,6 +86,37 @@
 
 * {
   box-sizing: border-box;
+}
+
+/* ---- Scrollbars: one thin, quiet, overlay-style treatment everywhere --------
+   Per the doc 63 design system, every `overflow:auto` surface (the single
+   document scrollbar on `.viewport`, plus dialog bodies, menus, the command
+   list, and side panels) shares one minimal bar: a transparent track and a
+   translucent thumb that darkens on hover. Applied globally so no default
+   chunky OS bar leaks through, then reinforced on the known scroll surfaces. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 html,
@@ -2134,24 +2171,25 @@ body.modal-open {
 }
 .suggesting-banner button:hover { background: var(--accent-soft); }
 
+/* One scroll owner (Google Docs model): the comment column is an
+   absolutely-positioned layer INSIDE `.viewport`'s scroll context, not a
+   sibling `overflow:auto` container. It never scrolls on its own, so cards —
+   positioned in document-scroll coordinates — ride natively with their anchored
+   text (no JS scroll-sync, no card drift under momentum) and the single
+   scrollbar sits at `.viewport`'s far-right edge, past the comments. */
 .review-sidebar {
-  flex: 0 0 340px;
+  position: absolute;
+  top: 0;
+  right: 12px;
   width: 340px;
   min-width: 340px;
-  margin: 0 12px 0 0;
-  overflow: auto;
-  position: relative;
   color: var(--ink);
   background: transparent;
-  scrollbar-width: none;
-  overscroll-behavior: contain;
 }
-.review-sidebar::-webkit-scrollbar { display: none; }
 .review-sidebar[hidden] { display: none; }
 .review-sidebar-body {
   position: relative;
   width: 100%;
-  min-height: 100%;
 }
 .review-sidebar-empty {
   margin-top: 12px;
@@ -2275,10 +2313,12 @@ body.modal-open {
 
 @media (max-width: 860px) {
   .review-sidebar {
-    flex-basis: 300px;
+    right: 8px;
     width: 300px;
     min-width: 300px;
-    margin-right: 8px;
+  }
+  .viewport.has-review-sidebar .pages {
+    padding-right: 316px; /* 300 column + 8 gutter + 8 breathing room */
   }
 }
 .panel-head {
@@ -2541,6 +2581,14 @@ body.modal-open {
   flex-direction: column;
   align-items: center;
   gap: 22px;
+}
+
+/* When the comment column is shown, reserve its width in the page stack's right
+   margin so pages stay centered-ish in the remaining space and the comments sit
+   in the reserved margin — the same spatial layout as before, now in ONE scroll
+   context. (Toggled by JS: `#viewport.has-review-sidebar`.) */
+.viewport.has-review-sidebar .pages {
+  padding-right: 364px; /* 340 comment column + 12 gutter + 12 breathing room */
 }
 
 .pages:focus {
