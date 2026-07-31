@@ -1046,6 +1046,7 @@ const indentIncBtn = document.getElementById("indentInc");
 const bulletListBtn = document.getElementById("bulletList");
 const numberedListBtn = document.getElementById("numberedList");
 const restartListBtn = document.getElementById("restartList");
+const continueListBtn = document.getElementById("continueList");
 const fontFamilySel = document.getElementById("fontFamily");
 const paragraphStyleSel = document.getElementById("paragraphStyle");
 const runControls = [superBtn, subBtn, fontSizeSel, textColorInput, highlightSel, fontFamilySel, clearFormattingBtn];
@@ -1058,6 +1059,7 @@ const paraControls = [
   bulletListBtn,
   numberedListBtn,
   restartListBtn,
+  continueListBtn,
   paragraphStyleSel,
 ];
 const saveBtn = document.getElementById("save");
@@ -2486,6 +2488,15 @@ function buildContextCommands(context) {
       run: () => runNodeEdit(() => doc.restartList(context.anchor.node)),
     },
     {
+      id: "paragraph.continue",
+      label: "Continue numbering",
+      group: "paragraph",
+      visible: context.listKind === "numbered" && doc.canContinueList(context.anchor.node),
+      enabled: structuralEnabled,
+      disabledReason: structuralReason,
+      run: () => runNodeEdit(() => doc.continueList(context.anchor.node)),
+    },
+    {
       id: "paragraph.indent.increase",
       label: "Increase indent",
       group: "paragraph",
@@ -3449,6 +3460,10 @@ function updateToolbar() {
   bulletListBtn.setAttribute("aria-pressed", String(listKind === "bullet"));
   numberedListBtn.setAttribute("aria-pressed", String(listKind === "numbered"));
   restartListBtn.disabled = !hasSel || listKind !== "numbered";
+  // Continue numbering is available only when the caret's numbered item has an
+  // earlier numbered list at the same level to resume (the engine's own guard).
+  continueListBtn.disabled =
+    !hasSel || listKind !== "numbered" || !doc.canContinueList(selection.focus.node);
   // The contextual Table ribbon is enabled only inside a table; regular-grid
   // column commands stay unavailable on merged/spanned tables rather than
   // failing after the user clicks them.
@@ -3675,6 +3690,9 @@ onButton(bulletListBtn, () => runToolbarEdit((a, b, c, d) => doc.toggleList(a, b
 onButton(numberedListBtn, () => runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "numbered")));
 onButton(restartListBtn, () => {
   if (selection && doc) runNodeEdit(() => doc.restartList(selection.focus.node));
+});
+onButton(continueListBtn, () => {
+  if (selection && doc) runNodeEdit(() => doc.continueList(selection.focus.node));
 });
 
 fontSizeSel.addEventListener("change", () => {
@@ -4956,6 +4974,7 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "paragraph.list.bullet", label: "Bullet list", group: "Paragraph", kw: "unordered", run: () => runToolbarEdit((s, o, e, f) => doc.toggleList(s, o, e, f, "bullet")) },
     { id: "paragraph.list.numbered", label: "Numbered list", group: "Paragraph", kw: "ordered", run: () => runToolbarEdit((s, o, e, f) => doc.toggleList(s, o, e, f, "numbered")) },
     { id: "paragraph.list.restart", label: "Restart numbering", group: "Paragraph", kw: "list restart 1", run: () => selection && runNodeEdit(() => doc.restartList(selection.focus.node)) },
+    { id: "paragraph.list.continue", label: "Continue numbering", group: "Paragraph", kw: "list continue resume", run: () => selection && runNodeEdit(() => doc.continueList(selection.focus.node)) },
     { id: "paragraph.indent.increase", label: "Increase indent", group: "Paragraph", kw: "", run: () => adjustIndentCommand(360) },
     { id: "paragraph.indent.decrease", label: "Decrease indent", group: "Paragraph", kw: "outdent", run: () => adjustIndentCommand(-360) },
     { id: "insert.table", label: "Insert table (3×3)", group: "Insert", kw: "grid", run: () => selection && runEdit(() => doc.insertTable(selection.focus.node, 3, 3), { gate: true }) },
