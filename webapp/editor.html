@@ -633,6 +633,14 @@
           </div>
         </div>
         <div id="pages" class="pages" tabindex="0" aria-label="Document editing surface"></div>
+        <!-- Read-only, model-derived accessibility tree (docs/67 row 9). The
+             canvas above paints pixels only, so it exposes no structure to a
+             screen reader; this off-screen region mirrors the document's
+             headings, paragraphs, lists, and tables from the engine model so
+             assistive technology can read the content. It is never an editing
+             surface (no contenteditable) — the model stays the source of
+             truth. Kept out of the tab order; screen readers still browse it. -->
+        <div id="a11yDocument" class="sr-only" role="document" aria-label="Document content (read-only for assistive technology)"></div>
         <aside id="reviewSidebar" class="review-sidebar" hidden aria-label="Comments and suggestions">
           <div id="reviewSidebarBody" class="review-sidebar-body"></div>
         </aside>

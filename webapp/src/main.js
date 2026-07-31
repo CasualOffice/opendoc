@@ -172,6 +172,7 @@ const railReview = document.getElementById("railReview");
 const outlinePanel = document.getElementById("outlinePanel");
 const outlineClose = document.getElementById("outlineClose");
 const outlineBody = document.getElementById("outlineBody");
+const a11yDocument = document.getElementById("a11yDocument");
 const reviewBtn = document.getElementById("reviewBtn");
 const reviewPanel = document.getElementById("reviewPanel");
 const reviewClose = document.getElementById("reviewClose");
@@ -1236,6 +1237,7 @@ let selectionAutoScrollFrame = 0;
 let chromeRefreshFrame = 0;
 let chromeRefreshStats = false;
 let chromeRefreshOutline = false;
+let chromeRefreshA11y = false;
 /** The model-derived link currently represented by the host-owned link chip. */
 let activeLink = null;
 /** One-frame throttle for pointer feedback over canvas-painted link geometry. */
@@ -1289,18 +1291,24 @@ function setStatus(text, kind = "") {
   statusEl.className = `status ${kind}`;
 }
 
-function scheduleChromeRefresh({ stats = false, outline = false } = {}) {
+function scheduleChromeRefresh({ stats = false, outline = false, a11y = false } = {}) {
   chromeRefreshStats ||= stats;
   chromeRefreshOutline ||= outline;
+  // The off-screen accessibility tree mirrors document structure, so it is
+  // rebuilt on the same content-changed triggers as the outline.
+  chromeRefreshA11y ||= a11y || outline;
   if (chromeRefreshFrame) return;
   chromeRefreshFrame = requestAnimationFrame(() => {
     chromeRefreshFrame = 0;
     const refreshStats = chromeRefreshStats;
     const refreshOutline = chromeRefreshOutline;
+    const refreshA11y = chromeRefreshA11y;
     chromeRefreshStats = false;
     chromeRefreshOutline = false;
+    chromeRefreshA11y = false;
     if (refreshStats) updateStats();
     if (refreshOutline) buildOutline();
+    if (refreshA11y) buildAccessibilityTree();
   });
 }
 
@@ -1412,6 +1420,7 @@ async function openBytes(bytes, name) {
       );
     }
     buildOutline();
+    buildAccessibilityTree();
     drawSelection();
   } catch (err) {
     console.error(err);
@@ -4574,6 +4583,80 @@ gridPicker.addEventListener("pointerdown", async (e) => {
   focusEditorSurface();
 });
 const insertTablePopover = registerPopover(insertTableBtn, insertTableMenu, () => highlightGrid(0, 0));
+
+// ---- Off-screen accessibility tree (docs/67 row 9) --------------------------
+/**
+ * Rebuilds the read-only, off-screen structural mirror of the document from the
+ * engine's `accessibilityTree()` projection so a screen reader can read the
+ * canvas (which paints pixels only, exposing no structure). Headings become
+ * `h1`–`h6` (levels 7–9 clamp to `h6`), list items group into `ul`/`ol`,
+ * tables become real `table`/`tr`/`td`, and everything else is a `p`. This is
+ * never an editing surface — the model stays the source of truth (docs/67 Open
+ * Risks). Rebuilt on the same coalesced content-change frame as the outline.
+ */
+function buildAccessibilityTree() {
+  if (!a11yDocument) return;
+  if (!doc) {
+    a11yDocument.replaceChildren();
+    return;
+  }
+  let nodes;
+  try {
+    nodes = JSON.parse(doc.accessibilityTree());
+  } catch {
+    nodes = [];
+  }
+  const frag = document.createDocumentFragment();
+  let listEl = null;
+  let listOrdered = null;
+  const flushList = () => {
+    if (listEl) {
+      frag.appendChild(listEl);
+      listEl = null;
+      listOrdered = null;
+    }
+  };
+  for (const node of Array.isArray(nodes) ? nodes : []) {
+    if (node.kind === "listItem") {
+      if (!listEl || listOrdered !== node.ordered) {
+        flushList();
+        listEl = document.createElement(node.ordered ? "ol" : "ul");
+        listOrdered = node.ordered;
+      }
+      const li = document.createElement("li");
+      li.textContent = String(node.text ?? "");
+      listEl.appendChild(li);
+      continue;
+    }
+    flushList();
+    if (node.kind === "heading") {
+      const level = Math.min(6, Math.max(1, Number(node.level) || 1));
+      const heading = document.createElement(`h${level}`);
+      heading.textContent = String(node.text ?? "");
+      frag.appendChild(heading);
+    } else if (node.kind === "table") {
+      const table = document.createElement("table");
+      const tbody = document.createElement("tbody");
+      for (const row of Array.isArray(node.rows) ? node.rows : []) {
+        const tr = document.createElement("tr");
+        for (const cell of Array.isArray(row) ? row : []) {
+          const td = document.createElement("td");
+          td.textContent = String(cell ?? "");
+          tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+      }
+      table.appendChild(tbody);
+      frag.appendChild(table);
+    } else {
+      const paragraph = document.createElement("p");
+      paragraph.textContent = String(node.text ?? "");
+      frag.appendChild(paragraph);
+    }
+  }
+  flushList();
+  a11yDocument.replaceChildren(frag);
+}
 
 // ---- Outline panel (heading tree → scroll-to) -------------------------------
 /** Rebuilds the outline list from the document's headings (no-op when hidden). */
