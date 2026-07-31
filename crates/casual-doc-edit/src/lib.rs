@@ -19,10 +19,10 @@
 
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
-    BlockNode, Color, Comment, CommentId, CoreProperties, DefinitionMap, Document, FontName,
-    FontRef, GridColumn, HighlightColor, Hyperlink, HyperlinkTarget, InlineNode, PageMargins,
-    PageOrientation, PageSize, Paragraph, ParagraphProperties, ReviewProjection, RgbColor, Run,
-    RunProperties, SectionColumns, SectionId, Table, TableCell, TableCellProperties,
+    BlockNode, Color, Comment, CommentId, CoreProperties, DefinitionMap, Document, Extent,
+    FontName, FontRef, GridColumn, HighlightColor, Hyperlink, HyperlinkTarget, InlineNode,
+    PageMargins, PageOrientation, PageSize, Paragraph, ParagraphProperties, ReviewProjection,
+    RgbColor, Run, RunProperties, SectionColumns, SectionId, Table, TableCell, TableCellProperties,
     TableProperties, TableRow, VerticalAlignment,
 };
 
@@ -292,6 +292,17 @@ pub enum Operation {
         index: u32,
         /// How many consecutive blocks to remove.
         count: u32,
+    },
+    /// Resize an inline drawing or text box: replace its authored extent
+    /// (`wp:extent`, EMU) — the geometry op behind a handle drag-resize (docs/85
+    /// §5.3). Self-inverse carrying the previous extent (the retained-value
+    /// pattern, like [`Operation::SetParagraphProperties`]). `None` restores the
+    /// "size resolved from content" state a missing extent means.
+    SetExtent {
+        /// The inline drawing / text-box node to resize.
+        object: NodeId,
+        /// The new authored extent (`None` = defer to content-derived sizing).
+        extent: Option<Extent>,
     },
     /// Replace a table cell's properties (shading, borders, vertical alignment,
     /// margins, span/merge, …). Its own inverse (carrying the previous properties).
@@ -800,6 +811,15 @@ pub fn apply(
                 blocks: removed,
             })
         }
+        Operation::SetExtent { object, extent } => {
+            let slot =
+                find_object_extent_mut(doc.body_mut(), *object).ok_or(EditError::NodeNotFound)?;
+            let previous = core::mem::replace(slot, *extent);
+            Ok(Operation::SetExtent {
+                object: *object,
+                extent: previous,
+            })
+        }
         Operation::SetTableCellProperties { cell, properties } => {
             let c = find_cell_mut(doc.body_mut(), *cell).ok_or(EditError::NodeNotFound)?;
             let previous = std::mem::replace(&mut c.properties, (**properties).clone());
@@ -975,6 +995,75 @@ fn remove_table(
         }
     }
     Err(EditError::NodeNotFound)
+}
+
+/// The mutable authored-extent slot of the inline drawing or text box with id
+/// `object`, searched recursively across body paragraphs (descending into
+/// hyperlink/revision inline wrappers), table cells, block SDTs, and inline
+/// text-box bodies. `None` if `object` is not a resizable inline object.
+/// [`Operation::SetExtent`]'s target.
+fn find_object_extent_mut(blocks: &mut [BlockNode], object: NodeId) -> Option<&mut Option<Extent>> {
+    for block in blocks.iter_mut() {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                if let Some(slot) = find_object_extent_in_inlines(&mut paragraph.inlines, object) {
+                    return Some(slot);
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &mut table.rows {
+                    for cell in &mut row.cells {
+                        if let Some(slot) = find_object_extent_mut(&mut cell.blocks, object) {
+                            return Some(slot);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(slot) = find_object_extent_mut(&mut sdt.blocks, object) {
+                    return Some(slot);
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    None
+}
+
+/// The mutable extent slot of a drawing/text-box node inside an inline sequence,
+/// descending one level into hyperlink and revision wrappers and into a text
+/// box's own block content (a nested drawing is resizable too).
+fn find_object_extent_in_inlines(
+    inlines: &mut [InlineNode],
+    object: NodeId,
+) -> Option<&mut Option<Extent>> {
+    for inline in inlines.iter_mut() {
+        match inline {
+            InlineNode::Drawing(drawing) if drawing.id == object => {
+                return Some(&mut drawing.extent);
+            }
+            InlineNode::TextBox(text_box) => {
+                if text_box.id == object {
+                    return Some(&mut text_box.extent);
+                }
+                if let Some(slot) = find_object_extent_mut(&mut text_box.blocks, object) {
+                    return Some(slot);
+                }
+            }
+            InlineNode::Hyperlink(hyperlink) => {
+                if let Some(slot) = find_object_extent_in_inlines(&mut hyperlink.inlines, object) {
+                    return Some(slot);
+                }
+            }
+            InlineNode::Revision(revision) => {
+                if let Some(slot) = find_object_extent_in_inlines(&mut revision.inlines, object) {
+                    return Some(slot);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// The mutable block list of the cell or SDT with id `id`, searched recursively —
@@ -2143,6 +2232,92 @@ mod tests {
             None
         }
         walk(document.body(), id).unwrap_or_default()
+    }
+
+    #[test]
+    fn set_extent_resizes_an_inline_drawing_and_inverse_restores_it() {
+        use casual_doc_model::v1::{Drawing, Extent, MediaId, MediaReference};
+        let media = MediaId::new(NodeId::from_parts(7, 900).unwrap());
+        let drawing_id = n(50);
+        let mut definitions = Definitions::default();
+        definitions.media.insert(
+            media,
+            MediaReference {
+                relationship_id: "rId9".to_owned(),
+                media_type: "image/png".to_owned(),
+                part_name: "word/media/image1.png".to_owned(),
+            },
+        );
+        let mut d = Document::new(
+            n(1000),
+            vec![BlockNode::Paragraph(Paragraph {
+                id: n(2),
+                properties: ParagraphProperties::default(),
+                inlines: vec![
+                    run(3, "before"),
+                    InlineNode::Drawing(Drawing {
+                        id: drawing_id,
+                        media,
+                        extent: Some(Extent {
+                            width_emu: 914_400,
+                            height_emu: 457_200,
+                        }),
+                        descr: None,
+                        crop: None,
+                    }),
+                ],
+            })],
+            definitions,
+        )
+        .expect("valid document with a registered media part");
+        let mut ids = IdGenerator::new(9);
+
+        let new_extent = Some(Extent {
+            width_emu: 1_828_800,
+            height_emu: 914_400,
+        });
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetExtent {
+                object: drawing_id,
+                extent: new_extent,
+            },
+        )
+        .expect("resize the drawing");
+        // The inverse carries the previous extent.
+        assert_eq!(
+            inverse,
+            Operation::SetExtent {
+                object: drawing_id,
+                extent: Some(Extent {
+                    width_emu: 914_400,
+                    height_emu: 457_200,
+                }),
+            }
+        );
+        // Applying the inverse restores the original extent (undo).
+        apply(&mut d, &mut ids, &inverse).expect("undo the resize");
+        let BlockNode::Paragraph(p) = &d.body()[0] else {
+            unreachable!()
+        };
+        let InlineNode::Drawing(drawing) = &p.inlines[1] else {
+            panic!("the drawing is intact");
+        };
+        assert_eq!(drawing.extent.unwrap().width_emu, 914_400);
+
+        // An unknown object is rejected.
+        assert!(matches!(
+            apply(
+                &mut d,
+                &mut ids,
+                &Operation::SetExtent {
+                    object: n(999),
+                    extent: new_extent,
+                },
+            ),
+            Err(EditError::NodeNotFound)
+        ));
     }
 
     #[test]

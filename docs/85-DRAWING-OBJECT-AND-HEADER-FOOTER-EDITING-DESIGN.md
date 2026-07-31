@@ -264,6 +264,22 @@ explicit `Location`.
   preview is host-side chrome, not per-frame ops), so a move/resize is one undo
   step.
 
+**Implementation note (`P1G-OBJ-GEOMETRY`, resize shipped).** `SetExtent` landed
+as an additive `casual_doc_edit::Operation` arm (self-inverse with the previous
+`Option<Extent>`), driven by `setObjectExtent(node, wEmu, hEmu)` and committed
+once on handle-release; the eight selection grips from `P1G-OBJ-SELECT` are the
+draggable handles (the grip div is the `Float { handle }` hit resolution — no
+separate `objectHandleAt` needed), corner grips constrain aspect under Shift
+(§10.3), and the op is blocked fail-closed in Suggesting/Viewing mode (§6, Q5).
+The resized extent **round-trips through DOCX** (export writes `wp:extent`; a
+regression asserts export→reopen preserves the new size). **`SetAnchor` (move) and
+wrap-mode / z-order are not shipped here:** those mutate a `DrawingAnchor`, which
+only *floating* objects carry — and floating objects are not yet *selectable*
+(`P1G-OBJ-SELECT` scoped to inline images/text boxes; anchored-float selection
+needs `PlacedAnchor` to carry its source `NodeId`). So move + wrap + z-order ship
+with the anchored-float selection follow-up, on the same `SetAnchor` op shape
+defined above.
+
 ### 5.4 Image content ops
 
 - `ReplaceMedia { object: NodeId, media: MediaId }` — swap the image; the new
