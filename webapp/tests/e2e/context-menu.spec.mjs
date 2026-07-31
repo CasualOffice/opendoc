@@ -4,6 +4,7 @@ import {
   gotoEditor,
   clickIntoFirstPage,
   moveCaretToDocStart,
+  setReviewMode,
 } from "./fixtures.mjs";
 
 async function selectTypedMarker(page, marker) {
@@ -168,8 +169,7 @@ test("table and suggestion contexts expose exact commands and mode-safe reasons"
   await expect(menu.locator('[data-command-id="table.merge"]')).toBeEnabled();
   await page.keyboard.press("Escape");
 
-  await page.locator('[data-tab="home"]').click();
-  await page.locator("#reviewInlineMode").click();
+  await setReviewMode(page, "suggesting");
   await page.locator("#pages").focus();
   await page.keyboard.press("Shift+F10");
   await expect(
@@ -184,8 +184,7 @@ test("table and suggestion contexts expose exact commands and mode-safe reasons"
     name: "Switch to editing",
   }).click();
   await moveCaretToDocStart(page);
-  await page.locator('[data-tab="home"]').click();
-  await page.locator("#reviewInlineMode").click();
+  await setReviewMode(page, "suggesting");
   await page.keyboard.type("REVIEW_CONTEXT");
   await page.keyboard.press("Shift+ArrowLeft");
   await page.keyboard.press("Shift+F10");
