@@ -24,7 +24,10 @@ REVIEW-GAP-006 and completed the formatting-delta half of REVIEW-GAP-016.
 P1G-REVIEW-041 closed REVIEW-GAP-005. P1G-REVIEW-042 closed REVIEW-GAP-004's
 mode-bypass, though it only blocks the affected commands in Suggesting mode —
 REVIEW-GAP-009's structural-tracking backlog those commands still lack
-remains open. Twenty-two gaps remain; the remaining P0 rows below are release
+remains open. P1G-REVIEW-043 closed REVIEW-GAP-022 with first-class typed
+`listComments`/`listRevisions`/`commentThread` query methods, replacing the
+untyped combined `reviewSummary` blob as the primary review query surface.
+Twenty-one gaps remain; the remaining P0 rows below are release
 blockers for any claim of complete tracked-change support.
 
 The sibling `docs/docx-editor` repository was used only as the requested
@@ -68,7 +71,7 @@ Classification:
 | REVIEW-GAP-019 | P1 | Partial | Resolved comments remain in the main stream with no active filter. The sidebar auto-opens for any review item and has no in-sidebar header/close control. Cursor navigation into a comment does not drive expansion; only overlay/card clicks do. | Add explicit sidebar state, resolved visibility/filter behavior, close/header affordance, and caret-driven single-card expansion. |
 | REVIEW-GAP-020 | P1 | Incorrect | Every scroll-frame rebuilds every card, reparses the full review JSON, calls range geometry for all items, and replaces the sidebar DOM. There is no virtualization or retained item model. Documents with many revisions will jank, allocate heavily, and repeatedly discard focusable DOM. | Cache review inventory by model revision, retain keyed card DOM/state, virtualize offscreen items, and add 100/1,000-item scroll/edit performance gates. |
 | REVIEW-GAP-021 | P1 | Partial | Stable-anchor behavior under insertion/deletion at comment boundaries, full deletion of commented text, paragraph joins/splits, table edits, accept/reject near comments, and imported malformed marker sets is largely untested. | Define anchor transformation policy and add mutation matrices plus export/reopen fixed-point tests. |
-| REVIEW-GAP-022 | P1 | Debt | The design promises `listComments`, `listRevisions`, and `commentThread`; the implementation exposes one untyped JSON string through `reviewSummary`. Public SDK policy, compatibility, and error behavior are undocumented. | Finalize a typed, bounded query API or revise the design explicitly; add API tests and SDK documentation. |
+| REVIEW-GAP-022 | Closed | Resolved | P1G-REVIEW-043 adds first-class `listComments`, `listRevisions`, and `commentThread` methods to `casual-doc-wasm`, each backed by a named `serde`-derived Rust struct (not an ad hoc JSON literal) with a documented, additive-only field set; `reviewSummary` remains unchanged for existing callers. `commentThread` resolves any thread member to its root and returns root-first ordered replies, erring on an unknown/invalid id. | Closed by typed-schema WASM tests cross-checked against `reviewSummary`'s legacy output, a nested reply-to-a-reply thread-resolution test, an invalid/unknown-id error test, `webapp/src/main.js` calling the typed methods directly, and the full Playwright `review-margin` suite exercising the rewritten call sites. |
 | REVIEW-GAP-023 | P2 | Partial | Review cards are focusable generic `article` elements with button-like key handlers but no button role; the sidebar lacks a labelled header/close control; frequent DOM replacement can drop focus; status/error announcements are not review-specific live regions. | Complete keyboard, focus-retention, screen-reader, and high-contrast audits with automated accessibility smoke. |
 | REVIEW-GAP-024 | P2 | Partial | The sidebar remains a fixed 300px at narrow widths and competes with the paged canvas. There is no mobile/tablet review presentation or touch-specific card/anchor behavior. | Define a breakpoint-specific drawer/sheet or review mode and test touch selection plus card actions. |
 | REVIEW-GAP-025 | P2 | Debt | Review strings, dates, labels, error messages, and card verbs are hard-coded in English. | Route review copy through the editor's localization boundary and test long translated strings. |
@@ -103,7 +106,8 @@ The move-specific deferral found before this audit is closed:
    mode-bypass half is closed by P1G-REVIEW-042; REVIEW-GAP-009's
    structural-tracking backlog stays open).
 3. **P1G-REVIEW-038 — Complete comment/reviewer workflow.**
-   Fix REVIEW-GAP-011/012/013/015/016/019/021/022 and define host policy.
+   Fix REVIEW-GAP-011/012/013/015/016/019/021 and define host policy.
+   REVIEW-GAP-022 was closed separately by P1G-REVIEW-043.
 4. **P1G-REVIEW-039 — Scale, accessibility, cleanup, and interoperability.**
    Fix REVIEW-GAP-020/023/024/025/026/027/028 and run real-consumer oracles.
 

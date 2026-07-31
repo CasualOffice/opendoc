@@ -3633,6 +3633,44 @@ impl WasmDocument {
         .unwrap_or_else(|_| "{\"comments\":[],\"revisions\":[]}".to_string())
     }
 
+    /// All comments and threaded replies, in stable id order, as a typed JSON
+    /// array of [`ReviewCommentSummaryJson`]. This is the typed, single-purpose
+    /// replacement for `reviewSummary`'s nested `comments` array (docs/81
+    /// REVIEW-GAP-022; docs/68 `listComments`); `reviewSummary` keeps working
+    /// unchanged for existing callers. Use [`comment_thread`](Self::comment_thread)
+    /// to fetch just one thread instead of filtering this list by hand.
+    #[wasm_bindgen(js_name = listComments)]
+    #[must_use]
+    pub fn list_comments(&self) -> String {
+        serde_json::to_string(&build_review_comment_summaries(&self.document))
+            .unwrap_or_else(|_| "[]".to_string())
+    }
+
+    /// All tracked-change and formatting revisions, in document order, as a
+    /// typed JSON array of [`ReviewRevisionSummaryJson`]. This is the typed,
+    /// single-purpose replacement for `reviewSummary`'s nested `revisions`
+    /// array (docs/81 REVIEW-GAP-022; docs/68 `listRevisions`), using the exact
+    /// same final-with-markup anchor projection; `reviewSummary` keeps working
+    /// unchanged for existing callers.
+    #[wasm_bindgen(js_name = listRevisions)]
+    #[must_use]
+    pub fn list_revisions(&self) -> String {
+        serde_json::to_string(&build_review_revision_summaries(&self.document))
+            .unwrap_or_else(|_| "[]".to_string())
+    }
+
+    /// One comment thread — the identified comment plus every descendant
+    /// reply, ordered root-first by creation order — as a typed JSON array of
+    /// [`ReviewCommentSummaryJson`] (docs/81 REVIEW-GAP-022; docs/68
+    /// `commentThread`). Passing a reply's id resolves to that reply's thread
+    /// root first, mirroring [`delete_comment`](Self::delete_comment)'s
+    /// existing parent-chain walk (matching by either the parent's node id or
+    /// its `para_id` join key). Errs if `comment` is not a known comment id.
+    #[wasm_bindgen(js_name = commentThread)]
+    pub fn comment_thread(&self, comment: &str) -> Result<String, JsValue> {
+        self.comment_thread_inner(comment).map_err(to_js)
+    }
+
     /// Creates a comment over a same-paragraph selection. The marker and
     /// definition changes are one undoable review transaction.
     #[wasm_bindgen(js_name = addComment)]
@@ -5109,6 +5147,20 @@ impl MediaSource for BorrowedMedia<'_> {
 /// these run under `cargo test` on native targets, where constructing a `JsValue`
 /// would panic ("cannot call wasm-bindgen imported functions on non-wasm targets").
 impl WasmDocument {
+    /// See [`WasmDocument::comment_thread`]. Split out as a plain
+    /// `Result<_, String>` helper (rather than `JsValue`) so it is callable
+    /// from native (non-wasm) unit tests, matching `page_size_inner`.
+    fn comment_thread_inner(&self, comment: &str) -> Result<String, String> {
+        let id = NodeId::from_str(comment)
+            .map(CommentId::new)
+            .map_err(|_| "invalid comment id".to_string())?;
+        if self.document.definitions().comments.get(&id).is_none() {
+            return Err("comment not found".to_string());
+        }
+        let thread = build_review_comment_thread(&self.document, id);
+        serde_json::to_string(&thread).map_err(|_| "failed to serialize comment thread".to_string())
+    }
+
     /// See [`WasmDocument::page_size`].
     fn page_size_inner(&self, index: u32) -> Result<PageSize, String> {
         let page = self.page(index)?;
@@ -6583,6 +6635,252 @@ fn collect_block_text(blocks: &[BlockNode], out: &mut Vec<(NodeId, String)>) {
             BlockNode::AltChunk(_) => {}
         }
     }
+}
+
+/// A resolved `[start, end)` UTF-8 byte range anchoring a comment or revision
+/// inside one paragraph's final-with-markup projection (docs/83) — the same
+/// projection `selectionRects`/`caretRect` already address. `node` is an
+/// opaque 32-hex `NodeId` string, passed back unchanged.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReviewAnchorJson {
+    node: String,
+    start: u32,
+    end: u32,
+}
+
+/// One comment or threaded reply — the stable, typed element returned by
+/// [`WasmDocument::list_comments`] and [`WasmDocument::comment_thread`].
+/// Replaces the untyped `comments` array formerly nested only inside
+/// [`WasmDocument::review_summary`] (docs/81 REVIEW-GAP-022): this exact
+/// field set is the public SDK contract and only grows additively within a
+/// major version. `anchor` is absent when the comment's range markers could
+/// not be resolved in the live document tree (docs/68: "no anchor cache").
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReviewCommentSummaryJson {
+    /// The comment's 32-hex `NodeId` string.
+    id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    author: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    initials: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    date: Option<String>,
+    /// `true` once resolved (`commentsExtended.xml` `w15:done`).
+    resolved: bool,
+    /// This comment's own paragraph join key (`w14:paraId`), if assigned.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    para_id: Option<String>,
+    /// The thread root's `para_id`, present only on a reply.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parent_para_id: Option<String>,
+    /// The comment body's plain text (multi-paragraph bodies join with `\n`).
+    text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    anchor: Option<ReviewAnchorJson>,
+}
+
+/// One tracked-change or formatting revision — the stable, typed element
+/// returned by [`WasmDocument::list_revisions`]. Replaces the untyped
+/// `revisions` array formerly nested only inside
+/// [`WasmDocument::review_summary`] (docs/81 REVIEW-GAP-022): this exact field
+/// set is the public SDK contract and only grows additively within a major
+/// version. `move_pair` is present only on a paired `move_from`/`move_to`
+/// revision (docs/81 paired-move review); `formatting_delta` is present only
+/// on a `formatting` revision.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReviewRevisionSummaryJson {
+    /// The revision's (or format-changed run's) 32-hex `NodeId` string.
+    id: String,
+    /// `"insertion" | "deletion" | "move_from" | "move_to" | "formatting"`.
+    kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    author: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    date: Option<String>,
+    /// Opaque OpenDoc editor decision-group id (docs/82); absent when the
+    /// revision is not part of an editor-authored group.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    group_id: Option<String>,
+    /// `"typing" | "replacement" | "formatting"`, present iff `group_id` is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    group_kind: Option<String>,
+    /// The producer's opaque `w:id`, if declared (docs/82).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    revision_id: Option<String>,
+    text: String,
+    anchor: ReviewAnchorJson,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    move_pair: Option<ReviewMovePairJson>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    formatting_delta: Option<serde_json::Value>,
+}
+
+/// The paired source/destination anchor of one imported `MoveFrom`/`MoveTo`
+/// suggestion (docs/81 paired-move review), correlated by their shared
+/// move-range `name`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReviewMovePairJson {
+    name: String,
+    from_start: String,
+    to_start: String,
+}
+
+/// Builds one [`ReviewCommentSummaryJson`], resolving `id`'s anchor (if any)
+/// from a pre-walked `anchors` list (shared across a whole
+/// `listComments`/`commentThread` call so the document tree is walked once).
+fn build_review_comment_summary(
+    id: CommentId,
+    comment: &Comment,
+    anchors: &[(CommentId, NodeId, u32, u32)],
+) -> ReviewCommentSummaryJson {
+    let mut blocks = Vec::new();
+    collect_block_text(&comment.blocks, &mut blocks);
+    let anchor = anchors
+        .iter()
+        .find(|(anchor_id, _, _, _)| *anchor_id == id)
+        .map(|(_, node, start, end)| ReviewAnchorJson {
+            node: node.to_string(),
+            start: *start,
+            end: *end,
+        });
+    ReviewCommentSummaryJson {
+        id: id.node_id().to_string(),
+        author: comment.author.clone(),
+        initials: comment.initials.clone(),
+        date: comment.date.clone(),
+        resolved: comment.done,
+        para_id: comment.para_id.clone(),
+        parent_para_id: comment.parent_para_id.clone(),
+        text: blocks
+            .into_iter()
+            .map(|(_, text)| text)
+            .collect::<Vec<_>>()
+            .join("\n"),
+        anchor,
+    }
+}
+
+/// All comments and threaded replies, ordered by (creation-order) id — the
+/// typed data backing [`WasmDocument::list_comments`].
+fn build_review_comment_summaries(document: &Document) -> Vec<ReviewCommentSummaryJson> {
+    let mut anchors = Vec::new();
+    collect_review_comment_anchors(document.body(), &mut anchors);
+    document
+        .definitions()
+        .comments
+        .iter()
+        .map(|(id, comment)| build_review_comment_summary(*id, comment, &anchors))
+        .collect()
+}
+
+/// All tracked-change and formatting revisions in document order — the typed
+/// data backing [`WasmDocument::list_revisions`]. `collect_review_revisions`
+/// itself still builds each entry as a `serde_json::Value` (shared with
+/// `review_summary`'s tree walk, unchanged for that method's back-compat
+/// output), because a `formatting`-kind entry (from a `w:rPrChange` run) and
+/// a `Revision`-kind entry share the array but carry different optional
+/// fields (`formattingDelta` vs. `movePair`); this re-validates every value
+/// against the merged typed schema so a schema drift between the two call
+/// sites fails loudly instead of silently reaching JS untyped.
+fn build_review_revision_summaries(document: &Document) -> Vec<ReviewRevisionSummaryJson> {
+    let move_pairs = collect_review_move_pairs(document.body());
+    let move_links = review_move_links(&move_pairs);
+    let mut revisions = Vec::new();
+    collect_review_revisions(document.body(), &move_links, &mut revisions);
+    revisions
+        .into_iter()
+        .map(|value| {
+            serde_json::from_value(value)
+                .expect("collect_review_revisions matches ReviewRevisionSummaryJson's schema")
+        })
+        .collect()
+}
+
+/// The set of keys under which `id`/`comment` may be referenced as a parent:
+/// the id's own hex string, and its `para_id` join key if assigned. Mirrors
+/// [`WasmDocument::delete_comment`]'s existing cascade-matching rule so
+/// thread resolution and thread deletion agree on what counts as a child.
+fn comment_parent_keys(id: CommentId, comment: &Comment) -> BTreeSet<String> {
+    let mut keys = BTreeSet::from([id.node_id().to_string()]);
+    if let Some(para_id) = comment.para_id.clone() {
+        keys.insert(para_id);
+    }
+    keys
+}
+
+/// Walks `comment`'s `parent_para_id` chain up to its thread root (the
+/// nearest ancestor with no resolvable parent), so
+/// [`WasmDocument::comment_thread`] returns the same thread regardless of
+/// which member's id the caller passes.
+fn resolve_comment_thread_root(
+    comments: &DefinitionMap<CommentId, Comment>,
+    mut current: CommentId,
+) -> CommentId {
+    loop {
+        let Some(comment) = comments.get(&current) else {
+            return current;
+        };
+        let Some(parent_key) = comment.parent_para_id.as_deref() else {
+            return current;
+        };
+        let parent = comments.iter().find(|(candidate, value)| {
+            **candidate != current
+                && (candidate.node_id().to_string() == parent_key
+                    || value.para_id.as_deref() == Some(parent_key))
+        });
+        match parent {
+            Some((candidate, _)) => current = *candidate,
+            None => return current,
+        }
+    }
+}
+
+/// One comment thread — `comment`'s thread root plus every descendant reply,
+/// ordered root-first by creation order — the typed data backing
+/// [`WasmDocument::comment_thread`].
+fn build_review_comment_thread(
+    document: &Document,
+    comment: CommentId,
+) -> Vec<ReviewCommentSummaryJson> {
+    let comments = &document.definitions().comments;
+    let root = resolve_comment_thread_root(comments, comment);
+    let mut members = BTreeSet::from([root]);
+    let mut parent_keys = comments
+        .get(&root)
+        .map(|value| comment_parent_keys(root, value))
+        .unwrap_or_default();
+    loop {
+        let mut changed = false;
+        for (id, value) in comments.iter() {
+            if !members.contains(id)
+                && value
+                    .parent_para_id
+                    .as_deref()
+                    .is_some_and(|parent| parent_keys.contains(parent))
+            {
+                members.insert(*id);
+                parent_keys.extend(comment_parent_keys(*id, value));
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let mut anchors = Vec::new();
+    collect_review_comment_anchors(document.body(), &mut anchors);
+    members
+        .into_iter()
+        .filter_map(|id| {
+            comments
+                .get(&id)
+                .map(|value| build_review_comment_summary(id, value, &anchors))
+        })
+        .collect()
 }
 
 /// Allocates the eight-hex-digit paragraph join key required by the DOCX
@@ -12822,6 +13120,201 @@ mod tests {
                 .iter()
                 .all(|comment| comment["text"] != "Root" && comment["text"] != "Reply")
         }));
+    }
+
+    /// `listComments` (docs/81 REVIEW-GAP-022) is a typed, single-purpose
+    /// substitute for `reviewSummary`'s nested `comments` array: same data,
+    /// documented field set, no combined blob. A root comment carries a range
+    /// anchor; a reply shares no range markers of its own and carries none.
+    #[test]
+    fn list_comments_matches_review_summary_and_supports_threaded_replies() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, text)| !text.is_empty())
+            .map(|(id, _)| id.to_string())
+            .expect("a non-empty paragraph");
+        d.add_comment(
+            &node,
+            0,
+            1,
+            "Root comment",
+            Some("Reviewer".to_owned()),
+            Some("R".to_owned()),
+            None,
+        )
+        .expect("add root");
+        let root = d
+            .document
+            .definitions()
+            .comments
+            .iter()
+            .find_map(|(id, comment)| {
+                let mut blocks = Vec::new();
+                collect_block_text(&comment.blocks, &mut blocks);
+                (blocks.iter().any(|(_, text)| text == "Root comment")).then_some(*id)
+            })
+            .expect("root id");
+        d.reply_to_comment(
+            &root.node_id().to_string(),
+            "Reply text",
+            Some("Responder".to_owned()),
+            None,
+            None,
+        )
+        .expect("add reply");
+
+        let listed: Vec<ReviewCommentSummaryJson> =
+            serde_json::from_str(&d.list_comments()).expect("typed comment list");
+        assert_eq!(listed.len(), 2);
+        let root_entry = listed
+            .iter()
+            .find(|comment| comment.text == "Root comment")
+            .expect("root entry");
+        assert_eq!(root_entry.author.as_deref(), Some("Reviewer"));
+        assert!(!root_entry.resolved);
+        assert!(root_entry.parent_para_id.is_none());
+        assert!(root_entry.para_id.is_some());
+        assert!(
+            root_entry.anchor.is_some(),
+            "root comment has a range anchor"
+        );
+
+        let reply_entry = listed
+            .iter()
+            .find(|comment| comment.text == "Reply text")
+            .expect("reply entry");
+        assert_eq!(reply_entry.parent_para_id, root_entry.para_id);
+        assert!(
+            reply_entry.anchor.is_none(),
+            "a reply has no range markers of its own"
+        );
+
+        let summary: serde_json::Value =
+            serde_json::from_str(&d.review_summary()).expect("review summary");
+        let summary_comments = summary["comments"].as_array().expect("comments array");
+        assert_eq!(summary_comments.len(), listed.len());
+        for entry in &listed {
+            assert!(
+                summary_comments
+                    .iter()
+                    .any(|comment| comment["id"] == entry.id && comment["text"] == entry.text),
+                "listComments must agree with reviewSummary's comments"
+            );
+        }
+    }
+
+    /// `commentThread` (docs/81 REVIEW-GAP-022; docs/68) returns one thread
+    /// root-first regardless of which member's id the caller passes,
+    /// including a reply-to-a-reply, matching `deleteComment`'s existing
+    /// parent-chain cascade.
+    #[test]
+    fn comment_thread_resolves_root_and_replies_regardless_of_which_id_is_passed() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, text)| !text.is_empty())
+            .map(|(id, _)| id.to_string())
+            .expect("a non-empty paragraph");
+        d.add_comment(&node, 0, 1, "Root", None, None, None)
+            .expect("add root");
+        let root = *d
+            .document
+            .definitions()
+            .comments
+            .iter()
+            .find(|(_, comment)| comment.parent_para_id.is_none())
+            .map(|(id, _)| id)
+            .expect("root");
+        d.reply_to_comment(&root.node_id().to_string(), "First reply", None, None, None)
+            .expect("add first reply");
+        let first_reply = *d
+            .document
+            .definitions()
+            .comments
+            .iter()
+            .find(|(_, comment)| comment.parent_para_id.is_some())
+            .map(|(id, _)| id)
+            .expect("first reply id");
+        d.reply_to_comment(
+            &first_reply.node_id().to_string(),
+            "Second reply",
+            None,
+            None,
+            None,
+        )
+        .expect("reply to a reply");
+
+        let from_root: Vec<ReviewCommentSummaryJson> = serde_json::from_str(
+            &d.comment_thread(&root.node_id().to_string())
+                .expect("thread from root"),
+        )
+        .expect("typed thread");
+        assert_eq!(
+            from_root
+                .iter()
+                .map(|comment| comment.text.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                "Root".to_owned(),
+                "First reply".to_owned(),
+                "Second reply".to_owned(),
+            ]
+        );
+
+        let from_nested_reply: Vec<ReviewCommentSummaryJson> = serde_json::from_str(
+            &d.comment_thread(&first_reply.node_id().to_string())
+                .expect("thread from a nested reply"),
+        )
+        .expect("typed thread");
+        assert_eq!(
+            from_nested_reply, from_root,
+            "any thread member resolves the same thread"
+        );
+    }
+
+    #[test]
+    fn comment_thread_errs_for_unknown_or_invalid_id() {
+        let d = open_document(RICH_DOCX).expect("open corpus docx");
+        assert!(d.comment_thread_inner("not-a-node-id").is_err());
+        assert!(
+            d.comment_thread_inner("ffffffffffffffffffffffffffffffff")
+                .is_err()
+        );
+    }
+
+    /// `listRevisions` (docs/81 REVIEW-GAP-022) is a typed, single-purpose
+    /// substitute for `reviewSummary`'s nested `revisions` array.
+    #[test]
+    fn list_revisions_matches_review_summary_revisions_for_suggestions() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, text)| !text.is_empty())
+            .map(|(id, _)| id.to_string())
+            .expect("a non-empty paragraph");
+        d.suggest_insert(&node, 0, "Tracked", Some("Tester".to_owned()), None, None)
+            .expect("suggest insert");
+
+        let listed: Vec<ReviewRevisionSummaryJson> =
+            serde_json::from_str(&d.list_revisions()).expect("typed revision list");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].kind, "insertion");
+        assert_eq!(listed[0].author.as_deref(), Some("Tester"));
+        assert_eq!(listed[0].text, "Tracked");
+
+        let summary: serde_json::Value =
+            serde_json::from_str(&d.review_summary()).expect("review summary");
+        let summary_revisions = summary["revisions"].as_array().expect("revisions array");
+        assert_eq!(summary_revisions.len(), listed.len());
+        assert_eq!(summary_revisions[0]["id"], listed[0].id);
+        assert_eq!(summary_revisions[0]["text"], listed[0].text);
     }
 
     /// Rapid adjacent typing is one user action, while a different host gesture
