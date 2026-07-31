@@ -224,11 +224,20 @@ inside the resolved vertical band, including paragraphs before a later anchor,
 and overlapping edge intervals union deterministically. Cached pagination uses
 the identical fixed point.
 
+The exclusion pass (`document_layout.rs::paragraph_float_exclusions`) now also
+descends into a top-level **body table**'s cells: it recovers each nested
+paragraph's absolute page rect (honoring `w:tcMar`/`w:vAlign` and `w:vMerge`
+continuation cells, recursing through nested tables), so a float positioned
+near a table has its exclusion applied to paragraphs inside that table's cells
+instead of being silently dropped. `P1F-FLOAT-SQUARE-2`.
+
 Remaining consequences:
 
 - tight/through wrapping does not use an authored contour;
-- cross-paragraph exclusion does not yet descend into tables, text boxes, or
-  running bands;
+- cross-paragraph exclusion still does not descend into floating text boxes or
+  header/footer running bands (both flow through an independent context that
+  carries no exclusion map) — only top-level paragraphs and top-level body
+  table cells are covered;
 - a paragraph that begins above a later float needs line-offset exclusion;
 - the current VML body safety policy still keeps unsupported side/page cases
   inline;
