@@ -4445,8 +4445,41 @@ fn vml_pict_image_becomes_a_drawing() {
             _ => None,
         })
         .expect("VML image modeled as a Drawing");
-    // VML sizes in CSS, not EMU, so no extent is captured.
+    // The CSS style string carries only `width`, not `height`: a partial box is
+    // not enough to size the image (avoids fabricating a bogus dimension), so
+    // no extent is captured. See `vml_pict_inline_image_with_css_size_captures_extent`
+    // below for the common case where the CSS box carries both.
     assert!(drawing.extent.is_none());
+}
+
+#[test]
+fn vml_pict_inline_image_with_css_size_captures_extent() {
+    // A genuinely inline VML image (no absolute position/z-order) commonly
+    // still carries an authored CSS `width`/`height` on `v:shape@style`. That
+    // CSS box must resolve into a real segment extent (in EMU) instead of
+    // being discarded — an extent-less inline Drawing contributes nothing to
+    // layout (`casual_doc_layout::flow::image_item`), so the image would
+    // otherwise silently vanish even though it parsed successfully.
+    let document = br#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:v="urn:v"><w:body>
+        <w:p><w:r><w:pict><v:shape style="width:72pt;height:36pt"><v:imagedata r:id="rId5"/></v:shape></w:pict></w:r></w:p>
+    </w:body></w:document>"#;
+    let rels = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+    let media = [("word/media/image1.png", b"PNGDATA".as_slice())];
+    let import = import_bytes(&build_package(document, rels, &media));
+    let drawing = paragraph(&import, 0)
+        .inlines
+        .iter()
+        .find_map(|i| match i {
+            InlineNode::Drawing(d) => Some(d),
+            _ => None,
+        })
+        .expect("VML image modeled as a Drawing");
+    // 72pt == 1in == 1440 twips == 914_400 EMU; 36pt == 720 twips == 457_200 EMU.
+    let extent = drawing
+        .extent
+        .expect("authored CSS width/height must produce an extent");
+    assert_eq!(extent.width_emu, 914_400);
+    assert_eq!(extent.height_emu, 457_200);
 }
 
 #[test]

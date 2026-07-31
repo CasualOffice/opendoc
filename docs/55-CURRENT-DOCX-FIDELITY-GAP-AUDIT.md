@@ -109,7 +109,6 @@ still use bounded approximations.
 | P1 | Square-family exclusion is only local/bounded | Cross-paragraph, page-relative, contour, and overlapping-float cases can still diverge | `flow.rs::shape_with_float_exclusions` |
 | P1 | Table style cascade and advanced table geometry are not consumed | Styled tables lose conditional fills/borders/fonts; floating/bidi/spaced tables become inline approximations | `cascade.rs`; `flow.rs::flow_table` |
 | P1 | Paragraph base direction and per-script run slots are not selected | Arabic/Hebrew/mixed-script layout and East Asian/complex-script typography can use wrong direction, face, weight, or size | `flow.rs::line_constraints`, `requested_family` |
-| P1 | Inline VML images discard their CSS size | A valid inline VML image can disappear because its model extent is `None` | `body.rs::vml_segment`; `flow.rs::image_item` |
 | P2 | Shape geometry is reduced at paint | Ellipse/round-rect/preset/path shapes can paint as rectangles | `anchor.rs::place_group_children` |
 | P2 | Review semantics have no view policy | Insertions and deletions both render; comments have no visible anchor/UI | `flow.rs::collect_items` |
 | P2 | Section/page-furniture long tail is not consumed | Page borders, line numbers, note policy, section text direction, and parity starts diverge | model `SectionBoundary`; layout search |
@@ -346,10 +345,16 @@ mixed field/tab/object combinations, and intrinsic table sizing still needs to
 account for all atomic boxes.
 
 The normal inline-image path requires a media entry and a positive `Extent`.
-`image_item` returns `None` otherwise. The VML importer currently maps a genuinely
-inline `v:imagedata` to `Segment::Drawing { extent: None }` even when the parsed
-VML CSS box contains width and height. Such an image survives import but renders
-nothing.
+`image_item` returns `None` otherwise. **Fixed** (`agent/fix-vml-inline-image-size`):
+the VML importer previously mapped a genuinely inline `v:imagedata` to
+`Segment::Drawing { extent: None }` unconditionally, even when the parsed VML
+CSS box (`v:shape@style`) carried an explicit `width`/`height` — such an image
+survived import but rendered nothing. `body.rs::vml_segment` now converts the
+parsed `VmlPosition`'s twip `width`/`height` into the segment's EMU `Extent`
+whenever both are present and positive, so the authored CSS size is captured
+and the image paints; a box missing either dimension (or a degenerate
+zero-size one) still leaves `extent: None` rather than fabricating a bogus
+size.
 
 The CPU backend deliberately enables only PNG and JPEG codecs. EMF/WMF, SVG,
 GIF, BMP, and TIFF are currently unsupported/undecodable. Real decoding of any
@@ -499,7 +504,7 @@ support.
 | --- | --- | --- | --- | --- |
 | Paragraph/run core flow | Yes | Yes | Yes | Same shared block/inline paths |
 | Direct table layout | Yes | Yes | Yes | Table-style cascade and advanced table props absent |
-| PNG/JPEG inline picture with extent | Yes | Yes | Yes | True in-flow box; other formats and extent-less inline VML omitted |
+| PNG/JPEG inline picture with extent | Yes | Yes | Yes | True in-flow box; other raster formats omitted; inline VML now also captures a CSS `width`/`height` box |
 | Positioned float paint/z-order | Yes | Yes | Yes | Running-content source and geometry are section-scoped |
 | `topAndBottom` local reflow | Yes | Yes | Yes | Paragraph/line-relative explicit-offset envelope only |
 | Square/tight/through reflow | Safe subset | Safe subset | Safe subset | Local explicit paragraph/line-relative side exclusion; square bounds only |
