@@ -6,6 +6,12 @@
 This document distinguishes target support from implemented support. A target is
 not considered supported until its required CI and conformance gates pass.
 
+A public, per-construct rendering of the fidelity gradient (modeled → rendered →
+editable → round-trips) derived from this document, the execution tracker, and
+the fidelity audits lives at `webapp/fidelity.html`
+(`webapp/src/fidelity.js` holds its data). Keep the two consistent when support
+advances; that page is a **draft pending owner review** before it is featured.
+
 ## Platform Tiers
 
 | Tier | Contract |
