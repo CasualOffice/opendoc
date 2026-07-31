@@ -3208,7 +3208,25 @@ body.modal-open {
   border: 1.5px solid var(--accent);
   border-radius: 2px;
   box-shadow: 0 1px 2px rgba(20, 22, 28, 0.3);
-  pointer-events: none; /* not yet draggable — the move/resize slice enables this */
+  pointer-events: auto; /* drag to resize (P1G-OBJ-GEOMETRY) */
+  touch-action: none;
+}
+/* Directional resize cursors, keyed by handle index (NW,N,NE,E,SE,S,SW,W). */
+.overlay .object-handle[data-handle="0"],
+.overlay .object-handle[data-handle="4"] { cursor: nwse-resize; }
+.overlay .object-handle[data-handle="2"],
+.overlay .object-handle[data-handle="6"] { cursor: nesw-resize; }
+.overlay .object-handle[data-handle="1"],
+.overlay .object-handle[data-handle="5"] { cursor: ns-resize; }
+.overlay .object-handle[data-handle="3"],
+.overlay .object-handle[data-handle="7"] { cursor: ew-resize; }
+
+/* Live drag-resize preview outline (host chrome; the op commits once on release). */
+.overlay .object-resize-preview {
+  position: absolute;
+  border: 1.5px dashed var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  pointer-events: none;
 }
 
 /* Placeholder object context bar (docs/85 §4.1): names the selected object and

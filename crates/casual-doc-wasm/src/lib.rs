@@ -38,15 +38,15 @@ use casual_doc_model::v1::GridColumn;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, BookmarkId, BorderEdge, Break,
     CellMargins, CellVerticalAlignment, Color, Comment, CommentId, CommentRangeEnd,
-    CommentRangeStart, CommentReference, DefinitionMap, Document, ExternalTarget, FontName,
+    CommentRangeStart, CommentReference, DefinitionMap, Document, Extent, ExternalTarget, FontName,
     FontRef, HeightRule, HighlightColor, Hyperlink, HyperlinkTarget, Indentation, InlineNode,
-    InternalTarget, LevelJustification, LevelSuffix, MoveKind, NumberFormat, NumberingInstance,
-    NumberingInstanceId, NumberingLevel, NumberingOverride, NumberingRef, PageMargins,
-    PageOrientation, PageSize as SectionPageSize, Paragraph, ParagraphBorders, ParagraphProperties,
-    PropChange, ReviewProjection, Revision, RevisionGroup, RevisionGroupKind, RevisionKind,
-    RgbColor, RowHeight, Run, RunProperties, SectionColumns, SectionId, Spacing, StyleId,
-    StyleKind, Tab, TabAlignment, TabStop, Table, TableBorders, TableCell, TableCellProperties,
-    TableLayout, TableProperties, TableRow, VerticalAlignment, VerticalMerge,
+    InternalTarget, LevelJustification, LevelSuffix, MAX_EMU, MoveKind, NumberFormat,
+    NumberingInstance, NumberingInstanceId, NumberingLevel, NumberingOverride, NumberingRef,
+    PageMargins, PageOrientation, PageSize as SectionPageSize, Paragraph, ParagraphBorders,
+    ParagraphProperties, PropChange, ReviewProjection, Revision, RevisionGroup, RevisionGroupKind,
+    RevisionKind, RgbColor, RowHeight, Run, RunProperties, SectionColumns, SectionId, Spacing,
+    StyleId, StyleKind, Tab, TabAlignment, TabStop, Table, TableBorders, TableCell,
+    TableCellProperties, TableLayout, TableProperties, TableRow, VerticalAlignment, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
@@ -218,6 +218,7 @@ enum HistoryKind {
     TableResize,
     TableFormatting,
     TableStructure,
+    ObjectResize,
     DocumentProperties,
     PageSetup,
     Review,
@@ -240,6 +241,7 @@ impl HistoryKind {
             Self::TableResize => "Table resize",
             Self::TableFormatting => "Table formatting",
             Self::TableStructure => "Table structure",
+            Self::ObjectResize => "Object resize",
             Self::DocumentProperties => "Document properties",
             Self::PageSetup => "Page setup",
             Self::Review => "Review",
@@ -283,6 +285,7 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         | Operation::DeleteTable { .. }
         | Operation::InsertTable { .. } => HistoryKind::TableStructure,
         Operation::InsertBlocks { .. } | Operation::DeleteBlocks { .. } => HistoryKind::Paste,
+        Operation::SetExtent { .. } => HistoryKind::ObjectResize,
         Operation::SetTableCellProperties { .. }
         | Operation::SetTableProperties { .. }
         | Operation::ReplaceTable { .. } => HistoryKind::TableFormatting,
@@ -599,6 +602,63 @@ impl WasmDocument {
             out.extend_from_slice(&[obj.page as i32, hx, hy, i as i32]);
         }
         out
+    }
+
+    /// Resizes an inline drawing / text box to `width_emu` × `height_emu`
+    /// (`wp:extent`, EMU) as one undoable action — the commit of a handle
+    /// drag-resize (docs/85 §5.3, `SetExtent`). A drag previews as host chrome and
+    /// commits exactly once here on release, so a resize is one undo step. Object
+    /// geometry has no tracked-revision representation, so the host blocks this in
+    /// Suggesting/Viewing mode before calling. Errors if `node` is not a resizable
+    /// inline object.
+    #[wasm_bindgen(js_name = setObjectExtent)]
+    pub fn set_object_extent(
+        &mut self,
+        node: &str,
+        width_emu: f64,
+        height_emu: f64,
+    ) -> Result<EditResult, JsValue> {
+        let object = node_id(node)?;
+        let width = (width_emu.round() as i64).clamp(1, MAX_EMU);
+        let height = (height_emu.round() as i64).clamp(1, MAX_EMU);
+        self.apply_action_caret_as(
+            vec![Operation::SetExtent {
+                object,
+                extent: Some(Extent {
+                    width_emu: width,
+                    height_emu: height,
+                }),
+            }],
+            Pos::new(object, 0),
+            HistoryKind::ObjectResize,
+        )
+        .map_err(to_js)
+    }
+
+    /// The current authored extent of the object `node` as `[widthEmu, heightEmu]`
+    /// (EMU), or the *placed* size (converted from the twip rect) when the object
+    /// has no authored extent — the base a drag-resize scales from. Empty if
+    /// `node` is not a currently placed selectable object.
+    #[wasm_bindgen(js_name = objectExtent)]
+    #[must_use]
+    pub fn object_extent(&self, node: &str) -> Vec<f64> {
+        let Ok(nid) = NodeId::from_str(node) else {
+            return Vec::new();
+        };
+        // Prefer the authored extent; fall back to the placed rect (twips → EMU).
+        if let Some(extent) = object_authored_extent(self.document.body(), nid) {
+            return vec![extent.width_emu as f64, extent.height_emu as f64];
+        }
+        self.object_boxes()
+            .into_iter()
+            .find(|obj| obj.node == nid)
+            .map(|obj| {
+                vec![
+                    f64::from(obj.rect.size.width.raw()) * EMU_PER_TWIP,
+                    f64::from(obj.rect.size.height.raw()) * EMU_PER_TWIP,
+                ]
+            })
+            .unwrap_or_default()
     }
 
     /// The caret box for a model anchor, as `[page, xTwip, yTwip, wTwip, hTwip]`
@@ -10780,6 +10840,74 @@ struct ObjectBox {
 /// media part name) and inline text-box nodes, in document order, descending one
 /// level into hyperlink and revision wrappers. Anchored (`anchor.is_some()`)
 /// text boxes are floating objects, out of the inline-object scope.
+/// EMU per twip (914,400 EMU/inch ÷ 1,440 twip/inch). Object extents are authored
+/// in EMU; the layout/selection geometry is in twips.
+const EMU_PER_TWIP: f64 = 635.0;
+
+/// The authored extent of the inline drawing / text box `object`, searched across
+/// body paragraphs (through hyperlink/revision wrappers), table cells, block SDTs,
+/// and inline text-box bodies. `None` if the object has no authored extent or is
+/// not a resizable inline object.
+fn object_authored_extent(blocks: &[BlockNode], object: NodeId) -> Option<Extent> {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                if let Some(extent) = object_authored_extent_in_inlines(&paragraph.inlines, object)
+                {
+                    return Some(extent);
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        if let Some(extent) = object_authored_extent(&cell.blocks, object) {
+                            return Some(extent);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(extent) = object_authored_extent(&sdt.blocks, object) {
+                    return Some(extent);
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    None
+}
+
+/// The authored extent of `object` within an inline sequence, descending into
+/// hyperlink/revision wrappers and a text box's own blocks.
+fn object_authored_extent_in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<Extent> {
+    for inline in inlines {
+        match inline {
+            InlineNode::Drawing(drawing) if drawing.id == object => return drawing.extent,
+            InlineNode::TextBox(text_box) => {
+                if text_box.id == object {
+                    return text_box.extent;
+                }
+                if let Some(extent) = object_authored_extent(&text_box.blocks, object) {
+                    return Some(extent);
+                }
+            }
+            InlineNode::Hyperlink(hyperlink) => {
+                if let Some(extent) = object_authored_extent_in_inlines(&hyperlink.inlines, object)
+                {
+                    return Some(extent);
+                }
+            }
+            InlineNode::Revision(revision) => {
+                if let Some(extent) = object_authored_extent_in_inlines(&revision.inlines, object) {
+                    return Some(extent);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 fn collect_para_objects(
     inlines: &[InlineNode],
     definitions: &casual_doc_model::v1::Definitions,
@@ -11951,6 +12079,9 @@ fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos 
             .map(first_pos_of_block)
             .unwrap_or_else(|| Pos::new(doc_id, 0)),
         Operation::DeleteBlocks { container, .. } => Pos::new(container.unwrap_or(doc_id), 0),
+        // Object resize keeps the object selected (the frontend re-draws the
+        // object chrome, not a text caret); this arm keeps the match exhaustive.
+        Operation::SetExtent { object, .. } => Pos::new(*object, 0),
         // Cell/table formatting keeps the selection (the frontend does not collapse
         // to this); these arms only keep the match exhaustive.
         Operation::SetTableCellProperties { cell, .. } => {
@@ -16569,6 +16700,55 @@ mod tests {
             d.copy_structured(&id, 0, &id, text.len() as u32),
             "",
             "plain prose is not captured as a structured fragment"
+        );
+    }
+
+    #[test]
+    fn set_object_extent_resizes_undoes_and_round_trips_through_docx() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let image_node = d
+            .object_boxes()
+            .into_iter()
+            .find(|b| b.kind == "image")
+            .expect("an inline image object")
+            .node
+            .to_string();
+
+        let before = d.object_extent(&image_node);
+        assert_eq!(before.len(), 2, "the image reports a base extent");
+
+        // Resize to a distinct size and confirm the authored extent changed.
+        let (w, h) = (2_000_000.0_f64, 1_500_000.0_f64);
+        d.set_object_extent(&image_node, w, h)
+            .expect("resize the image");
+        let after = d.object_extent(&image_node);
+        assert_eq!(after, vec![w, h], "the authored extent is the new size");
+        assert_ne!(after, before, "the extent actually changed");
+
+        // One undo reverts the resize.
+        d.undo().expect("undo the resize");
+        assert_eq!(
+            d.object_extent(&image_node),
+            before,
+            "undo restores the original extent"
+        );
+
+        // Redo, then round-trip through DOCX: the new extent survives export +
+        // reopen (the object keeps its identity across the save).
+        d.set_object_extent(&image_node, w, h).expect("re-resize");
+        let bytes = d.export_docx().expect("export the resized document");
+        let reopened = open_document(&bytes).expect("reopen the exported document");
+        let reopened_image = reopened
+            .object_boxes()
+            .into_iter()
+            .find(|b| b.kind == "image")
+            .expect("the image survives the round trip")
+            .node
+            .to_string();
+        assert_eq!(
+            reopened.object_extent(&reopened_image),
+            vec![w, h],
+            "the resized extent round-trips through DOCX"
         );
     }
 

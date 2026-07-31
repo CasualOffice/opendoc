@@ -1600,6 +1600,9 @@ let selection = null; // { anchor: {node, offset}, focus: {node, offset} }
  * selected. `selection` still holds a caret at the object's surrounding-text
  * anchor so a two-step Escape can collapse back to it. */
 let objectSelection = null; // { node, kind, mode: "selected" | "editing" } | null
+/** Active object resize drag (docs/85 §5.3): a handle drag that previews as host
+ * chrome and commits ONE `SetExtent` op on release. `null` when not resizing. */
+let objectResizeDrag = null;
 /** Current table-cell selection overlay, separate from text ranges. */
 let tableSelection = null; // { node, mode: "row" | "column" | "table" }
 let tableResizeDrag = null; // { node, col, page, startClientX, startWidthTwips, preview }
@@ -2167,8 +2170,112 @@ function paintObjectSelection() {
     el.dataset.handle = String(kind);
     el.style.left = `${cx * sx}px`;
     el.style.top = `${cy * sy}px`;
+    el.addEventListener("pointerdown", (event) => startObjectResize(event, page, node, kind));
     page.overlay.appendChild(el);
   }
+}
+
+/** Begins a handle drag-resize (docs/85 §5.3). Records the object's current
+ *  placed size and shows a live preview outline; the model is untouched until
+ *  release. Object geometry is not trackable, so a resize is blocked in
+ *  Suggesting/Viewing mode. */
+function startObjectResize(event, page, node, handleKind) {
+  if (!doc || !objectSelection || objectSelection.node !== node) return;
+  event.preventDefault();
+  event.stopPropagation(); // do not let the page pointerdown re-hit-test
+  if (reviewMode === "viewing") {
+    blockMutationInViewing();
+    return;
+  }
+  if (reviewMode === "suggesting") {
+    setStatus("Resizing an object is not tracked; switch to Editing to resize it", "error");
+    return;
+  }
+  focusEditorSurface();
+  hideLinkChip();
+  resetPointerGesture();
+  const rect = doc.objectRect(node); // [page, x, y, w, h] twips
+  if (rect.length < 5) return;
+  const [, x, y, w, h] = rect;
+  const preview = document.createElement("div");
+  preview.className = "object-resize-preview";
+  const { sx, sy } = scaleOf(page);
+  preview.style.left = `${x * sx}px`;
+  preview.style.top = `${y * sy}px`;
+  preview.style.width = `${w * sx}px`;
+  preview.style.height = `${h * sy}px`;
+  page.overlay.appendChild(preview);
+  objectResizeDrag = {
+    node,
+    handleKind,
+    page,
+    startClientX: event.clientX,
+    startClientY: event.clientY,
+    startX: x,
+    startY: y,
+    startW: w,
+    startH: h,
+    lastW: w,
+    lastH: h,
+    aspect: h > 0 ? w / h : 1,
+    preview,
+  };
+  event.currentTarget.setPointerCapture?.(event.pointerId);
+}
+
+// Minimum object edge in twips (~0.1in) so a drag can't collapse an object.
+const MIN_OBJECT_TWIP = 144;
+
+/** Updates the resize preview from the pointer delta. Per-handle signs decide
+ *  which edges grow (corners = both axes, N/S = height, E/W = width). Shift on a
+ *  corner constrains to the original aspect ratio (docs/85 §10.3). */
+function updateObjectResize(event) {
+  if (!objectResizeDrag) return;
+  const drag = objectResizeDrag;
+  const { sx, sy } = scaleOf(drag.page);
+  const dxTwip = Math.round((event.clientX - drag.startClientX) / sx);
+  const dyTwip = Math.round((event.clientY - drag.startClientY) / sy);
+  // Handle index → (dw factor, dh factor). NW,N,NE,E,SE,S,SW,W.
+  const [fw, fh] = [
+    [-1, -1], [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0],
+  ][drag.handleKind];
+  let newW = Math.max(MIN_OBJECT_TWIP, drag.startW + fw * dxTwip);
+  let newH = Math.max(MIN_OBJECT_TWIP, drag.startH + fh * dyTwip);
+  // Aspect-lock a corner drag when Shift is held: drive both edges from the axis
+  // that moved more, so the object keeps its proportions.
+  const isCorner = fw !== 0 && fh !== 0;
+  if (isCorner && event.shiftKey) {
+    if (Math.abs(newW - drag.startW) >= Math.abs(newH - drag.startH)) {
+      newH = Math.max(MIN_OBJECT_TWIP, Math.round(newW / drag.aspect));
+    } else {
+      newW = Math.max(MIN_OBJECT_TWIP, Math.round(newH * drag.aspect));
+    }
+  }
+  drag.lastW = newW;
+  drag.lastH = newH;
+  drag.preview.style.width = `${newW * sx}px`;
+  drag.preview.style.height = `${newH * sy}px`;
+  event.preventDefault();
+}
+
+/** Commits (or cancels) the resize on release: one `SetExtent` op, converting the
+ *  final placed size (twips) to authored EMU. Returns whether a drag was active. */
+function finishObjectResize(event) {
+  if (!objectResizeDrag) return false;
+  const drag = objectResizeDrag;
+  objectResizeDrag = null;
+  drag.preview.remove();
+  event.preventDefault();
+  const changed = Math.abs(drag.lastW - drag.startW) >= 8 || Math.abs(drag.lastH - drag.startH) >= 8;
+  if (changed) {
+    const EMU_PER_TWIP = 635;
+    runEdit(() => doc.setObjectExtent(drag.node, drag.lastW * EMU_PER_TWIP, drag.lastH * EMU_PER_TWIP), {
+      gate: true,
+    });
+  } else {
+    drawSelection();
+  }
+  return true;
 }
 
 /** Reflects the object-selection state onto `#pages` as data attributes so the
@@ -2552,6 +2659,15 @@ function cancelTableColumnResize() {
   tableResizeDrag = null;
 }
 
+/** Aborts an in-progress object resize (pointer cancel / window blur), discarding
+ *  the preview and committing nothing. */
+function cancelObjectResize() {
+  if (!objectResizeDrag) return;
+  objectResizeDrag.preview.remove();
+  objectResizeDrag = null;
+  drawSelection();
+}
+
 function updateTableColumnResize(event) {
   if (!tableResizeDrag) return;
   const { sx } = scaleOf(tableResizeDrag.page);
@@ -2578,6 +2694,10 @@ function finishTableColumnResize(event) {
 }
 
 function onPointerMove(page, event) {
+  if (objectResizeDrag) {
+    updateObjectResize(event);
+    return;
+  }
   if (tableResizeDrag) {
     updateTableColumnResize(event);
     return;
@@ -2648,6 +2768,7 @@ function startSelectionAutoScroll() {
 }
 
 function onPointerUp(event) {
+  if (finishObjectResize(event)) return;
   if (finishTableColumnResize(event)) return;
   const gesture = pointerGesture;
   resetPointerGesture();
@@ -2784,6 +2905,10 @@ pagesEl.addEventListener("pointermove", (e) => {
   if (page && !dragging) onPointerMove(page, e);
 });
 window.addEventListener("pointermove", (e) => {
+  if (objectResizeDrag) {
+    updateObjectResize(e);
+    return;
+  }
   if (tableResizeDrag) {
     updateTableColumnResize(e);
     return;
@@ -2831,19 +2956,23 @@ pagesEl.addEventListener("click", (e) => {
 });
 window.addEventListener("pointerup", onPointerUp);
 window.addEventListener("pointercancel", () => {
+  cancelObjectResize();
   cancelTableColumnResize();
   resetPointerGesture();
 });
 window.addEventListener("lostpointercapture", () => {
+  cancelObjectResize();
   cancelTableColumnResize();
   resetPointerGesture();
 });
 window.addEventListener("blur", () => {
+  cancelObjectResize();
   cancelTableColumnResize();
   resetPointerGesture();
 });
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
+    cancelObjectResize();
     cancelTableColumnResize();
     resetPointerGesture();
   }
@@ -6678,6 +6807,11 @@ document.addEventListener("keydown", async (e) => {
   // object is selected. Escape is the two-step exit (editing → selected → text);
   // Enter/Delete act on the object; a selected object swallows text keys so a
   // stale caret is never edited.
+  if (objectResizeDrag && key === "Escape") {
+    e.preventDefault();
+    cancelObjectResize(); // Escape during a drag cancels it (docs/85 §4.2)
+    return;
+  }
   if (objectSelection) {
     if (key === "Escape") {
       e.preventDefault();
