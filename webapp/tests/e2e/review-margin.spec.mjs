@@ -4,6 +4,7 @@ import {
   gotoEditor,
   clickIntoFirstPage,
   moveCaretToDocStart,
+  setReviewMode,
   MOD,
 } from "./fixtures.mjs";
 
@@ -124,8 +125,7 @@ test("suggestions share the sidebar and decisions appear only on the active card
   await moveCaretToDocStart(page);
 
   await expect(page.locator("#reviewInlineBar")).toBeHidden();
-  await page.locator("#reviewInlineMode").click();
-  await expect(page.locator("#reviewInlineMode")).toHaveText("Suggesting");
+  await setReviewMode(page, "suggesting");
   await expect(page.locator("#suggestingBanner")).toBeVisible();
   await pastePlainText(page, "TRACKED_SIDEBAR_INSERT");
 
@@ -162,7 +162,7 @@ test("replacement and formatting pairs are one atomic suggestion card", async ({
   await page.keyboard.press("Shift+ArrowLeft");
   await page.keyboard.press("Shift+ArrowLeft");
   await page.keyboard.press("Shift+ArrowLeft");
-  await page.locator("#reviewInlineMode").click();
+  await setReviewMode(page, "suggesting");
   await page.locator("#alignCenter").click();
   await expect(page.locator("#status")).toContainText("cannot be tracked");
   await page.keyboard.type("NEW");
@@ -189,7 +189,9 @@ test("replacement and formatting pairs are one atomic suggestion card", async ({
   await expect(formatting).toHaveCount(0);
 
   await page.locator("#suggestingBanner").getByRole("button", { name: "Switch to editing" }).click();
-  await expect(page.locator("#reviewInlineMode")).toHaveText("Editing");
+  await expect(
+    page.locator('#reviewModeControl [data-review-mode="editing"]'),
+  ).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator("#suggestingBanner")).toBeHidden();
   expect(consoleErrors).toEqual([]);
 });
@@ -205,7 +207,7 @@ test("a standalone deletion stays visible at its collapsed document anchor", asy
   for (let index = 0; index < "DELETE_ME".length; index++) {
     await page.keyboard.press("Shift+ArrowLeft");
   }
-  await page.locator("#reviewInlineMode").click();
+  await setReviewMode(page, "suggesting");
   await page.keyboard.press("Backspace");
 
   const sidebar = page.locator("#reviewSidebar");

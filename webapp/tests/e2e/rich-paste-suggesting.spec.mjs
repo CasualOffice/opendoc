@@ -8,7 +8,7 @@
 // Multi-paragraph paste, and a rich paste that also replaces an existing
 // selection, remain explicitly out of scope (see the `pasteTrackedRichRuns`
 // doc comment in webapp/src/main.js) and stay on the flattened/plain path.
-import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, MOD } from "./fixtures.mjs";
+import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, setReviewMode, MOD } from "./fixtures.mjs";
 
 async function dispatchClipboardEvent(page, type, data = {}) {
   return page.evaluate(
@@ -27,13 +27,11 @@ async function dispatchClipboardEvent(page, type, data = {}) {
   );
 }
 
-// `#reviewInlineMode` lives in the Home ribbon panel, hidden while a
-// contextual panel is showing — switch tabs first, matching
-// suggesting-mode-gate.spec.mjs's helper.
+// The three-state mode control lives in the Home ribbon panel, hidden while a
+// contextual panel is showing — `setReviewMode` switches to Home first,
+// matching suggesting-mode-gate.spec.mjs's helper.
 async function enterSuggestingMode(page) {
-  await page.locator("#tabHome").click();
-  await page.locator("#reviewInlineMode").click();
-  await expect(page.locator("#reviewInlineMode")).toHaveText("Suggesting");
+  await setReviewMode(page, "suggesting");
 }
 
 test("rich single-paragraph paste in Suggesting mode preserves per-run formatting as one tracked suggestion", async ({

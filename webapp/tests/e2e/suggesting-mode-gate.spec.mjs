@@ -10,7 +10,7 @@
 // a table op) fail closed by default. These commands have no tracked-
 // revision representation yet (REVIEW-GAP-009), so the fix is to block them
 // in Suggesting mode, not to fake tracking.
-import { test, expect, gotoEditor, clickIntoFirstPage } from "./fixtures.mjs";
+import { test, expect, gotoEditor, clickIntoFirstPage, setReviewMode } from "./fixtures.mjs";
 
 async function insertTwoByTwoTable(page) {
   await gotoEditor(page);
@@ -23,12 +23,11 @@ async function insertTwoByTwoTable(page) {
   await page.locator("#tabTable").click();
 }
 
-// `#reviewInlineMode` lives in the Home ribbon panel, hidden while the
-// contextual Table (or Insert) panel is showing — switch tabs first.
+// The three-state mode control lives in the Home ribbon panel, hidden while
+// the contextual Table (or Insert) panel is showing — `setReviewMode` switches
+// to Home first.
 async function enterSuggestingMode(page) {
-  await page.locator("#tabHome").click();
-  await page.locator("#reviewInlineMode").click();
-  await expect(page.locator("#reviewInlineMode")).toHaveText("Suggesting");
+  await setReviewMode(page, "suggesting");
 }
 
 test("table style and table structure commands are blocked in Suggesting mode instead of silently mutating the table", async ({
@@ -58,9 +57,7 @@ test("table style and table structure commands are blocked in Suggesting mode in
 
   // Confirm the gate is mode-specific, not a permanent regression: switching
   // back to Editing lets the identical action through.
-  await page.locator("#tabHome").click();
-  await page.locator("#reviewInlineMode").click();
-  await expect(page.locator("#reviewInlineMode")).toHaveText("Editing");
+  await setReviewMode(page, "editing");
   await page.locator("#tabTable").click();
   await ribbon.locator('[data-table-action="insert-row-below"]').click();
   await expect(page.locator("#tableContext")).toContainText("3×2 table");

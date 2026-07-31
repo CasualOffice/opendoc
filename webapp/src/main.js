@@ -188,13 +188,18 @@ const reviewNext = document.getElementById("reviewNext");
 const reviewAcceptAll = document.getElementById("reviewAcceptAll");
 const reviewRejectAll = document.getElementById("reviewRejectAll");
 const reviewInlineBar = document.getElementById("reviewInlineBar");
-const reviewInlineMode = document.getElementById("reviewInlineMode");
+const reviewModeControl = document.getElementById("reviewModeControl");
+const reviewModeSegButtons = reviewModeControl
+  ? [...reviewModeControl.querySelectorAll("[data-review-mode]")]
+  : [];
 const reviewInlinePrevious = document.getElementById("reviewInlinePrevious");
 const reviewInlineNext = document.getElementById("reviewInlineNext");
 const reviewInlineAcceptAll = document.getElementById("reviewInlineAcceptAll");
 const reviewInlineRejectAll = document.getElementById("reviewInlineRejectAll");
 const suggestingBanner = document.getElementById("suggestingBanner");
 const suggestingBannerEdit = document.getElementById("suggestingBannerEdit");
+const viewingBanner = document.getElementById("viewingBanner");
+const viewingBannerEdit = document.getElementById("viewingBannerEdit");
 const reviewSidebar = document.getElementById("reviewSidebar");
 const reviewSidebarBody = document.getElementById("reviewSidebarBody");
 let reviewMode = "editing";
@@ -227,18 +232,24 @@ function updateReviewInlineBar() {
   let count = 0;
   try { count = (JSON.parse(doc.listRevisions()) ?? []).length; } catch { count = 0; }
   reviewInlineBar.hidden = true;
-  reviewInlineMode.disabled = false;
+  // The three-state mode control (Editing / Suggesting / Viewing) is live once a
+  // document is loaded; its per-button pressed state is owned by setReviewMode.
+  for (const button of reviewModeSegButtons) button.disabled = false;
   reviewInlinePrevious.disabled = count === 0;
   reviewInlineNext.disabled = count === 0;
   reviewInlineAcceptAll.disabled = count === 0;
   reviewInlineRejectAll.disabled = count === 0;
-  reviewInlineMode.textContent = reviewMode === "suggesting" ? "Suggesting" : "Editing";
-  reviewInlineMode.setAttribute("aria-pressed", String(reviewMode === "suggesting"));
 }
 
+/** The three review modes (docs/68 §"Suggesting mode"): `editing` applies
+ *  edits directly, `suggesting` records them as tracked revisions, and
+ *  `viewing` is fully read-only — no Operation reaches apply. Any unrecognized
+ *  value falls back to `editing`. */
 function setReviewMode(mode) {
-  reviewMode = mode === "suggesting" ? "suggesting" : "editing";
+  reviewMode =
+    mode === "suggesting" ? "suggesting" : mode === "viewing" ? "viewing" : "editing";
   suggestingBanner.hidden = reviewMode !== "suggesting";
+  if (viewingBanner) viewingBanner.hidden = reviewMode !== "viewing";
   for (const button of reviewModeButtons) {
     button.setAttribute("aria-pressed", String(button.dataset.reviewMode === reviewMode));
   }
@@ -1055,6 +1066,7 @@ async function openBytes(bytes, name) {
     tableSelection = null;
     reviewMode = "editing";
     suggestingBanner.hidden = true;
+    if (viewingBanner) viewingBanner.hidden = true;
     reviewSidebarPreference = null;
     activeReviewCommentId = null;
     activeReviewItemId = null;
@@ -1989,7 +2001,11 @@ document.addEventListener("keydown", (event) => {
     openReviewComposer();
   } else if (mod && event.shiftKey && event.key.toLowerCase() === "e") {
     event.preventDefault();
-    setReviewMode(reviewMode === "suggesting" ? "editing" : "suggesting");
+    // Cycle Editing → Suggesting → Viewing → Editing for keyboard access to
+    // all three modes (REVIEW-GAP-014).
+    const next =
+      reviewMode === "editing" ? "suggesting" : reviewMode === "suggesting" ? "viewing" : "editing";
+    setReviewMode(next);
   }
 });
 viewportEl.addEventListener("scroll", hideLinkChip, { passive: true });
@@ -2958,11 +2974,27 @@ function blockUntrackedInSuggesting() {
   return true;
 }
 
+/** True (after showing the read-only status message and returning focus to the
+ *  canvas) if Viewing mode should block a document mutation. Viewing is fully
+ *  read-only — no Operation reaches apply (docs/68 §"Suggesting mode") — so
+ *  every mutation path (typing, deletion, paste, toolbar formatting, table
+ *  ops, and comment/revision decisions) fails closed here rather than
+ *  depending on any individual command or menu item being disabled
+ *  (REVIEW-GAP-014). Navigation, selection, scroll, and copy are not
+ *  mutations and are unaffected. */
+function blockMutationInViewing() {
+  if (reviewMode !== "viewing") return false;
+  setStatus("Viewing mode is read-only; switch to Editing to change the document", "error");
+  focusEditorSurface();
+  return true;
+}
+
 /** Runs an edit thunk and applies its result; unsupported edits are ignored.
  *  `gate: true` marks a mutation that has no tracked-revision representation
  *  (yet, or ever, per REVIEW-GAP-009's structural backlog): it is blocked
  *  outright in Suggesting mode rather than silently applying untracked. */
 async function runEdit(thunk, { typing = false, gate = false } = {}) {
+  if (blockMutationInViewing()) return;
   if (!typing) breakTypingSession();
   if (gate && blockUntrackedInSuggesting()) return;
   let res;
@@ -3018,6 +3050,7 @@ function selEndpoints() {
  *  preserving the selection (formatting does not collapse it) and repainting
  *  only the dirty pages. */
 async function runToolbarEdit(thunk, { allowInSuggesting = false } = {}) {
+  if (blockMutationInViewing()) return;
   breakTypingSession();
   if (!allowInSuggesting && blockUntrackedInSuggesting()) return;
   const ends = selEndpoints();
@@ -3781,6 +3814,7 @@ paraSpaceAfter.addEventListener("change", () =>
  *  mode instead of silently applying untracked (REVIEW-GAP-004). */
 function runNodeEdit(thunk) {
   if (!selection || !doc) return false;
+  if (blockMutationInViewing()) return false;
   if (blockUntrackedInSuggesting()) return false;
   let res;
   try {
@@ -4570,8 +4604,11 @@ reviewPrevious.addEventListener("click", () => navigateReviewRevision(-1));
 reviewNext.addEventListener("click", () => navigateReviewRevision(1));
 reviewInlinePrevious.addEventListener("click", () => navigateReviewRevision(-1));
 reviewInlineNext.addEventListener("click", () => navigateReviewRevision(1));
-reviewInlineMode.addEventListener("click", () => setReviewMode(reviewMode === "suggesting" ? "editing" : "suggesting"));
+// The visible mode control (`#reviewModeControl`) is a three-button segmented
+// group; each button carries `data-review-mode` and is wired below alongside
+// the hidden review-panel buttons.
 suggestingBannerEdit.addEventListener("click", () => setReviewMode("editing"));
+if (viewingBannerEdit) viewingBannerEdit.addEventListener("click", () => setReviewMode("editing"));
 reviewInlineAcceptAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(true)); closeReviewPopover(); drawSelection(); } });
 reviewInlineRejectAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(false)); closeReviewPopover(); drawSelection(); } });
 function openReviewComposer(parent = null) {
@@ -5413,6 +5450,9 @@ function editorTextInputEvent(event) {
 /** Cut (⌘X): copy the selection to the clipboard, then delete it. */
 async function cut(event = null) {
   if (!hasRange()) return;
+  // Cut is a mutation (copy + delete); in read-only Viewing mode it is blocked
+  // before touching the clipboard so it never partially executes as a copy.
+  if (blockMutationInViewing()) return;
   const copied = await copySelection(event);
   if (!copied) return;
   const { anchor, focus } = selection;
@@ -5572,6 +5612,13 @@ async function pasteHtml(html) {
  *  with newline-as-paragraph-split remains the fallback. */
 async function paste(event = null) {
   if (!doc || !selection) return;
+  // Read-only Viewing mode blocks paste up front (it still calls
+  // preventDefault below) so no clipboard read or insertion is attempted.
+  if (reviewMode === "viewing") {
+    if (event?.clipboardData) event.preventDefault();
+    blockMutationInViewing();
+    return;
+  }
   if (event?.clipboardData) {
     event.preventDefault();
     const html = event.clipboardData.getData("text/html");

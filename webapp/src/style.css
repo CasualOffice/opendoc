@@ -2096,12 +2096,16 @@ body.modal-open {
 .review-popover-body { margin: 8px 0; font-size: 12px; line-height: 1.45; white-space: pre-wrap; }
 .review-popover-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .review-inline-bar { display: none !important; }
-.review-mode-toggle,
+.review-mode-segmented { display: inline-flex; gap: 2px; padding: 2px; border-radius: 999px; background: var(--bg-2); }
+.review-mode-seg { border: 1px solid transparent; border-radius: 999px; padding: 4px 9px; background: transparent; color: var(--muted); font: inherit; font-size: 11px; font-weight: 550; cursor: pointer; white-space: nowrap; }
+.review-mode-seg[aria-pressed="true"] { color: #137333; border-color: #188038; background: color-mix(in srgb, #188038 12%, var(--surface)); }
+.review-mode-seg[data-review-mode="viewing"][aria-pressed="true"] { color: var(--ink); border-color: var(--accent); background: var(--accent-soft); }
+.review-mode-seg:disabled { opacity: 0.45; cursor: default; }
+.review-mode-seg:not(:disabled):not([aria-pressed="true"]):hover { background: var(--accent-soft); color: var(--ink); }
 .review-inline-bar button { border: 1px solid var(--line); border-radius: 999px; padding: 5px 9px; background: transparent; color: var(--ink); font: inherit; font-size: 11px; cursor: pointer; white-space: nowrap; }
-.review-mode-toggle[aria-pressed="true"] { color: #137333; border-color: #188038; background: color-mix(in srgb, #188038 10%, transparent); }
-.review-mode-toggle:disabled { opacity: 0.45; cursor: default; }
-.review-mode-toggle:not(:disabled):hover,
 .review-inline-bar button:hover { background: var(--accent-soft); border-color: var(--accent); }
+.viewing-banner { border-color: color-mix(in srgb, var(--accent) 42%, var(--line)); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.viewing-banner .ms { color: var(--accent); }
 .suggesting-banner {
   min-height: 32px;
   margin: 6px 8px 0;

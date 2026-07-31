@@ -251,7 +251,11 @@
           </div>
           <div class="rgroup">
             <div class="rgroup-ctl">
-              <button id="reviewInlineMode" type="button" class="review-mode-toggle" aria-pressed="false" disabled>Editing</button>
+              <div id="reviewModeControl" class="review-mode-segmented" role="group" aria-label="Editing mode">
+                <button type="button" class="review-mode-seg" data-review-mode="editing" aria-pressed="true" disabled>Editing</button>
+                <button type="button" class="review-mode-seg" data-review-mode="suggesting" aria-pressed="false" disabled>Suggesting</button>
+                <button type="button" class="review-mode-seg" data-review-mode="viewing" aria-pressed="false" disabled>Viewing</button>
+              </div>
               <div id="reviewInlineBar" class="review-inline-bar" role="toolbar" aria-label="Review changes" hidden aria-hidden="true">
                 <button id="reviewInlinePrevious" type="button">Previous</button>
                 <button id="reviewInlineNext" type="button">Next</button>
@@ -573,6 +577,12 @@
       <button id="suggestingBannerEdit" type="button">Switch to editing</button>
     </div>
 
+    <div id="viewingBanner" class="suggesting-banner viewing-banner" role="status" hidden>
+      <span class="ms" aria-hidden="true">visibility</span>
+      <span>Viewing — the document is read-only.</span>
+      <button id="viewingBannerEdit" type="button">Switch to editing</button>
+    </div>
+
     <div class="workarea">
       <nav class="rail" aria-label="Document navigation">
         <button id="railOutline" type="button" class="rail-btn" title="Outline" aria-label="Outline" aria-pressed="false" disabled><span class="ms" aria-hidden="true">toc</span><span>Outline</span></button>
@@ -602,6 +612,7 @@
           <span>Mode</span>
           <button type="button" class="review-mode-button" data-review-mode="editing" aria-pressed="true">Editing</button>
           <button type="button" class="review-mode-button" data-review-mode="suggesting" aria-pressed="false">Suggesting</button>
+          <button type="button" class="review-mode-button" data-review-mode="viewing" aria-pressed="false">Viewing</button>
         </div>
         <div class="review-bulk-actions"><button id="reviewPrevious" type="button" class="review-card-action" title="Previous tracked change">Previous</button><button id="reviewNext" type="button" class="review-card-action" title="Next tracked change">Next</button><button id="reviewAcceptAll" type="button" class="review-card-action">Accept all changes</button><button id="reviewRejectAll" type="button" class="review-card-action">Reject all changes</button></div>
         <div class="review-filters" role="group" aria-label="Review filter">

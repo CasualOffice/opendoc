@@ -52,6 +52,17 @@ export async function moveCaretToDocStart(page) {
   await page.keyboard.press(`${MOD}+Home`);
 }
 
+// The three-state review-mode control (`#reviewModeControl`: Editing /
+// Suggesting / Viewing) lives in the Home ribbon panel, hidden while a
+// contextual Table/Insert panel is showing — switch to Home first. Selects
+// `mode` and confirms its segment became the pressed one.
+export async function setReviewMode(page, mode) {
+  await page.locator("#tabHome").click();
+  const button = page.locator(`#reviewModeControl [data-review-mode="${mode}"]`);
+  await button.click();
+  await expect(button).toHaveAttribute("aria-pressed", "true");
+}
+
 // Types `marker` at the caret, rewinds to just before it, then proves the
 // editor is still live by finding it via the real Find panel — the same
 // "click, type, find" recovery check used for every focus-recovery scenario.
