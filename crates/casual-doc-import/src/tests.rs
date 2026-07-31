@@ -2103,6 +2103,53 @@ fn inline_drawing_with_embed_maps_to_a_drawing_node() {
     assert!(!features(&import).contains(&"drawing"));
 }
 
+// An inline drawing carrying alt text (`wp:docPr@descr`) and a crop
+// (`a:srcRect`) — the two `P1G-OBJ-MODEL` fields on the inline path.
+const DRAWING_INLINE_CROP_DESCR: &str = r#"<w:drawing><wp:inline><wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="Pic 1" descr="A cropped logo"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"/><a:srcRect l="10000" t="20000" r="5000" b="15000"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>"#;
+
+#[test]
+fn inline_drawing_carries_alt_text_and_crop() {
+    use casual_doc_model::v1::CropRect;
+
+    let document = format!(
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:r>{DRAWING_INLINE_CROP_DESCR}</w:r></w:p></w:body></w:document>"#
+    );
+    let media = [("word/media/image1.png", b"PNGDATA".as_slice())];
+    let import = import_bytes(&build_package(document.as_bytes(), IMAGE_REL, &media));
+
+    let InlineNode::Drawing(drawing) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected an inline drawing");
+    };
+    assert_eq!(drawing.descr.as_deref(), Some("A cropped logo"));
+    assert_eq!(
+        drawing.crop,
+        Some(CropRect {
+            left: 10_000,
+            top: 20_000,
+            right: 5_000,
+            bottom: 15_000,
+        })
+    );
+    // Both fields are modeled, so the drawing is not reported as under-modeled.
+    assert!(!features(&import).contains(&"drawing"));
+}
+
+#[test]
+fn inline_drawing_identity_srcrect_is_dropped_as_no_crop() {
+    // An all-zero `a:srcRect` is the identity crop; it must model as `crop: None`,
+    // not a spurious zero crop.
+    let inline = r#"<w:drawing><wp:inline><wp:extent cx="914400" cy="914400"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"/><a:srcRect l="0" t="0" r="0" b="0"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>"#;
+    let document = format!(
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:r>{inline}</w:r></w:p></w:body></w:document>"#
+    );
+    let media = [("word/media/image1.png", b"PNGDATA".as_slice())];
+    let import = import_bytes(&build_package(document.as_bytes(), IMAGE_REL, &media));
+    let InlineNode::Drawing(drawing) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected an inline drawing");
+    };
+    assert_eq!(drawing.crop, None);
+}
+
 const DRAWING_ANCHOR: &str = r#"<w:drawing><wp:anchor behindDoc="1" simplePos="0" distT="12700" distB="25400" distL="38100" distR="50800"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>914400</wp:posOffset></wp:positionH><wp:positionV relativeFrom="margin"><wp:posOffset>228600</wp:posOffset></wp:positionV><wp:extent cx="1828800" cy="1219200"/><wp:wrapNone/><wp:docPr id="1" name="Pic 1" descr="Company logo"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing>"#;
 
 #[test]

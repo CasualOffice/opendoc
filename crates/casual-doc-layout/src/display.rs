@@ -7,6 +7,7 @@
 //! tested and, later, shipped across a boundary. Coordinates are in device
 //! pixels (the device scale has already been applied when the list was built).
 
+use casual_doc_model::v1::CropRect;
 use serde::{Deserialize, Serialize};
 
 use crate::text::GlyphRun;
@@ -84,6 +85,11 @@ pub enum PaintItem {
         media: String,
         /// Destination rectangle, in device pixels.
         rect: Rect,
+        /// The source-rectangle crop (`a:srcRect`), if the picture is cropped: the
+        /// backend samples only the visible source sub-rectangle and scales it to
+        /// fill `rect`. `None` = the whole source fills `rect` (`P1G-OBJ-MODEL`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        crop: Option<CropRect>,
     },
     /// A straight line / connector between two points (a floating DrawingML line
     /// shape or `wps:cxnSp` straight connector).

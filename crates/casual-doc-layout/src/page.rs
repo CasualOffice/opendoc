@@ -98,6 +98,10 @@ pub enum AnchorContent {
     Image {
         /// The media key (package part name).
         media: String,
+        /// The source-rectangle crop (`a:srcRect`), if the picture is cropped
+        /// (`P1G-OBJ-MODEL`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        crop: Option<casual_doc_model::v1::CropRect>,
     },
     /// A rectangle (a group's background/foreground shape).
     Rectangle {

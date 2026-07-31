@@ -105,6 +105,7 @@ fn anchored(id: u64, media: MediaId, h_offset: i64, v_offset: i64, behind_doc: b
         },
         descr: Some("A floating logo".to_owned()),
         relative_height: None,
+        crop: None,
     })
 }
 
@@ -160,7 +161,7 @@ fn an_anchored_drawing_composes_at_its_resolved_page_rect() {
         .items
         .iter()
         .find_map(|item| match item {
-            PaintItem::Image { media, rect } if media == "word/media/image1.png" => Some(*rect),
+            PaintItem::Image { media, rect, .. } if media == "word/media/image1.png" => Some(*rect),
             _ => None,
         })
         .expect("an anchored image paint item");
@@ -284,6 +285,7 @@ fn top_bottom_drawing(id: u64, media: MediaId, height_twips: i64, bottom_twips: 
         anchor: top_bottom_anchor(bottom_twips),
         descr: None,
         relative_height: None,
+        crop: None,
     })
 }
 
@@ -298,6 +300,7 @@ fn anchored_at_paragraph(id: u64, media: MediaId) -> InlineNode {
         anchor: paragraph_anchor(),
         descr: None,
         relative_height: None,
+        crop: None,
     })
 }
 
@@ -324,6 +327,7 @@ fn anchored_at_column_right(id: u64, media: MediaId) -> InlineNode {
         },
         descr: None,
         relative_height: None,
+        crop: None,
     })
 }
 
@@ -350,6 +354,7 @@ fn anchored_at_page_right(id: u64, media: MediaId) -> InlineNode {
         },
         descr: None,
         relative_height: None,
+        crop: None,
     })
 }
 
@@ -1405,6 +1410,7 @@ fn a_group_paints_children_in_document_order_with_the_picture_at_its_own_extent(
                     height_emu: 914_400,
                 },
                 descr: None,
+                crop: None,
             }),
             rect(33, 200_000),
         ],

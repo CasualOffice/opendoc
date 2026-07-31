@@ -200,6 +200,61 @@ pub struct Extent {
     pub height_emu: i64,
 }
 
+/// One `a:srcRect` edge fraction meaning "no crop" (0), and the value meaning
+/// "the whole edge" (`100000` = 100% in OOXML ST_Percentage — thousandths of a
+/// percent).
+pub const CROP_FULL: i32 = 100_000;
+
+/// The bound applied to each [`CropRect`] edge at import. Word authors
+/// `0..=CROP_FULL`, but DrawingML `a:srcRect` also permits a small negative value
+/// (an *outset* / padding), so the range is bounded rather than assumed
+/// non-negative; values outside it are clamped.
+pub const CROP_MIN: i32 = -CROP_FULL;
+/// The upper crop bound (see [`CROP_MIN`]).
+pub const CROP_MAX: i32 = 2 * CROP_FULL;
+
+/// An image crop (`a:srcRect`): how much of each edge of the **source** image to
+/// hide, in OOXML ST_Percentage units — thousandths of a percent, where
+/// [`CROP_FULL`] (`100000`) is the whole edge. The visible source rectangle is
+/// `left ..= CROP_FULL - right` horizontally and `top ..= CROP_FULL - bottom`
+/// vertically (fractions of the source dimensions), scaled to fill the drawing's
+/// display extent. All-zero means no crop (the whole source fills the box).
+///
+/// Values round-trip verbatim within [`CROP_MIN`]..=[`CROP_MAX`].
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CropRect {
+    /// Fraction of the source hidden at the left edge (`a:srcRect@l`).
+    pub left: i32,
+    /// Fraction hidden at the top edge (`a:srcRect@t`).
+    pub top: i32,
+    /// Fraction hidden at the right edge (`a:srcRect@r`).
+    pub right: i32,
+    /// Fraction hidden at the bottom edge (`a:srcRect@b`).
+    pub bottom: i32,
+}
+
+impl CropRect {
+    /// Whether this crop hides nothing (all four edges zero) — the identity crop,
+    /// treated as "no crop" so an empty/absent `a:srcRect` is not modeled.
+    #[must_use]
+    pub fn is_identity(&self) -> bool {
+        self.left == 0 && self.top == 0 && self.right == 0 && self.bottom == 0
+    }
+
+    /// This crop with every edge clamped into [`CROP_MIN`]..=[`CROP_MAX`].
+    #[must_use]
+    pub fn clamped(self) -> Self {
+        let clamp = |v: i32| v.clamp(CROP_MIN, CROP_MAX);
+        Self {
+            left: clamp(self.left),
+            top: clamp(self.top),
+            right: clamp(self.right),
+            bottom: clamp(self.bottom),
+        }
+    }
+}
+
 /// An inline drawing that references an embedded picture in the media table.
 ///
 /// Only the embedded-picture case (a resolvable `r:embed`) is modeled; linked
@@ -215,6 +270,13 @@ pub struct Drawing {
     /// The drawing's natural size, if declared.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extent: Option<Extent>,
+    /// The alt text (`wp:docPr@descr`), preserved for accessibility, if declared
+    /// (non-empty, at most [`MAX_DESCR_BYTES`] bytes). Mirrors the anchored path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub descr: Option<String>,
+    /// The source-rectangle crop (`a:srcRect`), if the picture is cropped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crop: Option<CropRect>,
 }
 
 /// Maximum drawing alt-text (`wp:docPr@descr`) length, in UTF-8 bytes.
@@ -433,6 +495,9 @@ pub struct AnchoredDrawing {
     /// each of those two bands.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relative_height: Option<u32>,
+    /// The source-rectangle crop (`a:srcRect`), if the picture is cropped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crop: Option<CropRect>,
 }
 
 /// An 8-bit-per-channel RGBA color used by floating-object fills and outlines.
@@ -530,6 +595,9 @@ pub struct GroupPicture {
     /// The alt text (`wp:docPr@descr`/`pic:cNvPr@descr`), if declared.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub descr: Option<String>,
+    /// The source-rectangle crop (`a:srcRect`), if the picture is cropped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crop: Option<CropRect>,
 }
 
 /// DrawingML text-box internal margins (`wps:bodyPr@lIns/tIns/rIns/bIns`), in

@@ -109,6 +109,10 @@ pub struct InlineImage {
     pub origin: Point,
     /// The image box size (twips), derived from the drawing's EMU extent.
     pub size: Size,
+    /// The source-rectangle crop (`a:srcRect`), if the picture is cropped
+    /// (`P1G-OBJ-MODEL`); carried through to the display list's `PaintItem::Image`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crop: Option<casual_doc_model::v1::CropRect>,
 }
 
 /// An inline image handed to the line shaper as an in-flow box. `index` is the
@@ -122,6 +126,9 @@ pub struct InlineImageSpec {
     pub index: u32,
     /// Authored image box size.
     pub size: Size,
+    /// The source-rectangle crop (`a:srcRect`), copied into the positioned
+    /// [`InlineImage`] (`P1G-OBJ-MODEL`).
+    pub crop: Option<casual_doc_model::v1::CropRect>,
 }
 
 /// Which inline edge of a paragraph-local floating object excludes text.
@@ -552,6 +559,7 @@ pub trait LineShaper {
                     media: image.media.clone(),
                     origin: Point::new(Twip::ZERO, y),
                     size: image.size,
+                    crop: image.crop,
                 }],
                 fields: Vec::new(),
                 notes: Vec::new(),

@@ -873,6 +873,7 @@ impl ParleyShaper {
                                     Twip(inline_box.width.round() as i32),
                                     Twip(inline_box.height.round() as i32),
                                 ),
+                                crop: image.crop,
                             });
                         }
                         continue;

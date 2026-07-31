@@ -578,6 +578,65 @@ mod semantic_tests {
     }
 
     #[test]
+    fn inline_drawing_crop_and_alt_text_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, CropRect, InlineNode};
+
+        // An inline picture with alt text (`wp:docPr@descr`) and a crop
+        // (`a:srcRect`): the two `P1G-OBJ-MODEL` fields. Imported through a
+        // package so its `r:embed` resolves.
+        let document_xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="Pic 1" descr="A cropped logo"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"/><a:srcRect l="10000" t="20000" r="5000" b="15000"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+
+        let m1 = reopen(&pack(document_xml, document_rels));
+
+        // The inline drawing carries both the alt text and the crop fractions.
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Drawing(drawing) = &paragraph.inlines[0] else {
+            panic!("expected an inline drawing, got {:?}", paragraph.inlines[0]);
+        };
+        assert_eq!(drawing.descr.as_deref(), Some("A cropped logo"));
+        assert_eq!(
+            drawing.crop,
+            Some(CropRect {
+                left: 10_000,
+                top: 20_000,
+                right: 5_000,
+                bottom: 15_000,
+            })
+        );
+
+        // Write it back: the alt text and every crop edge re-emit.
+        let written = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut written_package =
+            DocxPackage::open(&written, PackageLimits::default()).expect("written package");
+        let written_xml = written_package
+            .read_part("word/document.xml")
+            .expect("written main document");
+        let written_xml = std::str::from_utf8(&written_xml).expect("utf-8 document XML");
+        assert!(
+            written_xml.contains(r#"descr="A cropped logo""#),
+            "the writer preserves the inline alt text"
+        );
+        for attribute in [
+            r#"l="10000""#,
+            r#"t="20000""#,
+            r#"r="5000""#,
+            r#"b="15000""#,
+        ] {
+            assert!(
+                written_xml.contains("<a:srcRect") && written_xml.contains(attribute),
+                "the writer preserves the crop attribute {attribute}"
+            );
+        }
+
+        // And it is a fixed point: crop + alt text survive write -> reopen.
+        let m2 = reopen(&written);
+        assert_eq!(m1, m2, "inline crop + alt text survive write -> reopen");
+    }
+
+    #[test]
     fn wpg_group_survives_the_semantic_round_trip() {
         use casual_doc_model::v1::{BlockNode, GroupChild, InlineNode, ShapeGeometry};
         // A `wpg:wgp` with a rectangle (red fill, green outline) and a text box.

@@ -21,13 +21,14 @@ use casual_doc_layout::display::{DisplayList, PaintItem};
 use casual_doc_layout::font_registry::{DynFace, FontRegistry};
 use casual_doc_layout::text::{FontId, GlyphRun};
 use casual_doc_layout::units::Rect;
+use casual_doc_model::v1::{CROP_FULL, CropRect};
 use skrifa::instance::{LocationRef, Size};
 use skrifa::metrics::Metrics;
 use skrifa::outline::{DrawSettings, OutlinePen};
 use skrifa::{FontRef, GlyphId, MetadataProvider};
 use tiny_skia::{
-    Color, FillRule, FilterQuality, IntSize, Mask, Paint, PathBuilder, Pixmap, PixmapPaint,
-    Rect as SkRect, Stroke, Transform,
+    Color, FillRule, FilterQuality, IntRect, IntSize, Mask, Paint, PathBuilder, Pixmap,
+    PixmapPaint, Rect as SkRect, Stroke, Transform,
 };
 
 /// Secure per-image decode defaults from `docs/21-PARSER-LIMITS.md`.
@@ -185,8 +186,20 @@ pub fn render(
             PaintItem::PopClip => {
                 clip_stack.pop();
             }
-            PaintItem::Image { media: id, rect } => {
-                render_image(id, *rect, surface, dpi, media, clip_stack.last());
+            PaintItem::Image {
+                media: id,
+                rect,
+                crop,
+            } => {
+                render_image(
+                    id,
+                    *rect,
+                    crop.as_ref(),
+                    surface,
+                    dpi,
+                    media,
+                    clip_stack.last(),
+                );
             }
             PaintItem::Line { from, to, stroke } => {
                 let clip = clip_stack.last();
@@ -237,6 +250,7 @@ pub fn render(
 fn render_image(
     media_id: &str,
     rect: Rect,
+    crop: Option<&CropRect>,
     surface: &mut Surface,
     dpi: f32,
     media: &dyn MediaSource,
@@ -248,6 +262,17 @@ fn render_image(
     let Some(source) = decode_to_pixmap(bytes) else {
         render_undecodable_placeholder(rect, surface, dpi, clip);
         return;
+    };
+    // A crop (`a:srcRect`) selects a sub-rectangle of the SOURCE pixels; that
+    // visible region is what scales to fill the destination box. Extract it first
+    // so the scale below maps only the cropped source into `rect`. An identity or
+    // degenerate crop leaves the whole source in play.
+    let source = match crop.filter(|crop| !crop.is_identity()) {
+        Some(crop) => match crop_pixmap(&source, crop) {
+            Some(cropped) => cropped,
+            None => return,
+        },
+        None => source,
     };
     let (src_w, src_h) = (source.width() as f32, source.height() as f32);
     if src_w <= 0.0 || src_h <= 0.0 {
@@ -270,6 +295,31 @@ fn render_image(
     surface
         .pixmap
         .draw_pixmap(0, 0, source.as_ref(), &paint, transform, clip);
+}
+
+/// Extracts the visible source sub-rectangle described by an `a:srcRect` crop
+/// from `source`. Each edge fraction is in [`CROP_FULL`]-relative units
+/// (thousandths of a percent); the visible region is
+/// `[left, CROP_FULL - right] x [top, CROP_FULL - bottom]` of the source,
+/// clamped to the pixmap and to at least one pixel. Returns `None` when the crop
+/// leaves no visible area (nothing to paint).
+fn crop_pixmap(source: &Pixmap, crop: &CropRect) -> Option<Pixmap> {
+    let w = source.width() as i64;
+    let h = source.height() as i64;
+    let full = i64::from(CROP_FULL);
+    let axis = |size: i64, near: i32, far: i32| -> Option<(i32, u32)> {
+        // Pixel offsets of the visible span; the near edge hides `near` of the
+        // dimension, the far edge hides `far`, leaving at least one pixel.
+        let start = (size * i64::from(near.max(0)) / full).clamp(0, size);
+        let end = (size - size * i64::from(far.max(0)) / full).clamp(0, size);
+        let start = start.min(end.saturating_sub(1)).max(0);
+        let len = (end - start).max(1).min(size - start);
+        (len > 0).then_some((start as i32, len as u32))
+    };
+    let (x, cw) = axis(w, crop.left, crop.right)?;
+    let (y, ch) = axis(h, crop.top, crop.bottom)?;
+    let sub = IntRect::from_xywh(x, y, cw, ch)?;
+    source.clone_rect(sub)
 }
 
 /// The placeholder's stroke color: a neutral mid-gray, visible against a white
@@ -1033,10 +1083,85 @@ mod tests {
         list.push(PaintItem::Image {
             media: "pic".to_owned(),
             rect,
+            crop: None,
         });
         let mut surface = Surface::new(50, 50).unwrap();
         render(&list, &mut surface, 1440.0, &BundledFontSource, &media);
         surface
+    }
+
+    /// Renders one `Image` paint item with a `crop` into the same box as
+    /// [`render_one_image`], so a test can compare cropped vs uncropped pixels.
+    fn render_one_image_cropped(media_bytes: Vec<u8>, crop: Option<CropRect>) -> Surface {
+        use casual_doc_layout::units::Size;
+        let mut media = MapMediaSource::new();
+        media.insert("pic", media_bytes);
+        let rect = Rect::new(
+            Point::new(Twip(10), Twip(10)),
+            Size::new(Twip(20), Twip(20)),
+        );
+        let mut list = DisplayList::new();
+        list.push(PaintItem::Image {
+            media: "pic".to_owned(),
+            rect,
+            crop,
+        });
+        let mut surface = Surface::new(50, 50).unwrap();
+        render(&list, &mut surface, 1440.0, &BundledFontSource, &media);
+        surface
+    }
+
+    /// An `w×h` PNG whose left half is `left` and right half is `right`.
+    fn split_image(w: u32, h: u32, left: [u8; 4], right: [u8; 4]) -> Vec<u8> {
+        let mut img = image::RgbaImage::new(w, h);
+        for (x, _y, pixel) in img.enumerate_pixels_mut() {
+            *pixel = image::Rgba(if x < w / 2 { left } else { right });
+        }
+        let mut buf = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut buf, image::ImageFormat::Png)
+            .unwrap();
+        buf.into_inner()
+    }
+
+    #[test]
+    fn a_crop_selects_only_the_visible_source_region() {
+        // A 16×16 PNG: red left half, blue right half. Cropping away the left 50%
+        // (`a:srcRect@l=50000`) must fill the whole box with the blue right half;
+        // uncropped, the box shows both colors.
+        let red = [220, 30, 30, 255];
+        let blue = [30, 30, 220, 255];
+        let bytes = split_image(16, 16, red, blue);
+
+        let cropped = render_one_image_cropped(
+            bytes.clone(),
+            Some(CropRect {
+                left: CROP_FULL / 2,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            }),
+        );
+        // Sample near the left and right of the box (device px [10,30)²).
+        let left_px = pixel_at(&cropped, 50, 13, 20);
+        let right_px = pixel_at(&cropped, 50, 27, 20);
+        assert!(
+            left_px[2] > 150 && left_px[0] < 120,
+            "the cropped box shows the blue right half at its left edge (got {left_px:?})"
+        );
+        assert!(
+            right_px[2] > 150 && right_px[0] < 120,
+            "and blue across to its right edge (got {right_px:?})"
+        );
+
+        // Uncropped, the same box's left edge is red, not blue — proving the crop
+        // (not the box) changed which source pixels were sampled.
+        let plain = render_one_image_cropped(bytes, None);
+        let plain_left = pixel_at(&plain, 50, 13, 20);
+        assert!(
+            plain_left[0] > 150 && plain_left[2] < 120,
+            "uncropped, the box's left edge shows the red left half (got {plain_left:?})"
+        );
     }
 
     #[test]
@@ -1112,6 +1237,7 @@ mod tests {
         list.push(PaintItem::Image {
             media: "missing".to_owned(),
             rect,
+            crop: None,
         });
         let mut surface = Surface::new(50, 50).unwrap();
         render(
@@ -1144,6 +1270,7 @@ mod tests {
         list.push(PaintItem::Image {
             media: "junk".to_owned(),
             rect,
+            crop: None,
         });
         let mut surface = Surface::new(50, 50).unwrap();
         render(&list, &mut surface, 1440.0, &BundledFontSource, &media);
