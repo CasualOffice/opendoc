@@ -760,6 +760,38 @@ function renderReviewMarginItems() {
       path.append(source, arrow, destination);
       card.appendChild(path);
     }
+    // REVIEW-GAP-012: thread comments that overlap this tracked change beneath
+    // it, read-only, on an expanded revision card. `revisionThread` reports the
+    // overlap; authoring a reply to a change is `addComment` over the change's
+    // own range (unchanged DOCX comment ownership). Only rendered when the
+    // overlap is non-empty, so a change with no related comment adds no chrome.
+    if (item.type === "revision" && expanded && item.data.id) {
+      let related = [];
+      try {
+        related = JSON.parse(doc.revisionThread(item.data.id) || "[]");
+      } catch {
+        related = [];
+      }
+      if (related.length) {
+        const relatedList = document.createElement("div");
+        relatedList.className = "review-margin-revision-comments";
+        const relatedLabel = document.createElement("small");
+        relatedLabel.textContent = "Related comments";
+        relatedList.appendChild(relatedLabel);
+        for (const related_comment of related) {
+          const relatedItem = document.createElement("div");
+          relatedItem.className = "review-margin-revision-comment";
+          const relatedAuthor = document.createElement("strong");
+          relatedAuthor.textContent =
+            related_comment.author || related_comment.initials || "You";
+          const relatedText = document.createElement("p");
+          relatedText.textContent = String(related_comment.text || "");
+          relatedItem.append(relatedAuthor, relatedText);
+          relatedList.appendChild(relatedItem);
+        }
+        card.appendChild(relatedList);
+      }
+    }
     if (item.type === "comment") {
       const replies = comments.filter((comment) =>
         comment.parentParaId === item.data.paraId || comment.parentParaId === item.data.id);
@@ -779,6 +811,56 @@ function renderReviewMarginItems() {
           const replyBody = document.createElement("p");
           replyBody.textContent = String(reply.text || "");
           replyItem.append(replyHead, replyBody);
+          // REVIEW-GAP-011: edit or delete this specific reply (not just the
+          // whole thread). Only on an expanded, unresolved parent card, so the
+          // controls stay out of the collapsed/resolved presentation.
+          if (expanded && !item.data.resolved) {
+            const replyActionRow = document.createElement("div");
+            replyActionRow.className = "review-margin-reply-actions";
+            const editReply = reviewCardButton("Edit", () => {
+              const input = document.createElement("input");
+              input.type = "text";
+              input.className = "review-margin-reply-edit";
+              input.maxLength = 4096;
+              input.value = String(reply.text || "");
+              const save = reviewCardButton("Save", async () => {
+                const text = input.value.trim();
+                if (!text) return;
+                await runEdit(() => doc.updateComment(reply.id, text));
+                drawSelection();
+              });
+              const cancelEdit = reviewCardButton("Cancel", () => {
+                scheduleReviewMarginRender();
+              });
+              const editActions = document.createElement("div");
+              editActions.className = "review-composer-actions";
+              editActions.append(cancelEdit, save);
+              input.addEventListener("click", (event) => event.stopPropagation());
+              input.addEventListener("keydown", (event) => {
+                event.stopPropagation();
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  save.click();
+                } else if (event.key === "Escape") {
+                  event.preventDefault();
+                  cancelEdit.click();
+                }
+              });
+              replyBody.replaceWith(input);
+              replyActionRow.replaceWith(editActions);
+              input.focus({ preventScroll: true });
+            });
+            const deleteReply = reviewCardButton(
+              "Delete",
+              async () => {
+                await runEdit(() => doc.deleteReply(reply.id));
+                drawSelection();
+              },
+              true,
+            );
+            replyActionRow.append(editReply, deleteReply);
+            replyItem.appendChild(replyActionRow);
+          }
           thread.appendChild(replyItem);
         }
         card.appendChild(thread);

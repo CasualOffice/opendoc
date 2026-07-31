@@ -3702,6 +3702,32 @@ impl WasmDocument {
         self.comment_thread_inner(comment).map_err(to_js)
     }
 
+    /// The comments that overlap one tracked-change/formatting revision —
+    /// the typed data (a `ReviewCommentSummaryJson` array, the same shape
+    /// [`comment_thread`](Self::comment_thread) returns) backing a review UI
+    /// that threads a comment card beneath the change it discusses (docs/81
+    /// REVIEW-GAP-012, "comment-to-revision overlap mapping"). A comment
+    /// overlaps a revision when their resolved anchor ranges lie in the same
+    /// paragraph and intersect in the shared final-with-markup byte space
+    /// that both [`list_comments`](Self::list_comments) and
+    /// [`list_revisions`](Self::list_revisions) already report. Ordered by
+    /// stable comment id. Errs if `revision` is not a known revision id.
+    ///
+    /// This is the read/overlap half of REVIEW-GAP-012 and changes no DOCX
+    /// comment-ownership semantics: it invents no model link between a
+    /// comment and a revision, it only reports where their existing anchor
+    /// ranges coincide. Authoring a reply *to* a revision is `addComment`
+    /// over that revision's own anchor range (available from
+    /// [`list_revisions`](Self::list_revisions)); the new comment then
+    /// appears here. A pure deletion revision is zero-width in the
+    /// final-with-markup projection, so it cannot itself carry a new
+    /// same-range comment anchor — that authoring case remains deferred
+    /// (docs/81 REVIEW-GAP-012).
+    #[wasm_bindgen(js_name = revisionThread)]
+    pub fn revision_thread(&self, revision: &str) -> Result<String, JsValue> {
+        self.revision_thread_inner(revision).map_err(to_js)
+    }
+
     /// Sets or updates the host-supplied review identity that `addComment`,
     /// `replyToComment`, and the `suggest*` tracked-change calls fall back to
     /// when their own `author`/`initials` arguments are omitted. This is the
@@ -4025,6 +4051,34 @@ impl WasmDocument {
             HistoryKind::Review,
         )
         .map_err(to_js)
+    }
+
+    /// Replaces the body text of a comment or reply as one undoable review
+    /// action (docs/81 REVIEW-GAP-011). Works on a thread root or any reply;
+    /// only the target's own body text changes — its threading
+    /// (`para_id`/`parent_para_id`, so a reply stays a reply and export's
+    /// `w14:paraId`/`w15:paraIdParent` join keys survive reopen), resolved
+    /// state, author identity, and any anchor markers are preserved
+    /// untouched. Reviewer edit permission ("edit your own comment") is host
+    /// policy per the identity seam (docs/68), so the engine trusts the
+    /// caller and does not enforce authorship here.
+    #[wasm_bindgen(js_name = updateComment)]
+    pub fn update_comment(&mut self, comment: &str, text: &str) -> Result<EditResult, JsValue> {
+        self.update_comment_inner(comment, text).map_err(to_js)
+    }
+
+    /// Deletes a single reply — and any nested replies beneath it — from a
+    /// comment thread as one undoable review action (docs/81 REVIEW-GAP-011),
+    /// leaving the thread root and every sibling reply intact. Errs if
+    /// `reply` is unknown, or if it is a thread root (no `parent_para_id`):
+    /// deleting a whole thread is [`delete_comment`](Self::delete_comment)'s
+    /// job, so this fails closed rather than silently removing an entire
+    /// anchored thread when handed a root id. A reply carries no body range
+    /// markers (only the anchored root does), so this touches the comment map
+    /// only and never rewrites body paragraphs.
+    #[wasm_bindgen(js_name = deleteReply)]
+    pub fn delete_reply(&mut self, reply: &str) -> Result<EditResult, JsValue> {
+        self.delete_reply_inner(reply).map_err(to_js)
     }
 
     /// Adds a tracked insertion at a same-paragraph caret.
@@ -5273,6 +5327,134 @@ impl WasmDocument {
         }
         let thread = build_review_comment_thread(&self.document, id);
         serde_json::to_string(&thread).map_err(|_| "failed to serialize comment thread".to_string())
+    }
+
+    /// See [`WasmDocument::revision_thread`]. Split out as a plain
+    /// `Result<_, String>` helper so it is callable from native unit tests.
+    fn revision_thread_inner(&self, revision: &str) -> Result<String, String> {
+        let target = NodeId::from_str(revision)
+            .map_err(|_| "invalid revision id".to_string())?
+            .to_string();
+        let revisions = build_review_revision_summaries(&self.document);
+        let Some(revision) = revisions.iter().find(|entry| entry.id == target) else {
+            return Err("revision not found".to_string());
+        };
+        let anchor = &revision.anchor;
+        let comments = build_review_comment_summaries(&self.document)
+            .into_iter()
+            .filter(|comment| {
+                comment.anchor.as_ref().is_some_and(|comment_anchor| {
+                    comment_anchor.node == anchor.node
+                        && review_ranges_overlap(
+                            comment_anchor.start,
+                            comment_anchor.end,
+                            anchor.start,
+                            anchor.end,
+                        )
+                })
+            })
+            .collect::<Vec<_>>();
+        serde_json::to_string(&comments)
+            .map_err(|_| "failed to serialize revision thread".to_string())
+    }
+
+    /// See [`WasmDocument::update_comment`]. Plain-`String`-error inner so the
+    /// error paths are exercisable from native unit tests (constructing a
+    /// `JsValue` panics off-wasm).
+    fn update_comment_inner(&mut self, comment: &str, text: &str) -> Result<EditResult, String> {
+        if text.is_empty() {
+            return Err("comment text must be non-empty".to_string());
+        }
+        let id = NodeId::from_str(comment)
+            .map(CommentId::new)
+            .map_err(|_| "invalid comment id".to_string())?;
+        let mut comments = self.document.definitions().comments.clone();
+        let Some(mut value) = comments.get(&id).cloned() else {
+            return Err("comment not found".to_string());
+        };
+        let body_id = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| "id space exhausted".to_string())?;
+        let run_id = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| "id space exhausted".to_string())?;
+        value.blocks = vec![BlockNode::Paragraph(Paragraph {
+            id: body_id,
+            properties: ParagraphProperties::default(),
+            inlines: vec![InlineNode::Run(Run {
+                id: run_id,
+                properties: RunProperties::default(),
+                text: text.to_owned(),
+            })],
+        })];
+        comments.insert(id, value);
+        self.apply_action_caret_as(
+            vec![Operation::UpdateReviewState {
+                paragraphs: Vec::new(),
+                comments: Some(comments),
+            }],
+            Pos::new(self.document.id(), 0),
+            HistoryKind::Review,
+        )
+    }
+
+    /// See [`WasmDocument::delete_reply`]. Plain-`String`-error inner so the
+    /// error paths are exercisable from native unit tests.
+    fn delete_reply_inner(&mut self, reply: &str) -> Result<EditResult, String> {
+        let id = NodeId::from_str(reply)
+            .map(CommentId::new)
+            .map_err(|_| "invalid comment id".to_string())?;
+        let source_comments = self.document.definitions().comments.clone();
+        let Some(target) = source_comments.get(&id) else {
+            return Err("reply not found".to_string());
+        };
+        if target.parent_para_id.is_none() {
+            return Err("comment is a thread root, not a reply; use deleteComment".to_string());
+        }
+        // Cascade over the reply's own descendants, mirroring `deleteComment`'s
+        // parent-chain walk so a reply-to-a-reply is removed with its parent.
+        let mut removed = BTreeSet::from([id]);
+        let mut parent_keys = BTreeSet::from([id.node_id().to_string()]);
+        if let Some(para_id) = target.para_id.clone() {
+            parent_keys.insert(para_id);
+        }
+        loop {
+            let mut changed = false;
+            for (key, value) in source_comments.iter() {
+                if !removed.contains(key)
+                    && value
+                        .parent_para_id
+                        .as_ref()
+                        .is_some_and(|parent| parent_keys.contains(parent))
+                {
+                    removed.insert(*key);
+                    parent_keys.insert(key.node_id().to_string());
+                    if let Some(para_id) = value.para_id.clone() {
+                        parent_keys.insert(para_id);
+                    }
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        let mut comments = DefinitionMap::default();
+        for (key, value) in source_comments.iter() {
+            if !removed.contains(key) {
+                comments.insert(*key, value.clone());
+            }
+        }
+        self.apply_action_caret_as(
+            vec![Operation::UpdateReviewState {
+                paragraphs: Vec::new(),
+                comments: Some(comments),
+            }],
+            Pos::new(self.document.id(), 0),
+            HistoryKind::Review,
+        )
     }
 
     /// See [`WasmDocument::page_size`].
@@ -6995,6 +7177,26 @@ fn build_review_comment_thread(
                 .map(|value| build_review_comment_summary(id, value, &anchors))
         })
         .collect()
+}
+
+/// Whether a comment's anchor range `[comment_start, comment_end)` overlaps a
+/// revision's anchor range `[revision_start, revision_end)` in the shared
+/// final-with-markup byte space (both ranges are same-paragraph, half-open, and
+/// produced by the same offset walk). A revision with positive width uses the
+/// standard half-open intersection. A zero-width revision (a pure deletion is
+/// zero-width in this projection) threads under a comment whose range strictly
+/// contains its point — [`WasmDocument::revision_thread`]'s overlap rule.
+fn review_ranges_overlap(
+    comment_start: u32,
+    comment_end: u32,
+    revision_start: u32,
+    revision_end: u32,
+) -> bool {
+    if revision_start == revision_end {
+        comment_start <= revision_start && revision_start < comment_end
+    } else {
+        comment_start < revision_end && revision_start < comment_end
+    }
 }
 
 /// Allocates the eight-hex-digit paragraph join key required by the DOCX
@@ -13413,6 +13615,323 @@ mod tests {
             d.comment_thread_inner("ffffffffffffffffffffffffffffffff")
                 .is_err()
         );
+    }
+
+    /// Helpers shared by the reply CRUD (REVIEW-GAP-011) tests: open the rich
+    /// corpus, add a root comment over the first non-empty paragraph, and
+    /// return `(document, paragraph node id, root comment id)`.
+    fn document_with_root_comment() -> (WasmDocument, String, CommentId) {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, text)| text.len() >= 3)
+            .map(|(id, _)| id.to_string())
+            .expect("a paragraph with at least three bytes of text");
+        d.add_comment(&node, 0, 1, "Root", None, None, None)
+            .expect("add root");
+        let root = *d
+            .document
+            .definitions()
+            .comments
+            .iter()
+            .find(|(_, comment)| comment.parent_para_id.is_none())
+            .map(|(id, _)| id)
+            .expect("root");
+        (d, node, root)
+    }
+
+    fn thread_texts(d: &WasmDocument, member: CommentId) -> Vec<String> {
+        let thread: Vec<ReviewCommentSummaryJson> = serde_json::from_str(
+            &d.comment_thread(&member.node_id().to_string())
+                .expect("thread"),
+        )
+        .expect("typed thread");
+        thread.into_iter().map(|comment| comment.text).collect()
+    }
+
+    /// REVIEW-GAP-011: `updateComment` edits a reply's body text in place,
+    /// leaving the reply a reply (its `parent_para_id`/`para_id` threading
+    /// survives) and the root comment untouched, as one undoable action that
+    /// also survives DOCX export and reopen.
+    #[test]
+    fn update_comment_edits_a_reply_and_preserves_threading_through_reopen() {
+        let (mut d, _node, root) = document_with_root_comment();
+        d.reply_to_comment(&root.node_id().to_string(), "Draft reply", None, None, None)
+            .expect("add reply");
+        let reply = *d
+            .document
+            .definitions()
+            .comments
+            .iter()
+            .find(|(_, comment)| comment.parent_para_id.is_some())
+            .map(|(id, _)| id)
+            .expect("reply id");
+        let reply_para_id = d
+            .document
+            .definitions()
+            .comments
+            .get(&reply)
+            .and_then(|comment| comment.para_id.clone())
+            .expect("reply para id");
+        let reply_parent = d
+            .document
+            .definitions()
+            .comments
+            .get(&reply)
+            .and_then(|comment| comment.parent_para_id.clone())
+            .expect("reply parent para id");
+
+        d.update_comment(&reply.node_id().to_string(), "Edited reply")
+            .expect("edit reply text");
+
+        assert_eq!(
+            thread_texts(&d, root),
+            vec!["Root".to_owned(), "Edited reply".to_owned()],
+            "the reply text changes and the root is untouched"
+        );
+        let edited = d
+            .document
+            .definitions()
+            .comments
+            .get(&reply)
+            .expect("reply still present");
+        assert_eq!(
+            edited.para_id.as_deref(),
+            Some(reply_para_id.as_str()),
+            "editing text keeps the reply's own join key"
+        );
+        assert_eq!(
+            edited.parent_para_id.as_deref(),
+            Some(reply_parent.as_str()),
+            "editing text keeps the thread edge, so it stays a reply"
+        );
+
+        let bytes = d.export_docx().expect("export edited thread");
+        let reopened = open_document(&bytes).expect("reopen edited thread");
+        assert!(
+            reopened
+                .document
+                .definitions()
+                .comments
+                .iter()
+                .any(|(_, comment)| {
+                    let mut blocks = Vec::new();
+                    collect_block_text(&comment.blocks, &mut blocks);
+                    comment.parent_para_id.as_deref() == Some(reply_parent.as_str())
+                        && blocks.iter().any(|(_, text)| text == "Edited reply")
+                }),
+            "the edited reply text and its thread edge survive reopen"
+        );
+    }
+
+    /// REVIEW-GAP-011: `updateComment` also edits a thread root's own text
+    /// while keeping its range anchor, and can be undone in one step.
+    #[test]
+    fn update_comment_edits_a_root_and_keeps_its_anchor_and_is_undoable() {
+        let (mut d, _node, root) = document_with_root_comment();
+        d.update_comment(&root.node_id().to_string(), "Root edited")
+            .expect("edit root text");
+        let listed: Vec<ReviewCommentSummaryJson> =
+            serde_json::from_str(&d.list_comments()).expect("typed comment list");
+        let root_summary = listed
+            .iter()
+            .find(|comment| comment.id == root.node_id().to_string())
+            .expect("root still listed");
+        assert_eq!(root_summary.text, "Root edited");
+        assert!(
+            root_summary.anchor.is_some(),
+            "editing a root's text preserves its range anchor"
+        );
+
+        d.undo().expect("undo edit");
+        let after_undo: Vec<ReviewCommentSummaryJson> =
+            serde_json::from_str(&d.list_comments()).expect("typed comment list");
+        assert_eq!(
+            after_undo
+                .iter()
+                .find(|comment| comment.id == root.node_id().to_string())
+                .map(|comment| comment.text.as_str()),
+            Some("Root"),
+            "undo restores the original root text"
+        );
+    }
+
+    #[test]
+    fn update_comment_rejects_empty_text_and_unknown_id() {
+        let (mut d, _node, root) = document_with_root_comment();
+        assert!(
+            d.update_comment_inner(&root.node_id().to_string(), "")
+                .is_err()
+        );
+        assert!(
+            d.update_comment_inner("ffffffffffffffffffffffffffffffff", "x")
+                .is_err()
+        );
+    }
+
+    /// REVIEW-GAP-011: `deleteReply` removes exactly one reply (and its own
+    /// nested replies) while the root and sibling replies survive.
+    #[test]
+    fn delete_reply_removes_one_reply_and_keeps_the_root_and_siblings() {
+        let (mut d, _node, root) = document_with_root_comment();
+        d.reply_to_comment(&root.node_id().to_string(), "First", None, None, None)
+            .expect("first reply");
+        let first = *d
+            .document
+            .definitions()
+            .comments
+            .iter()
+            .find(|(_, comment)| comment.parent_para_id.is_some())
+            .map(|(id, _)| id)
+            .expect("first reply id");
+        d.reply_to_comment(&root.node_id().to_string(), "Second", None, None, None)
+            .expect("second reply");
+
+        d.delete_reply(&first.node_id().to_string())
+            .expect("delete first reply");
+
+        assert_eq!(
+            thread_texts(&d, root),
+            vec!["Root".to_owned(), "Second".to_owned()],
+            "only the targeted reply is gone; root and sibling remain"
+        );
+    }
+
+    /// REVIEW-GAP-011: deleting a reply removes its nested sub-replies too,
+    /// mirroring `deleteComment`'s cascade, but never the parent chain above.
+    #[test]
+    fn delete_reply_cascades_its_own_nested_replies_only() {
+        let (mut d, _node, root) = document_with_root_comment();
+        d.reply_to_comment(&root.node_id().to_string(), "First", None, None, None)
+            .expect("first reply");
+        let first = *d
+            .document
+            .definitions()
+            .comments
+            .iter()
+            .find(|(_, comment)| comment.parent_para_id.is_some())
+            .map(|(id, _)| id)
+            .expect("first reply id");
+        d.reply_to_comment(&first.node_id().to_string(), "Nested", None, None, None)
+            .expect("nested reply");
+
+        d.delete_reply(&first.node_id().to_string())
+            .expect("delete first reply and its nested reply");
+
+        assert_eq!(
+            thread_texts(&d, root),
+            vec!["Root".to_owned()],
+            "the reply and its nested descendant are gone; the root survives"
+        );
+    }
+
+    #[test]
+    fn delete_reply_rejects_a_thread_root_and_unknown_id() {
+        let (mut d, _node, root) = document_with_root_comment();
+        assert!(
+            d.delete_reply_inner(&root.node_id().to_string()).is_err(),
+            "a thread root is not a reply; deleteReply must fail closed"
+        );
+        assert!(
+            d.document.definitions().comments.get(&root).is_some(),
+            "the failed deleteReply left the root intact"
+        );
+        assert!(
+            d.delete_reply_inner("ffffffffffffffffffffffffffffffff")
+                .is_err()
+        );
+    }
+
+    /// REVIEW-GAP-012 overlap math (`review_ranges_overlap`): a positive-width
+    /// revision uses half-open intersection (adjacency does not count); a
+    /// zero-width revision (a deletion is zero-width in the final-with-markup
+    /// projection) threads only when its point lies inside the comment range.
+    #[test]
+    fn review_ranges_overlap_matches_half_open_and_zero_width_rules() {
+        assert!(review_ranges_overlap(0, 5, 3, 8), "overlapping ranges");
+        assert!(review_ranges_overlap(2, 6, 0, 3), "reverse overlap");
+        assert!(
+            !review_ranges_overlap(0, 5, 5, 8),
+            "adjacency is not overlap"
+        );
+        assert!(!review_ranges_overlap(0, 5, 6, 9), "disjoint ranges");
+        assert!(
+            review_ranges_overlap(0, 5, 3, 3),
+            "zero-width point inside the comment range"
+        );
+        assert!(
+            !review_ranges_overlap(0, 5, 5, 5),
+            "zero-width point at the exclusive end is outside"
+        );
+        assert!(
+            !review_ranges_overlap(2, 5, 1, 1),
+            "zero-width point before the comment range"
+        );
+    }
+
+    /// REVIEW-GAP-012: `revisionThread` maps a comment whose anchor overlaps a
+    /// tracked change to that change, so a review UI can thread the comment
+    /// beneath the revision. A comment in the same paragraph that does not
+    /// overlap is excluded, and an unknown revision id errs.
+    #[test]
+    fn revision_thread_maps_overlapping_comments_and_excludes_the_rest() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, text)| text.len() >= 4)
+            .map(|(id, _)| id.to_string())
+            .expect("a paragraph with at least four bytes of text");
+        // A comment over the first three bytes, then a tracked insertion at
+        // byte 1 (inside that comment's range) — the overlap case.
+        assert!(
+            d.add_comment(&node, 0, 3, "Overlapping", None, None, None)
+                .is_ok(),
+            "add overlapping comment"
+        );
+        let overlapping = *d
+            .document
+            .definitions()
+            .comments
+            .iter()
+            .find(|(_, comment)| comment.parent_para_id.is_none())
+            .map(|(id, _)| id)
+            .expect("overlapping comment id");
+        assert!(
+            d.suggest_insert(&node, 1, "Z", Some("Tester".to_owned()), None, None)
+                .is_ok(),
+            "tracked insertion inside the comment range"
+        );
+
+        let revisions: Vec<ReviewRevisionSummaryJson> =
+            serde_json::from_str(&d.list_revisions()).expect("typed revision list");
+        let revision_id = revisions
+            .iter()
+            .find(|revision| revision.kind == "insertion")
+            .map(|revision| revision.id.clone())
+            .expect("the tracked insertion id");
+
+        let threaded: Vec<ReviewCommentSummaryJson> = serde_json::from_str(
+            &d.revision_thread_inner(&revision_id)
+                .expect("revision thread"),
+        )
+        .expect("typed revision thread");
+        assert!(
+            threaded
+                .iter()
+                .any(|comment| comment.id == overlapping.node_id().to_string()),
+            "the overlapping comment threads under the tracked insertion"
+        );
+
+        assert!(
+            d.revision_thread_inner("ffffffffffffffffffffffffffffffff")
+                .is_err(),
+            "an unknown revision id errs"
+        );
+        assert!(d.revision_thread_inner("not-a-node-id").is_err());
     }
 
     /// `listRevisions` (docs/81 REVIEW-GAP-022) is a typed, single-purpose
