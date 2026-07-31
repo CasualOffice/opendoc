@@ -149,6 +149,14 @@
           </label>
         </div>
       </div>
+      <div class="settings-section">
+        <div class="settings-label">Reviewer identity</div>
+        <div class="dialog-field-grid">
+          <label class="dialog-field">Name<input id="authorName" type="text" maxlength="255" placeholder="You" autocomplete="off" /></label>
+          <label class="dialog-field">Initials<input id="authorInitials" type="text" maxlength="8" placeholder="Auto" autocomplete="off" /></label>
+        </div>
+        <p class="settings-note">Attributed on comments and tracked changes you create. This is the only identity source — the engine never invents an author.</p>
+      </div>
       <div class="settings-foot">
         <span class="oss">Open-source · customizable</span>
         <button type="button" id="settingsReset" class="link">Reset</button>
@@ -595,7 +603,6 @@
           <button type="button" class="review-mode-button" data-review-mode="editing" aria-pressed="true">Editing</button>
           <button type="button" class="review-mode-button" data-review-mode="suggesting" aria-pressed="false">Suggesting</button>
         </div>
-        <label class="review-author">Author<input id="reviewAuthor" type="text" value="You" maxlength="255" /></label>
         <div class="review-bulk-actions"><button id="reviewPrevious" type="button" class="review-card-action" title="Previous tracked change">Previous</button><button id="reviewNext" type="button" class="review-card-action" title="Next tracked change">Next</button><button id="reviewAcceptAll" type="button" class="review-card-action">Accept all changes</button><button id="reviewRejectAll" type="button" class="review-card-action">Reject all changes</button></div>
         <div class="review-filters" role="group" aria-label="Review filter">
           <button type="button" class="review-filter" data-review-filter="open" aria-pressed="true">Open</button>

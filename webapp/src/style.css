@@ -393,6 +393,13 @@ input {
   opacity: 0;
 }
 
+.settings-note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: var(--fs-small);
+  line-height: 1.4;
+}
+
 .settings-foot {
   display: flex;
   align-items: center;

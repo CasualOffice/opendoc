@@ -122,6 +122,37 @@ pub struct WasmDocument {
     /// the document grows at most one abstract+instance per list kind.
     bullet_list: Option<NumberingInstanceId>,
     numbered_list: Option<NumberingInstanceId>,
+    /// The host-supplied review identity (see [`WasmDocument::set_active_author`]).
+    /// The engine has no concept of "current user" of its own — this is the one
+    /// seam a host uses to supply it, mirroring the `registerFont`/font-registry
+    /// pattern rather than a DOM read. `addComment`, `replyToComment`, and the
+    /// `suggest*` tracked-change calls fall back to this identity when their own
+    /// `author`/`initials` arguments are omitted. Never serialized itself; only
+    /// its `name`/`initials` strings flow into authored comments/revisions.
+    active_author: Option<ActiveAuthor>,
+}
+
+/// A host-supplied review identity set through [`WasmDocument::set_active_author`].
+/// Opaque to the engine: carried only as attribution strings on subsequently
+/// authored comments/revisions, never interpreted, looked up, or phoned home.
+#[derive(Clone, Debug)]
+struct ActiveAuthor {
+    name: String,
+    initials: String,
+    id: Option<String>,
+}
+
+/// Derives initials from up to the first two whitespace-separated words of a
+/// display name (e.g. "Ada Lovelace" -> "AL"), used when a host supplies a
+/// name without initials. Matches the fallback the demo webapp used before
+/// this seam existed, so behavior is unchanged for hosts that only set a name.
+fn derive_initials(name: &str) -> String {
+    name.split_whitespace()
+        .filter(|part| !part.is_empty())
+        .take(2)
+        .filter_map(|part| part.chars().next())
+        .flat_map(char::to_uppercase)
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -3671,6 +3702,80 @@ impl WasmDocument {
         self.comment_thread_inner(comment).map_err(to_js)
     }
 
+    /// Sets or updates the host-supplied review identity that `addComment`,
+    /// `replyToComment`, and the `suggest*` tracked-change calls fall back to
+    /// when their own `author`/`initials` arguments are omitted. This is the
+    /// explicit host identity seam described in docs/68 and docs/82: the
+    /// engine has no built-in concept of "current user," never reads DOM
+    /// state, and never invents an author — the host calls this once (or
+    /// again whenever its active user changes) instead.
+    ///
+    /// `name` is required and trimmed; passing an empty/whitespace-only name
+    /// clears the active identity, after which authoring calls must supply an
+    /// explicit `author` or fail their existing empty-author validation.
+    /// `initials` is used as given (trimmed) when non-empty, otherwise derived
+    /// from up to the first two words of `name`. `id` is an opaque,
+    /// host-defined stable identifier (for example for deterministic per-author
+    /// coloring); OpenDoc never serializes it into the document or interprets it.
+    #[wasm_bindgen(js_name = setActiveAuthor)]
+    pub fn set_active_author(
+        &mut self,
+        name: &str,
+        initials: Option<String>,
+        id: Option<String>,
+    ) -> Result<(), JsValue> {
+        let name = name.trim();
+        if name.is_empty() {
+            self.active_author = None;
+            return Ok(());
+        }
+        validate_active_author_name(name).map_err(to_js)?;
+        let initials = initials
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+            .unwrap_or_else(|| derive_initials(name));
+        self.active_author = Some(ActiveAuthor {
+            name: name.to_owned(),
+            initials,
+            id,
+        });
+        Ok(())
+    }
+
+    /// Returns the current host-supplied review identity as JSON
+    /// (`{"name":..., "initials":..., "id":...}`), or the JSON literal `null`
+    /// when no identity has been set (initial state, or after
+    /// `setActiveAuthor("")`).
+    #[wasm_bindgen(js_name = activeAuthor)]
+    #[must_use]
+    pub fn active_author(&self) -> String {
+        match &self.active_author {
+            Some(author) => serde_json::json!({
+                "name": author.name,
+                "initials": author.initials,
+                "id": author.id,
+            })
+            .to_string(),
+            None => "null".to_string(),
+        }
+    }
+
+    /// Resolves an explicit per-call author against the active host identity:
+    /// an explicit `Some` (including an explicit empty string, which existing
+    /// validation rejects) always wins, otherwise the active author's name is
+    /// used when set.
+    fn resolve_author(&self, author: Option<String>) -> Option<String> {
+        author.or_else(|| self.active_author.as_ref().map(|a| a.name.clone()))
+    }
+
+    /// Resolves an explicit per-call initials value the same way
+    /// [`Self::resolve_author`] resolves the author name.
+    fn resolve_initials(&self, initials: Option<String>) -> Option<String> {
+        initials.or_else(|| self.active_author.as_ref().map(|a| a.initials.clone()))
+    }
+
     /// Creates a comment over a same-paragraph selection. The marker and
     /// definition changes are one undoable review transaction.
     #[wasm_bindgen(js_name = addComment)]
@@ -3690,6 +3795,8 @@ impl WasmDocument {
                 "comment range and text must be non-empty".to_string(),
             ));
         }
+        let author = self.resolve_author(author);
+        let initials = self.resolve_initials(initials);
         let node = node_id(node)?;
         let next_id = |ids: &mut IdGenerator| {
             ids.next_id()
@@ -3796,6 +3903,8 @@ impl WasmDocument {
         if text.is_empty() {
             return Err(to_js("reply text must be non-empty".to_string()));
         }
+        let author = self.resolve_author(author);
+        let initials = self.resolve_initials(initials);
         let parent = NodeId::from_str(parent)
             .map(CommentId::new)
             .map_err(|_| to_js("invalid comment id".to_string()))?;
@@ -3933,6 +4042,7 @@ impl WasmDocument {
         if text.is_empty() {
             return Err(to_js("suggested text must be non-empty".to_string()));
         }
+        let author = self.resolve_author(author);
         validate_authored_revision_author(author.as_deref()).map_err(to_js)?;
         let node = node_id(node)?;
         let start = Pos::new(node, offset);
@@ -4034,6 +4144,7 @@ impl WasmDocument {
         if text.is_empty() {
             return Err(to_js("suggested text must be non-empty".to_string()));
         }
+        let author = self.resolve_author(author);
         validate_authored_revision_author(author.as_deref()).map_err(to_js)?;
         let node = node_id(node)?;
         let start = Pos::new(node, offset);
@@ -4143,6 +4254,7 @@ impl WasmDocument {
                 "suggested replacement requires a range and text".to_string(),
             ));
         }
+        let author = self.resolve_author(author);
         validate_authored_revision_author(author.as_deref()).map_err(to_js)?;
         let node = node_id(node)?;
         let group = RevisionGroup {
@@ -4243,6 +4355,7 @@ impl WasmDocument {
         if start >= end {
             return Err(to_js("suggested deletion requires a range".to_string()));
         }
+        let author = self.resolve_author(author);
         validate_authored_revision_author(author.as_deref()).map_err(to_js)?;
         let node = node_id(node)?;
         let mut body = review_paragraph_body(&self.document, node).map_err(to_js)?;
@@ -4319,6 +4432,7 @@ impl WasmDocument {
                 "suggested formatting requires a range and change".to_string(),
             ));
         }
+        let author = self.resolve_author(author);
         validate_authored_revision_author(author.as_deref()).map_err(to_js)?;
         let node = node_id(node)?;
         let group = RevisionGroup {
@@ -7189,6 +7303,16 @@ fn validate_authored_revision_author(author: Option<&str>) -> Result<(), String>
         Ok(())
     } else {
         Err("editor-authored suggestions require a non-empty author".to_owned())
+    }
+}
+
+/// Validates a trimmed, non-empty `setActiveAuthor` name against the same
+/// 255-byte bound as an authored comment/revision author.
+fn validate_active_author_name(name: &str) -> Result<(), String> {
+    if name.len() <= 255 {
+        Ok(())
+    } else {
+        Err("active author name must be at most 255 bytes".to_owned())
     }
 }
 
@@ -10178,6 +10302,7 @@ fn open_document(bytes: &[u8]) -> Result<WasmDocument, String> {
         // List definitions are created on demand by the first bullet/numbered toggle.
         bullet_list: None,
         numbered_list: None,
+        active_author: None,
     })
 }
 
@@ -12213,6 +12338,7 @@ mod tests {
             galley_cache: GalleyCache::new(),
             bullet_list: None,
             numbered_list: None,
+            active_author: None,
         };
         let node = paragraph.to_string();
 
@@ -12635,6 +12761,7 @@ mod tests {
             galley_cache: GalleyCache::new(),
             bullet_list: None,
             numbered_list: None,
+            active_author: None,
         };
         let node = paragraph.to_string();
 
@@ -12895,6 +13022,7 @@ mod tests {
             galley_cache: GalleyCache::new(),
             bullet_list: None,
             numbered_list: None,
+            active_author: None,
         };
 
         let summary: serde_json::Value =
@@ -13315,6 +13443,125 @@ mod tests {
         assert_eq!(summary_revisions.len(), listed.len());
         assert_eq!(summary_revisions[0]["id"], listed[0].id);
         assert_eq!(summary_revisions[0]["text"], listed[0].text);
+    }
+
+    /// The host identity seam (docs/68, docs/82; REVIEW-GAP-013): before any
+    /// host sets an identity, the engine has none and suggestions with no
+    /// explicit author are rejected exactly as before. `setActiveAuthor`
+    /// makes subsequent omitted-author `addComment`/`suggestInsert` calls use
+    /// the host's identity; an explicit per-call author still overrides it;
+    /// clearing the identity (empty name) returns to the no-identity state.
+    #[test]
+    fn set_active_author_defaults_omitted_authors_and_can_be_overridden_or_cleared() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, text)| !text.is_empty())
+            .map(|(id, _)| id.to_string())
+            .expect("a non-empty paragraph");
+
+        // No host identity yet: the JSON getter reports null and an
+        // omitted-author suggestion still resolves to no author and fails its
+        // existing validation (checked directly rather than through the
+        // `#[wasm_bindgen]` method, whose `JsValue` error path is only
+        // constructible on a wasm target).
+        assert_eq!(d.active_author(), "null");
+        assert!(d.resolve_author(None).is_none());
+        assert!(
+            validate_authored_revision_author(d.resolve_author(None).as_deref()).is_err(),
+            "suggestions without a host identity or explicit author must still fail"
+        );
+
+        // Setting an identity without explicit initials derives them from the
+        // name, mirroring the fallback the demo webapp used to compute itself.
+        d.set_active_author("Ada Lovelace", None, Some("host-user-1".to_owned()))
+            .expect("set active author");
+        let active: serde_json::Value =
+            serde_json::from_str(&d.active_author()).expect("active author json");
+        assert_eq!(active["name"], "Ada Lovelace");
+        assert_eq!(active["initials"], "AL");
+        assert_eq!(active["id"], "host-user-1");
+
+        // An omitted author on both a comment and a suggestion now resolves
+        // to the active host identity.
+        d.add_comment(&node, 0, 1, "hi", None, None, None)
+            .expect("add comment defaults to active author");
+        let comment = d
+            .document
+            .definitions()
+            .comments
+            .iter()
+            .map(|(_, comment)| comment)
+            .find(|comment| {
+                let mut blocks = Vec::new();
+                collect_block_text(&comment.blocks, &mut blocks);
+                blocks.iter().any(|(_, text)| text == "hi")
+            })
+            .expect("authored comment");
+        assert_eq!(comment.author.as_deref(), Some("Ada Lovelace"));
+        assert_eq!(comment.initials.as_deref(), Some("AL"));
+
+        d.suggest_insert(&node, 0, "tracked", None, None, None)
+            .expect("suggest insert defaults to active author");
+        let mut revisions = Vec::new();
+        collect_review_revision_ids(d.document.body(), &mut revisions);
+        assert_eq!(revisions.len(), 1);
+        let revision =
+            find_review_revision(d.document.body(), revisions[0]).expect("authored revision");
+        assert_eq!(revision.author.as_deref(), Some("Ada Lovelace"));
+
+        // An explicit author on the call still wins over the active identity.
+        d.suggest_insert(
+            &node,
+            0,
+            "explicit",
+            Some("Explicit Author".to_owned()),
+            None,
+            None,
+        )
+        .expect("suggest insert with an explicit author");
+        let mut revisions = Vec::new();
+        collect_review_revision_ids(d.document.body(), &mut revisions);
+        let explicit_authored = revisions
+            .iter()
+            .filter_map(|id| find_review_revision(d.document.body(), *id))
+            .any(|revision| revision.author.as_deref() == Some("Explicit Author"));
+        assert!(
+            explicit_authored,
+            "an explicit per-call author must override the active identity"
+        );
+
+        // Clearing the identity (blank name) returns to the no-identity state.
+        d.set_active_author("", None, None)
+            .expect("clear active author");
+        assert_eq!(d.active_author(), "null");
+        assert!(d.resolve_author(None).is_none());
+        assert!(
+            validate_authored_revision_author(d.resolve_author(None).as_deref()).is_err(),
+            "suggestions must require an author again once the identity is cleared"
+        );
+    }
+
+    #[test]
+    fn set_active_author_rejects_an_overlong_name() {
+        // `set_active_author`'s own `Result<(), JsValue>` error path is only
+        // constructible on a wasm target, so the validation it delegates to
+        // is exercised directly here rather than through the `#[wasm_bindgen]`
+        // method itself.
+        let ok = "x".repeat(255);
+        let overlong = "x".repeat(256);
+        assert!(validate_active_author_name(&ok).is_ok());
+        assert!(validate_active_author_name(&overlong).is_err());
+
+        // A rejected name must leave any previously set identity untouched:
+        // confirmed through the public method, whose success path (returning
+        // `Ok`) never touches `JsValue` and is safe to call natively.
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        d.set_active_author("Grace Hopper", None, None)
+            .expect("set an initial identity");
+        assert_ne!(d.active_author(), "null");
     }
 
     /// Rapid adjacent typing is one user action, while a different host gesture
@@ -15406,6 +15653,7 @@ mod tests {
             galley_cache: GalleyCache::new(),
             bullet_list: None,
             numbered_list: None,
+            active_author: None,
         };
 
         let paragraph =

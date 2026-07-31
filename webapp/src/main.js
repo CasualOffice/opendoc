@@ -183,7 +183,6 @@ const reviewComposerText = document.getElementById("reviewComposerText");
 const reviewComposerCancel = document.getElementById("reviewComposerCancel");
 const reviewComposerSubmit = document.getElementById("reviewComposerSubmit");
 const reviewModeButtons = [...document.querySelectorAll("[data-review-mode]")];
-const reviewAuthor = document.getElementById("reviewAuthor");
 const reviewPrevious = document.getElementById("reviewPrevious");
 const reviewNext = document.getElementById("reviewNext");
 const reviewAcceptAll = document.getElementById("reviewAcceptAll");
@@ -543,8 +542,8 @@ function renderReviewMarginItems() {
         const text = textarea.value.trim();
         if (!text || !reviewComposerState?.range) return;
         const { start, end } = reviewComposerState.range;
-        const metadata = currentReviewAuthor();
-        await runEdit(() => doc.addComment(start.node, start.offset, end.offset, text, metadata.author, metadata.initials, metadata.date));
+        const metadata = currentReviewTimestamp();
+        await runEdit(() => doc.addComment(start.node, start.offset, end.offset, text, undefined, undefined, metadata.date));
         reviewComposerState = null;
         reviewSidebarPreference = true;
         drawSelection();
@@ -784,8 +783,8 @@ function renderReviewMarginItems() {
         const submit = reviewCardButton("Reply", async () => {
           const text = textarea.value.trim();
           if (!text) return;
-          const metadata = currentReviewAuthor();
-          await runEdit(() => doc.replyToComment(item.data.id, text, metadata.author, metadata.initials, metadata.date));
+          const metadata = currentReviewTimestamp();
+          await runEdit(() => doc.replyToComment(item.data.id, text, undefined, undefined, metadata.date));
           drawSelection();
         });
         const cancel = reviewCardButton("Cancel", () => {
@@ -1051,6 +1050,7 @@ async function openBytes(bytes, name) {
     // A previous document's memory is freed when it is dropped; replace it.
     if (doc) doc.free();
     doc = open(bytes);
+    applyActiveAuthorToDocument();
     selection = null;
     tableSelection = null;
     reviewMode = "editing";
@@ -3408,7 +3408,7 @@ function suggestRunFormat(patch) {
       patch.highlight,
       patch.vertAlign,
       patch.font,
-      reviewAuthor.value.trim() || "You",
+      undefined,
       new Date().toISOString(),
     );
   }, { allowInSuggesting: true });
@@ -4259,16 +4259,14 @@ function formatReviewDate(value) {
   }).format(date);
 }
 
-function currentReviewAuthor() {
-  const author = reviewAuthor.value.trim() || "You";
-  const initials = author
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0])
-    .join("")
-    .toUpperCase() || "Y";
-  return { author, initials, date: new Date().toISOString() };
+/**
+ * Timestamp for a review action. Author/initials are no longer read here:
+ * they come from the WASM engine's active host identity (`doc.setActiveAuthor`,
+ * kept in sync with the Identity settings below), so callers pass `undefined`
+ * for those arguments and let the engine fall back to it.
+ */
+function currentReviewTimestamp() {
+  return { date: new Date().toISOString() };
 }
 
 let reviewFilter = "open";
@@ -4610,9 +4608,9 @@ reviewComposerSubmit.addEventListener("click", async () => {
   const text = reviewComposerText.value.trim();
   const range = selection;
   if (!doc || !text || (!reviewReplyParent && (!range || !hasRange()))) return;
-  const metadata = currentReviewAuthor();
+  const metadata = currentReviewTimestamp();
   if (reviewReplyParent) {
-    await runEdit(() => doc.replyToComment(reviewReplyParent, text, metadata.author, metadata.initials, metadata.date));
+    await runEdit(() => doc.replyToComment(reviewReplyParent, text, undefined, undefined, metadata.date));
     closeReviewComposer();
     buildReview();
     return;
@@ -4623,7 +4621,7 @@ reviewComposerSubmit.addEventListener("click", async () => {
     setStatus("Comments currently require a single-paragraph selection", "error");
     return;
   }
-  await runEdit(() => doc.addComment(start.node, start.offset, end.offset, text, metadata.author, metadata.initials, metadata.date));
+  await runEdit(() => doc.addComment(start.node, start.offset, end.offset, text, undefined, undefined, metadata.date));
   closeReviewComposer();
   buildReview();
 });
@@ -5423,7 +5421,7 @@ async function cut(event = null) {
     return;
   }
   await runEdit(() => reviewMode === "suggesting" && anchor.node === focus.node
-    ? doc.suggestDelete(anchor.node, Math.min(anchor.offset, focus.offset), Math.max(anchor.offset, focus.offset), reviewAuthor.value.trim() || "You", new Date().toISOString())
+    ? doc.suggestDelete(anchor.node, Math.min(anchor.offset, focus.offset), Math.max(anchor.offset, focus.offset), undefined, new Date().toISOString())
     : doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset));
 }
 
@@ -5436,8 +5434,8 @@ async function pasteText(text, actionKind = "paste") {
     const start = Math.min(anchor.offset, focus.offset);
     const end = Math.max(anchor.offset, focus.offset);
     await runEdit(() => end > start
-      ? doc.suggestReplace(anchor.node, start, end, text, reviewAuthor.value.trim() || "You", new Date().toISOString())
-      : doc.suggestInsert(anchor.node, start, text, reviewAuthor.value.trim() || "You", new Date().toISOString()));
+      ? doc.suggestReplace(anchor.node, start, end, text, undefined, new Date().toISOString())
+      : doc.suggestInsert(anchor.node, start, text, undefined, new Date().toISOString()));
     return;
   }
   if (reviewMode === "suggesting") {
@@ -5702,7 +5700,7 @@ document.addEventListener("keydown", async (e) => {
           ? (() => { const c = doc.moveCaret(focus.node, focus.offset, "wordRight"); const p = { node: c.node, offset: c.offset }; c.free(); return p; })()
           : focus;
       if (start.node === end.node && start.offset < end.offset) {
-        await runEdit(() => doc.suggestDelete(start.node, start.offset, end.offset, reviewAuthor.value.trim() || "You", new Date().toISOString()));
+        await runEdit(() => doc.suggestDelete(start.node, start.offset, end.offset, undefined, new Date().toISOString()));
       } else {
         setStatus("This word deletion crosses a paragraph and cannot be tracked yet", "error");
       }
@@ -5741,7 +5739,7 @@ document.addEventListener("keydown", async (e) => {
       const start = range ? (anchor.offset <= focus.offset ? anchor : focus) : (() => { const c = doc.moveCaret(focus.node, focus.offset, "left"); const p = { node: c.node, offset: c.offset }; c.free(); return p; })();
       const end = range ? (anchor.offset <= focus.offset ? focus : anchor) : focus;
       if (start.node === end.node && start.offset < end.offset) {
-        await runEdit(() => doc.suggestDelete(start.node, start.offset, end.offset, reviewAuthor.value.trim() || "You", new Date().toISOString()));
+        await runEdit(() => doc.suggestDelete(start.node, start.offset, end.offset, undefined, new Date().toISOString()));
         return;
       }
       setStatus("This deletion crosses a paragraph and cannot be tracked yet", "error");
@@ -5756,7 +5754,7 @@ document.addEventListener("keydown", async (e) => {
       const start = range ? (anchor.offset <= focus.offset ? anchor : focus) : focus;
       const end = range ? (anchor.offset <= focus.offset ? focus : anchor) : (() => { const c = doc.moveCaret(focus.node, focus.offset, "right"); const p = { node: c.node, offset: c.offset }; c.free(); return p; })();
       if (start.node === end.node && start.offset < end.offset) {
-        await runEdit(() => doc.suggestDelete(start.node, start.offset, end.offset, reviewAuthor.value.trim() || "You", new Date().toISOString()));
+        await runEdit(() => doc.suggestDelete(start.node, start.offset, end.offset, undefined, new Date().toISOString()));
         return;
       }
       setStatus("This deletion crosses a paragraph and cannot be tracked yet", "error");
@@ -5815,7 +5813,7 @@ document.addEventListener("keydown", async (e) => {
             Math.min(anchor.offset, focus.offset),
             Math.max(anchor.offset, focus.offset),
             key,
-            reviewAuthor.value.trim() || "You",
+            undefined,
             new Date().toISOString(),
             session,
           )
@@ -5839,7 +5837,7 @@ document.addEventListener("keydown", async (e) => {
             pf.highlight,
             pf.vertAlign,
             pf.font,
-            reviewAuthor.value.trim() || "You",
+            undefined,
             new Date().toISOString(),
             session,
           )
@@ -5867,7 +5865,7 @@ document.addEventListener("keydown", async (e) => {
             focus.node,
             focus.offset,
             key,
-            reviewAuthor.value.trim() || "You",
+            undefined,
             new Date().toISOString(),
             session,
           )
@@ -5911,15 +5909,17 @@ viewportEl.addEventListener("drop", (e) => {
   handleFile(e.dataTransfer?.files?.[0]);
 });
 
-// ---- Settings: theme + accent, persisted (OSS-customizable) ------------------
+// ---- Settings: theme + accent + reviewer identity, persisted (OSS-customizable) ----
 const settingsBtn = document.getElementById("settingsBtn");
 const settingsPanel = document.getElementById("settingsPanel");
 const themeSeg = document.getElementById("themeSeg");
 const accentSwatches = document.getElementById("accentSwatches");
 const accentCustom = document.getElementById("accentCustom");
 const settingsReset = document.getElementById("settingsReset");
+const authorNameInput = document.getElementById("authorName");
+const authorInitialsInput = document.getElementById("authorInitials");
 
-const DEFAULT_SETTINGS = { theme: "system", accent: "#e2622a" };
+const DEFAULT_SETTINGS = { theme: "system", accent: "#e2622a", authorName: "", authorInitials: "" };
 let settings = loadSettings();
 
 function loadSettings() {
@@ -5936,6 +5936,22 @@ function saveSettings() {
   } catch {
     /* storage disabled — settings apply for the session only */
   }
+}
+
+/**
+ * Pushes the host's reviewer identity into the open document through the
+ * explicit `setActiveAuthor` seam (see docs/68 "Host identity seam" and
+ * docs/81 REVIEW-GAP-013) — this is the one place identity crosses from the
+ * host UI into the engine. A blank name still resolves to "You" so
+ * `suggestInsert`/`suggestDelete`/etc. (which require a non-empty author)
+ * keep working out of the box; a blank initials field lets the engine derive
+ * initials from the name instead of duplicating that logic here.
+ */
+function applyActiveAuthorToDocument() {
+  if (!doc) return;
+  const name = settings.authorName.trim() || "You";
+  const initials = settings.authorInitials.trim() || undefined;
+  doc.setActiveAuthor(name, initials, undefined);
 }
 
 /** Applies the current settings to the document root + reflects them in the panel. */
@@ -5955,6 +5971,9 @@ function applySettings() {
     );
   }
   accentCustom.value = settings.accent;
+  authorNameInput.value = settings.authorName;
+  authorInitialsInput.value = settings.authorInitials;
+  applyActiveAuthorToDocument();
 }
 
 themeSeg.addEventListener("click", (e) => {
@@ -5975,6 +5994,16 @@ accentCustom.addEventListener("input", () => {
   settings.accent = accentCustom.value;
   saveSettings();
   applySettings();
+});
+authorNameInput.addEventListener("input", () => {
+  settings.authorName = authorNameInput.value;
+  saveSettings();
+  applyActiveAuthorToDocument();
+});
+authorInitialsInput.addEventListener("input", () => {
+  settings.authorInitials = authorInitialsInput.value;
+  saveSettings();
+  applyActiveAuthorToDocument();
 });
 settingsReset.addEventListener("click", () => {
   settings = { ...DEFAULT_SETTINGS };
