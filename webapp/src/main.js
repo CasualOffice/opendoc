@@ -836,6 +836,10 @@ function renderReviewMarginItems() {
       focus();
     });
     card.addEventListener("keydown", (event) => {
+      // Let inner controls (Accept/Reject, the move source/destination
+      // navigation buttons, composers) handle their own Enter/Space instead
+      // of also toggling the card's expansion — mirrors the click guard above.
+      if (event.target.closest("button, textarea, input, select")) return;
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
         focus();
@@ -845,22 +849,22 @@ function renderReviewMarginItems() {
     if (item.type === "revision" && item.data.kind === "move") {
       const path = document.createElement("div");
       path.className = "review-move-path";
-      const source = document.createElement("span");
-      const sourceLabel = document.createElement("b");
-      sourceLabel.textContent = "From";
-      const sourceText = document.createElement("span");
-      sourceText.textContent = "Original location";
-      source.append(sourceLabel, sourceText);
+      const source = reviewMoveEndButton(
+        "From",
+        item.data.anchor,
+        "Original location",
+        "Go to the moved text's original location",
+      );
       const arrow = document.createElement("span");
       arrow.className = "ms";
       arrow.setAttribute("aria-hidden", "true");
       arrow.textContent = "arrow_forward";
-      const destination = document.createElement("span");
-      const destinationLabel = document.createElement("b");
-      destinationLabel.textContent = "To";
-      const destinationText = document.createElement("span");
-      destinationText.textContent = "New location";
-      destination.append(destinationLabel, destinationText);
+      const destination = reviewMoveEndButton(
+        "To",
+        item.data.destinationAnchor,
+        "New location",
+        "Go to the moved text's new location",
+      );
       path.append(source, arrow, destination);
       card.appendChild(path);
     }
@@ -4756,6 +4760,63 @@ function navigateReviewRevision(direction) {
   scrollCaretIntoView("center");
   match.free();
   buildReview();
+}
+
+/**
+ * Moves the caret/selection to one end of a tracked move — its source
+ * (`move_from`) or destination (`move_to`) anchor — and scrolls that location
+ * to the centre of the viewport. This is the keyboard-accessible "go to the
+ * original / new location" navigation a move review card exposes for both ends
+ * of the move (REVIEW-GAP-016), so a reviewer can jump to precisely where the
+ * text came from and where it went.
+ */
+function navigateToReviewAnchor(anchor) {
+  if (!doc || !anchor?.node) return;
+  reviewSidebarPreference = true;
+  const start = Number(anchor.start) || 0;
+  const rawEnd = Number(anchor.end);
+  const end = Number.isFinite(rawEnd) ? rawEnd : start;
+  selection = {
+    anchor: { node: anchor.node, offset: start },
+    focus: { node: anchor.node, offset: end },
+  };
+  drawSelection();
+  focusEditorSurface();
+  scrollCaretIntoView("center");
+}
+
+/**
+ * A keyboard-accessible navigation control for one end of a tracked move.
+ * The visible secondary line is the precise page the end sits on (from the
+ * same range geometry the sidebar uses to place cards), falling back to a
+ * generic location label when geometry is unavailable (e.g. an off-screen or
+ * not-yet-laid-out anchor). Activating it jumps the caret to that end.
+ */
+function reviewMoveEndButton(endLabel, anchor, fallbackLocation, action) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "review-move-end";
+  const start = Number(anchor?.start) || 0;
+  const rawEnd = Number(anchor?.end);
+  const end = Number.isFinite(rawEnd) ? rawEnd : start;
+  const rect = anchor?.node
+    ? reviewRangeClientRect(anchor.node, start, anchor.node, end)
+    : null;
+  const locationText = rect ? `Page ${rect.pageNumber}` : fallbackLocation;
+  const label = document.createElement("b");
+  label.textContent = endLabel;
+  const location = document.createElement("span");
+  location.textContent = locationText;
+  button.append(label, location);
+  const description = rect ? `${action} (page ${rect.pageNumber})` : action;
+  button.title = description;
+  button.setAttribute("aria-label", description);
+  button.disabled = !anchor?.node;
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    navigateToReviewAnchor(anchor);
+  });
+  return button;
 }
 
 function focusReviewRevision(revision, expand = true) {

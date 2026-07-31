@@ -283,14 +283,32 @@ test("an imported tracked move is one atomic source-to-destination card", async 
   const move = sidebar.locator(".review-margin-card.review-margin-move");
   await expect(move).toHaveCount(1);
   await expect(move).toContainText("Moved “relocated”");
-  await expect(move).toContainText("From");
-  await expect(move).toContainText("Original location");
-  await expect(move).toContainText("To");
-  await expect(move).toContainText("New location");
+  // REVIEW-GAP-016: both ends of the move are keyboard-accessible navigation
+  // buttons that name a precise location (the page each end sits on) rather
+  // than a static generic label.
+  const sourceNav = move.getByRole("button", { name: /original location/i });
+  const destNav = move.getByRole("button", { name: /new location/i });
+  await expect(sourceNav).toBeVisible();
+  await expect(destNav).toBeVisible();
+  await expect(sourceNav).toContainText("From");
+  await expect(sourceNav).toContainText(/Page \d+/);
+  await expect(destNav).toContainText("To");
+  await expect(destNav).toContainText(/Page \d+/);
   await expect(sidebar.locator(".review-margin-move-from")).toHaveCount(0);
   await expect(sidebar.locator(".review-margin-move-to")).toHaveCount(0);
   await expect(page.locator(".review-deletion-marker")).toHaveCount(1);
   await expect(page.locator(".review-insertion-marker")).toHaveCount(1);
+
+  // Activating a move-end nav button jumps to that end and does not toggle the
+  // card's own expansion (the inner button owns its keyboard). The destination
+  // ("relocated" at its new spot) is a real range, so navigating there selects
+  // it; the move source is zero-width, so navigating there collapses to a caret
+  // — proving both ends resolve to their own distinct anchors.
+  await destNav.click();
+  await expect(page.locator(".overlay .highlight")).not.toHaveCount(0);
+  await sourceNav.click();
+  await expect(page.locator(".overlay .highlight")).toHaveCount(0);
+  await expect(page.locator(".overlay .caret")).toHaveCount(1);
 
   await move.click();
   await expect(page.locator(".review-revision-marker-active")).toHaveCount(2);

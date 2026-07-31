@@ -2249,9 +2249,28 @@ body.modal-open {
   margin: 4px 0 9px 34px;
   color: var(--muted);
 }
-.review-move-path > span:not(.ms) { display: grid; gap: 1px; min-width: 0; }
-.review-move-path b { color: var(--ink); font-size: 10px; }
-.review-move-path span span { font-size: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.review-move-end {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  text-align: left;
+  padding: 3px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+.review-move-end:hover { background: var(--bg-2); }
+.review-move-end:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.review-move-end[disabled] { cursor: default; opacity: 0.6; }
+.review-move-end b { color: var(--ink); font-size: 10px; }
+.review-move-end span { font-size: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .review-move-path > .ms { color: #0b8043; font-size: 15px; }
 .review-margin-revision:has(.review-margin-title small) { border-color: var(--line-strong); }
 .review-margin-card-actions { display: flex; gap: 5px; flex-wrap: wrap; }
