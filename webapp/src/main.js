@@ -492,35 +492,26 @@ const outlineClose = document.getElementById("outlineClose");
 const outlineBody = document.getElementById("outlineBody");
 const a11yDocument = document.getElementById("a11yDocument");
 const reviewBtn = document.getElementById("reviewBtn");
-const reviewPanel = document.getElementById("reviewPanel");
 const reviewClose = document.getElementById("reviewClose");
-const reviewBody = document.getElementById("reviewBody");
 const reviewFilters = [...document.querySelectorAll("[data-review-filter]")];
 const selComment = document.getElementById("selComment");
-const reviewComposer = document.getElementById("reviewComposer");
-const reviewComposerText = document.getElementById("reviewComposerText");
-const reviewComposerCancel = document.getElementById("reviewComposerCancel");
-const reviewComposerSubmit = document.getElementById("reviewComposerSubmit");
 const reviewModeButtons = [...document.querySelectorAll("[data-review-mode]")];
 const reviewPrevious = document.getElementById("reviewPrevious");
 const reviewNext = document.getElementById("reviewNext");
 const reviewAcceptAll = document.getElementById("reviewAcceptAll");
 const reviewRejectAll = document.getElementById("reviewRejectAll");
-const reviewInlineBar = document.getElementById("reviewInlineBar");
+const reviewBulkActions = document.getElementById("reviewBulkActions");
 const reviewModeControl = document.getElementById("reviewModeControl");
 const reviewModeSegButtons = reviewModeControl
   ? [...reviewModeControl.querySelectorAll("[data-review-mode]")]
   : [];
-const reviewInlinePrevious = document.getElementById("reviewInlinePrevious");
-const reviewInlineNext = document.getElementById("reviewInlineNext");
-const reviewInlineAcceptAll = document.getElementById("reviewInlineAcceptAll");
-const reviewInlineRejectAll = document.getElementById("reviewInlineRejectAll");
 const suggestingBanner = document.getElementById("suggestingBanner");
 const suggestingBannerEdit = document.getElementById("suggestingBannerEdit");
 const viewingBanner = document.getElementById("viewingBanner");
 const viewingBannerEdit = document.getElementById("viewingBannerEdit");
 const reviewSidebar = document.getElementById("reviewSidebar");
 const reviewSidebarBody = document.getElementById("reviewSidebarBody");
+const reviewSidebarHeader = document.getElementById("reviewSidebarHeader");
 let reviewMode = "editing";
 let reviewRevisionCursor = -1;
 let activeReviewCommentId = null;
@@ -538,6 +529,11 @@ let reviewMarginFrame = 0;
 // unchanged card is never rebuilt or re-measured, and only cards inside (or near)
 // the viewport are ever mounted into the DOM.
 let reviewLayout = [];
+// A caret→card index rebuilt each render: for every shown item, its card id and
+// the model anchor range (node + byte offsets) its text occupies, so a caret
+// landing in a commented or tracked-changed range can expand that exact card
+// (REVIEW-GAP-019 caret-driven expansion, for comments AND revisions).
+let reviewAnchorIndex = [];
 const reviewCardCache = new Map();
 let reviewWindowFrame = 0;
 // Pixels above and below the viewport to keep mounted, so a scroll reveals an
@@ -656,18 +652,22 @@ function reviewCommentTooltip(comment) {
   ].filter(Boolean).join(" · ");
 }
 
-function updateReviewInlineBar() {
-  if (!reviewInlineBar || !doc) return;
+// Enable the three-state mode control (Editing / Suggesting / Viewing) once a
+// document is loaded (its per-button pressed state is owned by setReviewMode),
+// and reflect the review-sidebar workflow controls' availability: Next/Previous
+// and Accept-all/Reject-all need at least one tracked change, and bulk decisions
+// are hidden in read-only Viewing mode (REVIEW-GAP-018).
+function updateReviewControls() {
+  if (!doc) return;
   let count = 0;
   try { count = (JSON.parse(doc.listRevisions()) ?? []).length; } catch { count = 0; }
-  reviewInlineBar.hidden = true;
-  // The three-state mode control (Editing / Suggesting / Viewing) is live once a
-  // document is loaded; its per-button pressed state is owned by setReviewMode.
   for (const button of reviewModeSegButtons) button.disabled = false;
-  reviewInlinePrevious.disabled = count === 0;
-  reviewInlineNext.disabled = count === 0;
-  reviewInlineAcceptAll.disabled = count === 0;
-  reviewInlineRejectAll.disabled = count === 0;
+  if (reviewPrevious) reviewPrevious.disabled = count === 0;
+  if (reviewNext) reviewNext.disabled = count === 0;
+  const canDecide = count > 0 && reviewMode !== "viewing";
+  if (reviewAcceptAll) reviewAcceptAll.disabled = !canDecide;
+  if (reviewRejectAll) reviewRejectAll.disabled = !canDecide;
+  if (reviewBulkActions) reviewBulkActions.hidden = reviewMode === "viewing";
 }
 
 /** The three review modes (docs/68 §"Suggesting mode"): `editing` applies
@@ -682,7 +682,7 @@ function setReviewMode(mode) {
   for (const button of reviewModeButtons) {
     button.setAttribute("aria-pressed", String(button.dataset.reviewMode === reviewMode));
   }
-  updateReviewInlineBar();
+  updateReviewControls();
   drawSelection();
   // Toolbar controls must not retain focus after changing mode: clipboard,
   // typing, and deletion events are deliberately accepted only while the
@@ -819,8 +819,19 @@ function renderReviewMarginItems() {
   const summary = readReviewData(doc);
   const items = [];
   const comments = summary.comments ?? [];
+  updateReviewControls();
   for (const comment of comments) {
     if (!comment.anchor?.node) continue;
+    // Open / Resolved / All comment filter (REVIEW-GAP-018/019). A reply always
+    // follows its root's visibility so a thread is never half-shown: match on the
+    // root comment's resolved state when this is a reply.
+    if (reviewFilter !== "all") {
+      const root = comment.parentParaId
+        ? comments.find((c) => c.paraId === comment.parentParaId) ?? comment
+        : comment;
+      const resolved = !!root.resolved;
+      if (reviewFilter === "resolved" ? !resolved : resolved) continue;
+    }
     const rect = reviewRangeClientRect(comment.anchor.node, Number(comment.anchor.start) || 0, comment.anchor.node, Number(comment.anchor.end) || 0);
     if (rect) items.push({ type: "comment", data: comment, rect });
   }
@@ -905,7 +916,9 @@ function renderReviewMarginItems() {
       revisions,
     });
   }
-  for (const revision of revisionItems) {
+  // Tracked changes are not "resolved" — the Resolved filter is comment-only, so
+  // it hides revisions; Open and All show them (REVIEW-GAP-018/019).
+  for (const revision of reviewFilter === "resolved" ? [] : revisionItems) {
     const ranges = revision.ranges ?? [revisionRange(revision)].filter(Boolean);
     const positioned = ranges
       .map((range) => ({
@@ -954,6 +967,11 @@ function renderReviewMarginItems() {
   // deselect and cards are never clipped. No scrollTop sync: one scroll owner.
   const viewportRect = viewportEl.getBoundingClientRect();
   reviewSidebarBody.style.height = `${Math.max(pagesEl.scrollHeight, viewportEl.clientHeight)}px`;
+  // Cancel the sticky header's flow height so cards stay pixel-aligned to their
+  // canvas anchors (the header floats above via `position: sticky`).
+  if (reviewSidebarHeader) {
+    reviewSidebarBody.style.marginTop = `-${reviewSidebarHeader.offsetHeight}px`;
+  }
 
   if (!items.length) {
     const empty = document.createElement("div");
@@ -972,8 +990,18 @@ function renderReviewMarginItems() {
   // or re-measuring; the active/expanded card and the composer always rebuild so
   // their live controls stay fresh (REVIEW-GAP-020).
   const built = [];
+  reviewAnchorIndex = [];
   for (const item of items) {
     const itemId = item.type === "composer" ? "composer" : `${item.type}:${item.data.id}`;
+    const anchor = item.data?.anchor;
+    if (item.type !== "composer" && anchor?.node) {
+      reviewAnchorIndex.push({
+        itemId,
+        node: anchor.node,
+        start: Number(anchor.start) || 0,
+        end: Number(anchor.end) || Number(anchor.start) || 0,
+      });
+    }
     const expanded = activeReviewItemId === itemId;
     const sig = reviewCardSignature(item, comments);
     let entry = reviewCardCache.get(itemId);
@@ -1385,6 +1413,27 @@ function renderReviewMarginItems() {
     entry.measured = true;
   }
   for (const { entry } of toMeasure) reviewSidebarBody.removeChild(entry.el);
+
+  // Stacked-chip surfacing (REVIEW-GAP-019): when several chips collide on one
+  // paragraph (same anchor Y), the active/clicked one claims true anchor
+  // alignment and the others stack below it — the Google Docs pattern. Reorder
+  // the active card to the front of its own collision cluster so the top-down
+  // position pass places it at its anchor top; cross-cluster document order and
+  // every other card's relative order are preserved.
+  if (activeReviewItemId) {
+    const activeIdx = built.findIndex((b) => b.itemId === activeReviewItemId);
+    if (activeIdx > 0) {
+      const activeTop = Math.round(built[activeIdx].item.rect.top);
+      let clusterStart = activeIdx;
+      for (let i = 0; i < activeIdx; i++) {
+        if (Math.round(built[i].item.rect.top) === activeTop) { clusterStart = i; break; }
+      }
+      if (clusterStart < activeIdx) {
+        const [active] = built.splice(activeIdx, 1);
+        built.splice(clusterStart, 0, active);
+      }
+    }
+  }
 
   // Position pass: stack every card in document-scroll coordinates exactly as
   // the non-virtualized layout did (anchor top, pushed down to clear the card
@@ -1962,9 +2011,26 @@ function reviewCommentAtAnchor(anchor) {
  *  caret placement. */
 function syncActiveReviewCommentToCaret(anchor) {
   const comment = reviewCommentAtAnchor(anchor);
-  if (!comment) return;
-  activeReviewCommentId = comment.id;
-  activeReviewItemId = `comment:${comment.id}`;
+  if (comment) {
+    activeReviewCommentId = comment.id;
+    activeReviewItemId = `comment:${comment.id}`;
+    reviewSidebarPreference = true;
+    scheduleReviewMarginRender();
+    return;
+  }
+  // No comment under the caret — surface a tracked-change card whose anchor range
+  // contains the caret, so caret-driven expansion works for suggestions too
+  // (REVIEW-GAP-019). The smallest containing range wins when several stack.
+  if (!anchor?.node) return;
+  const offset = Number(anchor.offset) || 0;
+  let best = null;
+  for (const entry of reviewAnchorIndex) {
+    if (entry.node !== anchor.node) continue;
+    if (offset < entry.start || offset > entry.end) continue;
+    if (!best || entry.end - entry.start < best.end - best.start) best = entry;
+  }
+  if (!best || best.itemId === activeReviewItemId) return;
+  activeReviewItemId = best.itemId;
   reviewSidebarPreference = true;
   scheduleReviewMarginRender();
 }
@@ -2044,7 +2110,7 @@ function drawSelection() {
   updateObjectSelectionState();
   updateObjectContextBar();
   updateToolbar();
-  updateReviewInlineBar();
+  updateReviewControls();
   scheduleReviewMarginRender();
   updatePageNumber();
   updateRulerMarkers();
@@ -5307,135 +5373,6 @@ function showReviewPopover(item) {
   popover.style.top = `${Math.max(12, Math.min(window.innerHeight - popover.offsetHeight - 12, top + 18))}px`;
 }
 
-function buildReview() {
-  if (!doc || reviewPanel.hidden) return;
-  const summary = readReviewData(doc);
-  reviewBody.replaceChildren();
-  const comments = (summary.comments ?? []).filter((comment) =>
-    reviewFilter === "all" || (reviewFilter === "resolved" ? comment.resolved : !comment.resolved),
-  );
-  const revisions = summary.revisions ?? [];
-  reviewPrevious.disabled = !revisions.some((revision) => String(revision.text || "").length);
-  reviewNext.disabled = reviewPrevious.disabled;
-  if (!comments.length && !revisions.length) {
-    const empty = document.createElement("div");
-    empty.className = "review-empty";
-    empty.textContent = "No comments or tracked changes in this document.";
-    reviewBody.appendChild(empty);
-    return;
-  }
-  const note = document.createElement("p");
-  note.className = "review-readonly-note";
-  note.textContent = "Review actions are undoable. Suggestions support text edits, bold/italic/underline/strike formatting, and bulk decisions.";
-  reviewBody.appendChild(note);
-  const appendCard = (className, title, meta, body, anchor = null) => {
-    const card = document.createElement("article");
-    card.className = className;
-    if (anchor?.node) {
-      card.tabIndex = 0;
-      card.setAttribute("role", "button");
-      card.title = "Go to comment range";
-      const goToAnchor = () => navigateToAnchor(anchor.node, Number(anchor.start) || 0);
-      card.addEventListener("click", goToAnchor);
-      card.addEventListener("keydown", (event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          goToAnchor();
-        }
-      });
-    }
-    const heading = document.createElement("strong");
-    heading.textContent = title;
-    const details = document.createElement("small");
-    details.textContent = meta;
-    const text = document.createElement("p");
-    text.textContent = body;
-    card.append(heading, details, text);
-    reviewBody.appendChild(card);
-    return card;
-  };
-  for (const comment of comments) {
-    const card = appendCard(
-      `review-card review-comment${comment.parentParaId ? " review-reply" : ""}`,
-      `${comment.parentParaId ? "Reply · " : ""}${reviewText(comment.author || comment.initials || "Comment")}`,
-      `${comment.resolved ? "Resolved" : "Open"}${comment.date ? ` · ${reviewText(comment.date)}` : ""}`,
-      reviewText(comment.text),
-      comment.anchor,
-    );
-    card.dataset.reviewId = comment.id;
-    card.addEventListener("click", (event) => {
-      if (event.target instanceof HTMLButtonElement) return;
-      focusReviewComment(comment);
-    });
-    const action = document.createElement("button");
-    action.type = "button";
-    action.className = "review-card-action";
-    action.textContent = comment.resolved ? "Reopen" : "Resolve";
-    action.addEventListener("click", async (event) => {
-      event.stopPropagation();
-      if (!doc) return;
-      await runEdit(() => doc.setCommentResolved(comment.id, !comment.resolved));
-      buildReview();
-    });
-    card.appendChild(action);
-    const reply = document.createElement("button");
-    reply.type = "button";
-    reply.className = "review-card-action";
-    reply.textContent = "Reply";
-    reply.addEventListener("click", (event) => { event.stopPropagation(); openReviewComposer(comment.id); });
-    card.appendChild(reply);
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "review-card-action";
-    remove.textContent = "Delete";
-    remove.addEventListener("click", async (event) => {
-      event.stopPropagation();
-      if (!doc) return;
-      await runEdit(() => doc.deleteComment(comment.id));
-      buildReview();
-    });
-    card.appendChild(remove);
-  }
-  for (const revision of revisions) {
-    const kind = reviewText(revision.kind);
-    const card = appendCard(
-      `review-card review-revision review-${kind.replaceAll("_", "-")}`,
-      kind.replaceAll("_", " "),
-      `${reviewText(revision.author)}${revision.date ? ` · ${reviewText(revision.date)}` : ""}`,
-      reviewText(revision.text),
-    );
-    card.tabIndex = 0;
-    card.setAttribute("role", "button");
-    card.title = "Select this tracked change";
-    card.addEventListener("click", (event) => {
-      if (event.target instanceof HTMLButtonElement) return;
-      focusReviewRevision(revision);
-    });
-    card.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        focusReviewRevision(revision);
-      }
-    });
-    const actions = document.createElement("span");
-    actions.className = "review-revision-actions";
-    for (const [label, accept] of [["Accept", true], ["Reject", false]]) {
-      const action = document.createElement("button");
-      action.type = "button";
-      action.className = "review-card-action";
-      action.textContent = label;
-      action.addEventListener("click", async (event) => {
-        event.stopPropagation();
-        if (!doc) return;
-        await runEdit(() => doc.decideRevision(revision.id, accept));
-        buildReview();
-      });
-      actions.appendChild(action);
-    }
-    card.appendChild(actions);
-  }
-}
-
 /** Move the caret to the next/previous tracked text change.  Revision anchors
  * are intentionally resolved through the engine's text index rather than DOM
  * ranges, so this also works for changes inside tables and content controls. */
@@ -5455,7 +5392,7 @@ function navigateReviewRevision(direction) {
     drawSelection();
     focusEditorSurface();
     scrollCaretIntoView("center");
-    buildReview();
+    syncActiveReviewCommentToCaret(selection.focus);
     return;
   }
   const start = selection?.focus || doc.firstPosition();
@@ -5473,7 +5410,7 @@ function navigateReviewRevision(direction) {
   focusEditorSurface();
   scrollCaretIntoView("center");
   match.free();
-  buildReview();
+  syncActiveReviewCommentToCaret(selection.focus);
 }
 
 /**
@@ -5537,6 +5474,21 @@ function focusReviewRevision(revision, expand = true) {
   if (!doc || !revision?.text) return;
   reviewSidebarPreference = true;
   if (expand) activeReviewItemId = `revision:${revision.id}`;
+  // Clicking a card scrolls the canvas to that change's anchor (card→canvas
+  // sync, REVIEW-GAP-019). For a tracked move, the destination is the sensible
+  // default landing spot; its per-end buttons still jump to source/destination.
+  if (revision.kind === "move" && revision.destinationAnchor?.node) {
+    const dest = revision.destinationAnchor;
+    selection = {
+      anchor: { node: dest.node, offset: Number(dest.start) || 0 },
+      focus: { node: dest.node, offset: Number(dest.end) || Number(dest.start) || 0 },
+    };
+    drawSelection();
+    focusEditorSurface();
+    scrollCaretIntoView("center");
+    scheduleReviewMarginRender();
+    return;
+  }
   const range = revisionRange(revision);
   if (range) {
     selection = {
@@ -5577,19 +5529,14 @@ function toggleReview(open) {
 reviewBtn.addEventListener("click", () => toggleReview());
 railReview.addEventListener("click", () => toggleReview());
 reviewClose.addEventListener("click", () => toggleReview(false));
-reviewAcceptAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(true)); buildReview(); } });
-reviewRejectAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(false)); buildReview(); } });
+reviewAcceptAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(true)); scheduleReviewMarginRender(); } });
+reviewRejectAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(false)); scheduleReviewMarginRender(); } });
 reviewPrevious.addEventListener("click", () => navigateReviewRevision(-1));
 reviewNext.addEventListener("click", () => navigateReviewRevision(1));
-reviewInlinePrevious.addEventListener("click", () => navigateReviewRevision(-1));
-reviewInlineNext.addEventListener("click", () => navigateReviewRevision(1));
 // The visible mode control (`#reviewModeControl`) is a three-button segmented
-// group; each button carries `data-review-mode` and is wired below alongside
-// the hidden review-panel buttons.
+// group; each button carries `data-review-mode` and is wired below.
 suggestingBannerEdit.addEventListener("click", () => setReviewMode("editing"));
 if (viewingBannerEdit) viewingBannerEdit.addEventListener("click", () => setReviewMode("editing"));
-reviewInlineAcceptAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(true)); closeReviewPopover(); drawSelection(); } });
-reviewInlineRejectAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(false)); closeReviewPopover(); drawSelection(); } });
 function openReviewComposer(parent = null) {
   if (!doc || (!parent && (!hasRange() || !selection))) return;
   reviewSidebarPreference = true;
@@ -5612,42 +5559,18 @@ function openReviewComposer(parent = null) {
   activeReviewItemId = null;
   scheduleReviewMarginRender();
 }
-function closeReviewComposer() {
-  reviewReplyParent = null;
-  reviewComposer.hidden = true;
-  reviewComposerText.value = "";
-}
+// Comment authoring/reply uses the in-sidebar composer (`openReviewComposer` →
+// `reviewComposerState`, rendered by `renderReviewMarginItems`); the legacy
+// hidden side-panel composer was removed (docs/81 REVIEW-GAP-018/026).
 selComment.addEventListener("mousedown", (event) => event.preventDefault());
 selComment.addEventListener("click", () => openReviewComposer());
-reviewComposerCancel.addEventListener("click", closeReviewComposer);
-reviewComposerSubmit.addEventListener("click", async () => {
-  const text = reviewComposerText.value.trim();
-  const range = selection;
-  if (!doc || !text || (!reviewReplyParent && (!range || !hasRange()))) return;
-  const metadata = currentReviewTimestamp();
-  if (reviewReplyParent) {
-    await runEdit(() => doc.replyToComment(reviewReplyParent, text, undefined, undefined, metadata.date));
-    closeReviewComposer();
-    buildReview();
-    return;
-  }
-  const start = range.anchor.offset <= range.focus.offset ? range.anchor : range.focus;
-  const end = range.anchor.offset <= range.focus.offset ? range.focus : range.anchor;
-  if (start.node !== end.node) {
-    setStatus("Comments currently require a single-paragraph selection", "error");
-    return;
-  }
-  await runEdit(() => doc.addComment(start.node, start.offset, end.offset, text, undefined, undefined, metadata.date));
-  closeReviewComposer();
-  buildReview();
-});
 for (const filter of reviewFilters) {
   filter.addEventListener("click", () => {
     reviewFilter = filter.dataset.reviewFilter;
     for (const button of reviewFilters) {
       button.setAttribute("aria-pressed", String(button === filter));
     }
-    buildReview();
+    scheduleReviewMarginRender();
   });
 }
 for (const mode of reviewModeButtons) {

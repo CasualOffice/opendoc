@@ -302,12 +302,6 @@
                 <button type="button" class="review-mode-seg" data-review-mode="suggesting" aria-pressed="false" disabled>Suggesting</button>
                 <button type="button" class="review-mode-seg" data-review-mode="viewing" aria-pressed="false" disabled>Viewing</button>
               </div>
-              <div id="reviewInlineBar" class="review-inline-bar" role="toolbar" aria-label="Review changes" hidden aria-hidden="true">
-                <button id="reviewInlinePrevious" type="button">Previous</button>
-                <button id="reviewInlineNext" type="button">Next</button>
-                <button id="reviewInlineAcceptAll" type="button">Accept all</button>
-                <button id="reviewInlineRejectAll" type="button">Reject all</button>
-              </div>
             </div>
             <span class="rgroup-label">Review</span>
           </div>
@@ -645,34 +639,6 @@
         </div>
         <div id="outlineBody" class="panel-body outline-list"></div>
       </aside>
-      <aside id="reviewPanel" class="side-panel review-panel" hidden aria-labelledby="reviewTitle">
-        <div class="panel-head">
-          <span id="reviewTitle" class="panel-title">Review</span>
-          <button id="reviewClose" type="button" class="panel-close" title="Close review" aria-label="Close review"><span class="ms" aria-hidden="true">close</span></button>
-        </div>
-        <div id="reviewComposer" class="review-composer" hidden>
-          <label for="reviewComposerText">Comment</label>
-          <textarea id="reviewComposerText" rows="3" maxlength="4096" placeholder="Add a comment…"></textarea>
-          <div class="review-composer-actions">
-            <button id="reviewComposerCancel" type="button" class="dialog-button">Cancel</button>
-            <button id="reviewComposerSubmit" type="button" class="dialog-button dialog-button-primary">Comment</button>
-          </div>
-        </div>
-        <div class="review-mode" role="group" aria-label="Editing mode">
-          <span>Mode</span>
-          <button type="button" class="review-mode-button" data-review-mode="editing" aria-pressed="true">Editing</button>
-          <button type="button" class="review-mode-button" data-review-mode="suggesting" aria-pressed="false">Suggesting</button>
-          <button type="button" class="review-mode-button" data-review-mode="viewing" aria-pressed="false">Viewing</button>
-        </div>
-        <div class="review-bulk-actions"><button id="reviewPrevious" type="button" class="review-card-action" title="Previous tracked change">Previous</button><button id="reviewNext" type="button" class="review-card-action" title="Next tracked change">Next</button><button id="reviewAcceptAll" type="button" class="review-card-action">Accept all changes</button><button id="reviewRejectAll" type="button" class="review-card-action">Reject all changes</button></div>
-        <div class="review-filters" role="group" aria-label="Review filter">
-          <button type="button" class="review-filter" data-review-filter="open" aria-pressed="true">Open</button>
-          <button type="button" class="review-filter" data-review-filter="resolved" aria-pressed="false">Resolved</button>
-          <button type="button" class="review-filter" data-review-filter="all" aria-pressed="false">All</button>
-        </div>
-        <div id="reviewBody" class="panel-body review-list"></div>
-      </aside>
-
       <main id="viewport" class="viewport">
         <div id="drop" class="drop">
           <div class="drop-card">
@@ -691,6 +657,27 @@
              truth. Kept out of the tab order; screen readers still browse it. -->
         <div id="a11yDocument" class="sr-only" role="document" aria-label="Document content (read-only for assistive technology)"></div>
         <aside id="reviewSidebar" class="review-sidebar" hidden aria-label="Comments and suggestions">
+          <div id="reviewSidebarHeader" class="review-sidebar-header">
+            <div class="review-sidebar-headrow">
+              <span class="review-sidebar-title">Comments &amp; suggestions</span>
+              <div class="review-sidebar-nav" role="group" aria-label="Navigate changes">
+                <button id="reviewPrevious" type="button" class="review-nav-button" title="Previous change" aria-label="Previous change"><span class="ms" aria-hidden="true">expand_less</span></button>
+                <button id="reviewNext" type="button" class="review-nav-button" title="Next change" aria-label="Next change"><span class="ms" aria-hidden="true">expand_more</span></button>
+                <button id="reviewClose" type="button" class="review-nav-button review-sidebar-close" title="Close comments and suggestions" aria-label="Close comments and suggestions"><span class="ms" aria-hidden="true">close</span></button>
+              </div>
+            </div>
+            <div class="review-sidebar-controlrow">
+              <div class="review-filters" role="group" aria-label="Filter comments">
+                <button type="button" class="review-filter" data-review-filter="open" aria-pressed="true">Open</button>
+                <button type="button" class="review-filter" data-review-filter="resolved" aria-pressed="false">Resolved</button>
+                <button type="button" class="review-filter" data-review-filter="all" aria-pressed="false">All</button>
+              </div>
+              <div id="reviewBulkActions" class="review-bulk-actions" role="group" aria-label="Bulk decisions">
+                <button id="reviewAcceptAll" type="button" class="review-card-action" title="Accept all changes">Accept all</button>
+                <button id="reviewRejectAll" type="button" class="review-card-action" title="Reject all changes">Reject all</button>
+              </div>
+            </div>
+          </div>
           <div id="reviewSidebarBody" class="review-sidebar-body"></div>
         </aside>
       </main>
