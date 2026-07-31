@@ -3634,7 +3634,7 @@ impl WasmDocument {
     }
 
     /// All comments and threaded replies, in stable id order, as a typed JSON
-    /// array of [`ReviewCommentSummaryJson`]. This is the typed, single-purpose
+    /// array of `ReviewCommentSummaryJson`. This is the typed, single-purpose
     /// replacement for `reviewSummary`'s nested `comments` array (docs/81
     /// REVIEW-GAP-022; docs/68 `listComments`); `reviewSummary` keeps working
     /// unchanged for existing callers. Use [`comment_thread`](Self::comment_thread)
@@ -3647,7 +3647,7 @@ impl WasmDocument {
     }
 
     /// All tracked-change and formatting revisions, in document order, as a
-    /// typed JSON array of [`ReviewRevisionSummaryJson`]. This is the typed,
+    /// typed JSON array of `ReviewRevisionSummaryJson`. This is the typed,
     /// single-purpose replacement for `reviewSummary`'s nested `revisions`
     /// array (docs/81 REVIEW-GAP-022; docs/68 `listRevisions`), using the exact
     /// same final-with-markup anchor projection; `reviewSummary` keeps working
@@ -3661,7 +3661,7 @@ impl WasmDocument {
 
     /// One comment thread — the identified comment plus every descendant
     /// reply, ordered root-first by creation order — as a typed JSON array of
-    /// [`ReviewCommentSummaryJson`] (docs/81 REVIEW-GAP-022; docs/68
+    /// `ReviewCommentSummaryJson` (docs/81 REVIEW-GAP-022; docs/68
     /// `commentThread`). Passing a reply's id resolves to that reply's thread
     /// root first, mirroring [`delete_comment`](Self::delete_comment)'s
     /// existing parent-chain walk (matching by either the parent's node id or
@@ -6729,7 +6729,7 @@ struct ReviewMovePairJson {
     to_start: String,
 }
 
-/// Builds one [`ReviewCommentSummaryJson`], resolving `id`'s anchor (if any)
+/// Builds one `ReviewCommentSummaryJson`, resolving `id`'s anchor (if any)
 /// from a pre-walked `anchors` list (shared across a whole
 /// `listComments`/`commentThread` call so the document tree is walked once).
 fn build_review_comment_summary(
