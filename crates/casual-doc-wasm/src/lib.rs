@@ -5436,7 +5436,7 @@ impl WasmDocument {
     }
 
     /// The document's structure as a **read-only** JSON array of
-    /// [`A11yBlockJson`] nodes in document order — headings (with a 1-based
+    /// `A11yBlockJson` nodes in document order — headings (with a 1-based
     /// level), paragraphs, list items (with an `ordered` flag), and tables
     /// (a grid of cell plain-text). A host renders this into an off-screen
     /// ARIA tree so assistive technology can read the canvas document, which
