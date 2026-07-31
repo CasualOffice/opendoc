@@ -5451,6 +5451,67 @@ async function commitComposedText(text) {
   await pasteText(text, "typing");
 }
 
+/**
+ * Suggesting-mode rich paste at a collapsed caret, single paragraph only
+ * (REVIEW-GAP-008): inserts each clipboard run as its own tracked
+ * `suggestStyledInsert`, chained under one gesture (`typingSessionForKey`)
+ * so the whole paste is one review card and one Undo step — the same
+ * paragraph-snapshot coalescing real adjacent keystrokes already use (docs
+ * 82 §3; see `suggest_insert`'s `continuing_group` in casual-doc-wasm).
+ * This is what lets a rich paste keep its bold/italic/color/etc. per run
+ * instead of flattening to one plain-text tracked insertion.
+ *
+ * Returns whether it handled the paste. It does not: multi-paragraph
+ * content (`paragraphBreak` runs — REVIEW-GAP-009's structural-tracking
+ * backlog), or a paste that also needs to replace an existing selection (no
+ * tracked multi-run *replacement* group exists yet — the model's
+ * `RevisionGroupKind::Replacement` requires exactly one deletion plus one
+ * insertion). Both remain the existing flattened-plain-text fallback in
+ * `pasteRichRunsJson`. A run's `href` (hyperlink) is not carried into the
+ * tracked insertion either — the same as the existing flattened fallback,
+ * so this is not a regression, just an unchanged, explicit limitation.
+ */
+async function pasteTrackedRichRuns(runs) {
+  if (!doc || !selection || hasRange()) return false;
+  if (!Array.isArray(runs) || runs.some((run) => run.paragraphBreak)) return false;
+  const insertable = runs.filter((run) => !run.paragraphBreak && run.text);
+  if (!insertable.length) return false;
+
+  breakTypingSession();
+  const session = typingSessionForKey();
+  const node = selection.focus.node;
+  let offset = selection.focus.offset;
+  for (const run of insertable) {
+    await runEdit(
+      () => doc.suggestStyledInsert(
+        node,
+        offset,
+        run.text,
+        run.bold,
+        run.italic,
+        run.underline,
+        run.strike,
+        run.sizeHalfPoints,
+        run.color,
+        run.highlight,
+        run.vertAlign,
+        run.font,
+        undefined,
+        new Date().toISOString(),
+        session,
+      ),
+      { typing: true },
+    );
+    offset += run.text.length;
+  }
+  // Close the gesture explicitly so a later, unrelated keystroke cannot
+  // merge into this paste's group (mirrors the pause-based boundary real
+  // typing uses; nothing else calls `typingSessionForKey` between here and
+  // the next real key).
+  breakTypingSession();
+  return true;
+}
+
 /** Replaces the selection with a rich-run clipboard fragment, as one
  * undoable action (`doc.pasteRichRuns` — the paste counterpart of
  * `copyRichRuns`). `runsJson` must be a JSON array in the shape
@@ -5458,14 +5519,22 @@ async function commitComposedText(text) {
 async function pasteRichRunsJson(runsJson) {
   if (!doc || !selection) return;
   if (reviewMode === "suggesting") {
+    let runs = null;
     try {
-      const runs = JSON.parse(runsJson);
-      const text = runs.map((run) => run.paragraphBreak ? "\n" : String(run.text ?? "")).join("");
-      if (text) {
-        await pasteText(text, "paste");
-        return;
-      }
-    } catch { /* extraction failed; fall through to the block below */ }
+      runs = JSON.parse(runsJson);
+    } catch { /* malformed payload; runs stays null */ }
+    if (await pasteTrackedRichRuns(runs)) return;
+    // Falls back to a flattened, single-format tracked replace/insert for
+    // the cases `pasteTrackedRichRuns` intentionally does not cover yet
+    // (see its doc comment): an existing selection to replace, or
+    // multi-paragraph content.
+    const text = Array.isArray(runs)
+      ? runs.map((run) => run.paragraphBreak ? "\n" : String(run.text ?? "")).join("")
+      : "";
+    if (text) {
+      await pasteText(text, "paste");
+      return;
+    }
     // No plain-text fallback could be derived (malformed clipboard payload, or
     // an entirely non-text rich fragment) — `doc.pasteRichRuns` has no tracked
     // representation, so this must fail closed rather than silently apply
