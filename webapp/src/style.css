@@ -2226,7 +2226,11 @@ body.modal-open {
 .review-margin-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .review-margin-card.resolved { opacity: 0.72; }
 .review-margin-card-head { display: flex; align-items: flex-start; gap: 9px; }
-.review-margin-avatar { width: 26px; height: 26px; flex: 0 0 26px; display: grid; place-items: center; border-radius: 50%; background: var(--accent-soft); color: var(--accent-strong); font-size: 11px; font-weight: 700; }
+/* Per-author avatar chip (docs/81 REVIEW-GAP-015): filled with the author's
+ * stable palette color (`--review-author-color`, set per card) with white text
+ * for legible contrast in light and dark themes. Falls back to the theme accent
+ * when a card sets no author color. */
+.review-margin-avatar { --review-author-color: var(--accent-strong); width: 26px; height: 26px; flex: 0 0 26px; display: grid; place-items: center; border-radius: 50%; background: var(--review-author-color); color: #fff; font-size: 11px; font-weight: 700; }
 .review-margin-title { min-width: 0; display: grid; gap: 1px; }
 .review-margin-title strong { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .review-margin-title small { color: var(--muted); font-size: 10px; text-transform: capitalize; }
@@ -2784,21 +2788,31 @@ body.modal-open {
   border-radius: 1px;
 }
 
-/* Comment range marker: interaction-only highlight over the fixed canvas. */
+/* Comment range marker: interaction-only highlight over the fixed canvas.
+ * `--review-author-color` (set per marker, docs/81 REVIEW-GAP-015) tints it to
+ * the comment author's stable palette color; the amber default keeps a comment
+ * recognizable when no author is attributed. */
 .overlay .review-comment-marker {
+  --review-author-color: #c58b00;
   position: absolute;
-  background: color-mix(in srgb, #f5c542 28%, transparent);
-  border-bottom: 2px solid color-mix(in srgb, #c58b00 70%, transparent);
+  background: color-mix(in srgb, var(--review-author-color) 22%, transparent);
+  border-bottom: 2px solid color-mix(in srgb, var(--review-author-color) 75%, transparent);
   pointer-events: auto;
   cursor: pointer;
 }
 .overlay .review-comment-marker-active {
-  background: color-mix(in srgb, #f5c542 48%, transparent);
-  border-bottom-color: #b77900;
+  background: color-mix(in srgb, var(--review-author-color) 40%, transparent);
+  border-bottom-color: var(--review-author-color);
 }
-.overlay .review-revision-marker { position: absolute; pointer-events: none; }
-.overlay .review-insertion-marker { border-bottom: 2px solid color-mix(in srgb, #188038 80%, transparent); }
-.overlay .review-deletion-marker { background: color-mix(in srgb, #d93025 18%, transparent); border-bottom: 2px solid color-mix(in srgb, #d93025 80%, transparent); }
+/* Revision markers carry `--review-author-color` per author. `pointer-events:
+ * auto` lets the native attribution `title` tooltip appear on hover; the
+ * pointerdown still bubbles to the page's own hit-testing (the same pattern the
+ * comment marker uses), so caret placement inside a tracked change is unaffected
+ * (REVIEW-GAP-005). Insertion = author-colored underline; deletion = author-
+ * colored tint + underline, preserving the fill-vs-underline distinction. */
+.overlay .review-revision-marker { --review-author-color: #188038; position: absolute; pointer-events: auto; }
+.overlay .review-insertion-marker { border-bottom: 2px solid color-mix(in srgb, var(--review-author-color) 85%, transparent); }
+.overlay .review-deletion-marker { background: color-mix(in srgb, var(--review-author-color) 18%, transparent); border-bottom: 2px solid color-mix(in srgb, var(--review-author-color) 85%, transparent); }
 .overlay .review-revision-marker-active { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 70%, transparent); }
 
 .overlay .table-cell-selection {

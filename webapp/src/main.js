@@ -225,6 +225,105 @@ function readReviewData(doc) {
   return { comments, revisions };
 }
 
+// --- Per-author review color / attribution (docs/81 REVIEW-GAP-015) -----------
+//
+// Word and Google Docs give each distinct reviewer a stable, auto-assigned color
+// so overlapping authors are distinguishable at a glance, plus a hover tooltip
+// with name/date/change type (docs/68 §"Reference reading", §50). We mirror that:
+// a fixed cycling palette, keyed deterministically by the author's stable
+// identity, is assigned in the webapp only — presentation, never persisted into
+// the model (the engine keeps just the opaque `author` string). The projection
+// (`listComments`/`listRevisions`) exposes the author *name* (and comment
+// initials), which is the stable key docs/68 §50 specifies hashing.
+
+// Ten hues chosen to stay legible over the white document canvas and, as a solid
+// avatar fill with white text, in both light and dark themes. Deliberately not
+// the theme accent, so author colors never collide with selection/UI chrome.
+const REVIEW_AUTHOR_PALETTE = [
+  "#1a73e8", // blue
+  "#188038", // green
+  "#d93025", // red
+  "#9334e6", // purple
+  "#e37400", // orange
+  "#0b8043", // deep green
+  "#a50e0e", // dark red
+  "#8430ce", // violet
+  "#b06000", // amber-brown
+  "#12805c", // teal
+];
+
+// The neutral fallback for an item with no author at all ("You"/"Unknown"): a
+// grey that is not part of the palette, so an unattributed change never masquer-
+// ades as a specific reviewer's color.
+const REVIEW_AUTHOR_FALLBACK_COLOR = "#5f6368";
+
+/** The stable per-author key: the author name, else the initials, else empty
+ *  (the unattributed "You"/"Unknown" bucket). Case-folded so "Ada"/"ada" share
+ *  one color. */
+function reviewAuthorKey(item) {
+  const name = String(item?.author ?? "").trim();
+  if (name) return name.toLowerCase();
+  const initials = String(item?.initials ?? "").trim();
+  if (initials) return initials.toLowerCase();
+  return "";
+}
+
+/** A deterministic palette color for an author key. Empty key → neutral
+ *  fallback. Same key always yields the same color within and across sessions
+ *  (pure function of the key), so an author's insertions, deletions, and
+ *  comments all render in one color. */
+function reviewAuthorColor(key) {
+  if (!key) return REVIEW_AUTHOR_FALLBACK_COLOR;
+  // FNV-1a-style rolling hash — stable, order-sensitive, no dependencies.
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < key.length; i++) {
+    hash ^= key.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return REVIEW_AUTHOR_PALETTE[hash % REVIEW_AUTHOR_PALETTE.length];
+}
+
+/** The human display name for an author, matching the sidebar's existing
+ *  convention: name, else initials, else "You" (an unattributed local edit). */
+function reviewAuthorDisplay(item) {
+  return String(item?.author ?? "").trim()
+    || String(item?.initials ?? "").trim()
+    || "You";
+}
+
+/** The change-type label used in an attribution tooltip. */
+function reviewChangeTypeLabel(kind) {
+  switch (kind) {
+    case "insertion": return "Insertion";
+    case "deletion": return "Deletion";
+    case "replacement": return "Replacement";
+    case "formatting": return "Formatting change";
+    case "move": return "Move";
+    case "move_from": return "Move (source)";
+    case "move_to": return "Move (destination)";
+    default: return "Change";
+  }
+}
+
+/** The `author · type · date` attribution string shown on hover of a tracked
+ *  change (its inline marker and its sidebar card). Omits empty segments. */
+function reviewRevisionTooltip(revision) {
+  return [
+    reviewAuthorDisplay(revision),
+    reviewChangeTypeLabel(revision.kind),
+    formatReviewDate(revision.date),
+  ].filter(Boolean).join(" · ");
+}
+
+/** The `author · date` attribution string for a comment marker/card. */
+function reviewCommentTooltip(comment) {
+  return [
+    reviewAuthorDisplay(comment),
+    comment.resolved ? "Resolved" : "Comment",
+    formatReviewDate(comment.date),
+  ].filter(Boolean).join(" · ");
+}
+
 function updateReviewInlineBar() {
   if (!reviewInlineBar || !doc) return;
   let count = 0;
@@ -589,6 +688,17 @@ function renderReviewMarginItems() {
     avatar.className = "review-margin-avatar";
     const authorName = item.data.author || item.data.initials || "You";
     avatar.textContent = authorName.trim().slice(0, 1).toUpperCase() || "U";
+    // Per-author color (docs/81 REVIEW-GAP-015): the avatar chip is filled with
+    // the author's stable palette color so the same reviewer is recognizable
+    // across their comments and tracked changes, matching the inline markers.
+    const authorColor = reviewAuthorColor(reviewAuthorKey(item.data));
+    avatar.style.setProperty("--review-author-color", authorColor);
+    // Attribution tooltip on the whole card: author · type · date for a tracked
+    // change, author · state · date for a comment (reuses the native `title`
+    // tooltip pattern used across the editor's chrome).
+    card.title = item.type === "revision"
+      ? reviewRevisionTooltip(item.data)
+      : reviewCommentTooltip(item.data);
     const title = document.createElement("div");
     title.className = "review-margin-title";
     const author = document.createElement("strong");
@@ -1395,9 +1505,15 @@ function paintReviewMarkers() {
     if ((comment.resolved && !explicitlyOpen) || !comment.anchor?.node) continue;
     const { node, start, end } = comment.anchor;
     const rects = doc.selectionRects(node, Number(start) || 0, node, Number(end) || 0);
+    const color = reviewAuthorColor(reviewAuthorKey(comment));
+    const tooltip = reviewCommentTooltip(comment);
     for (let i = 0; i < rects.length; i += 5) {
       const el = place(rects.slice(i, i + 5), activeReviewCommentId === comment.id ? "review-comment-marker review-comment-marker-active" : "review-comment-marker");
-      if (el) el.dataset.reviewCommentId = comment.id;
+      if (el) {
+        el.dataset.reviewCommentId = comment.id;
+        el.style.setProperty("--review-author-color", color);
+        el.title = tooltip;
+      }
     }
   }
   for (const revision of summary.revisions ?? []) {
@@ -1417,7 +1533,15 @@ function paintReviewMarkers() {
     const kind = `${deletionLike
       ? "review-revision-marker review-deletion-marker"
       : "review-revision-marker review-insertion-marker"}${active}`;
-    for (let i = 0; i < rects.length; i += 5) place(rects.slice(i, i + 5), kind);
+    const color = reviewAuthorColor(reviewAuthorKey(revision));
+    const tooltip = reviewRevisionTooltip(revision);
+    for (let i = 0; i < rects.length; i += 5) {
+      const el = place(rects.slice(i, i + 5), kind);
+      if (el) {
+        el.style.setProperty("--review-author-color", color);
+        el.title = tooltip;
+      }
+    }
   }
 }
 
