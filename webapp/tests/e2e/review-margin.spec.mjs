@@ -4,6 +4,7 @@ import {
   gotoEditor,
   clickIntoFirstPage,
   moveCaretToDocStart,
+  MOD,
 } from "./fixtures.mjs";
 
 const TRACKED_MOVE_DOCX = "UEsDBBQAAAAIABwY/1ydxYoq8gAAALkBAAATAAAAW0NvbnRlbnRfVHlwZXNdLnhtbH2QzU7DMBCE73kKy1eUOHBACCXpgZ8jcCgPsLI3iVV7bXnd0r49TgtFQpSjNfPNrKdb7b0TO0xsA/XyummlQNLBWJp6+b5+ru+k4AxkwAXCXh6Q5WqouvUhIosCE/dyzjneK8V6Rg/chIhUlDEkD7k806Qi6A1MqG7a9lbpQBkp13nJkEMlRPeII2xdFk/7opxuSehYioeTd6nrJcTorIZcdLUj86uo/ippCnn08GwjXxWDVJdKFvFyxw/6WiZK1qB4g5RfwBej+gjJKBP01he4+T/pj2vDOFqNZ35JiyloZC7be9ecFQ+Wvn/RqePwQ/UJUEsDBAoAAAAAABwY/1wAAAAAAAAAAAAAAAAGAAAAX3JlbHMvUEsDBBQAAAAIABwY/1xAoFMJsgAAAC8BAAALAAAAX3JlbHMvLnJlbHONz7sOgjAUBuCdp2jOLgUHYwyFxZiwGnyApj2URnpJWy+8vR0cxDg4ntt38jfd08zkjiFqZxnUZQUErXBSW8XgMpw2eyAxcSv57CwyWDBC1xbNGWee8k2ctI8kIzYymFLyB0qjmNDwWDqPNk9GFwxPuQyKei6uXCHdVtWOhk8D2oKQFUt6ySD0sgYyLB7/4d04aoFHJ24Gbfrx5WsjyzwoTAweLkgq3+0ys0BzSrqK2RYvUEsDBAoAAAAAABwY/1wAAAAAAAAAAAAAAAAFAAAAd29yZC9QSwMEFAAAAAgAHBj/XNCh0AF8AQAAzAMAABEAAAB3b3JkL2RvY3VtZW50LnhtbLVTPU/DMBDd+ysi7yGpKVBFTRADbEiIhoXNxNckUuyz7GtD+fU4aWhaaAeEkDzc8328u+fz4vZdNcEGrKtRp2x6EbMAdIGy1mXKXvKHcM4CR0JL0aCGlG3BsdtssmgTicVagabAV9AuaVNWEZkkilxRgRLuAg1o71uhVYI8tGXUopXGYgHOeQLVRDyOryMlas2ySRD4qm8ot53ZA7OzelvhBh4sqmehS1iSsBS0SS1T5jtuEy2Ub66LCS1samhDI2rbecSaKrQpu5Oig1KQD+Qxvw7jm/Bymsdx0p9XFp1gGzimv6v0VagvZbNOLGhyeKfMQoOFT5SLaLzsbLsnj0b2c+Pfa7kffui6SzNnhcvxh2z8v2TLcWC4/Kto3+Q6I1SOp4cdReKnRXJQ0JM9SDbl8sOn+E2ecj7r96ry9tV8Fh9NacpHYb2T0Hj3bBdp67KiEb4hEaoRN7A68FYgJHhVbngPV4h0AMs19fDoccduO7T7Jv0SDd8wm3wCUEsBAh4DFAAAAAgAHBj/XJ3FiiryAAAAuQEAABMAAAAAAAAAAQAAAKSBAAAAAFtDb250ZW50X1R5cGVzXS54bWxQSwECHgMKAAAAAAAcGP9cAAAAAAAAAAAAAAAABgAAAAAAAAAAABAA7UEjAQAAX3JlbHMvUEsBAh4DFAAAAAgAHBj/XECgUwmyAAAALwEAAAsAAAAAAAAAAQAAAKSBRwEAAF9yZWxzLy5yZWxzUEsBAh4DCgAAAAAAHBj/XAAAAAAAAAAAAAAAAAUAAAAAAAAAAAAQAO1BIgIAAHdvcmQvUEsBAh4DFAAAAAgAHBj/XNCh0AF8AQAAzAMAABEAAAAAAAAAAQAAAKSBRQIAAHdvcmQvZG9jdW1lbnQueG1sUEsFBgAAAAAFAAUAIAEAAPADAAAAAA==";
@@ -255,5 +256,103 @@ test("an imported tracked move is one atomic source-to-destination card", async 
   await move.getByRole("button", { name: "Reject" }).click();
   await expect(move).toHaveCount(0);
   await expect(page.locator(".review-revision-marker")).toHaveCount(0);
+  expect(consoleErrors).toEqual([]);
+});
+
+// REVIEW-GAP-005 (docs/81): the comment highlight span used to stop pointer
+// propagation and reset the selection to the *entire* comment range on any
+// click inside it, hijacking ordinary caret placement. Document hit-testing
+// must remain authoritative — clicking inside commented text should place
+// the caret exactly where the user clicked, the same as clicking anywhere
+// else. Card expansion is allowed as a non-blocking secondary effect only.
+test("clicking inside a commented range places the caret at the click position", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await moveCaretToDocStart(page);
+
+  const marker = "COMMENT_HIT_TARGET_WORD";
+  await page.keyboard.type(marker);
+  await moveCaretToDocStart(page);
+  for (let i = 0; i < marker.length; i++) await page.keyboard.press("Shift+ArrowRight");
+  await page.locator("#selComment").click();
+
+  const sidebar = page.locator("#reviewSidebar");
+  const composer = sidebar.locator('[data-testid="review-comment-composer"]');
+  await expect(composer).toBeVisible();
+  await composer.fill("hit-test comment");
+  await sidebar.locator('[data-testid="review-comment-submit"]').click();
+
+  const card = sidebar.locator(".review-margin-card.review-margin-comment");
+  await expect(card).toBeVisible();
+  await expect(card).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator(".review-comment-marker")).not.toHaveCount(0);
+
+  // Submitting the composer left keyboard focus on the sidebar button, not
+  // the editable surface — refocus it directly (bypassing any click on the
+  // canvas, so this setup step cannot itself land inside the comment and
+  // pre-expand the card before the real test click below).
+  await page.evaluate(() => document.getElementById("pages").focus({ preventScroll: true }));
+
+  // Ground truth: derive the exact overlay pixel position of an offset well
+  // inside the commented word using ordinary keyboard caret navigation,
+  // which is never routed through the comment-highlight click path.
+  const targetOffset = 8; // inside "COMMENT_H|IT_TARGET_WORD" — not an edge
+  await moveCaretToDocStart(page);
+  for (let i = 0; i < targetOffset; i++) await page.keyboard.press("ArrowRight");
+  const expectedCaret = await page.evaluate(() => {
+    const caret = document.querySelector(".overlay .caret");
+    return caret && {
+      left: caret.style.left,
+      top: caret.style.top,
+      height: caret.style.height,
+    };
+  });
+  expect(expectedCaret).toBeTruthy();
+
+  // Move the caret far away so the upcoming click is the only thing that can
+  // put it back at the target offset.
+  await page.keyboard.press(`${MOD}+End`);
+  await expect(page.locator(".overlay .caret")).toHaveCount(1);
+  const awayCaret = await page.evaluate(() => document.querySelector(".overlay .caret").style.left);
+  expect(awayCaret).not.toBe(expectedCaret.left);
+
+  // Click on the commented highlight itself, at the same pixel position as
+  // the recorded caret. Before the fix, this click landed on the
+  // `.review-comment-marker` overlay, stopped propagation, and replaced the
+  // selection with the *entire* comment range instead of a caret here.
+  //
+  // Dispatched via raw mouse coordinates (not a locator + `{position}` click):
+  // Playwright's locator-click actionability check requires the *target
+  // locator itself* to be the top hit-tested element, and it deliberately is
+  // not — `.review-comment-marker` (pointer-events: auto) sits on top of the
+  // canvas and is the real click target, exactly like a genuine user click
+  // on commented text. The fix relies on that pointerdown bubbling up to the
+  // page's own hit-testing, which `page.mouse.click` exercises faithfully.
+  const canvasBox = await page.locator(".page-wrap .page").first().boundingBox();
+  const clickPosition = await page.evaluate(({ left, top, height }) => ({
+    x: Math.round(Number.parseFloat(left)) + 1,
+    y: Math.round(Number.parseFloat(top)) + Math.max(2, Math.round(Number.parseFloat(height) / 2)),
+  }), expectedCaret);
+  const target = { x: canvasBox.x + clickPosition.x, y: canvasBox.y + clickPosition.y };
+  expect(
+    await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.className, target),
+  ).toContain("review-comment-marker");
+  await page.mouse.click(target.x, target.y);
+
+  const actualCaret = await page.evaluate(() => {
+    const caret = document.querySelector(".overlay .caret");
+    return caret && { left: caret.style.left, top: caret.style.top };
+  });
+  expect(actualCaret).toEqual({ left: expectedCaret.left, top: expectedCaret.top });
+  // A collapsed caret, not a full-range selection highlight, must be shown.
+  await expect(page.locator(".overlay .highlight")).toHaveCount(0);
+
+  // Non-blocking secondary effect: the comment card is still surfaced so the
+  // user can still find/open the comment from the sidebar.
+  await expect(card).toHaveAttribute("aria-expanded", "true");
+
   expect(consoleErrors).toEqual([]);
 });
