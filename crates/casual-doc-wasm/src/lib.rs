@@ -35,7 +35,7 @@ use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_layout::units::{Point, Rect, Size, Twip};
 use casual_doc_model::v1::GridColumn;
 use casual_doc_model::v1::{
-    AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, BookmarkId, BorderEdge,
+    AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, BookmarkId, BorderEdge, Break,
     CellMargins, CellVerticalAlignment, Color, Comment, CommentId, CommentRangeEnd,
     CommentRangeStart, CommentReference, DefinitionMap, Document, ExternalTarget, FontName,
     FontRef, HeightRule, HighlightColor, Hyperlink, HyperlinkTarget, Indentation, InlineNode,
@@ -44,7 +44,7 @@ use casual_doc_model::v1::{
     PageOrientation, PageSize as SectionPageSize, Paragraph, ParagraphBorders, ParagraphProperties,
     PropChange, ReviewProjection, Revision, RevisionGroup, RevisionGroupKind, RevisionKind,
     RgbColor, RowHeight, Run, RunProperties, SectionColumns, SectionId, Spacing, StyleId,
-    StyleKind, TabAlignment, TabStop, Table, TableBorders, TableCell, TableCellProperties,
+    StyleKind, Tab, TabAlignment, TabStop, Table, TableBorders, TableCell, TableCellProperties,
     TableLayout, TableProperties, TableRow, VerticalAlignment, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
@@ -281,6 +281,7 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         | Operation::DeleteColumn { .. }
         | Operation::DeleteTable { .. }
         | Operation::InsertTable { .. } => HistoryKind::TableStructure,
+        Operation::InsertBlocks { .. } | Operation::DeleteBlocks { .. } => HistoryKind::Paste,
         Operation::SetTableCellProperties { .. }
         | Operation::SetTableProperties { .. }
         | Operation::ReplaceTable { .. } => HistoryKind::TableFormatting,
@@ -700,6 +701,139 @@ impl WasmDocument {
             return Err(to_js("nothing to paste".into()));
         }
         self.apply_action_caret_as(ops, cursor, HistoryKind::Paste)
+            .map_err(to_js)
+    }
+
+    /// The selection as a **structured** clipboard fragment (JSON), for internal
+    /// OpenDoc-to-OpenDoc paste that must survive block structure the flat
+    /// [`copy_rich_runs`](Self::copy_rich_runs) fragment flattens: whole tables and
+    /// list paragraphs (their `numbering` reference). Returns the top-level body
+    /// blocks the selection touches, but **only** when at least one is a table or a
+    /// list item and every touched block is a paragraph or table (SDT/AltChunk
+    /// bail); otherwise returns `""` so the caller keeps the flat rich-run path for
+    /// ordinary prose. Whole blocks are captured even on a partial selection — Word
+    /// copies the whole table when a selection crosses it. Cross-document remapping
+    /// (numbering/media) is out of scope; this is the internal same-document payload.
+    #[wasm_bindgen(js_name = copyStructured)]
+    #[must_use]
+    pub fn copy_structured(
+        &self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+    ) -> String {
+        let Some(range) = parse_range(start_node, start_offset, end_node, end_offset) else {
+            return String::new();
+        };
+        let body = self.document.body();
+        let (Some(si), Some(ei)) = (
+            body.iter().position(|b| block_holds(b, range.start.node)),
+            body.iter().position(|b| block_holds(b, range.end.node)),
+        ) else {
+            return String::new();
+        };
+        let (lo, hi) = (si.min(ei), si.max(ei));
+        let selected = &body[lo..=hi];
+        // Only paragraphs and tables are reconstructed; anything else bails so no
+        // structure is silently half-copied.
+        if !selected
+            .iter()
+            .all(|b| matches!(b, BlockNode::Paragraph(_) | BlockNode::Table(_)))
+        {
+            return String::new();
+        }
+        // Trigger only when there is real block structure to preserve — a table, or
+        // a list paragraph — so plain prose keeps the flat (and tracked-paste) path.
+        let worth_preserving = selected.iter().any(|b| match b {
+            BlockNode::Table(_) => true,
+            BlockNode::Paragraph(p) => p.properties.numbering.is_some(),
+            _ => false,
+        });
+        if !worth_preserving {
+            return String::new();
+        }
+        serde_json::to_string(&StructuredClipboard {
+            blocks: selected.to_vec(),
+        })
+        .unwrap_or_default()
+    }
+
+    /// Pastes a [`copy_structured`](Self::copy_structured) fragment at a **collapsed
+    /// caret in a body paragraph**, reconstructing the copied paragraphs and tables
+    /// with fresh ids as one undoable action. Rejects a non-collapsed selection or a
+    /// caret inside a table cell / SDT (the caller falls back to the flat rich-run
+    /// paste for those), so the reconstruction target is always the document body.
+    /// Inline content is sanitized to text, formatting, and hyperlinks; exotic
+    /// inline objects (drawings, fields, comments, bookmarks, …) are dropped rather
+    /// than duplicated with dangling references.
+    #[wasm_bindgen(js_name = pasteStructured)]
+    pub fn paste_structured(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        fragment_json: String,
+    ) -> Result<EditResult, JsValue> {
+        let fragment: StructuredClipboard = serde_json::from_str(&fragment_json)
+            .map_err(|e| to_js(format!("invalid structured clipboard payload: {e}")))?;
+        if fragment.blocks.is_empty() {
+            return Err(to_js("nothing to paste".into()));
+        }
+        let (start, end) = self
+            .order_endpoints(start_node, start_offset, end_node, end_offset)
+            .map_err(to_js)?;
+        // A structured fragment reconstructs whole blocks, so it only inserts at a
+        // collapsed caret; a range selection is left to the flat paste path.
+        if start != end {
+            return Err(to_js("structured paste needs a collapsed caret".into()));
+        }
+        // The caret must sit in a top-level body paragraph so the fragment inserts
+        // between whole body blocks.
+        let body = self.document.body();
+        let Some(block_index) = body.iter().position(|b| block_holds(b, start.node)) else {
+            return Err(to_js("paste target is not in the document body".into()));
+        };
+        let Some(BlockNode::Paragraph(caret_paragraph)) = body.get(block_index) else {
+            return Err(to_js("structured paste targets a body paragraph".into()));
+        };
+        if caret_paragraph.id != start.node {
+            return Err(to_js("structured paste targets a body paragraph".into()));
+        }
+        let paragraph_len = node_plain_text(&caret_paragraph.inlines).len() as u32;
+
+        // Reconstruct the fragment blocks with fresh ids and sanitized inlines.
+        let mut blocks = Vec::with_capacity(fragment.blocks.len());
+        for block in &fragment.blocks {
+            blocks.push(self.fresh_block(block).map_err(to_js)?);
+        }
+        let caret = blocks
+            .first()
+            .map(first_pos_of_block)
+            .unwrap_or_else(|| Pos::new(start.node, 0));
+
+        // Position the insertion between whole body blocks: before the caret block
+        // (caret at its start), after it (caret at its end), or split it (mid-way).
+        let mut ops = Vec::new();
+        let insert_index = if start.offset == 0 {
+            block_index as u32
+        } else if start.offset >= paragraph_len {
+            block_index as u32 + 1
+        } else {
+            let new_id = self
+                .edit_ids
+                .next_id()
+                .map_err(|_| to_js("id space exhausted".into()))?;
+            ops.push(Operation::SplitParagraph { at: start, new_id });
+            block_index as u32 + 1
+        };
+        ops.push(Operation::InsertBlocks {
+            container: None,
+            index: insert_index,
+            blocks,
+        });
+        self.apply_action_caret_as(ops, caret, HistoryKind::Paste)
             .map_err(to_js)
     }
 
@@ -6395,6 +6529,116 @@ impl WasmDocument {
         self.apply_action_caret_as(ops, Pos::new(start_node, 0), HistoryKind::ListFormatting)
     }
 
+    /// Deep-clones a structured-clipboard block, reassigning a fresh id to every
+    /// node (paragraph, table, row, cell, and each cell's blocks) so a pasted
+    /// fragment never collides with the ids it was copied from, and sanitizing
+    /// paragraph inline content through [`sanitize_inlines`](Self::sanitize_inlines).
+    /// Only paragraphs and tables are reconstructed — the same set
+    /// [`copy_structured`](Self::copy_structured) emits — so an unexpected block
+    /// kind is rejected rather than cloned with duplicate ids.
+    fn fresh_block(&mut self, block: &BlockNode) -> Result<BlockNode, String> {
+        let exhausted = || "id space exhausted".to_string();
+        match block {
+            BlockNode::Paragraph(p) => {
+                let id = self.edit_ids.next_id().map_err(|_| exhausted())?;
+                Ok(BlockNode::Paragraph(Paragraph {
+                    id,
+                    properties: p.properties.clone(),
+                    inlines: self.sanitize_inlines(&p.inlines)?,
+                }))
+            }
+            BlockNode::Table(t) => {
+                let mut rows = Vec::with_capacity(t.rows.len());
+                for row in &t.rows {
+                    let mut cells = Vec::with_capacity(row.cells.len());
+                    for cell in &row.cells {
+                        let cell_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
+                        let mut blocks = Vec::with_capacity(cell.blocks.len());
+                        for inner in &cell.blocks {
+                            blocks.push(self.fresh_block(inner)?);
+                        }
+                        if blocks.is_empty() {
+                            // A cell's block list must stay non-empty.
+                            let pid = self.edit_ids.next_id().map_err(|_| exhausted())?;
+                            blocks.push(BlockNode::Paragraph(Paragraph {
+                                id: pid,
+                                properties: ParagraphProperties::default(),
+                                inlines: Vec::new(),
+                            }));
+                        }
+                        cells.push(TableCell {
+                            id: cell_id,
+                            properties: cell.properties.clone(),
+                            blocks,
+                        });
+                    }
+                    let row_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
+                    rows.push(TableRow {
+                        id: row_id,
+                        properties: row.properties.clone(),
+                        cells,
+                    });
+                }
+                let table_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
+                Ok(BlockNode::Table(Table {
+                    id: table_id,
+                    grid: t.grid.clone(),
+                    grid_change: t.grid_change.clone(),
+                    properties: t.properties.clone(),
+                    rows,
+                }))
+            }
+            _ => Err("unsupported block in structured paste".into()),
+        }
+    }
+
+    /// Rebuilds a paragraph's inline sequence for structured paste: text runs,
+    /// tabs, breaks, and hyperlinks are kept (with fresh ids and recursively
+    /// sanitized hyperlink content); every other inline — drawings, fields,
+    /// embedded objects, comment/bookmark/note markers — is dropped rather than
+    /// duplicated with a reference that would dangle or double-bind an existing
+    /// definition. Text, formatting, and links survive; exotic inline objects do
+    /// not (the documented bound of this internal structured-paste slice).
+    fn sanitize_inlines(&mut self, inlines: &[InlineNode]) -> Result<Vec<InlineNode>, String> {
+        let exhausted = || "id space exhausted".to_string();
+        let mut out = Vec::new();
+        for inline in inlines {
+            match inline {
+                InlineNode::Run(r) => {
+                    let id = self.edit_ids.next_id().map_err(|_| exhausted())?;
+                    out.push(InlineNode::Run(Run {
+                        id,
+                        properties: r.properties.clone(),
+                        text: r.text.clone(),
+                    }));
+                }
+                InlineNode::Tab(_) => {
+                    let id = self.edit_ids.next_id().map_err(|_| exhausted())?;
+                    out.push(InlineNode::Tab(Tab { id }));
+                }
+                InlineNode::Break(b) => {
+                    let id = self.edit_ids.next_id().map_err(|_| exhausted())?;
+                    out.push(InlineNode::Break(Break { id, kind: b.kind }));
+                }
+                InlineNode::Hyperlink(h) => {
+                    let inner = self.sanitize_inlines(&h.inlines)?;
+                    if inner.is_empty() {
+                        continue;
+                    }
+                    let id = self.edit_ids.next_id().map_err(|_| exhausted())?;
+                    out.push(InlineNode::Hyperlink(Hyperlink {
+                        id,
+                        target: h.target.clone(),
+                        tooltip: h.tooltip.clone(),
+                        inlines: inner,
+                    }));
+                }
+                _ => {}
+            }
+        }
+        Ok(out)
+    }
+
     fn ensure_list(&mut self, numbered: bool) -> Result<NumberingInstanceId, String> {
         if let Some(id) = if numbered {
             self.numbered_list
@@ -6888,6 +7132,17 @@ struct ClipboardRun {
     href: Option<String>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     paragraph_break: bool,
+}
+
+/// The internal structured-clipboard fragment produced by
+/// [`copy_structured`](WasmDocument::copy_structured) and consumed by
+/// [`paste_structured`](WasmDocument::paste_structured): a sequence of top-level
+/// body blocks (paragraphs and tables) serialized as the model's own `BlockNode`
+/// JSON. It crosses the JS boundary only inside the internal round-trip marker,
+/// so it is never parsed from foreign HTML.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+struct StructuredClipboard {
+    blocks: Vec<BlockNode>,
 }
 
 fn paragraph_rich_runs(
@@ -10721,6 +10976,29 @@ fn first_paragraph_of_row(row: &TableRow) -> Option<NodeId> {
     row.cells.first().and_then(first_paragraph_of_cell)
 }
 
+/// A caret position at the very start of a block's first text-bearing paragraph
+/// — a table's first cell paragraph, an SDT's first inner paragraph, a paragraph
+/// itself — used as the natural landing caret after inserting the block.
+fn first_pos_of_block(block: &BlockNode) -> Pos {
+    match block {
+        BlockNode::Paragraph(p) => Pos::new(p.id, 0),
+        BlockNode::Table(t) => t
+            .rows
+            .first()
+            .and_then(first_paragraph_of_row)
+            .map_or_else(|| Pos::new(t.id, 0), |p| Pos::new(p, 0)),
+        BlockNode::Sdt(s) => s
+            .blocks
+            .iter()
+            .find_map(|b| match b {
+                BlockNode::Paragraph(p) => Some(Pos::new(p.id, 0)),
+                _ => None,
+            })
+            .unwrap_or_else(|| Pos::new(s.id, 0)),
+        BlockNode::AltChunk(a) => Pos::new(a.id, 0),
+    }
+}
+
 /// The id of a cell's first paragraph, if it has one.
 fn first_paragraph_of_cell(cell: &TableCell) -> Option<NodeId> {
     cell.blocks.iter().find_map(|b| match b {
@@ -11287,6 +11565,14 @@ fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos 
             .first()
             .and_then(first_paragraph_of_row)
             .map_or_else(|| Pos::new(table.id, 0), |p| Pos::new(p, 0)),
+        // Block-sequence ops go through `apply_action_caret`, which overrides the
+        // caret with the caller's own position; these arms only keep the match
+        // exhaustive with a sensible fallback to the first inserted block.
+        Operation::InsertBlocks { blocks, .. } => blocks
+            .first()
+            .map(first_pos_of_block)
+            .unwrap_or_else(|| Pos::new(doc_id, 0)),
+        Operation::DeleteBlocks { container, .. } => Pos::new(container.unwrap_or(doc_id), 0),
         // Cell/table formatting keeps the selection (the frontend does not collapse
         // to this); these arms only keep the match exhaustive.
         Operation::SetTableCellProperties { cell, .. } => {
@@ -15746,6 +16032,165 @@ mod tests {
                 .instance,
             restarted,
             "undo reverts the continue to the restarted instance"
+        );
+    }
+
+    fn body_table_ids(d: &WasmDocument) -> Vec<NodeId> {
+        d.document
+            .body()
+            .iter()
+            .filter_map(|b| match b {
+                BlockNode::Table(t) => Some(t.id),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn structured_copy_paste_reconstructs_a_table_with_fresh_ids() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let anchor = nodes
+            .iter()
+            .find(|(_, text)| !text.is_empty())
+            .map(|(id, _)| id.to_string())
+            .expect("a non-empty paragraph");
+
+        let before = body_table_ids(&d);
+        let ins = d.insert_table(&anchor, 2, 2).expect("insert a 2x2 table");
+        let inserted = body_table_ids(&d);
+        let new_table_id = *inserted
+            .iter()
+            .find(|id| !before.contains(id))
+            .expect("the inserted table id");
+        // The caret landed in the new table's first cell paragraph — copy the
+        // whole table from there (a collapsed range inside a cell still captures
+        // the enclosing top-level table block).
+        let cell_para = ins.node();
+        let json = d.copy_structured(&cell_para, 0, &cell_para, 0);
+        assert!(
+            json.contains("\"table\"") || json.contains("blocks"),
+            "structured copy produced a block fragment, got: {json}"
+        );
+
+        // Paste at the end of the anchor paragraph (a body paragraph): the table
+        // is reconstructed as a distinct second table.
+        let anchor_len = d.paragraph_length(&anchor);
+        d.paste_structured(&anchor, anchor_len, &anchor, anchor_len, json)
+            .expect("structured paste");
+
+        let after = body_table_ids(&d);
+        assert_eq!(
+            after.len(),
+            inserted.len() + 1,
+            "paste added exactly one more top-level table"
+        );
+        // Every table id is still unique — the pasted table got fresh ids.
+        let mut unique = after.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), after.len(), "no duplicated table ids");
+        let pasted = *after
+            .iter()
+            .find(|id| !inserted.contains(id))
+            .expect("the pasted table id");
+        assert_ne!(pasted, new_table_id, "pasted table has a fresh id");
+        // The reconstructed table keeps 2 rows x 2 cells.
+        let t = find_table(&d.document, pasted).expect("pasted table exists");
+        assert_eq!(t.rows.len(), 2);
+        assert!(t.rows.iter().all(|r| r.cells.len() == 2));
+
+        // One undoable action: undo removes the pasted table.
+        d.undo().expect("undo the structured paste");
+        assert_eq!(body_table_ids(&d).len(), inserted.len());
+    }
+
+    #[test]
+    fn structured_copy_paste_preserves_list_numbering() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, text)| !text.is_empty())
+            .map(|(id, _)| id.to_string())
+            .expect("a non-empty paragraph");
+
+        // A two-item numbered list.
+        d.toggle_list(&node, 0, &node, 0, "numbered")
+            .expect("toggle numbered on");
+        let second = d
+            .split_paragraph(&node, d.paragraph_length(&node))
+            .expect("split second item")
+            .node();
+        let instance = paragraph_properties(&d.document, NodeId::from_str(&node).unwrap())
+            .unwrap()
+            .numbering
+            .unwrap()
+            .instance;
+
+        // A plain destination paragraph outside the list.
+        let plain = nodes
+            .iter()
+            .rev()
+            .find(|(id, text)| !text.is_empty() && id.to_string() != node)
+            .map(|(id, _)| id.to_string())
+            .expect("a second non-empty paragraph");
+
+        // Copy both list items; the fragment must carry their numbering.
+        let json = d.copy_structured(&node, 0, &second, d.paragraph_length(&second));
+        assert!(!json.is_empty(), "a list selection copies as structured");
+
+        let plain_len = d.paragraph_length(&plain);
+        let before_list = d
+            .document
+            .body()
+            .iter()
+            .filter(|b| matches!(b, BlockNode::Paragraph(p) if p.properties.numbering.is_some()))
+            .count();
+        d.paste_structured(&plain, plain_len, &plain, plain_len, json)
+            .expect("structured paste of a list");
+        let after_list = d
+            .document
+            .body()
+            .iter()
+            .filter(|b| matches!(b, BlockNode::Paragraph(p) if p.properties.numbering.is_some()))
+            .count();
+        assert_eq!(
+            after_list,
+            before_list + 2,
+            "two more numbered paragraphs exist after paste"
+        );
+        // The pasted items reference the same numbering instance (same-document).
+        let pasted_uses_instance = d.document.body().iter().any(|b| {
+            matches!(b, BlockNode::Paragraph(p)
+                if p.id != NodeId::from_str(&node).unwrap()
+                    && p.id != NodeId::from_str(&second).unwrap()
+                    && p.properties.numbering.is_some_and(|n| n.instance == instance))
+        });
+        assert!(
+            pasted_uses_instance,
+            "pasted list keeps its numbering instance"
+        );
+    }
+
+    #[test]
+    fn structured_copy_returns_empty_for_plain_prose() {
+        let d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let (id, text) = nodes
+            .iter()
+            .find(|(_, t)| t.len() >= 3)
+            .map(|(id, t)| (id.to_string(), t.clone()))
+            .expect("a paragraph with text");
+        // A plain-text selection carries no table or list, so structured copy
+        // declines and the caller keeps the flat rich-run path.
+        assert_eq!(
+            d.copy_structured(&id, 0, &id, text.len() as u32),
+            "",
+            "plain prose is not captured as a structured fragment"
         );
     }
 
