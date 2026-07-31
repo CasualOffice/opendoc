@@ -108,7 +108,7 @@ still use bounded approximations.
 | P1 | Footnote/endnote placement is bounded, not Word-complete | Common note references and bodies render, but separator customization, footnote-only trailing pages, and full section policy remain approximations | `notes.rs`; `62-FOOTNOTE-ENDNOTE-PAGINATION-DESIGN.md` |
 | P1 | Square-family exclusion is only local/bounded | Cross-paragraph, page-relative, contour, and overlapping-float cases can still diverge | `flow.rs::shape_with_float_exclusions` |
 | P1 | Table style cascade and advanced table geometry are not consumed | Styled tables lose conditional fills/borders/fonts; floating/bidi/spaced tables become inline approximations | `cascade.rs`; `flow.rs::flow_table` |
-| P1 | Paragraph base direction and per-script run slots are not selected | Arabic/Hebrew/mixed-script layout and East Asian/complex-script typography can use wrong direction, face, weight, or size | `flow.rs::line_constraints`, `requested_family` |
+| P1 | Paragraph base direction and per-script run slots — partially fixed | Base direction (`w:bidi`) + RTL alignment edge, per-script font slots (`w:eastAsia`/`w:cs`/`hint`), and complex-script bold/italic/size are now consumed; full bidi *visual reordering*, vertical writing, and theme-only per-script resolution remain open | `flow.rs::line_constraints`/`push_styled_runs`, `cascade.rs::requested_font_family_for`, `script.rs`, `shape.rs::alignment` |
 | P2 | Shape geometry is reduced at paint | Ellipse/round-rect/preset/path shapes can paint as rectangles | `anchor.rs::place_group_children` |
 | P2 | Review semantics have no view policy | Insertions and deletions both render; comments have no visible anchor/UI | `flow.rs::collect_items` |
 | P2 | Section/page-furniture long tail is not consumed | Page borders, line numbers, note policy, section text direction, and parity starts diverge | model `SectionBoundary`; layout search |
@@ -332,16 +332,55 @@ float-exclusion architecture can support them safely.
 ### 7. RTL and per-script typography are partial
 
 The shaper performs Unicode BiDi analysis and records per-run bidi levels, so
-ordinary mixed-direction text is not wholly unsupported. Layout still sets
-`LineConstraints.rtl` to `false`, however, and does not derive paragraph base
-direction from `w:bidi` or run direction from `w:rtl`.
+ordinary mixed-direction text is not wholly unsupported.
 
-Font selection is also ASCII-slot-only:
-`flow.rs::requested_family` reads `RunProperties::font_ref` but not the modeled
-`font_ref_h_ansi`, `font_ref_east_asia`, `font_ref_cs`, or `font_hint`.
-Likewise, shaped weight/style/size use the Latin `bold`, `italic`, and
-`size_half_points`, not `bold_complex`, `italic_complex`, and
-`size_complex_half_points`.
+**Partially fixed** (`agent/fix-rtl-per-script-typography`): two of the three
+gaps this section named are now consumed in layout.
+
+- **Paragraph base direction.** `flow.rs::line_constraints` no longer hardcodes
+  `LineConstraints.rtl = false`; it derives the flag from the paragraph's
+  effective `w:bidi` (`ParagraphProperties::bidi`, resolved through the style
+  cascade — the P1B-COV-PAR East-Asian/bidi toggles were also wired into
+  `cascade.rs::overlay_paragraph`, which had silently been dropping them). An RTL
+  paragraph's direction-relative alignment now resolves against the correct edge:
+  `shape.rs::alignment` maps `Start`→`Right` and `End`→`Left` for a `w:bidi`
+  paragraph, so the visual edge follows the document's base direction rather than
+  the base level `parley` auto-detects from the text (parley 0.11 exposes no API
+  to force a paragraph's base direction, so a Latin-charactered RTL paragraph
+  would otherwise mis-detect LTR).
+- **Per-script font slots.** `flow.rs::push_styled_runs` now partitions a run
+  that carries per-script formatting into script spans (`script.rs`, the single
+  source of truth for the East-Asian/complex-script Unicode ranges — the shaper's
+  CJK-metric `is_cjk_scalar` delegates to it) and resolves each span against its
+  own `w:rFonts` slot per ECMA-376 §17.3.2.26: East-Asian code points use
+  `w:eastAsia`, complex-script code points use `w:cs`, everything else keeps
+  `w:ascii`/`w:hAnsi`. `cascade.rs::requested_font_family_for` reads the modeled
+  `font_ref_east_asia`/`font_ref_cs` (falling back to the ascii slot when unset,
+  as Word does), and `font_hint` (`w:rFonts@hint`) disambiguates the neutral code
+  points. **Complex-script bold/italic/size are also consumed**: a `w:cs` span
+  shapes with `bold_complex`/`italic_complex`/`size_complex_half_points`
+  (`w:bCs`/`w:iCs`/`w:szCs`) instead of the Latin `w:b`/`w:i`/`w:sz`.
+
+To keep the existing corpus byte-identical, the per-script split is gated on the
+run actually declaring per-script intent (an `w:eastAsia`/`w:cs` font, a
+`w:bCs`/`w:iCs`/`w:szCs`, or an East-Asian/complex `w:rFonts@hint`); a run
+without those keeps the original single-slot fast path.
+
+**Still open** in this area:
+
+- **Full bidi visual reordering.** The base-direction flag and alignment edge are
+  now set, but reordering the visual order of mixed LTR/RTL runs *within* a line
+  still relies on `parley`'s own per-run Unicode-bidi analysis; opendoc does not
+  itself reorder runs, and cannot force a paragraph's base level into that
+  analysis (parley 0.11 has no such API). East-Asian text runs directionally like
+  Latin here; vertical writing modes are not addressed.
+- **Theme-driven per-script resolution without an explicit slot.** A CJK/complex
+  run that relies on the theme's `minorEastAsia`/`minorBidi` entry *without*
+  setting an explicit `w:eastAsia`/`w:cs` on the run is not yet re-slotted (the
+  gate requires explicit per-script intent), so it still resolves via the ascii
+  theme slot.
+- **East-Asian paragraph layout rules** (kinsoku, auto-spacing, grid snapping)
+  remain modeled-but-unconsumed, per the closing paragraph of this section.
 
 Run character scaling (`w:w`) is modeled, round-tripped, and consumed by shaping
 and paint. Exact-height lines clip escaped ink and re-anchor each glyph baseline
@@ -351,8 +390,10 @@ are containment rules, not a claim that every producer's CJK grid and line
 metrics are reproduced exactly; doc 60 records the remaining SDS pagination
 delta.
 
-This means system fallback may find a glyph-covering face while still ignoring
-the producer's intended per-script face and complex-script metrics.
+A run that declared no per-script face still relies on system/coverage fallback
+to find a glyph-covering face, but a run that *does* declare `w:eastAsia`/`w:cs`
+(or the complex-script metrics) now shapes with the producer's intended face and
+metrics rather than the Latin slot.
 
 Other modeled run effects that are not painted include double strike, emphasis
 marks, kerning threshold policy, outline, shadow, emboss, imprint, run border,

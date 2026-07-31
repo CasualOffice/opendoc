@@ -25,6 +25,8 @@ use casual_doc_model::v1::{
 };
 use casual_doc_model::v1::{DefinitionMap, Definitions};
 
+use crate::script::ScriptSlot;
+
 /// The maximum `basedOn` chain depth walked. The model rejects cycles, but the
 /// resolver is defensive: it never loops, and a pathological chain is simply
 /// truncated (the deepest ancestors, which contribute least, are dropped).
@@ -276,10 +278,35 @@ pub fn requested_font_family(
     properties: &RunProperties,
     scheme: Option<&FontScheme>,
 ) -> Option<String> {
-    let reference = properties
+    requested_font_family_for(properties, scheme, ScriptSlot::Default)
+}
+
+/// The concrete authored family a run requests for a given script slot
+/// (ECMA-376 §17.3.2.26). Each slot reads its own `w:rFonts` entry — East-Asian
+/// text from `w:eastAsia`, complex-script text from `w:cs`, everything else from
+/// `w:ascii`/`w:hAnsi` — so a mixed-script run shapes each script in the producer's
+/// intended face rather than forcing the whole run onto the Latin slot.
+///
+/// A slot the run leaves unset falls back to the default (`w:ascii`/`w:hAnsi`)
+/// slot, matching Word: a CJK or Arabic run with no `w:eastAsia`/`w:cs` font still
+/// resolves to the run's declared family. Theme references resolve through the
+/// document font scheme exactly as the default slot does.
+#[must_use]
+pub fn requested_font_family_for(
+    properties: &RunProperties,
+    scheme: Option<&FontScheme>,
+    slot: ScriptSlot,
+) -> Option<String> {
+    // The default (ascii/hAnsi) reference every slot falls back to.
+    let default_ref = properties
         .font_ref
         .as_ref()
-        .or(properties.font_ref_h_ansi.as_ref())?;
+        .or(properties.font_ref_h_ansi.as_ref());
+    let reference = match slot {
+        ScriptSlot::Default => default_ref,
+        ScriptSlot::EastAsia => properties.font_ref_east_asia.as_ref().or(default_ref),
+        ScriptSlot::ComplexScript => properties.font_ref_cs.as_ref().or(default_ref),
+    }?;
     match reference {
         FontRef::Named(name) => Some(name.name.clone()),
         FontRef::Theme(theme) => theme_font_family(theme.slot, scheme),
@@ -414,6 +441,51 @@ fn overlay_paragraph(base: &mut ParagraphProperties, over: &ParagraphProperties)
     }
     if over.mark_run.is_some() {
         base.mark_run = over.mark_run.clone();
+    }
+    // The P1B-COV-PAR East-Asian/bidi toggles (added to the model but never
+    // wired into this overlay) previously vanished on cascade: a paragraph or
+    // style that set `w:bidi`/`w:kinsoku`/etc. lost it the moment
+    // `resolve_paragraph` ran, because this function had no arm for them —
+    // even a *direct* `w:bidi` on the paragraph's own `w:pPr` was dropped, since
+    // direct properties are overlaid through this same function. Fixed as part
+    // of deriving `LineConstraints.rtl` from `w:bidi` (`docs/55` §7): these are
+    // simple tri-state replace-when-set toggles, the same idiom as
+    // `outline_level` above.
+    if over.bidi.is_some() {
+        base.bidi = over.bidi;
+    }
+    if over.word_wrap.is_some() {
+        base.word_wrap = over.word_wrap;
+    }
+    if over.kinsoku.is_some() {
+        base.kinsoku = over.kinsoku;
+    }
+    if over.snap_to_grid.is_some() {
+        base.snap_to_grid = over.snap_to_grid;
+    }
+    if over.mirror_indents.is_some() {
+        base.mirror_indents = over.mirror_indents;
+    }
+    if over.adjust_right_ind.is_some() {
+        base.adjust_right_ind = over.adjust_right_ind;
+    }
+    if over.suppress_auto_hyphens.is_some() {
+        base.suppress_auto_hyphens = over.suppress_auto_hyphens;
+    }
+    if over.overflow_punct.is_some() {
+        base.overflow_punct = over.overflow_punct;
+    }
+    if over.top_line_punct.is_some() {
+        base.top_line_punct = over.top_line_punct;
+    }
+    if over.auto_space_de.is_some() {
+        base.auto_space_de = over.auto_space_de;
+    }
+    if over.auto_space_dn.is_some() {
+        base.auto_space_dn = over.auto_space_dn;
+    }
+    if over.text_alignment.is_some() {
+        base.text_alignment = over.text_alignment;
     }
 }
 
