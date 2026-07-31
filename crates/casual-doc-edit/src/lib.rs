@@ -19,8 +19,8 @@
 
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
-    BlockNode, Color, Comment, CommentId, CoreProperties, DefinitionMap, Document, Extent,
-    FontName, FontRef, GridColumn, HighlightColor, Hyperlink, HyperlinkTarget, InlineNode,
+    BlockNode, Color, Comment, CommentId, CoreProperties, DefinitionMap, Document, DrawingAnchor,
+    Extent, FontName, FontRef, GridColumn, HighlightColor, Hyperlink, HyperlinkTarget, InlineNode,
     PageMargins, PageOrientation, PageSize, Paragraph, ParagraphProperties, ReviewProjection,
     RgbColor, Run, RunProperties, SectionColumns, SectionId, Table, TableCell, TableCellProperties,
     TableProperties, TableRow, VerticalAlignment,
@@ -299,10 +299,20 @@ pub enum Operation {
     /// pattern, like [`Operation::SetParagraphProperties`]). `None` restores the
     /// "size resolved from content" state a missing extent means.
     SetExtent {
-        /// The inline drawing / text-box node to resize.
+        /// The drawing / text-box node to resize (inline or floating).
         object: NodeId,
         /// The new authored extent (`None` = defer to content-derived sizing).
         extent: Option<Extent>,
+    },
+    /// Move / re-wrap / re-order a **floating** object: replace the whole
+    /// [`DrawingAnchor`] of an `AnchoredDrawing` or floating `TextBox` (docs/85
+    /// §5.3). One op covers position, wrap mode, wrap distances, and z-order.
+    /// Self-inverse carrying the previous anchor (retained-value pattern).
+    SetAnchor {
+        /// The floating object node to reposition/re-wrap.
+        object: NodeId,
+        /// The new anchor (position + wrap + z-order).
+        anchor: Box<DrawingAnchor>,
     },
     /// Replace a table cell's properties (shading, borders, vertical alignment,
     /// margins, span/merge, …). Its own inverse (carrying the previous properties).
@@ -812,12 +822,19 @@ pub fn apply(
             })
         }
         Operation::SetExtent { object, extent } => {
-            let slot =
-                find_object_extent_mut(doc.body_mut(), *object).ok_or(EditError::NodeNotFound)?;
-            let previous = core::mem::replace(slot, *extent);
+            let previous = set_object_extent(doc.body_mut(), *object, *extent)
+                .ok_or(EditError::NodeNotFound)?;
             Ok(Operation::SetExtent {
                 object: *object,
                 extent: previous,
+            })
+        }
+        Operation::SetAnchor { object, anchor } => {
+            let previous = set_object_anchor(doc.body_mut(), *object, **anchor)
+                .ok_or(EditError::NodeNotFound)?;
+            Ok(Operation::SetAnchor {
+                object: *object,
+                anchor: Box::new(previous),
             })
         }
         Operation::SetTableCellProperties { cell, properties } => {
@@ -997,31 +1014,39 @@ fn remove_table(
     Err(EditError::NodeNotFound)
 }
 
-/// The mutable authored-extent slot of the inline drawing or text box with id
-/// `object`, searched recursively across body paragraphs (descending into
-/// hyperlink/revision inline wrappers), table cells, block SDTs, and inline
-/// text-box bodies. `None` if `object` is not a resizable inline object.
-/// [`Operation::SetExtent`]'s target.
-fn find_object_extent_mut(blocks: &mut [BlockNode], object: NodeId) -> Option<&mut Option<Extent>> {
+/// Sets the authored extent of the drawing / text box `object` (inline
+/// `Drawing`/`TextBox` or a floating `AnchoredDrawing`), searched recursively
+/// across body paragraphs (through hyperlink/revision wrappers), table cells,
+/// block SDTs, and inline text-box bodies. Returns the **previous** extent (as an
+/// `Option`, so a floating drawing's always-present extent and an inline
+/// object's optional extent share one inverse shape); `None` if `object` is not
+/// a resizable object. [`Operation::SetExtent`]'s target.
+fn set_object_extent(
+    blocks: &mut [BlockNode],
+    object: NodeId,
+    extent: Option<Extent>,
+) -> Option<Option<Extent>> {
     for block in blocks.iter_mut() {
         match block {
             BlockNode::Paragraph(paragraph) => {
-                if let Some(slot) = find_object_extent_in_inlines(&mut paragraph.inlines, object) {
-                    return Some(slot);
+                if let Some(prev) =
+                    set_object_extent_in_inlines(&mut paragraph.inlines, object, extent)
+                {
+                    return Some(prev);
                 }
             }
             BlockNode::Table(table) => {
                 for row in &mut table.rows {
                     for cell in &mut row.cells {
-                        if let Some(slot) = find_object_extent_mut(&mut cell.blocks, object) {
-                            return Some(slot);
+                        if let Some(prev) = set_object_extent(&mut cell.blocks, object, extent) {
+                            return Some(prev);
                         }
                     }
                 }
             }
             BlockNode::Sdt(sdt) => {
-                if let Some(slot) = find_object_extent_mut(&mut sdt.blocks, object) {
-                    return Some(slot);
+                if let Some(prev) = set_object_extent(&mut sdt.blocks, object, extent) {
+                    return Some(prev);
                 }
             }
             BlockNode::AltChunk(_) => {}
@@ -1030,34 +1055,127 @@ fn find_object_extent_mut(blocks: &mut [BlockNode], object: NodeId) -> Option<&m
     None
 }
 
-/// The mutable extent slot of a drawing/text-box node inside an inline sequence,
-/// descending one level into hyperlink and revision wrappers and into a text
-/// box's own block content (a nested drawing is resizable too).
-fn find_object_extent_in_inlines(
+fn set_object_extent_in_inlines(
     inlines: &mut [InlineNode],
     object: NodeId,
-) -> Option<&mut Option<Extent>> {
+    extent: Option<Extent>,
+) -> Option<Option<Extent>> {
     for inline in inlines.iter_mut() {
         match inline {
             InlineNode::Drawing(drawing) if drawing.id == object => {
-                return Some(&mut drawing.extent);
+                return Some(core::mem::replace(&mut drawing.extent, extent));
+            }
+            // A floating anchored picture always carries an extent; a `None`
+            // request leaves it unchanged (resize always supplies a size).
+            InlineNode::AnchoredDrawing(drawing) if drawing.id == object => {
+                let previous = Some(drawing.extent);
+                if let Some(new) = extent {
+                    drawing.extent = new;
+                }
+                return Some(previous);
             }
             InlineNode::TextBox(text_box) => {
                 if text_box.id == object {
-                    return Some(&mut text_box.extent);
+                    return Some(core::mem::replace(&mut text_box.extent, extent));
                 }
-                if let Some(slot) = find_object_extent_mut(&mut text_box.blocks, object) {
-                    return Some(slot);
+                if let Some(prev) = set_object_extent(&mut text_box.blocks, object, extent) {
+                    return Some(prev);
                 }
             }
             InlineNode::Hyperlink(hyperlink) => {
-                if let Some(slot) = find_object_extent_in_inlines(&mut hyperlink.inlines, object) {
-                    return Some(slot);
+                if let Some(prev) =
+                    set_object_extent_in_inlines(&mut hyperlink.inlines, object, extent)
+                {
+                    return Some(prev);
                 }
             }
             InlineNode::Revision(revision) => {
-                if let Some(slot) = find_object_extent_in_inlines(&mut revision.inlines, object) {
-                    return Some(slot);
+                if let Some(prev) =
+                    set_object_extent_in_inlines(&mut revision.inlines, object, extent)
+                {
+                    return Some(prev);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Replaces the [`DrawingAnchor`] of the floating object `object` (an
+/// `AnchoredDrawing`, a floating `TextBox`, or an anchored `Group`), searched the
+/// same way as [`set_object_extent`]. Returns the **previous** anchor; `None` if
+/// `object` is not a currently floating object (an inline object has no anchor to
+/// set, so a move/wrap is rejected rather than silently converting it to a float).
+/// [`Operation::SetAnchor`]'s target.
+fn set_object_anchor(
+    blocks: &mut [BlockNode],
+    object: NodeId,
+    anchor: DrawingAnchor,
+) -> Option<DrawingAnchor> {
+    for block in blocks.iter_mut() {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                if let Some(prev) =
+                    set_object_anchor_in_inlines(&mut paragraph.inlines, object, anchor)
+                {
+                    return Some(prev);
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &mut table.rows {
+                    for cell in &mut row.cells {
+                        if let Some(prev) = set_object_anchor(&mut cell.blocks, object, anchor) {
+                            return Some(prev);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(prev) = set_object_anchor(&mut sdt.blocks, object, anchor) {
+                    return Some(prev);
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    None
+}
+
+fn set_object_anchor_in_inlines(
+    inlines: &mut [InlineNode],
+    object: NodeId,
+    anchor: DrawingAnchor,
+) -> Option<DrawingAnchor> {
+    for inline in inlines.iter_mut() {
+        match inline {
+            InlineNode::AnchoredDrawing(drawing) if drawing.id == object => {
+                return Some(core::mem::replace(&mut drawing.anchor, anchor));
+            }
+            InlineNode::TextBox(text_box) => {
+                if text_box.id == object {
+                    // Only an already-floating text box can be re-anchored.
+                    return text_box.anchor.replace(anchor);
+                }
+                if let Some(prev) = set_object_anchor(&mut text_box.blocks, object, anchor) {
+                    return Some(prev);
+                }
+            }
+            InlineNode::Group(group) if group.id == object => {
+                return group.anchor.replace(anchor);
+            }
+            InlineNode::Hyperlink(hyperlink) => {
+                if let Some(prev) =
+                    set_object_anchor_in_inlines(&mut hyperlink.inlines, object, anchor)
+                {
+                    return Some(prev);
+                }
+            }
+            InlineNode::Revision(revision) => {
+                if let Some(prev) =
+                    set_object_anchor_in_inlines(&mut revision.inlines, object, anchor)
+                {
+                    return Some(prev);
                 }
             }
             _ => {}
@@ -2314,6 +2432,118 @@ mod tests {
                 &Operation::SetExtent {
                     object: n(999),
                     extent: new_extent,
+                },
+            ),
+            Err(EditError::NodeNotFound)
+        ));
+    }
+
+    #[test]
+    fn set_anchor_moves_and_rewraps_a_floating_drawing_with_exact_inverse() {
+        use casual_doc_model::v1::{
+            AnchorHorizontal, AnchorVertical, AnchoredDrawing, DrawingAnchor, Extent,
+            HorizontalAnchor, HorizontalPosition, MediaId, MediaReference, VerticalAnchor,
+            VerticalPosition, WrapDistances, WrapMode,
+        };
+        let media = MediaId::new(NodeId::from_parts(7, 901).unwrap());
+        let float_id = n(60);
+        let original = DrawingAnchor {
+            horizontal: AnchorHorizontal {
+                relative_from: HorizontalAnchor::Column,
+                position: HorizontalPosition::Offset(100_000),
+            },
+            vertical: AnchorVertical {
+                relative_from: VerticalAnchor::Paragraph,
+                position: VerticalPosition::Offset(50_000),
+            },
+            wrap: WrapMode::Square,
+            wrap_distances: WrapDistances::default(),
+            behind_doc: false,
+        };
+        let mut definitions = Definitions::default();
+        definitions.media.insert(
+            media,
+            MediaReference {
+                relationship_id: "rId9".to_owned(),
+                media_type: "image/png".to_owned(),
+                part_name: "word/media/image1.png".to_owned(),
+            },
+        );
+        let mut d = Document::new(
+            n(1000),
+            vec![BlockNode::Paragraph(Paragraph {
+                id: n(2),
+                properties: ParagraphProperties::default(),
+                inlines: vec![
+                    run(3, "anchor"),
+                    InlineNode::AnchoredDrawing(AnchoredDrawing {
+                        id: float_id,
+                        media,
+                        extent: Extent {
+                            width_emu: 914_400,
+                            height_emu: 457_200,
+                        },
+                        anchor: original,
+                        descr: None,
+                        relative_height: None,
+                        crop: None,
+                    }),
+                ],
+            })],
+            definitions,
+        )
+        .expect("valid document with a floating drawing");
+        let mut ids = IdGenerator::new(9);
+
+        // Move to an absolute page position + change wrap to behind-text.
+        let moved = DrawingAnchor {
+            horizontal: AnchorHorizontal {
+                relative_from: HorizontalAnchor::Page,
+                position: HorizontalPosition::Offset(2_000_000),
+            },
+            vertical: AnchorVertical {
+                relative_from: VerticalAnchor::Page,
+                position: VerticalPosition::Offset(3_000_000),
+            },
+            wrap: WrapMode::None,
+            wrap_distances: WrapDistances::default(),
+            behind_doc: true,
+        };
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetAnchor {
+                object: float_id,
+                anchor: Box::new(moved),
+            },
+        )
+        .expect("move + re-wrap the float");
+        // The inverse carries the original anchor.
+        assert_eq!(
+            inverse,
+            Operation::SetAnchor {
+                object: float_id,
+                anchor: Box::new(original),
+            }
+        );
+        // Applying the inverse restores it exactly (undo).
+        apply(&mut d, &mut ids, &inverse).expect("undo the move");
+        let BlockNode::Paragraph(p) = &d.body()[0] else {
+            unreachable!()
+        };
+        let InlineNode::AnchoredDrawing(drawing) = &p.inlines[1] else {
+            panic!("the float is intact");
+        };
+        assert_eq!(drawing.anchor, original);
+
+        // An inline (non-floating) object has no anchor to set — rejected.
+        assert!(matches!(
+            apply(
+                &mut d,
+                &mut ids,
+                &Operation::SetAnchor {
+                    object: n(3), // a plain run, not floating
+                    anchor: Box::new(moved),
                 },
             ),
             Err(EditError::NodeNotFound)

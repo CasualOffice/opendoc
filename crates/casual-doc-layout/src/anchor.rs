@@ -576,6 +576,7 @@ fn collect_inlines(
                     layout,
                     page_index,
                     PlacedAnchor {
+                        node: Some(drawing.id),
                         content: AnchorContent::Image {
                             media,
                             crop: drawing.crop,
@@ -612,6 +613,7 @@ fn collect_inlines(
                     layout,
                     page_index,
                     PlacedAnchor {
+                        node: Some(text_box.id),
                         content: AnchorContent::TextBox {
                             blocks: flowed.blocks,
                             fill: text_box.fill.map(rgba),
@@ -729,6 +731,7 @@ fn place_group_children(
                     layout,
                     page_index,
                     PlacedAnchor {
+                        node: None,
                         content: AnchorContent::Image {
                             media,
                             crop: picture.crop,
@@ -758,6 +761,7 @@ fn place_group_children(
                     layout,
                     page_index,
                     PlacedAnchor {
+                        node: None,
                         content: AnchorContent::TextBox {
                             blocks: flowed.blocks,
                             fill: text_box.fill.map(rgba),
@@ -797,6 +801,7 @@ fn place_group_children(
                     layout,
                     page_index,
                     PlacedAnchor {
+                        node: None,
                         content,
                         rect,
                         behind_doc,

@@ -3244,11 +3244,29 @@ body.modal-open {
   border: 1px solid var(--line);
   box-shadow: var(--shadow-popover);
   font-size: 12px;
-  pointer-events: none;
+  pointer-events: auto;
 }
 .object-context-bar[hidden] { display: none; }
 .object-context-bar strong { text-transform: capitalize; }
 .object-context-bar small { color: var(--muted); }
+.object-wrap-menu { display: flex; gap: 3px; }
+.object-wrap-btn {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 8px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.object-wrap-btn:hover { background: var(--accent-soft); border-color: var(--accent); }
+.object-wrap-btn[aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  font-weight: 650;
+}
 
 .overlay .table-col-resize-handle {
   position: absolute;

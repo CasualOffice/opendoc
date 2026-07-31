@@ -6,6 +6,7 @@
 //! fragment, which is exactly what makes incremental re-pagination (the
 //! stabilization halt) and hit-testing cheap (`43-…` §3.5, §9).
 
+use casual_doc_model::NodeId;
 use casual_doc_model::v1::SectionId;
 use serde::{Deserialize, Serialize};
 
@@ -142,6 +143,13 @@ pub enum AnchorContent {
 /// by [`compose_page`](crate::compose::compose_page).
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct PlacedAnchor {
+    /// The model anchor node this float came from — a top-level
+    /// [`AnchoredDrawing`](casual_doc_model::v1::AnchoredDrawing) or a floating
+    /// [`TextBox`](casual_doc_model::v1::TextBox) — so a click can be resolved
+    /// back to a selectable object (docs/85 §3). `None` for a group child (not
+    /// individually selectable yet) and any float with no model identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<NodeId>,
     /// What this float paints.
     pub content: AnchorContent,
     /// The absolute rectangle in page-local twip coordinates (the paint box; the
