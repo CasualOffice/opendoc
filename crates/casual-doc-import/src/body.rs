@@ -4188,11 +4188,18 @@ impl BodyParser<'_> {
                     relative_height,
                 }));
             }
-            // Inline VML image: unchanged (the model does not capture CSS sizing).
-            return Ok(Some(Segment::Drawing {
-                media,
-                extent: None,
-            }));
+            // Inline VML image: not floating (no absolute box/z-order), but the
+            // `v:shape@style` CSS may still carry an authored `width`/`height` (the
+            // common case — VML sizing lives on the style string, not a separate
+            // attribute). Use it as the drawing's extent so the image actually
+            // paints: `image_item` (casual-doc-layout) treats `extent: None` as
+            // "cannot be sized" and silently contributes nothing to layout. A box
+            // missing either dimension, or a degenerate zero-size one, still leaves
+            // `extent: None` rather than fabricating a bogus size.
+            let extent = (drawing.position.width.is_some_and(|w| w > 0)
+                && drawing.position.height.is_some_and(|h| h > 0))
+            .then(|| vml_extent(&drawing.position));
+            return Ok(Some(Segment::Drawing { media, extent }));
         }
         // A VML text box (`v:textbox`): placement depends on both its container and
         // whether the layout engine can honor its exclusion semantics. Its flowed
