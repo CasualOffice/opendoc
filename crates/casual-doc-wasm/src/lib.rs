@@ -5435,6 +5435,96 @@ impl WasmDocument {
         None
     }
 
+    /// The document's structure as a **read-only** JSON array of
+    /// [`A11yBlockJson`] nodes in document order — headings (with a 1-based
+    /// level), paragraphs, list items (with an `ordered` flag), and tables
+    /// (a grid of cell plain-text). A host renders this into an off-screen
+    /// ARIA tree so assistive technology can read the canvas document, which
+    /// otherwise exposes nothing to a screen reader (docs/67 row 9). The model
+    /// stays the source of truth: this is a projection, never an editing
+    /// surface (docs/67 Open Risks — "Accessibility bridges cannot become
+    /// hidden DOM editors"). Empty paragraphs are omitted as reading noise;
+    /// content controls flatten into their blocks; a paragraph inside a table
+    /// cell contributes to that cell's text, not a top-level node.
+    #[wasm_bindgen(js_name = accessibilityTree)]
+    #[must_use]
+    pub fn accessibility_tree(&self) -> String {
+        let cascade = StyleCascade::new(self.document.definitions());
+        let mut out = Vec::new();
+        self.collect_a11y_blocks(self.document.body(), &cascade, &mut out);
+        serde_json::to_string(&out).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    fn collect_a11y_blocks(
+        &self,
+        blocks: &[BlockNode],
+        cascade: &StyleCascade,
+        out: &mut Vec<A11yBlockJson>,
+    ) {
+        for block in blocks {
+            match block {
+                BlockNode::Paragraph(paragraph) => {
+                    let text = node_plain_text(&paragraph.inlines);
+                    let trimmed = text.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    let text = trimmed.to_owned();
+                    if let Some(level) = self.heading_level_of(paragraph.id, cascade) {
+                        out.push(A11yBlockJson::Heading { level, text });
+                    } else if let Some(reference) = paragraph.properties.numbering.as_ref() {
+                        out.push(A11yBlockJson::ListItem {
+                            ordered: self.numbering_ordered(reference),
+                            text,
+                        });
+                    } else {
+                        out.push(A11yBlockJson::Paragraph { text });
+                    }
+                }
+                BlockNode::Table(table) => {
+                    let rows = table
+                        .rows
+                        .iter()
+                        .map(|row| {
+                            row.cells
+                                .iter()
+                                .map(|cell| {
+                                    let mut pairs = Vec::new();
+                                    collect_block_text(&cell.blocks, &mut pairs);
+                                    pairs
+                                        .into_iter()
+                                        .map(|(_, text)| text)
+                                        .filter(|text| !text.trim().is_empty())
+                                        .collect::<Vec<_>>()
+                                        .join(" ")
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>();
+                    out.push(A11yBlockJson::Table { rows });
+                }
+                BlockNode::Sdt(sdt) => self.collect_a11y_blocks(&sdt.blocks, cascade, out),
+                BlockNode::AltChunk(_) => {}
+            }
+        }
+    }
+
+    /// Whether a paragraph's list is ordered (numbered) rather than a bullet
+    /// list — mirrors [`list_style_at`](Self::list_style_at)'s classification,
+    /// defaulting an unrecognized imported instance to unordered.
+    fn numbering_ordered(&self, reference: &NumberingRef) -> bool {
+        if Some(reference.instance) == self.numbered_list {
+            return true;
+        }
+        if Some(reference.instance) == self.bullet_list {
+            return false;
+        }
+        !matches!(
+            self.list_format(reference.instance),
+            Some(NumberFormat::Bullet)
+        )
+    }
+
     /// Undoes the last user action (one or many ops), returning the restored
     /// caret + revision.
     #[wasm_bindgen(js_name = undo)]
@@ -7317,6 +7407,22 @@ fn collect_block_text(blocks: &[BlockNode], out: &mut Vec<(NodeId, String)>) {
             BlockNode::AltChunk(_) => {}
         }
     }
+}
+
+/// One read-only, model-derived accessibility node for [`accessibility_tree`]
+/// (docs/67 row 9). Serialized as an internally-tagged JSON object whose `kind`
+/// selects the variant: `heading` (+ 1-based `level`), `paragraph`, `listItem`
+/// (+ `ordered`), or `table` (+ `rows`, a grid of cell plain-text). This is a
+/// structural projection for an off-screen ARIA tree, never an editing surface.
+///
+/// [`accessibility_tree`]: WasmDocument::accessibility_tree
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum A11yBlockJson {
+    Heading { level: u8, text: String },
+    Paragraph { text: String },
+    ListItem { ordered: bool, text: String },
+    Table { rows: Vec<Vec<String>> },
 }
 
 /// A resolved `[start, end)` UTF-8 byte range anchoring a comment or revision
@@ -16532,6 +16638,86 @@ mod tests {
             assert!(parts[0].parse::<u8>().is_ok(), "numeric level: {row:?}");
             assert!(!parts[2].trim().is_empty(), "non-empty text: {row:?}");
         }
+    }
+
+    /// The read-only accessibility tree (docs/67 row 9) projects the document's
+    /// structure — headings with a level, paragraphs, list items with an
+    /// ordered flag, and tables as a cell-text grid — so an off-screen ARIA
+    /// tree can carry it to a screen reader.
+    #[test]
+    fn accessibility_tree_projects_headings_paragraphs_lists_and_tables() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let nodes: Vec<A11yBlockJson> =
+            serde_json::from_str(&d.accessibility_tree()).expect("typed a11y tree");
+        assert!(!nodes.is_empty(), "the corpus document has structure");
+
+        // The corpus's "Rich Document" title is a level-1 heading.
+        assert!(
+            nodes.iter().any(|node| matches!(
+                node,
+                A11yBlockJson::Heading { level: 1, text } if text.contains("Rich Document")
+            )),
+            "a level-1 heading with the title is exposed: {nodes:?}"
+        );
+        // It has at least one paragraph and at least one table (with cells).
+        assert!(
+            nodes
+                .iter()
+                .any(|node| matches!(node, A11yBlockJson::Paragraph { .. })),
+            "at least one plain paragraph is exposed"
+        );
+        assert!(
+            nodes.iter().any(|node| matches!(
+                node,
+                A11yBlockJson::Table { rows } if rows.iter().any(|row| !row.is_empty())
+            )),
+            "at least one table with cells is exposed"
+        );
+        // Every heading carries a valid 1..=9 level and non-empty text; no node
+        // carries empty text (empty paragraphs are omitted as reading noise).
+        for node in &nodes {
+            match node {
+                A11yBlockJson::Heading { level, text } => {
+                    assert!((1..=9).contains(level), "heading level in range: {node:?}");
+                    assert!(!text.trim().is_empty(), "heading text non-empty: {node:?}");
+                }
+                A11yBlockJson::Paragraph { text } | A11yBlockJson::ListItem { text, .. } => {
+                    assert!(!text.trim().is_empty(), "block text non-empty: {node:?}");
+                }
+                A11yBlockJson::Table { .. } => {}
+            }
+        }
+
+        // Toggling a plain paragraph into a bullet list marks it a list item,
+        // ordered = false — the classification a screen reader needs. Match the
+        // first plain-paragraph node to its model paragraph by text (headings
+        // are classified before lists, so a heading toggled to a list would
+        // still read as a heading — this must be a genuine plain paragraph).
+        let plain_text = nodes
+            .iter()
+            .find_map(|node| match node {
+                A11yBlockJson::Paragraph { text } => Some(text.clone()),
+                _ => None,
+            })
+            .expect("a plain paragraph to convert");
+        let mut model_paragraphs = Vec::new();
+        collect_block_text(d.document.body(), &mut model_paragraphs);
+        let node = model_paragraphs
+            .iter()
+            .find(|(_, text)| text.trim() == plain_text)
+            .map(|(id, _)| id.to_string())
+            .expect("the plain paragraph exists in the model");
+        d.toggle_list(&node, 0, &node, 0, "bullet")
+            .expect("toggle bullet list");
+        let after: Vec<A11yBlockJson> =
+            serde_json::from_str(&d.accessibility_tree()).expect("typed a11y tree");
+        assert!(
+            after.iter().any(|node| matches!(
+                node,
+                A11yBlockJson::ListItem { ordered: false, text } if *text == plain_text
+            )),
+            "the converted paragraph is now an unordered list item: {after:?}"
+        );
     }
 
     /// A `pageBreakBefore` set through the live edit path must re-paginate and add a
