@@ -38,7 +38,7 @@ use crate::block::{
     CellContentMargins, CellFragment, CellVAlign, CellVerticalMerge, ParagraphDecor,
     ResolvedBorderSegment, ResolvedEdge,
 };
-use crate::cascade::{StyleCascade, requested_font_family};
+use crate::cascade::{StyleCascade, requested_font_family, union_cnf};
 use crate::incremental::{DirtySet, GalleyCache};
 use crate::model::{ModelPos, ModelRange};
 use crate::numbering::{self, NumberingState, PreparedMarker};
@@ -927,11 +927,26 @@ fn flow_table(
                 &edges,
             );
             // A cell fill overrides table shading. When the cell omits `w:shd`,
-            // table-level shading applies through the cell extent.
+            // the table-style layer applies next: the referenced style's (and
+            // its `basedOn` ancestors') base cell/table shading, overlaid by
+            // whichever conditional `w:tblStylePr` region the row+cell's
+            // combined `w:cnfStyle` selects (gated by `w:tblLook`) — e.g. a
+            // banded-row or header-row fill. Only then does the table's own
+            // direct `w:shd` apply through the cell extent.
+            let cnf = union_cnf(
+                row.properties.conditional_format.unwrap_or_default(),
+                cell.properties.conditional_format.unwrap_or_default(),
+            );
+            let style_shading = ctx.cascade.table_style_cell_shading(
+                table.properties.style_ref,
+                table.properties.look,
+                cnf,
+            );
             let shading = cell
                 .properties
                 .shading
                 .fill
+                .or(style_shading)
                 .or(table.properties.shading.fill)
                 .map(|c| [c.r, c.g, c.b, 255]);
             // Word insets a cell's content by `w:tcMar` (per-cell), falling back to
@@ -7237,6 +7252,173 @@ mod tests {
         };
         assert_eq!(cells[0].shading, Some([240, 230, 220, 255]));
         assert_eq!(cells[1].shading, Some([10, 20, 30, 255]));
+    }
+
+    #[test]
+    fn table_style_and_cnf_style_conditional_shading_differ_from_the_unstyled_default() {
+        // Regression (table-style cascade, docs/46 "Table style and conditional
+        // formatting"): a table referencing a `w:tblStyle` with a header-row
+        // `w:tblStylePr` and a plain base cell fill must resolve the header row
+        // to the region's fill and every other row to the style's base fill —
+        // neither of which a cell/table direct `w:shd` provides. An identical
+        // table with no `style_ref` (or with `tblLook` disabling the header
+        // option) must fall back to no fill at all, proving the cascade — not a
+        // hard-coded default — drives the difference.
+        use casual_doc_model::v1::{
+            CnfStyle, Style, StyleKind, TableLook, TableStyleOverride, TableStyleRegion,
+        };
+
+        let base_fill = RgbColor {
+            r: 220,
+            g: 220,
+            b: 220,
+        };
+        let header_fill = RgbColor {
+            r: 40,
+            g: 70,
+            b: 130,
+        };
+        let sid = StyleId::new(NodeId::from_parts(9, 1).unwrap());
+        let table_style = Style {
+            kind: StyleKind::Table,
+            is_default: false,
+            name: None,
+            aliases: None,
+            based_on: None,
+            next: None,
+            link: None,
+            hidden: false,
+            ui_priority: None,
+            semi_hidden: false,
+            unhide_when_used: false,
+            q_format: false,
+            locked: false,
+            paragraph: None,
+            run: None,
+            table: None,
+            table_row: None,
+            table_cell: Some(TableCellProperties {
+                shading: Shading {
+                    fill: Some(base_fill),
+                },
+                ..TableCellProperties::default()
+            }),
+            conditional: vec![TableStyleOverride {
+                region: TableStyleRegion::FirstRow,
+                paragraph: None,
+                run: None,
+                table: None,
+                table_row: None,
+                table_cell: Some(TableCellProperties {
+                    shading: Shading {
+                        fill: Some(header_fill),
+                    },
+                    ..TableCellProperties::default()
+                }),
+            }],
+        };
+        let mut definitions = Definitions::default();
+        definitions.styles.insert(sid, table_style);
+
+        let build = |style_ref: Option<StyleId>, look: TableLook| Table {
+            id: node(50),
+            grid: vec![GridColumn {
+                width_twips: Some(3000),
+            }],
+            grid_change: None,
+            properties: TableProperties {
+                style_ref,
+                look,
+                ..TableProperties::default()
+            },
+            rows: vec![
+                ModelRow {
+                    id: node(51),
+                    properties: TableRowProperties {
+                        conditional_format: Some(CnfStyle {
+                            first_row: true,
+                            ..CnfStyle::default()
+                        }),
+                        ..TableRowProperties::default()
+                    },
+                    cells: vec![text_cell(60, TableCellProperties::default(), "header")],
+                },
+                ModelRow {
+                    id: node(52),
+                    properties: TableRowProperties::default(),
+                    cells: vec![text_cell(62, TableCellProperties::default(), "body")],
+                },
+            ],
+        };
+
+        let styled = build(
+            Some(sid),
+            TableLook {
+                first_row: true,
+                ..TableLook::default()
+            },
+        );
+        let shaper = ParleyShaper::new();
+        let document =
+            document_with_definitions(vec![BlockNode::Table(styled)], definitions.clone());
+        let galley = build_galley(&document, &shaper, Twip(9000));
+        let BlockFragment::TableRow {
+            cells: header_row, ..
+        } = &galley[0]
+        else {
+            panic!("expected the header row fragment");
+        };
+        let BlockFragment::TableRow {
+            cells: body_row, ..
+        } = &galley[1]
+        else {
+            panic!("expected the body row fragment");
+        };
+        assert_eq!(
+            header_row[0].shading,
+            Some([40, 70, 130, 255]),
+            "the first-row conditional region fill applies, not the style base"
+        );
+        assert_eq!(
+            body_row[0].shading,
+            Some([220, 220, 220, 255]),
+            "a row matching no conditional region still gets the style's base fill"
+        );
+
+        // Same table, `tblLook` no longer enabling the header-row option: the
+        // first row's `w:cnfStyle` bit is now ignored (Word's "Header Row"
+        // checkbox unticked) and only the base fill remains for every row.
+        let look_disabled = build(Some(sid), TableLook::default());
+        let document_disabled =
+            document_with_definitions(vec![BlockNode::Table(look_disabled)], definitions);
+        let galley_disabled = build_galley(&document_disabled, &shaper, Twip(9000));
+        let BlockFragment::TableRow {
+            cells: header_row_disabled,
+            ..
+        } = &galley_disabled[0]
+        else {
+            panic!("expected the header row fragment");
+        };
+        assert_eq!(
+            header_row_disabled[0].shading,
+            Some([220, 220, 220, 255]),
+            "disabling tblLook.first_row suppresses the conditional region"
+        );
+
+        // The unstyled default: no `style_ref` at all, and neither the table nor
+        // the cells set a direct `w:shd` — no fill anywhere.
+        let unstyled = build(None, TableLook::default());
+        let BlockFragment::TableRow {
+            cells: unstyled_row,
+            ..
+        } = flow_single_row(unstyled, Twip(9000))
+        else {
+            panic!("expected a row");
+        };
+        assert_eq!(
+            unstyled_row[0].shading, None,
+            "no style_ref means no table-style layer contributes a fill"
+        );
     }
 
     #[test]
