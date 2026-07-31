@@ -140,3 +140,40 @@ test("rich paste that replaces an existing selection in Suggesting mode still tr
 
   expect(consoleErrors).toEqual([]);
 });
+
+// REVIEW-GAP-030 (docs/81): the Home ribbon's format toolbar used to skip runs
+// wrapped in a pending tracked revision, so selecting suggested bold text left
+// `#bold` unpressed even though the model was correct. The reflection queries
+// (`run_properties_in_range`/`caret_run_properties`) now descend into
+// final-with-markup revisions, so the toolbar reflects the real formatting.
+test("the Home ribbon reflects bold for a selection inside a pending suggestion (REVIEW-GAP-030)", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await enterSuggestingMode(page);
+  await moveCaretToDocStart(page);
+
+  // A pending tracked insertion whose "Bold" run is genuinely bold.
+  await dispatchClipboardEvent(page, "paste", {
+    "text/html": "<p>Plain <b>Bold</b></p>",
+    "text/plain": "Plain Bold",
+  });
+
+  // Select just the pending bold run "Bold" (after the plain "Plain "): before
+  // REVIEW-GAP-030 the wrapped run was skipped, so #bold stayed unpressed even
+  // though the suggestion is genuinely bold. It now reflects.
+  await moveCaretToDocStart(page);
+  for (let i = 0; i < "Plain ".length; i++) await page.keyboard.press("ArrowRight");
+  for (let i = 0; i < "Bold".length; i++) await page.keyboard.press("Shift+ArrowRight");
+  await expect(page.locator("#bold")).toHaveAttribute("aria-pressed", "true");
+
+  // A caret resting inside the pending bold run reflects it too (the collapsed
+  // -caret sibling query is fixed the same way).
+  await moveCaretToDocStart(page);
+  for (let i = 0; i < "Plain B".length; i++) await page.keyboard.press("ArrowRight");
+  await expect(page.locator("#bold")).toHaveAttribute("aria-pressed", "true");
+
+  expect(consoleErrors).toEqual([]);
+});

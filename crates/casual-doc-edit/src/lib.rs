@@ -1340,16 +1340,15 @@ pub fn caret_run_properties(
     offset: u32,
 ) -> Option<&RunProperties> {
     let para = find_paragraph(document.body(), node)?;
-    let segs = run_segments(&para.inlines);
-    let seg = segs
-        .iter()
+    // Flatten across final-with-markup wrappers so a caret resting inside a
+    // pending tracked revision reflects that run's formatting (docs/81
+    // REVIEW-GAP-030), not the paragraph default.
+    let segs = flatten_run_segments(&para.inlines);
+    segs.iter()
         .find(|s| offset > s.start && offset <= s.end)
         .or_else(|| segs.iter().find(|s| offset >= s.start && offset < s.end))
-        .or_else(|| segs.first())?;
-    match &para.inlines[seg.idx] {
-        InlineNode::Run(run) => Some(&run.properties),
-        _ => None,
-    }
+        .or_else(|| segs.first())
+        .map(|s| s.properties)
 }
 
 /// The uniform run styling across a range — each field is `Some`/`true` only when
@@ -1412,13 +1411,16 @@ pub fn run_properties_in_range(document: &Document, range: Range) -> Vec<&RunPro
     let Some(para) = find_paragraph(document.body(), range.start.node) else {
         return Vec::new();
     };
-    run_segments(&para.inlines)
+    // Descend into final-with-markup-contributing wrappers so a selection that
+    // touches a run inside a pending tracked revision (or hyperlink/SDT)
+    // reflects that run's real formatting, matching the copy/layout projections
+    // (docs/81 REVIEW-GAP-030). The editing/split paths keep using
+    // `run_segments` (top-level runs only) because revision-aware splitting is
+    // separate work (REVIEW-GAP-007).
+    flatten_run_segments(&para.inlines)
         .into_iter()
         .filter(|s| s.end > range.start.offset && s.start < range.end.offset && s.start < s.end)
-        .filter_map(|s| match &para.inlines[s.idx] {
-            InlineNode::Run(run) => Some(&run.properties),
-            _ => None,
-        })
+        .map(|s| s.properties)
         .collect()
 }
 
@@ -1518,6 +1520,62 @@ fn nested_len(inlines: &[InlineNode]) -> u32 {
 /// The paragraph's total shaped-text byte length.
 fn paragraph_text_len(para: &Paragraph) -> u32 {
     para.inlines.iter().map(inline_text_len).sum()
+}
+
+/// One run's projected byte range and its direct properties, flattened across
+/// the final-with-markup-contributing wrappers so a run inside a pending tracked
+/// revision (or hyperlink/SDT) is visible to read-only reflection queries
+/// (docs/81 REVIEW-GAP-030). Distinct from [`RunSeg`], which the editing/split
+/// paths use for top-level runs only.
+struct FlatRun<'a> {
+    /// Byte offset of the run's first byte in the projected paragraph text.
+    start: u32,
+    /// Byte offset one past the run's last byte.
+    end: u32,
+    /// The run's direct properties.
+    properties: &'a RunProperties,
+}
+
+/// Every run in projected order — top-level and nested inside
+/// final-with-markup-contributing `Revision`/`Hyperlink`/`Sdt` wrappers — with
+/// cumulative byte offsets aligned to [`inline_text_len`], mirroring the copy
+/// path's `walk_inlines_rich`. Used by the reflection/caret-property queries so
+/// formatting inside a pending suggestion is not silently dropped.
+fn flatten_run_segments(inlines: &[InlineNode]) -> Vec<FlatRun<'_>> {
+    let mut out = Vec::new();
+    let mut cum = 0u32;
+    push_run_segments(inlines, &mut cum, &mut out);
+    out
+}
+
+fn push_run_segments<'a>(inlines: &'a [InlineNode], cum: &mut u32, out: &mut Vec<FlatRun<'a>>) {
+    for inline in inlines {
+        match inline {
+            InlineNode::Run(run) => {
+                let start = *cum;
+                let end = start.saturating_add(run.text.len() as u32);
+                *cum = end;
+                out.push(FlatRun {
+                    start,
+                    end,
+                    properties: &run.properties,
+                });
+            }
+            InlineNode::Hyperlink(link) => push_run_segments(&link.inlines, cum, out),
+            InlineNode::Revision(revision)
+                if revision
+                    .kind
+                    .contributes_to(ReviewProjection::FinalWithMarkup) =>
+            {
+                push_run_segments(&revision.inlines, cum, out);
+            }
+            InlineNode::Revision(_) => {}
+            InlineNode::Sdt(sdt) => push_run_segments(&sdt.inlines, cum, out),
+            other => {
+                *cum = cum.saturating_add(inline_text_len(other));
+            }
+        }
+    }
 }
 
 /// The byte ranges of the paragraph's top-level runs (the editable segments).
@@ -2867,5 +2925,84 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err, EditError::NodeNotFound);
+    }
+
+    /// REVIEW-GAP-030: the toolbar-reflection queries must descend into a
+    /// pending tracked revision so selecting (or resting a caret in) suggested
+    /// text reflects its real run formatting, not the paragraph default. Before
+    /// the fix `run_properties_in_range`/`caret_run_properties` matched only a
+    /// top-level `InlineNode::Run` and silently skipped the wrapped run.
+    #[test]
+    fn reflection_sees_formatting_inside_a_pending_revision() {
+        // "Hi " (0..3) + a pending bold insertion "bold" (3..7) + " tail" (7..12).
+        let bold_run = InlineNode::Run(Run {
+            id: n(20),
+            properties: RunProperties {
+                bold: Some(true),
+                ..RunProperties::default()
+            },
+            text: "bold".to_string(),
+        });
+        let insertion = InlineNode::Revision(Revision {
+            id: n(21),
+            kind: RevisionKind::Insertion,
+            author: Some("Reviewer".to_owned()),
+            date: None,
+            revision_id: Some("21".to_owned()),
+            editor_group: None,
+            inlines: vec![bold_run],
+        });
+        let p = n(10);
+        let document = doc(vec![para(
+            10,
+            vec![run(19, "Hi "), insertion, run(22, " tail")],
+        )]);
+
+        // A selection wholly inside the pending insertion.
+        let inside = Range {
+            start: Pos::new(p, 3),
+            end: Pos::new(p, 7),
+        };
+        let covered = run_properties_in_range(&document, inside);
+        assert_eq!(covered.len(), 1, "the wrapped run is now covered");
+        assert_eq!(covered[0].bold, Some(true));
+        assert!(
+            format_state(&document, inside).bold,
+            "the toolbar reflects bold for a selection inside a suggestion"
+        );
+
+        // A caret resting inside the pending insertion reflects it too.
+        assert!(
+            caret_format(&document, p, 5).bold,
+            "the toolbar reflects bold at a caret inside a suggestion"
+        );
+
+        // A selection spanning plain + pending + plain text sees all three runs,
+        // and is correctly reported as mixed (not uniformly bold).
+        let whole = Range {
+            start: Pos::new(p, 0),
+            end: Pos::new(p, 12),
+        };
+        let across = run_properties_in_range(&document, whole);
+        assert_eq!(across.len(), 3, "top-level and wrapped runs both covered");
+        assert_eq!(
+            across
+                .iter()
+                .filter(|props| props.bold == Some(true))
+                .count(),
+            1
+        );
+        assert!(
+            !format_state(&document, whole).bold,
+            "a mixed selection is not reported as uniformly bold"
+        );
+
+        // A rejected/zero-width deletion still contributes nothing to the
+        // projected offsets, so plain-text reflection is unchanged.
+        let plain = Range {
+            start: Pos::new(p, 7),
+            end: Pos::new(p, 12),
+        };
+        assert!(!format_state(&document, plain).bold);
     }
 }
