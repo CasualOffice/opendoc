@@ -14307,6 +14307,63 @@ mod tests {
         assert!(!d.format_at(&node, 0, 3).bold(), "undo cleared bold");
     }
 
+    /// REVIEW-GAP-030: the effective-format query the toolbar drives
+    /// (`selectionFormat`/`formatAt` → `effective_run_properties_in_range` →
+    /// `run_properties_in_range`) must see a run wrapped in a pending tracked
+    /// insertion, so the ribbon reflects suggested-text formatting.
+    #[test]
+    fn effective_format_reflects_a_run_inside_a_pending_revision() {
+        use casual_doc_model::v1::{Definitions, RunProperties};
+
+        let paragraph_id = NodeId::from_parts(90, 1).unwrap();
+        // "Plain " (0..6) + a pending bold insertion "Bold" (6..10).
+        let document = Document::new(
+            NodeId::from_parts(90, 9).unwrap(),
+            vec![BlockNode::Paragraph(Paragraph {
+                id: paragraph_id,
+                properties: ParagraphProperties::default(),
+                inlines: vec![
+                    InlineNode::Run(Run {
+                        id: NodeId::from_parts(90, 2).unwrap(),
+                        properties: RunProperties::default(),
+                        text: "Plain ".to_owned(),
+                    }),
+                    InlineNode::Revision(Revision {
+                        id: NodeId::from_parts(90, 3).unwrap(),
+                        kind: RevisionKind::Insertion,
+                        author: Some("Reviewer".to_owned()),
+                        date: None,
+                        revision_id: Some("3".to_owned()),
+                        editor_group: None,
+                        inlines: vec![InlineNode::Run(Run {
+                            id: NodeId::from_parts(90, 4).unwrap(),
+                            properties: RunProperties {
+                                bold: Some(true),
+                                ..RunProperties::default()
+                            },
+                            text: "Bold".to_owned(),
+                        })],
+                    }),
+                ],
+            })],
+            Definitions::default(),
+        )
+        .expect("valid document");
+
+        // Selection over just the pending bold run [6,10).
+        let inside = effective_run_properties_in_range(&document, paragraph_id, 6, 10);
+        assert_eq!(inside.len(), 1, "the wrapped run is covered");
+        assert!(
+            format_from_effective_runs(&inside).bold(),
+            "the toolbar reflects bold inside a pending suggestion"
+        );
+
+        // Selection spanning plain + pending text is mixed, not uniformly bold.
+        let across = effective_run_properties_in_range(&document, paragraph_id, 0, 10);
+        assert_eq!(across.len(), 2);
+        assert!(!format_from_effective_runs(&across).bold());
+    }
+
     #[test]
     fn toolbar_style_resolves_effective_paragraph_style_font_and_format() {
         use casual_doc_model::v1::{Definitions, RunProperties, Style};

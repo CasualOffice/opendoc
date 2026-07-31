@@ -32,13 +32,14 @@ P1G-REVIEW-046 closed REVIEW-GAP-014 with a real read-only Viewing mode that
 fails every document mutation closed at the shared command entry points.
 REVIEW-GAP-008's collapsed-caret single-paragraph rich-paste slice narrows it
 but does not close it; verifying that fix also surfaced a new toolbar
-format-reflection gap, REVIEW-GAP-030. P1G-REVIEW-047 closed REVIEW-GAP-011
-with `updateComment`/`deleteReply` engine methods plus sidebar controls, and
-advanced REVIEW-GAP-012 by adding the `revisionThread` comment-to-revision
-overlap mapping (a first-class reply composer on a change, and commenting on
-zero-width deletion content, remain deferred). Twenty gaps remain; the
-remaining P0 rows below are release blockers for any claim of complete
-tracked-change support.
+format-reflection gap, REVIEW-GAP-030, which P1G-REVIEW-049 then closed by
+making the toolbar-reflection queries descend into pending tracked revisions.
+P1G-REVIEW-047 closed REVIEW-GAP-011 with `updateComment`/`deleteReply` engine
+methods plus sidebar controls, and advanced REVIEW-GAP-012 by adding the
+`revisionThread` comment-to-revision overlap mapping (a first-class reply
+composer on a change, and commenting on zero-width deletion content, remain
+deferred). Nineteen gaps remain; the remaining P0 rows below are release
+blockers for any claim of complete tracked-change support.
 
 The sibling `docs/docx-editor` repository was used only as the requested
 interaction reference. Its card composition, reply controls, resolved markers,
@@ -89,7 +90,7 @@ Classification:
 | REVIEW-GAP-027 | P1 | Partial | Automated coverage is narrow: no Word/LibreOffice open-save oracle for editor-authored suggestions; no schema validation of exported revisions; no suggested insertion/deletion export/reopen test; no comment-edit test; no mixed-revision editing matrix; no large-review performance test; and no review accessibility or narrow-viewport gate. | Add gates per remediation slice and record them in doc 15 before claiming completion. |
 | REVIEW-GAP-028 | P2 | Debt | Doc 68 still describes pre-implementation “current state,” operation variants that were not built, query methods that do not exist, a small canvas composer contradicted by the sidebar correction, and verification gates that have not all run. Tracker rows 030–033 overstate completeness. | Rewrite the durable design around the implementation actually chosen and keep Done claims scoped to tested behavior. |
 | REVIEW-GAP-029 | P2 | Deferred | @mentions, assignees, reactions, presence, notifications, collaborative conflict policy, and reviewer permissions remain host-owned future work. | Define host callbacks and policy only when a collaboration product slice is scheduled; do not bake a provider into the runtime. |
-| REVIEW-GAP-030 | P2 | Incorrect | Discovered verifying REVIEW-GAP-008's rich-paste fix: selecting text that sits inside a pending tracked revision (a suggested insertion) does not reflect its real run formatting in the Home ribbon's format toolbar (`#bold` etc. stay unpressed) even though the model is correct — `copyRichRuns`'s walk explicitly recurses into `InlineNode::Revision` content, confirming the pasted/typed suggestion really is bold. `formatAt`'s query (`casual_doc_edit::run_properties_in_range`) only matches a direct top-level `InlineNode::Run` at each covered segment; a `InlineNode::Revision`-wrapped run falls through its match arm unmatched and is silently excluded, so the toolbar undercounts (or misses entirely) any selection that touches pending tracked content. | Make `run_properties_in_range` recurse into (accepted) `InlineNode::Revision`/`Hyperlink`/`Sdt` wrappers the same way `copyRichRuns`'s `walk_inlines_rich` already does, and add a regression selecting formatted text inside a pending suggestion. |
+| REVIEW-GAP-030 | Closed | Resolved | P1G-REVIEW-049 makes the two toolbar-reflection queries in `casual-doc-edit` — `run_properties_in_range` (a selection) and `caret_run_properties` (a collapsed caret) — descend into final-with-markup-contributing `Revision`/`Hyperlink`/`Sdt` wrappers via a shared `flatten_run_segments`, the same way `copyRichRuns`'s `walk_inlines_rich` already walks, so `format_state`/`caret_format` (and the `selectionFormat`/`formatAt` WASM path built on them) now see a run inside a pending tracked insertion. The Home ribbon reflects bold/italic/etc. for suggested text where it previously stayed unpressed. The editing/split paths keep using top-level `run_segments` because revision-aware run splitting is separate work (REVIEW-GAP-007). | Closed by `flatten_run_segments`, a `casual-doc-edit` regression (`format_state`/`caret_format` bold inside a pending insertion + mixed-selection sanity), a `casual-doc-wasm` `effective_run_properties_in_range` regression, and a Playwright test asserting `#bold` reflects a selection and caret inside a suggested bold run. |
 
 ## Paired tracked moves closed in P1G-REVIEW-034
 
