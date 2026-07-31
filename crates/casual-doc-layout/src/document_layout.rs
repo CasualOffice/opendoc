@@ -35,7 +35,7 @@
 //! one. Per-section balancing of the last column page remains a documented
 //! deferral (see [`crate::columns`]).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
@@ -44,7 +44,7 @@ use casual_doc_model::v1::{
 };
 
 use crate::anchor::{body_wrap_rects, header_float_reserve_for_section, place_floats};
-use crate::block::BlockFragment;
+use crate::block::{BlockFragment, CellFragment, CellVerticalMerge};
 use crate::columns::{
     ColumnLayout, SectionRun, column_layout, paginate_columns, section_starts_new_page,
 };
@@ -57,7 +57,7 @@ use crate::notes::{paginate_section_footnotes, run_has_body_footnotes};
 use crate::paginate::{PageConfig, resolve_anchored_fields, resolve_fields};
 use crate::running::{HeaderFooter, RunningContent, place_running_content_on_page};
 use crate::text::InlineFloatSide;
-use crate::units::{Size, Twip};
+use crate::units::{Point, Rect, Size, Twip};
 use casual_doc_model::v1::SectionId;
 
 /// US-Letter page size in twips (8.5in × 11in), the fallback for a document that
@@ -688,11 +688,29 @@ fn paragraph_float_exclusions(
             _ => None,
         })
         .collect();
+    // Top-level body tables, so a page-relative float's exclusion can descend
+    // into their cells' paragraphs (P1F-FLOAT-SQUARE-2) without also reaching
+    // note-body or running-content tables, which share the same placed-fragment
+    // list but are not real body-order content (mirroring `body_order` above).
+    let body_table_ids: BTreeSet<NodeId> = document
+        .body()
+        .iter()
+        .filter_map(|block| match block {
+            BlockNode::Table(table) => Some(table.id),
+            _ => None,
+        })
+        .collect();
     let mut paragraphs = Vec::new();
     for (page_index, page) in layout.pages.iter().enumerate() {
         for placed in &page.placed {
-            if let BlockFragment::Paragraph { id, .. } = &placed.fragment {
-                paragraphs.push((page_index, *id, placed.rect));
+            match &placed.fragment {
+                BlockFragment::Paragraph { id, .. } if body_order.contains_key(id) => {
+                    paragraphs.push((page_index, *id, placed.rect));
+                }
+                BlockFragment::TableRow { table, cells, .. } if body_table_ids.contains(table) => {
+                    collect_cell_paragraph_rects(cells, placed.rect, page_index, &mut paragraphs);
+                }
+                _ => {}
             }
         }
     }
@@ -707,9 +725,6 @@ fn paragraph_float_exclusions(
         let top = wrap.rect.origin.y - emu_to_twip(wrap.distances.top_emu);
         let bottom = wrap.rect.bottom() + emu_to_twip(wrap.distances.bottom_emu);
         for (page_index, paragraph, rect) in &paragraphs {
-            if !body_order.contains_key(paragraph) {
-                continue;
-            }
             // Page- and margin-relative objects can sit above their anchoring
             // paragraph (the right arrow in demo.docx is one such object), so
             // every overlapping top-level paragraph on the resolved page must be
@@ -743,6 +758,63 @@ fn paragraph_float_exclusions(
         }
     }
     exclusions
+}
+
+/// Appends every paragraph fragment's absolute page rect nested under a
+/// top-level table row's cells to `out`, so a page-relative float's exclusion
+/// zone can reach text inside a table cell — not only top-level body
+/// paragraphs. Descends through nested tables (a table inside a cell) to
+/// arbitrary depth.
+///
+/// The geometry mirrors [`crate::compose::compose_page`]'s cell-content
+/// placement exactly (top/bottom margin inset, `w:vAlign` slack, block
+/// stacking by [`BlockFragment::height`]) so a computed exclusion always lines
+/// up with what the page actually paints; a merged-away `w:vMerge` continuation
+/// cell contributes no box, matching the painter.
+fn collect_cell_paragraph_rects(
+    cells: &[CellFragment],
+    row_rect: Rect,
+    page_index: usize,
+    out: &mut Vec<(usize, NodeId, Rect)>,
+) {
+    for cell in cells {
+        if matches!(cell.vertical_merge, CellVerticalMerge::Continue) {
+            continue;
+        }
+        let cell_height = cell.box_height(row_rect.size.height);
+        let content_width =
+            Twip((cell.width.raw() - cell.margins.start.raw() - cell.margins.end.raw()).max(1));
+        let x = row_rect.origin.x + cell.x + cell.margins.start;
+        let mut y = row_rect.origin.y + cell.content_y_offset(cell_height);
+        for block in &cell.blocks {
+            collect_block_paragraph_rects(block, Point::new(x, y), content_width, page_index, out);
+            y = y + block.height();
+        }
+    }
+}
+
+/// One block's contribution to [`collect_cell_paragraph_rects`]: a paragraph
+/// records its rect directly; a nested table row recurses into its own cells.
+fn collect_block_paragraph_rects(
+    block: &BlockFragment,
+    origin: Point,
+    width: Twip,
+    page_index: usize,
+    out: &mut Vec<(usize, NodeId, Rect)>,
+) {
+    match block {
+        BlockFragment::Paragraph { id, .. } => {
+            out.push((
+                page_index,
+                *id,
+                Rect::new(origin, Size::new(width, block.height())),
+            ));
+        }
+        BlockFragment::TableRow { cells, .. } => {
+            let row_rect = Rect::new(origin, Size::new(width, block.height()));
+            collect_cell_paragraph_rects(cells, row_rect, page_index, out);
+        }
+    }
 }
 
 fn conservative_exclusions(
@@ -993,9 +1065,10 @@ mod cross_paragraph_float_tests {
     use crate::shape::ParleyShaper;
     use casual_doc_model::v1::{
         AnchorHorizontal, AnchorVertical, AnchoredDrawing, Definitions, DrawingAnchor, Extent,
-        HorizontalAlign, HorizontalAnchor, HorizontalPosition, InlineNode, MediaId, MediaReference,
-        Paragraph, ParagraphProperties, Run, RunProperties, VerticalAlign, VerticalAnchor,
-        VerticalPosition, WrapDistances, WrapMode,
+        GridColumn, HorizontalAlign, HorizontalAnchor, HorizontalPosition, InlineNode, MediaId,
+        MediaReference, Paragraph, ParagraphProperties, Run, RunProperties, Table, TableCell,
+        TableCellProperties, TableProperties, TableRow, TableRowProperties, VerticalAlign,
+        VerticalAnchor, VerticalPosition, WrapDistances, WrapMode,
     };
 
     fn node(id: u64) -> NodeId {
@@ -1207,6 +1280,157 @@ mod cross_paragraph_float_tests {
             intersecting
                 .iter()
                 .all(|run| { placed.rect.origin.x + run.origin.x >= float.rect.right() })
+        );
+    }
+
+    /// A page/margin-relative float anchored in an ordinary paragraph, followed
+    /// immediately by a one-cell table whose cell paragraph overlaps the float's
+    /// resolved band. Returns the document, the table's node id, and the cell
+    /// paragraph's node id (the exclusion target).
+    fn margin_float_over_table_cell_document() -> (Document, NodeId, NodeId) {
+        let media = MediaId::new(node(940));
+        let mut definitions = Definitions::default();
+        definitions.media.insert(
+            media,
+            MediaReference {
+                relationship_id: "rIdTableFloat".to_owned(),
+                media_type: "image/png".to_owned(),
+                part_name: "word/media/table-float.png".to_owned(),
+            },
+        );
+        let drawing = InlineNode::AnchoredDrawing(AnchoredDrawing {
+            id: node(941),
+            media,
+            extent: Extent {
+                width_emu: 1_500 * 635,
+                height_emu: 1_800 * 635,
+            },
+            anchor: DrawingAnchor {
+                horizontal: AnchorHorizontal {
+                    relative_from: HorizontalAnchor::Margin,
+                    position: HorizontalPosition::Align(HorizontalAlign::Left),
+                },
+                vertical: AnchorVertical {
+                    relative_from: VerticalAnchor::Margin,
+                    position: VerticalPosition::Align(VerticalAlign::Top),
+                },
+                wrap: WrapMode::Square,
+                wrap_distances: WrapDistances::default(),
+                behind_doc: false,
+            },
+            descr: None,
+            relative_height: None,
+        });
+        let table_id = node(950);
+        let cell_paragraph = node(953);
+        let table = BlockNode::Table(Table {
+            id: table_id,
+            grid: vec![GridColumn {
+                width_twips: Some(9_000),
+            }],
+            grid_change: None,
+            properties: TableProperties::default(),
+            rows: vec![TableRow {
+                id: node(951),
+                properties: TableRowProperties::default(),
+                cells: vec![TableCell {
+                    id: node(952),
+                    properties: TableCellProperties::default(),
+                    blocks: vec![BlockNode::Paragraph(Paragraph {
+                        id: cell_paragraph,
+                        properties: ParagraphProperties::default(),
+                        inlines: vec![InlineNode::Run(Run {
+                            id: node(954),
+                            properties: RunProperties::default(),
+                            text: "table cell text wraps beside the page relative float "
+                                .repeat(20),
+                        })],
+                    })],
+                }],
+            }],
+        });
+        let document = Document::new(
+            node(939),
+            vec![paragraph(1, "anchor".to_owned(), vec![drawing]), table],
+            definitions,
+        )
+        .unwrap();
+        (document, table_id, cell_paragraph)
+    }
+
+    /// P1F-FLOAT-SQUARE-2: a page/margin-relative float's exclusion zone now
+    /// reaches a paragraph nested inside a table cell, not just top-level body
+    /// paragraphs.
+    #[test]
+    fn margin_float_excludes_a_paragraph_nested_in_a_table_cell() {
+        let (document, table_id, target) = margin_float_over_table_cell_document();
+        let shaper = ParleyShaper::new();
+        let layout = paginate_document(&document, &shaper);
+
+        let page = &layout.pages[0];
+        let float = page.anchored.first().expect("placed anchored drawing");
+        let placed_row = page
+            .placed
+            .iter()
+            .find(|placed| {
+                matches!(&placed.fragment, BlockFragment::TableRow { table, .. } if *table == table_id)
+            })
+            .expect("table row placed on the float's page");
+        let BlockFragment::TableRow { cells, .. } = &placed_row.fragment else {
+            unreachable!("matched above")
+        };
+        let cell = &cells[0];
+        let cell_height = cell.box_height(placed_row.fragment.height());
+        let content_origin = Point::new(
+            placed_row.rect.origin.x + cell.x + cell.margins.start,
+            placed_row.rect.origin.y + cell.content_y_offset(cell_height),
+        );
+        let BlockFragment::Paragraph { id, lines, .. } = &cell.blocks[0] else {
+            panic!("expected the cell's paragraph fragment");
+        };
+        assert_eq!(*id, target);
+
+        let mut shifted = 0;
+        let mut restored = 0;
+        for line in &lines.lines {
+            let Some(run) = line.runs.first() else {
+                continue;
+            };
+            let baseline = content_origin.y + run.origin.y;
+            let x = content_origin.x + run.origin.x;
+            if baseline < float.rect.bottom() {
+                assert!(
+                    x >= float.rect.right(),
+                    "cell line at y={} starts at {}, inside float ending at {}",
+                    baseline.raw(),
+                    x.raw(),
+                    float.rect.right().raw()
+                );
+                shifted += 1;
+            } else if run.origin.x == Twip::ZERO {
+                restored += 1;
+            }
+        }
+        assert!(
+            shifted >= 1,
+            "the float should exclude at least one line inside the table cell"
+        );
+        assert!(
+            restored >= 1,
+            "the cell's full width should return below the float"
+        );
+
+        assert_eq!(
+            layout,
+            paginate_document(&document, &shaper),
+            "bounded float reflow into a table cell must be deterministic"
+        );
+        let mut cache = GalleyCache::new();
+        let cached =
+            paginate_document_cached(&document, &shaper, &mut cache, &DirtySet::everything());
+        assert_eq!(
+            cached, layout,
+            "cached entry point uses the same fixed point"
         );
     }
 }

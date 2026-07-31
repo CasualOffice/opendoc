@@ -233,9 +233,14 @@ exclusion design already identified in docs 51 and 55.
 Paragraph/line-relative, margin/column-aligned left and right
 square/tight/through anchors now create non-painting inline float markers. The
 resumable line breaker narrows only intersecting lines by the object extent plus
-wrap distances and restores full measure below it. Page-relative,
-cross-paragraph, centered, and contour-accurate wrapping remain explicit
-residuals.
+wrap distances and restores full measure below it.
+
+Page-relative/cross-paragraph convergence (a bounded three-pass fixed point with
+deterministic multi-float edge-interval union) and its descent into top-level
+body table cells are now implemented (`P1F-FLOAT-CROSS-PARAGRAPH`,
+`P1F-FLOAT-SQUARE-2`; see `docs/55-…` §3). Centered anchors, contour-accurate
+wrapping, and exclusion inside floating text boxes / header-footer running
+bands remain explicit residuals.
 
 ### 6. Chinese SDS content exceeds its authored box — containment implemented; pagination residual
 
@@ -359,7 +364,10 @@ fixture images remain local evidence and are not committed.
    intersections by page/node.
 2. **Residual pagination** — medical form row/grid parity and SDS font/grid/final
    balancing without global margin or font-size tuning.
-3. **Cross-paragraph float reflow** — page-relative exclusions and convergence.
+3. **Cross-paragraph float reflow** — page-relative exclusions/convergence and
+   table-cell descent are implemented (`P1F-FLOAT-CROSS-PARAGRAPH`,
+   `P1F-FLOAT-SQUARE-2`); descent into floating text boxes and header/footer
+   running bands remains open.
 4. **Contour wrapping** — tight/through contour intervals beyond square bounds.
 5. ~~**Visible inline-content floor**~~ note marks, OMML text fallback, and
    special hyphens are done (`P1F-INLINE-FLOOR`, not independently re-verified
