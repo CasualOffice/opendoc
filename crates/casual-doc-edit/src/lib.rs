@@ -268,6 +268,31 @@ pub enum Operation {
         /// The table to insert (its ids must be those the inverse recorded).
         table: Box<Table>,
     },
+    /// Insert a sequence of `blocks` into `container` (`None` = the document body,
+    /// `Some(id)` = the owning cell / SDT node) starting at 0-based `index` (≤ the
+    /// current block count). The general block-sequence primitive behind structured
+    /// paste — a fragment of copied paragraphs and tables reconstructed with fresh
+    /// ids. Inverse: [`Operation::DeleteBlocks`] of the same span.
+    InsertBlocks {
+        /// The container: `None` for the body, else the owning cell / SDT node.
+        container: Option<NodeId>,
+        /// The 0-based block position within the container.
+        index: u32,
+        /// The blocks to insert, in order (their ids must be those the inverse
+        /// recorded — the caller assigns fresh ids before inserting).
+        blocks: Vec<BlockNode>,
+    },
+    /// Remove `count` blocks from `container` (`None` = the document body) starting
+    /// at 0-based `index`. The inverse vehicle for [`Operation::InsertBlocks`];
+    /// undo restores the removed blocks verbatim.
+    DeleteBlocks {
+        /// The container: `None` for the body, else the owning cell / SDT node.
+        container: Option<NodeId>,
+        /// The 0-based block position of the first removed block.
+        index: u32,
+        /// How many consecutive blocks to remove.
+        count: u32,
+    },
     /// Replace a table cell's properties (shading, borders, vertical alignment,
     /// margins, span/merge, …). Its own inverse (carrying the previous properties).
     /// Boxed to keep the enum small.
@@ -715,6 +740,65 @@ pub fn apply(
             }
             blocks.insert(idx, BlockNode::Table((**table).clone()));
             Ok(Operation::DeleteTable { table: table.id })
+        }
+        Operation::InsertBlocks {
+            container,
+            index,
+            blocks: to_insert,
+        } => {
+            if to_insert.is_empty() {
+                return Err(EditError::EmptyEdit);
+            }
+            let blocks = match container {
+                None => doc.body_mut(),
+                Some(id) => {
+                    find_container_blocks_mut(doc.body_mut(), *id).ok_or(EditError::NodeNotFound)?
+                }
+            };
+            let idx = *index as usize;
+            if idx > blocks.len() {
+                return Err(EditError::OffsetOutOfRange);
+            }
+            for (offset, block) in to_insert.iter().enumerate() {
+                blocks.insert(idx + offset, block.clone());
+            }
+            Ok(Operation::DeleteBlocks {
+                container: *container,
+                index: *index,
+                count: to_insert.len() as u32,
+            })
+        }
+        Operation::DeleteBlocks {
+            container,
+            index,
+            count,
+        } => {
+            let blocks = match container {
+                None => doc.body_mut(),
+                Some(id) => {
+                    find_container_blocks_mut(doc.body_mut(), *id).ok_or(EditError::NodeNotFound)?
+                }
+            };
+            let idx = *index as usize;
+            let count = *count as usize;
+            if count == 0 {
+                return Err(EditError::EmptyEdit);
+            }
+            if idx + count > blocks.len() {
+                return Err(EditError::OffsetOutOfRange);
+            }
+            // A cell / SDT container's block list must stay non-empty.
+            if container.is_some() && count >= blocks.len() {
+                return Err(EditError::Unsupported);
+            }
+            let removed: Vec<BlockNode> = blocks
+                .splice(idx..idx + count, std::iter::empty())
+                .collect();
+            Ok(Operation::InsertBlocks {
+                container: *container,
+                index: *index,
+                blocks: removed,
+            })
         }
         Operation::SetTableCellProperties { cell, properties } => {
             let c = find_cell_mut(doc.body_mut(), *cell).ok_or(EditError::NodeNotFound)?;
@@ -2059,6 +2143,87 @@ mod tests {
             None
         }
         walk(document.body(), id).unwrap_or_default()
+    }
+
+    #[test]
+    fn insert_blocks_splices_a_sequence_and_inverse_removes_it() {
+        // Body: [P2, P3]. Insert two blocks between them at index 1.
+        let mut d = doc(vec![
+            para(2, vec![run(3, "one")]),
+            para(4, vec![run(5, "two")]),
+        ]);
+        let mut ids = IdGenerator::new(9);
+
+        let inserted = vec![para(6, vec![run(7, "A")]), para(8, vec![run(9, "B")])];
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertBlocks {
+                container: None,
+                index: 1,
+                blocks: inserted.clone(),
+            },
+        )
+        .expect("insert blocks");
+        assert_eq!(d.body().len(), 4, "two blocks spliced in");
+        assert_eq!(text_of(&d, n(6)), "A");
+        assert_eq!(text_of(&d, n(8)), "B");
+        assert_eq!(
+            inverse,
+            Operation::DeleteBlocks {
+                container: None,
+                index: 1,
+                count: 2,
+            }
+        );
+
+        // Applying the inverse removes exactly the two inserted blocks (undo),
+        // and its own inverse restores them verbatim (redo).
+        let redo = apply(&mut d, &mut ids, &inverse).expect("delete blocks");
+        assert_eq!(d.body().len(), 2, "the two inserted blocks are gone");
+        assert_eq!(text_of(&d, n(2)), "one");
+        assert_eq!(text_of(&d, n(4)), "two");
+        assert_eq!(
+            redo,
+            Operation::InsertBlocks {
+                container: None,
+                index: 1,
+                blocks: inserted,
+            }
+        );
+        apply(&mut d, &mut ids, &redo).expect("redo");
+        assert_eq!(d.body().len(), 4);
+        assert_eq!(text_of(&d, n(6)), "A");
+    }
+
+    #[test]
+    fn insert_blocks_rejects_an_out_of_range_index_and_empty_edit() {
+        let mut d = doc(vec![para(2, vec![run(3, "x")])]);
+        let mut ids = IdGenerator::new(9);
+        assert!(matches!(
+            apply(
+                &mut d,
+                &mut ids,
+                &Operation::InsertBlocks {
+                    container: None,
+                    index: 9,
+                    blocks: vec![para(4, vec![run(5, "y")])],
+                },
+            ),
+            Err(EditError::OffsetOutOfRange)
+        ));
+        assert!(matches!(
+            apply(
+                &mut d,
+                &mut ids,
+                &Operation::InsertBlocks {
+                    container: None,
+                    index: 0,
+                    blocks: Vec::new(),
+                },
+            ),
+            Err(EditError::EmptyEdit)
+        ));
     }
 
     #[test]

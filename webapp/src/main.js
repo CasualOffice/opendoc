@@ -2167,6 +2167,15 @@ function selectionRichHtml() {
   const { anchor, focus } = selection;
   const runsJson = doc.copyRichRuns(anchor.node, anchor.offset, focus.node, focus.offset);
   const runs = JSON.parse(runsJson);
+  // When the selection spans block structure the flat runs flatten — a table or
+  // a list — carry a structured payload for internal OpenDoc-to-OpenDoc paste
+  // (`{ blocks, runs }`: the flat runs ride along so a Suggesting-mode paste, or
+  // a structured paste the engine declines, still has the rich-run fallback).
+  const structured = doc.copyStructured(anchor.node, anchor.offset, focus.node, focus.offset);
+  if (structured) {
+    const blocks = JSON.parse(structured).blocks;
+    return embedMarker(JSON.stringify({ blocks, runs })) + runsToHtml(runs);
+  }
   if (!runs.length) return null;
   return embedMarker(runsJson) + runsToHtml(runs);
 }
@@ -6046,6 +6055,25 @@ async function pasteHtml(html) {
   if (!html) return false;
   const internal = extractMarker(html);
   if (internal) {
+    let parsed = null;
+    try {
+      parsed = JSON.parse(internal);
+    } catch { /* not JSON — treat as no usable internal payload below */ }
+    // A structured fragment (`{ blocks, runs }`) reconstructs tables/lists in
+    // Editing mode; Suggesting mode has no tracked representation for structural
+    // paste (GAP-009), so it uses the flat runs. If the engine declines the
+    // structured paste (a range selection, or a caret inside a table cell), fall
+    // back to the flat runs too.
+    if (parsed && !Array.isArray(parsed) && Array.isArray(parsed.blocks)) {
+      if (
+        reviewMode !== "suggesting" &&
+        (await pasteStructured(JSON.stringify({ blocks: parsed.blocks })))
+      ) {
+        return true;
+      }
+      await pasteRichRunsJson(JSON.stringify(parsed.runs ?? []));
+      return true;
+    }
     await pasteRichRunsJson(internal);
     return true;
   }
@@ -6053,6 +6081,26 @@ async function pasteHtml(html) {
   const runs = htmlToRuns(parsed.body);
   if (!runs.length) return false;
   await pasteRichRunsJson(JSON.stringify(runs));
+  return true;
+}
+
+/** Editing-mode structured paste: reconstructs a copied fragment of tables and
+ * list paragraphs at the caret via `doc.pasteStructured`, as one undoable
+ * action. Returns true when applied; false when the engine declines (a range
+ * selection, or a caret that is not a top-level body paragraph), so the caller
+ * falls back to the flat rich-run paste. Calls the engine directly (not through
+ * `runEdit`, which swallows the decline) so the fallback can see it. */
+async function pasteStructured(fragmentJson) {
+  if (!doc || !selection) return false;
+  const { anchor, focus } = selection;
+  breakTypingSession();
+  let res;
+  try {
+    res = doc.pasteStructured(anchor.node, anchor.offset, focus.node, focus.offset, fragmentJson);
+  } catch {
+    return false;
+  }
+  await applyEditResult(res);
   return true;
 }
 
