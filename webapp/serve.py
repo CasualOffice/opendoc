@@ -24,4 +24,13 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8099
     print(f"Serving OpenDoc (no-cache) on http://localhost:{port}/")
-    http.server.test(HandlerClass=NoCacheHandler, port=port, bind="127.0.0.1")
+    # ThreadingHTTPServer (not the single-threaded `http.server.test`): the
+    # editor loads the wasm, JS, fonts, and fixtures concurrently, and a
+    # single-threaded server stalls or refuses those parallel connections —
+    # which flaked the Playwright e2e run (ERR_CONNECTION_REFUSED). One request
+    # per thread keeps the dev server responsive under that concurrency.
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", port), NoCacheHandler)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        server.shutdown()

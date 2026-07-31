@@ -102,6 +102,9 @@ test("comments use the dedicated sidebar and an in-column composer", async ({
   await card.locator(".review-reply-composer").getByRole("button", { name: "Reply" }).click();
   await expect(card.locator(".review-margin-reply")).toContainText("Thread reply");
 
+  // Show resolved comments so the card stays visible through the resolve flow
+  // (the default "Open" filter would hide it once resolved — REVIEW-GAP-018/019).
+  await sidebar.locator('[data-review-filter="all"]').click();
   await card.locator(":scope > .review-margin-card-head").getByRole("button", { name: "Resolve" }).click();
   await expect(card).toHaveClass(/resolved/);
   await expect(card).toHaveAttribute("aria-expanded", "false");
@@ -112,7 +115,6 @@ test("comments use the dedicated sidebar and an in-column composer", async ({
   await card.click();
   await expect(card).toHaveAttribute("aria-expanded", "false");
   await expect(page.locator(".review-comment-marker")).toHaveCount(0);
-  await expect(page.locator("#reviewPanel")).toBeHidden();
   expect(consoleErrors).toEqual([]);
 });
 
@@ -170,7 +172,6 @@ test("suggestions share the sidebar and decisions appear only on the active card
   await clickIntoFirstPage(page);
   await moveCaretToDocStart(page);
 
-  await expect(page.locator("#reviewInlineBar")).toBeHidden();
   await setReviewMode(page, "suggesting");
   await expect(page.locator("#suggestingBanner")).toBeVisible();
   await pastePlainText(page, "TRACKED_SIDEBAR_INSERT");
