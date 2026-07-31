@@ -11,18 +11,33 @@ selection), docs 47/48/51/52/53/54 (text-box + float + per-section render/layout
 already shipped), doc 84 (context-menu / shared command registry), doc 69
 (competitive interaction grammar), doc 67 row 10 (the editing-scope gap this
 closes).
-**Owner decision required:** the Open Questions in §9 gate implementation.
+**Owner decisions recorded (2026-08-01):** Q3, Q4, and Q5 in §9 are now
+**DECIDED** and folded into the phasing, ops, and tracker below; the remaining
+open questions (Q1, Q2, Q6, Q7, Q8, Q9) still gate implementation. **§10 is a
+competitive comparison of how OnlyOffice, Microsoft Word, and Google Docs handle
+object and header/footer editing, plus what we adopt vs. deliberately differ**
+given our engine-drawn-selection / model-as-truth / canvas architecture — read it
+alongside the interaction grammar in §4.
 
 ## 1. Purpose and phasing
 
 Body and table-cell paragraph text is editable today; **headers/footers, notes,
 text boxes, and drawing objects are not general editing surfaces** (doc 67 row
-10). This design closes that gap in two phases, in a deliberate order:
+10). This design closes that gap in two phases, preceded by one prerequisite
+model slice, in a deliberate order:
 
+- **Phase 0 — prerequisite model slice (DECIDED, Q3):** add image **crop**
+  (`a:srcRect`) and inline-`Drawing` **alt-text** (`descr`) to the model, with
+  import/export/layout, *before* Phase A object editing — so crop and alt-text
+  ship *with* Phase A's image ops rather than trailing them. This is the one item
+  that is not a pure edit-layer change (§5.4).
 - **Phase A — drawing-object editing:** insert / select / move / resize / delete
-  for images, text boxes, and basic shapes; image replace / crop / alt-text /
-  wrap-mode; text-box text editing and body properties; and the one *object
-  interaction grammar* shared by every object kind.
+  for images, text boxes, and basic shapes — **including inserting new basic
+  shapes**, not only editing existing ones (DECIDED, Q4); image replace / crop /
+  alt-text / wrap-mode; text-box text editing and body properties; and the one
+  *object interaction grammar* shared by every object kind. Object edits are
+  **blocked (fail-closed) in Suggesting mode** because they have no OOXML revision
+  markup (DECIDED, Q5; §6).
 - **Phase B — headers/footers as editable surfaces:** entering/exiting the
   header/footer editing context; editing their paragraphs **and** their
   contained images/text-boxes (by reusing Phase A); first-page and even/odd
@@ -240,14 +255,16 @@ explicit `Location`.
   bytes enter the package/preservation side-table and a new `MediaReference` is
   registered in `Definitions.media` (a host-provided image → new `MediaId`).
   Self-inverse with the previous `MediaId`.
-- `SetObjectDescr { object: NodeId, descr: Option<String> }` — alt-text. **Blocked
-  on a model change** for inline `Drawing` (it has no `descr` field today);
-  `AnchoredDrawing`/`GroupPicture` already carry `descr`. See §9-Q3.
-- `SetImageCrop { object: NodeId, crop: CropRect }` — **blocked on a model
-  addition**: crop (`a:srcRect`) is not modeled on any picture type. This op is
-  *designed here but gated* behind adding a `crop` field + import/export/layout
-  support; it is the one Phase A item that is not a pure edit-layer change. See
-  §9-Q3 and the phased split in §10 (`P1G-OBJ-MODEL` precedes it).
+- `SetObjectDescr { object: NodeId, descr: Option<String> }` — alt-text. Inline
+  `Drawing` gains a `descr` field in the **Phase 0** model slice (DECIDED, Q3);
+  `AnchoredDrawing`/`GroupPicture` already carry `descr`. Self-inverse with the
+  previous value.
+- `SetImageCrop { object: NodeId, crop: CropRect }` — crop (`a:srcRect`). The
+  `crop` field + import/export/layout land in the **Phase 0 prerequisite slice
+  (DECIDED, Q3)** so this op ships *with* Phase A rather than trailing it (it is
+  the one item that is not a pure edit-layer change — see the tracker in §11,
+  where `P1G-OBJ-MODEL` runs *before* the Phase A object ops). Self-inverse with
+  the previous crop.
 
 ### 5.5 Text-box ops
 
@@ -261,12 +278,38 @@ explicit `Location`.
 - `SetShapeFillStroke { object: NodeId, fill: Option<Rgba>, stroke: Option<ShapeStroke> }`
   — text-box / shape appearance (doc 47). Self-inverse.
 
-### 5.6 What is intentionally out of scope for Phase A
+### 5.6 Inserting new basic shapes (DECIDED, Q4)
 
-Rotation/flip, custom `ShapeGeometry` (beyond the 5-value enum), floating position
-for `EmbeddedObject`, group re-parenting / child add-remove, and drawing new
-shapes from scratch. Each needs a model extension and is a later slice; naming
-them keeps "basic shapes" honest (§9-Q4).
+Phase A includes **authoring new basic shapes**, not only editing existing ones.
+This is a deliberately larger scope than "edit-existing", and it is honest about
+what new-shape authoring needs that mutating an imported shape did not:
+
+- **Op:** `InsertShape { location, index, geometry: ShapeGeometry, extent, anchor:
+  Option<DrawingAnchor>, fill, stroke }` — a specialization of `InsertObject`
+  (§5.2) that mints a `GroupShape`/`WordprocessingShape` node with a default
+  extent at a default position, then the user drags/edits it. Inverse:
+  `DeleteObject`.
+- **Geometry is limited by the model, not by this op.** `ShapeGeometry` is a
+  coarse 5-value enum (`Rectangle | RoundRectangle | Ellipse | Line | Other`), so
+  the shape *gallery* offered at insert time is exactly those primitives —
+  rectangle, rounded rectangle, ellipse/oval, line — plus any modeled `Other`
+  presets that already round-trip. A richer preset gallery (Word's ~160 autoshape
+  presets) or arbitrary custom geometry (`a:custGeom`) is **out of scope** until
+  `ShapeGeometry` grows; the insert UI must only offer what the model + layout can
+  faithfully render and export.
+- **No rotation/flip at insert or edit** in this phase (the model carries a
+  `transform` but rotation/flip authoring + hit-testing rotated handles is
+  deferred — see §5.7). Inserted shapes are axis-aligned.
+- **Text in a shape:** a shape that is a text box authors its text through the
+  same text ops as any text-box body (§5.5); a plain shape has no text.
+
+### 5.7 What is intentionally out of scope for Phase A
+
+Rotation/flip authoring (and the rotated-handle hit-testing it implies), custom
+`ShapeGeometry`/`a:custGeom` and the full preset autoshape gallery, floating
+position for `EmbeddedObject`, and group re-parenting / child add-remove. Each
+needs a model extension and is a later slice; naming them keeps "basic shapes"
+honest.
 
 ## 6. Undo / transaction semantics and tracked changes
 
@@ -278,15 +321,16 @@ them keeps "basic shapes" honest (§9-Q4).
   (node identity is stable); a delete collapses to a `Caret` at the object's
   former anchor. No `PositionMap` byte-remap is needed for pure object ops (they
   don't shift paragraph text), which keeps them simpler than text edits.
-- **Tracked changes (Suggesting mode):** OOXML has **no revision markup for
-  object move/resize/replace/property changes**, and Word itself does not track
-  most object-geometry edits. Consistent with `REVIEW-GAP-009`'s structural-
-  tracking backlog, **object edits are not tracked in this phase.** Two safe
-  options (owner decides, §9-Q5): (a) **block** object edits in Suggesting mode
-  with the existing "cannot be tracked yet" status (fail-closed, matching
-  `P1G-REVIEW-042`), or (b) **apply untracked** with a visible note. Default
-  recommendation: **block in Suggesting mode** for a truthful "no silent
-  untracked mutation" guarantee.
+- **Tracked changes (Suggesting mode) — DECIDED (Q5): block, fail-closed.** OOXML
+  has **no revision markup for object move/resize/replace/insert/delete/property
+  changes**, and Word itself does not track most object-geometry edits.
+  Consistent with `REVIEW-GAP-009`'s structural-tracking backlog and the decision
+  for the other untrackable ops (`P1G-REVIEW-042`), **every object op is blocked
+  in Suggesting mode** via the existing shared `blockUntrackedInSuggesting()` gate
+  and reports the existing "This command cannot be tracked yet; switch to Editing
+  to apply it" status — it is never silently applied untracked. This gives a
+  truthful "no silent untracked mutation" guarantee. (A future tracked-object
+  representation, if one is ever designed, would revisit this — not this phase.)
 
 ## 7. Save / round-trip implications
 
@@ -360,25 +404,38 @@ has **no `link_to_previous` field**. For editing we must decide (§9-Q7):
 
 ## 9. Open questions for owner review
 
-- **Q1 — Object interaction grammar exact keys.** Confirm the two-step Escape
-  (edit-mode → object-selected → text-caret) and whether Tab/Shift+Tab traverses
-  objects on a page (§4). These set muscle-memory expectations.
-- **Q2 — Context bar vs. contextual ribbon tab.** Does object selection surface a
-  floating context bar (Google Docs), a contextual ribbon tab (Word "Picture
-  Format"), or both? doc 69 already chose "disable, don't hide" for contextual
-  tabs — confirm the object case reuses that.
-- **Q3 — Model additions for image crop + inline alt-text.** Crop (`a:srcRect`)
-  and inline-`Drawing` `descr` are not modeled. Approve a small model/import/
-  export slice (`P1G-OBJ-MODEL`) as a prerequisite for `SetImageCrop` /
-  `SetObjectDescr`-on-inline, or descope crop/inline-alt from Phase A?
-- **Q4 — "Basic shapes" scope.** With `ShapeGeometry` a coarse 5-value enum and no
-  rotation/flip/custom geometry, "shape editing" in Phase A means move/resize/
-  delete/fill/outline of existing shapes only — **not** drawing new shapes or
-  editing geometry. Confirm that boundary.
-- **Q5 — Object edits under Suggesting mode.** Block (fail-closed, recommended)
-  or apply-untracked-with-a-note? Object geometry/property changes have no OOXML
-  revision markup.
-- **Q6 — `title_page` / section running toggles.** Extend `SetSectionGeometry`
+Three questions are now **DECIDED** (recorded 2026-08-01) and folded into the
+phasing/ops/tracker above; kept here for the decision record. The rest remain
+open and gate implementation.
+
+- **Q1 — Object interaction grammar exact keys.** *(open)* Confirm the two-step
+  Escape (edit-mode → object-selected → text-caret) and whether Tab/Shift+Tab
+  traverses objects on a page (§4). These set muscle-memory expectations. (§10
+  shows all three reference editors use single-click→handles and double-click→
+  enter-text; none has a strong Tab-traversal convention, so that part is a
+  genuine choice.)
+- **Q2 — Context bar vs. contextual ribbon tab.** *(open)* Does object selection
+  surface a floating context bar (Google Docs), a contextual ribbon tab (Word
+  "Picture Format" / OnlyOffice right sidebar), or both? doc 69 already chose
+  "disable, don't hide" for contextual tabs — confirm the object case reuses
+  that. (§10 synthesis leans to a floating context bar for common actions + a
+  reusable properties surface for the long tail.)
+- **Q3 — Model additions for image crop + inline alt-text. DECIDED: do the
+  prerequisite model slice.** Add crop (`a:srcRect`) and inline-`Drawing` `descr`
+  to the model with import/export/layout as **Phase 0**, *before* Phase A object
+  editing, so `SetImageCrop`/`SetObjectDescr` ship with Phase A (§1, §5.4;
+  `P1G-OBJ-MODEL` runs first in §11).
+- **Q4 — "Basic shapes" scope. DECIDED: include inserting new basic shapes.**
+  Phase A authors new shapes, not only edits existing ones (§5.6). The insert
+  gallery is bounded to what `ShapeGeometry` + layout faithfully render/export
+  (rectangle / rounded-rectangle / ellipse / line / modeled `Other` presets);
+  rotation/flip, the full autoshape preset gallery, and custom geometry remain
+  deferred (§5.7).
+- **Q5 — Object edits under Suggesting mode. DECIDED: block, fail-closed.** Every
+  object op is blocked in Suggesting mode with the existing "cannot be tracked
+  yet" status, matching `P1G-REVIEW-042`; object changes have no OOXML revision
+  markup and are never applied silently untracked (§6).
+- **Q6 — `title_page` / section running toggles.** *(open)* Extend `SetSectionGeometry`
   (which today deliberately leaves headers/footers untouched) or add a dedicated
   section-running-properties op? A dedicated op is cleaner but adds surface.
 - **Q7 — Link-to-previous semantics.** Approve modelling linkage purely as
@@ -392,36 +449,150 @@ has **no `link_to_previous` field**. For editing we must decide (§9-Q7):
   should text-box *content* editing (pure locator reuse) ship as an early
   sub-slice ahead of object move/resize?
 
-## 10. Proposed tracker breakdown (design-first; all Not started / Designing)
+## 10. Competitive editing-experience comparison
+
+The owner's chief concern is that we follow *proven* object- and header/footer-
+editing patterns rather than inventing. This section surveys the three editors we
+benchmark against — **OnlyOffice Document Editor** (closest architecturally: an
+OOXML-native, canvas-rendered editor), **Microsoft Word** (the fidelity oracle;
+doc 69 is our detailed Word competitive guide), and **Google Docs** (the browser
+interaction baseline; doc 58) — then synthesizes what we adopt vs. deliberately
+differ given our engine-drawn-selection / model-as-truth / canvas architecture.
+Sources are cited at the end of this section.
+
+### 10.1 Object editing (image / shape / text box)
+
+| Aspect | OnlyOffice | Microsoft Word | Google Docs |
+| --- | --- | --- | --- |
+| **Insert** | Insert tab → Image (from file / URL / storage); Shape (autoshape gallery); Text box | Insert → Pictures / Shapes (≈160 preset gallery) / Text Box | Insert → Image; Insert → Drawing (a separate canvas dialog) for shapes/text boxes |
+| **Selection + handles** | Square edge/corner resize handles + a **green circular rotation handle**; alignment guides while moving | Border with sizing handles + a rotation handle at top; Shift = keep proportions, Ctrl = keep center, Shift+rotate = 15° steps | Blue-dot handles; Shift = keep aspect ratio; rotation via Image options |
+| **Resize modifier** | Shift + corner = proportional | Shift = proportional, Ctrl = from center | Shift = aspect ratio |
+| **Context surface** | **Right-hand settings sidebar** (Size incl. Crop, Opacity, Rotation, Wrapping Style, **Replace Image**) + right-click "Advanced Settings" | **Contextual ribbon tab** ("Picture Format" / "Shape Format"), Arrange group (Rotate, Wrap Text, Position) + right-click Wrap Text menu | **Floating toolbar** under the image + "Image options" side panel (Size & Rotation, Text Wrapping, Recolor/Adjustments) |
+| **Wrap-text modes** | inline, square, tight, through, top and bottom, in front, behind | In Line with Text, Square, Tight, Through, Top and Bottom, Behind Text, In Front of Text | Inline, Wrap text, Break text, Behind text, In front of text |
+| **Enter text-box editing** | Double-click the box (border goes solid = selected; caret inside = editing) | Double-click the text box to edit its text | Text boxes live inside the Drawing dialog; edit re-opens that dialog |
+| **Replace image** | Replace Image (sidebar or right-click) | Right-click → Change Picture | Right-click → Replace image |
+
+**The three agree on the core grammar:** single-click selects the object and
+shows handles; drag a handle resizes (Shift constrains); a rotation handle
+rotates; double-click a container enters its text; a context surface exposes
+Replace / Wrap / Crop / properties. Our §4 grammar matches this. The wrap-mode
+vocabularies are near-identical and map **directly onto our `WrapMode` enum**
+(`Square/Tight/Through/TopAndBottom/None` + `behind_doc`) — no invention needed.
+
+### 10.2 Header/footer editing
+
+| Aspect | OnlyOffice | Microsoft Word | Google Docs |
+| --- | --- | --- | --- |
+| **Enter** | Double-click the top/bottom page margin, or Insert → Header/Footer | Double-click the header/footer region, or Insert → Header/Footer → opens the "Header & Footer" contextual tab | Double-click the top/bottom of the page, or Insert → Headers & footers |
+| **Exit** | Click back in the body | **Close Header and Footer** button, or **Esc** | Click back in the body |
+| **First-page variant** | "Different first page" option | **Different First Page** toggle (Header & Footer tab) | **Different first page** checkbox |
+| **Odd/even variant** | Different odd/even | **Different Odd & Even Pages** toggle | (not offered) |
+| **Section linkage** | Per-section headers with linking | **Link to Previous** toggle; requires a section break; each variant (first/odd/even) links separately | **Link to previous** checkbox, appears once the doc has section breaks |
+
+**All three** treat header/footer editing as an **editing-context switch** — a
+double-click into the margin band, dim/de-emphasize the body, edit in place, exit
+by Esc or clicking the body — **not** a modal dialog and **not** a document
+mutation in itself. Word and Google Docs both gate distinct section headers behind
+a **section break + a "Link to Previous"/"Different first page" toggle**, and both
+model linkage as *inheritance you opt out of*. This is exactly the design in §8
+(entering is selection/host state, not an op; linkage is `HeaderFooterRef`
+presence/absence) — again, proven, not invented.
+
+### 10.3 What we adopt vs. deliberately differ
+
+**Adopt (proven, and our model already supports it):**
+
+- The **object grammar**: single-click → handles + context surface; drag handle →
+  resize (Shift constrains proportions); double-click container → enter text;
+  Delete removes the object (§4).
+- The **wrap-mode vocabulary** verbatim (it *is* our `WrapMode` enum) and a
+  right-click / context-bar **Wrap** submenu (§5.3).
+- **Crop, Replace Image, Alt-text** as first-class image context actions (all
+  three editors expose these; Phase 0 + §5.4 make them real for us).
+- Header/footer as an **in-place context switch** entered by double-clicking the
+  margin band and exited by Esc/body-click; **Different First Page**, **Different
+  Odd & Even**, and **Link to Previous** as the section-variant/linkage controls
+  (§8) — Word's exact control names, since doc 69 already tracks Word as the
+  fidelity oracle.
+
+**Deliberately differ (forced by our architecture, doc 56/58):**
+
+- **We draw every handle and outline ourselves** from engine geometry
+  (`objectRect`/`objectHandles`, §3.3). We **cannot** reuse any of these editors'
+  DOM/SVG-overlay handle implementations — Word/OnlyOffice are native canvas apps
+  and Google Docs overlays DOM handles on its own layout box; our selection chrome
+  is rastered from the same `LayoutSnapshot` the page came from, so it matches the
+  glyphs exactly and never drifts. This is a strength (zero overlay-vs-content
+  drift) but means handle hit-testing is our own `objectAt` math, not the
+  browser's.
+- **The model is the single source of truth, never the DOM** (doc 67 row 10). A
+  drag-resize previews as host chrome and commits **one** `SetExtent`/`SetAnchor`
+  op at drag-end (§5.3); we do not, like a DOM editor, mutate a live element and
+  reconcile afterward.
+- **Shape authoring is bounded to what we can faithfully render + round-trip**
+  (§5.6): our insert gallery is the modeled `ShapeGeometry` primitives, not Word's
+  ~160-preset gallery, and there is **no rotation/flip authoring** yet — we would
+  rather ship a small, faithful set than fake presets that export as rectangles.
+  This is a conscious fidelity-over-breadth difference from all three references.
+- **Text boxes edit in place**, like OnlyOffice/Word (caret inside the box), *not*
+  behind a separate Drawing dialog like Google Docs — our text-box body is
+  ordinary block content flowed by the shared pipeline (docs 47/52), so in-place
+  editing is the natural (and higher-fidelity) fit.
+- **Object edits are blocked in Suggesting mode** (§6, Q5) — none of the three
+  reference editors tracks object-geometry changes either, so blocking (rather
+  than silently untracked mutation) is both faithful and safer.
+
+**Sources:** ONLYOFFICE Document Editor Help — Insert images
+(`helpcenter.onlyoffice.com/docs/userguides/document_editor/InsertImages.aspx`),
+Insert autoshapes, Insert text objects; Microsoft Support — "Change the size of a
+picture, shape, text box, or WordArt", "Rotate or flip a text box, shape, WordArt
+or picture", "Link to previous", "Create different headers or footers for odd and
+even pages"; Google Docs Editors Help — "Insert & edit images/drawings", "Wrap
+text around images", "Use headers, footers, page numbers & footnotes". Cross-refs:
+doc 69 (Word competitive guide) and the OnlyOffice capability analysis referenced
+there.
+
+## 11. Proposed tracker breakdown (design-first; all Not started / Designing)
+
+Reordered to reflect the recorded decisions: the **Phase 0 model slice runs
+first** (crop + inline alt-text, Q3), Phase A now includes **new-shape
+insertion** (Q4), and every object op **fails closed in Suggesting mode** (Q5).
+
+Phase 0 — prerequisite model slice (`P1G-OBJ-MODEL`, runs before Phase A object
+ops):
+
+- `P1G-OBJ-MODEL` — (DECIDED, Q3) model + import + export + layout for image crop
+  (`a:srcRect`) and inline-`Drawing` alt-text (`descr`); the foundation
+  `SetImageCrop`/`SetObjectDescr` build on.
 
 Phase A (`P1G-OBJ-*`):
 
-- `P1G-OBJ-DESIGN` — this doc; owner sign-off on §9 gates everything below.
+- `P1G-OBJ-DESIGN` — this doc; owner sign-off on the remaining open questions
+  (Q1/Q2/Q6/Q7/Q8/Q9) gates the ops below.
 - `P1G-OBJ-SELECT` — `HitTarget::{InlineObject,Float}` + `Selection::Object`,
   `objectAt`/`objectRect`/`objectHandles`, engine-drawn outline + handles (doc 58
   arms; read-only, no ops).
 - `P1G-OBJ-GRAMMAR` — the §4 interaction grammar + object context bar via doc 84
-  `editorCommands(object)`.
+  `editorCommands(object)` (§10 adopt list).
 - `P1G-OBJ-GEOMETRY` — `SetAnchor` + `SetExtent` (move/resize/wrap/z-order) with
-  undo + export fixed point.
-- `P1G-OBJ-STRUCTURE` — `InsertObject`/`DeleteObject` + the §5.1 `Location`
-  locator generalization.
+  undo + export fixed point; blocked in Suggesting mode (Q5).
+- `P1G-OBJ-STRUCTURE` — `InsertObject`/`DeleteObject` + `InsertShape` (new basic
+  shapes, Q4) + the §5.1 `Location` locator generalization.
 - `P1G-OBJ-TEXTBOX` — text-box content editing (locator reuse) +
   `SetTextBoxBody` + `SetShapeFillStroke`.
-- `P1G-OBJ-IMAGE` — `ReplaceMedia`; host-bytes contract (Q8).
-- `P1G-OBJ-MODEL` — (gated by Q3) model+import+export for crop + inline alt-text;
-  then `SetImageCrop`/`SetObjectDescr`.
+- `P1G-OBJ-IMAGE` — `ReplaceMedia` + `SetImageCrop` + `SetObjectDescr` (on the
+  Phase 0 model); host-bytes contract (Q8).
 
 Phase B (`P1G-HF-*`, each depends on Phase A):
 
 - `P1G-HF-CONTEXT` — `RunningZone` hit target, enter/exit header-footer editing
-  context (selection/host state, no op).
+  context (selection/host state, no op) — the §10 in-place context switch.
 - `P1G-HF-CONTENT` — edit header/footer paragraphs + contained objects (Phase A
   reuse via `Location::Header/Footer`).
 - `P1G-HF-VARIANTS` — first-page / even-odd targeting; `SetSectionRunningRef` +
   `CreateHeaderFooterBody`; `title_page` toggle (Q6).
 - `P1G-HF-LINK` — "same as previous" link/unlink via ref presence/absence (Q7).
 
-**None of these are implementation-ready until the §9 owner decisions are
-recorded.** Per AGENTS.md, this doc is the design gate; code follows a finalized
-design.
+**The recorded decisions (Q3/Q4/Q5) are final; the remaining open questions
+(Q1/Q2/Q6/Q7/Q8/Q9) still gate the code.** Per AGENTS.md, this doc is the design
+gate; code follows a finalized design.
