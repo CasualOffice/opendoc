@@ -211,6 +211,19 @@ let reviewSidebarPreference = null;
 let reviewComposerState = null;
 let reviewDeleteConfirmId = null;
 let reviewMarginFrame = 0;
+// Sidebar virtualization (REVIEW-GAP-020). The full render (on content edit /
+// resize) computes every item's stacked document-scroll position once and keeps
+// it in `reviewLayout`; scrolling only re-windows that precomputed layout, never
+// re-parsing the review payload or rebuilding cards. `reviewCardCache` retains
+// each item's built DOM + measured height keyed by a content signature, so an
+// unchanged card is never rebuilt or re-measured, and only cards inside (or near)
+// the viewport are ever mounted into the DOM.
+let reviewLayout = [];
+const reviewCardCache = new Map();
+let reviewWindowFrame = 0;
+// Pixels above and below the viewport to keep mounted, so a scroll reveals an
+// already-present card instead of a blank gap before the next frame mounts it.
+const REVIEW_WINDOW_OVERSCAN = 800;
 
 /** Reads the typed comment/revision review data (docs/81 REVIEW-GAP-022's
  *  `listComments`/`listRevisions`), shaped like the legacy combined
@@ -480,6 +493,8 @@ function renderReviewMarginItems() {
   if (!doc || !pages.length) {
     reviewSidebar.hidden = true;
     viewportEl.classList.remove("has-review-sidebar");
+    reviewLayout = [];
+    reviewCardCache.clear();
     return;
   }
   const summary = readReviewData(doc);
@@ -610,7 +625,10 @@ function renderReviewMarginItems() {
   viewportEl.classList.toggle("has-review-sidebar", show);
   reviewBtn.setAttribute("aria-pressed", String(show));
   railReview.setAttribute("aria-pressed", String(show));
-  if (!show) return;
+  if (!show) {
+    reviewLayout = [];
+    return;
+  }
 
   // The comment layer rides inside `.viewport`'s single scroll context; its body
   // spans the page-stack height so the transparent margin remains click-to-
@@ -623,11 +641,27 @@ function renderReviewMarginItems() {
     empty.className = "review-sidebar-empty";
     empty.innerHTML = '<span class="ms" aria-hidden="true">chat_bubble_outline</span><br>No comments or suggestions yet.<br>Select text and choose Add comment.';
     reviewSidebarBody.appendChild(empty);
+    reviewLayout = [];
+    reviewCardCache.clear();
     return;
   }
 
-  let nextY = 8;
+  // Build (or reuse) each item's card, but do not mount them all: compute every
+  // card's stacked document-scroll position once here, then mount only the
+  // viewport window (`mountReviewWindow`). A collapsed card whose content
+  // signature is unchanged is reused from `reviewCardCache` without rebuilding
+  // or re-measuring; the active/expanded card and the composer always rebuild so
+  // their live controls stay fresh (REVIEW-GAP-020).
+  const built = [];
   for (const item of items) {
+    const itemId = item.type === "composer" ? "composer" : `${item.type}:${item.data.id}`;
+    const expanded = activeReviewItemId === itemId;
+    const sig = reviewCardSignature(item, comments);
+    let entry = reviewCardCache.get(itemId);
+    if (entry && entry.sig === sig && item.type !== "composer" && !expanded) {
+      built.push({ itemId, item, entry });
+      continue;
+    }
     if (item.type === "composer") {
       const composer = document.createElement("article");
       composer.className = "review-margin-card review-margin-composer expanded";
@@ -665,18 +699,13 @@ function renderReviewMarginItems() {
       });
       actions.append(cancel, submit);
       composer.append(textarea, actions);
-      reviewSidebarBody.appendChild(composer);
-      const targetY = item.rect.top - viewportRect.top + viewportEl.scrollTop;
-      const y = Math.max(8, targetY, nextY);
-      composer.style.top = `${Math.round(y)}px`;
-      nextY = y + composer.offsetHeight + 8;
-      requestAnimationFrame(() => textarea.focus({ preventScroll: true }));
+      entry = { el: composer, sig, height: 0, measured: false, focusTextarea: textarea, needsFocus: true };
+      reviewCardCache.set(itemId, entry);
+      built.push({ itemId, item, entry });
       continue;
     }
 
     const card = document.createElement("article");
-    const itemId = `${item.type}:${item.data.id}`;
-    const expanded = activeReviewItemId === itemId;
     const revisionKind = item.type === "revision" ? ` review-margin-${String(item.data.kind || "change").replaceAll("_", "-")}` : "";
     card.className = `review-margin-card review-margin-${item.type}${revisionKind}${item.data.resolved ? " resolved" : ""}${expanded ? " expanded" : ""}`;
     card.tabIndex = 0;
@@ -1018,19 +1047,126 @@ function renderReviewMarginItems() {
       }
     }
     if (actions.childElementCount) card.appendChild(actions);
-    reviewSidebarBody.appendChild(card);
+    entry = { el: card, sig, height: 0, measured: false };
+    reviewCardCache.set(itemId, entry);
+    built.push({ itemId, item, entry });
+  }
+
+  // Measure only the freshly built cards, batched: mount them all off-view, read
+  // every height (one layout for all reads, since no DOM mutation interleaves),
+  // then detach them. Reused cards keep their cached measured height, so a large
+  // review set is not re-measured on every edit.
+  const toMeasure = built.filter(({ entry }) => !entry.measured);
+  for (const { entry } of toMeasure) {
+    entry.el.style.top = "-99999px";
+    reviewSidebarBody.appendChild(entry.el);
+  }
+  for (const { entry } of toMeasure) {
+    entry.height = entry.el.offsetHeight;
+    entry.measured = true;
+  }
+  for (const { entry } of toMeasure) reviewSidebarBody.removeChild(entry.el);
+
+  // Position pass: stack every card in document-scroll coordinates exactly as
+  // the non-virtualized layout did (anchor top, pushed down to clear the card
+  // above), using the measured heights.
+  let nextY = 8;
+  const seen = new Set();
+  const layout = [];
+  for (const { itemId, item, entry } of built) {
+    seen.add(itemId);
     const targetY = item.rect.top - viewportRect.top + viewportEl.scrollTop;
     const y = Math.max(8, targetY, nextY);
-    card.style.top = `${Math.round(y)}px`;
-    nextY = y + card.offsetHeight + 8;
+    nextY = y + entry.height + 8;
+    layout.push({ itemId, top: y, entry });
   }
+  // Drop cache entries (and their retained DOM) for items no longer present.
+  for (const key of [...reviewCardCache.keys()]) {
+    if (!seen.has(key)) reviewCardCache.delete(key);
+  }
+  reviewLayout = layout;
+  mountReviewWindow();
+}
+
+/** A stable string that changes whenever anything affecting a card's rendered
+ *  DOM or measured height changes, so `reviewCardCache` reuses a card only when
+ *  it would render identically. The composer is never cached (always rebuilt so
+ *  its live textarea/focus stays correct). */
+function reviewCardSignature(item, comments) {
+  if (item.type === "composer") return "composer";
+  const d = item.data;
+  const itemId = `${item.type}:${d.id}`;
+  const expanded = activeReviewItemId === itemId;
+  const confirm = reviewDeleteConfirmId === d.id;
+  const replies = item.type === "comment"
+    ? comments
+      .filter((c) => c.parentParaId === d.paraId || c.parentParaId === d.id)
+      .map((r) => `${r.id}${r.resolved ? 1 : 0}${r.text}${r.author}${r.date}`)
+      .join("")
+    : "";
+  return JSON.stringify([
+    item.type, d.id, d.kind || "", expanded ? 1 : 0, d.resolved ? 1 : 0, confirm ? 1 : 0,
+    d.text || "", d.oldText || "", d.newText || "", d.author || "", d.initials || "", d.date || "",
+    d.groupId || "", d.movePair ? 1 : 0,
+    Array.isArray(d.formattingDelta) ? d.formattingDelta : 0,
+    d.anchor ? `${d.anchor.node}:${d.anchor.start}:${d.anchor.end}` : "",
+    replies,
+  ]);
+}
+
+/** Mounts only the cards whose precomputed position falls inside (or within
+ *  `REVIEW_WINDOW_OVERSCAN` of) the viewport, and detaches the rest. Runs after
+ *  a full render and on every scroll frame; it never re-parses the review
+ *  payload, recomputes geometry, or rebuilds a card — it only attaches/detaches
+ *  retained DOM by comparing cached positions to the current scroll band. This
+ *  is what keeps the mounted card count bounded regardless of review size
+ *  (REVIEW-GAP-020). */
+function mountReviewWindow() {
+  if (reviewSidebar.hidden) return;
+  const scrollTop = viewportEl.scrollTop;
+  const bandTop = scrollTop - REVIEW_WINDOW_OVERSCAN;
+  const bandBottom = scrollTop + viewportEl.clientHeight + REVIEW_WINDOW_OVERSCAN;
+  for (const { itemId, top, entry } of reviewLayout) {
+    // The composer and the active/expanded card are always kept mounted: they
+    // own live focus/controls the user is interacting with.
+    const force = itemId === "composer" || itemId === activeReviewItemId;
+    const visible = force || (top + entry.height >= bandTop && top <= bandBottom);
+    const mounted = entry.el.parentNode === reviewSidebarBody;
+    if (visible) {
+      entry.el.style.top = `${Math.round(top)}px`;
+      if (!mounted) reviewSidebarBody.appendChild(entry.el);
+      if (entry.needsFocus && entry.focusTextarea) {
+        entry.needsFocus = false;
+        const textarea = entry.focusTextarea;
+        requestAnimationFrame(() => textarea.focus({ preventScroll: true }));
+      }
+    } else if (mounted) {
+      reviewSidebarBody.removeChild(entry.el);
+    }
+  }
+}
+
+/** rAF-debounced `mountReviewWindow` for the scroll path: re-windowing is cheap
+ *  (no parse/geometry/rebuild), but coalescing to one call per frame keeps a
+ *  fast scroll from doing redundant DOM work. */
+function scheduleReviewWindow() {
+  if (reviewWindowFrame) return;
+  reviewWindowFrame = requestAnimationFrame(() => {
+    reviewWindowFrame = 0;
+    mountReviewWindow();
+  });
 }
 
 // One scroll owner: the comment layer lives inside `.viewport` and rides its
 // scroll context natively, so cards stay pinned to their anchored text without
 // any scroll-sync or per-frame re-render (that eliminates the momentum drift and
 // the between-canvas scrollbar). Cards are positioned in document-scroll
-// coordinates; only content edits and resizes re-render them.
+// coordinates; only content edits and resizes recompute those positions. On a
+// plain scroll we only re-window the already-computed layout (mount the cards
+// entering the viewport, detach those leaving it) — no re-parse, no geometry,
+// no rebuild — so a document with hundreds of comments scrolls with a bounded,
+// viewport-sized number of mounted cards (REVIEW-GAP-020).
+viewportEl.addEventListener("scroll", scheduleReviewWindow, { passive: true });
 reviewSidebarBody.addEventListener("click", (event) => {
   if (event.target !== reviewSidebarBody || !activeReviewItemId) return;
   activeReviewItemId = null;
@@ -1250,6 +1386,9 @@ async function openBytes(bytes, name) {
     activeReviewItemId = null;
     reviewComposerState = null;
     reviewDeleteConfirmId = null;
+    // A new document invalidates every retained card and its cached geometry.
+    reviewLayout = [];
+    reviewCardCache.clear();
     for (const button of reviewModeButtons) {
       button.setAttribute("aria-pressed", String(button.dataset.reviewMode === reviewMode));
     }
