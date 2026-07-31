@@ -1926,6 +1926,63 @@ impl WasmDocument {
             .map_err(to_js)
     }
 
+    /// Continues the caret's numbered list from the nearest **preceding** numbered
+    /// list at the same level — the inverse of [`restart_list`](Self::restart_list).
+    /// Counters are keyed by `(instance, level)`, so adopting that earlier list's
+    /// instance resumes its sequence (e.g. an item restarted at `1.` rejoins the
+    /// list above it and renumbers `4.`, `5.`, …). The adopted instance is carried
+    /// through the contiguous following items that shared the caret paragraph's
+    /// current instance and level, so an entire restarted run rejoins at once.
+    ///
+    /// Bullets and non-list paragraphs are rejected; so is a paragraph that has no
+    /// distinct preceding numbered list at its level (nothing to continue from) or
+    /// one already contiguous with the list above it (already continuous).
+    #[wasm_bindgen(js_name = continueList)]
+    pub fn continue_list(&mut self, node: &str) -> Result<EditResult, JsValue> {
+        let start_node = node_id(node)?;
+        self.continue_list_inner(start_node).map_err(to_js)
+    }
+
+    /// Whether [`continue_list`](Self::continue_list) would succeed at `node`: the
+    /// paragraph is a numbered list item with an earlier numbered list at the same
+    /// level (a different instance) to resume. Drives the toolbar button's enabled
+    /// state so it is offered only when there is actually a list to continue.
+    #[wasm_bindgen(js_name = canContinueList)]
+    #[must_use]
+    pub fn can_continue_list(&self, node: &str) -> bool {
+        let Ok(start_node) = NodeId::from_str(node) else {
+            return false;
+        };
+        let Some(current) =
+            paragraph_properties(&self.document, start_node).and_then(|p| p.numbering)
+        else {
+            return false;
+        };
+        if self.list_format(current.instance) == Some(NumberFormat::Bullet) {
+            return false;
+        }
+        let ordered = self.ordered_paragraphs();
+        let Some(index) = ordered.iter().position(|(id, _)| *id == start_node) else {
+            return false;
+        };
+        for (id, _) in ordered[..index].iter().rev() {
+            let Some(numbering) =
+                paragraph_properties(&self.document, *id).and_then(|p| p.numbering)
+            else {
+                continue;
+            };
+            if self.list_format(numbering.instance) == Some(NumberFormat::Bullet)
+                || numbering.level != current.level
+            {
+                continue;
+            }
+            // The nearest earlier item at this level decides: a different instance
+            // can be continued; the same instance is already contiguous.
+            return numbering.instance != current.instance;
+        }
+        false
+    }
+
     /// The list kind the paragraph belongs to: `"bullet"`, `"numbered"`, or `""` —
     /// drives the toolbar's list-button active state.
     #[wasm_bindgen(js_name = listStyleAt)]
@@ -6264,6 +6321,80 @@ impl WasmDocument {
     /// toggle of the same kind reuses it. The definition is document infrastructure,
     /// not a body edit, so it is not part of undo; an unreferenced numbering instance
     /// is valid and harmless.
+    /// Native-error core of [`continue_list`](Self::continue_list); the public
+    /// wasm method is a thin `map_err(to_js)` wrapper. Split out so the error paths
+    /// (bullet/non-list rejection, no preceding list, already continuous) are
+    /// unit-testable off-wasm, where constructing a `JsValue` error would panic.
+    fn continue_list_inner(&mut self, start_node: NodeId) -> Result<EditResult, String> {
+        let Some(current) =
+            paragraph_properties(&self.document, start_node).and_then(|p| p.numbering)
+        else {
+            return Err("continue numbering requires a numbered list item".into());
+        };
+        if self.list_format(current.instance) == Some(NumberFormat::Bullet) {
+            return Err("continue numbering requires a numbered list item".into());
+        }
+
+        let ordered = self.ordered_paragraphs();
+        let Some(index) = ordered.iter().position(|(id, _)| *id == start_node) else {
+            return Err("paragraph not found".into());
+        };
+
+        // Scan backward for the nearest earlier numbered item at the same level.
+        // A same-instance neighbor means the item is already part of that list, so
+        // there is nothing to continue; a different instance is the list to rejoin.
+        let mut target_instance = None;
+        for (id, _) in ordered[..index].iter().rev() {
+            let Some(numbering) =
+                paragraph_properties(&self.document, *id).and_then(|p| p.numbering)
+            else {
+                continue;
+            };
+            if self.list_format(numbering.instance) == Some(NumberFormat::Bullet) {
+                continue;
+            }
+            if numbering.level != current.level {
+                continue;
+            }
+            if numbering.instance == current.instance {
+                return Err("this item is already part of a continuous numbered list".into());
+            }
+            target_instance = Some(numbering.instance);
+            break;
+        }
+        let Some(target_instance) = target_instance else {
+            return Err("no preceding numbered list at this level to continue".into());
+        };
+
+        // Adopt the earlier list's instance for the caret item and the contiguous
+        // following run that shared its current instance and level.
+        let mut ops = Vec::new();
+        for (id, _) in ordered.into_iter().skip(index) {
+            let Some(properties) = paragraph_properties(&self.document, id) else {
+                continue;
+            };
+            let Some(numbering) = properties.numbering else {
+                break;
+            };
+            if numbering.instance != current.instance || numbering.level != current.level {
+                break;
+            }
+            let mut next = properties.clone();
+            next.numbering = Some(NumberingRef {
+                instance: target_instance,
+                level: current.level,
+            });
+            ops.push(Operation::SetParagraphProperties {
+                node: id,
+                properties: Box::new(next),
+            });
+        }
+        if ops.is_empty() {
+            return Err("no contiguous numbered items to continue".into());
+        }
+        self.apply_action_caret_as(ops, Pos::new(start_node, 0), HistoryKind::ListFormatting)
+    }
+
     fn ensure_list(&mut self, numbered: bool) -> Result<NumberingInstanceId, String> {
         if let Some(id) = if numbered {
             self.numbered_list
@@ -15453,6 +15584,130 @@ mod tests {
                 .start,
             Some(1)
         );
+    }
+
+    #[test]
+    fn continue_numbering_rejoins_a_restarted_list_and_carries_contiguous_items() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, text)| !text.is_empty())
+            .map(|(id, _)| id.to_string())
+            .expect("a non-empty paragraph");
+        // One numbered list of three items.
+        d.toggle_list(&node, 0, &node, 0, "numbered")
+            .expect("toggle numbered on");
+        let second = d
+            .split_paragraph(&node, d.paragraph_length(&node))
+            .expect("split second item")
+            .node();
+        let third = d
+            .split_paragraph(&second, d.paragraph_length(&second))
+            .expect("split third item")
+            .node();
+        let original = paragraph_properties(&d.document, NodeId::from_str(&node).unwrap())
+            .unwrap()
+            .numbering
+            .unwrap()
+            .instance;
+
+        // Restart at the second item: items 2 and 3 move to a fresh instance.
+        d.restart_list(&second).expect("restart");
+        let restarted = paragraph_properties(&d.document, NodeId::from_str(&second).unwrap())
+            .unwrap()
+            .numbering
+            .unwrap()
+            .instance;
+        assert_ne!(restarted, original, "restart created a distinct instance");
+        assert_eq!(
+            paragraph_properties(&d.document, NodeId::from_str(&third).unwrap())
+                .unwrap()
+                .numbering
+                .unwrap()
+                .instance,
+            restarted,
+            "restart carried the third item too"
+        );
+
+        // Continue at the second item: it (and the contiguous third) rejoin the
+        // original list's instance so the sequence resumes.
+        d.continue_list(&second).expect("continue");
+        let second_after = paragraph_properties(&d.document, NodeId::from_str(&second).unwrap())
+            .unwrap()
+            .numbering
+            .unwrap()
+            .instance;
+        let third_after = paragraph_properties(&d.document, NodeId::from_str(&third).unwrap())
+            .unwrap()
+            .numbering
+            .unwrap()
+            .instance;
+        assert_eq!(
+            second_after, original,
+            "second item rejoined the first list"
+        );
+        assert_eq!(
+            third_after, original,
+            "the contiguous third item rejoined too"
+        );
+
+        // The first item is untouched, and a list with no preceding numbered list
+        // at its level has nothing to continue.
+        assert_eq!(
+            paragraph_properties(&d.document, NodeId::from_str(&node).unwrap())
+                .unwrap()
+                .numbering
+                .unwrap()
+                .instance,
+            original
+        );
+        let err = d
+            .continue_list_inner(NodeId::from_str(&node).unwrap())
+            .expect_err("first item cannot continue");
+        assert!(
+            err.contains("no preceding"),
+            "the leading list item reports nothing to continue, got: {err}"
+        );
+        // An item already contiguous with the list above it is rejected too.
+        let already = d
+            .continue_list_inner(NodeId::from_str(&second).unwrap())
+            .expect_err("an already-continuous item cannot continue");
+        assert!(
+            already.contains("already"),
+            "a contiguous item reports it is already continuous, got: {already}"
+        );
+
+        // Undo restores the caret paragraph's continue back to the restarted state.
+        d.undo().expect("undo continue");
+        assert_eq!(
+            paragraph_properties(&d.document, NodeId::from_str(&second).unwrap())
+                .unwrap()
+                .numbering
+                .unwrap()
+                .instance,
+            restarted,
+            "undo reverts the continue to the restarted instance"
+        );
+    }
+
+    #[test]
+    fn continue_numbering_rejects_bullets_and_non_lists() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, text)| !text.is_empty())
+            .map(|(id, _)| id.to_string())
+            .expect("a non-empty paragraph");
+        d.continue_list_inner(NodeId::from_str(&node).unwrap())
+            .expect_err("a non-list paragraph cannot continue numbering");
+        d.toggle_list(&node, 0, &node, 0, "bullet")
+            .expect("toggle bullet on");
+        d.continue_list_inner(NodeId::from_str(&node).unwrap())
+            .expect_err("a bullet item cannot continue numbering");
     }
 
     /// Paragraph and run properties apply and undo: alignment (with a query),
