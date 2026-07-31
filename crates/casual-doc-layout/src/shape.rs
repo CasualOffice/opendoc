@@ -252,27 +252,11 @@ const CJK_SINGLE_LINE_FACTOR: f32 = 1.2;
 /// bundled Latin faces never cover. Used to recognize a run that shaped with an OS
 /// *coverage-fallback* face (as opposed to a run on its real requested Latin face,
 /// whose metrics we must never touch — Latin docs stay pixel-identical).
+///
+/// Delegates to [`crate::script::is_east_asian`], the single source of truth for
+/// the East-Asian range table (also used by per-script font-slot selection).
 fn is_cjk_scalar(ch: char) -> bool {
-    matches!(u32::from(ch),
-        0x1100..=0x11FF   // Hangul Jamo
-        | 0x2E80..=0x2EFF // CJK Radicals Supplement
-        | 0x3000..=0x303F // CJK Symbols and Punctuation
-        | 0x3040..=0x30FF // Hiragana + Katakana
-        | 0x3100..=0x312F // Bopomofo
-        | 0x3130..=0x318F // Hangul Compatibility Jamo
-        | 0x3190..=0x319F // Kanbun
-        | 0x31A0..=0x31BF // Bopomofo Extended
-        | 0x31F0..=0x31FF // Katakana Phonetic Extensions
-        | 0x3200..=0x33FF // Enclosed CJK Letters/Months + CJK Compatibility
-        | 0x3400..=0x4DBF // CJK Unified Ideographs Extension A
-        | 0x4E00..=0x9FFF // CJK Unified Ideographs
-        | 0xA960..=0xA97F // Hangul Jamo Extended-A
-        | 0xAC00..=0xD7FF // Hangul Syllables + Jamo Extended-B
-        | 0xF900..=0xFAFF // CJK Compatibility Ideographs
-        | 0xFE30..=0xFE4F // CJK Compatibility Forms
-        | 0xFF00..=0xFFEF // Halfwidth and Fullwidth Forms
-        | 0x20000..=0x3FFFF // CJK Unified Ideographs Extensions B–G + Supplement
-    )
+    crate::script::is_east_asian(ch)
 }
 
 /// Whether a scalar is a *full-width* CJK glyph — one Word lays out in a fixed
@@ -447,13 +431,33 @@ pub(crate) fn apply_line_rule(
     (ascent, descent, natural)
 }
 
-/// Maps the crate's [`TextAlignment`] to `parley`'s.
-fn alignment(alignment: TextAlignment) -> Alignment {
-    match alignment {
-        TextAlignment::Start => Alignment::Start,
-        TextAlignment::End => Alignment::End,
-        TextAlignment::Center => Alignment::Center,
-        TextAlignment::Justify => Alignment::Justify,
+/// Maps the crate's [`TextAlignment`] to `parley`'s, honoring the paragraph's
+/// base direction (`LineConstraints.rtl`, derived from `w:bidi`).
+///
+/// `parley` 0.11 resolves its direction-aware `Start`/`End` against the base
+/// level it *auto-detects* from the text's strong directional characters — it
+/// exposes no API to force a paragraph's base direction. So an RTL paragraph
+/// whose text carries no strong RTL character (empty, punctuation-only, or an
+/// authored RTL paragraph typed in Latin) would auto-detect LTR and align its
+/// default (`Start`) content to the *left*, contradicting the document's
+/// `w:bidi`. To make `w:bidi` actually govern the visual edge, an RTL paragraph
+/// maps the document-relative `Start`/`End` to the *explicit* physical edges —
+/// `Start`→`Right`, `End`→`Left` — rather than to `parley`'s auto-detected ones.
+/// `Center`/`Justify` are edge-agnostic and pass through. LTR paragraphs are
+/// unchanged (`Start`/`End` pass through, so genuinely mixed/RTL content parley
+/// detects still resolves normally).
+///
+/// This governs the paragraph's base direction and alignment edge only; per-run
+/// Unicode-bidi *reordering* within a line still relies on parley's own
+/// analysis (see `docs/55` §7 — full visual reordering remains open).
+fn alignment(alignment: TextAlignment, rtl: bool) -> Alignment {
+    match (alignment, rtl) {
+        (TextAlignment::Start, false) => Alignment::Start,
+        (TextAlignment::End, false) => Alignment::End,
+        (TextAlignment::Start, true) => Alignment::Right,
+        (TextAlignment::End, true) => Alignment::Left,
+        (TextAlignment::Center, _) => Alignment::Center,
+        (TextAlignment::Justify, _) => Alignment::Justify,
     }
 }
 
@@ -813,7 +817,7 @@ impl ParleyShaper {
             break_lines_around_floats(&mut layout, images.len(), floats, constraints.max_width);
         }
         layout.align(
-            alignment(constraints.alignment),
+            alignment(constraints.alignment, constraints.rtl),
             AlignmentOptions::default(),
         );
 
@@ -1253,6 +1257,50 @@ mod tests {
         assert!(
             x(centered) > x(left),
             "center alignment offsets the line inward"
+        );
+    }
+
+    #[test]
+    fn alignment_maps_start_and_end_by_base_direction() {
+        // LTR: start/end pass through to parley's direction-aware Start/End.
+        assert_eq!(alignment(TextAlignment::Start, false), Alignment::Start);
+        assert_eq!(alignment(TextAlignment::End, false), Alignment::End);
+        // RTL: start/end map to the explicit physical edges, so the visual edge is
+        // governed by w:bidi rather than parley's auto-detected base level.
+        assert_eq!(alignment(TextAlignment::Start, true), Alignment::Right);
+        assert_eq!(alignment(TextAlignment::End, true), Alignment::Left);
+        // Edge-agnostic alignments are unchanged by direction.
+        assert_eq!(alignment(TextAlignment::Center, true), Alignment::Center);
+        assert_eq!(alignment(TextAlignment::Justify, true), Alignment::Justify);
+    }
+
+    #[test]
+    fn rtl_paragraph_aligns_start_content_to_the_right_edge() {
+        // An RTL (w:bidi) paragraph whose text is Latin — parley auto-detects an
+        // LTR base level, so only `LineConstraints.rtl` makes the default (Start)
+        // content align to the right edge, as Word lays out a right-to-left
+        // paragraph. The LTR control keeps it at the left edge.
+        let shaper = ParleyShaper::new();
+        let ltr = LineConstraints {
+            max_width: Twip::from_points(400),
+            alignment: TextAlignment::Start,
+            rtl: false,
+            ..LineConstraints::default()
+        };
+        let rtl = LineConstraints { rtl: true, ..ltr };
+        let x = |c| {
+            shaper
+                .shape_paragraph(&[run("short")], c, para_range())
+                .lines[0]
+                .runs[0]
+                .origin
+                .x
+                .raw()
+        };
+        assert_eq!(x(ltr), 0, "LTR start-aligned content sits at the left edge");
+        assert!(
+            x(rtl) > 0,
+            "RTL start-aligned content is pushed toward the right edge"
         );
     }
 

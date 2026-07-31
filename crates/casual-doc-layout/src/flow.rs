@@ -25,12 +25,12 @@ use casual_doc_model::v1::{
     EmbeddedObject, Extent, FontScheme, FrameWrap, HeightRule, HighlightColor, HorizontalAlign,
     HorizontalAnchor, HorizontalPosition, HorizontalRule as ModelHorizontalRule,
     HorizontalRuleAlign, Indentation, InlineNode, LevelSuffix, LineRule, MediaId, MediaReference,
-    NoteKind, NoteReference, Paragraph, ParagraphProperties, ReviewProjection, Rgba, RunProperties,
-    SchemeColor, SectionBoundary, SectionId, SectionType, ShapeStroke, StyleId, Symbol,
-    TabAlignment, TabLeader, TabStop, Table, TableBorders, TableCell, TableLayout, TableRow,
-    TableRowProperties, TextBox, TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow,
-    TextBoxVerticalAnchor, TextBoxVerticalOverflow, ThemeColorRef, VerticalAlignment,
-    VerticalAnchor, VerticalMerge, VerticalPosition, WrapMode,
+    NoteKind, NoteReference, Paragraph, ParagraphProperties, ReviewProjection, Rgba, RunFontHint,
+    RunProperties, SchemeColor, SectionBoundary, SectionId, SectionType, ShapeStroke, StyleId,
+    Symbol, TabAlignment, TabLeader, TabStop, Table, TableBorders, TableCell, TableLayout,
+    TableRow, TableRowProperties, TextBox, TextBoxAutoFit, TextBoxBodyProperties,
+    TextBoxHorizontalOverflow, TextBoxVerticalAnchor, TextBoxVerticalOverflow, ThemeColorRef,
+    VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition, WrapMode,
 };
 
 use crate::block::{
@@ -38,11 +38,12 @@ use crate::block::{
     CellContentMargins, CellFragment, CellVAlign, CellVerticalMerge, ParagraphDecor,
     ResolvedBorderSegment, ResolvedEdge,
 };
-use crate::cascade::{StyleCascade, requested_font_family, union_cnf};
+use crate::cascade::{StyleCascade, requested_font_family, requested_font_family_for, union_cnf};
 use crate::incremental::{DirtySet, GalleyCache};
 use crate::model::{ModelPos, ModelRange};
 use crate::numbering::{self, NumberingState, PreparedMarker};
 use crate::resolve::{FaceRequest, FontResolutionReport, FontResolver};
+use crate::script::{self, ScriptSlot};
 use crate::tabs::{self, FlowItem};
 use crate::text::{
     Decoration, FieldKind, FieldMarker, FieldStyle, FontId, Glyph, GlyphRun, InlineFloatSide,
@@ -3616,11 +3617,21 @@ fn bullet_scale(marker_text: &str) -> Option<f32> {
 /// the glyphs to ~2/3; `w:position` adds a half-point baseline raise(+)/lower(−)
 /// with no resize. The two compose.
 fn run_metrics(properties: &RunProperties) -> (Twip, Twip) {
+    run_metrics_with_base(properties, properties.size_half_points)
+}
+
+/// [`run_metrics`] with the base size (in `w:sz`-style half-points) supplied
+/// explicitly, so a complex-script slot can shape at `w:szCs`
+/// ([`size_complex_half_points`](RunProperties::size_complex_half_points)) instead
+/// of the Latin `w:sz`. The super/subscript and `w:position` shifts derive from
+/// the same base, so they scale with the complex-script size too.
+fn run_metrics_with_base(
+    properties: &RunProperties,
+    base_half_points: Option<u32>,
+) -> (Twip, Twip) {
     // `w:sz` is in half-points; a half-point is 10 twips (a point is 20). Default
     // to 11pt (Word's default body size) when unset.
-    let base = properties
-        .size_half_points
-        .map_or(Twip::from_points(11), |hp| Twip(hp as i32 * 10));
+    let base = base_half_points.map_or(Twip::from_points(11), |hp| Twip(hp as i32 * 10));
     let (size, mut shift) = match properties.vertical_alignment {
         Some(VerticalAlignment::Superscript) => (Twip(base.raw() * 2 / 3), Twip(base.raw() / 3)),
         Some(VerticalAlignment::Subscript) => (Twip(base.raw() * 2 / 3), Twip(-base.raw() / 6)),
@@ -3676,8 +3687,99 @@ fn push_styled_runs<'a>(
     }
     if effective.small_caps == Some(true) {
         push_small_caps_runs(text, &effective, ctx, out);
+    } else if has_per_script_formatting(&effective) {
+        // The run carries per-script font/formatting (`w:eastAsia`/`w:cs` fonts,
+        // `w:bCs`/`w:iCs`/`w:szCs`, or an East-Asian/complex `w:rFonts@hint`), so
+        // resolve each script span against its own slot (ECMA-376 §17.3.2.26)
+        // instead of shaping the whole run through the Latin (ascii) slot. Latin
+        // runs — and every run without these fields — never reach this arm, so
+        // their single-run output is unchanged.
+        for (span, slot) in script::partition_by_slot(text, effective.font_hint) {
+            out.push(build_script_run(span, &effective, slot, ctx));
+        }
     } else {
         out.push(build_styled_run(text, &effective, ctx));
+    }
+}
+
+/// Whether a run declares any per-script formatting that makes the ascii-only slot
+/// wrong for some of its code points: an explicit East-Asian/complex-script font
+/// (`w:eastAsia`/`w:cs`), a complex-script bold/italic/size (`w:bCs`/`w:iCs`/
+/// `w:szCs`), or an East-Asian/complex `w:rFonts@hint`. A run with none of these
+/// keeps the single-slot fast path, so the existing Latin corpus is byte-for-byte
+/// unchanged; only runs that actually carry per-script intent are re-slotted.
+fn has_per_script_formatting(properties: &RunProperties) -> bool {
+    properties.font_ref_east_asia.is_some()
+        || properties.font_ref_cs.is_some()
+        || properties.bold_complex.is_some()
+        || properties.italic_complex.is_some()
+        || properties.size_complex_half_points.is_some()
+        || matches!(
+            properties.font_hint,
+            Some(RunFontHint::EastAsia | RunFontHint::Cs)
+        )
+}
+
+/// Builds a [`StyledRun`] for one script span of a run, selecting the face (and,
+/// for the complex-script slot, the bold/italic/size) from the matching
+/// `w:rFonts` slot. The complex-script slot reads `w:bCs`/`w:iCs`/`w:szCs`
+/// (falling back to the Latin `w:b`/`w:i`/`w:sz` when a complex field is unset);
+/// the East-Asian and default slots use the Latin toggles/size. Every other run
+/// attribute (color, decoration, letter spacing, scale, highlight, baseline
+/// shift) is script-independent and shared across the run's spans.
+///
+/// For a `Default` span of a run that declares no complex fields this produces
+/// exactly what [`build_styled_run`] does, so a run whose text is entirely
+/// default-slot yields an identical single styled run.
+fn build_script_run<'a>(
+    text: &'a str,
+    properties: &RunProperties,
+    slot: ScriptSlot,
+    ctx: &mut FlowCtx,
+) -> StyledRun<'a> {
+    let base_half_points = match slot {
+        ScriptSlot::ComplexScript => properties
+            .size_complex_half_points
+            .or(properties.size_half_points),
+        ScriptSlot::EastAsia | ScriptSlot::Default => properties.size_half_points,
+    };
+    let (raw_size, raw_shift) = run_metrics_with_base(properties, base_half_points);
+    let size = scale_twip(raw_size, ctx.text_scale).max(Twip(1));
+    let baseline_shift = scale_twip(raw_shift, ctx.text_scale);
+    let (bold, italic) = match slot {
+        ScriptSlot::ComplexScript => (
+            properties.bold_complex.or(properties.bold).unwrap_or(false),
+            properties
+                .italic_complex
+                .or(properties.italic)
+                .unwrap_or(false),
+        ),
+        ScriptSlot::EastAsia | ScriptSlot::Default => (
+            properties.bold.unwrap_or(false),
+            properties.italic.unwrap_or(false),
+        ),
+    };
+    let text = case_transform(text, properties);
+    let family = requested_font_family_for(properties, ctx.scheme, slot);
+    StyledRun {
+        font: resolve_font_family(text.as_ref(), family.clone(), bold, italic, ctx),
+        requested_family: family.map(Cow::Owned),
+        text,
+        size,
+        character_scale_percent: properties.character_scale_percent.unwrap_or(100),
+        bold,
+        italic,
+        letter_spacing: scale_twip(
+            properties.character_spacing_twips.map_or(Twip::ZERO, Twip),
+            ctx.text_scale,
+        ),
+        color: run_color(properties.color, ctx.palette),
+        decoration: Decoration {
+            underline: properties.underline.unwrap_or(false),
+            strikethrough: properties.strike.unwrap_or(false),
+        },
+        highlight: properties.highlight.and_then(highlight_rgba),
+        baseline_shift,
     }
 }
 
@@ -3880,7 +3982,27 @@ fn resolve_font(
     italic: bool,
     ctx: &mut FlowCtx,
 ) -> FontId {
-    let face = match requested_family(properties, ctx.scheme) {
+    resolve_font_family(
+        text,
+        requested_family(properties, ctx.scheme),
+        bold,
+        italic,
+        ctx,
+    )
+}
+
+/// Resolves an already-picked family name to a bundled face and records coverage.
+/// Shared by the ascii-slot path ([`resolve_font`]) and the per-script-slot path
+/// ([`build_script_run`]), which pass the family they selected for the run's
+/// script so the renderer outlines the same face `parley` shapes with.
+fn resolve_font_family(
+    text: &str,
+    family: Option<String>,
+    bold: bool,
+    italic: bool,
+    ctx: &mut FlowCtx,
+) -> FontId {
+    let face = match family {
         Some(family) => {
             let outcome = ctx.resolver.resolve(&FaceRequest {
                 family: &family,
@@ -4130,7 +4252,17 @@ fn line_constraints(
         max_width,
         margin_width: width,
         indent_start: metrics.indent_start,
-        rtl: false,
+        // Paragraph base direction: `w:bidi` (right-to-left paragraph) sets the
+        // shaper's base level to RTL so the line is laid out right-to-left and a
+        // start/end alignment resolves against the correct edge. The effective
+        // value already carries the section-level default, the paragraph style
+        // chain, and the paragraph's own `w:bidi` (folded in by the cascade's
+        // `overlay_paragraph`), so this reads the resolved paragraph intent. An
+        // unset (or explicit `w:val="0"`) `w:bidi` stays LTR, unchanged from
+        // before. Note: this flags the paragraph's *base direction*; the shaper's
+        // per-run Unicode-bidi reordering within the line is a separate concern
+        // (`docs/55` §7 — full visual reordering of mixed runs remains open).
+        rtl: properties.bidi.unwrap_or(false),
         alignment: alignment(properties),
         line_height_percent,
         line_at_least,
@@ -4453,6 +4585,161 @@ mod tests {
             BlockFragment::Paragraph { lines, .. } => lines,
             BlockFragment::TableRow { .. } => panic!("expected a paragraph fragment"),
         }
+    }
+
+    /// The styled runs a single model run flows into, in document order, with the
+    /// full flow cascade applied. Used to observe per-script slot selection.
+    fn styled_runs_for(text: &str, properties: RunProperties) -> Vec<StyledRun<'static>> {
+        let definitions = Definitions::default();
+        let resolver = FontResolver::new();
+        let mut report = FontResolutionReport::new();
+        let mut ctx = FlowCtx {
+            resolver: &resolver,
+            scheme: definitions.font_scheme.as_ref(),
+            report: &mut report,
+            default_tab: crate::tabs::DEFAULT_TAB_STOP,
+            media: &definitions.media,
+            palette: None,
+            cascade: StyleCascade::new(&definitions),
+            para_style: None,
+            sections: &[],
+            definitions: &definitions,
+            numbering: NumberingState::new(),
+            text_scale: 100_000,
+            line_spacing_reduction: 0,
+            paragraph_float_exclusions: None,
+        };
+        let mut out = Vec::new();
+        push_styled_runs(text, &properties, &mut ctx, &mut out);
+        // Detach the borrow so the returned runs can outlive the borrowed `text`
+        // (each run's text is owned once `case_transform`/partition copies it, but
+        // borrowed spans must be cloned to `'static` here for the assertion site).
+        out.into_iter()
+            .map(|r| StyledRun {
+                text: Cow::Owned(r.text.into_owned()),
+                requested_family: r.requested_family.map(|f| Cow::Owned(f.into_owned())),
+                ..r
+            })
+            .collect()
+    }
+
+    fn named_font_ref(name: &str) -> Option<casual_doc_model::v1::FontRef> {
+        Some(casual_doc_model::v1::FontRef::Named(
+            casual_doc_model::v1::FontName {
+                name: name.to_owned(),
+            },
+        ))
+    }
+
+    #[test]
+    fn line_constraints_derive_rtl_from_paragraph_bidi() {
+        let width = Twip::from_points(400);
+
+        // A default (LTR) paragraph stays left-to-right.
+        let ltr = line_constraints(&ParagraphProperties::default(), width, 0);
+        assert!(!ltr.rtl, "a paragraph without w:bidi is left-to-right");
+
+        // A `w:bidi` paragraph is right-to-left.
+        let rtl_props = ParagraphProperties {
+            bidi: Some(true),
+            ..ParagraphProperties::default()
+        };
+        let rtl = line_constraints(&rtl_props, width, 0);
+        assert!(rtl.rtl, "a w:bidi paragraph is right-to-left");
+
+        // An explicit `w:bidi w:val="0"` (off) stays left-to-right.
+        let off_props = ParagraphProperties {
+            bidi: Some(false),
+            ..ParagraphProperties::default()
+        };
+        let off = line_constraints(&off_props, width, 0);
+        assert!(
+            !off.rtl,
+            "an explicit w:bidi=off paragraph is left-to-right"
+        );
+    }
+
+    #[test]
+    fn mixed_script_run_selects_the_east_asian_face_for_cjk_only() {
+        // One run, Latin ascii font + a distinct East-Asian font, mixing Latin and
+        // CJK text. Each script must resolve against its own w:rFonts slot: the
+        // Latin spans keep the ascii/hAnsi family, the CJK span uses eastAsia.
+        let properties = RunProperties {
+            font_ref: named_font_ref("Latin Font"),
+            font_ref_east_asia: named_font_ref("EA Font"),
+            ..RunProperties::default()
+        };
+        let runs = styled_runs_for("A中B", properties);
+
+        assert_eq!(runs.len(), 3, "the run splits at each script boundary");
+        assert_eq!(runs[0].text, "A");
+        assert_eq!(
+            runs[0].requested_family.as_deref(),
+            Some("Latin Font"),
+            "Latin code points keep the ascii/hAnsi face"
+        );
+        assert_eq!(runs[1].text, "中");
+        assert_eq!(
+            runs[1].requested_family.as_deref(),
+            Some("EA Font"),
+            "CJK code points use the eastAsia face"
+        );
+        assert_eq!(runs[2].text, "B");
+        assert_eq!(
+            runs[2].requested_family.as_deref(),
+            Some("Latin Font"),
+            "Latin code points after the CJK span keep the ascii/hAnsi face"
+        );
+    }
+
+    #[test]
+    fn complex_script_run_uses_the_cs_face_bold_and_size() {
+        // An Arabic run with a complex-script font + complex-script bold and size
+        // that differ from the Latin ones. The complex span must pick up the cs
+        // face, w:bCs weight, and w:szCs size — not the Latin w:rFonts/w:b/w:sz.
+        let properties = RunProperties {
+            font_ref: named_font_ref("Latin Font"),
+            font_ref_cs: named_font_ref("CS Font"),
+            bold: Some(false),
+            bold_complex: Some(true),
+            size_half_points: Some(24),         // 12pt Latin
+            size_complex_half_points: Some(40), // 20pt complex
+            ..RunProperties::default()
+        };
+        let runs = styled_runs_for("العربية", properties);
+
+        assert_eq!(runs.len(), 1, "an all-complex run is a single cs span");
+        assert_eq!(
+            runs[0].requested_family.as_deref(),
+            Some("CS Font"),
+            "complex code points use the cs face"
+        );
+        assert!(
+            runs[0].bold,
+            "complex code points use w:bCs (bold), not w:b"
+        );
+        assert_eq!(
+            runs[0].size,
+            Twip::from_points(20),
+            "complex code points shape at w:szCs (20pt), not w:sz (12pt)"
+        );
+    }
+
+    #[test]
+    fn latin_run_without_per_script_fields_is_a_single_unchanged_run() {
+        // The fast path: a run with no eastAsia/cs fonts, no bCs/iCs/szCs, and no
+        // eastAsia/cs hint yields exactly one styled run through the original
+        // single-slot path — the existing corpus is unaffected.
+        let properties = RunProperties {
+            font_ref: named_font_ref("Latin Font"),
+            size_half_points: Some(24),
+            ..RunProperties::default()
+        };
+        let runs = styled_runs_for("Hello world 123", properties);
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].text, "Hello world 123");
+        assert_eq!(runs[0].requested_family.as_deref(), Some("Latin Font"));
+        assert_eq!(runs[0].size, Twip::from_points(12));
     }
 
     #[test]
