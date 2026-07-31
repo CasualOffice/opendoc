@@ -75,6 +75,14 @@ now verified. Equations remain visibly absent; notes now have bounded reference,
 footnote-band, continuation, and endnote-append support, with separator and full
 section-policy fidelity still open.
 
+*Post-audit update:* a later PR (`P1F-INLINE-FLOOR`, `docs/14-EXECUTION-TRACKER.md`,
+after this audit's `cde11ff` baseline) closed the equation-visibility half of
+this finding — an `InlineNode::Math` leaf now shapes its best-effort plain-text
+fallback as a normal run instead of being dropped by `flow.rs::collect_items`'s
+catch-all. This is fallback-text visibility only, not real OMML typesetting (no
+fraction bars, radicals, or exponent layout), and this audit's page renders were
+not regenerated against the fixture DOCX files to re-verify visually.
+
 ## Fixture feature inventory
 
 Counts are elements in `word/document.xml`, not package-wide counts.
@@ -281,7 +289,10 @@ box intersections by page/node is still required.
 
 The exact Sample fixture confirms:
 
-- all three OMML equations are invisible;
+- all three OMML equations are invisible (as measured at this audit's `cde11ff`
+  baseline; see the post-audit note below — a later PR gives each equation's
+  plain-text fallback a visible run, though not real typesetting, and this
+  fixture was not re-rendered to confirm the visual result);
 - note reference marks and common footnote/endnote bodies now render through the
   bounded note-pagination path; separator customization and full per-section note
   policy remain open;
@@ -307,6 +318,16 @@ decodable by its PNG/JPEG-only path (doc 55 §8) — it now paints a visible
 placeholder box in the image's rect instead of leaving a blank gap. Real
 EMF/WMF vector-metafile decoding is still not implemented; that remains
 `P1F-28`'s follow-up.
+
+The Sample fixture's three `m:oMath` equations, called out as invisible above,
+are also affected by a later, separate PR: `P1F-INLINE-FLOOR`
+(`docs/14-EXECUTION-TRACKER.md`, after this audit's baseline) made
+`flow.rs::collect_items` shape an inline `Math` node's `text` best-effort
+plain-text fallback as an ordinary run instead of silently dropping it. This is
+fallback-text visibility only — the retained OMML subtree is not consulted for
+layout, so there is still no fraction bar, radical, or exponent typesetting.
+This audit's fixture was not re-rendered against that change, so the equation
+row in the table above is not independently re-verified here.
 
 ## Fixes completed in this pass
 
@@ -340,8 +361,10 @@ fixture images remain local evidence and are not committed.
    balancing without global margin or font-size tuning.
 3. **Cross-paragraph float reflow** — page-relative exclusions and convergence.
 4. **Contour wrapping** — tight/through contour intervals beyond square bounds.
-5. **Visible inline-content floor** — note marks, OMML text fallback, special
-   hyphens, then note-body fixed-point pagination.
+5. ~~**Visible inline-content floor**~~ note marks, OMML text fallback, and
+   special hyphens are done (`P1F-INLINE-FLOOR`, not independently re-verified
+   against this audit's fixtures — see the post-audit note above); note-body
+   fixed-point pagination remains open and is tracked separately.
 6. **Control appearance** — native checked-state presentation beyond the
    preserved cached symbol.
 7. **`w:altChunk` content flow** — none of this audit's four corpus fixtures
