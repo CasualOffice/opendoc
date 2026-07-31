@@ -4956,7 +4956,7 @@ function editorCommands(context = { surface: "palette" }) {
   const align = (a) => () => runToolbarEdit((s, o, e, f) => doc.setAlignment(s, o, e, f, a));
   const cmds = [
     { id: "file.open", label: "Open…", group: "File", kw: "load docx", noDoc: true, run: () => fileEl.click() },
-    { id: "file.save", label: "Save (download .docx)", group: "File", kw: "export download", run: () => saveDocx() },
+    { id: "file.save", label: "Save (download .docx)", group: "File", kw: "export download", shortcut: "⌘S", run: () => saveDocx() },
     {
       id: "edit.undo",
       label: doc?.undoLabel ? `Undo ${doc.undoLabel}` : "Undo",
@@ -5022,11 +5022,13 @@ function editorCommands(context = { surface: "palette" }) {
       enabled: !!doc,
       run: () => selectAll(),
     },
-    { id: "edit.find", label: "Find and replace", group: "Edit", kw: "search replace", run: () => openFind() },
-    { id: "format.bold", label: "Bold", group: "Format", kw: "strong", run: fmt("bold") },
-    { id: "format.italic", label: "Italic", group: "Format", kw: "emphasis", run: fmt("italic") },
-    { id: "format.underline", label: "Underline", group: "Format", kw: "", run: fmt("underline") },
+    { id: "edit.find", label: "Find and replace", group: "Edit", kw: "search replace", shortcut: "⌘F", run: () => openFind() },
+    { id: "format.bold", label: "Bold", group: "Format", kw: "strong", shortcut: "⌘B", run: fmt("bold") },
+    { id: "format.italic", label: "Italic", group: "Format", kw: "emphasis", shortcut: "⌘I", run: fmt("italic") },
+    { id: "format.underline", label: "Underline", group: "Format", kw: "", shortcut: "⌘U", run: fmt("underline") },
     { id: "format.strike", label: "Strikethrough", group: "Format", kw: "strike", run: fmt("strike") },
+    { id: "format.superscript", label: "Superscript", group: "Format", kw: "raise exponent", run: () => superBtn.click() },
+    { id: "format.subscript", label: "Subscript", group: "Format", kw: "lower", run: () => subBtn.click() },
     { id: "format.clear", label: "Clear direct formatting", group: "Format", kw: "reset defaults", run: () => clearFormattingBtn.click() },
     { id: "paragraph.align.start", label: "Align left", group: "Paragraph", kw: "", run: align("start") },
     { id: "paragraph.align.center", label: "Align center", group: "Paragraph", kw: "centre", run: align("center") },
@@ -5039,7 +5041,7 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "paragraph.indent.increase", label: "Increase indent", group: "Paragraph", kw: "", run: () => adjustIndentCommand(360) },
     { id: "paragraph.indent.decrease", label: "Decrease indent", group: "Paragraph", kw: "outdent", run: () => adjustIndentCommand(-360) },
     { id: "insert.table", label: "Insert table (3×3)", group: "Insert", kw: "grid", run: () => selection && runEdit(() => doc.insertTable(selection.focus.node, 3, 3), { gate: true }) },
-    { id: "insert.link", label: "Add or edit link", group: "Insert", kw: "hyperlink url bookmark toc", run: () => editSelectionLink() },
+    { id: "insert.link", label: "Add or edit link", group: "Insert", kw: "hyperlink url bookmark toc", shortcut: "⌘K", run: () => editSelectionLink() },
     { id: "insert.bookmark", label: "Bookmark manager", group: "Insert", kw: "bookmarks navigate links", run: () => openBookmarkManager() },
     { id: "view.outline", label: "Toggle outline", group: "View", kw: "headings navigation", run: () => toggleOutline() },
     { id: "view.zoomIn", label: "Zoom in", group: "View", kw: "", run: () => stepZoom(1) },
@@ -5047,6 +5049,24 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "view.settings", label: "Settings", group: "View", kw: "theme accent dark", run: () => settingsBtn.click() },
     { id: "layout.pageSetup", label: "Page setup", group: "Layout", kw: "margins orientation paper size", run: () => togglePageSetup(true) },
     { id: "layout.paragraph", label: "Paragraph properties", group: "Layout", kw: "spacing borders shading indent", run: () => toggleParagraphProperties(true) },
+    {
+      id: "review.comment",
+      label: "Add comment",
+      group: "Review",
+      kw: "annotate note",
+      shortcut: "⌘⌥M",
+      enabled: context.hasRange ?? hasRange(),
+      disabledReason: "Select text to comment on",
+      run: () => openReviewComposer(),
+    },
+    { id: "review.toggle", label: "Toggle comments & suggestions", group: "Review", kw: "sidebar review panel", run: () => toggleReview() },
+    { id: "review.mode.editing", label: "Editing mode", group: "Review", kw: "review mode edit", run: () => setReviewMode("editing") },
+    { id: "review.mode.suggesting", label: "Suggesting mode (track changes)", group: "Review", kw: "review mode track changes suggest", run: () => setReviewMode("suggesting") },
+    { id: "review.mode.viewing", label: "Viewing mode (read-only)", group: "Review", kw: "review mode view read only", run: () => setReviewMode("viewing") },
+    { id: "review.next", label: "Next change", group: "Review", kw: "revision suggestion navigate", run: () => navigateReviewRevision(1) },
+    { id: "review.previous", label: "Previous change", group: "Review", kw: "revision suggestion navigate", run: () => navigateReviewRevision(-1) },
+    { id: "review.acceptAll", label: "Accept all changes", group: "Review", kw: "revision suggestion approve", run: () => reviewAcceptAll.click() },
+    { id: "review.rejectAll", label: "Reject all changes", group: "Review", kw: "revision suggestion discard", run: () => reviewRejectAll.click() },
   ];
   if (doc) {
     for (const name of doc.listStyles()) {
@@ -5106,7 +5126,11 @@ function renderCommands(query) {
     item.setAttribute("role", "option");
     item.disabled = c.enabled === false;
     if (c.disabledReason) item.title = c.disabledReason;
-    item.innerHTML = `<span>${escapeHtml(c.label)}</span><span class="cmd-hint">${escapeHtml(c.enabled === false ? c.disabledReason : c.group)}</span>`;
+    // The hint column shows the disabled reason when unavailable, else the
+    // command's keyboard shortcut when it has one (so the palette teaches the
+    // shortcut), else its group.
+    const hint = c.enabled === false ? c.disabledReason : (c.shortcut || c.group);
+    item.innerHTML = `<span>${escapeHtml(c.label)}</span><span class="cmd-hint">${escapeHtml(hint)}</span>`;
     item.addEventListener("mousemove", () => setCmdSel(i));
     item.addEventListener("click", () => runCommand(i));
     cmdList.appendChild(item);
@@ -5175,11 +5199,31 @@ cmdPalette.addEventListener("pointerdown", (e) => {
   if (e.target === cmdPalette) closeCmd(); // click the backdrop
 });
 document.addEventListener("keydown", (e) => {
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+  const mod = e.metaKey || e.ctrlKey;
+  if (!mod) return;
+  const lower = e.key.toLowerCase();
+  // Command palette: ⌘⇧P (the VS Code / editor-palette convention). Moved off
+  // ⌘K so that ⌘K can carry the Word / Google Docs / Pages standard "insert or
+  // edit hyperlink" — the two used to collide (docs/67 audit row 8). The header
+  // Search pill is the discoverable on-screen entry point (doc 69 §1.4.1).
+  if (e.shiftKey && lower === "p") {
     e.preventDefault();
     cmdPalette.hidden ? openCmd() : closeCmd();
+    return;
   }
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s" && doc) {
+  // ⌘K inserts/edits a hyperlink on the current text selection. Skipped while a
+  // chrome input (find box, dialog field, the palette itself) is focused so it
+  // never hijacks typing there.
+  if (!e.shiftKey && lower === "k" && doc && !isInteractiveChromeTarget(e.target)) {
+    e.preventDefault();
+    if (hasRange() && selection) {
+      editSelectionLink();
+    } else {
+      setStatus("Select text to add a link", "error");
+    }
+    return;
+  }
+  if (lower === "s" && doc) {
     e.preventDefault();
     saveDocx();
   }
