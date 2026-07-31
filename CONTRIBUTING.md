@@ -69,6 +69,22 @@ cargo check --workspace --all-features --locked --target wasm32-unknown-unknown
 cargo doc --workspace --all-features --no-deps --locked
 ```
 
+The CI `docs` job runs the `cargo doc` step with `RUSTDOCFLAGS="-D warnings"`, so
+every rustdoc lint is a hard failure. To reproduce it exactly:
+
+```sh
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
+```
+
+**Rustdoc gotcha — private intra-doc links.** A *public* doc comment that links a
+*private* type with intra-doc-link syntax (`` [`Type`] ``) emits a
+`private_intra_doc_links` warning, which `-D warnings` turns into a red CI
+`docs` job. This has bitten `casual-doc-wasm` twice on its private
+`serde`-serialization structs (e.g. `ReviewCommentSummaryJson`, `A11yBlockJson`).
+When a doc comment refers to a private/internal type, use a plain code span
+(`` `Type` ``, no brackets) instead of an intra-doc link. Reserve `` [`Type`] ``
+for items that are public from the linking item's scope.
+
 Dependency policy additionally uses:
 
 ```sh
