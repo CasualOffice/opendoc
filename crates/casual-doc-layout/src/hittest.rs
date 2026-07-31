@@ -254,6 +254,36 @@ impl<'a> LayoutSnapshot<'a> {
         Some((lb.page, rect))
     }
 
+    /// The page-local rect of every list **marker** (a bullet/number/checkbox glyph
+    /// drawn ahead of the paragraph text), paired with its 1-based page and the
+    /// paragraph `node` it marks. The rect spans the marker glyphs' horizontal
+    /// extent over the line's height — the precise, engine-drawn target a host uses
+    /// to make a checkbox marker clickable (an ordinary caret click still lands in
+    /// the body text, which carries no `is_marker` runs).
+    #[must_use]
+    pub fn marker_rects(&self) -> Vec<(u32, Rect, NodeId)> {
+        let mut out = Vec::new();
+        for lb in self.line_boxes() {
+            let mut min_x = i32::MAX;
+            let mut max_x = i32::MIN;
+            for run in lb.line.runs.iter().filter(|r| r.is_marker) {
+                let start = lb.left.raw() + run.origin.x.raw();
+                let width: i32 = run.glyphs.iter().map(|g| g.advance.raw()).sum();
+                min_x = min_x.min(start);
+                max_x = max_x.max(start + width);
+            }
+            if max_x <= min_x {
+                continue; // no marker runs on this line
+            }
+            let rect = Rect::new(
+                Point::new(Twip(min_x), lb.top),
+                Size::new(Twip(max_x - min_x), lb.line.height),
+            );
+            out.push((lb.page, rect, lb.line.range.start.node));
+        }
+        out
+    }
+
     /// The page-local border box of the table cell that (recursively) contains
     /// paragraph `node` — the innermost cell for a nested table — plus its 1-based
     /// page. `None` when the node is not inside a table cell. Drives the editor's
@@ -677,6 +707,7 @@ mod tests {
                 })
                 .collect();
             let run = GlyphRun {
+                is_marker: false,
                 font: FontId(0),
                 size: Twip(LINE_H),
                 character_scale_percent: 100,
@@ -732,6 +763,7 @@ mod tests {
             })
             .collect();
         let run = GlyphRun {
+            is_marker: false,
             font: FontId(0),
             size: Twip(LINE_H),
             character_scale_percent: 100,

@@ -3082,6 +3082,7 @@ pub(crate) fn shape_field_run(
     let advance = glyphs.iter().fold(Twip::ZERO, |a, g| a + g.advance);
     FieldRunShape {
         run: GlyphRun {
+            is_marker: false,
             font: style.font,
             size: style.size,
             character_scale_percent: style.character_scale_percent,
@@ -4765,6 +4766,7 @@ mod tests {
         let range = ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, 1));
         let line = |baseline| Line {
             runs: vec![GlyphRun {
+                is_marker: false,
                 font: FontId(0),
                 size: Twip(100),
                 character_scale_percent: 100,

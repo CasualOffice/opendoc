@@ -3299,6 +3299,23 @@ body.modal-open {
   pointer-events: none;
 }
 
+/* Checklist checkbox click target (docs/67 — checklist authoring). The checkbox
+   glyph is painted in the page raster; this transparent, clickable overlay sits
+   over it in the hanging gutter so a click toggles the item. A faint hover ring
+   signals it is interactive without competing with the drawn glyph. */
+.overlay .checklist-marker {
+  position: absolute;
+  cursor: pointer;
+  pointer-events: auto;
+  border-radius: 4px;
+  touch-action: none;
+}
+
+.overlay .checklist-marker:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
 .overlay .caret {
   position: absolute;
   background: #111;

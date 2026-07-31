@@ -1000,6 +1000,7 @@ impl ParleyShaper {
                 // Alpha 0 is the "no highlight" sentinel carried through the brush.
                 let highlight = (style.brush.highlight[3] != 0).then_some(style.brush.highlight);
                 out_runs.push(GlyphRun {
+                    is_marker: false,
                     font,
                     size,
                     character_scale_percent: style.brush.character_scale_percent,
@@ -1126,6 +1127,7 @@ mod tests {
     ) -> Line {
         Line {
             runs: vec![GlyphRun {
+                is_marker: false,
                 font: FontId(0),
                 size: Twip(220),
                 character_scale_percent: 100,

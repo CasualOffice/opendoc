@@ -125,6 +125,15 @@ pub struct WasmDocument {
     /// the document grows at most one abstract+instance per list kind.
     bullet_list: Option<NumberingInstanceId>,
     numbered_list: Option<NumberingInstanceId>,
+    /// The two checklist numbering definitions (unchecked `☐` / checked `☑`),
+    /// allocated lazily on the first checklist toggle. A checklist item's paragraph
+    /// points at one of them; toggling an item swaps it between the two (its checked
+    /// state *is* which definition it uses). Detected session-independently from the
+    /// marker glyph (see [`WasmDocument::checklist_state_of_instance`]), so an
+    /// imported or reopened checklist — whose ids these do not hold — is still
+    /// recognized as a checklist and stays clickable.
+    checklist_unchecked: Option<NumberingInstanceId>,
+    checklist_checked: Option<NumberingInstanceId>,
     /// The host-supplied review identity (see [`WasmDocument::set_active_author`]).
     /// The engine has no concept of "current user" of its own — this is the one
     /// seam a host uses to supply it, mirroring the `registerFont`/font-registry
@@ -2160,16 +2169,27 @@ impl WasmDocument {
         end_offset: u32,
         kind: &str,
     ) -> Result<EditResult, JsValue> {
-        let numbered = kind == "numbered";
-        let instance = self.ensure_list(numbered).map_err(to_js)?;
-        // Direction: turn the list off iff the first selected paragraph already uses
-        // exactly this list instance; otherwise turn it on for the whole selection.
+        // A checklist is a bullet-style list whose marker is a checkbox; new items
+        // start unchecked. `"numbered"` → numbered; anything else → plain bullet.
+        let checklist = kind == "checklist";
+        let instance = if checklist {
+            self.ensure_checklist(false).map_err(to_js)?
+        } else {
+            self.ensure_list(kind == "numbered").map_err(to_js)?
+        };
+        // Direction: turn the list off iff the first selected paragraph is already
+        // this kind of list; otherwise turn it on for the whole selection. For a
+        // checklist, "already this kind" means the paragraph is any checklist item
+        // (checked or unchecked), so the toggle also turns a checked item off.
         let (start, _end) = self
             .order_endpoints(start_node, start_offset, end_node, end_offset)
             .map_err(to_js)?;
-        let already = paragraph_properties(&self.document, start.node)
-            .and_then(|p| p.numbering)
-            .is_some_and(|n| n.instance == instance);
+        let current = paragraph_properties(&self.document, start.node).and_then(|p| p.numbering);
+        let already = if checklist {
+            current.is_some_and(|n| self.checklist_state_of_instance(n.instance).is_some())
+        } else {
+            current.is_some_and(|n| n.instance == instance)
+        };
         let target = (!already).then_some(NumberingRef { instance, level: 0 });
         self.apply_paragraph_props_as(
             start_node,
@@ -2181,6 +2201,77 @@ impl WasmDocument {
                 p.numbering = target;
             },
         )
+    }
+
+    /// Toggles the checked state of the checklist item at `node` — the interaction
+    /// behind a click on the checkbox marker. Swaps the item's numbering between the
+    /// unchecked (`☐`) and checked (`☑`) checklist definitions, preserving its
+    /// level, as one undoable action. Errors if `node` is not a checklist item, so
+    /// the host only wires it to a checklist marker.
+    #[wasm_bindgen(js_name = toggleChecklistItem)]
+    pub fn toggle_checklist_item(&mut self, node: &str) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let reference = paragraph_properties(&self.document, nid)
+            .and_then(|p| p.numbering)
+            .ok_or_else(|| to_js("not a list item".into()))?;
+        let checked = self
+            .checklist_state_of_instance(reference.instance)
+            .ok_or_else(|| to_js("not a checklist item".into()))?;
+        let level = reference.level;
+        let instance = self.ensure_checklist(!checked).map_err(to_js)?;
+        self.apply_paragraph_props_as(node, 0, node, 0, HistoryKind::ListFormatting, move |p| {
+            p.numbering = Some(NumberingRef { instance, level });
+        })
+    }
+
+    /// The checked state of the checklist item at `node`: `1` checked, `0`
+    /// unchecked, `-1` when the paragraph is not a checklist item.
+    #[wasm_bindgen(js_name = checkboxStateAt)]
+    #[must_use]
+    pub fn checkbox_state_at(&self, node: &str) -> i32 {
+        let Ok(nid) = NodeId::from_str(node) else {
+            return -1;
+        };
+        match self.checklist_state_at(nid) {
+            Some(true) => 1,
+            Some(false) => 0,
+            None => -1,
+        }
+    }
+
+    /// The clickable checkbox markers for every checklist item, as a JSON array of
+    /// `{ node, page, x, y, w, h, checked }` (page-local twips). The host paints a
+    /// transparent click target over each (the checkbox glyph itself is baked into
+    /// the page raster) and calls [`toggle_checklist_item`](Self::toggle_checklist_item)
+    /// on click. The rect is the hanging gutter just left of the item's text — where
+    /// the marker sits — sized from the line height so it scales with the font.
+    #[wasm_bindgen(js_name = checklistMarkers)]
+    #[must_use]
+    pub fn checklist_markers(&self) -> String {
+        // Checked state per checklist paragraph (from the model).
+        let mut checked_by_node = std::collections::HashMap::new();
+        let mut items = Vec::new();
+        collect_checklist_paragraphs(self.document.body(), self, &mut items);
+        for (node, checked) in items {
+            checked_by_node.insert(node, checked);
+        }
+        // Precise marker rects from layout, kept only for checklist paragraphs.
+        let mut out = Vec::new();
+        for (page, rect, node) in LayoutSnapshot::new(&self.layout).marker_rects() {
+            let Some(&checked) = checked_by_node.get(&node) else {
+                continue;
+            };
+            out.push(ChecklistMarkerJson {
+                node: node.to_string(),
+                page,
+                x: rect.origin.x.raw(),
+                y: rect.origin.y.raw(),
+                w: rect.size.width.raw(),
+                h: rect.size.height.raw(),
+                checked,
+            });
+        }
+        serde_json::to_string(&out).unwrap_or_else(|_| "[]".to_string())
     }
 
     /// Promotes or demotes list paragraphs by one numbering level, preserving
@@ -2363,7 +2454,14 @@ impl WasmDocument {
         else {
             return String::new();
         };
-        if Some(reference.instance) == self.numbered_list {
+        // A checklist (bullet with a checkbox marker) is recognized by its glyph,
+        // independent of the session's cached ids, so it survives a round-trip.
+        if self
+            .checklist_state_of_instance(reference.instance)
+            .is_some()
+        {
+            "checklist".to_string()
+        } else if Some(reference.instance) == self.numbered_list {
             "numbered".to_string()
         } else if Some(reference.instance) == self.bullet_list {
             "bullet".to_string()
@@ -7153,6 +7251,73 @@ impl WasmDocument {
         abstract_num.levels.first().and_then(|l| l.num_fmt.clone())
     }
 
+    /// Get-or-create the checklist numbering definition for a given checked state.
+    /// Each is a bullet-style list whose marker glyph is a checkbox (`☐` unchecked
+    /// / `☑` checked) — so it renders through the ordinary bullet-marker path and
+    /// round-trips to DOCX as a plain bullet list (Word shows checkbox bullets).
+    /// The per-item checked state is which of the two definitions the item uses.
+    fn ensure_checklist(&mut self, checked: bool) -> Result<NumberingInstanceId, String> {
+        if let Some(id) = if checked {
+            self.checklist_checked
+        } else {
+            self.checklist_unchecked
+        } {
+            return Ok(id);
+        }
+        let exhausted = || "id space exhausted".to_string();
+        let abs_id = AbstractNumberingId::new(self.edit_ids.next_id().map_err(|_| exhausted())?);
+        let inst_id = NumberingInstanceId::new(self.edit_ids.next_id().map_err(|_| exhausted())?);
+        let defs = self.document.definitions_mut();
+        defs.abstract_numbering.insert(
+            abs_id,
+            AbstractNumbering {
+                levels: (0..=8)
+                    .map(|level| checklist_level(checked, level))
+                    .collect(),
+            },
+        );
+        defs.numbering.insert(
+            inst_id,
+            NumberingInstance {
+                abstract_ref: abs_id,
+                overrides: Vec::new(),
+            },
+        );
+        if checked {
+            self.checklist_checked = Some(inst_id);
+        } else {
+            self.checklist_unchecked = Some(inst_id);
+        }
+        Ok(inst_id)
+    }
+
+    /// Whether a numbering instance is a checklist and, if so, whether its items are
+    /// rendered checked — determined from the instance's first level's marker glyph
+    /// (`w:lvlText`), not a cached id, so an imported/reopened checklist is
+    /// recognized. `Some(true)` = checked (`☑`/`☒`), `Some(false)` = unchecked
+    /// (`☐`), `None` = not a checklist.
+    fn checklist_state_of_instance(&self, instance: NumberingInstanceId) -> Option<bool> {
+        let defs = self.document.definitions();
+        let inst = defs.numbering.get(&instance)?;
+        let abstract_num = defs.abstract_numbering.get(&inst.abstract_ref)?;
+        let level = abstract_num.levels.first()?;
+        if !matches!(level.num_fmt, Some(NumberFormat::Bullet)) {
+            return None;
+        }
+        match level.lvl_text.as_deref().map(str::trim) {
+            Some(CHECKBOX_UNCHECKED) => Some(false),
+            Some(CHECKBOX_CHECKED_TICK | CHECKBOX_CHECKED_CROSS) => Some(true),
+            _ => None,
+        }
+    }
+
+    /// The checked state of the checklist item at `node`: `Some(bool)` for a
+    /// checklist item, `None` otherwise.
+    fn checklist_state_at(&self, node: NodeId) -> Option<bool> {
+        let reference = paragraph_properties(&self.document, node)?.numbering?;
+        self.checklist_state_of_instance(reference.instance)
+    }
+
     /// Builds an empty row matching `template`'s column structure: one empty
     /// paragraph per cell, cell properties (width / span / borders) preserved, and
     /// fresh ids for the row, every cell, and every paragraph (from the edit
@@ -7785,6 +7950,50 @@ fn collect_block_text(blocks: &[BlockNode], out: &mut Vec<(NodeId, String)>) {
                 }
             }
             BlockNode::Sdt(sdt) => collect_block_text(&sdt.blocks, out),
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+}
+
+/// The checkbox marker for one checklist item — the node + checked state — the
+/// host paints a clickable target for.
+#[derive(Clone, Debug, serde::Serialize)]
+struct ChecklistMarkerJson {
+    node: String,
+    page: u32,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    checked: bool,
+}
+
+/// Collects `(node, checked)` for every checklist item in document order,
+/// recursing into tables and block SDTs (mirrors [`collect_block_text`]).
+fn collect_checklist_paragraphs(
+    blocks: &[BlockNode],
+    doc: &WasmDocument,
+    out: &mut Vec<(NodeId, bool)>,
+) {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(p) => {
+                if let Some(checked) = p
+                    .properties
+                    .numbering
+                    .and_then(|n| doc.checklist_state_of_instance(n.instance))
+                {
+                    out.push((p.id, checked));
+                }
+            }
+            BlockNode::Table(t) => {
+                for row in &t.rows {
+                    for cell in &row.cells {
+                        collect_checklist_paragraphs(&cell.blocks, doc, out);
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => collect_checklist_paragraphs(&sdt.blocks, doc, out),
             BlockNode::AltChunk(_) => {}
         }
     }
@@ -11608,6 +11817,8 @@ fn open_document(bytes: &[u8]) -> Result<WasmDocument, String> {
         // List definitions are created on demand by the first bullet/numbered toggle.
         bullet_list: None,
         numbered_list: None,
+        checklist_unchecked: None,
+        checklist_checked: None,
         active_author: None,
     })
 }
@@ -12210,6 +12421,34 @@ fn empty_paragraph_block(ids: &mut IdGenerator) -> Result<BlockNode, String> {
 /// indented so the marker hangs to the left of the body text. These are the
 /// nine levels accepted by `adjustListLevel` (0..=8), so editor-created lists
 /// remain valid when users promote items repeatedly and export the document.
+/// Checklist marker glyphs (Unicode "ballot box" family, Common script — the same
+/// vocabulary `sample.docx` uses, so the covering symbol font is already
+/// provisioned). Unchecked and the two accepted checked variants.
+const CHECKBOX_UNCHECKED: &str = "\u{2610}"; // ☐ BALLOT BOX
+const CHECKBOX_CHECKED_TICK: &str = "\u{2611}"; // ☑ BALLOT BOX WITH CHECK
+const CHECKBOX_CHECKED_CROSS: &str = "\u{2612}"; // ☒ BALLOT BOX WITH X
+
+/// One level of a checklist numbering definition: a bullet whose glyph is the
+/// checkbox for the given checked state, with the same hanging-indent geometry as
+/// an ordinary bullet list so Tab/Shift+Tab level changes and wrapping behave
+/// identically.
+fn checklist_level(checked: bool, level: u8) -> NumberingLevel {
+    // Render the checked state as `☒` (U+2612), not `☑` (U+2611): the ballot-box
+    // family `☐`/`☒` is what `sample.docx` uses and what the covering symbol font
+    // is provisioned for (P1G-SHELL-THEME-002), so both states render rather than
+    // the checked glyph falling back to `.notdef`. Detection still accepts `☑`.
+    let glyph = if checked {
+        CHECKBOX_CHECKED_CROSS
+    } else {
+        CHECKBOX_UNCHECKED
+    };
+    NumberingLevel {
+        num_fmt: Some(NumberFormat::Bullet),
+        lvl_text: Some(glyph.to_string()),
+        ..list_level(false, level)
+    }
+}
+
 fn list_level(numbered: bool, level: u8) -> NumberingLevel {
     let (num_fmt, lvl_text) = if numbered {
         let placeholders = (1..=level + 1)
@@ -13680,6 +13919,8 @@ mod tests {
             galley_cache: GalleyCache::new(),
             bullet_list: None,
             numbered_list: None,
+            checklist_unchecked: None,
+            checklist_checked: None,
             active_author: None,
         };
         let node = paragraph.to_string();
@@ -14103,6 +14344,8 @@ mod tests {
             galley_cache: GalleyCache::new(),
             bullet_list: None,
             numbered_list: None,
+            checklist_unchecked: None,
+            checklist_checked: None,
             active_author: None,
         };
         let node = paragraph.to_string();
@@ -14364,6 +14607,8 @@ mod tests {
             galley_cache: GalleyCache::new(),
             bullet_list: None,
             numbered_list: None,
+            checklist_unchecked: None,
+            checklist_checked: None,
             active_author: None,
         };
 
@@ -17197,6 +17442,73 @@ mod tests {
             .expect_err("a bullet item cannot continue numbering");
     }
 
+    /// A checklist is created, its item toggles checked/unchecked (the click
+    /// interaction), reflects as `"checklist"`, and toggles back off.
+    #[test]
+    fn checklist_creates_toggles_and_reflects() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, text)| !text.is_empty())
+            .map(|(id, _)| id.to_string())
+            .expect("a non-empty paragraph");
+
+        // Create the checklist — a new item starts unchecked and reflects as one.
+        d.toggle_list(&node, 0, &node, 0, "checklist")
+            .expect("checklist on");
+        assert_eq!(d.list_style_at(&node), "checklist");
+        assert_eq!(
+            d.checkbox_state_at(&node),
+            0,
+            "new checklist item is unchecked"
+        );
+
+        // Toggle the checkbox: the item flips to checked and stays a checklist.
+        d.toggle_checklist_item(&node).expect("toggle checked");
+        assert_eq!(d.checkbox_state_at(&node), 1, "toggled to checked");
+        assert_eq!(d.list_style_at(&node), "checklist", "still a checklist");
+
+        // Toggle back to unchecked, then turn the checklist off entirely.
+        d.toggle_checklist_item(&node).expect("toggle back");
+        assert_eq!(d.checkbox_state_at(&node), 0);
+        d.toggle_list(&node, 0, &node, 0, "checklist")
+            .expect("checklist off");
+        assert_eq!(d.list_style_at(&node), "", "no longer a list");
+        // Not a checklist item any more, so a toggle would be rejected at the
+        // boundary (the error path constructs a JsValue, exercised in the browser).
+        assert_eq!(d.checkbox_state_at(&node), -1);
+    }
+
+    /// A checked checklist round-trips through DOCX (export → reopen) and is still
+    /// recognized as a checked checklist — the state is carried by the marker
+    /// glyph, detected session-independently.
+    #[test]
+    fn a_checklist_round_trips_through_docx_as_a_checkbox_bullet_list() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, text)| !text.is_empty())
+            .map(|(id, _)| id.to_string())
+            .expect("a non-empty paragraph");
+        d.toggle_list(&node, 0, &node, 0, "checklist")
+            .expect("checklist on");
+        d.toggle_checklist_item(&node).expect("check it");
+
+        let bytes = d.export_docx().expect("export docx");
+        let d2 = open_document(&bytes).expect("reopen exported docx");
+
+        // Detected purely from the reopened model's marker glyph (fresh session —
+        // the cached checklist ids are unset), proving the round-trip.
+        let mut items = Vec::new();
+        collect_checklist_paragraphs(d2.document.body(), &d2, &mut items);
+        assert_eq!(items.len(), 1, "exactly one checklist item survives");
+        assert!(items[0].1, "and it is still checked");
+    }
+
     /// Paragraph and run properties apply and undo: alignment (with a query),
     /// plus line spacing / indent / shading / color / size / vert-align without
     /// error, all reversible, leaving the text intact.
@@ -17994,6 +18306,8 @@ mod tests {
             galley_cache: GalleyCache::new(),
             bullet_list: None,
             numbered_list: None,
+            checklist_unchecked: None,
+            checklist_checked: None,
             active_author: None,
         };
 

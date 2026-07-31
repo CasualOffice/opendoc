@@ -1597,6 +1597,7 @@ const indentDecBtn = document.getElementById("indentDec");
 const indentIncBtn = document.getElementById("indentInc");
 const bulletListBtn = document.getElementById("bulletList");
 const numberedListBtn = document.getElementById("numberedList");
+const checkListBtn = document.getElementById("checkList");
 const restartListBtn = document.getElementById("restartList");
 const continueListBtn = document.getElementById("continueList");
 const fontFamilySel = document.getElementById("fontFamily");
@@ -1927,16 +1928,32 @@ async function provisionFonts(name) {
     }
   }
 
-  const missing = doc.missingCoverage();
-  const keys = fallbackKeysFor(missing);
-  if (keys.length === 0) return warnings;
+  warnings.push(...(await provisionMissingFallbacks(name)));
+  return warnings;
+}
 
-  setStatus(`Fetching fonts for ${name} (${[...keys].join(", ")})…`);
+/** The script fallback buckets already fetched + registered this session, so a
+ *  later coverage check never re-fetches a font it already has. */
+const provisionedFallbackKeys = new Set();
+
+/** Fetches and registers any script fallback fonts the document now needs but
+ *  hasn't got yet (`doc.missingCoverage()` → buckets), skipping ones already
+ *  provisioned. Used both on open and after an edit that introduces new glyphs
+ *  (e.g. a checklist's `☐`/`☒` markers), so newly-added symbols render instead of
+ *  tofu. Returns the keys that failed to load. */
+async function provisionMissingFallbacks(label) {
+  const warnings = [];
+  if (!doc) return warnings;
+  const missing = doc.missingCoverage();
+  const keys = fallbackKeysFor(missing).filter((key) => !provisionedFallbackKeys.has(key));
+  if (keys.length === 0) return warnings;
+  setStatus(`Fetching fonts for ${label} (${keys.join(", ")})…`);
   for (const key of keys) {
     const { url, scripts } = SCRIPT_FALLBACK_FONTS[key];
     try {
       const bytes = await fetchFontBytes(url, fontCache);
       doc.registerFallbackFont(bytes, scripts); // registers + re-paginates
+      provisionedFallbackKeys.add(key);
     } catch (err) {
       console.warn(`font ${key} (${url}) failed:`, err);
       setStatus(`Could not load the ${key} font — some text may show as ▯`, "error");
@@ -1944,6 +1961,17 @@ async function provisionFonts(name) {
     }
   }
   return warnings;
+}
+
+/** Ensures any glyphs a just-applied edit introduced (e.g. checklist checkbox
+ *  markers) have a covering font, then re-renders if one was fetched. */
+async function ensureGlyphCoverage(label) {
+  const before = provisionedFallbackKeys.size;
+  await provisionMissingFallbacks(label);
+  if (provisionedFallbackKeys.size !== before) {
+    await renderAll();
+    setStatus("");
+  }
 }
 
 async function renderAll() {
@@ -2166,6 +2194,7 @@ function drawSelection() {
   if (!doc) return;
   clearOverlays();
   paintReviewMarkers();
+  paintChecklistMarkers();
   // A selected object owns the visible chrome (outline + handles) in place of the
   // text caret; in "editing" mode the ordinary text caret is shown instead.
   if (objectSelection && objectSelection.mode === "selected") {
@@ -2546,6 +2575,45 @@ function enterObjectEditMode() {
   }
   objectSelection = { ...objectSelection, mode: "editing" };
   drawSelection();
+}
+
+/** Paints a clickable target over each checklist item's checkbox marker (docs/67
+ *  — checklist authoring). The checkbox glyph itself is baked into the page raster
+ *  by the layout engine; this overlay is the *model-as-truth* click target
+ *  (`doc.checklistMarkers()` gives each marker's engine rect + node + state) that
+ *  toggles the item's checked state via one edit op, then re-renders. Like the
+ *  review markers it never mutates the canvas; unlike them it carries its own
+ *  handler (the checkbox is a control, not passive text). Gated through
+ *  `runNodeEdit` so it is blocked in Viewing and Suggesting, consistent with the
+ *  other list edits. */
+function paintChecklistMarkers() {
+  if (!doc) return;
+  let markers = [];
+  try { markers = JSON.parse(doc.checklistMarkers()) ?? []; } catch { markers = []; }
+  for (const marker of markers) {
+    const el = place([marker.page, marker.x, marker.y, marker.w, marker.h], "checklist-marker");
+    if (!el) continue;
+    el.classList.toggle("is-checked", !!marker.checked);
+    el.dataset.checklistNode = marker.node;
+    el.setAttribute("role", "checkbox");
+    el.setAttribute("aria-checked", String(!!marker.checked));
+    el.setAttribute("aria-label", marker.checked ? "Checked item" : "Unchecked item");
+    el.title = marker.checked ? "Checked — click to uncheck" : "Unchecked — click to check";
+    el.addEventListener("pointerdown", (event) => {
+      // Own the gesture: toggle the item instead of placing a caret in the gutter.
+      event.preventDefault();
+      event.stopPropagation();
+      // Put the caret at the item so the mutation path has a selection and typing
+      // continues in that item afterward; then toggle (gated for Viewing/Suggesting).
+      selection = {
+        anchor: { node: marker.node, offset: 0 },
+        focus: { node: marker.node, offset: 0 },
+      };
+      runNodeEdit(() => doc.toggleChecklistItem(marker.node));
+      void ensureGlyphCoverage("checklist");
+      focusEditorSurface();
+    });
+  }
 }
 
 /** Paints the caret or highlight for `sel` from engine geometry. */
@@ -4495,6 +4563,7 @@ function updateToolbar() {
   const listKind = hasSel && doc ? doc.listStyleAt(selection.focus.node) : "";
   bulletListBtn.setAttribute("aria-pressed", String(listKind === "bullet"));
   numberedListBtn.setAttribute("aria-pressed", String(listKind === "numbered"));
+  checkListBtn.setAttribute("aria-pressed", String(listKind === "checklist"));
   restartListBtn.disabled = !hasSel || listKind !== "numbered";
   // Continue numbering is available only when the caret's numbered item has an
   // earlier numbered list at the same level to resume (the engine's own guard).
@@ -4735,6 +4804,12 @@ onButton(indentDecBtn, () => adjustIndentCommand(-360));
 onButton(indentIncBtn, () => adjustIndentCommand(360));
 onButton(bulletListBtn, () => runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "bullet")));
 onButton(numberedListBtn, () => runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "numbered")));
+onButton(checkListBtn, () => {
+  runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "checklist"));
+  // A brand-new checklist introduces the `☐` marker glyph; fetch its covering
+  // symbol font (once) so it renders instead of a .notdef box, then re-render.
+  void ensureGlyphCoverage("checklist");
+});
 onButton(restartListBtn, () => {
   if (selection && doc) runNodeEdit(() => doc.restartList(selection.focus.node));
 });
