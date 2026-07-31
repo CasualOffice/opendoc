@@ -656,6 +656,10 @@
              surface (no contenteditable) — the model stays the source of
              truth. Kept out of the tab order; screen readers still browse it. -->
         <div id="a11yDocument" class="sr-only" role="document" aria-label="Document content (read-only for assistive technology)"></div>
+        <!-- Polite live region for review events (comment added, change accepted/
+             rejected, filter/mode changed) — announced to a screen reader without
+             stealing focus (REVIEW-GAP-023). -->
+        <div id="reviewLiveRegion" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
         <aside id="reviewSidebar" class="review-sidebar" hidden aria-label="Comments and suggestions">
           <div id="reviewSidebarHeader" class="review-sidebar-header">
             <div class="review-sidebar-headrow">
