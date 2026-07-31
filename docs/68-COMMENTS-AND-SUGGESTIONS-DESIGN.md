@@ -49,6 +49,21 @@ Both converge on the same shape: inline colored markup for the change itself, a 
 
 The engine has no concept of "current user." The host supplies a `CurrentUser { name: String, initials: Option<String>, color: Option<Rgba> }` at session start (WASM constructor option, mirroring how fonts are host-populated per the font-registry seam). If no color is supplied, the engine deterministically derives one from a hash of `name` (stable within a session, mirrors Word's auto-assigned author colors) — this is presentation only, never persisted into the model beyond the existing opaque `author: Option<String>` string. No network calls, no accounts, no server — consistent with AGENTS.md's "no mandatory server... dependency."
 
+**Implemented (REVIEW-GAP-013):** rather than a constructor-only option, the
+seam is `WasmDocument::setActiveAuthor(name, initials?, id?)` — callable any
+time after construction, mirroring `registerFont`/`registerFonts` more
+directly than a one-shot constructor argument so a host can update the active
+reviewer (e.g. a user switch) without reopening the document. `activeAuthor()`
+reads the current identity back as JSON. `addComment`, `replyToComment`, and
+every `suggest*` tracked-change call already took `author`/`initials` as
+per-call `Option` arguments; they now resolve an omitted value from the active
+identity instead of requiring the caller to resupply it every time, while an
+explicit per-call value still overrides it. `id` is carried only in
+`activeAuthor()`'s JSON for host-side use (e.g. deterministic per-author
+coloring for REVIEW-GAP-015); it is opaque to the engine and never written
+into the document. Deterministic color-from-name derivation is not yet
+implemented — tracked under REVIEW-GAP-015.
+
 ### 2. New `Operation` variants (closed set, I2)
 
 Comments:
