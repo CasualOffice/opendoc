@@ -10810,7 +10810,7 @@ fn collect_para_objects(
 }
 
 /// A selectable object resolved at a page-local point (docs/85 §3.1): its model
-/// `NodeId` (32-hex), an [`ObjectKind`]-style tag (`"image"`/`"textbox"`), the
+/// `NodeId` (32-hex), an `ObjectKind`-style tag (`"image"`/`"textbox"`), the
 /// 1-based page, and its placed rect `[page, x, y, w, h]` in twips.
 #[wasm_bindgen]
 #[derive(Clone, Debug)]
