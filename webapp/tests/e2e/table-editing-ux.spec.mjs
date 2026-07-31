@@ -203,7 +203,11 @@ test("live table properties remain reachable on a narrow viewport", async ({
 }) => {
   await page.setViewportSize({ width: 390, height: 700 });
   await insertTwoByTwoTable(page);
-  await page.locator("#tablePropertiesBtn").click();
+  // The Table ribbon's Properties group collapses into the "⋯" overflow menu at
+  // this narrow width (docs/64 — no horizontal scrollbar); open it to reach it.
+  const tableProps = page.locator("#tablePropertiesBtn");
+  if (!(await tableProps.isVisible())) await page.locator("#ribbonOverflowBtn").click();
+  await tableProps.click();
 
   const panel = page.locator("#tablePropertiesPanel");
   await expect(panel).toBeVisible();

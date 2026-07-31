@@ -1,8 +1,47 @@
 # 64 — Editor Toolbar / Ribbon — Competitive Analysis & Design
 
-Status: proposal (awaiting confirmation before build)
+Status: Home band rebuilt to the `template.png` reference (P1G-UI-RIBBON-HOME);
+Insert/Table/View tabs and the contextual Table tab retained.
 Companion to [doc 63](63-EDITOR-UI-UX-DESIGN-SYSTEM.md) (shell & design system).
 Reference: `template.png`.
+
+## Home band — as built (mirrors template.png)
+
+The Home tab is a single **no-wrap** band of divider-separated groups with a
+small centered label under each, matching the reference's group composition:
+
+- **Undo** — Undo/Redo (opendoc-specific, kept; the reference puts these in a
+  quick-access strip opendoc does not have).
+- **Clipboard** — a big **Paste** button beside stacked **Cut** / **Copy** text
+  rows. All three call the same clipboard actions the command palette/keyboard
+  use. *Format Painter is omitted — not implemented.*
+- **Font** — two rows: (1) font family, size, clear-formatting; (2) B I U S,
+  sub/super, text color, highlight. *Grow/shrink font and change-case are omitted
+  — not implemented.*
+- **Paragraph** — two rows: (1) bullets, numbering, restart-numbering, indent
+  −/＋, ¶ (paragraph properties); (2) align L/C/R/J, line-spacing.
+  *Multilevel list and paragraph sort are omitted — not implemented.*
+- **Styles** — a **live gallery** of style cards built from the document's real
+  styles (`doc.listStyles()`), the visible control driving the (now hidden)
+  `#paragraphStyle` reflection select; horizontal ‹/› scroll on overflow. Known
+  built-in names render in an approximate look (the engine exposes style names,
+  not per-style metrics, to the webapp).
+- **Editing** — **Find** / **Replace** stacked rows (both open Find & Replace).
+  *Select is omitted — no functional select menu.*
+- **Review** — the three-state Editing/Suggesting/Viewing segmented control
+  (opendoc-specific; the reference's Voice/Dictate group is omitted — no dictation).
+
+**No horizontal scrollbar, ever** (superseding the earlier "overflow scrolls"
+note in §3): groups that don't fit the current width collapse, right-to-left,
+into a "⋯" overflow menu (`#ribbonOverflowBtn`/`#ribbonOverflowMenu`) that keeps
+every control reachable. Overflow is recomputed on resize (`ResizeObserver`) and
+synchronously on tab switch. Every icon-only control has a ~350ms delayed
+name+shortcut tooltip plus its `aria-label` (§3).
+
+**Compact ↔ ribbon view.** A toggle in the tab strip (`#ribbonViewToggle`)
+collapses the band to just the tabs (compact view — more document room) and
+expands it back, mirroring Word's "collapse the ribbon". The choice persists
+(`localStorage`); clicking any tab while collapsed restores the band.
 
 Owner directives driving this note:
 - The current flat toolbar does **not** look like the reference; move toward it.
