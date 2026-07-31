@@ -20,6 +20,7 @@ use casual_doc_edit::{
 };
 use casual_doc_export::write_document;
 use casual_doc_import::{ImportConfig, ImportMode, import_package};
+use casual_doc_layout::block::BlockFragment;
 use casual_doc_layout::cascade::{StyleCascade, requested_font_family};
 use casual_doc_layout::compose::compose_page;
 use casual_doc_layout::document_layout::{
@@ -50,7 +51,7 @@ use casual_doc_model::v1::{
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
 use casual_doc_render::{MediaSource, RegistryFontSource, Surface, render};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::str::FromStr;
 use wasm_bindgen::Clamped;
 use wasm_bindgen::prelude::*;
@@ -512,6 +513,92 @@ impl WasmDocument {
             target_offset,
             target_page,
         })
+    }
+
+    /// The selectable object (drawing/image/text box) under a page-local point
+    /// (twips) on 1-based `page`, or `undefined` if the point hits no object —
+    /// the object-selection counterpart of [`hit_test`](Self::hit_test) (docs/85
+    /// §3.1 `HitTarget::InlineObject`). The frontend calls this *before* text
+    /// hit-testing: a hit selects the object as a unit (`Selection::Object`,
+    /// docs/58 §3), a miss falls through to a text caret. Read-only; no mutation.
+    ///
+    /// Scope (Phase A / `P1G-OBJ-SELECT`): inline images (`w:drawing` pictures)
+    /// and inline text boxes in top-level body paragraphs. Anchored/floating
+    /// objects, table-cell and header/footer objects, and handle-grip resolution
+    /// (which drives drag-resize) are later slices.
+    #[wasm_bindgen(js_name = objectAt)]
+    #[must_use]
+    pub fn object_at(&self, page: u32, x_twip: i32, y_twip: i32) -> Option<ObjectHitPayload> {
+        let point = Point::new(Twip(x_twip), Twip(y_twip));
+        // Later objects paint on top, so the last containing box wins a click.
+        self.object_boxes()
+            .into_iter()
+            .rev()
+            .find(|obj| obj.page == page && obj.rect.contains(point))
+            .map(|obj| ObjectHitPayload {
+                node: obj.node.to_string(),
+                kind: obj.kind,
+                page: obj.page,
+                rect: flat_rect(obj.page, obj.rect),
+            })
+    }
+
+    /// The placed rectangle of the object `node`, as `[page, xTwip, yTwip,
+    /// wTwip, hTwip]` — the geometry the frontend paints the selection outline
+    /// from (docs/85 §3.3 `objectRect`). Empty if `node` is not a currently
+    /// placed selectable object.
+    #[wasm_bindgen(js_name = objectRect)]
+    #[must_use]
+    pub fn object_rect(&self, node: &str) -> Vec<i32> {
+        let Ok(nid) = NodeId::from_str(node) else {
+            return Vec::new();
+        };
+        self.object_boxes()
+            .into_iter()
+            .find(|obj| obj.node == nid)
+            .map(|obj| flat_rect(obj.page, obj.rect).to_vec())
+            .unwrap_or_default()
+    }
+
+    /// The eight resize/move handle centers of the selected object `node`, as a
+    /// flat `[page, cxTwip, cyTwip, kind]` per handle (docs/85 §3.3
+    /// `objectHandles`), in the order NW, N, NE, E, SE, S, SW, W (`kind` = that
+    /// index). The frontend paints a fixed screen-size grip centered at each —
+    /// engine-drawn chrome from the object's placed rect, so it matches the
+    /// raster with zero drift (docs/58). Empty if `node` is not placed.
+    ///
+    /// Grips are painted this slice but not yet draggable; drag-resize/move is
+    /// the next slice (`P1G-OBJ-GEOMETRY`).
+    #[wasm_bindgen(js_name = objectHandles)]
+    #[must_use]
+    pub fn object_handles(&self, node: &str) -> Vec<i32> {
+        let Ok(nid) = NodeId::from_str(node) else {
+            return Vec::new();
+        };
+        let Some(obj) = self.object_boxes().into_iter().find(|obj| obj.node == nid) else {
+            return Vec::new();
+        };
+        let r = obj.rect;
+        let (l, t) = (r.origin.x.raw(), r.origin.y.raw());
+        let (w, h) = (r.size.width.raw(), r.size.height.raw());
+        let (cx, cy) = (l + w / 2, t + h / 2);
+        let (right, bottom) = (l + w, t + h);
+        // NW, N, NE, E, SE, S, SW, W.
+        let centers = [
+            (l, t),
+            (cx, t),
+            (right, t),
+            (right, cy),
+            (right, bottom),
+            (cx, bottom),
+            (l, bottom),
+            (l, cy),
+        ];
+        let mut out = Vec::with_capacity(centers.len() * 4);
+        for (i, (hx, hy)) in centers.into_iter().enumerate() {
+            out.extend_from_slice(&[obj.page as i32, hx, hy, i as i32]);
+        }
+        out
     }
 
     /// The caret box for a model anchor, as `[page, xTwip, yTwip, wTwip, hTwip]`
@@ -6729,6 +6816,106 @@ impl WasmDocument {
         Ok(out)
     }
 
+    /// Every currently placed selectable inline object (image / text box) in the
+    /// body, resolved to its model `NodeId`, kind, page, and absolute page rect —
+    /// the geometry `object_at`/`object_rect`/`object_handles` answer from. Walks
+    /// the paginated layout (public `Page`/`PlacedFragment`/`BlockFragment` fields)
+    /// and mirrors composition's inline-object placement math
+    /// (`content_origin + box.origin`, see `compose_fragment`), then correlates
+    /// each placed box back to its model drawing/text-box node. Header/footer,
+    /// table-cell, and anchored/floating objects are out of this slice's scope.
+    fn object_boxes(&self) -> Vec<ObjectBox> {
+        let mut out = Vec::new();
+        // Per-paragraph claimed flags, so a paragraph split across pages still maps
+        // each placed box to a distinct model node (media match first, order next).
+        let mut claimed: HashMap<NodeId, (Vec<bool>, Vec<bool>)> = HashMap::new();
+        for page in &self.layout.pages {
+            for placed in &page.placed {
+                let BlockFragment::Paragraph {
+                    id,
+                    lines,
+                    box_metrics,
+                    ..
+                } = &placed.fragment
+                else {
+                    continue;
+                };
+                let content_x = placed.rect.origin.x.raw() + box_metrics.indent_start.raw();
+                let content_y = placed.rect.origin.y.raw() + box_metrics.space_before.raw();
+                let (img_nodes, tb_nodes) = self.paragraph_object_nodes(*id);
+                let entry = claimed
+                    .entry(*id)
+                    .or_insert_with(|| (vec![false; img_nodes.len()], vec![false; tb_nodes.len()]));
+                for line in &lines.lines {
+                    for image in &line.images {
+                        let rect = Rect::new(
+                            Point::new(
+                                Twip(content_x + image.origin.x.raw()),
+                                Twip(content_y + image.origin.y.raw()),
+                            ),
+                            image.size,
+                        );
+                        // Prefer a same-media unclaimed model drawing; else the next
+                        // unclaimed one in document order.
+                        let pick = img_nodes
+                            .iter()
+                            .position(|(_, part)| part.as_deref() == Some(image.media.as_str()))
+                            .filter(|i| !entry.0[*i])
+                            .or_else(|| entry.0.iter().position(|used| !used));
+                        if let Some(i) = pick {
+                            entry.0[i] = true;
+                            out.push(ObjectBox {
+                                node: img_nodes[i].0,
+                                kind: "image",
+                                page: page.number,
+                                rect,
+                            });
+                        }
+                    }
+                    for text_box in &line.text_boxes {
+                        let rect = Rect::new(
+                            Point::new(
+                                Twip(content_x + text_box.origin.x.raw()),
+                                Twip(content_y + text_box.origin.y.raw()),
+                            ),
+                            text_box.size,
+                        );
+                        if let Some(i) = entry.1.iter().position(|used| !used) {
+                            entry.1[i] = true;
+                            out.push(ObjectBox {
+                                node: tb_nodes[i],
+                                kind: "textbox",
+                                page: page.number,
+                                rect,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// The model drawing nodes (with their resolved media part name) and inline
+    /// text-box nodes of a body paragraph, in document order — the correlation
+    /// targets for [`object_boxes`](Self::object_boxes).
+    fn paragraph_object_nodes(
+        &self,
+        paragraph: NodeId,
+    ) -> (Vec<(NodeId, Option<String>)>, Vec<NodeId>) {
+        let mut images = Vec::new();
+        let mut text_boxes = Vec::new();
+        if let Some(paragraph) = find_paragraph(self.document.body(), paragraph) {
+            collect_para_objects(
+                &paragraph.inlines,
+                self.document.definitions(),
+                &mut images,
+                &mut text_boxes,
+            );
+        }
+        (images, text_boxes)
+    }
+
     fn ensure_list(&mut self, numbered: bool) -> Result<NumberingInstanceId, String> {
         if let Some(id) = if numbered {
             self.numbered_list
@@ -10578,6 +10765,91 @@ fn resolve_bookmark(document: &Document, anchor: &str) -> Option<ModelPos> {
     }
 
     blocks_pos(document, document.body(), bookmark)
+}
+
+/// A placed selectable object resolved from the layout: its model node, kind,
+/// page, and absolute page rect. Internal to [`WasmDocument::object_boxes`].
+struct ObjectBox {
+    node: NodeId,
+    kind: &'static str,
+    page: u32,
+    rect: Rect,
+}
+
+/// Collects a paragraph's inline drawing nodes (with each drawing's resolved
+/// media part name) and inline text-box nodes, in document order, descending one
+/// level into hyperlink and revision wrappers. Anchored (`anchor.is_some()`)
+/// text boxes are floating objects, out of the inline-object scope.
+fn collect_para_objects(
+    inlines: &[InlineNode],
+    definitions: &casual_doc_model::v1::Definitions,
+    images: &mut Vec<(NodeId, Option<String>)>,
+    text_boxes: &mut Vec<NodeId>,
+) {
+    for inline in inlines {
+        match inline {
+            InlineNode::Drawing(drawing) => {
+                let part = definitions
+                    .media
+                    .get(&drawing.media)
+                    .map(|media| media.part_name.clone());
+                images.push((drawing.id, part));
+            }
+            InlineNode::TextBox(text_box) if text_box.anchor.is_none() => {
+                text_boxes.push(text_box.id);
+            }
+            InlineNode::Hyperlink(hyperlink) => {
+                collect_para_objects(&hyperlink.inlines, definitions, images, text_boxes);
+            }
+            InlineNode::Revision(revision) => {
+                collect_para_objects(&revision.inlines, definitions, images, text_boxes);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// A selectable object resolved at a page-local point (docs/85 §3.1): its model
+/// `NodeId` (32-hex), an [`ObjectKind`]-style tag (`"image"`/`"textbox"`), the
+/// 1-based page, and its placed rect `[page, x, y, w, h]` in twips.
+#[wasm_bindgen]
+#[derive(Clone, Debug)]
+pub struct ObjectHitPayload {
+    node: String,
+    kind: &'static str,
+    page: u32,
+    rect: [i32; 5],
+}
+
+#[wasm_bindgen]
+impl ObjectHitPayload {
+    /// The object node id (32-hex string).
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn node(&self) -> String {
+        self.node.clone()
+    }
+
+    /// The object kind: `"image"` or `"textbox"` (docs/85 `ObjectKind`).
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn kind(&self) -> String {
+        self.kind.to_string()
+    }
+
+    /// The 1-based page the object sits on.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn page(&self) -> u32 {
+        self.page
+    }
+
+    /// The placed rect `[page, xTwip, yTwip, wTwip, hTwip]` (page-local).
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn rect(&self) -> Vec<i32> {
+        self.rect.to_vec()
+    }
 }
 
 /// The model anchor a point resolved to (doc 58 §2 `TextCaret`/`Outside`): a
@@ -16298,6 +16570,48 @@ mod tests {
             "",
             "plain prose is not captured as a structured fragment"
         );
+    }
+
+    #[test]
+    fn object_selection_resolves_an_inline_image_body_and_its_handles() {
+        let d = open_document(RICH_DOCX).expect("open corpus docx");
+        let boxes = d.object_boxes();
+        // The rich producer fixture has an inline picture in a body paragraph.
+        let image = boxes
+            .iter()
+            .find(|b| b.kind == "image")
+            .expect("an inline image object in the body");
+
+        // A click at the image center resolves to that object (not text).
+        let cx = image.rect.origin.x.raw() + image.rect.size.width.raw() / 2;
+        let cy = image.rect.origin.y.raw() + image.rect.size.height.raw() / 2;
+        let hit = d
+            .object_at(image.page, cx, cy)
+            .expect("object hit at the image center");
+        assert_eq!(hit.node, image.node.to_string());
+        assert_eq!(hit.kind, "image");
+        assert_eq!(hit.rect[0], image.page as i32);
+
+        // objectRect round-trips the placed rect; objectHandles yields 8 grips
+        // (NW,N,NE,E,SE,S,SW,W), each `[page, cx, cy, kind]`.
+        let rect = d.object_rect(&image.node.to_string());
+        assert_eq!(rect.len(), 5, "objectRect is [page,x,y,w,h]");
+        assert_eq!(rect[3], image.rect.size.width.raw());
+        let handles = d.object_handles(&image.node.to_string());
+        assert_eq!(handles.len(), 8 * 4, "eight [page,cx,cy,kind] handles");
+        // The NW handle sits at the object's top-left corner.
+        assert_eq!(handles[1], image.rect.origin.x.raw());
+        assert_eq!(handles[2], image.rect.origin.y.raw());
+        // The kind indices run 0..8 in order.
+        for i in 0..8 {
+            assert_eq!(handles[i * 4 + 3], i as i32);
+        }
+
+        // A point in the far top-left margin hits no object.
+        assert!(d.object_at(image.page, 1, 1).is_none());
+        // An unknown node has no rect or handles.
+        assert!(d.object_rect("deadbeef").is_empty());
+        assert!(d.object_handles("deadbeef").is_empty());
     }
 
     #[test]

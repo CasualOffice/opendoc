@@ -2856,6 +2856,49 @@ body.modal-open {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
+/* Object selection chrome (docs/85 §3.3): an outline + eight resize/move grips,
+ * drawn by us from the object's placed rect so they match the raster with zero
+ * drift. The grips are display-only this slice; drag-resize is the next slice. */
+.overlay .object-outline {
+  position: absolute;
+  border: 1.5px solid var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
+  pointer-events: none;
+}
+
+.overlay .object-handle {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  margin: -5px 0 0 -5px; /* center on the handle point */
+  background: var(--surface);
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  box-shadow: 0 1px 2px rgba(20, 22, 28, 0.3);
+  pointer-events: none; /* not yet draggable — the move/resize slice enables this */
+}
+
+/* Placeholder object context bar (docs/85 §4.1): names the selected object and
+ * the actions the later slices will make real. */
+.object-context-bar {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-radius: var(--radius-popover);
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-popover);
+  font-size: 12px;
+  pointer-events: none;
+}
+.object-context-bar[hidden] { display: none; }
+.object-context-bar strong { text-transform: capitalize; }
+.object-context-bar small { color: var(--muted); }
+
 .overlay .table-col-resize-handle {
   position: absolute;
   width: 10px;

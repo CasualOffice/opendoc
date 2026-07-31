@@ -164,6 +164,21 @@ painted from the object's placed rect (`Page.anchored` for floats;
 
 These are read-only (no transaction), exactly as `copyText`/`selectionRects` are.
 
+**Implementation note (`P1G-OBJ-SELECT`, shipped).** The first slice resolves
+**inline objects** — `w:drawing` pictures and inline text boxes in top-level body
+paragraphs — by walking the paginated layout and correlating each placed box back
+to its model node at query time (image by media part-name then document order;
+text box by order), so no `NodeId` had to be threaded onto the layout structs
+(`InlineImage`/`InlineTextBox` carry no id) and the shaper/flow pipeline is
+untouched. `objectHandles` returns the eight grip centers `[page, cx, cy, kind]`
+(NW,N,NE,E,SE,S,SW,W); the host paints a fixed screen-size grip at each. **Still
+open for a follow-up selection slice:** anchored/floating objects need
+`PlacedAnchor` to carry its source `NodeId` (a small `anchor.rs` thread), and
+table-cell / header-footer objects need the walk to descend those containers.
+Handle-grip *hit* resolution (the `Float { handle }` arm that turns a grip click
+into a drag) lands with the move/resize op slice (`P1G-OBJ-GEOMETRY`); this slice
+paints grips but does not make them draggable.
+
 ## 4. The universal object interaction grammar
 
 One grammar for images, text boxes, shapes, groups, **and** tables (doc 69's
