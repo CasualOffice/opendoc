@@ -992,7 +992,10 @@ body.modal-open {
 /* ---- Right-click context menu ---------------------------------------------- */
 .context-menu {
   position: fixed;
-  z-index: 30;
+  /* Above the floating selection toolbar (z-index 40) so a right-click on a
+     selection never has its menu occluded — or its items click-intercepted — by
+     the toolbar that hovers the same selection. */
+  z-index: 60;
   min-width: 224px;
   max-width: min(340px, calc(100vw - 16px));
   max-height: calc(100vh - 16px);
@@ -1770,6 +1773,44 @@ body.modal-open {
   border-bottom: 1px solid var(--line);
 }
 
+/* Compact ↔ ribbon view toggle: collapses the whole band to just the tab strip
+   (Word's "collapse the ribbon"), giving the document more room. */
+.ribbon-view-toggle {
+  margin-left: auto;
+  align-self: center;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 26px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.ribbon-view-toggle:hover {
+  background: var(--bg-2);
+  color: var(--ink);
+}
+
+.ribbon-view-toggle .ms {
+  font-size: 20px;
+}
+
+.ribbon.is-collapsed {
+  border-bottom-left-radius: 9px;
+  border-bottom-right-radius: 9px;
+}
+
+.ribbon.is-collapsed .ribbon-tabs {
+  border-bottom: none;
+}
+
+.ribbon.is-collapsed .ribbon-body {
+  display: none;
+}
+
 .ribbon-tab {
   height: var(--h-tab);
   padding: 0 14px;
@@ -1797,11 +1838,18 @@ body.modal-open {
   cursor: default;
 }
 
+.ribbon-body {
+  position: relative;
+}
+
 .ribbon-panel {
   display: flex;
   align-items: stretch;
   padding: 6px 10px 5px;
-  overflow-x: auto;
+  /* No horizontal scrollbar ever (docs/64): a single no-wrap row whose
+     overflowing groups collapse into the "⋯" menu instead. */
+  overflow: hidden;
+  min-width: 0;
 }
 
 .ribbon-panel[hidden] {
@@ -1812,9 +1860,11 @@ body.modal-open {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: space-between;
   gap: 3px;
-  padding: 0 10px;
+  padding: 0 5px;
   border-right: 1px solid var(--line);
+  flex: 0 0 auto;
 }
 
 .rgroup:last-child {
@@ -1880,6 +1930,255 @@ body.modal-open {
 
 .rgroup-note {
   justify-content: center;
+}
+
+/* --- Home band composition (template.png / docs/64) ----------------------- */
+
+/* Accessible-only element kept in the DOM for handlers/reflection/specs but not
+   shown (e.g. the `#paragraphStyle` select behind the Styles gallery). */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* Two stacked control rows inside one group (Font, Paragraph). */
+.fmt-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.fmt-row-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 26px;
+}
+
+/* Clipboard group: a big Paste button beside stacked Cut/Copy text rows. */
+.clipboard-ctl {
+  align-items: stretch;
+  gap: 6px;
+}
+
+.fmt-big {
+  flex-direction: column;
+  gap: 2px;
+  width: auto;
+  min-width: 46px;
+  height: auto;
+  padding: 5px 8px;
+}
+
+.fmt-big .ms {
+  font-size: 22px;
+}
+
+.fmt-big-label {
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.stackrows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  justify-content: center;
+}
+
+/* Icon + label text rows (Cut/Copy, Find/Replace). */
+.fmt-row {
+  width: auto;
+  height: auto;
+  min-height: 22px;
+  padding: 2px 8px 2px 5px;
+  justify-content: flex-start;
+  gap: 6px;
+}
+
+.fmt-row .ms {
+  font-size: 16px;
+}
+
+.fmt-row-label {
+  font-size: 11.5px;
+  font-weight: 450;
+}
+
+/* Styles gallery: a live strip of style cards (template.png), each rendered in
+   its own look; the visible control that drives the hidden `#paragraphStyle`
+   select. Horizontal scroll on overflow via the chevron buttons — never wraps. */
+.rgroup-styles {
+  min-width: 0;
+}
+
+.styles-ctl {
+  gap: 2px;
+  max-width: 150px;
+  min-width: 0;
+}
+
+.styles-gallery {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  overflow: hidden;
+  scroll-behavior: smooth;
+  padding: 1px;
+}
+
+.style-card {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  flex: 0 0 auto;
+  min-width: 58px;
+  max-width: 120px;
+  height: 44px;
+  padding: 4px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.style-card:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.style-card[aria-selected="true"] {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.style-card:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.style-card-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  font-weight: 450;
+}
+
+/* Render the well-known built-in styles roughly in their own look so the
+   gallery previews the style (template.png). Arbitrary/custom document styles
+   fall back to the plain card text above — an approximation, since the engine
+   exposes style names but not per-style metrics to the webapp. */
+.style-card-title .style-card-name { font-size: 15px; font-weight: 700; }
+.style-card-heading-1 .style-card-name { font-size: 14px; font-weight: 700; }
+.style-card-heading-2 .style-card-name { font-size: 13px; font-weight: 650; }
+.style-card-heading-3 .style-card-name { font-size: 12.5px; font-weight: 600; }
+.style-card-subtitle .style-card-name { font-size: 12px; font-weight: 500; color: var(--muted); }
+.style-card-normal .style-card-name { font-size: 12px; font-weight: 450; }
+
+.styles-scroll-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 44px;
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.styles-scroll-btn:hover {
+  background: var(--bg-2);
+  color: var(--ink);
+}
+
+.styles-scroll-btn[hidden] {
+  display: none;
+}
+
+/* Overflow "⋯" button + menu — collects groups that don't fit the width. */
+.ribbon-overflow-btn {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  z-index: 3;
+}
+
+.ribbon-overflow-btn[hidden] {
+  display: none;
+}
+
+.ribbon-overflow-menu {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  max-width: min(92vw, 760px);
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow-2, 0 10px 30px rgba(0, 0, 0, 0.18));
+}
+
+.ribbon-overflow-menu[hidden] {
+  display: none;
+}
+
+/* A group living in the overflow menu keeps its label but drops the divider. */
+.ribbon-overflow-menu .rgroup {
+  border-right: none;
+  padding: 0 6px;
+}
+
+/* Delayed hover/focus tooltip for icon-only ribbon controls (docs/64 §3). */
+.ribbon-tooltip {
+  position: fixed;
+  z-index: 1000;
+  max-width: 240px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: var(--ink);
+  color: var(--surface);
+  font-size: 11.5px;
+  line-height: 1.35;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(2px);
+  transition: opacity 90ms ease, transform 90ms ease;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.24);
+}
+
+.ribbon-tooltip.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.ribbon-tooltip kbd {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--surface) 22%, transparent);
+  font-family: inherit;
+  font-size: 10.5px;
 }
 
 .rgroup-hint {

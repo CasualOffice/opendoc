@@ -156,12 +156,330 @@ const findCloseBtn = document.getElementById("findClose");
 function selectRibbonTab(name) {
   for (const t of ribbonTabs) t.setAttribute("aria-selected", String(t.dataset.tab === name));
   for (const p of ribbonPanels) p.hidden = p.dataset.panel !== name;
+  // Recompute overflow synchronously (not on a later frame) so a control is
+  // already in its final inline-or-overflow location the moment the panel shows —
+  // the newly shown panel reflows and the previous panel's groups are restored.
+  if (typeof updateRibbonOverflow === "function") updateRibbonOverflow();
 }
 for (const t of ribbonTabs) {
   t.addEventListener("click", () => {
-    if (!t.disabled) selectRibbonTab(t.dataset.tab);
+    if (t.disabled) return;
+    selectRibbonTab(t.dataset.tab);
+    // Clicking a tab while collapsed brings the ribbon back (Word behavior).
+    if (ribbonViewCollapsed) setRibbonCollapsed(false);
   });
 }
+
+// --- Compact ↔ ribbon view toggle (collapse/expand the band) -----------------
+const ribbonViewToggle = document.getElementById("ribbonViewToggle");
+let ribbonViewCollapsed = false;
+
+/** Collapses the ribbon to just its tab strip (compact view) or expands it back
+ *  to the full band, persisting the choice. */
+function setRibbonCollapsed(collapsed) {
+  ribbonViewCollapsed = collapsed;
+  const ribbon = document.querySelector(".ribbon");
+  ribbon?.classList.toggle("is-collapsed", collapsed);
+  if (ribbonViewToggle) {
+    ribbonViewToggle.setAttribute("aria-expanded", String(!collapsed));
+    ribbonViewToggle.setAttribute(
+      "aria-label",
+      collapsed ? "Expand the ribbon" : "Collapse the ribbon",
+    );
+    ribbonViewToggle.title = collapsed
+      ? "Expand the ribbon"
+      : "Collapse the ribbon (compact view)";
+    const icon = ribbonViewToggle.querySelector(".ms");
+    if (icon) icon.textContent = collapsed ? "keyboard_arrow_down" : "keyboard_arrow_up";
+  }
+  try {
+    localStorage.setItem("opendoc.ribbonCollapsed", collapsed ? "1" : "0");
+  } catch {
+    /* private mode / storage disabled — the toggle still works in-session */
+  }
+  if (!collapsed && typeof scheduleRibbonOverflow === "function") scheduleRibbonOverflow();
+}
+
+if (ribbonViewToggle) {
+  ribbonViewToggle.addEventListener("click", () => setRibbonCollapsed(!ribbonViewCollapsed));
+  try {
+    if (localStorage.getItem("opendoc.ribbonCollapsed") === "1") setRibbonCollapsed(true);
+  } catch {
+    /* ignore */
+  }
+}
+
+// --- Home ribbon: Clipboard, Styles gallery, overflow, tooltips (docs/64) ----
+// The Home band mirrors template.png. Every control below maps to a real,
+// working opendoc action; nothing is a placeholder (docs/64 "no dead controls").
+
+const pasteBtn = document.getElementById("pasteBtn");
+const cutBtn = document.getElementById("cutBtn");
+const copyBtn = document.getElementById("copyBtn");
+const replaceBtn = document.getElementById("replaceBtn");
+// Clipboard buttons reuse the exact clipboard actions the command palette and
+// keyboard already invoke (`paste`/`cut`/`copySelection`), so they are never a
+// second code path. Replace opens the same Find & Replace panel as Find.
+pasteBtn.addEventListener("click", () => { paste(); });
+cutBtn.addEventListener("click", () => { cut(); });
+copyBtn.addEventListener("click", () => { copySelection(); });
+replaceBtn.addEventListener("click", () => { if (!findBtn.disabled) findBtn.click(); });
+
+// Live Styles gallery — the visible control (template.png). It is populated from
+// the document's real styles (`doc.listStyles()`, the same source as the hidden
+// `#paragraphStyle` select it drives) and applies a style through the identical
+// `setParagraphStyle` path the select's change handler uses.
+const stylesGallery = document.getElementById("stylesGallery");
+const stylesScrollPrev = document.querySelector('[data-styles-scroll="prev"]');
+const stylesScrollNext = document.querySelector('[data-styles-scroll="next"]');
+
+/** Rebuilds the Styles gallery cards from the document's style names. */
+function buildStylesGallery(styles) {
+  if (!stylesGallery) return;
+  stylesGallery.replaceChildren();
+  for (const name of styles) {
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = `style-card style-card-${slug}`;
+    card.dataset.style = name;
+    card.setAttribute("role", "option");
+    card.setAttribute("aria-selected", "false");
+    card.title = name;
+    const label = document.createElement("span");
+    label.className = "style-card-name";
+    label.textContent = name;
+    card.appendChild(label);
+    card.addEventListener("click", () => {
+      if (card.disabled) return;
+      runToolbarEdit((a, b, c, d) => doc.setParagraphStyle(a, b, c, d, name));
+    });
+    stylesGallery.appendChild(card);
+  }
+  updateStylesScrollAffordance();
+}
+
+/** Highlights the gallery card matching the reflected paragraph style. */
+function syncStylesGalleryActive() {
+  if (!stylesGallery) return;
+  const active = paragraphStyleSel.value;
+  for (const card of stylesGallery.children) {
+    card.setAttribute("aria-selected", String(card.dataset.style === active));
+  }
+}
+
+/** Shows the ‹/› scroll chevrons only when the gallery overflows its box. */
+function updateStylesScrollAffordance() {
+  if (!stylesGallery || !stylesScrollPrev || !stylesScrollNext) return;
+  const overflowing = stylesGallery.scrollWidth > stylesGallery.clientWidth + 1;
+  const atStart = stylesGallery.scrollLeft <= 1;
+  const atEnd =
+    stylesGallery.scrollLeft + stylesGallery.clientWidth >= stylesGallery.scrollWidth - 1;
+  stylesScrollPrev.hidden = !overflowing || atStart;
+  stylesScrollNext.hidden = !overflowing || atEnd;
+}
+
+if (stylesScrollPrev && stylesScrollNext && stylesGallery) {
+  stylesScrollPrev.addEventListener("click", () => {
+    stylesGallery.scrollBy({ left: -140, behavior: "smooth" });
+  });
+  stylesScrollNext.addEventListener("click", () => {
+    stylesGallery.scrollBy({ left: 140, behavior: "smooth" });
+  });
+  stylesGallery.addEventListener("scroll", updateStylesScrollAffordance, { passive: true });
+}
+
+// --- Ribbon overflow: collapse groups that don't fit into a "⋯" menu ---------
+const ribbonBodyEl = document.querySelector(".ribbon-body");
+const ribbonEl = document.querySelector(".ribbon");
+const ribbonOverflowBtn = document.getElementById("ribbonOverflowBtn");
+const ribbonOverflowMenu = document.getElementById("ribbonOverflowMenu");
+// Canonical group order per panel, captured before any group is relocated.
+const ribbonPanelGroups = new Map(
+  ribbonPanels.map((p) => [p, [...p.querySelectorAll(":scope > .rgroup")]]),
+);
+
+function closeRibbonOverflow() {
+  if (!ribbonOverflowMenu) return;
+  ribbonOverflowMenu.hidden = true;
+  ribbonOverflowBtn?.setAttribute("aria-expanded", "false");
+}
+
+/** Reflows the active ribbon panel: groups that don't fit move into the "⋯"
+ *  overflow menu so the ribbon never shows a horizontal scrollbar. */
+function updateRibbonOverflow() {
+  if (!ribbonBodyEl || !ribbonOverflowBtn || !ribbonOverflowMenu) return;
+  closeRibbonOverflow();
+  // Restore every group to its home panel in canonical order before measuring.
+  for (const [panel, groups] of ribbonPanelGroups) {
+    for (const g of groups) if (g.parentElement !== panel) panel.appendChild(g);
+  }
+  ribbonOverflowMenu.replaceChildren();
+  ribbonOverflowBtn.hidden = true;
+  const active = ribbonPanels.find((p) => !p.hidden);
+  if (!active) return;
+  const groups = ribbonPanelGroups.get(active) || [];
+  const style = getComputedStyle(active);
+  const avail =
+    active.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+  const widths = groups.map((g) => g.offsetWidth);
+  const total = widths.reduce((a, b) => a + b, 0);
+  if (total <= avail + 0.5) return; // everything fits — no overflow control
+  // Reserve room for the ⋯ button and keep the widest fitting prefix inline.
+  const reserve = 44;
+  let used = 0;
+  let cut = groups.length;
+  for (let i = 0; i < groups.length; i++) {
+    if (used + widths[i] > avail - reserve) {
+      cut = i;
+      break;
+    }
+    used += widths[i];
+  }
+  if (cut < 1) cut = 1; // always keep at least one group inline
+  for (let i = cut; i < groups.length; i++) ribbonOverflowMenu.appendChild(groups[i]);
+  ribbonOverflowBtn.hidden = false;
+}
+
+let ribbonOverflowFrame = 0;
+function scheduleRibbonOverflow() {
+  cancelAnimationFrame(ribbonOverflowFrame);
+  ribbonOverflowFrame = requestAnimationFrame(updateRibbonOverflow);
+}
+
+if (ribbonOverflowBtn && ribbonOverflowMenu) {
+  // The menu is fixed-positioned and lives on <body> so the ribbon's
+  // `overflow:hidden` never clips the dropdown.
+  document.body.appendChild(ribbonOverflowMenu);
+  const positionOverflowMenu = () => {
+    const rect = ribbonOverflowBtn.getBoundingClientRect();
+    const mw = ribbonOverflowMenu.offsetWidth;
+    const left = Math.max(6, Math.min(rect.right - mw, window.innerWidth - mw - 6));
+    ribbonOverflowMenu.style.left = `${Math.round(left)}px`;
+    ribbonOverflowMenu.style.top = `${Math.round(rect.bottom + 4)}px`;
+  };
+  ribbonOverflowBtn.addEventListener("click", () => {
+    const open = ribbonOverflowMenu.hidden;
+    ribbonOverflowMenu.hidden = !open;
+    ribbonOverflowBtn.setAttribute("aria-expanded", String(open));
+    if (open) positionOverflowMenu();
+  });
+  document.addEventListener("pointerdown", (e) => {
+    if (ribbonOverflowMenu.hidden) return;
+    if (e.target.closest("#ribbonOverflowMenu, #ribbonOverflowBtn")) return;
+    closeRibbonOverflow();
+  });
+  if (typeof ResizeObserver === "function" && ribbonBodyEl) {
+    new ResizeObserver(scheduleRibbonOverflow).observe(ribbonBodyEl);
+  } else {
+    window.addEventListener("resize", scheduleRibbonOverflow);
+  }
+}
+
+// --- Delayed tooltips for icon-only ribbon controls (docs/64 §3) -------------
+// A single custom tooltip (~350ms hover/focus delay) shows the control's name +
+// shortcut. Reuses the existing `title`/`aria-label` content; the native title
+// is suppressed only while the control is actively hovered so it never appears
+// alongside the custom one, and is restored on leave (keeping dynamic titles and
+// accessibility intact).
+const TIP_SELECTOR = ".fmt, .ribbon-tab, .review-mode-seg, .style-card, .styles-scroll-btn";
+const ribbonTooltip = document.createElement("div");
+ribbonTooltip.className = "ribbon-tooltip";
+ribbonTooltip.setAttribute("role", "tooltip");
+ribbonTooltip.hidden = true;
+document.body.appendChild(ribbonTooltip);
+let tipTimer = 0;
+let tipTarget = null;
+
+function tipContentFor(el) {
+  const raw = (el.dataset.tipTitle ?? el.getAttribute("title") ?? "").trim();
+  const label = (el.getAttribute("aria-label") ?? "").trim();
+  const match = raw.match(/^(.*?)\s*\(([^)]+)\)\s*$/);
+  const name = (label || (match ? match[1] : raw)).trim();
+  const shortcut = match ? match[2].trim() : "";
+  return { name, shortcut };
+}
+
+function positionTip(el) {
+  const rect = el.getBoundingClientRect();
+  const tw = ribbonTooltip.offsetWidth;
+  const th = ribbonTooltip.offsetHeight;
+  let left = rect.left + rect.width / 2 - tw / 2;
+  left = Math.max(6, Math.min(left, window.innerWidth - tw - 6));
+  let top = rect.bottom + 6;
+  if (top + th > window.innerHeight - 6) top = rect.top - th - 6;
+  ribbonTooltip.style.left = `${Math.round(left)}px`;
+  ribbonTooltip.style.top = `${Math.round(top)}px`;
+}
+
+function showTip(el) {
+  const { name, shortcut } = tipContentFor(el);
+  if (!name) return;
+  ribbonTooltip.textContent = name;
+  if (shortcut) {
+    const kbd = document.createElement("kbd");
+    kbd.textContent = shortcut;
+    ribbonTooltip.appendChild(kbd);
+  }
+  ribbonTooltip.hidden = false;
+  positionTip(el);
+  ribbonTooltip.classList.add("is-visible");
+}
+
+function armTip(el) {
+  if (el.getAttribute("title")) {
+    el.dataset.tipTitle = el.getAttribute("title");
+    el.removeAttribute("title");
+  }
+  tipTarget = el;
+  clearTimeout(tipTimer);
+  tipTimer = window.setTimeout(() => {
+    if (tipTarget === el) showTip(el);
+  }, 350);
+}
+
+function disarmTip(el) {
+  if (el && el.dataset.tipTitle != null) {
+    el.setAttribute("title", el.dataset.tipTitle);
+    delete el.dataset.tipTitle;
+  }
+  if (tipTarget === el || !el) {
+    clearTimeout(tipTimer);
+    tipTimer = 0;
+    tipTarget = null;
+    ribbonTooltip.classList.remove("is-visible");
+    ribbonTooltip.hidden = true;
+  }
+}
+
+if (ribbonEl) {
+  ribbonEl.addEventListener("pointerover", (e) => {
+    const el = e.target.closest(TIP_SELECTOR);
+    if (!el || !ribbonEl.contains(el) || el === tipTarget) return;
+    if (tipTarget) disarmTip(tipTarget);
+    armTip(el);
+  });
+  ribbonEl.addEventListener("pointerout", (e) => {
+    if (!tipTarget) return;
+    if (e.relatedTarget && tipTarget.contains(e.relatedTarget)) return;
+    disarmTip(tipTarget);
+  });
+  ribbonEl.addEventListener("focusin", (e) => {
+    const el = e.target.closest(TIP_SELECTOR);
+    if (!el) return;
+    if (tipTarget && tipTarget !== el) disarmTip(tipTarget);
+    armTip(el);
+  });
+  ribbonEl.addEventListener("focusout", (e) => {
+    const el = e.target.closest(TIP_SELECTOR);
+    if (el) disarmTip(el);
+  });
+  ribbonEl.addEventListener("click", () => {
+    if (tipTarget) disarmTip(tipTarget);
+  });
+  window.addEventListener("scroll", () => { if (tipTarget) disarmTip(tipTarget); }, true);
+}
+
 undoBtn.addEventListener("click", () => runEdit(() => doc.undo()));
 redoBtn.addEventListener("click", () => runEdit(() => doc.redo()));
 viewOutlineBtn.addEventListener("click", () => toggleOutline());
@@ -3677,6 +3995,14 @@ function updateToolbar() {
   undoBtn.title = `${undoName} (⌘Z)`;
   redoBtn.title = `${redoName} (⌘⇧Z)`;
   findBtn.disabled = !doc;
+  replaceBtn.disabled = !doc;
+  // Clipboard buttons mirror the clipboard actions' own preconditions: copy/cut
+  // need a range; paste needs a caret. The actions still fail closed in Viewing
+  // mode, but the buttons also disable there so the affordance matches.
+  copyBtn.disabled = !range;
+  cutBtn.disabled = !range || reviewMode === "viewing";
+  pasteBtn.disabled = !hasSel || !doc || reviewMode === "viewing";
+  syncStylesGalleryActive();
   propertiesBtn.disabled = !doc;
   pageSetupBtn.disabled = !doc;
   viewOutlineBtn.disabled = !doc;
@@ -3706,6 +4032,9 @@ function populateStyles() {
       select.appendChild(opt);
     }
   }
+  // The visible Styles gallery mirrors the same style list.
+  buildStylesGallery(styles);
+  scheduleRibbonOverflow();
 }
 
 function populateTableStyles() {

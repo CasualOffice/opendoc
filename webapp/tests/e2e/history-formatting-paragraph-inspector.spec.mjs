@@ -114,7 +114,11 @@ test("paragraph inspector stays viewport-bounded on a narrow editor", async ({
   await page.setViewportSize({ width: 390, height: 700 });
   await gotoEditor(page);
   await clickIntoFirstPage(page);
-  await page.locator("#paraOptsBtn").click();
+  // At this narrow width the Paragraph group collapses into the ribbon's "⋯"
+  // overflow menu (docs/64 — no horizontal scrollbar); open it to reach ¶.
+  const paraOpts = page.locator("#paraOptsBtn");
+  if (!(await paraOpts.isVisible())) await page.locator("#ribbonOverflowBtn").click();
+  await paraOpts.click();
 
   const panel = page.locator("#paragraphPropertiesPanel");
   await expect(panel).toBeVisible();
