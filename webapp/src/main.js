@@ -1544,6 +1544,13 @@ let renderToken = 0;
 let pages = [];
 /** Current selection as model anchors, or null. `focus` trails the pointer. */
 let selection = null; // { anchor: {node, offset}, focus: {node, offset} }
+/** Current object selection (docs/85 §3.2 `Selection::Object`): a drawing/image/
+ * text box selected as a unit, distinct from the text caret/range in `selection`.
+ * `mode` is the interaction-grammar state (§4): "selected" shows the outline +
+ * handles; "editing" is inside a container object's content. `null` = no object
+ * selected. `selection` still holds a caret at the object's surrounding-text
+ * anchor so a two-step Escape can collapse back to it. */
+let objectSelection = null; // { node, kind, mode: "selected" | "editing" } | null
 /** Current table-cell selection overlay, separate from text ranges. */
 let tableSelection = null; // { node, mode: "row" | "column" | "table" }
 let tableResizeDrag = null; // { node, col, page, startClientX, startWidthTwips, preview }
@@ -2024,12 +2031,18 @@ function drawSelection() {
   if (!doc) return;
   clearOverlays();
   paintReviewMarkers();
-  if (selection) {
+  // A selected object owns the visible chrome (outline + handles) in place of the
+  // text caret; in "editing" mode the ordinary text caret is shown instead.
+  if (objectSelection && objectSelection.mode === "selected") {
+    paintObjectSelection();
+  } else if (selection) {
     paintTableSelection();
     paintActiveCell(selection.focus); // under the caret/highlight
     paintSelection(selection);
     paintTableResizeHandles(selection.focus);
   }
+  updateObjectSelectionState();
+  updateObjectContextBar();
   updateToolbar();
   updateReviewInlineBar();
   scheduleReviewMarginRender();
@@ -2069,6 +2082,106 @@ function paintTableResizeHandles(focus) {
     el.addEventListener("pointerdown", (event) => startTableColumnResize(event, page, focus.node, col));
     page.overlay.appendChild(el);
   }
+}
+
+/** Paints the selected object's outline + eight resize/move handles from engine
+ *  geometry (docs/85 §3.3), the same overlay mechanism as the caret/highlight so
+ *  the chrome matches the raster exactly. Handles are display-only this slice. */
+function paintObjectSelection() {
+  const { node } = objectSelection;
+  place(doc.objectRect(node), "object-outline");
+  const handles = doc.objectHandles(node); // [page, cx, cy, kind] * 8
+  for (let i = 0; i + 3 < handles.length; i += 4) {
+    const [pageNumber, cx, cy, kind] = handles.slice(i, i + 4);
+    const page = pages[pageNumber - 1];
+    if (!page) continue;
+    const { sx, sy } = scaleOf(page);
+    const el = document.createElement("div");
+    el.className = "object-handle";
+    el.dataset.handle = String(kind);
+    el.style.left = `${cx * sx}px`;
+    el.style.top = `${cy * sy}px`;
+    page.overlay.appendChild(el);
+  }
+}
+
+/** Reflects the object-selection state onto `#pages` as data attributes so the
+ *  host (and tests) can observe the grammar state machine without reading into
+ *  the overlay. */
+function updateObjectSelectionState() {
+  if (objectSelection) {
+    pagesEl.dataset.objectSelected = objectSelection.node;
+    pagesEl.dataset.objectKind = objectSelection.kind;
+    pagesEl.dataset.objectMode = objectSelection.mode;
+  } else {
+    delete pagesEl.dataset.objectSelected;
+    delete pagesEl.dataset.objectKind;
+    delete pagesEl.dataset.objectMode;
+  }
+}
+
+/** The lazily-created placeholder object context bar (docs/85 §4.1). */
+let objectContextBarEl = null;
+
+/** Shows/positions a placeholder context bar above a selected object, naming the
+ *  object kind and the actions later slices will make real. Hidden when no object
+ *  is selected. This is the §4.1 "context bar" seam; real `editorCommands(object)`
+ *  descriptors are the P1G-OBJ-GRAMMAR command slice. */
+function updateObjectContextBar() {
+  if (!objectContextBarEl) {
+    objectContextBarEl = document.createElement("div");
+    objectContextBarEl.className = "object-context-bar";
+    objectContextBarEl.hidden = true;
+    document.body.appendChild(objectContextBarEl);
+  }
+  if (!objectSelection || objectSelection.mode !== "selected") {
+    objectContextBarEl.hidden = true;
+    return;
+  }
+  const rect = doc.objectRect(objectSelection.node); // [page, x, y, w, h]
+  const page = rect.length >= 5 ? pages[rect[0] - 1] : null;
+  if (!page) {
+    objectContextBarEl.hidden = true;
+    return;
+  }
+  const { rect: pageRect, sx, sy } = scaleOf(page);
+  const label = objectSelection.kind === "textbox" ? "Text box" : "Image";
+  const actions =
+    objectSelection.kind === "textbox"
+      ? "Edit text · Fill · Outline · Wrap · Delete"
+      : "Replace · Crop · Alt text · Wrap · Delete";
+  objectContextBarEl.innerHTML =
+    `<strong>${label}</strong><small>${actions} (coming soon)</small>`;
+  objectContextBarEl.hidden = false;
+  // Position just above the object's top-left, clamped into the viewport.
+  const left = pageRect.left + rect[1] * sx;
+  const top = pageRect.top + rect[2] * sy - objectContextBarEl.offsetHeight - 8;
+  objectContextBarEl.style.left = `${Math.max(8, left)}px`;
+  objectContextBarEl.style.top = `${Math.max(8, top)}px`;
+}
+
+/** Selects an object as a unit (docs/85 §4.1). Keeps `selection` as a caret at
+ *  the object's surrounding-text anchor so the two-step Escape can return to it. */
+function selectObject(node, kind, anchor) {
+  if (anchor) selection = { anchor, focus: anchor };
+  objectSelection = { node, kind, mode: "selected" };
+  pendingFormat = null;
+  tableSelection = null;
+  drawSelection();
+}
+
+/** Enters a container object's edit mode (docs/85 §4.3). A leaf object (image)
+ *  has no edit mode — its primary context action is a later image slice. Placing
+ *  a caret *inside* a text box's flowed body is the P1G-OBJ-TEXTBOX slice; here
+ *  the grammar transitions state and the surrounding-text caret is shown. */
+function enterObjectEditMode() {
+  if (!objectSelection) return;
+  if (objectSelection.kind !== "textbox") {
+    setStatus("Image options (replace / crop / alt text) are a later editing slice");
+    return;
+  }
+  objectSelection = { ...objectSelection, mode: "editing" };
+  drawSelection();
 }
 
 /** Paints the caret or highlight for `sel` from engine geometry. */
@@ -2287,8 +2400,31 @@ function onPointerDown(page, event) {
   hideLinkChip();
   clearLinkHover();
   pointerGesture = null;
+  // Object selection (docs/85 §3.1) takes precedence over a text caret: a click
+  // on a drawing/image/text box selects it as a unit and shows its handles.
+  const { x, y } = pointToTwip(page, event);
+  const object = doc.objectAt(page.pageNumber, x, y);
+  if (object) {
+    const node = object.node;
+    const kind = object.kind;
+    object.free?.();
+    // A caret at the nearest text slot is the object's surrounding-text anchor
+    // (for the two-step Escape); fall back to the current caret.
+    const anchor = anchorAt(page, event) || selection?.focus || null;
+    selectObject(node, kind, anchor);
+    startSelectionAutoScroll();
+    event.preventDefault();
+    return;
+  }
+  // A click that is not on an object deselects any selected object and proceeds
+  // with ordinary text hit-testing.
+  objectSelection = null;
   const anchor = anchorAt(page, event);
-  if (!anchor) return;
+  if (!anchor) {
+    updateObjectSelectionState();
+    updateObjectContextBar();
+    return;
+  }
   pendingFormat = null; // a click moves the caret → disarm typing format
   tableSelection = null;
   dragging = true;
@@ -2594,7 +2730,24 @@ window.addEventListener("pointermove", (e) => {
 pagesEl.addEventListener("pointerleave", clearLinkHover);
 pagesEl.addEventListener("dblclick", (e) => {
   const page = pageFromEvent(e);
-  if (page) selectWord(page, e);
+  if (!page) return;
+  // Double-click on an object enters its edit mode (container) or selects it
+  // (leaf) — docs/85 §4.3; otherwise it selects the word under the caret.
+  const { x, y } = pointToTwip(page, e);
+  const object = doc?.objectAt(page.pageNumber, x, y);
+  if (object) {
+    const node = object.node;
+    const kind = object.kind;
+    object.free?.();
+    focusEditorSurface();
+    if (!objectSelection || objectSelection.node !== node) {
+      selectObject(node, kind, anchorAt(page, e) || selection?.focus || null);
+    }
+    enterObjectEditMode();
+    e.preventDefault();
+    return;
+  }
+  selectWord(page, e);
 });
 // Triple-click selects the paragraph (the click's `detail` is the click count).
 pagesEl.addEventListener("click", (e) => {
@@ -3692,6 +3845,7 @@ async function runEdit(thunk, { typing = false, gate = false } = {}) {
 /** Move the caret by arrow key. Shift extends (moves the focus); plain collapses. */
 function navCaret(dir, extend) {
   if (!selection) return;
+  objectSelection = null; // moving the caret leaves any object selection
   breakTypingSession();
   pendingFormat = null; // caret moved → disarm typing format
   const collapseToStart = dir === "left" || dir === "wordLeft";
@@ -6596,6 +6750,41 @@ document.addEventListener("keydown", async (e) => {
   const lower = key.toLowerCase();
 
   if (composingText || e.isComposing || key === "Process") return;
+
+  // The object interaction grammar (docs/85 §4) owns the keyboard while an
+  // object is selected. Escape is the two-step exit (editing → selected → text);
+  // Enter/Delete act on the object; a selected object swallows text keys so a
+  // stale caret is never edited.
+  if (objectSelection) {
+    if (key === "Escape") {
+      e.preventDefault();
+      if (objectSelection.mode === "editing") {
+        objectSelection = { ...objectSelection, mode: "selected" };
+      } else {
+        objectSelection = null; // collapse to the surrounding-text caret
+      }
+      drawSelection();
+      return;
+    }
+    if (objectSelection.mode === "selected") {
+      if (key === "Enter") {
+        e.preventDefault();
+        enterObjectEditMode(); // double-click's keyboard twin (§4.3)
+        return;
+      }
+      if (key === "Delete" || key === "Backspace") {
+        e.preventDefault();
+        setStatus("Deleting an object is a later editing slice");
+        return;
+      }
+      // Swallow text-producing keys; navigation/modifier combos fall through so
+      // the user can still move the caret off the object.
+      if (key.length === 1 && !mod) {
+        e.preventDefault();
+        return;
+      }
+    }
+  }
 
   // Word's Windows/Linux shortcut for clearing direct character formatting.
   // macOS keeps Ctrl+Space available to the host/input source.
