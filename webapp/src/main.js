@@ -37,6 +37,7 @@ function escapeHtml(text) {
 const fontCache = new Map();
 
 const statusEl = document.getElementById("status");
+const reviewLiveRegion = document.getElementById("reviewLiveRegion");
 const fileEl = document.getElementById("file");
 const zoomEl = document.getElementById("zoom");
 const pagesEl = document.getElementById("pages");
@@ -652,6 +653,21 @@ function reviewCommentTooltip(comment) {
   ].filter(Boolean).join(" · ");
 }
 
+/** A descriptive accessible name for a review card — who, what kind, and a short
+ *  text snippet — so a screen reader announces the card's content and role
+ *  rather than a nameless generic article (REVIEW-GAP-023). */
+function reviewCardAriaLabel(item) {
+  const author = reviewAuthorDisplay(item.data) || "You";
+  const snippet = String(item.data.text || "").replace(/\s+/g, " ").trim().slice(0, 80);
+  const suffix = snippet ? `: ${snippet}` : "";
+  if (item.type === "comment") {
+    const kind = item.data.parentParaId ? "Reply" : item.data.resolved ? "Resolved comment" : "Comment";
+    return `${kind} by ${author}${suffix}`;
+  }
+  const kind = (reviewChangeTypeLabel(item.data.kind) || "change").toLowerCase();
+  return `Suggested ${kind} by ${author}${suffix}`;
+}
+
 // Enable the three-state mode control (Editing / Suggesting / Viewing) once a
 // document is loaded (its per-button pressed state is owned by setReviewMode),
 // and reflect the review-sidebar workflow controls' availability: Next/Previous
@@ -675,12 +691,17 @@ function updateReviewControls() {
  *  `viewing` is fully read-only — no Operation reaches apply. Any unrecognized
  *  value falls back to `editing`. */
 function setReviewMode(mode) {
+  const previous = reviewMode;
   reviewMode =
     mode === "suggesting" ? "suggesting" : mode === "viewing" ? "viewing" : "editing";
   suggestingBanner.hidden = reviewMode !== "suggesting";
   if (viewingBanner) viewingBanner.hidden = reviewMode !== "viewing";
   for (const button of reviewModeButtons) {
     button.setAttribute("aria-pressed", String(button.dataset.reviewMode === reviewMode));
+  }
+  // Announce a genuine user mode change (not the load-time reset to Editing).
+  if (reviewMode !== previous) {
+    announceReview(`${reviewMode[0].toUpperCase()}${reviewMode.slice(1)} mode`);
   }
   updateReviewControls();
   drawSelection();
@@ -769,11 +790,17 @@ function revisionRange(revision) {
   return range;
 }
 
-function reviewCardButton(label, action, danger = false) {
+function reviewCardButton(label, action, danger = false, ariaLabel = "") {
   const button = document.createElement("button");
   button.type = "button";
   button.className = `review-margin-action${danger ? " danger" : ""}`;
   button.textContent = label;
+  // A descriptive accessible name where the visible verb alone ("Accept",
+  // "Reply") lacks context for a screen reader (REVIEW-GAP-023).
+  if (ariaLabel) {
+    button.setAttribute("aria-label", ariaLabel);
+    button.title = ariaLabel;
+  }
   button.addEventListener("click", async (event) => {
     event.stopPropagation();
     await action();
@@ -1031,8 +1058,9 @@ function renderReviewMarginItems() {
         await runEdit(() => doc.addComment(start.node, start.offset, end.offset, text, undefined, undefined, metadata.date));
         reviewComposerState = null;
         reviewSidebarPreference = true;
+        announceReview("Comment added");
         drawSelection();
-      });
+      }, false, "Add comment");
       submit.dataset.testid = "review-comment-submit";
       textarea.addEventListener("keydown", (event) => {
         event.stopPropagation();
@@ -1058,6 +1086,12 @@ function renderReviewMarginItems() {
     card.tabIndex = 0;
     card.dataset.reviewItemId = itemId;
     card.setAttribute("aria-expanded", String(expanded));
+    // A labelled, expandable group so a screen reader announces what the card is
+    // (who, what kind, a text snippet) and its expanded/collapsed state, instead
+    // of a nameless generic article (REVIEW-GAP-023). `group` (not `button`)
+    // because an expanded card contains real action buttons.
+    card.setAttribute("role", "group");
+    card.setAttribute("aria-label", reviewCardAriaLabel(item));
     const header = document.createElement("div");
     header.className = "review-margin-card-head";
     const avatar = document.createElement("span");
@@ -1087,9 +1121,10 @@ function renderReviewMarginItems() {
     header.append(avatar, title);
     if (expanded && item.type === "comment") {
       header.append(
-        reviewIconButton(item.data.resolved ? "undo" : "check", item.data.resolved ? "Reopen" : "Resolve", async () => {
+        reviewIconButton(item.data.resolved ? "undo" : "check", item.data.resolved ? "Reopen comment" : "Resolve comment", async () => {
           const resolving = !item.data.resolved;
           await runEdit(() => doc.setCommentResolved(item.data.id, resolving));
+          announceReview(resolving ? "Comment resolved" : "Comment reopened");
           if (resolving) {
             activeReviewItemId = null;
             activeReviewCommentId = null;
@@ -1157,6 +1192,7 @@ function renderReviewMarginItems() {
         );
       }
     } else if (!["move_from", "move_to"].includes(item.data.kind) || item.data.movePair) {
+      const changeLabel = (reviewChangeTypeLabel(item.data.kind) || "change").toLowerCase();
       actions.append(
         reviewCardButton("Accept", async () => {
           await runEdit(() => item.data.movePair
@@ -1168,9 +1204,10 @@ function renderReviewMarginItems() {
             : item.data.groupId
               ? doc.decideRevisionGroup(item.data.groupId, true)
               : doc.decideRevision(item.data.id, true));
+          announceReview(`Accepted ${changeLabel}`);
           drawSelection();
           focusEditorSurface();
-        }),
+        }, false, `Accept this ${changeLabel}`),
         reviewCardButton("Reject", async () => {
           await runEdit(() => item.data.movePair
             ? doc.decideMovePair(
@@ -1181,9 +1218,10 @@ function renderReviewMarginItems() {
             : item.data.groupId
               ? doc.decideRevisionGroup(item.data.groupId, false)
               : doc.decideRevision(item.data.id, false));
+          announceReview(`Rejected ${changeLabel}`);
           drawSelection();
           focusEditorSurface();
-        }, true),
+        }, true, `Reject this ${changeLabel}`),
       );
     }
     const focus = () => {
@@ -1305,14 +1343,16 @@ function renderReviewMarginItems() {
               const input = document.createElement("input");
               input.type = "text";
               input.className = "review-margin-reply-edit";
+              input.setAttribute("aria-label", "Edit reply text");
               input.maxLength = 4096;
               input.value = String(reply.text || "");
               const save = reviewCardButton("Save", async () => {
                 const text = input.value.trim();
                 if (!text) return;
                 await runEdit(() => doc.updateComment(reply.id, text));
+                announceReview("Reply updated");
                 drawSelection();
-              });
+              }, false, "Save reply");
               const cancelEdit = reviewCardButton("Cancel", () => {
                 scheduleReviewMarginRender();
               });
@@ -1338,9 +1378,11 @@ function renderReviewMarginItems() {
               "Delete",
               async () => {
                 await runEdit(() => doc.deleteReply(reply.id));
+                announceReview("Reply deleted");
                 drawSelection();
               },
               true,
+              "Delete reply",
             );
             replyActionRow.append(editReply, deleteReply);
             replyItem.appendChild(replyActionRow);
@@ -1357,13 +1399,15 @@ function renderReviewMarginItems() {
         textarea.maxLength = 4096;
         textarea.readOnly = true;
         textarea.placeholder = "Reply…";
+        textarea.setAttribute("aria-label", "Reply to this comment");
         const submit = reviewCardButton("Reply", async () => {
           const text = textarea.value.trim();
           if (!text) return;
           const metadata = currentReviewTimestamp();
           await runEdit(() => doc.replyToComment(item.data.id, text, undefined, undefined, metadata.date));
+          announceReview("Reply added");
           drawSelection();
-        });
+        }, false, "Send reply");
         const cancel = reviewCardButton("Cancel", () => {
           textarea.value = "";
           textarea.readOnly = true;
@@ -1663,6 +1707,20 @@ function clientPointEvent(clientX, clientY) {
 function setStatus(text, kind = "") {
   statusEl.textContent = text;
   statusEl.className = `status ${kind}`;
+}
+
+// Concise polite announcements for review events (comment added, change
+// accepted/rejected, bulk decisions, filter/mode changes) to the review live
+// region (REVIEW-GAP-023). Re-announcing the same string still fires by briefly
+// clearing the node first, so repeated identical actions (e.g. two accepts) are
+// each spoken. Never moves focus.
+function announceReview(text) {
+  if (!reviewLiveRegion || !text) return;
+  reviewLiveRegion.textContent = "";
+  // A microtask gap makes assistive tech treat the new text as a fresh change.
+  requestAnimationFrame(() => {
+    reviewLiveRegion.textContent = text;
+  });
 }
 
 function scheduleChromeRefresh({ stats = false, outline = false, a11y = false } = {}) {
@@ -5383,6 +5441,10 @@ function navigateReviewRevision(direction) {
   if (!usable.length) return;
   reviewRevisionCursor = (reviewRevisionCursor + (direction > 0 ? 1 : -1) + usable.length) % usable.length;
   const revision = usable[reviewRevisionCursor];
+  // Announce which change the caret moved to, for a screen reader following
+  // Next/Previous without watching the canvas (REVIEW-GAP-023).
+  const changeKind = (reviewChangeTypeLabel(revision.kind) || "change").toLowerCase();
+  announceReview(`Change ${reviewRevisionCursor + 1} of ${usable.length}: ${changeKind} by ${reviewAuthorDisplay(revision) || "You"}`);
   const range = revisionRange(revision);
   if (range) {
     selection = {
@@ -5525,12 +5587,15 @@ function toggleReview(open) {
     reviewComposerState = null;
   }
   scheduleReviewMarginRender();
+  // Focus management (REVIEW-GAP-023): closing the sidebar returns focus to the
+  // rail toggle that owns it, so keyboard/AT users are not stranded.
+  if (!show) railReview?.focus?.({ preventScroll: true });
 }
 reviewBtn.addEventListener("click", () => toggleReview());
 railReview.addEventListener("click", () => toggleReview());
 reviewClose.addEventListener("click", () => toggleReview(false));
-reviewAcceptAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(true)); scheduleReviewMarginRender(); } });
-reviewRejectAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(false)); scheduleReviewMarginRender(); } });
+reviewAcceptAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(true)); announceReview("All changes accepted"); scheduleReviewMarginRender(); } });
+reviewRejectAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(false)); announceReview("All changes rejected"); scheduleReviewMarginRender(); } });
 reviewPrevious.addEventListener("click", () => navigateReviewRevision(-1));
 reviewNext.addEventListener("click", () => navigateReviewRevision(1));
 // The visible mode control (`#reviewModeControl`) is a three-button segmented
@@ -5570,6 +5635,8 @@ for (const filter of reviewFilters) {
     for (const button of reviewFilters) {
       button.setAttribute("aria-pressed", String(button === filter));
     }
+    const label = { open: "Open comments", resolved: "Resolved comments", all: "All comments" }[reviewFilter] || reviewFilter;
+    announceReview(`Filter: ${label}`);
     scheduleReviewMarginRender();
   });
 }
