@@ -2264,6 +2264,14 @@ body.modal-open {
 .review-margin-action { border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; background: transparent; color: var(--ink); font: inherit; font-size: 10px; cursor: pointer; }
 .review-margin-action:hover { background: var(--accent-soft); border-color: var(--accent); }
 .review-margin-action.danger { color: var(--danger, #b3261e); }
+/* REVIEW-GAP-011: per-reply edit/delete controls; REVIEW-GAP-012: related-comment list. */
+.review-margin-reply-actions { display: flex; gap: 6px; margin-top: 2px; }
+.review-margin-reply-edit { width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; font: inherit; font-size: 11px; color: var(--ink); background: var(--surface, transparent); }
+.review-margin-revision-comments { display: grid; gap: 6px; margin: 9px -2px 2px 34px; padding-left: 10px; border-left: 2px solid var(--line); }
+.review-margin-revision-comments > small { color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em; }
+.review-margin-revision-comment { display: grid; gap: 3px; }
+.review-margin-revision-comment strong { font-size: 11px; }
+.review-margin-revision-comment p { margin: 0; color: var(--ink); font-size: 11px; }
 .review-margin-icon-action {
   width: 28px;
   height: 28px;

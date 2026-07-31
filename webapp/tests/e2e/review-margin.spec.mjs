@@ -116,6 +116,52 @@ test("comments use the dedicated sidebar and an in-column composer", async ({
   expect(consoleErrors).toEqual([]);
 });
 
+test("a reply can be edited and individually deleted (REVIEW-GAP-011)", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await moveCaretToDocStart(page);
+
+  await page.keyboard.type("REPLY_TARGET");
+  for (let i = 0; i < "REPLY_TARGET".length; i++) {
+    await page.keyboard.press("Shift+ArrowLeft");
+  }
+  await page.locator("#selComment").click();
+
+  const sidebar = page.locator("#reviewSidebar");
+  const composer = sidebar.locator('[data-testid="review-comment-composer"]');
+  await composer.fill("Root comment");
+  await sidebar.locator('[data-testid="review-comment-submit"]').click();
+
+  const card = sidebar.locator(".review-margin-card.review-margin-comment");
+  await card.click();
+  await expect(card).toHaveAttribute("aria-expanded", "true");
+
+  const reply = card.locator(".review-reply-composer input");
+  await reply.click();
+  await reply.fill("First draft");
+  await card.locator(".review-reply-composer").getByRole("button", { name: "Reply" }).click();
+  const replyItem = card.locator(".review-margin-reply");
+  await expect(replyItem).toContainText("First draft");
+
+  // Edit the reply's text in place.
+  await replyItem.getByRole("button", { name: "Edit" }).click();
+  const replyEdit = card.locator(".review-margin-reply-edit");
+  await replyEdit.fill("Edited reply text");
+  await card.getByRole("button", { name: "Save" }).click();
+  await expect(card.locator(".review-margin-reply")).toContainText("Edited reply text");
+  await expect(card.locator(".review-margin-reply")).not.toContainText("First draft");
+
+  // Delete just the reply; the root comment card survives.
+  await card.locator(".review-margin-reply").getByRole("button", { name: "Delete" }).click();
+  await expect(card.locator(".review-margin-reply")).toHaveCount(0);
+  await expect(card).toContainText("Root comment");
+
+  expect(consoleErrors).toEqual([]);
+});
+
 test("suggestions share the sidebar and decisions appear only on the active card", async ({
   page,
   consoleErrors,
