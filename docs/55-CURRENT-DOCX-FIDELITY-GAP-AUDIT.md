@@ -103,7 +103,7 @@ still use bounded approximations.
 
 | Priority | Gap | User-visible consequence | Primary evidence |
 | --- | --- | --- | --- |
-| P0 | Modeled inline leaves are omitted by layout | Object previews, math fallback, and special hyphens can be invisible | `flow.rs::collect_items` catch-all |
+| P0 (closed, P1F-INLINE-FLOOR) | Modeled inline leaves are omitted by layout | Object previews, math fallback, and special hyphens are now visible (`flow.rs::collect_items` shapes a run for `EmbeddedObject`/`Math`/`NoBreakHyphen`/`SoftHyphen`); math is fallback-text visibility only, not real OMML typesetting | `flow.rs::collect_items` (formerly a catch-all, see §1) |
 | P0 (partly closed, P1F-39b) | `altChunk`'s real embedded content is never parsed/laid out | Referenced HTML/RTF/text/sub-document content is preserved but never rendered; a deterministic bordered placeholder box now reserves its layout space and is visually distinguishable from real content, closing the *silent-zero-space* half of this gap — the content-flow half remains open | `flow.rs` `alt_chunk_fragment`/`alt_chunk_decor` (placeholder only, not a parser for the embedded part) |
 | P1 | Footnote/endnote placement is bounded, not Word-complete | Common note references and bodies render, but separator customization, footnote-only trailing pages, and full section policy remain approximations | `notes.rs`; `62-FOOTNOTE-ENDNOTE-PAGINATION-DESIGN.md` |
 | P1 | Square-family exclusion is only local/bounded | Cross-paragraph, page-relative, contour, and overlapping-float cases can still diverge | `flow.rs::shape_with_float_exclusions` |
@@ -120,22 +120,34 @@ still use bounded approximations.
 
 `flow.rs::collect_items` handles runs, tabs, symbols, breaks, pictures, floats,
 fields, horizontal rules, text boxes, groups, and recursive wrappers. Its
-catch-all silently ignores several valid `InlineNode` variants:
+former catch-all silently ignored several valid `InlineNode` variants;
+**`P1F-INLINE-FLOOR` (`docs/14-EXECUTION-TRACKER.md`) closed the visibility gap
+for the four leaf kinds below** — each now emits a `FlowItem::Run` (or an
+image, when a preview is present) instead of falling into the `_ => {}` arm:
 
-- `EmbeddedObject` — charts, SmartArt, and OLE objects retain their package
+- ~~`EmbeddedObject` — charts, SmartArt, and OLE objects retain their package
   references and optional preview, but layout paints neither the object nor the
-  preview;
-- `Math` — the retained OMML and best-effort `m:t` text fallback round-trip, but
-  neither is shown;
-- `NoBreakHyphen` and `SoftHyphen` — visible/break semantics are absent;
-- comment, bookmark, move, and range markers — zero-width markers may correctly
-  remain non-painting, but comments additionally lack any visible review
-  affordance.
+  preview~~ done — `embedded_object_items` paints the object's preview image
+  through the existing image pipeline when one is present, otherwise a typed
+  `[chart]`/`[diagram]`/`[object]` text placeholder;
+- ~~`Math` — the retained OMML and best-effort `m:t` text fallback round-trip,
+  but neither is shown~~ done — the `text` best-effort plain-text fallback now
+  shapes as an ordinary run (`[fallback text]`, or `[equation]` when the
+  fallback is empty). **This is fallback-text visibility only, not real OMML
+  typesetting**: no fraction bars, radicals, exponent/subscript layout, or
+  operator spacing — the retained OMML subtree still round-trips verbatim on
+  export but is not consulted for layout;
+- ~~`NoBreakHyphen` and `SoftHyphen` — visible/break semantics are absent~~
+  done — they shape as `U+2011` (non-breaking hyphen) and `U+00AD` (soft
+  hyphen) respectively;
+- comment, bookmark, move, and range markers — zero-width markers correctly
+  remain non-painting, but comments still lack any visible review affordance
+  (tracked separately, "Review semantics have no view policy" above).
 
-The same omission occurs inside hyperlinks, revisions, and inline content
-controls because those wrappers recurse into the same function. The same
-function is used from body paragraphs, table cells, text boxes, headers, and
-footers, so the gap is not body-only.
+The fix applies inside hyperlinks, revisions, and inline content controls too,
+because those wrappers recurse into the same function, and the same function
+is used from body paragraphs, table cells, text boxes, headers, and footers, so
+the fix is not body-only.
 
 `BlockNode::AltChunk` (`P1F-39b`, `docs/14-EXECUTION-TRACKER.md`) no longer
 occupies zero space: `flow.rs`'s three sites (fresh body flow, table-cell/nested
@@ -151,10 +163,11 @@ is correct as-is, not a gap.
 **Required direction:** add small leaf-specific slices, never a generic
 “stringify every unknown node” fallback. At minimum:
 
-1. special hyphens;
-2. math text fallback with a compatibility marker;
-3. embedded-object preview through the existing image pipeline, with a visible
-   bounded placeholder when no preview is available;
+1. ~~special hyphens~~ done (`P1F-INLINE-FLOOR`);
+2. ~~math text fallback with a compatibility marker~~ done (`P1F-INLINE-FLOOR`)
+   — the fallback text shapes as a bracketed run; still not real typesetting;
+3. ~~embedded-object preview through the existing image pipeline, with a visible
+   bounded placeholder when no preview is available~~ done (`P1F-INLINE-FLOOR`);
 4. ~~explicit `altChunk` placeholder~~ done (`P1F-39b`) — a bounded, deterministic
    placeholder box reserves layout space and is visually marked as an
    approximation; parsing the chunk's actual embedded content into real,
@@ -513,7 +526,7 @@ support.
 | `PAGE`/`NUMPAGES` | Yes | Yes | Yes, including anchored boxes | Other fields use cached result |
 | Per-section running-content selection | N/A | Yes | N/A | Continuous-page ownership and band growth remain approximate |
 | Notes | No | No | No | References and bodies not laid out |
-| Embedded objects/math/special hyphens | No | No | No | Modeled/preserved but omitted by shared inline flow |
+| Embedded objects/math/special hyphens | Yes | Yes | Yes | `P1F-INLINE-FLOOR`: object preview/typed placeholder, math fallback-text run, hyphen glyphs. Math is fallback-text visibility only, not real OMML typesetting |
 | Review markup presentation | No | No | No | Wrappers transparent; no view policy |
 
 ## Recommended implementation sequence
@@ -528,10 +541,13 @@ proves a smaller safe combination.
      remaining page-distribution delta;
    - keep per-document visual/page-placement evidence so a matching total alone
      is never accepted as proof.
-2. **Inline visibility floor**
-   - render no-break/soft hyphens;
-   - render OMML text fallback and embedded-object previews/placeholders;
-   - add explicit compatibility output for display fallbacks.
+2. ~~**Inline visibility floor**~~ done (`P1F-INLINE-FLOOR`)
+   - ~~render no-break/soft hyphens~~ done;
+   - ~~render OMML text fallback and embedded-object previews/placeholders~~
+     done — math fallback text is a plain-text approximation, not real
+     typesetting;
+   - explicit compatibility output for display fallbacks beyond the bracketed
+     text marker remains open.
 3. **Inline VML image extent**
    - bridge parsed CSS width/height into `Drawing::extent`;
    - cover body, header, footer, and nested-cell inline images.
