@@ -445,11 +445,17 @@ render time, so an undecodable image is visually flagged on the page but not
 an explicit safe policy per format: native decode, bounded vector conversion,
 host-provided rasterization, or a visible unsupported-media placeholder.
 
-The inline picture model does not yet carry the full DrawingML appearance
-surface, including crop/source rectangle, rotation/flip, and picture effects.
-Anchors preserve useful position/wrap metadata but still defer simple-position
-override, percentage offsets, exact character glyph anchoring, and complete
-inside/outside parity behavior.
+The inline picture model now carries image **crop** (`a:srcRect`) on inline,
+anchored, and grouped pictures, and inline-`Drawing` **alt text** (`wp:docPr@descr`,
+previously modeled only on the anchored/grouped paths) — the `P1G-OBJ-MODEL`
+Phase 0 slice (docs/85 §5.4). Crop round-trips through import/export and is
+applied in layout/render: the CPU backend samples only the visible source
+sub-rectangle into the display box, so a cropped picture renders cropped. Still
+deferred on the appearance surface: rotation/flip and picture effects. Crop and
+alt-text **editing** ops (`SetImageCrop`/`SetObjectDescr`) are later Phase A
+slices, not this model foundation. Anchors preserve useful position/wrap metadata
+but still defer simple-position override, percentage offsets, exact character
+glyph anchoring, and complete inside/outside parity behavior.
 
 ### 9. Shapes and text boxes remain approximate
 

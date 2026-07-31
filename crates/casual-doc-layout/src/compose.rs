@@ -89,6 +89,7 @@ pub fn compose_paragraph(layout: &LineLayout, origin: Point) -> DisplayList {
                     Point::new(origin.x + image.origin.x, origin.y + image.origin.y),
                     image.size,
                 ),
+                crop: image.crop,
             });
         }
         // Inline text boxes: the fill and border paint first, then the box's flowed
@@ -219,10 +220,11 @@ pub fn compose_page(page: &Page) -> DisplayList {
 /// text box).
 fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor) {
     match &anchor.content {
-        AnchorContent::Image { media } => {
+        AnchorContent::Image { media, crop } => {
             list.push(PaintItem::Image {
                 media: media.clone(),
                 rect: anchor.rect,
+                crop: *crop,
             });
         }
         AnchorContent::Rectangle { fill, stroke } => {

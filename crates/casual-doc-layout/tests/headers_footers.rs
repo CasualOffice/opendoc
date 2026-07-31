@@ -534,6 +534,8 @@ fn a_header_can_contain_an_inline_image() {
                 width_emu: 190_500,
                 height_emu: 127_000,
             }),
+            descr: None,
+            crop: None,
         })],
     });
     let header = flow_header_footer(&doc, &[header_block], &shaper, WIDTH);
@@ -562,7 +564,7 @@ fn a_header_can_contain_an_inline_image() {
         .items
         .iter()
         .find_map(|i| match i {
-            PaintItem::Image { media, rect } if media == "word/media/logo.png" => Some(*rect),
+            PaintItem::Image { media, rect, .. } if media == "word/media/logo.png" => Some(*rect),
             _ => None,
         })
         .expect("the header image paints");

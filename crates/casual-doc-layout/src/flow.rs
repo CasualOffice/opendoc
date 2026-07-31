@@ -584,11 +584,13 @@ fn paragraph_hash(
                 2u8.hash(&mut hasher);
                 break_kind_key(*kind).hash(&mut hasher);
             }
-            FlowItem::Image { media, size } => {
+            FlowItem::Image { media, size, crop } => {
                 3u8.hash(&mut hasher);
                 media.hash(&mut hasher);
                 size.width.0.hash(&mut hasher);
                 size.height.0.hash(&mut hasher);
+                crop.map(|c| (c.left, c.top, c.right, c.bottom))
+                    .hash(&mut hasher);
             }
             FlowItem::Field { kind, value, style } => {
                 4u8.hash(&mut hasher);
@@ -2116,6 +2118,7 @@ fn embedded_object_items<'a>(
             out.push(FlowItem::Image {
                 media: media.part_name.clone(),
                 size,
+                crop: None,
             });
             return;
         }
@@ -2563,7 +2566,11 @@ fn field_style(inlines: &[InlineNode], value: &str, ctx: &mut FlowCtx) -> FieldS
 fn image_item(drawing: &Drawing, ctx: &FlowCtx) -> Option<FlowItem<'static>> {
     let part = ctx.media.get(&drawing.media)?.part_name.clone();
     let size = extent_to_size(drawing.extent.as_ref()?);
-    (size.width.raw() > 0 && size.height.raw() > 0).then_some(FlowItem::Image { media: part, size })
+    (size.width.raw() > 0 && size.height.raw() > 0).then_some(FlowItem::Image {
+        media: part,
+        size,
+        crop: drawing.crop,
+    })
 }
 
 /// Maps an inline horizontal rule (`v:rect@o:hr`) to an [`FlowItem::HorizontalRule`],
@@ -2795,10 +2802,11 @@ fn shape_text_with_objects(
                 byte = byte.saturating_add(run.text.len() as u32);
                 runs.push(run.clone());
             }
-            FlowItem::Image { media, size } => images.push(InlineImageSpec {
+            FlowItem::Image { media, size, crop } => images.push(InlineImageSpec {
                 media: media.clone(),
                 index: byte,
                 size: *size,
+                crop: *crop,
             }),
             FlowItem::FloatExclusion {
                 side,
@@ -2849,7 +2857,7 @@ fn shape_complex_inline_with_objects(
             stack_lines(&mut out, chunk.lines, &mut cursor_y);
         }
         let object_line = match item {
-            FlowItem::Image { media, size } => image_line(media.clone(), *size, range),
+            FlowItem::Image { media, size, crop } => image_line(media.clone(), *size, *crop, range),
             FlowItem::FloatExclusion { height, .. } => float_barrier_line(*height, range),
             _ => unreachable!(),
         };
@@ -2897,7 +2905,12 @@ fn shape_text_items(
 
 /// A line holding a single inline image box at the paragraph's leading edge, its
 /// height equal to the image height so following content stacks below it.
-fn image_line(media: String, size: Size, range: ModelRange) -> Line {
+fn image_line(
+    media: String,
+    size: Size,
+    crop: Option<casual_doc_model::v1::CropRect>,
+    range: ModelRange,
+) -> Line {
     Line {
         runs: Vec::new(),
         ascent: size.height,
@@ -2912,6 +2925,7 @@ fn image_line(media: String, size: Size, range: ModelRange) -> Line {
             media,
             origin: Point::new(Twip::ZERO, Twip::ZERO),
             size,
+            crop,
         }],
         fields: Vec::new(),
         notes: Vec::new(),
@@ -5805,7 +5819,7 @@ mod tests {
         assert!(
             matches!(
                 &preview_items[..],
-                [FlowItem::Image { media, size }]
+                [FlowItem::Image { media, size, .. }]
                     if media == "word/media/preview.png"
                         && *size == Size::new(Twip(1_000), Twip(500))
             ),
@@ -7742,6 +7756,8 @@ mod tests {
                         width_emu: 190_500,
                         height_emu: 127_000,
                     }),
+                    descr: None,
+                    crop: None,
                 }),
                 run_node(13, " after", RunProperties::default()),
             ],
@@ -7795,7 +7811,9 @@ mod tests {
             .items
             .iter()
             .find_map(|item| match item {
-                PaintItem::Image { media, rect } if media == "word/media/image1.png" => Some(*rect),
+                PaintItem::Image { media, rect, .. } if media == "word/media/image1.png" => {
+                    Some(*rect)
+                }
                 _ => None,
             })
             .expect("an image paint item");
@@ -7804,6 +7822,93 @@ mod tests {
             Size::new(Twip(300), Twip(200)),
             "the paint rect carries the extent-derived size"
         );
+    }
+
+    #[test]
+    fn a_cropped_inline_drawing_carries_its_crop_into_the_image_paint_item() {
+        use crate::compose::compose_paragraph;
+        use crate::display::PaintItem;
+        use casual_doc_model::v1::{CropRect, Drawing, Extent, MediaId, MediaReference};
+
+        let media_id = MediaId::new(NodeId::from_parts(70, 1).unwrap());
+        let mut media = DefinitionMap::default();
+        media.insert(
+            media_id,
+            MediaReference {
+                relationship_id: "rId7".to_owned(),
+                media_type: "image/png".to_owned(),
+                part_name: "word/media/image1.png".to_owned(),
+            },
+        );
+        let definitions = Definitions {
+            media,
+            ..Definitions::default()
+        };
+        let crop = CropRect {
+            left: 10_000,
+            top: 20_000,
+            right: 5_000,
+            bottom: 15_000,
+        };
+        // Two paragraphs with the same image: one cropped, one not — so the paint
+        // items differ only by their crop, proving the crop (not the box) is what
+        // the display list carries.
+        let drawing = |id: u64, crop: Option<CropRect>| {
+            BlockNode::Paragraph(Paragraph {
+                id: NodeId::from_parts(id, 1).unwrap(),
+                properties: ParagraphProperties::default(),
+                inlines: vec![InlineNode::Drawing(Drawing {
+                    id: NodeId::from_parts(id + 100, 1).unwrap(),
+                    media: media_id,
+                    extent: Some(Extent {
+                        width_emu: 190_500,
+                        height_emu: 127_000,
+                    }),
+                    descr: None,
+                    crop,
+                })],
+            })
+        };
+        let doc = Document::new(
+            NodeId::from_parts(1, 1).unwrap(),
+            vec![drawing(10, Some(crop)), drawing(20, None)],
+            definitions,
+        )
+        .unwrap();
+
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&doc, &shaper, Twip::from_points(400));
+        let paint_crop = |fragment: &BlockFragment| {
+            let BlockFragment::Paragraph { lines, .. } = fragment else {
+                panic!("expected a paragraph fragment");
+            };
+            let list = compose_paragraph(lines, Point::new(Twip::ZERO, Twip::ZERO));
+            list.items
+                .iter()
+                .find_map(|item| match item {
+                    PaintItem::Image { media, rect, crop } if media == "word/media/image1.png" => {
+                        Some((*rect, *crop))
+                    }
+                    _ => None,
+                })
+                .expect("an image paint item")
+        };
+
+        let (cropped_rect, cropped_crop) = paint_crop(&galley[0]);
+        let (plain_rect, plain_crop) = paint_crop(&galley[1]);
+
+        // The crop rides the paint item so the backend samples only the visible
+        // source sub-rectangle; the uncropped twin carries no crop.
+        assert_eq!(cropped_crop, Some(crop), "the crop reaches the paint item");
+        assert_eq!(plain_crop, None, "an uncropped image carries no crop");
+        // The display box (destination rect) is the same either way — `a:srcRect`
+        // changes which source pixels fill the box, not the box itself.
+        assert_eq!(
+            cropped_rect.size,
+            Size::new(Twip(300), Twip(200)),
+            "cropping does not change the extent-derived display box"
+        );
+        assert_eq!(cropped_rect.size, plain_rect.size);
     }
 
     /// The first inline text box placed anywhere in a paragraph fragment's lines.
@@ -8026,6 +8131,8 @@ mod tests {
                     width_emu: 190_500,
                     height_emu: 127_000,
                 }),
+                descr: None,
+                crop: None,
             })],
         });
         let para = BlockNode::Paragraph(Paragraph {

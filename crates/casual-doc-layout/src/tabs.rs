@@ -73,6 +73,9 @@ pub enum FlowItem<'a> {
         media: String,
         /// The image box size in twips (from the drawing's EMU extent).
         size: Size,
+        /// The source-rectangle crop (`a:srcRect`), if the picture is cropped
+        /// (`P1G-OBJ-MODEL`).
+        crop: Option<casual_doc_model::v1::CropRect>,
     },
     /// An inline field (`w:fldSimple`/`w:instrText`): its resolved kind, a
     /// placeholder value (the producer's cached result) shaped at flow time, and

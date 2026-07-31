@@ -20,29 +20,30 @@ use casual_doc_import::{RelationshipOwner, RetainedParts};
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, AltChunk, AnchorHorizontal, AnchorVertical,
     AnchoredDrawing, AppProperties, BlockNode, BorderEdge, BreakKind, CellVerticalAlignment,
-    CnfStyle, Color, ColorScheme, Comment, CommentId, CoreProperties, CustomProperty, CustomValue,
-    DefinitionMap, Definitions, DocGridType, Document, DocumentDefaults, DocumentProtectionEdit,
-    DocumentSettings, DropCapFrame, DropCapMode, EmbeddedKind, EmbeddedObject, EmbeddedPart,
-    EmphasisMark, Extent, FontCollection, FontDescriptor, FontFamilyKind, FontPitch, FontRef,
-    FontScheme, FormCheckBoxSize, FormFieldData, FormFieldKind, FormTextType,
-    FrameHorizontalAlignment, FrameHorizontalAnchor, FrameVerticalAlignment, FrameVerticalAnchor,
-    FrameWrap, GridColumn, GroupChild, GroupShape, GroupTextBox, GroupTransform, HeaderFooterId,
-    HeaderFooterKind, HeightRule, HighlightColor, HorizontalAlign, HorizontalAnchor,
-    HorizontalPosition, HorizontalRuleAlign, HyperlinkTarget, InlineNode, LevelJustification,
-    LevelSuffix, LineNumberRestart, LineRule, MediaId, MediaReference, MoveKind, Note, NoteId,
-    NoteKind, NoteNumberRestart, NotePosition, NoteProperties, NumberFormat, NumberingInstance,
-    NumberingInstanceId, NumberingLevel, PageBorderDisplay, PageBorderOffset, PageOrientation,
-    PageVerticalAlignment, ParagraphProperties, Person, PointEmu, PositionalTabAlignment,
-    PositionalTabLeader, PositionalTabRelativeTo, ProofState, PropChange, RevisionKind, RgbColor,
-    Rgba, RunFontHint, RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData,
-    SdtControlKind, SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionType,
-    ShapeGeometry, ShapeStroke, Style, StyleId, StyleKind, TabAlignment, TabLeader, Table,
-    TableAnchor, TableBorders, TableCell, TableCellProperties, TableFloatPosition, TableLayout,
-    TableOverlap, TableProperties, TableRow, TableRowProperties, TableStyleOverride,
-    TableStyleRegion, TableXAlign, TableYAlign, TextBox, TextBoxAutoFit, TextBoxBodyProperties,
-    TextBoxHorizontalOverflow, TextBoxVerticalAnchor, TextBoxVerticalOverflow, TextDirection,
-    ThemeFontRef, VerticalAlign, VerticalAlignment, VerticalAnchor, VerticalMerge,
-    VerticalPosition, VerticalTextAlignment, WordprocessingGroup, WrapMode, Zoom, ZoomMode,
+    CnfStyle, Color, ColorScheme, Comment, CommentId, CoreProperties, CropRect, CustomProperty,
+    CustomValue, DefinitionMap, Definitions, DocGridType, Document, DocumentDefaults,
+    DocumentProtectionEdit, DocumentSettings, DropCapFrame, DropCapMode, EmbeddedKind,
+    EmbeddedObject, EmbeddedPart, EmphasisMark, Extent, FontCollection, FontDescriptor,
+    FontFamilyKind, FontPitch, FontRef, FontScheme, FormCheckBoxSize, FormFieldData, FormFieldKind,
+    FormTextType, FrameHorizontalAlignment, FrameHorizontalAnchor, FrameVerticalAlignment,
+    FrameVerticalAnchor, FrameWrap, GridColumn, GroupChild, GroupShape, GroupTextBox,
+    GroupTransform, HeaderFooterId, HeaderFooterKind, HeightRule, HighlightColor, HorizontalAlign,
+    HorizontalAnchor, HorizontalPosition, HorizontalRuleAlign, HyperlinkTarget, InlineNode,
+    LevelJustification, LevelSuffix, LineNumberRestart, LineRule, MediaId, MediaReference,
+    MoveKind, Note, NoteId, NoteKind, NoteNumberRestart, NotePosition, NoteProperties,
+    NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel, PageBorderDisplay,
+    PageBorderOffset, PageOrientation, PageVerticalAlignment, ParagraphProperties, Person,
+    PointEmu, PositionalTabAlignment, PositionalTabLeader, PositionalTabRelativeTo, ProofState,
+    PropChange, RevisionKind, RgbColor, Rgba, RunFontHint, RunProperties, SchemeColor, SdtCheckbox,
+    SdtCheckboxSymbol, SdtControlData, SdtControlKind, SdtDate, SdtListItem, SdtLock,
+    SdtProperties, SectionBoundary, SectionType, ShapeGeometry, ShapeStroke, Style, StyleId,
+    StyleKind, TabAlignment, TabLeader, Table, TableAnchor, TableBorders, TableCell,
+    TableCellProperties, TableFloatPosition, TableLayout, TableOverlap, TableProperties, TableRow,
+    TableRowProperties, TableStyleOverride, TableStyleRegion, TableXAlign, TableYAlign, TextBox,
+    TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxVerticalAnchor,
+    TextBoxVerticalOverflow, TextDirection, ThemeFontRef, VerticalAlign, VerticalAlignment,
+    VerticalAnchor, VerticalMerge, VerticalPosition, VerticalTextAlignment, WordprocessingGroup,
+    WrapMode, Zoom, ZoomMode,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -3897,7 +3898,15 @@ fn write_inline(
                 .as_ref()
                 .map(|extent| (extent.width_emu, extent.height_emu))
                 .unwrap_or((0, 0));
-            write_drawing(w, &embed, drawing.extent.as_ref(), cx, cy)?;
+            write_drawing(
+                w,
+                &embed,
+                drawing.extent.as_ref(),
+                cx,
+                cy,
+                drawing.descr.as_deref(),
+                drawing.crop.as_ref(),
+            )?;
         }
         // An anchored (floating) drawing: a `w:drawing`/`wp:anchor` carrying the
         // picture's position, wrap, z-order, and alt text.
@@ -4049,6 +4058,8 @@ fn write_drawing(
     extent: Option<&Extent>,
     cx: i64,
     cy: i64,
+    descr: Option<&str>,
+    crop: Option<&CropRect>,
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
     w.write_event(Event::Start(start("w:drawing")))
@@ -4067,8 +4078,11 @@ fn write_drawing(
     let mut doc_pr = start("wp:docPr");
     doc_pr.push_attribute(("id", "1"));
     doc_pr.push_attribute(("name", "Picture 1"));
+    if let Some(descr) = descr {
+        doc_pr.push_attribute(("descr", descr));
+    }
     w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
-    write_pic_graphic(w, embed, cx, cy)?;
+    write_pic_graphic(w, embed, cx, cy, crop)?;
     w.write_event(Event::End(BytesEnd::new("wp:inline")))
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("w:drawing")))
@@ -4082,11 +4096,37 @@ fn write_drawing(
 /// drawings: the picture frame referencing `embed` (the media relationship id)
 /// at the `cx`×`cy` EMU extent. The importer reads back `a:blip@r:embed` and the
 /// enclosing `wp:extent`; the geometry here is fixed scaffold.
+/// Writes an `a:srcRect` crop element (the four ST_Percentage edge fractions),
+/// omitting any edge that is zero. Called inside a `pic:blipFill`, before the
+/// `a:stretch`. A `None`/identity crop writes nothing.
+fn write_src_rect(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    crop: Option<&CropRect>,
+) -> Result<(), ExportError> {
+    let Some(crop) = crop.filter(|crop| !crop.is_identity()) else {
+        return Ok(());
+    };
+    let mut el = start("a:srcRect");
+    for (name, value) in [
+        ("l", crop.left),
+        ("t", crop.top),
+        ("r", crop.right),
+        ("b", crop.bottom),
+    ] {
+        if value != 0 {
+            el.push_attribute((name, value.to_string().as_str()));
+        }
+    }
+    w.write_event(Event::Empty(el)).map_err(pkg)?;
+    Ok(())
+}
+
 fn write_pic_graphic(
     w: &mut Writer<Cursor<Vec<u8>>>,
     embed: &str,
     cx: i64,
     cy: i64,
+    crop: Option<&CropRect>,
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("a:graphic")))
         .map_err(pkg)?;
@@ -4109,6 +4149,7 @@ fn write_pic_graphic(
     let mut blip = start("a:blip");
     blip.push_attribute(("r:embed", embed));
     w.write_event(Event::Empty(blip)).map_err(pkg)?;
+    write_src_rect(w, crop)?;
     w.write_event(Event::Start(start("a:stretch")))
         .map_err(pkg)?;
     w.write_event(Event::Empty(start("a:fillRect")))
@@ -4202,7 +4243,7 @@ fn write_anchored_drawing(
         doc_pr.push_attribute(("descr", descr.as_str()));
     }
     w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
-    write_pic_graphic(w, embed, cx, cy)?;
+    write_pic_graphic(w, embed, cx, cy, drawing.crop.as_ref())?;
     w.write_event(Event::End(BytesEnd::new("wp:anchor")))
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("w:drawing")))
@@ -4354,7 +4395,13 @@ fn write_wgp(
                     .get(&picture.media)
                     .map(|reference| reference.relationship_id.clone());
                 if let Some(embed) = embed {
-                    write_group_picture(w, &embed, picture.offset, picture.extent)?;
+                    write_group_picture(
+                        w,
+                        &embed,
+                        picture.offset,
+                        picture.extent,
+                        picture.crop.as_ref(),
+                    )?;
                 }
             }
             GroupChild::TextBox(text_box) => write_group_text_box(w, text_box, ctx)?,
@@ -4407,6 +4454,7 @@ fn write_group_picture(
     embed: &str,
     offset: PointEmu,
     extent: Extent,
+    crop: Option<&CropRect>,
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("pic:pic"))).map_err(pkg)?;
     w.write_event(Event::Start(start("pic:nvPicPr")))
@@ -4424,6 +4472,7 @@ fn write_group_picture(
     let mut blip = start("a:blip");
     blip.push_attribute(("r:embed", embed));
     w.write_event(Event::Empty(blip)).map_err(pkg)?;
+    write_src_rect(w, crop)?;
     w.write_event(Event::Start(start("a:stretch")))
         .map_err(pkg)?;
     w.write_event(Event::Empty(start("a:fillRect")))

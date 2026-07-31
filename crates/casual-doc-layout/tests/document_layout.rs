@@ -93,6 +93,7 @@ fn aligned_float(
         },
         descr: Some(descr.to_owned()),
         relative_height: None,
+        crop: None,
     })
 }
 
@@ -125,6 +126,7 @@ fn offset_float(
         },
         descr: Some(descr.to_owned()),
         relative_height: None,
+        crop: None,
     })
 }
 
@@ -622,6 +624,8 @@ fn a_header_image_renders_through_the_full_pipeline() {
                         width_emu: 190_500,
                         height_emu: 127_000,
                     }),
+                    descr: None,
+                    crop: None,
                 })],
             })],
         },
@@ -655,7 +659,7 @@ fn a_header_image_renders_through_the_full_pipeline() {
         .items
         .iter()
         .find_map(|i| match i {
-            PaintItem::Image { media, rect } if media == "word/media/logo.png" => Some(*rect),
+            PaintItem::Image { media, rect, .. } if media == "word/media/logo.png" => Some(*rect),
             _ => None,
         })
         .expect("the header image paints");
@@ -871,6 +875,7 @@ fn a_positioned_header_float_reserves_band_so_the_body_clears_it() {
             },
             descr: None,
             relative_height: None,
+            crop: None,
         })
     };
     let build = |header_blocks: Vec<InlineNode>| {

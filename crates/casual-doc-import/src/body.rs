@@ -6,29 +6,29 @@ use casual_doc_model::v1::{
     Alignment, AltChunk, AltChunkProperties, AnchorHorizontal, AnchorVertical, AnchoredDrawing,
     BlockNode, BlockSdt, Bookmark, BookmarkEnd, BookmarkId, BookmarkStart, BorderEdge, Break,
     BreakKind, CellVerticalAlignment, CnfStyle, ColorScheme, ColumnDef, Comment, CommentId,
-    CommentRangeEnd, CommentRangeStart, CommentReference, DefinitionMap, DocGrid, DocGridType,
-    Drawing, DrawingAnchor, EmbeddedKind, EmbeddedObject, EmbeddedPart, Extent, ExternalTarget,
-    Field, FormCheckBox, FormCheckBoxSize, FormDropDown, FormFieldData, FormFieldKind,
-    FormTextInput, FormTextType, GridColumn, GroupChild, GroupPicture, GroupShape, GroupTextBox,
-    GroupTransform, HR_FULL_WIDTH_PERMILLE, HeaderFooterId, HeaderFooterKind, HeaderFooterRef,
-    HeightRule, HorizontalAlign, HorizontalAnchor, HorizontalPosition, HorizontalRule,
-    HorizontalRuleAlign, Hyperlink, HyperlinkTarget, InlineNode, InlineSdt, InternalTarget,
-    LineNumberRestart, LineNumbering, MAX_DESCR_BYTES, MAX_EMU, MAX_FIELD_INSTRUCTION_BYTES,
-    MAX_FORM_FIELD_ENTRIES, MAX_FORM_FIELD_STRING_BYTES, MAX_MATH_BYTES, MAX_REVISION_DEPTH,
-    MAX_SDT_DEPTH, MAX_TEXTBOX_DEPTH, Math, MediaId, MoveKind, MoveRangeEnd, MoveRangeStart,
-    NoBreakHyphen, NoteId, NoteKind, NoteNumberRestart, NotePosition, NoteProperties,
-    NoteReference, PageBorderDisplay, PageBorderOffset, PageBorders, PageMargins, PageNumbering,
-    PageOrientation, PageSize, PageVerticalAlignment, PaperSource, Paragraph, ParagraphProperties,
-    PointEmu, PositionalTab, PositionalTabAlignment, PositionalTabLeader, PositionalTabRelativeTo,
-    PropChange, Revision, RevisionKind, RgbColor, Rgba, Run, RunProperties, SchemeColor,
-    SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind, SdtDataBinding, SdtDate,
-    SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionColumns, SectionId, SectionType,
-    ShapeGeometry, ShapeStroke, SoftHyphen, StyleKind, Symbol, Tab, TabAlignment, TabLeader,
-    TabStop, TableAnchor, TableCellProperties, TableFloatPosition, TableLayout, TableOverlap,
-    TableProperties, TableRowProperties, TableXAlign, TableYAlign, TextBox, TextBoxAutoFit,
-    TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxInsets, TextBoxVerticalAnchor,
-    TextBoxVerticalOverflow, TextDirection, VerticalAlign, VerticalAnchor, VerticalMerge,
-    VerticalPosition, WordprocessingGroup, WrapDistances, WrapMode,
+    CommentRangeEnd, CommentRangeStart, CommentReference, CropRect, DefinitionMap, DocGrid,
+    DocGridType, Drawing, DrawingAnchor, EmbeddedKind, EmbeddedObject, EmbeddedPart, Extent,
+    ExternalTarget, Field, FormCheckBox, FormCheckBoxSize, FormDropDown, FormFieldData,
+    FormFieldKind, FormTextInput, FormTextType, GridColumn, GroupChild, GroupPicture, GroupShape,
+    GroupTextBox, GroupTransform, HR_FULL_WIDTH_PERMILLE, HeaderFooterId, HeaderFooterKind,
+    HeaderFooterRef, HeightRule, HorizontalAlign, HorizontalAnchor, HorizontalPosition,
+    HorizontalRule, HorizontalRuleAlign, Hyperlink, HyperlinkTarget, InlineNode, InlineSdt,
+    InternalTarget, LineNumberRestart, LineNumbering, MAX_DESCR_BYTES, MAX_EMU,
+    MAX_FIELD_INSTRUCTION_BYTES, MAX_FORM_FIELD_ENTRIES, MAX_FORM_FIELD_STRING_BYTES,
+    MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH, MAX_TEXTBOX_DEPTH, Math, MediaId, MoveKind,
+    MoveRangeEnd, MoveRangeStart, NoBreakHyphen, NoteId, NoteKind, NoteNumberRestart, NotePosition,
+    NoteProperties, NoteReference, PageBorderDisplay, PageBorderOffset, PageBorders, PageMargins,
+    PageNumbering, PageOrientation, PageSize, PageVerticalAlignment, PaperSource, Paragraph,
+    ParagraphProperties, PointEmu, PositionalTab, PositionalTabAlignment, PositionalTabLeader,
+    PositionalTabRelativeTo, PropChange, Revision, RevisionKind, RgbColor, Rgba, Run,
+    RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind,
+    SdtDataBinding, SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionColumns,
+    SectionId, SectionType, ShapeGeometry, ShapeStroke, SoftHyphen, StyleKind, Symbol, Tab,
+    TabAlignment, TabLeader, TabStop, TableAnchor, TableCellProperties, TableFloatPosition,
+    TableLayout, TableOverlap, TableProperties, TableRowProperties, TableXAlign, TableYAlign,
+    TextBox, TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxInsets,
+    TextBoxVerticalAnchor, TextBoxVerticalOverflow, TextDirection, VerticalAlign, VerticalAnchor,
+    VerticalMerge, VerticalPosition, WordprocessingGroup, WrapDistances, WrapMode,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::events::{BytesStart, Event};
@@ -65,6 +65,8 @@ enum Segment {
     Drawing {
         media: MediaId,
         extent: Option<Extent>,
+        descr: Option<String>,
+        crop: Option<CropRect>,
     },
     /// A first-class embedded object (chart / SmartArt diagram / OLE object).
     EmbeddedObject {
@@ -177,6 +179,7 @@ enum Segment {
         anchor: DrawingAnchor,
         descr: Option<String>,
         relative_height: Option<u32>,
+        crop: Option<CropRect>,
     },
 }
 
@@ -279,6 +282,8 @@ struct ShapeBuilder {
     embed: Option<String>,
     /// The alt text (`pic:cNvPr@descr` / `wps:cNvPr@descr`), if declared.
     descr: Option<String>,
+    /// The picture's `a:srcRect` crop, for a picture child, if declared.
+    srcrect: Option<CropRect>,
     /// The flowed block content of a `w:txbxContent` inside this shape, if any.
     textbox_blocks: Option<Vec<BlockNode>>,
     /// The shape's text-body box model and overflow/autofit policy.
@@ -544,6 +549,8 @@ struct ContentFrame {
     blipfill_depth: u32,
     pending_embed: Option<String>,
     pending_extent: Option<Extent>,
+    pending_srcrect: Option<CropRect>,
+    pending_inline_descr: Option<String>,
     drawing_extra: bool,
     pict_depth: u32,
     pending_graphic: PendingGraphic,
@@ -720,6 +727,13 @@ struct BodyParser<'a> {
     blipfill_depth: u32,
     pending_embed: Option<String>,
     pending_extent: Option<Extent>,
+    /// The `a:srcRect` crop of the open lone/inline (non-group) picture; consumed
+    /// by `commit_drawing` for the inline or anchored drawing.
+    pending_srcrect: Option<CropRect>,
+    /// The `wp:docPr@descr` alt text of the open lone/inline drawing (no anchor);
+    /// consumed by `commit_drawing` for the inline `Drawing` (the anchored path
+    /// captures its own `descr` on the `PendingAnchor`).
+    pending_inline_descr: Option<String>,
     drawing_extra: bool,
     /// Depth of an open `w:pict` (legacy VML picture); `pending_embed` holds its
     /// `v:imagedata@r:id` until the picture closes.
@@ -993,6 +1007,8 @@ impl<'a> BodyParser<'a> {
             blipfill_depth: 0,
             pending_embed: None,
             pending_extent: None,
+            pending_srcrect: None,
+            pending_inline_descr: None,
             drawing_extra: false,
             pict_depth: 0,
             vml_capture: None,
@@ -2008,6 +2024,8 @@ impl BodyParser<'_> {
                 if self.drawing_depth == 1 {
                     self.pending_embed = None;
                     self.pending_extent = None;
+                    self.pending_srcrect = None;
+                    self.pending_inline_descr = None;
                     self.drawing_extra = false;
                     self.blipfill_depth = 0;
                     self.pending_graphic = PendingGraphic::default();
@@ -2053,6 +2071,34 @@ impl BodyParser<'_> {
             b"blipFill" if self.drawing_depth > 0 => self.blipfill_depth += 1,
             b"blip" if self.blipfill_depth > 0 && self.pending_embed.is_none() => {
                 self.pending_embed = attribute_value(element, b"embed");
+            }
+            // The picture crop (`a:srcRect@l/t/r/b`, ST_Percentage — thousandths of
+            // a percent). Routed to the open picture shape (a grouped `pic:pic`) or,
+            // for a lone/inline/anchored picture, to `pending_srcrect`. A missing
+            // edge is 0 (no crop on that side); an all-zero rect is dropped as the
+            // identity crop.
+            b"srcRect" if self.blipfill_depth > 0 => {
+                let edge = |name: &[u8]| {
+                    attribute_value(element, name)
+                        .and_then(|value| value.trim().parse::<i32>().ok())
+                        .unwrap_or(0)
+                };
+                let crop = CropRect {
+                    left: edge(b"l"),
+                    top: edge(b"t"),
+                    right: edge(b"r"),
+                    bottom: edge(b"b"),
+                }
+                .clamped();
+                if !crop.is_identity() {
+                    if let Some(shape) =
+                        self.pending_shape.as_mut().filter(|shape| shape.is_picture)
+                    {
+                        shape.srcrect = Some(crop);
+                    } else {
+                        self.pending_srcrect = Some(crop);
+                    }
+                }
             }
             // A floating anchor (`wp:anchor`): open an anchor accumulator so the
             // drawing's position/wrap/z-order are captured and it commits as an
@@ -2137,15 +2183,15 @@ impl BodyParser<'_> {
                     anchor.wrap = Some(wrap_mode(local));
                 }
             }
-            // `wp:docPr@descr` is the drawing's alt text: modeled on an anchor
-            // (accessibility); on an inline drawing it remains reported (the inline
-            // path does not yet carry alt text).
+            // `wp:docPr@descr` is the drawing's alt text (accessibility): modeled on
+            // an anchor's `descr`, and — since P1G-OBJ-MODEL — on an inline drawing's
+            // `pending_inline_descr` too. An over-long value is reported, not stored.
             b"docPr" if self.drawing_depth > 0 => match attribute_value(element, b"descr") {
                 Some(descr) if !descr.is_empty() && descr.len() <= MAX_DESCR_BYTES => {
                     if let Some(anchor) = self.pending_anchor.as_mut() {
                         anchor.descr = Some(descr);
                     } else {
-                        self.drawing_extra = true;
+                        self.pending_inline_descr = Some(descr);
                     }
                 }
                 Some(_) => self.drawing_extra = true,
@@ -2200,6 +2246,7 @@ impl BodyParser<'_> {
                     stroke: None,
                     embed: None,
                     descr: None,
+                    srcrect: None,
                     textbox_blocks: None,
                     body_properties: TextBoxBodyProperties::default(),
                 });
@@ -2219,6 +2266,7 @@ impl BodyParser<'_> {
                     stroke: None,
                     embed: None,
                     descr: None,
+                    srcrect: None,
                     textbox_blocks: None,
                     body_properties: TextBoxBodyProperties::default(),
                 });
@@ -3886,6 +3934,7 @@ impl BodyParser<'_> {
                 offset: shape.offset,
                 extent: shape.extent,
                 descr: shape.descr,
+                crop: shape.srcrect,
             }));
         }
         if let Some(blocks) = shape.textbox_blocks.take() {
@@ -4009,6 +4058,8 @@ impl BodyParser<'_> {
         // resolvable picture to an `AnchoredDrawing` (placed at its position); an
         // inline picture stays a `Drawing`.
         let anchor = self.pending_anchor.take();
+        let crop = self.pending_srcrect.take();
+        let inline_descr = self.pending_inline_descr.take();
         match self.pending_embed.take() {
             Some(embed) => match self.media_index.get(&embed) {
                 Some(media) => {
@@ -4019,6 +4070,7 @@ impl BodyParser<'_> {
                             anchor: anchor.resolve(),
                             descr: anchor.descr,
                             relative_height: anchor.relative_height,
+                            crop,
                         });
                         // Any remaining unmodeled detail (e.g. a click-link) is
                         // still surfaced so the anchored drawing is never silently
@@ -4034,6 +4086,8 @@ impl BodyParser<'_> {
                     self.push_segment(Segment::Drawing {
                         media: *media,
                         extent,
+                        descr: inline_descr,
+                        crop,
                     });
                 }
                 None => self.reporter.report(b"drawing"),
@@ -4147,6 +4201,8 @@ impl BodyParser<'_> {
                     Some(media) => self.push_segment(Segment::Drawing {
                         media: *media,
                         extent: None,
+                        descr: None,
+                        crop: None,
                     }),
                     None => self.reporter.report(b"pict"),
                 },
@@ -4186,6 +4242,7 @@ impl BodyParser<'_> {
                     anchor,
                     descr: None,
                     relative_height,
+                    crop: None,
                 }));
             }
             // Inline VML image: not floating (no absolute box/z-order), but the
@@ -4199,7 +4256,12 @@ impl BodyParser<'_> {
             let extent = (drawing.position.width.is_some_and(|w| w > 0)
                 && drawing.position.height.is_some_and(|h| h > 0))
             .then(|| vml_extent(&drawing.position));
-            return Ok(Some(Segment::Drawing { media, extent }));
+            return Ok(Some(Segment::Drawing {
+                media,
+                extent,
+                descr: None,
+                crop: None,
+            }));
         }
         // A VML text box (`v:textbox`): placement depends on both its container and
         // whether the layout engine can honor its exclusion semantics. Its flowed
@@ -4702,6 +4764,8 @@ impl BodyParser<'_> {
             blipfill_depth: std::mem::take(&mut self.blipfill_depth),
             pending_embed: self.pending_embed.take(),
             pending_extent: self.pending_extent.take(),
+            pending_srcrect: self.pending_srcrect.take(),
+            pending_inline_descr: self.pending_inline_descr.take(),
             drawing_extra: std::mem::take(&mut self.drawing_extra),
             pict_depth: std::mem::take(&mut self.pict_depth),
             pending_graphic: std::mem::take(&mut self.pending_graphic),
@@ -4771,6 +4835,8 @@ impl BodyParser<'_> {
         self.blipfill_depth = frame.blipfill_depth;
         self.pending_embed = frame.pending_embed;
         self.pending_extent = frame.pending_extent;
+        self.pending_srcrect = frame.pending_srcrect;
+        self.pending_inline_descr = frame.pending_inline_descr;
         self.drawing_extra = frame.drawing_extra;
         self.pict_depth = frame.pict_depth;
         self.pending_graphic = frame.pending_graphic;
@@ -5585,9 +5651,20 @@ impl BodyParser<'_> {
                 let id = self.next_id()?;
                 Ok(InlineNode::Break(Break { id, kind }))
             }
-            Segment::Drawing { media, extent } => {
+            Segment::Drawing {
+                media,
+                extent,
+                descr,
+                crop,
+            } => {
                 let id = self.next_id()?;
-                Ok(InlineNode::Drawing(Drawing { id, media, extent }))
+                Ok(InlineNode::Drawing(Drawing {
+                    id,
+                    media,
+                    extent,
+                    descr,
+                    crop,
+                }))
             }
             Segment::AnchoredDrawing {
                 media,
@@ -5595,6 +5672,7 @@ impl BodyParser<'_> {
                 anchor,
                 descr,
                 relative_height,
+                crop,
             } => {
                 let id = self.next_id()?;
                 Ok(InlineNode::AnchoredDrawing(AnchoredDrawing {
@@ -5604,6 +5682,7 @@ impl BodyParser<'_> {
                     anchor,
                     descr,
                     relative_height,
+                    crop,
                 }))
             }
             Segment::EmbeddedObject {

@@ -1513,6 +1513,7 @@ mod tests {
             media: "word/media/image1.png".into(),
             origin: Point::new(Twip(20), Twip(260)),
             size: Size::new(Twip(40), Twip(50)),
+            crop: None,
         });
         second.text_boxes.push(InlineTextBox {
             origin: Point::new(Twip(30), Twip(270)),
@@ -2398,6 +2399,7 @@ mod tests {
                 media: "word/media/continuation.png".into(),
                 origin: Point::new(Twip(20), Twip(70 * 240 + 20)),
                 size: Size::new(Twip(80), Twip(80)),
+                crop: None,
             });
         }
         let mut tall_cell = cell_of(21, vec![tall_paragraph]);

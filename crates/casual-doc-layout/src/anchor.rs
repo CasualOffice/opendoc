@@ -576,7 +576,10 @@ fn collect_inlines(
                     layout,
                     page_index,
                     PlacedAnchor {
-                        content: AnchorContent::Image { media },
+                        content: AnchorContent::Image {
+                            media,
+                            crop: drawing.crop,
+                        },
                         rect,
                         behind_doc: drawing.anchor.behind_doc,
                         z,
@@ -726,7 +729,10 @@ fn place_group_children(
                     layout,
                     page_index,
                     PlacedAnchor {
-                        content: AnchorContent::Image { media },
+                        content: AnchorContent::Image {
+                            media,
+                            crop: picture.crop,
+                        },
                         rect,
                         behind_doc,
                         z,
