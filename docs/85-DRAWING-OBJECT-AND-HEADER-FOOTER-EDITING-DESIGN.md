@@ -272,13 +272,21 @@ draggable handles (the grip div is the `Float { handle }` hit resolution — no
 separate `objectHandleAt` needed), corner grips constrain aspect under Shift
 (§10.3), and the op is blocked fail-closed in Suggesting/Viewing mode (§6, Q5).
 The resized extent **round-trips through DOCX** (export writes `wp:extent`; a
-regression asserts export→reopen preserves the new size). **`SetAnchor` (move) and
-wrap-mode / z-order are not shipped here:** those mutate a `DrawingAnchor`, which
-only *floating* objects carry — and floating objects are not yet *selectable*
-(`P1G-OBJ-SELECT` scoped to inline images/text boxes; anchored-float selection
-needs `PlacedAnchor` to carry its source `NodeId`). So move + wrap + z-order ship
-with the anchored-float selection follow-up, on the same `SetAnchor` op shape
-defined above.
+regression asserts export→reopen preserves the new size).
+
+**Implementation note (`P1G-OBJ-ANCHOR-SELECT`, move + wrap shipped).** The
+follow-up landed floating-object identity and geometry. `PlacedAnchor` now carries
+a `node: Option<NodeId>` (set in `anchor.rs` for top-level `AnchoredDrawing`/
+floating `TextBox`; `None` for group children), so `object_boxes` resolves body
+floats from `page.anchored` — no fragile correlation needed on the float side.
+`SetAnchor { object, anchor }` (self-inverse with the previous `DrawingAnchor`)
+carries move **and** wrap **and** z-order in one op; a free body-drag commits it as
+a `page`-relative `posOffset` on release (`setObjectAnchorPosition`), and the
+context bar's Wrap control commits it with a new `wrap`/`behind_doc`
+(`setObjectWrap`). `SetExtent` now also resizes floats. All three round-trip
+through DOCX and are blocked fail-closed in Suggesting/Viewing. **Still deferred:**
+group children and header/footer floats (selection), and inline↔floating
+conversion.
 
 ### 5.4 Image content ops
 

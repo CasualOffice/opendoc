@@ -30,23 +30,25 @@ use casual_doc_layout::flow::node_plain_text;
 use casual_doc_layout::hittest::{Direction, HitZone, LayoutSnapshot};
 use casual_doc_layout::incremental::{DirtySet, GalleyCache};
 use casual_doc_layout::model::{ModelPos, ModelRange};
-use casual_doc_layout::page::{Page, PaginatedLayout};
+use casual_doc_layout::page::{AnchorContent, Page, PaginatedLayout};
 use casual_doc_layout::paginate::PageConfig;
 use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_layout::units::{Point, Rect, Size, Twip};
 use casual_doc_model::v1::GridColumn;
 use casual_doc_model::v1::{
-    AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, BookmarkId, BorderEdge, Break,
-    CellMargins, CellVerticalAlignment, Color, Comment, CommentId, CommentRangeEnd,
-    CommentRangeStart, CommentReference, DefinitionMap, Document, Extent, ExternalTarget, FontName,
-    FontRef, HeightRule, HighlightColor, Hyperlink, HyperlinkTarget, Indentation, InlineNode,
-    InternalTarget, LevelJustification, LevelSuffix, MAX_EMU, MoveKind, NumberFormat,
-    NumberingInstance, NumberingInstanceId, NumberingLevel, NumberingOverride, NumberingRef,
-    PageMargins, PageOrientation, PageSize as SectionPageSize, Paragraph, ParagraphBorders,
-    ParagraphProperties, PropChange, ReviewProjection, Revision, RevisionGroup, RevisionGroupKind,
-    RevisionKind, RgbColor, RowHeight, Run, RunProperties, SectionColumns, SectionId, Spacing,
-    StyleId, StyleKind, Tab, TabAlignment, TabStop, Table, TableBorders, TableCell,
-    TableCellProperties, TableLayout, TableProperties, TableRow, VerticalAlignment, VerticalMerge,
+    AbstractNumbering, AbstractNumberingId, Alignment, AnchorHorizontal, AnchorVertical, BlockNode,
+    BookmarkId, BorderEdge, Break, CellMargins, CellVerticalAlignment, Color, Comment, CommentId,
+    CommentRangeEnd, CommentRangeStart, CommentReference, DefinitionMap, Document, DrawingAnchor,
+    Extent, ExternalTarget, FontName, FontRef, HeightRule, HighlightColor, HorizontalAnchor,
+    HorizontalPosition, Hyperlink, HyperlinkTarget, Indentation, InlineNode, InternalTarget,
+    LevelJustification, LevelSuffix, MAX_EMU, MoveKind, NumberFormat, NumberingInstance,
+    NumberingInstanceId, NumberingLevel, NumberingOverride, NumberingRef, PageMargins,
+    PageOrientation, PageSize as SectionPageSize, Paragraph, ParagraphBorders, ParagraphProperties,
+    PropChange, ReviewProjection, Revision, RevisionGroup, RevisionGroupKind, RevisionKind,
+    RgbColor, RowHeight, Run, RunProperties, SectionColumns, SectionId, Spacing, StyleId,
+    StyleKind, Tab, TabAlignment, TabStop, Table, TableBorders, TableCell, TableCellProperties,
+    TableLayout, TableProperties, TableRow, VerticalAlignment, VerticalAnchor, VerticalMerge,
+    VerticalPosition, WrapMode,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
@@ -219,6 +221,7 @@ enum HistoryKind {
     TableFormatting,
     TableStructure,
     ObjectResize,
+    ObjectMove,
     DocumentProperties,
     PageSetup,
     Review,
@@ -242,6 +245,7 @@ impl HistoryKind {
             Self::TableFormatting => "Table formatting",
             Self::TableStructure => "Table structure",
             Self::ObjectResize => "Object resize",
+            Self::ObjectMove => "Object move",
             Self::DocumentProperties => "Document properties",
             Self::PageSetup => "Page setup",
             Self::Review => "Review",
@@ -286,6 +290,7 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         | Operation::InsertTable { .. } => HistoryKind::TableStructure,
         Operation::InsertBlocks { .. } | Operation::DeleteBlocks { .. } => HistoryKind::Paste,
         Operation::SetExtent { .. } => HistoryKind::ObjectResize,
+        Operation::SetAnchor { .. } => HistoryKind::ObjectMove,
         Operation::SetTableCellProperties { .. }
         | Operation::SetTableProperties { .. }
         | Operation::ReplaceTable { .. } => HistoryKind::TableFormatting,
@@ -525,10 +530,10 @@ impl WasmDocument {
     /// hit-testing: a hit selects the object as a unit (`Selection::Object`,
     /// docs/58 §3), a miss falls through to a text caret. Read-only; no mutation.
     ///
-    /// Scope (Phase A / `P1G-OBJ-SELECT`): inline images (`w:drawing` pictures)
-    /// and inline text boxes in top-level body paragraphs. Anchored/floating
-    /// objects, table-cell and header/footer objects, and handle-grip resolution
-    /// (which drives drag-resize) are later slices.
+    /// Scope: inline images/text boxes in top-level body paragraphs
+    /// (`P1G-OBJ-SELECT`) **and** top-level floating/anchored images and text
+    /// boxes (`P1G-OBJ-ANCHOR-SELECT`; `anchored` = true). Group children,
+    /// table-cell and header/footer objects remain later slices.
     #[wasm_bindgen(js_name = objectAt)]
     #[must_use]
     pub fn object_at(&self, page: u32, x_twip: i32, y_twip: i32) -> Option<ObjectHitPayload> {
@@ -543,6 +548,7 @@ impl WasmDocument {
                 kind: obj.kind,
                 page: obj.page,
                 rect: flat_rect(obj.page, obj.rect),
+                anchored: obj.anchored,
             })
     }
 
@@ -659,6 +665,87 @@ impl WasmDocument {
                 ]
             })
             .unwrap_or_default()
+    }
+
+    /// Moves a **floating** object to an absolute page position: `left_emu` /
+    /// `top_emu` are page-local EMU (the top-left of the object measured from the
+    /// page edge — a free drag positions relative to the page). Commits one
+    /// undoable `SetAnchor` (docs/85 §5.3): the anchor's position becomes
+    /// `page`-relative `posOffset`s while wrap, wrap distances, and z-order are
+    /// preserved. Errors if `node` is not a currently floating object. Object
+    /// geometry is untracked, so the host blocks this in Suggesting/Viewing mode.
+    #[wasm_bindgen(js_name = setObjectAnchorPosition)]
+    pub fn set_object_anchor_position(
+        &mut self,
+        node: &str,
+        left_emu: f64,
+        top_emu: f64,
+    ) -> Result<EditResult, JsValue> {
+        let object = node_id(node)?;
+        let mut anchor = object_anchor(self.document.body(), object)
+            .ok_or_else(|| to_js("not a movable floating object".into()))?;
+        anchor.horizontal = AnchorHorizontal {
+            relative_from: HorizontalAnchor::Page,
+            position: HorizontalPosition::Offset(
+                (left_emu.round() as i64).clamp(-MAX_EMU, MAX_EMU),
+            ),
+        };
+        anchor.vertical = AnchorVertical {
+            relative_from: VerticalAnchor::Page,
+            position: VerticalPosition::Offset((top_emu.round() as i64).clamp(-MAX_EMU, MAX_EMU)),
+        };
+        self.commit_anchor(object, anchor)
+    }
+
+    /// Changes a **floating** object's text-wrap mode (docs/85 §5.3), committing
+    /// one undoable `SetAnchor`. Accepts `"square"`, `"tight"`, `"through"`,
+    /// `"topAndBottom"`, `"behind"` (wrap-none behind the text), and `"front"`
+    /// (wrap-none over the text); everything else is ignored. Errors if `node` is
+    /// not a floating object. Blocked in Suggesting/Viewing mode by the host.
+    #[wasm_bindgen(js_name = setObjectWrap)]
+    pub fn set_object_wrap(&mut self, node: &str, mode: &str) -> Result<EditResult, JsValue> {
+        let object = node_id(node)?;
+        let mut anchor = object_anchor(self.document.body(), object)
+            .ok_or_else(|| to_js("not a floating object".into()))?;
+        match mode {
+            "square" => anchor.wrap = WrapMode::Square,
+            "tight" => anchor.wrap = WrapMode::Tight,
+            "through" => anchor.wrap = WrapMode::Through,
+            "topAndBottom" => anchor.wrap = WrapMode::TopAndBottom,
+            "behind" => {
+                anchor.wrap = WrapMode::None;
+                anchor.behind_doc = true;
+            }
+            "front" => {
+                anchor.wrap = WrapMode::None;
+                anchor.behind_doc = false;
+            }
+            _ => return Err(to_js(format!("unknown wrap mode: {mode}"))),
+        }
+        self.commit_anchor(object, anchor)
+    }
+
+    /// The current wrap mode of a floating object as one of the
+    /// [`set_object_wrap`](Self::set_object_wrap) tokens, or `""` if `node` is not
+    /// a floating object — drives the context bar's active-wrap reflection.
+    #[wasm_bindgen(js_name = objectWrap)]
+    #[must_use]
+    pub fn object_wrap(&self, node: &str) -> String {
+        let Ok(object) = NodeId::from_str(node) else {
+            return String::new();
+        };
+        let Some(anchor) = object_anchor(self.document.body(), object) else {
+            return String::new();
+        };
+        match anchor.wrap {
+            WrapMode::Square => "square",
+            WrapMode::Tight => "tight",
+            WrapMode::Through => "through",
+            WrapMode::TopAndBottom => "topAndBottom",
+            WrapMode::None if anchor.behind_doc => "behind",
+            WrapMode::None => "front",
+        }
+        .to_string()
     }
 
     /// The caret box for a model anchor, as `[page, xTwip, yTwip, wTwip, hTwip]`
@@ -6929,6 +7016,7 @@ impl WasmDocument {
                                 kind: "image",
                                 page: page.number,
                                 rect,
+                                anchored: false,
                             });
                         }
                     }
@@ -6947,13 +7035,59 @@ impl WasmDocument {
                                 kind: "textbox",
                                 page: page.number,
                                 rect,
+                                anchored: false,
                             });
                         }
                     }
                 }
             }
+            // Floating (anchored) objects: `PlacedAnchor.rect` is already the
+            // absolute page rect, and `node` links back to the model anchor node
+            // (top-level `AnchoredDrawing`/floating `TextBox`; group children carry
+            // `None` and are not individually selectable yet).
+            for placed in &page.anchored {
+                let Some(node) = placed.node else {
+                    continue;
+                };
+                // Only body floats are editable this slice: a header/footer float's
+                // node lives in the running-content part, not `body()`, so the
+                // geometry ops can't resolve it — don't offer it for selection.
+                if object_anchor(self.document.body(), node).is_none() {
+                    continue;
+                }
+                let kind = match &placed.content {
+                    AnchorContent::Image { .. } => "image",
+                    AnchorContent::TextBox { .. } => "textbox",
+                    AnchorContent::Rectangle { .. } | AnchorContent::Line { .. } => "shape",
+                };
+                out.push(ObjectBox {
+                    node,
+                    kind,
+                    page: page.number,
+                    rect: placed.rect,
+                    anchored: true,
+                });
+            }
         }
         out
+    }
+
+    /// Commits a replaced floating-object anchor as one undoable `SetAnchor`
+    /// action, keeping the object selected (the frontend re-draws its chrome).
+    fn commit_anchor(
+        &mut self,
+        object: NodeId,
+        anchor: DrawingAnchor,
+    ) -> Result<EditResult, JsValue> {
+        self.apply_action_caret_as(
+            vec![Operation::SetAnchor {
+                object,
+                anchor: Box::new(anchor),
+            }],
+            Pos::new(object, 0),
+            HistoryKind::ObjectMove,
+        )
+        .map_err(to_js)
     }
 
     /// The model drawing nodes (with their resolved media part name) and inline
@@ -10834,6 +10968,9 @@ struct ObjectBox {
     kind: &'static str,
     page: u32,
     rect: Rect,
+    /// Whether this is a floating/anchored object (movable + wrappable) vs an
+    /// inline object (resizable only).
+    anchored: bool,
 }
 
 /// Collects a paragraph's inline drawing nodes (with each drawing's resolved
@@ -10883,6 +11020,9 @@ fn object_authored_extent_in_inlines(inlines: &[InlineNode], object: NodeId) -> 
     for inline in inlines {
         match inline {
             InlineNode::Drawing(drawing) if drawing.id == object => return drawing.extent,
+            InlineNode::AnchoredDrawing(drawing) if drawing.id == object => {
+                return Some(drawing.extent);
+            }
             InlineNode::TextBox(text_box) => {
                 if text_box.id == object {
                     return text_box.extent;
@@ -10900,6 +11040,69 @@ fn object_authored_extent_in_inlines(inlines: &[InlineNode], object: NodeId) -> 
             InlineNode::Revision(revision) => {
                 if let Some(extent) = object_authored_extent_in_inlines(&revision.inlines, object) {
                     return Some(extent);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The current [`DrawingAnchor`] of the floating object `object` (a top-level
+/// `AnchoredDrawing`, floating `TextBox`, or anchored `Group`), searched across
+/// body paragraphs (through hyperlink/revision wrappers), table cells, block
+/// SDTs, and inline text-box bodies. `None` if `object` is not floating.
+fn object_anchor(blocks: &[BlockNode], object: NodeId) -> Option<DrawingAnchor> {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                if let Some(anchor) = object_anchor_in_inlines(&paragraph.inlines, object) {
+                    return Some(anchor);
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        if let Some(anchor) = object_anchor(&cell.blocks, object) {
+                            return Some(anchor);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(anchor) = object_anchor(&sdt.blocks, object) {
+                    return Some(anchor);
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    None
+}
+
+fn object_anchor_in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<DrawingAnchor> {
+    for inline in inlines {
+        match inline {
+            InlineNode::AnchoredDrawing(drawing) if drawing.id == object => {
+                return Some(drawing.anchor);
+            }
+            InlineNode::TextBox(text_box) => {
+                if text_box.id == object {
+                    return text_box.anchor;
+                }
+                if let Some(anchor) = object_anchor(&text_box.blocks, object) {
+                    return Some(anchor);
+                }
+            }
+            InlineNode::Group(group) if group.id == object => return group.anchor,
+            InlineNode::Hyperlink(hyperlink) => {
+                if let Some(anchor) = object_anchor_in_inlines(&hyperlink.inlines, object) {
+                    return Some(anchor);
+                }
+            }
+            InlineNode::Revision(revision) => {
+                if let Some(anchor) = object_anchor_in_inlines(&revision.inlines, object) {
+                    return Some(anchor);
                 }
             }
             _ => {}
@@ -10947,6 +11150,7 @@ pub struct ObjectHitPayload {
     kind: &'static str,
     page: u32,
     rect: [i32; 5],
+    anchored: bool,
 }
 
 #[wasm_bindgen]
@@ -10977,6 +11181,14 @@ impl ObjectHitPayload {
     #[must_use]
     pub fn rect(&self) -> Vec<i32> {
         self.rect.to_vec()
+    }
+
+    /// Whether this is a floating/anchored object — movable and wrappable
+    /// (`setObjectAnchor`/`setObjectWrap`). Inline objects are resize-only.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn anchored(&self) -> bool {
+        self.anchored
     }
 }
 
@@ -12081,7 +12293,9 @@ fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos 
         Operation::DeleteBlocks { container, .. } => Pos::new(container.unwrap_or(doc_id), 0),
         // Object resize keeps the object selected (the frontend re-draws the
         // object chrome, not a text caret); this arm keeps the match exhaustive.
-        Operation::SetExtent { object, .. } => Pos::new(*object, 0),
+        Operation::SetExtent { object, .. } | Operation::SetAnchor { object, .. } => {
+            Pos::new(*object, 0)
+        }
         // Cell/table formatting keeps the selection (the frontend does not collapse
         // to this); these arms only keep the match exhaustive.
         Operation::SetTableCellProperties { cell, .. } => {
@@ -16700,6 +16914,177 @@ mod tests {
             d.copy_structured(&id, 0, &id, text.len() as u32),
             "",
             "plain prose is not captured as a structured fragment"
+        );
+    }
+
+    /// Builds a `WasmDocument` around a constructed `Document` (paginated, so the
+    /// float-placement pass runs and `object_boxes` can see anchored objects).
+    fn wasm_document(document: Document) -> WasmDocument {
+        let shaper = ParleyShaper::new();
+        let layout = paginate_document(&document, &shaper);
+        let default_config = document_page_config(&document);
+        let revision_ids = RevisionIdAllocator::from_document(&document);
+        WasmDocument {
+            document,
+            layout,
+            shaper,
+            media: BTreeMap::new(),
+            default_config,
+            edit_ids: IdGenerator::new(0xf10a7),
+            undo: Vec::new(),
+            redo: Vec::new(),
+            typing_history: None,
+            revision_ids,
+            revision: 0,
+            galley_cache: GalleyCache::new(),
+            bullet_list: None,
+            numbered_list: None,
+            active_author: None,
+        }
+    }
+
+    /// A one-paragraph document holding a single floating (anchored) picture with
+    /// the given anchor, plus the registered media it references.
+    fn document_with_floating_image(anchor: casual_doc_model::v1::DrawingAnchor) -> Document {
+        use casual_doc_model::v1::{AnchoredDrawing, Definitions, MediaId, MediaReference};
+        let media = MediaId::new(NodeId::from_parts(9, 5000).unwrap());
+        let mut definitions = Definitions::default();
+        definitions.media.insert(
+            media,
+            MediaReference {
+                relationship_id: "rId9".to_owned(),
+                media_type: "image/png".to_owned(),
+                part_name: "word/media/image1.png".to_owned(),
+            },
+        );
+        let float_id = NodeId::from_parts(9, 60).unwrap();
+        Document::new(
+            NodeId::from_parts(9, 1).unwrap(),
+            vec![BlockNode::Paragraph(Paragraph {
+                id: NodeId::from_parts(9, 2).unwrap(),
+                properties: ParagraphProperties::default(),
+                inlines: vec![
+                    InlineNode::Run(Run {
+                        id: NodeId::from_parts(9, 3).unwrap(),
+                        properties: RunProperties::default(),
+                        text: "anchor paragraph".to_owned(),
+                    }),
+                    InlineNode::AnchoredDrawing(AnchoredDrawing {
+                        id: float_id,
+                        media,
+                        extent: Extent {
+                            width_emu: 1_828_800,
+                            height_emu: 914_400,
+                        },
+                        anchor,
+                        descr: None,
+                        relative_height: None,
+                        crop: None,
+                    }),
+                ],
+            })],
+            definitions,
+        )
+        .expect("valid floating-image document")
+    }
+
+    fn page_offset_anchor() -> DrawingAnchor {
+        DrawingAnchor {
+            horizontal: AnchorHorizontal {
+                relative_from: HorizontalAnchor::Page,
+                position: HorizontalPosition::Offset(914_400),
+            },
+            vertical: AnchorVertical {
+                relative_from: VerticalAnchor::Page,
+                position: VerticalPosition::Offset(914_400),
+            },
+            wrap: WrapMode::Square,
+            wrap_distances: casual_doc_model::v1::WrapDistances::default(),
+            behind_doc: false,
+        }
+    }
+
+    /// Emits `webapp/float.docx` — a one-paragraph document with a top-level
+    /// floating image — so the browser e2e has a fixture with an anchored object
+    /// to select/move/wrap (none of the shipped sample docs contains a float).
+    /// Run explicitly with `--ignored`; regenerate if the float model changes.
+    #[test]
+    #[ignore = "fixture generator; run with --ignored to (re)write webapp/float.docx"]
+    fn generate_float_fixture_docx() {
+        // A 1×1 transparent PNG so the referenced image part exists on export.
+        const PNG_1X1: &[u8] = &[
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9c, 0x62, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00,
+            0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+        ];
+        let mut d = wasm_document(document_with_floating_image(page_offset_anchor()));
+        d.media
+            .insert("word/media/image1.png".to_owned(), PNG_1X1.to_vec());
+        let bytes = d.export_docx().expect("export the float fixture");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../webapp/float.docx");
+        std::fs::write(&path, &bytes).expect("write webapp/float.docx");
+        // Sanity: it reopens with the float intact.
+        let reopened = open_document(&bytes).expect("reopen the fixture");
+        assert!(reopened.object_boxes().iter().any(|b| b.anchored));
+    }
+
+    #[test]
+    fn floating_object_selection_move_wrap_resize_and_round_trip() {
+        let mut d = wasm_document(document_with_floating_image(page_offset_anchor()));
+
+        // The float is selectable as an anchored object.
+        let float = d
+            .object_boxes()
+            .into_iter()
+            .find(|b| b.anchored)
+            .expect("a floating object");
+        let node = float.node.to_string();
+        assert_eq!(float.kind, "image");
+        let cx = float.rect.origin.x.raw() + float.rect.size.width.raw() / 2;
+        let cy = float.rect.origin.y.raw() + float.rect.size.height.raw() / 2;
+        let hit = d.object_at(float.page, cx, cy).expect("hit the float");
+        assert_eq!(hit.node, node);
+        assert!(hit.anchored, "objectAt reports it as anchored/movable");
+
+        // Move it to a new absolute page position (one undoable SetAnchor).
+        let before_rect = d.object_rect(&node);
+        d.set_object_anchor_position(&node, 3_000_000.0, 2_000_000.0)
+            .expect("move the float");
+        let moved_rect = d.object_rect(&node);
+        assert_ne!(moved_rect, before_rect, "the placed rect moved");
+        d.undo().expect("undo the move");
+        assert_eq!(d.object_rect(&node), before_rect, "undo restores position");
+
+        // Wrap-mode change re-lays-out and reflects.
+        assert_eq!(d.object_wrap(&node), "square");
+        d.set_object_wrap(&node, "behind")
+            .expect("re-wrap behind text");
+        assert_eq!(d.object_wrap(&node), "behind");
+
+        // Resize a floating object (SetExtent applies to floats now).
+        d.set_object_extent(&node, 2_400_000.0, 1_200_000.0)
+            .expect("resize the float");
+        assert_eq!(d.object_extent(&node), vec![2_400_000.0, 1_200_000.0]);
+
+        // Round-trip through DOCX: move + wrap + resize survive export + reopen.
+        d.set_object_anchor_position(&node, 3_500_000.0, 2_500_000.0)
+            .expect("re-move for round trip");
+        let bytes = d.export_docx().expect("export the floating document");
+        let reopened = open_document(&bytes).expect("reopen the floating document");
+        let reopened_float = reopened
+            .object_boxes()
+            .into_iter()
+            .find(|b| b.anchored)
+            .expect("the float survives the round trip")
+            .node
+            .to_string();
+        assert_eq!(reopened.object_wrap(&reopened_float), "behind");
+        assert_eq!(
+            reopened.object_extent(&reopened_float),
+            vec![2_400_000.0, 1_200_000.0],
+            "the resized extent round-trips"
         );
     }
 
