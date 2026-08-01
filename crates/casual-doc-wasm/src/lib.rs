@@ -17184,6 +17184,8 @@ mod tests {
             galley_cache: GalleyCache::new(),
             bullet_list: None,
             numbered_list: None,
+            checklist_unchecked: None,
+            checklist_checked: None,
             active_author: None,
         }
     }
