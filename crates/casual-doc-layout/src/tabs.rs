@@ -933,6 +933,7 @@ fn leader_run(
         })
         .collect();
     Some(GlyphRun {
+        is_marker: false,
         font: template.font,
         size: template.size,
         character_scale_percent: template.character_scale_percent,

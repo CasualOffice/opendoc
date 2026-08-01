@@ -360,6 +360,9 @@ impl PreparedMarker {
     pub fn new(mut runs: Vec<GlyphRun>, marker_x: Twip, ascent: Twip, descent: Twip) -> Self {
         for run in &mut runs {
             run.origin = Point::new(Twip(run.origin.x.raw() + marker_x.raw()), run.origin.y);
+            // Tag the marker glyphs so the host can locate the (interactive
+            // checkbox) marker's rect while a caret click still lands in the body.
+            run.is_marker = true;
         }
         Self {
             runs,

@@ -1420,6 +1420,7 @@ mod tests {
                 let baseline = Twip(line_h.raw() * (i as i32 + 1));
                 Line {
                     runs: vec![GlyphRun {
+                        is_marker: false,
                         font: FontId(0),
                         size: line_h,
                         character_scale_percent: 100,
@@ -1495,6 +1496,7 @@ mod tests {
         };
         let mut second = blank_line(Twip(200));
         second.runs.push(GlyphRun {
+            is_marker: false,
             font: FontId(0),
             size: Twip(100),
             character_scale_percent: 100,

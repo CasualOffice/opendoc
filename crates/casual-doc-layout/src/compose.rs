@@ -1033,6 +1033,7 @@ mod tests {
     /// paragraph-relative `origin` with the given `advance` and optional highlight.
     fn one_run_line(advance: Twip, highlight: Option<[u8; 4]>) -> LineLayout {
         let run = GlyphRun {
+            is_marker: false,
             font: FontId(0),
             size: Twip(200),
             character_scale_percent: 100,

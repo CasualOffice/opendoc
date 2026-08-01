@@ -831,6 +831,7 @@ mod tests {
                 advance: Twip::from_points(6),
                 cluster: 0,
             }],
+            is_marker: false,
         };
         let mut list = DisplayList::new();
         list.push(PaintItem::Glyphs { run });

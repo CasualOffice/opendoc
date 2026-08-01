@@ -76,6 +76,12 @@ pub struct GlyphRun {
     pub highlight: Option<[u8; 4]>,
     /// The positioned glyphs, in visual (left-to-right) order.
     pub glyphs: Vec<Glyph>,
+    /// Whether this run is a list marker (a bullet/number/checkbox glyph injected
+    /// ahead of the paragraph text), not model text. Lets the host locate an
+    /// interactive checkbox marker's rect (`crate::hittest::LayoutSnapshot::marker_rects`)
+    /// while a caret click still lands in the body. Additive: defaults false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_marker: bool,
 }
 
 /// How a line ends.
@@ -632,6 +638,7 @@ mod tests {
     #[test]
     fn glyph_run_serializes() {
         let run = GlyphRun {
+            is_marker: false,
             font: FontId(0),
             size: Twip::from_points(11),
             character_scale_percent: 100,
