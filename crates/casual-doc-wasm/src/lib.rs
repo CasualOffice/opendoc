@@ -24,9 +24,9 @@ use casual_doc_layout::block::BlockFragment;
 use casual_doc_layout::cascade::{StyleCascade, requested_font_family};
 use casual_doc_layout::compose::compose_page;
 use casual_doc_layout::document_layout::{
-    document_page_config, paginate_document, paginate_document_cached,
+    document_page_config, paginate_document, paginate_document_cached, paginate_document_view,
 };
-use casual_doc_layout::flow::node_plain_text;
+use casual_doc_layout::flow::{ReviewView, node_plain_text};
 use casual_doc_layout::hittest::{Direction, HitZone, LayoutSnapshot};
 use casual_doc_layout::incremental::{DirtySet, GalleyCache};
 use casual_doc_layout::model::{ModelPos, ModelRange};
@@ -87,6 +87,13 @@ const MAX_HOST_FONT_BYTES: usize = 32 * 1024 * 1024;
 pub struct WasmDocument {
     document: Document,
     layout: PaginatedLayout,
+    /// A read-only "show changes" markup layout (docs/93), present only while the
+    /// host has toggled `setShowChanges(true)`. When present, `renderPage` /
+    /// `pageCount` render from it (struck deletions, author-colored insertions,
+    /// highlighted comments); caret/selection/hit-test always use `layout` (the
+    /// markup byte space differs). Rebuilt on toggle; the editor rebuilds it on
+    /// nothing — a preview is read-only, so no edits arrive while it is on.
+    markup_layout: Option<PaginatedLayout>,
     shaper: ParleyShaper,
     /// Inline-image bytes by package part name — served to the renderer (via
     /// [`BorrowedMedia`]) and to the semantic writer on export.
@@ -340,7 +347,25 @@ impl WasmDocument {
     pub fn page_count(&self) -> u32 {
         // A paginated document never exceeds u32 pages within the admission
         // limits; the cast is saturating for defensiveness.
-        u32::try_from(self.layout.page_count()).unwrap_or(u32::MAX)
+        u32::try_from(self.active_layout().page_count()).unwrap_or(u32::MAX)
+    }
+
+    /// Toggles the read-only "show changes" markup view (docs/93). When on, a
+    /// separate markup layout is built (struck deletions, author-colored/
+    /// underlined insertions, highlighted comment ranges) and `renderPage` /
+    /// `pageCount` render from it; caret/selection/hit-test always use the editing
+    /// layout, so this is a pure read-only preview. Toggling off drops it. Idempotent.
+    #[wasm_bindgen(js_name = setShowChanges)]
+    pub fn set_show_changes(&mut self, on: bool) {
+        self.markup_layout =
+            on.then(|| paginate_document_view(&self.document, &self.shaper, ReviewView::Markup));
+    }
+
+    /// Whether the read-only markup view is currently shown.
+    #[wasm_bindgen(getter, js_name = showingChanges)]
+    #[must_use]
+    pub fn showing_changes(&self) -> bool {
+        self.markup_layout.is_some()
     }
 
     /// Whether the document has at least one user action available to undo.
@@ -6191,7 +6216,7 @@ impl WasmDocument {
 
     /// See [`WasmDocument::render_page`].
     fn render_page_inner(&self, index: u32, dpi: f32) -> Result<PageBitmap, String> {
-        let page = self.page(index)?;
+        let page = self.render_page_of(index)?;
         let size = self.page_box(page);
         let width_px = size.width.to_device_px(dpi).ceil() as u32;
         let height_px = size.height.to_device_px(dpi).ceil() as u32;
@@ -7679,6 +7704,24 @@ impl WasmDocument {
             format!(
                 "page index {index} out of range (0..{})",
                 self.layout.page_count()
+            )
+        })
+    }
+
+    /// The layout the *renderer* reads: the read-only markup layout while "show
+    /// changes" is on (docs/93), otherwise the live editing layout. Caret,
+    /// selection, and hit-testing never use this — they always read `self.layout`.
+    fn active_layout(&self) -> &PaginatedLayout {
+        self.markup_layout.as_ref().unwrap_or(&self.layout)
+    }
+
+    /// The page to render for `index`, from [`WasmDocument::active_layout`].
+    fn render_page_of(&self, index: u32) -> Result<&Page, String> {
+        let layout = self.active_layout();
+        layout.pages.get(index as usize).ok_or_else(|| {
+            format!(
+                "page index {index} out of range (0..{})",
+                layout.page_count()
             )
         })
     }
@@ -12157,6 +12200,7 @@ fn open_document(bytes: &[u8]) -> Result<WasmDocument, String> {
     Ok(WasmDocument {
         document,
         layout,
+        markup_layout: None,
         shaper,
         media,
         default_config,
@@ -14262,6 +14306,7 @@ mod tests {
         let mut d = WasmDocument {
             document,
             layout,
+            markup_layout: None,
             shaper,
             media: BTreeMap::new(),
             default_config,
@@ -14687,6 +14732,7 @@ mod tests {
         let d = WasmDocument {
             document,
             layout,
+            markup_layout: None,
             shaper,
             media: BTreeMap::new(),
             default_config,
@@ -14950,6 +14996,7 @@ mod tests {
         let mut d = WasmDocument {
             document,
             layout,
+            markup_layout: None,
             shaper,
             media: BTreeMap::new(),
             default_config,
@@ -17527,6 +17574,7 @@ mod tests {
         WasmDocument {
             document,
             layout,
+            markup_layout: None,
             shaper,
             media: BTreeMap::new(),
             default_config,
@@ -18651,6 +18699,7 @@ mod tests {
         let handle = WasmDocument {
             document,
             layout,
+            markup_layout: None,
             shaper,
             media: BTreeMap::new(),
             default_config,
@@ -18923,5 +18972,23 @@ mod tests {
             Some("CD"),
             "unchanged"
         );
+    }
+
+    #[test]
+    fn set_show_changes_toggles_a_read_only_markup_layout() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        assert!(!d.showing_changes(), "off by default");
+
+        d.set_show_changes(true);
+        assert!(d.showing_changes(), "toggled on");
+        assert!(d.page_count() >= 1);
+        // Rendering reads the markup layout without panicking.
+        d.render_page(0, 96.0).expect("render markup page 0");
+
+        d.set_show_changes(false);
+        assert!(!d.showing_changes(), "toggled off");
+        // Idempotent off.
+        d.set_show_changes(false);
+        assert!(!d.showing_changes());
     }
 }
