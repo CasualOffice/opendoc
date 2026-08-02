@@ -1061,7 +1061,13 @@ pub(crate) fn split_cells(
     let mut used = 0;
     let mut has_tail = false;
     for cell in cells {
-        let vertical_margins = cell.margins.top.raw() + cell.margins.bottom.raw();
+        let vertical_margins = cell
+            .margins
+            .top
+            .raw()
+            .saturating_add(cell.margins.bottom.raw())
+            .saturating_add(cell.cell_spacing.top.raw())
+            .saturating_add(cell.cell_spacing.bottom.raw());
         let content_avail = avail.saturating_sub(vertical_margins);
         let (head_blocks, tail_blocks, cell_used) = split_blocks(&cell.blocks, content_avail);
         if cell_used > 0 || !head_blocks.is_empty() {
@@ -2114,11 +2120,13 @@ mod tests {
             grid_span: 1,
             x: Twip::ZERO,
             width: Twip(3000),
+            cell_spacing: Default::default(),
             blocks,
             margins: CellContentMargins::default(),
             vertical_alignment: CellVAlign::default(),
             vertical_merge: CellVerticalMerge::None,
             borders: CellBorders::default(),
+            table_borders: CellBorders::default(),
             shading: None,
         }
     }
