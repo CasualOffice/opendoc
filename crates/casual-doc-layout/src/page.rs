@@ -198,8 +198,8 @@ pub struct PlacedAnchor {
 /// A resolved page-border frame (`w:pgBorders`) for one page: the outer frame
 /// rectangle in page-local twips plus the resolved line for each present edge
 /// (`None` where the section declares none for that side). Produced off the
-/// pagination hot path by [`crate::page_border::resolve_page_borders`] and
-/// painted by [`compose_page`](crate::compose::compose_page), like the running
+/// pagination hot path by the page-border resolution pass and painted by
+/// [`compose_page`](crate::compose::compose_page), like the running
 /// header/footer and column separators; participates in neither flow nor
 /// hit-testing.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
