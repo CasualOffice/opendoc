@@ -542,17 +542,24 @@ pub struct ShapeStroke {
 }
 
 /// The preset geometry of a simple DrawingML shape (`a:prstGeom@prst`). Only the
-/// handful of presets that occur as group decorations are distinguished; every
-/// other preset is [`ShapeGeometry::Other`] (drawn as its bounding rectangle).
+/// bounded primitive subset implemented by layout/render is distinguished;
+/// every other preset is [`ShapeGeometry::Other`] (drawn as its bounding
+/// rectangle while its original token is retained by [`GroupShape::preset`]).
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ShapeGeometry {
     /// A rectangle (`rect`).
     Rectangle,
-    /// A rounded rectangle (`roundRect`), drawn as a rectangle in this slice.
+    /// A rounded rectangle (`roundRect`).
     RoundRectangle,
     /// An ellipse (`ellipse`).
     Ellipse,
+    /// An isosceles triangle (`triangle`).
+    Triangle,
+    /// A right triangle (`rtTriangle`).
+    RightTriangle,
+    /// A diamond (`diamond`).
+    Diamond,
     /// A straight line / connector (`line`, or a `wps:cxnSp` straight connector).
     Line,
     /// Any other preset, drawn as its bounding rectangle.

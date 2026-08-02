@@ -683,6 +683,33 @@ mod semantic_tests {
     }
 
     #[test]
+    fn angular_shape_presets_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, GroupChild, InlineNode, ShapeGeometry};
+
+        for (preset, expected) in [
+            ("triangle", ShapeGeometry::Triangle),
+            ("rtTriangle", ShapeGeometry::RightTriangle),
+            ("diamond", ShapeGeometry::Diamond),
+        ] {
+            let xml = format!(
+                r#"<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps" xmlns:wpg="urn:wpg"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="0" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="1000000" cy="500000"/><wp:wrapNone/><a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000000" cy="500000"/><a:chOff x="0" y="0"/><a:chExt cx="1000000" cy="500000"/></a:xfrm></wpg:grpSpPr><wps:wsp><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000000" cy="500000"/></a:xfrm><a:prstGeom prst="{preset}"><a:avLst/></a:prstGeom></wps:spPr><wps:bodyPr/></wps:wsp></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#
+            );
+            let (m1, m2) = round_trip_main_document(xml.as_bytes());
+            let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+                panic!("expected a paragraph");
+            };
+            let InlineNode::Group(group) = &paragraph.inlines[0] else {
+                panic!("expected a standalone {preset} group");
+            };
+            let GroupChild::Shape(shape) = &group.children[0] else {
+                panic!("expected a standalone {preset} shape");
+            };
+            assert_eq!(shape.geometry, expected, "preset {preset}");
+            assert_eq!(m1, m2, "{preset} survives write -> reopen");
+        }
+    }
+
+    #[test]
     fn omml_math_survives_the_semantic_round_trip() {
         // A paragraph with a run, an opaque equation (`m:oMathPara`), and a
         // trailing run. The retained OMML must be written back verbatim and the

@@ -46,7 +46,7 @@ const FIDELITY = [
   },
   {
     family: "Text boxes & shapes",
-    note: "Anchored DrawingML shapes retain bounded preset identities/adjustments; rectangles, lines, ellipses, and rounded rectangles render distinctly. Custom paths, non-text inline shapes, gradients, rotation, vertical text, and linked boxes remain partial. Not editable.",
+    note: "Anchored DrawingML shapes retain bounded preset identities/adjustments; rectangles, lines, ellipses, rounded rectangles, triangles, right triangles, and diamonds render distinctly. Other preset/custom paths, non-text inline shapes, gradients, rotation, vertical text, and linked boxes remain partial. Not editable.",
     modeled: "partial", rendered: "partial", editable: "none", roundtrips: "partial",
   },
   {

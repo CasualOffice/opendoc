@@ -7159,6 +7159,7 @@ impl WasmDocument {
                     AnchorContent::Rectangle { .. }
                     | AnchorContent::Ellipse { .. }
                     | AnchorContent::RoundedRectangle { .. }
+                    | AnchorContent::Polygon { .. }
                     | AnchorContent::Line { .. } => "shape",
                 };
                 out.push(ObjectBox {

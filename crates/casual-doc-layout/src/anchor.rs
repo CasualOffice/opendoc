@@ -801,6 +801,49 @@ fn place_group_children(
                         fill: shape.fill.map(rgba),
                         stroke: shape_stroke(shape.stroke),
                     },
+                    ShapeGeometry::Triangle => AnchorContent::Polygon {
+                        points: vec![
+                            Point::new(
+                                rect.origin.x + Twip(rect.size.width.raw() / 2),
+                                rect.origin.y,
+                            ),
+                            Point::new(rect.right(), rect.bottom()),
+                            Point::new(rect.origin.x, rect.bottom()),
+                        ],
+                        fill: shape.fill.map(rgba),
+                        stroke: shape_stroke(shape.stroke),
+                    },
+                    ShapeGeometry::RightTriangle => AnchorContent::Polygon {
+                        points: vec![
+                            rect.origin,
+                            Point::new(rect.right(), rect.bottom()),
+                            Point::new(rect.origin.x, rect.bottom()),
+                        ],
+                        fill: shape.fill.map(rgba),
+                        stroke: shape_stroke(shape.stroke),
+                    },
+                    ShapeGeometry::Diamond => AnchorContent::Polygon {
+                        points: vec![
+                            Point::new(
+                                rect.origin.x + Twip(rect.size.width.raw() / 2),
+                                rect.origin.y,
+                            ),
+                            Point::new(
+                                rect.right(),
+                                rect.origin.y + Twip(rect.size.height.raw() / 2),
+                            ),
+                            Point::new(
+                                rect.origin.x + Twip(rect.size.width.raw() / 2),
+                                rect.bottom(),
+                            ),
+                            Point::new(
+                                rect.origin.x,
+                                rect.origin.y + Twip(rect.size.height.raw() / 2),
+                            ),
+                        ],
+                        fill: shape.fill.map(rgba),
+                        stroke: shape_stroke(shape.stroke),
+                    },
                     ShapeGeometry::Rectangle | ShapeGeometry::Other => AnchorContent::Rectangle {
                         fill: shape.fill.map(rgba),
                         stroke: shape_stroke(shape.stroke),

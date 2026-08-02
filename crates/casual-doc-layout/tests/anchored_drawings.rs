@@ -1569,6 +1569,108 @@ fn ellipse_and_rounded_rectangle_reach_distinct_display_primitives() {
     )));
 }
 
+#[test]
+fn angular_presets_reach_exact_polygon_display_primitives() {
+    let group_extent = Extent {
+        width_emu: 3 * 914_400,
+        height_emu: 914_400,
+    };
+    let child_extent = Extent {
+        width_emu: 914_400,
+        height_emu: 914_400,
+    };
+    let shape = |id, x_emu, geometry| {
+        GroupChild::Shape(GroupShape {
+            id: node(id),
+            offset: PointEmu { x_emu, y_emu: 0 },
+            extent: child_extent,
+            geometry,
+            preset: None,
+            adjustments: Vec::new(),
+            fill: Some(Rgba {
+                r: 60,
+                g: 120,
+                b: 180,
+                a: 255,
+            }),
+            stroke: None,
+        })
+    };
+    let group = InlineNode::Group(WordprocessingGroup {
+        id: node(70),
+        anchor: Some(page_anchor(914_400, 914_400)),
+        relative_height: Some(10),
+        extent: group_extent,
+        transform: GroupTransform {
+            offset: PointEmu { x_emu: 0, y_emu: 0 },
+            extent: group_extent,
+            child_offset: PointEmu { x_emu: 0, y_emu: 0 },
+            child_extent: group_extent,
+        },
+        children: vec![
+            shape(71, 0, ShapeGeometry::Triangle),
+            shape(72, 914_400, ShapeGeometry::RightTriangle),
+            shape(73, 2 * 914_400, ShapeGeometry::Diamond),
+        ],
+    });
+    let paragraph = BlockNode::Paragraph(Paragraph {
+        id: node(10),
+        properties: ParagraphProperties::default(),
+        inlines: vec![run(11, "Body"), group],
+    });
+    let document = Document::new(node(1), vec![paragraph], Definitions::default()).unwrap();
+
+    let shaper = ParleyShaper::new();
+    let cfg = config();
+    let galley = build_galley(&document, &shaper, cfg.content_area().size.width);
+    let mut layout = paginate(&galley, &cfg);
+    place_floats(&mut layout, &document, &shaper, &cfg);
+
+    let polygons: Vec<&Vec<Point>> = layout.pages[0]
+        .anchored
+        .iter()
+        .filter_map(|anchor| match &anchor.content {
+            AnchorContent::Polygon { points, .. } => Some(points),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(polygons.len(), 3);
+    assert_eq!(
+        polygons[0],
+        &vec![
+            Point::new(Twip(2_160), Twip(1_440)),
+            Point::new(Twip(2_880), Twip(2_880)),
+            Point::new(Twip(1_440), Twip(2_880)),
+        ]
+    );
+    assert_eq!(
+        polygons[1],
+        &vec![
+            Point::new(Twip(2_880), Twip(1_440)),
+            Point::new(Twip(4_320), Twip(2_880)),
+            Point::new(Twip(2_880), Twip(2_880)),
+        ]
+    );
+    assert_eq!(
+        polygons[2],
+        &vec![
+            Point::new(Twip(5_040), Twip(1_440)),
+            Point::new(Twip(5_760), Twip(2_160)),
+            Point::new(Twip(5_040), Twip(2_880)),
+            Point::new(Twip(4_320), Twip(2_160)),
+        ]
+    );
+
+    let list = compose_page(&layout.pages[0]);
+    assert_eq!(
+        list.items
+            .iter()
+            .filter(|item| matches!(item, PaintItem::Polygon { .. }))
+            .count(),
+        3
+    );
+}
+
 // --- Footer page-number fields inside text boxes (SDS regression) ----------
 
 /// A field inline node carrying a *stale* cached result — the baked value Word

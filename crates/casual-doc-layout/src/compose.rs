@@ -262,6 +262,20 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor) {
                 }),
             });
         }
+        AnchorContent::Polygon {
+            points,
+            fill,
+            stroke,
+        } => {
+            list.push(PaintItem::Polygon {
+                points: points.clone(),
+                fill: fill.map(rgba),
+                stroke: stroke.map(|s| Stroke {
+                    color: rgba(s.color),
+                    width: stroke_px(s.width),
+                }),
+            });
+        }
         AnchorContent::Line { from, to, stroke } => {
             list.push(PaintItem::Line {
                 from: *from,

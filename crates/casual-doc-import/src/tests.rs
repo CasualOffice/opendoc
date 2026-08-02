@@ -2362,6 +2362,29 @@ fn standalone_anchored_ellipse_is_preserved_as_a_group_of_one() {
 }
 
 #[test]
+fn angular_shape_presets_are_modeled_explicitly() {
+    use casual_doc_model::v1::{GroupChild, ShapeGeometry};
+
+    for (preset, expected) in [
+        ("triangle", ShapeGeometry::Triangle),
+        ("rtTriangle", ShapeGeometry::RightTriangle),
+        ("diamond", ShapeGeometry::Diamond),
+    ] {
+        let geometry = format!(r#"<a:prstGeom prst="{preset}"><a:avLst/></a:prstGeom>"#);
+        let import = import_standalone_drawingml_shape(&geometry);
+        let InlineNode::Group(group) = &paragraph(&import, 0).inlines[0] else {
+            panic!("expected a standalone {preset} group");
+        };
+        let GroupChild::Shape(shape) = &group.children[0] else {
+            panic!("expected a standalone {preset} shape");
+        };
+        assert_eq!(shape.geometry, expected, "preset {preset}");
+        assert_eq!(shape.preset, None, "typed preset does not need retention");
+        assert!(!features(&import).contains(&"prstGeom"));
+    }
+}
+
+#[test]
 fn unknown_preset_and_adjustment_guides_are_retained() {
     use casual_doc_model::v1::{GroupChild, ShapeAdjustment, ShapeGeometry};
 

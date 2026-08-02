@@ -2358,7 +2358,14 @@ impl BodyParser<'_> {
                 let invalid_unknown_preset = preset.as_deref().is_some_and(|value| {
                     !matches!(
                         value,
-                        "rect" | "roundRect" | "ellipse" | "line" | "straightConnector1"
+                        "rect"
+                            | "roundRect"
+                            | "ellipse"
+                            | "triangle"
+                            | "rtTriangle"
+                            | "diamond"
+                            | "line"
+                            | "straightConnector1"
                     ) && (value.is_empty() || value.len() > MAX_SHAPE_PRESET_BYTES)
                 });
                 if let Some(shape) = self.pending_shape.as_mut() {
@@ -2366,6 +2373,9 @@ impl BodyParser<'_> {
                         Some("rect") => (ShapeGeometry::Rectangle, None),
                         Some("roundRect") => (ShapeGeometry::RoundRectangle, None),
                         Some("ellipse") => (ShapeGeometry::Ellipse, None),
+                        Some("triangle") => (ShapeGeometry::Triangle, None),
+                        Some("rtTriangle") => (ShapeGeometry::RightTriangle, None),
+                        Some("diamond") => (ShapeGeometry::Diamond, None),
                         Some("line" | "straightConnector1") => (ShapeGeometry::Line, None),
                         Some(value)
                             if !value.is_empty() && value.len() <= MAX_SHAPE_PRESET_BYTES =>

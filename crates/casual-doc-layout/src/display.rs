@@ -97,6 +97,15 @@ pub enum PaintItem {
         /// Stroke, if outlined.
         stroke: Option<Stroke>,
     },
+    /// A filled and/or stroked closed polygon.
+    Polygon {
+        /// Vertices in path order, in page-local twips.
+        points: Vec<Point>,
+        /// Fill color, if filled.
+        fill: Option<Color>,
+        /// Stroke, if outlined.
+        stroke: Option<Stroke>,
+    },
     /// An image blit (a `Definitions.media` reference), placed in `rect`. The
     /// backend resolves the bytes; layout carries only the reference and box.
     Image {

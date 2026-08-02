@@ -91,7 +91,7 @@ pub struct AnchorStroke {
     pub width: Twip,
 }
 
-/// What a [`PlacedAnchor`] paints: an image, a filled/stroked rectangle, a line/
+/// What a [`PlacedAnchor`] paints: an image, a filled/stroked shape, a line/
 /// connector, or a text box (flowed block content with an optional fill/border).
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub enum AnchorContent {
@@ -127,6 +127,16 @@ pub enum AnchorContent {
         /// The outline, if stroked.
         stroke: Option<AnchorStroke>,
     },
+    /// A closed polygon whose page-local vertices are already resolved.
+    Polygon {
+        /// Vertices in path order. Typed presets currently produce three or four
+        /// points; arbitrary package-provided paths never enter this primitive.
+        points: Vec<Point>,
+        /// The fill color (RGBA), if filled.
+        fill: Option<[u8; 4]>,
+        /// The outline, if stroked.
+        stroke: Option<AnchorStroke>,
+    },
     /// A straight line / connector, from `from` to `to` (page-local twips).
     Line {
         /// The line's start point.
@@ -153,7 +163,7 @@ pub enum AnchorContent {
 
 /// A floating object resolved to its absolute rectangle and stacking key on a
 /// page: an anchored picture, a floating text box, or a group child (picture,
-/// text box, rectangle, or connector). Unlike a [`PlacedFragment`], a float does
+/// text box, shape, or connector). Unlike a [`PlacedFragment`], a float does
 /// not participate in the flow — it is placed at the position computed from its
 /// anchor (and, for a group child, the group transform), then painted in z-order
 /// by [`compose_page`](crate::compose::compose_page).

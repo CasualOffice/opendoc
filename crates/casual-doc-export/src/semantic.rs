@@ -4617,6 +4617,9 @@ fn geometry_prst(geometry: ShapeGeometry) -> &'static str {
         ShapeGeometry::Rectangle => "rect",
         ShapeGeometry::RoundRectangle => "roundRect",
         ShapeGeometry::Ellipse => "ellipse",
+        ShapeGeometry::Triangle => "triangle",
+        ShapeGeometry::RightTriangle => "rtTriangle",
+        ShapeGeometry::Diamond => "diamond",
         ShapeGeometry::Line => "line",
         ShapeGeometry::Other => "rect",
     }
