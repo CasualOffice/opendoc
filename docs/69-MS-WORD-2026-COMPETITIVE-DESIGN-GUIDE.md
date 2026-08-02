@@ -1,7 +1,7 @@
 # 69 — Editor Shell Competitive Design Guide (Reference Prototype, Icons, Typography)
 
 Status: accepted direction; requested shell, typography, and icon slices implemented
-Date: 2026-07-30 (revised same day — re-grounded per owner feedback, see §0)
+Date: 2026-07-30 (revised 2026-08-02 for the implemented header/menu/dialog system)
 Depends on / extends: [doc 63](63-EDITOR-UI-UX-DESIGN-SYSTEM.md) (shell & design system, accepted
 direction), [doc 64](64-EDITOR-TOOLBAR-RIBBON-DESIGN.md) (toolbar/ribbon competitive read), [doc
 67](67-EDITOR-UX-GAP-ANALYSIS.md) (authoritative P0–P3 gap table), [doc 68](68-COMMENTS-AND-SUGGESTIONS-DESIGN.md)
@@ -48,9 +48,9 @@ its own orange, so exact reference hex values are not proposed for adoption anyw
 
 | Region | Reference (exact, from source) | OpenDoc today | Note |
 |---|---|---|---|
-| Title bar | flex row, `padding:7px 14px 5px`; 26×26 logo (`rx:9`); doc-title input `font-size:15px/500`; saved-indicator `12px` text + 16px icon | 44px `.bar`, doc-title `13px/550` | Comparable height/density; OpenDoc's is a touch larger overall (44px total vs ~top-bar content ~34px), reasonable given OpenDoc's bar also hosts Open/Save/Settings buttons the reference splits into a separate row. |
-| Menu row (File/Edit/View/Insert/Format/Tools/Help) | `font-size:13px`, `padding:2px 8px`, `border-radius:4px`, directly under the title row | absent | Still a real gap (doc 64 §4 item 6 already defers this); now has an exact micro-spec if/when built. |
-| **⌘K search trigger** | a real, visible button: `height:34px; border:1px solid #dadce0; border-radius:8px; background:#fff`, icon (`search`, 17px) + "Search" label (13px) + kbd chip (`⌘K`, 10.5px/600, bg `#f1f3f4`, radius 4px, padding `1px 5px`) — sits in the title bar, right side, before the avatar stack | Implemented as `#searchTrigger`, opening the existing command palette with ARIA state and focus restoration | Closed. The trigger collapses to its icon at narrower widths without introducing page overflow. |
+| Title bar | flex row, `padding:7px 14px 5px`; 26×26 logo (`rx:9`); doc-title input `font-size:15px/500`; saved-indicator `12px` text + 16px icon | `.bar` is a 58px two-row title/menu block with editable title and honest `Opened`/`Edited`/`Downloaded` local state | Aligned composition with room for real host-local actions. The taller single container owns both reference rows and remains width-contained at 480px. |
+| Menu row (File/Edit/View/Insert/Format/Tools/Help) | `font-size:13px`, `padding:2px 8px`, `border-radius:4px`, directly under the title row | Implemented from the shared command registry | Closed. Menus expose real categorized commands, disabled reasons, keyboard traversal, focus restoration, and a locally scrollable narrow layout. |
+| **Command search trigger** | a real, visible 34px Search button labelled `⌘K` | Implemented as `#searchTrigger`, labelled `⌘⇧P`, opening the command palette with ARIA state and focus restoration | Closed with an intentional shortcut difference: `⌘K` is reserved for standard link authoring. The trigger compacts at narrower widths without page overflow. |
 | Ribbon container | `background:#fff; border:1px solid #dadce0; border-radius:9px; padding:6px 4px; min-height:76px` | `.ribbon` is an inset white card with a 1px border and 9px radius | Aligned; OpenDoc retains its own orange accent and working tab set. |
 | Ribbon tabs | `font-size:13.5px; padding:7px 13px 8px`; active = accent color + `font-weight:600` + `border-bottom:2.5px solid` accent | `.ribbon-tab` uses 13.5px text and the existing accent underline | Aligned. |
 | Ribbon groups | vertical stack (icon row(s) + bottom-aligned caption), `gap:1px` between buttons in a row, caption `font-size:10.5px; color:#80868b`, **sentence case, not uppercase** (e.g. "Clipboard", "Font", "Paragraph") | `.rgroup-label` uses 10.5px/500 sentence-case captions | Aligned. Labels describe the commands actually present; Undo/Redo is not mislabeled “Clipboard.” |
@@ -59,8 +59,8 @@ its own orange, so exact reference hex values are not proposed for adoption anyw
 | Rail panel | `width:236px`; header `padding:13px 14px 10px`, title `15px/600`, close icon 18px; a built-in **search-this-document** box (distinct from the ⌘K command palette) when the "Search" rail item is active | `#outlinePanel` — similar header pattern, no in-panel document-search mode | The reference's rail unifies "find things in this doc" (headings via Outline, text via Search) in one panel; OpenDoc's ⌘F find is a separate floating panel instead. Both are reasonable structures — flagging as a design choice to make consciously if/when a rail "Search" destination is ever added, not as an error. |
 | Context panel | `width:314px`; 3 tabs (Comments/Properties/Styles), tab style `13.5px`, active `font-weight:600` + `border-bottom:2.5px` accent (same pattern as ribbon tabs) | **does not exist** — no right `<aside>` in `editor.html` | Still 0% built (doc 63 §2 region 4); this is the single largest unbuilt region, now with an exact width/tab spec ready for whenever it's scheduled (doc 68 already specs the Comments tab's content in detail). |
 | Floating selection toolbar | dark pill: `background:#202124; border-radius:9px; padding:4px 6px`, buttons `height:30px`, icons 16px on `#e8eaed`; B/I/U + divider + color/highlight + divider + link/comment | `.sel-toolbar` now uses the dark-pill treatment for its real B/I/U/S, color, and highlight controls | Visual treatment aligned; unimplemented link/comment commands were not added. |
-| Status bar | `height:30px; padding:0 14px; font-size:12px`; page icon+label, **words**, **characters** (not paragraphs), language dropdown, a mode chip (Editing/Viewing), a panel-toggle icon, zoom `−`/`%`/`+` (22×22 buttons, 4px radius), divider, "Synced" (`cloud_done`, green) | `.footer` is 30px/12px on the neutral canvas; words · paragraphs (left), Page X of Y · zoom (right) | Spatial treatment aligned. Language/mode/sync remain correctly absent because those states are not yet modeled. |
-| Find bar | floating card, `top:150px; right:34px; border-radius:10px`, icon+input(13px)+match-count+prev/next+close | `.find-panel` — floating card, `top:84px; right:18px; border-radius:var(--radius)` (8px) | Same anchoring pattern (top-right floating card) — already aligned structurally; only the exact offset/radius differ, not worth chasing. |
+| Status bar | `height:30px; padding:0 14px; font-size:12px`; page icon+label, **words**, **characters** (not paragraphs), language dropdown, a mode chip (Editing/Viewing), a panel-toggle icon, zoom `−`/`%`/`+` (22×22 buttons, 4px radius), divider, "Synced" (`cloud_done`, green) | `.footer` is 30px/12px on the neutral canvas; words · paragraphs, Page X/Y, synchronized Editing/Suggesting/Viewing control, and zoom | Spatial treatment and real mode state are aligned. Language and host sync remain absent because they are not modeled. |
+| Find bar | floating card, `top:150px; right:34px; border-radius:10px`, icon+input(13px)+match-count+prev/next+close | 440px top-right `.find-panel` with title/status, search navigation, wrapping scopes, replacement field, and actions | The repaired card keeps the reference anchoring but accommodates the real feature set without a cramped one-row grid. It is viewport-inset at 480px, and Previous/Next center the selected match on the canvas. |
 | Command palette | **centered-top modal**: `position:fixed;inset:0` backdrop, panel `width:560px; border-radius:14px`, top `padding-top:120px`, icon 20px + input 15px + "ESC" chip | `#cmdPalette` — centered modal overlay | **Correction to this doc's earlier screenshot-based read**: the annotated `template.png` crop made the palette look bottom-right-docked; the actual source shows it's a centered-top modal with a dimmed backdrop — i.e. essentially the **same** pattern OpenDoc already uses. Not a gap; the earlier note in this doc that these "differ" was wrong and is corrected here. |
 
 ### 1.3 Word 2026, briefly, as secondary context
@@ -212,21 +212,22 @@ recommendation below is not "shrink toward Word's leaner scale" — it's "make O
 individually consistent," full stop, since neither external reference actually runs a leaner scale
 in practice.
 
-### 3.2 OpenDoc's current type scale — as actually used
+### 3.2 OpenDoc's chrome type scale — as actually used
 
 `webapp/src/style.css` now uses self-hosted `Inter` first, followed by the native system-UI
 fallback stack, at a `13px/1.5` body base.
 
 | Size | Where used | Weight(s) used there |
 |---|---|---|
-| 9px | ruler tick numbers, tab-stop glyph | 400 (numbers), 800 (tab glyph) |
-| 10–10.5px | `.rgroup-label` (sentence-case ribbon captions), `.testing` badge, tab-corner glyph | 500–700 |
-| 11px | `.settings-label`, `.menu-heading` (popover section captions), `.rgroup-hint`, `.oss` | 700 (labels), 400 (hint/oss) |
-| 12px | footer/status bar, cmd-list group/hint text, find-status, zoom select | 400–550 |
-| 13px | body base, `.btn`, `.doc-title`, `.ribbon-tab`, `.menu-item`, `.cmd-item`, find-panel inputs | 550 |
-| 14px | `.ctl.swatch` "A" glyph | 700 |
-| 15px | `.brand .mark`, `.cmd-search input` | 600–700 |
-| 16/18/20px | compact, standard-control, and rail Material Symbols (icon scale, not text) | 400 |
+| 9px `--fs-micro` | ruler ticks and dense timestamps | 400–700 |
+| 10px `--fs-caption` | uppercase/tertiary labels | 600–700 |
+| 10.5px `--fs-ribbon-caption` | reference-aligned ribbon group captions and shortcut hints | 500–600 |
+| 12px `--fs-small` | status, secondary text, Find status/options, review cards | 400–600 |
+| 13px `--fs-body` | default chrome, buttons, menus, and fields | 400–600 |
+| 13.5px `--fs-ribbon-tab` | reference-aligned ribbon tabs | 600 |
+| 15px `--fs-medium` | compact panel titles and command search | 600–700 |
+| 16px `--fs-title` | modal dialog titles | 650 |
+| 16/18/20px icon tokens | compact, control, and rail Material Symbols (not text) | 400 |
 
 The concrete inconsistency worth fixing isn't the step count (§3.1 shows the reference has a
 similarly dense scale) — it's that **conceptually identical elements use different values**:
@@ -236,20 +237,11 @@ different roles now rather than accidental variants of one role.
 
 ### 3.3 Recommendation — consolidate to a named scale, don't shrink further
 
-```
---fs-micro:   9px   /* ruler ticks, tab-stop glyphs — leave as-is, already dense */
---fs-caption: 10px  /* ALL uppercase "eyebrow" labels: rgroup-label, settings-label,
-                        menu-heading, .oss — currently split across 10/11px, pick one */
---fs-small:   12px  /* status bar, cmd-list secondary text, find-status, zoom % */
---fs-body:    13px  /* default chrome: buttons, menu items, ribbon tabs, inputs — the
-                        existing body base, unchanged */
---fs-medium:  15px  /* command palette search input, brand wordmark */
-```
-
-Collapses 8 raw values to 5 named ones; moves `.settings-label`/`.menu-heading` onto the same
-`--fs-caption` as `.rgroup-label`. Weight collapses toward 2–3 steps (600 = default UI emphasis,
-700 = caption/label emphasis); `.btn`'s 550, `.acc`'s 650, and the tab-glyph's 800 are minor
-outliers with no clear rationale and fold into 600/700 without visible regression.
+The base named scale remains 9/10/12/13/15/16px. Two reference-specific tokens preserve the
+accepted 10.5px ribbon captions and 13.5px ribbon tabs instead of scattering those literals.
+Document style-preview cards deliberately retain their represented style sizes; they preview
+document formatting and are not ordinary chrome text. UI emphasis converges on 600, with 700
+reserved for labels and strong identities.
 
 ### 3.4 Adopt Inter without adding a network dependency
 
@@ -264,8 +256,9 @@ or affecting the separate document-content font pipeline.
 ### 4.1 Spacing / sizing grid
 
 OpenDoc's shell uses named control-height tokens: 30px (`--h-control`), 34px
-(`--h-search`/`--h-tab`), 44px (`--h-rail-control`/`--h-header`), and the reference-aligned 30px
-`--h-footer`. Equivalent roles no longer repeat unrelated bare height literals.
+(`--h-search`/`--h-tab` and dialog actions), 36px (`--h-field`), 44px
+(`--h-rail-control`), 58px (`--h-header`, containing the two title/menu rows), and the
+reference-aligned 30px `--h-footer`. Equivalent roles no longer repeat unrelated literals.
 
 ### 4.2 Icon grid
 
@@ -275,14 +268,11 @@ eight icon sizes while retaining its outlined visual language.
 
 ### 4.3 Elevation / radius conventions for floating surfaces
 
-`--radius` (8px) and `--radius-sm` (7px) exist but drift on floating surfaces: `.settings-panel`
-(12px), `.context-menu` (10px), `.cmd-box` (12px), `.find-panel` (correctly `var(--radius)`, 8px).
-For context: the reference itself is **not** more disciplined here either — its own radii span
-6px (buttons), 8px (dropdown menus), 9px (ribbon container, rail buttons), 10px (find bar), 11px
-(comment cards), 14px (command palette) — six different values. Neither external source justifies
-chasing a specific number; *recommend* OpenDoc pick **its own** clean `--radius-popover` (10px,
-splitting its own current 8/10/12 spread) and one `--shadow-popover` token, purely for internal
-consistency. Pure refactor, no functional change.
+Floating surfaces now use `--radius-popover` (10px) and `--shadow-popover`; centered modal cards
+use `--radius-dialog` (12px) and `--shadow-dialog`. Dialogs choose only compact 380px, standard
+640px, or wide 760px widths and share 30px Close, 36px fields, and 34px actions. The command
+palette may retain its larger product-specific silhouette, but feature dialogs and ordinary
+popovers no longer invent one-off geometry.
 
 ### 4.4 Contextual tab styling — no change recommended
 
@@ -321,18 +311,18 @@ background-swap pattern — `#e8f0fe` active bg, no elaborate depth effect) sugg
 
 ## 6. Remaining product questions
 
-The owner request resolves the font, icon, rounded-ribbon, group-caption, status-surface, and dark
-selection-toolbar direction. The remaining question is scope rather than styling: the menu row,
-Clipboard commands, Styles gallery, right context panel, additional rail destinations, and richer
-status states each require real underlying behavior and their own design/build slice. They remain
-deferred per doc 63 §0/§6 instead of being copied as inert reference chrome.
+The owner request resolves the font, icon, rounded-ribbon, group-caption, menu row, Clipboard,
+Styles gallery, mode control, dialog geometry, Find/Replace, status-surface, and dark
+selection-toolbar direction. Remaining scope is additional rail destinations, a unified right
+context panel, language/host-sync status, and collaboration-only chrome. Those still require real
+underlying behavior and remain gated by doc 63 §0 rather than copied as inert reference UI.
 
 ## 7. Implementation status / next steps
 
 The interrupted frontend pass was recovered and completed on 2026-07-30. It remains
 functional-only and changes no engine or document-model behavior:
 
-1. **Slice A — done:** the 34px visible Search/⌘K control opens the existing real command
+1. **Slice A — done:** the 34px visible Search/⌘⇧P control opens the existing real command
    palette, exposes dialog state through ARIA, and restores focus on close.
 2. **Slice B — done:** named typography, control-height, popover-radius, and popover-shadow
    tokens replace equivalent one-off shell values.
@@ -341,9 +331,15 @@ functional-only and changes no engine or document-model behavior:
    both routes load the local faces and every built chrome icon is migrated.
 5. **Slice E — done:** the working floating selection toolbar uses the reference's dark pill.
 6. **Slice F — done:** the functional Outline rail destination has a visible 9px caption.
-7. **Slices G+ (each its own doc-63-§6-style phase)** — menu row, Clipboard group, Styles-as-gallery,
-   the right context panel, remaining rail destinations, richer status bar. Each needs its own
-   design note before a build PR, per doc 63 §6's existing convention; not re-planned here.
+7. **Slice G — done:** the two-row title block and File/Edit/View/Insert/Format/Tools/Help menus
+   expose real shared-registry commands and keyboard traversal.
+8. **Slice H — done:** Clipboard, full-width Styles, Editing, and three-state mode controls follow
+   the accepted ribbon composition and overflow contract.
+9. **Slice I — done:** modal geometry is standardized at 380/640/760px with shared type, field,
+   action, close, radius, and elevation tokens. Find/Replace is a structured responsive card;
+   Previous/Next centers the selected engine highlight in the canvas viewport.
+10. **Later slices:** unified right context panel, additional rail destinations, language/host-sync
+    status, and collaboration chrome remain behavior-gated.
 
 The completion pass also removes the accidental "Clipboard" label from an Undo/Redo-only group,
 keeps the no-document header limited to useful actions, and bounds the header at 390px/720px so
