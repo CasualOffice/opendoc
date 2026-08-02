@@ -22,16 +22,14 @@ test("create a checklist, click its checkbox marker to toggle checked", async ({
   await expect(marker).toHaveAttribute("aria-checked", "false");
 
   // Clicking the marker toggles the item to checked (model flips, re-renders).
-  const box = await marker.boundingBox();
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await marker.click();
   await expect(page.locator(".overlay .checklist-marker").first()).toHaveAttribute(
     "aria-checked",
     "true",
   );
 
   // And back to unchecked.
-  const box2 = await page.locator(".overlay .checklist-marker").first().boundingBox();
-  await page.mouse.click(box2.x + box2.width / 2, box2.y + box2.height / 2);
+  await page.locator(".overlay .checklist-marker").first().click();
   await expect(page.locator(".overlay .checklist-marker").first()).toHaveAttribute(
     "aria-checked",
     "false",
@@ -58,8 +56,9 @@ test("toggling a checklist item is blocked in Viewing mode", async ({
   // Viewing mode is read-only: the checkbox does not toggle and the read-only
   // status is shown (consistent with the other list edits).
   await setReviewMode(page, "viewing");
-  const box = await marker.boundingBox();
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  // Use the live locator so an atomic async font render may replace the page
+  // between actionability checks without leaving a stale element handle.
+  await marker.click();
   await expect(page.locator("#status")).toContainText("read-only");
   await expect(page.locator(".overlay .checklist-marker").first()).toHaveAttribute(
     "aria-checked",
