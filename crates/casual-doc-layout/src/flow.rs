@@ -24,13 +24,14 @@ use casual_doc_model::v1::{
     Definitions, Document, Drawing, DrawingAnchor, DropCapFrame, DropCapMode, EmbeddedKind,
     EmbeddedObject, Extent, FontScheme, FrameWrap, HeightRule, HighlightColor, HorizontalAlign,
     HorizontalAnchor, HorizontalPosition, HorizontalRule as ModelHorizontalRule,
-    HorizontalRuleAlign, Indentation, InlineNode, LevelSuffix, LineRule, MathExpression, MediaId,
-    MediaReference, NoteKind, NoteReference, Paragraph, ParagraphProperties, ReviewProjection,
-    Rgba, RunFontHint, RunProperties, SchemeColor, SectionBoundary, SectionId, SectionType,
-    ShapeStroke, StyleId, Symbol, TabAlignment, TabLeader, TabStop, Table, TableBorders, TableCell,
-    TableLayout, TableRow, TableRowProperties, TextBox, TextBoxAutoFit, TextBoxBodyProperties,
-    TextBoxHorizontalOverflow, TextBoxVerticalAnchor, TextBoxVerticalOverflow, ThemeColorRef,
-    VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition, WrapMode,
+    HorizontalRuleAlign, Indentation, InlineNode, InlineSdt, LevelSuffix, LineRule, MathExpression,
+    MediaId, MediaReference, NoteKind, NoteReference, Paragraph, ParagraphProperties,
+    ReviewProjection, Rgba, RunFontHint, RunProperties, SchemeColor, SdtControlData,
+    SectionBoundary, SectionId, SectionType, ShapeStroke, StyleId, Symbol, TabAlignment, TabLeader,
+    TabStop, Table, TableBorders, TableCell, TableLayout, TableRow, TableRowProperties, TextBox,
+    TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxVerticalAnchor,
+    TextBoxVerticalOverflow, ThemeColorRef, VerticalAlignment, VerticalAnchor, VerticalMerge,
+    VerticalPosition, WrapMode,
 };
 
 use crate::block::{
@@ -2427,7 +2428,17 @@ fn collect_items_with_measure<'a>(
             }
             InlineNode::Revision(_) => {}
             InlineNode::Sdt(sdt) => {
-                collect_items_with_measure(&sdt.inlines, out, shaper, width, ctx, intrinsic)
+                // A native checkbox content control (`w14:checkbox`) declares its
+                // checked/unchecked glyphs, but producers routinely leave the
+                // cached `sdtContent` run at the unchecked box even when
+                // `w14:checked=1`, so the state must drive the painted glyph
+                // (docs/60 §8 "Control appearance"). Otherwise the SDT is a
+                // transparent range wrapper and recurses.
+                if let Some(glyph) = sdt_checkbox_glyph_run(sdt, ctx) {
+                    out.push(FlowItem::Run(glyph));
+                } else {
+                    collect_items_with_measure(&sdt.inlines, out, shaper, width, ctx, intrinsic);
+                }
             }
             InlineNode::Math(math) => {
                 let base = styled_owned_run("x".to_owned(), &RunProperties::default(), ctx);
@@ -4309,6 +4320,39 @@ fn build_styled_run<'a>(
 /// (Wingdings/Symbol/…) is intentionally **not**
 /// requested — the mapped Unicode char must resolve against a covering text face,
 /// not the (unbundled, glyph-incompatible) symbol font.
+/// If `sdt` is a checkbox content control whose content is a single glyph run,
+/// synthesize the state-driven glyph (`w14:checkedState` / `w14:uncheckedState`)
+/// instead of trusting the cached `sdtContent` run — so a `w14:checked=1` box
+/// paints its checked glyph even when the producer left the cached run unchecked
+/// (docs/60 §8). Returns `None` for a non-checkbox SDT, a checkbox that declares
+/// no glyph for the current state, or content that is not exactly one run (the
+/// caller keeps the transparent recurse, so nothing is dropped). The cached
+/// run's properties are reused so the glyph keeps its authored size/color, with
+/// the checkbox symbol's own font.
+fn sdt_checkbox_glyph_run(sdt: &InlineSdt, ctx: &mut FlowCtx) -> Option<StyledRun<'static>> {
+    let Some(SdtControlData::Checkbox(checkbox)) = sdt.properties.data.as_ref() else {
+        return None;
+    };
+    // Only replace a single-run content (the box glyph); anything richer keeps
+    // its own recurse so no authored content is lost.
+    let [InlineNode::Run(cached)] = sdt.inlines.as_slice() else {
+        return None;
+    };
+    let state = if checkbox.checked {
+        checkbox.checked_state.as_ref()
+    } else {
+        checkbox.unchecked_state.as_ref()
+    }?;
+    let code = u32::from_str_radix(state.val.trim(), 16).ok()?;
+    let symbol = Symbol {
+        id: cached.id,
+        font: state.font.clone().unwrap_or_default(),
+        char: code,
+        properties: cached.properties.clone(),
+    };
+    Some(symbol_glyph_run(&symbol, ctx))
+}
+
 fn symbol_glyph_run(symbol: &Symbol, ctx: &mut FlowCtx) -> StyledRun<'static> {
     let glyph = crate::symbol_map::resolve_symbol(&symbol.font, symbol.char);
     let effective = ctx.cascade.resolve_run_in_table(
@@ -6808,6 +6852,131 @@ mod tests {
         assert_eq!(
             &*runs[1].text, "\u{25A1}",
             "an unmapped symbol falls back to a visible placeholder, not nothing"
+        );
+    }
+
+    #[test]
+    fn a_native_sdt_checkbox_paints_its_state_glyph_not_the_cached_one() {
+        use casual_doc_model::v1::{
+            InlineSdt, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind,
+            SdtProperties,
+        };
+
+        fn checkbox_sdt(
+            checked: bool,
+            checked_val: &str,
+            font: &str,
+            unchecked_val: Option<&str>,
+            cached_glyph: &str,
+        ) -> InlineNode {
+            InlineNode::Sdt(InlineSdt {
+                id: NodeId::from_parts(11, 1).unwrap(),
+                properties: SdtProperties {
+                    control_kind: Some(SdtControlKind::Checkbox),
+                    data: Some(SdtControlData::Checkbox(SdtCheckbox {
+                        checked,
+                        checked_state: Some(SdtCheckboxSymbol {
+                            val: checked_val.to_owned(),
+                            font: Some(font.to_owned()),
+                        }),
+                        unchecked_state: unchecked_val.map(|v| SdtCheckboxSymbol {
+                            val: v.to_owned(),
+                            font: Some(font.to_owned()),
+                        }),
+                    })),
+                    ..SdtProperties::default()
+                },
+                inlines: vec![InlineNode::Run(Run {
+                    id: NodeId::from_parts(11, 2).unwrap(),
+                    properties: RunProperties::default(),
+                    text: cached_glyph.to_owned(),
+                })],
+            })
+        }
+
+        let definitions = Definitions::default();
+        let glyph = |inline: InlineNode| -> String {
+            let items = collected_items(&definitions, std::slice::from_ref(&inline));
+            let runs: Vec<_> = items
+                .iter()
+                .filter_map(|item| match item {
+                    FlowItem::Run(run) => Some(run.text.to_string()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(runs.len(), 1, "a checkbox emits exactly one glyph run");
+            runs.into_iter().next().unwrap()
+        };
+
+        // Checked → the `checkedState` glyph, even though the cached content run
+        // is the unchecked box a producer left behind.
+        assert_eq!(
+            glyph(checkbox_sdt(
+                true,
+                "2612",
+                "MS Gothic",
+                Some("2610"),
+                "\u{2610}"
+            )),
+            "\u{2612}",
+            "a checked SDT checkbox paints its checked glyph, not the cached unchecked one"
+        );
+        // Unchecked → the `uncheckedState` glyph.
+        assert_eq!(
+            glyph(checkbox_sdt(
+                false,
+                "2612",
+                "MS Gothic",
+                Some("2610"),
+                "\u{2612}"
+            )),
+            "\u{2610}",
+            "an unchecked SDT checkbox paints its unchecked glyph"
+        );
+        // The same checkbox flips glyph purely on `checked`, independent of the
+        // cached content run (here a stale checked box for the unchecked state).
+        assert_eq!(
+            glyph(checkbox_sdt(true, "2611", "MS Gothic", Some("2610"), "z")),
+            "\u{2611}",
+            "checked state selects checkedState even when the cached glyph is unrelated"
+        );
+    }
+
+    #[test]
+    fn an_sdt_checkbox_without_declared_glyphs_keeps_its_cached_content() {
+        use casual_doc_model::v1::{
+            InlineSdt, SdtCheckbox, SdtControlData, SdtControlKind, SdtProperties,
+        };
+        let definitions = Definitions::default();
+        let sdt = InlineNode::Sdt(InlineSdt {
+            id: NodeId::from_parts(12, 1).unwrap(),
+            properties: SdtProperties {
+                control_kind: Some(SdtControlKind::Checkbox),
+                data: Some(SdtControlData::Checkbox(SdtCheckbox {
+                    checked: true,
+                    checked_state: None,
+                    unchecked_state: None,
+                })),
+                ..SdtProperties::default()
+            },
+            inlines: vec![InlineNode::Run(Run {
+                id: NodeId::from_parts(12, 2).unwrap(),
+                properties: RunProperties::default(),
+                text: "\u{2611}".to_owned(),
+            })],
+        });
+        let items = collected_items(&definitions, std::slice::from_ref(&sdt));
+        let runs: Vec<_> = items
+            .iter()
+            .filter_map(|item| match item {
+                FlowItem::Run(run) => Some(run.text.to_string()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            runs,
+            vec!["\u{2611}".to_string()],
+            "a checkbox with no declared state glyph keeps its transparent recurse"
         );
     }
 
