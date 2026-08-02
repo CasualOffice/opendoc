@@ -5001,6 +5001,56 @@ impl WasmDocument {
                 .apply_action_caret_as(vec![operation], Pos::new(node, start), HistoryKind::Review)
                 .map_err(to_js);
         }
+        // docs/86 decision 2: a mixed delete (the author's own pending insertions
+        // plus accepted text) strips the not-yet-accepted insertions outright,
+        // then suggests-deletion of the accepted remainder — which is contiguous
+        // once the insertions are removed. A range with no own insertion, or one
+        // holding another author's revision, returns None and falls through to
+        // the plain deletion path below (unchanged).
+        {
+            let mut mixed = review_paragraph_body(&self.document, node).map_err(to_js)?;
+            if let Some(removed) =
+                strip_authored_insertions_in_range(&mut mixed, node, start, end, author.as_deref())
+            {
+                let new_end = end.saturating_sub(removed);
+                if new_end > start {
+                    let revision = self
+                        .edit_ids
+                        .next_id()
+                        .map_err(|_| to_js("id space exhausted".to_string()))?;
+                    let revision_id = self.revision_ids.allocate().map_err(to_js)?;
+                    if !wrap_review_deletion(
+                        &mut mixed,
+                        node,
+                        start,
+                        new_end,
+                        Revision {
+                            id: revision,
+                            kind: RevisionKind::Deletion,
+                            author: author.clone(),
+                            date: date.clone(),
+                            revision_id: Some(revision_id),
+                            editor_group: None,
+                            inlines: Vec::new(),
+                        },
+                        &mut self.edit_ids,
+                    ) {
+                        return Err(to_js(
+                            "suggested deletion requires top-level paragraph text".to_string(),
+                        ));
+                    }
+                }
+                let operation =
+                    update_review_operation(&self.document, &mixed, None).map_err(to_js)?;
+                return self
+                    .apply_action_caret_as(
+                        vec![operation],
+                        Pos::new(node, start),
+                        HistoryKind::Review,
+                    )
+                    .map_err(to_js);
+            }
+        }
         let revision = self
             .edit_ids
             .next_id()
@@ -9009,11 +9059,19 @@ fn wrap_review_deletion(
                 {
                     return false;
                 }
-                let mut cursor = 0;
+                let mut cursor = 0_u32;
                 let mut first = None;
                 let mut last = None;
                 for (index, inline) in paragraph.inlines.iter().enumerate() {
                     let InlineNode::Run(run) = inline else {
+                        // Advance by the inline's projected width so `start`/`end`
+                        // stay in projected coordinates even when a contributing
+                        // revision precedes the range — e.g. an insertion the
+                        // author kept while suggesting-deletion of adjacent
+                        // accepted text (docs/86 decision 2). Previously the
+                        // cursor only counted top-level runs, so any such wrapper
+                        // shifted the range and the wrap silently failed.
+                        cursor = cursor.saturating_add(inline_anchor_len_for_review(inline));
                         continue;
                     };
                     if cursor == start {
@@ -9151,6 +9209,115 @@ fn remove_authored_review_insertion(
         }
     }
     false
+}
+
+/// docs/86 decision 2 (Word semantics): a delete spanning the author's own
+/// pending insertions *and* accepted text removes the not-yet-accepted
+/// insertions outright while the accepted text is suggested-for-deletion. This
+/// does the first half — strip the current author's own `Insertion` bytes that
+/// overlap `[start, end)` in place — and returns the total bytes removed, which
+/// closes the gap so the remaining accepted text is contiguous and the caller
+/// can `wrap_review_deletion([start, end - removed))`.
+///
+/// Returns `None` (defer to the plain deletion path) when the range holds no
+/// own-author insertion, or holds anything this half can't safely handle: a
+/// different author's revision, or an own insertion that is not a single run.
+fn strip_authored_insertions_in_range(
+    blocks: &mut [BlockNode],
+    node: NodeId,
+    start: u32,
+    end: u32,
+    author: Option<&str>,
+) -> Option<u32> {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) if paragraph.id == node => {
+                let mut cursor = 0_u32;
+                let mut edits: Vec<(usize, usize, usize)> = Vec::new();
+                let mut saw_own = false;
+                for (index, inline) in paragraph.inlines.iter().enumerate() {
+                    let len = inline_anchor_len_for_review(inline);
+                    let next = cursor.saturating_add(len);
+                    if len > 0 && next > start && cursor < end {
+                        let overlap_start = start.max(cursor);
+                        let overlap_end = end.min(next);
+                        match inline {
+                            InlineNode::Revision(revision)
+                                if revision.kind == RevisionKind::Insertion =>
+                            {
+                                if revision.author.as_deref() != author
+                                    || revision.editor_group.is_none()
+                                {
+                                    return None; // another author's insertion — defer.
+                                }
+                                let [InlineNode::Run(run)] = revision.inlines.as_slice() else {
+                                    return None; // multi-run suggestion — defer.
+                                };
+                                let local_start = (overlap_start - cursor) as usize;
+                                let local_end = (overlap_end - cursor) as usize;
+                                if local_start >= local_end
+                                    || local_end > run.text.len()
+                                    || !run.text.is_char_boundary(local_start)
+                                    || !run.text.is_char_boundary(local_end)
+                                {
+                                    return None;
+                                }
+                                edits.push((index, local_start, local_end));
+                                saw_own = true;
+                            }
+                            InlineNode::Run(_) => {} // accepted text — left for the wrap step.
+                            _ => return None,        // a deletion/other wrapper in range — defer.
+                        }
+                    }
+                    cursor = next;
+                }
+                if !saw_own {
+                    return None; // nothing of ours to strip — plain deletion path handles it.
+                }
+                let mut removed = 0_u32;
+                for (index, local_start, local_end) in edits.into_iter().rev() {
+                    let InlineNode::Revision(revision) = &mut paragraph.inlines[index] else {
+                        return None;
+                    };
+                    let [InlineNode::Run(run)] = revision.inlines.as_mut_slice() else {
+                        return None;
+                    };
+                    removed = removed.saturating_add((local_end - local_start) as u32);
+                    run.text.replace_range(local_start..local_end, "");
+                    if run.text.is_empty() {
+                        paragraph.inlines.remove(index);
+                    }
+                }
+                coalesce_review_runs(&mut paragraph.inlines);
+                return Some(removed);
+            }
+            BlockNode::Paragraph(_) => continue,
+            BlockNode::Table(table) => {
+                for row in &mut table.rows {
+                    for cell in &mut row.cells {
+                        if let Some(removed) = strip_authored_insertions_in_range(
+                            &mut cell.blocks,
+                            node,
+                            start,
+                            end,
+                            author,
+                        ) {
+                            return Some(removed);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(removed) =
+                    strip_authored_insertions_in_range(&mut sdt.blocks, node, start, end, author)
+                {
+                    return Some(removed);
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    None
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -18674,6 +18841,82 @@ mod tests {
                 &mut ids
             ),
             None
+        );
+        assert_eq!(
+            only_revision_text(&blocks).as_deref(),
+            Some("CD"),
+            "unchanged"
+        );
+    }
+
+    // --- REVIEW-GAP-007 phase 2b: mixed delete Word semantics (docs/86) -------
+
+    fn paragraph_run_text(blocks: &[BlockNode]) -> String {
+        let BlockNode::Paragraph(p) = &blocks[0] else {
+            return String::new();
+        };
+        p.inlines
+            .iter()
+            .filter_map(|i| match i {
+                InlineNode::Run(r) => Some(r.text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn strip_removes_the_authors_own_insertion_from_a_mixed_range() {
+        // "AB" + «own insertion "CD"» + "EF"; deleting [1, 5) spans normal "B",
+        // the whole suggested "CD", and normal "E". Stripping removes the "CD"
+        // outright (it was never accepted) and reports 2 bytes gone; the accepted
+        // "B"/"E" are left for the caller to suggest-delete.
+        let (node, mut blocks) = suggestion_paragraph(Some("Me"), true);
+        let removed = strip_authored_insertions_in_range(&mut blocks, node, 1, 5, Some("Me"));
+        assert_eq!(removed, Some(2));
+        assert_eq!(only_revision_text(&blocks), None, "the suggestion is gone");
+        assert_eq!(
+            paragraph_run_text(&blocks),
+            "ABEF",
+            "accepted text is untouched and coalesced"
+        );
+    }
+
+    #[test]
+    fn strip_removes_only_the_covered_part_of_a_straddling_insertion() {
+        // A range that ends inside the suggestion removes only the covered bytes.
+        let (node, mut blocks) = suggestion_paragraph(Some("Me"), true); // AB ins"CD" EF
+        // [3, 6): "D" (inside the insertion) + "EF" (accepted). Only "D" is ours.
+        let removed = strip_authored_insertions_in_range(&mut blocks, node, 3, 6, Some("Me"));
+        assert_eq!(removed, Some(1));
+        assert_eq!(
+            only_revision_text(&blocks).as_deref(),
+            Some("C"),
+            "insertion kept its uncovered half"
+        );
+    }
+
+    #[test]
+    fn strip_defers_when_the_range_is_only_accepted_text() {
+        let node = wn(1);
+        let mut blocks = vec![BlockNode::Paragraph(Paragraph {
+            id: node,
+            properties: ParagraphProperties::default(),
+            inlines: vec![wrun(2, "ABCDEF")],
+        })];
+        assert_eq!(
+            strip_authored_insertions_in_range(&mut blocks, node, 1, 5, Some("Me")),
+            None,
+            "no own insertion — plain deletion path handles it"
+        );
+    }
+
+    #[test]
+    fn strip_defers_on_another_authors_insertion() {
+        let (node, mut blocks) = suggestion_paragraph(Some("Alice"), true);
+        assert_eq!(
+            strip_authored_insertions_in_range(&mut blocks, node, 1, 5, Some("Bob")),
+            None,
+            "never silently discards another author's suggestion"
         );
         assert_eq!(
             only_revision_text(&blocks).as_deref(),
