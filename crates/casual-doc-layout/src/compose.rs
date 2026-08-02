@@ -11,7 +11,7 @@ use crate::block::{
     ResolvedBorderSegment, ResolvedEdge,
 };
 use crate::display::{Color, DisplayList, PaintItem, Stroke};
-use crate::page::{AnchorContent, Page, PlacedAnchor};
+use crate::page::{AnchorContent, Page, PlacedAnchor, ResolvedPageBorders};
 use crate::text::{LineLayout, TextBoxContentLayout};
 use crate::units::{Point, Rect, Size, Twip};
 
@@ -208,10 +208,60 @@ pub fn compose_page(page: &Page) -> DisplayList {
     for placed in &page.footer {
         compose_fragment(&mut list, &placed.fragment, placed.rect.origin);
     }
+    // Page borders (`w:pgBorders`) frame the page as furniture, painted on top of
+    // the body so a text-offset frame over wide content still reads as a frame.
+    if let Some(borders) = &page.page_borders {
+        compose_page_borders(&mut list, borders);
+    }
     for anchor in floats.iter().filter(|anchor| !anchor.behind_doc) {
         compose_anchor(&mut list, anchor);
     }
     list
+}
+
+/// Paints a resolved page-border frame: each present edge as a filled band along
+/// its side of the frame rectangle, reusing the shared edge painter (so pattern
+/// styles — double/dashed/… — match paragraph and table borders).
+fn compose_page_borders(list: &mut DisplayList, borders: &ResolvedPageBorders) {
+    let rect = borders.rect;
+    if let Some(edge) = borders.top {
+        paint_border(
+            list,
+            Rect::new(rect.origin, Size::new(rect.size.width, edge.width)),
+            edge,
+            BorderAxis::Horizontal,
+        );
+    }
+    if let Some(edge) = borders.bottom {
+        paint_border(
+            list,
+            Rect::new(
+                Point::new(rect.origin.x, rect.bottom() - edge.width),
+                Size::new(rect.size.width, edge.width),
+            ),
+            edge,
+            BorderAxis::Horizontal,
+        );
+    }
+    if let Some(edge) = borders.start {
+        paint_border(
+            list,
+            Rect::new(rect.origin, Size::new(edge.width, rect.size.height)),
+            edge,
+            BorderAxis::Vertical,
+        );
+    }
+    if let Some(edge) = borders.end {
+        paint_border(
+            list,
+            Rect::new(
+                Point::new(rect.right() - edge.width, rect.origin.y),
+                Size::new(edge.width, rect.size.height),
+            ),
+            edge,
+            BorderAxis::Vertical,
+        );
+    }
 }
 
 /// Paints one placed float at its resolved rectangle: an image blit, a filled/

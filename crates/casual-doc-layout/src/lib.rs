@@ -38,6 +38,7 @@ pub mod model;
 pub mod notes;
 pub mod numbering;
 pub mod page;
+mod page_border;
 pub mod paginate;
 pub mod resolve;
 pub mod running;

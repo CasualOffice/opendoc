@@ -40,7 +40,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     BlockNode, Document, GroupChild, HeaderFooterKind, HeaderFooterRef, InlineNode, NoteId,
-    NoteKind, SectionBoundary,
+    NoteKind, PageBorders, SectionBoundary,
 };
 
 use crate::anchor::{body_wrap_rects, header_float_reserve_for_section, place_floats};
@@ -186,6 +186,7 @@ fn variant_mut(
 struct SectionPlan {
     config: PageConfig,
     running: RunningContent,
+    page_borders: PageBorders,
 }
 
 /// Resolves running-content inheritance and geometry for every section before
@@ -215,7 +216,11 @@ fn build_section_plans(
             header_float_reserve_for_section(document, shaper, &config, &effective_section);
         config.header_height = header_height.max(header_float);
         config.footer_height = footer_height;
-        plans.push(SectionPlan { config, running });
+        plans.push(SectionPlan {
+            config,
+            running,
+            page_borders: section.page_borders.clone(),
+        });
     }
 
     // A sectionless model is malformed for imported DOCX but remains a supported
@@ -227,6 +232,7 @@ fn build_section_plans(
                 even_and_odd: document.definitions().settings.even_and_odd_headers,
                 ..RunningContent::default()
             },
+            page_borders: PageBorders::default(),
         });
     }
     plans
@@ -654,6 +660,14 @@ fn finish_pagination_pass(
         *section_page_number = section_page_number.saturating_add(1);
         let plan = plan_for_section(plans, page.section);
         place_running_content_on_page(page, &plan.running, &plan.config, *section_page_number);
+        // Resolve this section's `w:pgBorders` into a per-page frame, off the hot
+        // path like the running content above (docs/46 §F6c).
+        page.page_borders = crate::page_border::resolve_page_borders(
+            &plan.page_borders,
+            *section_page_number,
+            page.page_size,
+            page.content_area,
+        );
     }
     resolve_fields(&mut layout, shaper);
     // Floating objects last: anchored pictures, floating text boxes, and DrawingML

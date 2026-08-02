@@ -10,7 +10,7 @@ use casual_doc_model::NodeId;
 use casual_doc_model::v1::SectionId;
 use serde::{Deserialize, Serialize};
 
-use crate::block::BlockFragment;
+use crate::block::{BlockFragment, ResolvedEdge};
 use crate::model::ModelPos;
 use crate::text::TextBoxStroke;
 use crate::units::{Point, Rect, Size, Twip};
@@ -195,6 +195,31 @@ pub struct PlacedAnchor {
 /// line centered in an inter-column gap, spanning its column band. Produced by the
 /// column paginator and painted by [`compose_page`](crate::compose::compose_page);
 /// it participates in neither flow nor hit-testing.
+/// A resolved page-border frame (`w:pgBorders`) for one page: the outer frame
+/// rectangle in page-local twips plus the resolved line for each present edge
+/// (`None` where the section declares none for that side). Produced off the
+/// pagination hot path by the page-border resolution pass and painted by
+/// [`compose_page`](crate::compose::compose_page), like the running
+/// header/footer and column separators; participates in neither flow nor
+/// hit-testing.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+pub struct ResolvedPageBorders {
+    /// The frame's outer rectangle — each side already offset per `offsetFrom`.
+    pub rect: Rect,
+    /// Top edge (`w:top`), if present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top: Option<ResolvedEdge>,
+    /// Bottom edge (`w:bottom`), if present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bottom: Option<ResolvedEdge>,
+    /// Leading (left) edge (`w:left`), if present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<ResolvedEdge>,
+    /// Trailing (right) edge (`w:right`), if present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end: Option<ResolvedEdge>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct ColumnSeparator {
     /// The rule's x in page-local twips (the gap's horizontal center).
@@ -245,6 +270,13 @@ pub struct Page {
     /// paginator, off the single-column hot path.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub separators: Vec<ColumnSeparator>,
+    /// The resolved page-border frame (`w:pgBorders`) for this page, if the
+    /// page's section declares one and its `display` policy includes this page.
+    /// `None` otherwise; filled by the post-pagination pass off the hot path so
+    /// page reuse (the stabilization halt) stays position-free, like the running
+    /// header/footer and anchored floats.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_borders: Option<ResolvedPageBorders>,
     /// First model position on this page (the stabilization-halt key).
     pub start: ModelPos,
     /// One-past-last model position on this page.
