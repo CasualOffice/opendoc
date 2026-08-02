@@ -430,7 +430,8 @@ fn find_cell_rect(fragment: &BlockFragment, left: Twip, top: Twip, node: NodeId)
         // Recurse into this cell's content (a nested table) first — a hit there
         // belongs to the inner cell, not this outer one.
         let content_left = cell_x + cell.margins.start;
-        let mut content_top = top + cell.content_y_offset(cell.box_height(row_height));
+        let cell_top = top + cell.cell_spacing.top;
+        let mut content_top = cell_top + cell.content_y_offset(cell.box_height(row_height));
         for block in &cell.blocks {
             if let Some(rect) = find_cell_rect(block, content_left, content_top, node) {
                 return Some(rect);
@@ -444,7 +445,7 @@ fn find_cell_rect(fragment: &BlockFragment, left: Twip, top: Twip, node: NodeId)
             .any(|b| matches!(b, BlockFragment::Paragraph { id, .. } if *id == node))
         {
             return Some(Rect::new(
-                Point::new(cell_x, top),
+                Point::new(cell_x, cell_top),
                 Size::new(cell.width, cell.box_height(row_height)),
             ));
         }
@@ -494,7 +495,9 @@ fn collect_fragment<'a>(
                 let cell_x0 = left + cell.x;
                 let cell_bounds = Some((cell_x0, cell_x0 + cell.width));
                 let cell_left = cell_x0 + cell.margins.start;
-                let mut cell_top = top + cell.content_y_offset(cell.box_height(row_height));
+                let mut cell_top = top
+                    + cell.cell_spacing.top
+                    + cell.content_y_offset(cell.box_height(row_height));
                 for block in &cell.blocks {
                     collect_fragment(block, cell_left, cell_top, page, cell_bounds, out);
                     cell_top = cell_top + block.height();
@@ -895,6 +898,7 @@ mod tests {
                 grid_span: 1,
                 x: Twip(200),
                 width: Twip(3000),
+                cell_spacing: Default::default(),
                 blocks: vec![inner],
                 margins: CellContentMargins {
                     top: Twip(50),
@@ -905,6 +909,7 @@ mod tests {
                 vertical_alignment: CellVAlign::Bottom,
                 vertical_merge: CellVerticalMerge::Restart { height: Twip(1000) },
                 borders: CellBorders::default(),
+                table_borders: CellBorders::default(),
                 shading: None,
             }],
             height: Twip(500),
@@ -933,11 +938,13 @@ mod tests {
             grid_span: 1,
             x: Twip(x),
             width: Twip(width),
+            cell_spacing: Default::default(),
             blocks: vec![ltr_para(para, &[1])],
             margins: CellContentMargins::default(),
             vertical_alignment: CellVAlign::Top,
             vertical_merge: CellVerticalMerge::None,
             borders: CellBorders::default(),
+            table_borders: CellBorders::default(),
             shading: None,
         };
         // Two side-by-side cells: column A grid [0,3000), column B [3000,6000).
@@ -987,11 +994,13 @@ mod tests {
             grid_span: 1,
             x: Twip::ZERO,
             width: Twip(3000),
+            cell_spacing: Default::default(),
             blocks: vec![ltr_para(12, &[1])],
             margins: CellContentMargins::default(),
             vertical_alignment: CellVAlign::Top,
             vertical_merge: CellVerticalMerge::None,
             borders: CellBorders::default(),
+            table_borders: CellBorders::default(),
             shading: None,
         };
         let table = BlockFragment::TableRow {

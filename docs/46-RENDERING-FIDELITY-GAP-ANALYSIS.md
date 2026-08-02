@@ -132,7 +132,7 @@ Per-script font slots (eastAsia/cs — CJK uses wrong font) · underline
 style/color, double-strike, emphasis marks, outline/shadow · theme tint/shade on
 runs · text wrapping around floats (square/tight/…) · header/footer PAGE fields
 show cached values · non-metric-compatible fonts (Arial/Times → Roboto) · CJK
-line-break quality · drop caps/framePr · cell spacing.
+line-break quality · drop caps/framePr.
 
 ## Focused table, text-box, and object audit (2026-07-27)
 
@@ -150,12 +150,12 @@ landed, but several modeled properties are still not consumed.
 | Cell margins and vertical alignment | Resolved in flow and applied in composition. | Implemented. |
 | Table/cell shading | Cell fill is painted; table-level `w:shd` now supplies the fallback when a cell has no overriding fill. | Implemented by `P1F-TBL-TOPO`. |
 | Horizontal border topology | Perimeter vs `insideH` is selected by row position; conflicts inspect abutting cells above/below, including differing grid-span partitions. A spanning side now retains independently resolved, coalesced twip segments at those partitions. | Implemented by `P1F-TBL-TOPO` + `P1F-TBL-STYLED`. |
-| Border conflict details | `nil` suppression and first-in-reading-order ties are handled by the topology slice, but the rank covers only a few styles and uses an approximate luminance tie-break. Non-zero cell spacing needs a different conflict mode. | Follow-up after topology; keep the limitation explicit. |
+| Border conflict details | `nil` suppression and first-in-reading-order ties are handled by the topology slice, but the collapsed-border rank covers only a few styles and uses an approximate luminance tie-break. Non-zero direct cell spacing switches to independent cell sides and a separate outer-table-border layer. | Partial: separated-cell mode implemented by `P1F-TBL-CELL-SPACING`; complete Word ranking and table-level-exception inside-border conflicts remain explicit follow-ups. |
 | Border appearance | Color, total width, and common line families reach paint: solid, double, dotted, dashed, dot-dash, and dot-dot-dash use deterministic portable geometry with a bounded solid fallback. | Implemented by `P1F-TBL-STYLED`; exact compound lines and art-border glyphs remain pending and explicitly fall back to solid. |
 | Vertical merges | The vertical-merge slice resolves conforming restart/continuation runs by exact grid range, gives the restart merged-height/content ownership, and keeps the group page-local. Malformed continuations remain visible ordinary cells. | Implemented by `P1F-TBL-VMERGE`; common side-segment styles are implemented by `P1F-TBL-STYLED`. |
 | Table style and conditional formatting | The per-cell table-style layer now resolves `style_ref`'s `basedOn` chain, unconditional `wholeTable`, and look-gated `cnfStyle` regions in Word precedence. Shading, paragraph/run formatting, and edge-wise table/cell border overrides reach intrinsic measurement and final flow; nested tables replace rather than inherit the outer layer. | Implemented by `P1F-TBL-CNF` + `P1F-TBL-CNF-TEXT-BORDER`. Row-property cascade and margins from table styles remain deferred with the table geometry items below. |
 | Alignment, bidi, and row alignment | Direct table/row `w:jc` resolves logical start/center/end origins; `w:bidiVisual` mirrors unequal columns/spans, logical margins, vertical borders, and segmented horizontal-border offsets without forcing cell paragraph direction. | Implemented by `P1F-TBL-ALIGN-BIDI`; table-style-provided row geometry and preservation of legacy physical `left`/`right` spelling remain deferred. |
-| Cell spacing | Table/row spacing is modeled but neither cell geometry nor border conflict mode consumes it. | **High:** needs gap geometry plus separately visible table/cell borders. |
+| Cell spacing | Direct row spacing overrides direct table spacing; deterministic half-gaps are carved inside fixed table geometry, contribute to row height, reflect through `bidiVisual`, and keep outer table borders separate from independently resolved cell borders. | Implemented by `P1F-TBL-CELL-SPACING`; style-provided/table-level-exception spacing remains deferred. |
 | Floating tables | `tblpPr`, overlap, and from-text distances are modeled but tables remain inline. | **High/design required:** integrate table boxes with float placement and wrapping. |
 | Cell text behavior | `noWrap`, vertical `textDirection`, `fitText`, and `hideMark` are modeled but ignored. | Medium/high, split into bounded layout slices. |
 
@@ -192,8 +192,8 @@ documented solid fallback.
 3. Render safe embedded-object previews through the existing image path.
 4. Make anchor lookup recurse through table fragments in body and
    header/footer bands.
-5. Design the remaining table cell-spacing/floating-table and text-box
-   `bodyPr` slices before implementation.
+5. Design the remaining floating-table and cell-text-behavior slices before
+   implementation.
 
 ## Execution roadmap (controlled sequence, not parallel free-for-all)
 

@@ -785,7 +785,7 @@ fn collect_cell_paragraph_rects(
         let content_width =
             Twip((cell.width.raw() - cell.margins.start.raw() - cell.margins.end.raw()).max(1));
         let x = row_rect.origin.x + cell.x + cell.margins.start;
-        let mut y = row_rect.origin.y + cell.content_y_offset(cell_height);
+        let mut y = row_rect.origin.y + cell.cell_spacing.top + cell.content_y_offset(cell_height);
         for block in &cell.blocks {
             collect_block_paragraph_rects(block, Point::new(x, y), content_width, page_index, out);
             y = y + block.height();
@@ -1386,7 +1386,7 @@ mod cross_paragraph_float_tests {
         let cell_height = cell.box_height(placed_row.fragment.height());
         let content_origin = Point::new(
             placed_row.rect.origin.x + cell.x + cell.margins.start,
-            placed_row.rect.origin.y + cell.content_y_offset(cell_height),
+            placed_row.rect.origin.y + cell.cell_spacing.top + cell.content_y_offset(cell_height),
         );
         let BlockFragment::Paragraph { id, lines, .. } = &cell.blocks[0] else {
             panic!("expected the cell's paragraph fragment");

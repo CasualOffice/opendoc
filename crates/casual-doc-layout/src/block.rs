@@ -186,6 +186,29 @@ impl CellContentMargins {
     }
 }
 
+/// The separated-cell gap allocated around one physical cell box. Horizontal
+/// values are also retained after `x`/`width` have been inset so composition can
+/// recover the table-grid slot for its distinct outer-border layer.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+pub struct CellBoxSpacing {
+    /// Gap between the logical/physical top of the row and the cell box.
+    pub top: Twip,
+    /// Gap between the physical leading side of the grid slot and the cell box.
+    pub start: Twip,
+    /// Gap between the cell box and the logical/physical bottom of the row.
+    pub bottom: Twip,
+    /// Gap between the cell box and the physical trailing side of the grid slot.
+    pub end: Twip,
+}
+
+impl CellBoxSpacing {
+    /// Whether this is collapsed-cell geometry.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// A cell's vertical content alignment (`w:vAlign`) — how the cell's stacked
 /// content sits within the (possibly taller) row box. `Top` is Word's default.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
@@ -224,8 +247,12 @@ pub struct CellFragment {
     pub grid_span: u32,
     /// The cell's left edge within the row (twips from the row's leading edge).
     pub x: Twip,
-    /// The cell's content width (twips) — the span of its grid columns.
+    /// The physical cell-border-box width (twips). With non-zero cell spacing,
+    /// this is the grid-column span minus its split start/end gaps.
     pub width: Twip,
+    /// The split `w:tblCellSpacing` gap surrounding this cell's border box.
+    #[serde(default, skip_serializing_if = "CellBoxSpacing::is_empty")]
+    pub cell_spacing: CellBoxSpacing,
     /// The cell's flowed block fragments.
     pub blocks: Vec<BlockFragment>,
     /// The cell's resolved content margins (`w:tcMar`/`w:tblCellMar`). Content is
@@ -242,6 +269,11 @@ pub struct CellFragment {
     /// The cell's resolved visible borders (border-conflict winners).
     #[serde(default, skip_serializing_if = "CellBorders::is_empty")]
     pub borders: CellBorders,
+    /// Table-perimeter borders painted on the enclosing grid slot. Non-empty
+    /// only for separated-cell rows, where table and cell borders both remain
+    /// visible instead of collapsing to one winner.
+    #[serde(default, skip_serializing_if = "CellBorders::is_empty")]
+    pub table_borders: CellBorders,
     /// The cell's background fill (`w:shd@fill`), RGBA, painted behind its content;
     /// `None` = no shading.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -265,14 +297,22 @@ impl CellVerticalMerge {
 }
 
 impl CellFragment {
-    /// The physical height of this cell box. A merge restart spans every covered
-    /// row; ordinary cells and continuations use their current row height.
+    /// The physical height of this cell's inset border box. A merge restart spans
+    /// every covered row; ordinary cells and continuations use their current row
+    /// height, with separated-cell top/bottom gaps removed in both cases.
     #[must_use]
     pub fn box_height(&self, row_height: Twip) -> Twip {
-        match self.vertical_merge {
+        let height = match self.vertical_merge {
             CellVerticalMerge::Restart { height } => height,
             CellVerticalMerge::None | CellVerticalMerge::Continue => row_height,
-        }
+        };
+        Twip(
+            height
+                .raw()
+                .saturating_sub(self.cell_spacing.top.raw())
+                .saturating_sub(self.cell_spacing.bottom.raw())
+                .max(1),
+        )
     }
 
     /// The stacked height of the cell's flowed content (twips), excluding margins.
@@ -288,7 +328,11 @@ impl CellFragment {
     /// vertical space the cell demands of its row.
     #[must_use]
     pub fn occupied_height(&self) -> Twip {
-        self.margins.top + self.content_height() + self.margins.bottom
+        self.cell_spacing.top
+            + self.margins.top
+            + self.content_height()
+            + self.margins.bottom
+            + self.cell_spacing.bottom
     }
 
     /// The vertical offset (twips) from the cell's top edge to the top of its

@@ -390,8 +390,18 @@ fn compose_fragment(list: &mut DisplayList, fragment: &BlockFragment, origin: Po
                     continue;
                 }
                 let cell_height = cell.box_height(row_height);
-                let cell_origin = Point::new(origin.x + cell.x, origin.y);
+                let cell_origin = Point::new(origin.x + cell.x, origin.y + cell.cell_spacing.top);
                 let cell_rect = Rect::new(cell_origin, Size::new(cell.width, cell_height));
+                if !cell.table_borders.is_empty() {
+                    let table_slot = Rect::new(
+                        Point::new(cell_origin.x - cell.cell_spacing.start, origin.y),
+                        Size::new(
+                            cell.width + cell.cell_spacing.start + cell.cell_spacing.end,
+                            cell_height + cell.cell_spacing.top + cell.cell_spacing.bottom,
+                        ),
+                    );
+                    compose_cell_borders(list, table_slot, &cell.table_borders);
+                }
                 // Cell background shading (`w:shd`) fills the cell before anything
                 // else, behind both the grid line and the content.
                 if let Some(fill) = cell.shading {
@@ -797,6 +807,7 @@ mod tests {
             grid_span: 1,
             x: Twip::ZERO,
             width: Twip(3000),
+            cell_spacing: Default::default(),
             blocks: Vec::new(),
             margins: CellContentMargins::default(),
             vertical_alignment: CellVAlign::default(),
@@ -809,6 +820,7 @@ mod tests {
                 }),
                 ..CellBorders::default()
             },
+            table_borders: CellBorders::default(),
             shading: None,
         };
         let row = BlockFragment::TableRow {
@@ -1272,6 +1284,71 @@ mod tests {
     }
 
     #[test]
+    fn separated_cell_paints_table_perimeter_and_cell_border_at_distinct_x_positions() {
+        use crate::block::{
+            BlockFragment, CellBorders, CellBoxSpacing, CellContentMargins, CellFragment,
+            CellVAlign, CellVerticalMerge, ResolvedEdge,
+        };
+        let border = |color| ResolvedEdge {
+            color,
+            width: Twip(20),
+            pattern: BorderPattern::Solid,
+        };
+        let cell = CellFragment {
+            id: node(501),
+            grid_span: 1,
+            x: Twip(120),
+            width: Twip(1760),
+            cell_spacing: CellBoxSpacing {
+                top: Twip(120),
+                start: Twip(120),
+                bottom: Twip(120),
+                end: Twip(120),
+            },
+            blocks: Vec::new(),
+            margins: CellContentMargins::default(),
+            vertical_alignment: CellVAlign::Top,
+            vertical_merge: CellVerticalMerge::None,
+            borders: CellBorders {
+                start: Some(border([0, 0, 255, 255])),
+                ..CellBorders::default()
+            },
+            table_borders: CellBorders {
+                start: Some(border([255, 0, 0, 255])),
+                ..CellBorders::default()
+            },
+            shading: None,
+        };
+        let row = BlockFragment::TableRow {
+            id: node(502),
+            table: node(503),
+            cells: vec![cell],
+            height: Twip(600),
+            can_split: false,
+            header: false,
+            merge_keep_next: false,
+            clip: false,
+        };
+        let mut list = DisplayList::new();
+        compose_fragment(&mut list, &row, Point::new(Twip(100), Twip(200)));
+
+        let vertical_bands: Vec<_> = list
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                PaintItem::Rect {
+                    rect,
+                    fill: Some(fill),
+                    stroke: None,
+                } if rect.size.width == Twip(20) => Some((rect.origin.x, *fill)),
+                _ => None,
+            })
+            .collect();
+        assert!(vertical_bands.contains(&(Twip(100), rgba([255, 0, 0, 255]))));
+        assert!(vertical_bands.contains(&(Twip(220), rgba([0, 0, 255, 255]))));
+    }
+
+    #[test]
     fn a_shaded_cell_emits_a_fill_behind_its_content() {
         use crate::block::{
             CellBorders, CellContentMargins, CellFragment, CellVAlign, CellVerticalMerge,
@@ -1281,11 +1358,13 @@ mod tests {
             grid_span: 1,
             x: Twip::ZERO,
             width: Twip(3000),
+            cell_spacing: Default::default(),
             blocks: Vec::new(),
             margins: CellContentMargins::default(),
             vertical_alignment: CellVAlign::default(),
             vertical_merge: CellVerticalMerge::None,
             borders: CellBorders::default(),
+            table_borders: CellBorders::default(),
             shading: Some([200, 100, 50, 255]),
         };
         let row = BlockFragment::TableRow {
@@ -1334,11 +1413,13 @@ mod tests {
             grid_span: 1,
             x: Twip::ZERO,
             width: Twip(3000),
+            cell_spacing: Default::default(),
             blocks: Vec::new(),
             margins: CellContentMargins::default(),
             vertical_alignment: CellVAlign::default(),
             vertical_merge,
             borders: CellBorders::default(),
+            table_borders: CellBorders::default(),
             shading,
         };
         let restart = BlockFragment::TableRow {

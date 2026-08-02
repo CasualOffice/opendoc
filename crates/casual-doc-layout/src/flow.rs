@@ -35,8 +35,8 @@ use casual_doc_model::v1::{
 
 use crate::block::{
     BlockBorders, BlockFragment, BorderPattern, BoxMetrics, BreakControl, CellBorders,
-    CellContentMargins, CellFragment, CellVAlign, CellVerticalMerge, ParagraphDecor,
-    ResolvedBorderSegment, ResolvedEdge,
+    CellBoxSpacing, CellContentMargins, CellFragment, CellVAlign, CellVerticalMerge,
+    ParagraphDecor, ResolvedBorderSegment, ResolvedEdge,
 };
 use crate::cascade::{
     StyleCascade, TableStyleLayer, overlay_table_borders, requested_font_family,
@@ -954,6 +954,7 @@ fn flow_table(
 
     let mut rows = Vec::with_capacity(table.rows.len());
     for (row_index, row) in table.rows.iter().enumerate() {
+        let row_spacing = effective_cell_spacing(table, row);
         let row_origin = table_row_origin(
             row.properties.alignment.or(table.properties.alignment),
             table.properties.tbl_bidi_visual,
@@ -967,8 +968,8 @@ fn flow_table(
             let span = cell.properties.grid_span.unwrap_or(1).max(1) as usize;
             let logical_start = edge(col);
             let logical_end = edge(col + span);
-            let cell_width = Twip((logical_end.raw() - logical_start.raw()).max(1));
-            let cell_x = if table.properties.tbl_bidi_visual {
+            let slot_width = Twip((logical_end.raw() - logical_start.raw()).max(1));
+            let slot_x = if table.properties.tbl_bidi_visual {
                 Twip(
                     row_origin
                         .raw()
@@ -977,8 +978,17 @@ fn flow_table(
             } else {
                 row_origin + logical_start
             };
-            let mut borders =
-                resolve_cell_borders(&table.rows, &border_candidates, row_index, index, &edges);
+            let mut cell_spacing = cell_box_spacing(row_spacing, slot_width);
+            let mut borders = if row_spacing > 0 {
+                resolve_separated_cell_borders(&border_candidates[row_index][index])
+            } else {
+                resolve_cell_borders(&table.rows, &border_candidates, row_index, index, &edges)
+            };
+            let mut table_borders = if row_spacing > 0 {
+                resolve_table_perimeter_borders(table, &style_layers, row_index, index)
+            } else {
+                CellBorders::default()
+            };
             // A cell fill overrides table shading. When the cell omits `w:shd`,
             // the table-style layer applies next: the referenced style's (and
             // its `basedOn` ancestors') base cell/table shading, overlaid by
@@ -1001,7 +1011,18 @@ fn flow_table(
             let mut margins =
                 resolve_cell_margins(&cell.properties.margins, &table.properties.cell_margins);
             if table.properties.tbl_bidi_visual {
-                mirror_cell_geometry(&mut margins, &mut borders, cell_width);
+                std::mem::swap(&mut cell_spacing.start, &mut cell_spacing.end);
+            }
+            let cell_x = slot_x + cell_spacing.start;
+            let cell_width = Twip(
+                slot_width
+                    .raw()
+                    .saturating_sub(cell_spacing.start.raw())
+                    .saturating_sub(cell_spacing.end.raw())
+                    .max(1),
+            );
+            if table.properties.tbl_bidi_visual {
+                mirror_cell_geometry(&mut margins, &mut borders, &mut table_borders, cell_width);
             }
             let inner_width =
                 Twip((cell_width.raw() - margins.start.raw() - margins.end.raw()).max(1));
@@ -1027,6 +1048,7 @@ fn flow_table(
                 grid_span: span as u32,
                 x: cell_x,
                 width: cell_width,
+                cell_spacing,
                 blocks,
                 margins,
                 vertical_alignment: cell_vertical_alignment(&cell.properties),
@@ -1036,6 +1058,7 @@ fn flow_table(
                     CellVerticalMerge::None
                 },
                 borders,
+                table_borders,
                 shading,
             });
             col += span;
@@ -1052,6 +1075,9 @@ fn flow_table(
             .max()
             .unwrap_or(Twip::ZERO);
         let (height, clip) = resolve_row_height(&row.properties, content_h);
+        for cell in &mut cells {
+            clamp_vertical_cell_spacing(&mut cell.cell_spacing, height);
+        }
         rows.push(FlowedTableRow {
             id: row.id,
             cells,
@@ -1098,13 +1124,62 @@ fn table_row_origin(
     }
 }
 
+/// Resolves direct row-over-table `w:tblCellSpacing`. Style-provided row
+/// properties are intentionally outside this slice; model validation already
+/// rejects negatives, and the clamp keeps manually constructed documents safe.
+fn effective_cell_spacing(table: &Table, row: &TableRow) -> i32 {
+    row.properties
+        .cell_spacing_twips
+        .or(table.properties.cell_spacing_twips)
+        .unwrap_or(0)
+        .max(0)
+}
+
+/// Splits one authored spacing value around the cell box while retaining at
+/// least one twip for that box. Spanning cells get only the two outside halves;
+/// covered internal grid lines do not introduce gaps.
+fn cell_box_spacing(spacing: i32, slot_width: Twip) -> CellBoxSpacing {
+    let spacing = spacing.max(0);
+    let mut start = spacing / 2;
+    let mut end = spacing - start;
+    let available_gap = slot_width.raw().saturating_sub(1).max(0);
+    if start.saturating_add(end) > available_gap {
+        start = start.min(available_gap / 2);
+        end = available_gap - start;
+    }
+    CellBoxSpacing {
+        top: Twip(spacing / 2),
+        start: Twip(start),
+        bottom: Twip(spacing - spacing / 2),
+        end: Twip(end),
+    }
+}
+
+/// Keeps the separated border box inside an authored exact-height row. Auto and
+/// at-least rows have already grown for the full spacing, so this is ordinarily
+/// a no-op.
+fn clamp_vertical_cell_spacing(spacing: &mut CellBoxSpacing, row_height: Twip) {
+    let available_gap = row_height.raw().saturating_sub(1).max(0);
+    if spacing.top.raw().saturating_add(spacing.bottom.raw()) > available_gap {
+        let top = spacing.top.raw().min(available_gap / 2);
+        spacing.top = Twip(top);
+        spacing.bottom = Twip(available_gap - top);
+    }
+}
+
 /// Reflects logical start/end geometry into physical left/right geometry for a
 /// visually RTL table. Horizontal segment offsets are relative to the physical
 /// left edge at composition time, so they are reflected and returned in
 /// ascending physical order as well.
-fn mirror_cell_geometry(margins: &mut CellContentMargins, borders: &mut CellBorders, width: Twip) {
+fn mirror_cell_geometry(
+    margins: &mut CellContentMargins,
+    borders: &mut CellBorders,
+    table_borders: &mut CellBorders,
+    width: Twip,
+) {
     std::mem::swap(&mut margins.start, &mut margins.end);
     std::mem::swap(&mut borders.start, &mut borders.end);
+    std::mem::swap(&mut table_borders.start, &mut table_borders.end);
     for segments in [&mut borders.top_segments, &mut borders.bottom_segments] {
         for segment in segments.iter_mut() {
             segment.offset = Twip(
@@ -1162,8 +1237,7 @@ fn resolve_table_border_candidates(
                 .enumerate()
                 .map(|(cell_index, cell)| {
                     let layer = &layers[row_index][cell_index];
-                    let mut table_borders = layer.table_borders.clone();
-                    overlay_table_borders(&mut table_borders, &table.properties.borders);
+                    let table_borders = effective_table_borders(table, layer);
 
                     let mut cell_borders = layer.cell_borders.clone();
                     overlay_table_borders(&mut cell_borders, &cell.properties.borders);
@@ -1216,6 +1290,41 @@ fn resolve_table_border_candidates(
                 .collect()
         })
         .collect()
+}
+
+fn effective_table_borders(table: &Table, layer: &TableStyleLayer) -> TableBorders {
+    let mut borders = layer.table_borders.clone();
+    overlay_table_borders(&mut borders, &table.properties.borders);
+    borders
+}
+
+/// Retains the table perimeter as its own paint layer for separated-cell rows.
+/// Each perimeter segment is attached to the cell whose logical grid slot owns
+/// it; composition reconstructs that slot from the inset cell geometry.
+fn resolve_table_perimeter_borders(
+    table: &Table,
+    layers: &[Vec<TableStyleLayer>],
+    row_index: usize,
+    cell_index: usize,
+) -> CellBorders {
+    let row = &table.rows[row_index];
+    let borders = effective_table_borders(table, &layers[row_index][cell_index]);
+    CellBorders {
+        top: (row_index == 0)
+            .then(|| resolve_edge(&[borders.top.as_ref()]))
+            .flatten(),
+        start: (cell_index == 0)
+            .then(|| resolve_edge(&[borders.start.as_ref()]))
+            .flatten(),
+        bottom: (row_index + 1 == table.rows.len())
+            .then(|| resolve_edge(&[borders.bottom.as_ref()]))
+            .flatten(),
+        end: (cell_index + 1 == row.cells.len())
+            .then(|| resolve_edge(&[borders.end.as_ref()]))
+            .flatten(),
+        top_segments: Vec::new(),
+        bottom_segments: Vec::new(),
+    }
 }
 
 /// One table row while vertical-merge height constraints are being resolved.
@@ -1294,14 +1403,20 @@ fn resolve_vertical_merge_geometry(roles: &[Vec<VerticalMergeRole>], rows: &mut 
     // constraint has had a chance to grow those rows.
     for (row_index, row_roles) in roles.iter().enumerate() {
         for (cell_index, role) in row_roles.iter().copied().enumerate() {
-            let VerticalMergeRole::Restart { end_row, .. } = role else {
+            let VerticalMergeRole::Restart { end_row, end_cell } = role else {
                 continue;
             };
             if end_row == row_index {
                 continue;
             }
 
-            let required = rows[row_index].cells[cell_index].occupied_height().raw();
+            let origin_cell = &rows[row_index].cells[cell_index];
+            let closing_spacing_bottom = rows[end_row].cells[end_cell].cell_spacing.bottom.raw();
+            let required = origin_cell
+                .occupied_height()
+                .raw()
+                .saturating_sub(origin_cell.cell_spacing.bottom.raw())
+                .saturating_add(closing_spacing_bottom);
             let current: i32 = rows[row_index..=end_row]
                 .iter()
                 .map(|row| row.height.raw())
@@ -1348,9 +1463,15 @@ fn resolve_vertical_merge_geometry(roles: &[Vec<VerticalMergeRole>], rows: &mut 
                     .map(|row| row.height.raw())
                     .sum(),
             );
-            let (closing_bottom, closing_bottom_segments) = {
+            let (closing_bottom, closing_bottom_segments, table_bottom, closing_spacing_bottom) = {
                 let closing = &rows[end_row].cells[end_cell].borders;
-                (closing.bottom, closing.bottom_segments.clone())
+                let closing_cell = &rows[end_row].cells[end_cell];
+                (
+                    closing.bottom,
+                    closing.bottom_segments.clone(),
+                    closing_cell.table_borders.bottom,
+                    closing_cell.cell_spacing.bottom,
+                )
             };
             let origin = &mut rows[row_index].cells[cell_index];
             origin.vertical_merge = CellVerticalMerge::Restart {
@@ -1358,6 +1479,8 @@ fn resolve_vertical_merge_geometry(roles: &[Vec<VerticalMergeRole>], rows: &mut 
             };
             origin.borders.bottom = closing_bottom;
             origin.borders.bottom_segments = closing_bottom_segments;
+            origin.table_borders.bottom = table_bottom;
+            origin.cell_spacing.bottom = closing_spacing_bottom;
         }
     }
 }
@@ -1923,6 +2046,20 @@ fn resolve_cell_borders(
         end: resolve_edge(&[own_end, right_start]),
         top_segments,
         bottom_segments,
+    }
+}
+
+/// Resolves one cell's already materialized sides without consulting adjacent
+/// cells. This is the non-zero-spacing mode: each side remains visible in its
+/// own inset cell box instead of collapsing to one shared winner.
+fn resolve_separated_cell_borders(effective: &TableBorders) -> CellBorders {
+    CellBorders {
+        top: resolve_edge(&[effective.top.as_ref()]),
+        start: resolve_edge(&[effective.start.as_ref()]),
+        bottom: resolve_edge(&[effective.bottom.as_ref()]),
+        end: resolve_edge(&[effective.end.as_ref()]),
+        top_segments: Vec::new(),
+        bottom_segments: Vec::new(),
     }
 }
 
@@ -7093,6 +7230,202 @@ mod tests {
         );
     }
 
+    fn two_column_spacing_table(spacing: i32, row_override: Option<i32>) -> Table {
+        Table {
+            id: node(50),
+            grid: vec![
+                GridColumn {
+                    width_twips: Some(2000),
+                },
+                GridColumn {
+                    width_twips: Some(4000),
+                },
+            ],
+            grid_change: None,
+            properties: TableProperties {
+                width_twips: Some(6000),
+                layout: Some(TableLayout::Fixed),
+                cell_spacing_twips: Some(spacing),
+                ..TableProperties::default()
+            },
+            rows: vec![ModelRow {
+                id: node(51),
+                properties: TableRowProperties {
+                    cell_spacing_twips: row_override,
+                    ..TableRowProperties::default()
+                },
+                cells: vec![
+                    text_cell(52, TableCellProperties::default(), "A"),
+                    text_cell(53, TableCellProperties::default(), "B"),
+                ],
+            }],
+        }
+    }
+
+    #[test]
+    fn cell_spacing_is_carved_inside_fixed_grid_tracks_with_row_precedence() {
+        let geometry = |table: Table| {
+            let BlockFragment::TableRow { cells, .. } = flow_single_row(table, Twip(9000)) else {
+                panic!("expected a table row");
+            };
+            cells
+                .iter()
+                .map(|cell| (cell.x, cell.width, cell.cell_spacing))
+                .collect::<Vec<_>>()
+        };
+
+        let table_spacing = geometry(two_column_spacing_table(240, None));
+        assert_eq!(table_spacing[0].0, Twip(120));
+        assert_eq!(table_spacing[0].1, Twip(1760));
+        assert_eq!(table_spacing[1].0, Twip(2120));
+        assert_eq!(table_spacing[1].1, Twip(3760));
+        assert_eq!(
+            table_spacing[1].0 - (table_spacing[0].0 + table_spacing[0].1),
+            Twip(240)
+        );
+        assert_eq!(
+            table_spacing[1].0 + table_spacing[1].1 + table_spacing[1].2.end,
+            Twip(6000),
+            "spacing does not enlarge the solved table"
+        );
+
+        let row_spacing = geometry(two_column_spacing_table(240, Some(480)));
+        assert_eq!(row_spacing[0].0, Twip(240));
+        assert_eq!(row_spacing[0].1, Twip(1520));
+        assert_eq!(row_spacing[1].0, Twip(2240));
+        assert_eq!(row_spacing[1].1, Twip(3520));
+    }
+
+    #[test]
+    fn cell_spacing_contributes_to_row_height_but_not_the_cell_content_box() {
+        let BlockFragment::TableRow {
+            cells: plain,
+            height: plain_height,
+            ..
+        } = flow_single_row(two_column_spacing_table(0, None), Twip(9000))
+        else {
+            panic!("expected a table row");
+        };
+        let BlockFragment::TableRow {
+            cells: spaced,
+            height: spaced_height,
+            ..
+        } = flow_single_row(two_column_spacing_table(240, None), Twip(9000))
+        else {
+            panic!("expected a table row");
+        };
+
+        assert_eq!(spaced_height - plain_height, Twip(240));
+        assert_eq!(
+            spaced[0].box_height(spaced_height),
+            plain[0].box_height(plain_height)
+        );
+        assert_eq!(spaced[0].cell_spacing.top, Twip(120));
+        assert_eq!(spaced[0].cell_spacing.bottom, Twip(120));
+    }
+
+    #[test]
+    fn exact_row_clamps_excessive_vertical_spacing_inside_its_box() {
+        let mut table = two_column_spacing_table(240, None);
+        table.rows[0].properties.height = RowHeight {
+            value_twips: Some(100),
+            rule: Some(HeightRule::Exact),
+        };
+        let BlockFragment::TableRow {
+            cells,
+            height,
+            clip,
+            ..
+        } = flow_single_row(table, Twip(9000))
+        else {
+            panic!("expected a table row");
+        };
+        assert_eq!(height, Twip(100));
+        assert!(clip);
+        assert_eq!(cells[0].box_height(height), Twip(1));
+        assert_eq!(
+            cells[0].cell_spacing.top + cells[0].box_height(height) + cells[0].cell_spacing.bottom,
+            height
+        );
+    }
+
+    #[test]
+    fn separated_cells_keep_abutting_and_outer_table_borders_distinct() {
+        let red = RgbColor { r: 255, g: 0, b: 0 };
+        let blue = RgbColor { r: 0, g: 0, b: 255 };
+        let green = RgbColor { r: 0, g: 128, b: 0 };
+        let mut table = two_column_spacing_table(240, None);
+        table.properties.borders = TableBorders {
+            start: Some(colored_edge("single", 24, green)),
+            end: Some(colored_edge("single", 24, green)),
+            inside_v: Some(colored_edge("single", 8, green)),
+            ..TableBorders::default()
+        };
+        table.rows[0].cells[0].properties.borders.end = Some(colored_edge("single", 16, red));
+        table.rows[0].cells[1].properties.borders.start = Some(colored_edge("double", 24, blue));
+
+        let BlockFragment::TableRow { cells, .. } = flow_single_row(table, Twip(9000)) else {
+            panic!("expected a table row");
+        };
+        assert_eq!(
+            cells[0].borders.end.map(|edge| edge.color),
+            Some([255, 0, 0, 255])
+        );
+        assert_eq!(
+            cells[1].borders.start.map(|edge| edge.color),
+            Some([0, 0, 255, 255])
+        );
+        assert_eq!(
+            cells[0].table_borders.start.map(|edge| edge.color),
+            Some([0, 128, 0, 255])
+        );
+        assert_eq!(
+            cells[1].table_borders.end.map(|edge| edge.color),
+            Some([0, 128, 0, 255])
+        );
+    }
+
+    #[test]
+    fn bidi_visual_reflects_cell_spacing_around_a_grid_span() {
+        let mut table = two_column_spacing_table(241, None);
+        table.properties.tbl_bidi_visual = true;
+        table.properties.alignment = Some(Alignment::End);
+        table.grid = vec![
+            GridColumn {
+                width_twips: Some(1000),
+            },
+            GridColumn {
+                width_twips: Some(2000),
+            },
+            GridColumn {
+                width_twips: Some(3000),
+            },
+        ];
+        table.rows[0].cells[0].properties.grid_span = Some(2);
+
+        let BlockFragment::TableRow { cells, .. } = flow_single_row(table, Twip(9000)) else {
+            panic!("expected a table row");
+        };
+        assert_eq!((cells[0].x, cells[0].width), (Twip(3121), Twip(2759)));
+        assert_eq!((cells[1].x, cells[1].width), (Twip(121), Twip(2759)));
+        assert_eq!(cells[0].x - (cells[1].x + cells[1].width), Twip(241));
+        assert_eq!(cells[0].cell_spacing.start, Twip(121));
+        assert_eq!(cells[0].cell_spacing.end, Twip(120));
+    }
+
+    #[test]
+    fn excessive_cell_spacing_keeps_a_bounded_cell_box() {
+        let BlockFragment::TableRow { cells, .. } =
+            flow_single_row(two_column_spacing_table(10_000, None), Twip(9000))
+        else {
+            panic!("expected a table row");
+        };
+        assert_eq!(cells[0].width, Twip(1));
+        assert_eq!(cells[1].width, Twip(1));
+        assert!(cells[0].x.raw() >= 0);
+        assert!(cells[1].x.raw() + cells[1].width.raw() <= 6000);
+    }
+
     #[test]
     fn bidi_visual_mirrors_unequal_grid_ranges_margins_and_vertical_borders() {
         let leading = RgbColor { r: 255, g: 0, b: 0 };
@@ -7254,11 +7587,20 @@ mod tests {
             ],
             ..CellBorders::default()
         };
+        let mut table_borders = CellBorders {
+            start: Some(thin),
+            end: Some(thick),
+            ..CellBorders::default()
+        };
 
-        mirror_cell_geometry(&mut margins, &mut borders, Twip(1000));
+        mirror_cell_geometry(&mut margins, &mut borders, &mut table_borders, Twip(1000));
 
         assert_eq!((margins.start, margins.end), (Twip(200), Twip(100)));
         assert_eq!((borders.start, borders.end), (Some(thick), Some(thin)));
+        assert_eq!(
+            (table_borders.start, table_borders.end),
+            (Some(thick), Some(thin))
+        );
         assert_eq!(
             borders.top_segments,
             vec![
@@ -9888,6 +10230,7 @@ mod tests {
             grid_span: 1,
             x: Twip::ZERO,
             width: Twip(3000),
+            cell_spacing: Default::default(),
             // A single 100-twip-tall empty paragraph line stands in for content.
             blocks: vec![BlockFragment::Paragraph {
                 id: NodeId::from_parts(10, 1).unwrap(),
@@ -9920,6 +10263,7 @@ mod tests {
             vertical_alignment: valign,
             vertical_merge: CellVerticalMerge::None,
             borders: CellBorders::default(),
+            table_borders: CellBorders::default(),
             shading: None,
         };
         let row = Twip(200);

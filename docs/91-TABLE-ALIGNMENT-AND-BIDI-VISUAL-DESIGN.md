@@ -41,8 +41,9 @@ round-trip.
 ## Scope and deferrals
 
 This increment consumes direct table/row alignment and direct table
-`tbl_bidi_visual`. Style-provided table/row geometry, cell spacing, floating
-tables, vertical cell text, and Word's legacy distinction between physical
+`tbl_bidi_visual`. Cell spacing subsequently landed in `P1F-TBL-CELL-SPACING`
+(doc 92). Style-provided table/row geometry, floating tables, vertical cell text,
+and Word's legacy distinction between physical
 `left`/`right` tokens and logical `start`/`end` are deferred. The v1 importer
 already normalizes those legacy aliases, so layout cannot reconstruct their
 original spelling.
