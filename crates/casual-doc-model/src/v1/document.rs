@@ -1380,15 +1380,18 @@ impl Document {
                     )?;
                     previous_run_properties = None;
                 }
-                // An opaque math object is an inert leaf (like a drawing): its
-                // retained OMML is bounded and non-empty; the text fallback,
-                // when present, is bounded by the same budget.
+                // Math is an inert inline leaf at the document tree level. Its
+                // retained XML and optional typed projection are independently
+                // bounded so hostile snapshots cannot build an unbounded AST.
                 InlineNode::Math(math) => {
                     check_domain(
                         !math.omml.is_empty() && math.omml.len() <= MAX_MATH_BYTES,
                         "math.omml",
                     )?;
                     check_domain(math.text.len() <= MAX_MATH_BYTES, "math.text")?;
+                    if let Some(expression) = &math.expression {
+                        validate_math_expression(expression)?;
+                    }
                     previous_run_properties = None;
                 }
                 // A symbol is an inert leaf: the font name is a non-empty,
@@ -1752,6 +1755,11 @@ fn accumulate_inline_limits(
         InlineNode::Math(math) => {
             enforce_limit("math_omml_bytes", math.omml.len(), MAX_MATH_BYTES)?;
             enforce_limit("math_text_bytes", math.text.len(), MAX_MATH_BYTES)?;
+            if let Some(expression) = &math.expression {
+                let (nodes, text_bytes) = math_expression_size(expression);
+                enforce_limit("math_expression_nodes", nodes, MAX_MATH_NODES)?;
+                enforce_limit("math_expression_text_bytes", text_bytes, MAX_MATH_BYTES)?;
+            }
         }
         InlineNode::Tab(_)
         | InlineNode::Break(_)
@@ -2096,6 +2104,139 @@ fn check_domain(condition: bool, property: &'static str) -> Result<(), ModelErro
         Ok(())
     } else {
         Err(ModelError::PropertyValueOutOfDomain { property })
+    }
+}
+
+fn validate_math_expression(expression: &MathExpression) -> Result<(), ModelError> {
+    fn visit(
+        expression: &MathExpression,
+        depth: usize,
+        nodes: &mut usize,
+        text_bytes: &mut usize,
+    ) -> Result<(), ModelError> {
+        check_domain(depth <= MAX_MATH_DEPTH, "math.expression.depth")?;
+        *nodes = nodes.saturating_add(1);
+        check_domain(*nodes <= MAX_MATH_NODES, "math.expression.nodes")?;
+        match expression {
+            MathExpression::Row { children } => {
+                check_domain(!children.is_empty(), "math.expression.row.children")?;
+                for child in children {
+                    visit(child, depth + 1, nodes, text_bytes)?;
+                }
+            }
+            MathExpression::Text { value } => {
+                check_domain(!value.is_empty(), "math.expression.text")?;
+                *text_bytes = text_bytes.saturating_add(value.len());
+                check_domain(*text_bytes <= MAX_MATH_BYTES, "math.expression.textBytes")?;
+            }
+            MathExpression::Fraction {
+                numerator,
+                denominator,
+            } => {
+                visit(numerator, depth + 1, nodes, text_bytes)?;
+                visit(denominator, depth + 1, nodes, text_bytes)?;
+            }
+            MathExpression::Script {
+                base,
+                subscript,
+                superscript,
+            } => {
+                check_domain(
+                    subscript.is_some() || superscript.is_some(),
+                    "math.expression.script",
+                )?;
+                visit(base, depth + 1, nodes, text_bytes)?;
+                if let Some(subscript) = subscript {
+                    visit(subscript, depth + 1, nodes, text_bytes)?;
+                }
+                if let Some(superscript) = superscript {
+                    visit(superscript, depth + 1, nodes, text_bytes)?;
+                }
+            }
+            MathExpression::Radical { degree, radicand } => {
+                if let Some(degree) = degree {
+                    visit(degree, depth + 1, nodes, text_bytes)?;
+                }
+                visit(radicand, depth + 1, nodes, text_bytes)?;
+            }
+            MathExpression::Delimiter {
+                open,
+                close,
+                content,
+            } => {
+                *text_bytes = text_bytes
+                    .saturating_add(open.len())
+                    .saturating_add(close.len());
+                check_domain(*text_bytes <= MAX_MATH_BYTES, "math.expression.textBytes")?;
+                visit(content, depth + 1, nodes, text_bytes)?;
+            }
+        }
+        Ok(())
+    }
+
+    let mut nodes = 0;
+    let mut text_bytes = 0;
+    visit(expression, 1, &mut nodes, &mut text_bytes)
+}
+
+fn math_expression_size(expression: &MathExpression) -> (usize, usize) {
+    match expression {
+        MathExpression::Row { children } => children.iter().fold((1, 0), |acc, child| {
+            let child = math_expression_size(child);
+            (acc.0.saturating_add(child.0), acc.1.saturating_add(child.1))
+        }),
+        MathExpression::Text { value } => (1, value.len()),
+        MathExpression::Fraction {
+            numerator,
+            denominator,
+        } => {
+            let numerator = math_expression_size(numerator);
+            let denominator = math_expression_size(denominator);
+            (
+                1usize
+                    .saturating_add(numerator.0)
+                    .saturating_add(denominator.0),
+                numerator.1.saturating_add(denominator.1),
+            )
+        }
+        MathExpression::Script {
+            base,
+            subscript,
+            superscript,
+        } => {
+            let mut size = math_expression_size(base);
+            size.0 = size.0.saturating_add(1);
+            for script in [subscript, superscript].into_iter().flatten() {
+                let child = math_expression_size(script);
+                size.0 = size.0.saturating_add(child.0);
+                size.1 = size.1.saturating_add(child.1);
+            }
+            size
+        }
+        MathExpression::Radical { degree, radicand } => {
+            let mut size = math_expression_size(radicand);
+            size.0 = size.0.saturating_add(1);
+            if let Some(degree) = degree {
+                let child = math_expression_size(degree);
+                size.0 = size.0.saturating_add(child.0);
+                size.1 = size.1.saturating_add(child.1);
+            }
+            size
+        }
+        MathExpression::Delimiter {
+            open,
+            close,
+            content,
+        } => {
+            let content = math_expression_size(content);
+            (
+                content.0.saturating_add(1),
+                content
+                    .1
+                    .saturating_add(open.len())
+                    .saturating_add(close.len()),
+            )
+        }
     }
 }
 

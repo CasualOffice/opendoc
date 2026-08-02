@@ -24,11 +24,11 @@ use casual_doc_model::v1::{
     Definitions, Document, Drawing, DrawingAnchor, DropCapFrame, DropCapMode, EmbeddedKind,
     EmbeddedObject, Extent, FontScheme, FrameWrap, HeightRule, HighlightColor, HorizontalAlign,
     HorizontalAnchor, HorizontalPosition, HorizontalRule as ModelHorizontalRule,
-    HorizontalRuleAlign, Indentation, InlineNode, LevelSuffix, LineRule, MediaId, MediaReference,
-    NoteKind, NoteReference, Paragraph, ParagraphProperties, ReviewProjection, Rgba, RunFontHint,
-    RunProperties, SchemeColor, SectionBoundary, SectionId, SectionType, ShapeStroke, StyleId,
-    Symbol, TabAlignment, TabLeader, TabStop, Table, TableBorders, TableCell, TableLayout,
-    TableRow, TableRowProperties, TextBox, TextBoxAutoFit, TextBoxBodyProperties,
+    HorizontalRuleAlign, Indentation, InlineNode, LevelSuffix, LineRule, MathExpression, MediaId,
+    MediaReference, NoteKind, NoteReference, Paragraph, ParagraphProperties, ReviewProjection,
+    Rgba, RunFontHint, RunProperties, SchemeColor, SectionBoundary, SectionId, SectionType,
+    ShapeStroke, StyleId, Symbol, TabAlignment, TabLeader, TabStop, Table, TableBorders, TableCell,
+    TableLayout, TableRow, TableRowProperties, TextBox, TextBoxAutoFit, TextBoxBodyProperties,
     TextBoxHorizontalOverflow, TextBoxVerticalAnchor, TextBoxVerticalOverflow, ThemeColorRef,
     VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition, WrapMode,
 };
@@ -47,8 +47,8 @@ use crate::script::{self, ScriptSlot};
 use crate::tabs::{self, FlowItem};
 use crate::text::{
     Decoration, FieldKind, FieldMarker, FieldStyle, FontId, Glyph, GlyphRun, InlineFloatSide,
-    InlineFloatSpec, InlineImage, InlineImageSpec, InlineRule, InlineTextBox, Line, LineBreak,
-    LineConstraints, LineLayout, LineShaper, NoteMarker, StyledRun, TextAlignment,
+    InlineFloatSpec, InlineImage, InlineImageSpec, InlineMathSpec, InlineRule, InlineTextBox, Line,
+    LineBreak, LineConstraints, LineLayout, LineShaper, NoteMarker, StyledRun, TextAlignment,
     TextBoxContentLayout, TextBoxStroke,
 };
 use crate::units::{Point, Size, Twip};
@@ -591,6 +591,27 @@ fn paragraph_hash(
                 size.height.0.hash(&mut hasher);
                 crop.map(|c| (c.left, c.top, c.right, c.bottom))
                     .hash(&mut hasher);
+            }
+            FlowItem::Math { size, runs, rules } => {
+                11u8.hash(&mut hasher);
+                size.width.0.hash(&mut hasher);
+                size.height.0.hash(&mut hasher);
+                for run in runs {
+                    run.font.0.hash(&mut hasher);
+                    run.size.0.hash(&mut hasher);
+                    run.origin.x.0.hash(&mut hasher);
+                    run.origin.y.0.hash(&mut hasher);
+                    for glyph in &run.glyphs {
+                        glyph.id.hash(&mut hasher);
+                        glyph.advance.0.hash(&mut hasher);
+                    }
+                }
+                for rule in rules {
+                    rule.origin.x.0.hash(&mut hasher);
+                    rule.origin.y.0.hash(&mut hasher);
+                    rule.size.width.0.hash(&mut hasher);
+                    rule.size.height.0.hash(&mut hasher);
+                }
             }
             FlowItem::Field { kind, value, style } => {
                 4u8.hash(&mut hasher);
@@ -2075,16 +2096,27 @@ fn collect_items<'a>(
             InlineNode::Revision(_) => {}
             InlineNode::Sdt(sdt) => collect_items(&sdt.inlines, out, shaper, width, ctx),
             InlineNode::Math(math) => {
-                let text = if math.text.is_empty() {
-                    "[equation]".to_owned()
+                let base = styled_owned_run("x".to_owned(), &RunProperties::default(), ctx);
+                if let Some(expression) = &math.expression
+                    && let Some(math_box) = layout_math_expression(shaper, expression, &base, 1_000)
+                {
+                    out.push(FlowItem::Math {
+                        size: math_box.size,
+                        runs: math_box.runs,
+                        rules: math_box.rules,
+                    });
                 } else {
-                    format!("[{}]", math.text)
-                };
-                out.push(FlowItem::Run(styled_owned_run(
-                    text,
-                    &RunProperties::default(),
-                    ctx,
-                )));
+                    let text = if math.text.is_empty() {
+                        "[equation]".to_owned()
+                    } else {
+                        format!("[{}]", math.text)
+                    };
+                    out.push(FlowItem::Run(styled_owned_run(
+                        text,
+                        &RunProperties::default(),
+                        ctx,
+                    )));
+                }
             }
             InlineNode::NoBreakHyphen(_) => {
                 out.push(FlowItem::Run(styled_run(
@@ -2708,6 +2740,7 @@ fn collect_note_positions(items: &[FlowItem<'_>], base: u32) -> Vec<(u32, NoteMa
             | FlowItem::PositionalTab { .. }
             | FlowItem::Break(_)
             | FlowItem::Image { .. }
+            | FlowItem::Math { .. }
             | FlowItem::TextBox { .. }
             | FlowItem::HorizontalRule(_)
             | FlowItem::FloatBarrier { .. }
@@ -2752,7 +2785,7 @@ fn shape_inline_chunk(
     if items.iter().any(|item| {
         matches!(
             item,
-            FlowItem::Image { .. } | FlowItem::FloatExclusion { .. }
+            FlowItem::Image { .. } | FlowItem::Math { .. } | FlowItem::FloatExclusion { .. }
         )
     }) {
         let has_fields = items
@@ -2794,6 +2827,7 @@ fn shape_text_with_objects(
 ) -> LineLayout {
     let mut runs = Vec::new();
     let mut images = Vec::new();
+    let mut maths = Vec::new();
     let mut floats = Vec::new();
     let mut byte = 0u32;
     for item in items {
@@ -2808,6 +2842,12 @@ fn shape_text_with_objects(
                 size: *size,
                 crop: *crop,
             }),
+            FlowItem::Math { size, runs, rules } => maths.push(InlineMathSpec {
+                index: byte,
+                size: *size,
+                runs: runs.clone(),
+                rules: rules.clone(),
+            }),
             FlowItem::FloatExclusion {
                 side,
                 width,
@@ -2821,7 +2861,14 @@ fn shape_text_with_objects(
             _ => {}
         }
     }
-    shaper.shape_paragraph_with_inline_objects(&runs, &images, &floats, constraints, range)
+    shaper.shape_paragraph_with_rich_inline_objects(
+        &runs,
+        &images,
+        &maths,
+        &floats,
+        constraints,
+        range,
+    )
 }
 
 /// Compatibility path for uncommon field/tab + inline-object combinations:
@@ -2841,7 +2888,7 @@ fn shape_complex_inline_with_objects(
     for (index, item) in items.iter().enumerate() {
         if !matches!(
             item,
-            FlowItem::Image { .. } | FlowItem::FloatExclusion { .. }
+            FlowItem::Image { .. } | FlowItem::Math { .. } | FlowItem::FloatExclusion { .. }
         ) {
             continue;
         }
@@ -2858,6 +2905,9 @@ fn shape_complex_inline_with_objects(
         }
         let object_line = match item {
             FlowItem::Image { media, size, crop } => image_line(media.clone(), *size, *crop, range),
+            FlowItem::Math { size, runs, rules } => {
+                math_line(*size, runs.clone(), rules.clone(), range)
+            }
             FlowItem::FloatExclusion { height, .. } => float_barrier_line(*height, range),
             _ => unreachable!(),
         };
@@ -2931,6 +2981,27 @@ fn image_line(
         notes: Vec::new(),
         text_boxes: Vec::new(),
         rules: Vec::new(),
+    }
+}
+
+/// Conservative compatibility line for equations combined with tabs/fields,
+/// whose specialized assembly path cannot yet interleave arbitrary boxes.
+fn math_line(size: Size, runs: Vec<GlyphRun>, rules: Vec<InlineRule>, range: ModelRange) -> Line {
+    Line {
+        runs,
+        ascent: size.height,
+        descent: Twip::ZERO,
+        height: size.height,
+        clip: false,
+        range,
+        line_break: LineBreak::Wrap,
+        page_break_after: false,
+        bars: Vec::new(),
+        images: Vec::new(),
+        fields: Vec::new(),
+        notes: Vec::new(),
+        text_boxes: Vec::new(),
+        rules,
     }
 }
 
@@ -3027,6 +3098,319 @@ fn stack_lines(out: &mut Vec<Line>, mut lines: Vec<Line>, cursor_y: &mut Twip) {
     }
     *cursor_y = lines.iter().fold(base, |cursor, line| cursor + line.height);
     out.extend(lines);
+}
+
+// --- Inline math -----------------------------------------------------------
+
+/// Resource ceiling for one equation's computed geometry. This is far larger
+/// than a page while keeping all intermediate integer-twip additions safe.
+const MAX_MATH_LAYOUT_TWIPS: i32 = 1 << 24;
+
+#[derive(Clone)]
+struct MathBox {
+    size: Size,
+    ascent: Twip,
+    descent: Twip,
+    runs: Vec<GlyphRun>,
+    rules: Vec<InlineRule>,
+}
+
+fn layout_math_expression(
+    shaper: &dyn LineShaper,
+    expression: &MathExpression,
+    base: &StyledRun<'_>,
+    scale_permille: u16,
+) -> Option<MathBox> {
+    match expression {
+        MathExpression::Text { value } => shape_math_text(shaper, value, base, scale_permille),
+        MathExpression::Row { children } => {
+            let children = children
+                .iter()
+                .map(|child| layout_math_expression(shaper, child, base, scale_permille))
+                .collect::<Option<Vec<_>>>()?;
+            math_row(children)
+        }
+        MathExpression::Fraction {
+            numerator,
+            denominator,
+        } => {
+            let child_scale = scaled_permille(scale_permille, 850);
+            let numerator = layout_math_expression(shaper, numerator, base, child_scale)?;
+            let denominator = layout_math_expression(shaper, denominator, base, child_scale)?;
+            fraction_box(numerator, denominator, base.color, base.size)
+        }
+        MathExpression::Script {
+            base: expression_base,
+            subscript,
+            superscript,
+        } => {
+            let expression_base =
+                layout_math_expression(shaper, expression_base, base, scale_permille)?;
+            let script_scale = scaled_permille(scale_permille, 700);
+            let subscript = match subscript.as_deref() {
+                Some(value) => Some(layout_math_expression(shaper, value, base, script_scale)?),
+                None => None,
+            };
+            let superscript = match superscript.as_deref() {
+                Some(value) => Some(layout_math_expression(shaper, value, base, script_scale)?),
+                None => None,
+            };
+            script_box(expression_base, subscript, superscript, base.size)
+        }
+        MathExpression::Radical { degree, radicand } => {
+            let radicand = layout_math_expression(shaper, radicand, base, scale_permille)?;
+            let degree_scale = scaled_permille(scale_permille, 600);
+            let degree = match degree.as_deref() {
+                Some(value) => Some(layout_math_expression(shaper, value, base, degree_scale)?),
+                None => None,
+            };
+            radical_box(shaper, degree, radicand, base, scale_permille)
+        }
+        MathExpression::Delimiter {
+            open,
+            close,
+            content,
+        } => {
+            let mut children = Vec::new();
+            if !open.is_empty() {
+                children.push(shape_math_text(shaper, open, base, scale_permille)?);
+            }
+            children.push(layout_math_expression(
+                shaper,
+                content,
+                base,
+                scale_permille,
+            )?);
+            if !close.is_empty() {
+                children.push(shape_math_text(shaper, close, base, scale_permille)?);
+            }
+            math_row(children)
+        }
+    }
+}
+
+fn shape_math_text(
+    shaper: &dyn LineShaper,
+    value: &str,
+    base: &StyledRun<'_>,
+    scale_permille: u16,
+) -> Option<MathBox> {
+    if value.is_empty() {
+        return None;
+    }
+    let mut styled = base.clone();
+    styled.text = Cow::Owned(value.to_owned());
+    styled.size = Twip(
+        (i64::from(base.size.raw()) * i64::from(scale_permille) / 1_000)
+            .clamp(1, i64::from(MAX_MATH_LAYOUT_TWIPS)) as i32,
+    );
+    styled.baseline_shift = Twip::ZERO;
+    let node = NodeId::from_parts(1, 1).expect("fixed valid math shaping id");
+    let range = ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, 0));
+    let layout = shaper.shape_paragraph(&[styled], tabs::unwrapped_constraints(), range);
+    let line = layout.lines.first()?;
+    let width = line
+        .runs
+        .iter()
+        .map(|run| safe_add(run.origin.x, run_advance(run)))
+        .max()
+        .unwrap_or(Twip::ZERO);
+    if width.raw() <= 0 || line.height.raw() <= 0 {
+        return None;
+    }
+    let mut runs = line.runs.clone();
+    for run in &mut runs {
+        for glyph in &mut run.glyphs {
+            glyph.cluster = 0;
+        }
+    }
+    Some(MathBox {
+        size: Size::new(width, line.height),
+        ascent: line.ascent,
+        descent: line.descent,
+        runs,
+        rules: Vec::new(),
+    })
+}
+
+fn math_row(children: Vec<MathBox>) -> Option<MathBox> {
+    if children.is_empty() {
+        return None;
+    }
+    let ascent = children
+        .iter()
+        .map(|child| child.ascent)
+        .max()
+        .unwrap_or(Twip::ZERO);
+    let descent = children
+        .iter()
+        .map(|child| child.descent)
+        .max()
+        .unwrap_or(Twip::ZERO);
+    let height = safe_add(ascent, descent);
+    let mut out = MathBox {
+        size: Size::new(Twip::ZERO, height),
+        ascent,
+        descent,
+        runs: Vec::new(),
+        rules: Vec::new(),
+    };
+    let mut x = Twip::ZERO;
+    for mut child in children {
+        let y = ascent - child.ascent;
+        translate_math_box(&mut child, x, y);
+        out.runs.extend(child.runs);
+        out.rules.extend(child.rules);
+        x = safe_add(x, child.size.width);
+    }
+    out.size.width = x;
+    Some(out)
+}
+
+fn fraction_box(
+    mut numerator: MathBox,
+    mut denominator: MathBox,
+    color: [u8; 4],
+    em: Twip,
+) -> Option<MathBox> {
+    let padding = Twip((em.raw() / 8).max(12));
+    let gap = Twip((em.raw() / 10).max(10));
+    let thickness = Twip((em.raw() / 24).max(8));
+    let content_width = numerator.size.width.max(denominator.size.width);
+    let width = safe_add(content_width, safe_add(padding, padding));
+    let rule_y = safe_add(numerator.size.height, gap);
+    let denominator_y = safe_add(rule_y, safe_add(thickness, gap));
+    let height = safe_add(denominator_y, denominator.size.height);
+    let numerator_x = Twip((width.raw() - numerator.size.width.raw()) / 2);
+    let denominator_x = Twip((width.raw() - denominator.size.width.raw()) / 2);
+    translate_math_box(&mut numerator, numerator_x, Twip::ZERO);
+    translate_math_box(&mut denominator, denominator_x, denominator_y);
+    let ascent = safe_add(rule_y, Twip(thickness.raw() / 2));
+    Some(MathBox {
+        size: Size::new(width, height),
+        ascent,
+        descent: height - ascent,
+        runs: numerator.runs.into_iter().chain(denominator.runs).collect(),
+        rules: numerator
+            .rules
+            .into_iter()
+            .chain(denominator.rules)
+            .chain(core::iter::once(InlineRule {
+                origin: Point::new(padding, rule_y),
+                size: Size::new(content_width, thickness),
+                color,
+            }))
+            .collect(),
+    })
+}
+
+fn script_box(
+    mut base: MathBox,
+    mut subscript: Option<MathBox>,
+    mut superscript: Option<MathBox>,
+    em: Twip,
+) -> Option<MathBox> {
+    let gap = Twip((em.raw() / 12).max(8));
+    let sup_height = superscript
+        .as_ref()
+        .map_or(Twip::ZERO, |value| value.size.height);
+    let ascent = base.ascent.max(safe_add(sup_height, gap));
+    let base_y = ascent - base.ascent;
+    let script_x = safe_add(base.size.width, gap);
+    translate_math_box(&mut base, Twip::ZERO, base_y);
+    let mut width = base.size.width;
+    let mut height = safe_add(base_y, base.size.height);
+    let mut runs = base.runs;
+    let mut rules = base.rules;
+    if let Some(superscript) = &mut superscript {
+        translate_math_box(superscript, script_x, Twip::ZERO);
+        width = width.max(safe_add(script_x, superscript.size.width));
+        height = height.max(superscript.size.height);
+        runs.append(&mut superscript.runs);
+        rules.append(&mut superscript.rules);
+    }
+    if let Some(subscript) = &mut subscript {
+        let y = safe_add(ascent, gap);
+        translate_math_box(subscript, script_x, y);
+        width = width.max(safe_add(script_x, subscript.size.width));
+        height = height.max(safe_add(y, subscript.size.height));
+        runs.append(&mut subscript.runs);
+        rules.append(&mut subscript.rules);
+    }
+    Some(MathBox {
+        size: Size::new(width, height),
+        ascent,
+        descent: height - ascent,
+        runs,
+        rules,
+    })
+}
+
+fn radical_box(
+    shaper: &dyn LineShaper,
+    mut degree: Option<MathBox>,
+    mut radicand: MathBox,
+    base: &StyledRun<'_>,
+    scale_permille: u16,
+) -> Option<MathBox> {
+    let mut radical = shape_math_text(shaper, "√", base, scale_permille)?;
+    let gap = Twip((base.size.raw() / 16).max(8));
+    let thickness = Twip((base.size.raw() / 24).max(8));
+    let degree_width = degree
+        .as_ref()
+        .map_or(Twip::ZERO, |value| Twip(value.size.width.raw() / 2));
+    let radical_x = degree_width;
+    let radicand_x = safe_add(radical_x, radical.size.width);
+    let ascent = safe_add(
+        radical.ascent.max(radicand.ascent),
+        safe_add(gap, thickness),
+    );
+    let radical_y = ascent - radical.ascent;
+    let radicand_y = ascent - radicand.ascent;
+    translate_math_box(&mut radical, radical_x, radical_y);
+    translate_math_box(&mut radicand, radicand_x, radicand_y);
+    let width = safe_add(radicand_x, radicand.size.width);
+    let mut height = safe_add(ascent, radical.descent.max(radicand.descent));
+    let mut runs: Vec<_> = radical.runs.into_iter().chain(radicand.runs).collect();
+    let mut rules: Vec<_> = radical.rules.into_iter().chain(radicand.rules).collect();
+    rules.push(InlineRule {
+        origin: Point::new(radicand_x, Twip((radicand_y.raw() - gap.raw()).max(0))),
+        size: Size::new(radicand.size.width, thickness),
+        color: base.color,
+    });
+    if let Some(degree) = &mut degree {
+        translate_math_box(degree, Twip::ZERO, Twip::ZERO);
+        height = height.max(degree.size.height);
+        runs.append(&mut degree.runs);
+        rules.append(&mut degree.rules);
+    }
+    Some(MathBox {
+        size: Size::new(width, height),
+        ascent,
+        descent: height - ascent,
+        runs,
+        rules,
+    })
+}
+
+fn translate_math_box(math: &mut MathBox, x: Twip, y: Twip) {
+    for run in &mut math.runs {
+        run.origin = Point::new(safe_add(run.origin.x, x), safe_add(run.origin.y, y));
+    }
+    for rule in &mut math.rules {
+        rule.origin = Point::new(safe_add(rule.origin.x, x), safe_add(rule.origin.y, y));
+    }
+}
+
+fn scaled_permille(scale: u16, factor: u16) -> u16 {
+    (u32::from(scale) * u32::from(factor) / 1_000).clamp(250, 1_000) as u16
+}
+
+fn safe_add(left: Twip, right: Twip) -> Twip {
+    Twip((i64::from(left.raw()) + i64::from(right.raw())).clamp(
+        -i64::from(MAX_MATH_LAYOUT_TWIPS),
+        i64::from(MAX_MATH_LAYOUT_TWIPS),
+    ) as i32)
 }
 
 // --- Inline fields ---------------------------------------------------------
@@ -4517,8 +4901,8 @@ mod tests {
     use casual_doc_model::NodeId;
     use casual_doc_model::v1::{
         BlockNode, CommentId, Definitions, Document, EmbeddedObject, EmbeddedPart, Extent,
-        InlineNode, Math, MediaId, MediaReference, NoBreakHyphen, Note, NoteId, NoteReference,
-        Paragraph, ParagraphProperties, Run, RunProperties, SoftHyphen, Spacing,
+        InlineNode, Math, MathExpression, MediaId, MediaReference, NoBreakHyphen, Note, NoteId,
+        NoteReference, Paragraph, ParagraphProperties, Run, RunProperties, SoftHyphen, Spacing,
     };
 
     fn run_node(id: u64, text: &str, properties: RunProperties) -> InlineNode {
@@ -5637,6 +6021,7 @@ mod tests {
                 id: NodeId::from_parts(10, 1).unwrap(),
                 omml: "<m:oMath/>".to_owned(),
                 text: "x+y".to_owned(),
+                expression: None,
             }),
             InlineNode::NoBreakHyphen(NoBreakHyphen {
                 id: NodeId::from_parts(11, 1).unwrap(),
@@ -5675,6 +6060,127 @@ mod tests {
                 .all(|item| !matches!(item, FlowItem::Run(run) if run.text.contains("comment"))),
             "comment references never emit an in-document glyph"
         );
+    }
+
+    #[test]
+    fn typed_fraction_is_an_atomic_inline_box_with_a_painted_rule() {
+        let math = InlineNode::Math(Math {
+            id: NodeId::from_parts(12, 1).unwrap(),
+            omml: "<m:oMath><m:f/></m:oMath>".to_owned(),
+            text: "a/b".to_owned(),
+            expression: Some(MathExpression::Fraction {
+                numerator: Box::new(MathExpression::Text {
+                    value: "a".to_owned(),
+                }),
+                denominator: Box::new(MathExpression::Text {
+                    value: "b".to_owned(),
+                }),
+            }),
+        });
+        let doc = document(vec![paragraph(
+            10,
+            vec![
+                run_node(11, "A", RunProperties::default()),
+                math,
+                run_node(13, "B", RunProperties::default()),
+            ],
+        )]);
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&doc, &shaper, Twip::from_points(400));
+        let BlockFragment::Paragraph { lines, .. } = &galley[0] else {
+            panic!("expected paragraph");
+        };
+        assert_eq!(
+            lines.lines.len(),
+            1,
+            "inline math must not force a new line"
+        );
+        let line = &lines.lines[0];
+        assert_eq!(line.rules.len(), 1, "fraction contributes one rule");
+        assert!(
+            line.runs.len() >= 4,
+            "A, numerator, denominator, and B render"
+        );
+        let math_size = Twip::from_points(11).raw() * 85 / 100;
+        assert!(
+            line.runs
+                .iter()
+                .filter(|run| run.size.raw() == math_size)
+                .all(|run| { run.glyphs.iter().all(|glyph| glyph.cluster == 1) }),
+            "all equation glyphs map to the equation's atomic caret boundary"
+        );
+
+        let display = crate::compose::compose_paragraph(lines, Point::new(Twip::ZERO, Twip::ZERO));
+        assert!(display.items.iter().any(|item| matches!(
+            item,
+            crate::display::PaintItem::Rect { rect, fill: Some(_), stroke: None }
+                if rect.size.height == line.rules[0].size.height
+        )));
+    }
+
+    #[test]
+    fn typed_scripts_radicals_and_delimiters_build_nested_math_geometry() {
+        let expression = MathExpression::Row {
+            children: vec![
+                MathExpression::Script {
+                    base: Box::new(MathExpression::Text {
+                        value: "x".to_owned(),
+                    }),
+                    subscript: Some(Box::new(MathExpression::Text {
+                        value: "i".to_owned(),
+                    })),
+                    superscript: Some(Box::new(MathExpression::Text {
+                        value: "2".to_owned(),
+                    })),
+                },
+                MathExpression::Radical {
+                    degree: Some(Box::new(MathExpression::Text {
+                        value: "3".to_owned(),
+                    })),
+                    radicand: Box::new(MathExpression::Text {
+                        value: "y".to_owned(),
+                    }),
+                },
+                MathExpression::Delimiter {
+                    open: "[".to_owned(),
+                    close: "]".to_owned(),
+                    content: Box::new(MathExpression::Text {
+                        value: "z".to_owned(),
+                    }),
+                },
+            ],
+        };
+        let definitions = Definitions::default();
+        let inlines = [InlineNode::Math(Math {
+            id: NodeId::from_parts(20, 1).unwrap(),
+            omml: "<m:oMath/>".to_owned(),
+            text: "xi2√y[z]".to_owned(),
+            expression: Some(expression),
+        })];
+        let items = collected_items(&definitions, &inlines);
+        let [FlowItem::Math { size, runs, rules }] = items.as_slice() else {
+            panic!("supported expression should build one math box");
+        };
+        assert!(size.width > Twip::ZERO && size.height > Twip::ZERO);
+        assert!(
+            runs.len() >= 8,
+            "all nested text and delimiter glyphs render"
+        );
+        assert_eq!(rules.len(), 1, "the radical contributes its overbar");
+        assert!(
+            runs.iter().any(|run| run.size < Twip::from_points(11)),
+            "scripts and the radical degree use reduced deterministic sizing"
+        );
+
+        let doc = document(vec![paragraph(21, inlines.to_vec())]);
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&doc, &shaper, Twip::from_points(400));
+        let BlockFragment::Paragraph { lines, .. } = &galley[0] else {
+            panic!("expected math-only paragraph");
+        };
+        assert_eq!(lines.lines.len(), 1);
+        assert_eq!(lines.lines[0].rules.len(), 1);
+        assert!(!lines.lines[0].runs.is_empty());
     }
 
     #[test]

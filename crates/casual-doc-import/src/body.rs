@@ -15,20 +15,21 @@ use casual_doc_model::v1::{
     HorizontalRule, HorizontalRuleAlign, Hyperlink, HyperlinkTarget, InlineNode, InlineSdt,
     InternalTarget, LineNumberRestart, LineNumbering, MAX_DESCR_BYTES, MAX_EMU,
     MAX_FIELD_INSTRUCTION_BYTES, MAX_FORM_FIELD_ENTRIES, MAX_FORM_FIELD_STRING_BYTES,
-    MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH, MAX_TEXTBOX_DEPTH, Math, MediaId, MoveKind,
-    MoveRangeEnd, MoveRangeStart, NoBreakHyphen, NoteId, NoteKind, NoteNumberRestart, NotePosition,
-    NoteProperties, NoteReference, PageBorderDisplay, PageBorderOffset, PageBorders, PageMargins,
-    PageNumbering, PageOrientation, PageSize, PageVerticalAlignment, PaperSource, Paragraph,
-    ParagraphProperties, PointEmu, PositionalTab, PositionalTabAlignment, PositionalTabLeader,
-    PositionalTabRelativeTo, PropChange, Revision, RevisionKind, RgbColor, Rgba, Run,
-    RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind,
-    SdtDataBinding, SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionColumns,
-    SectionId, SectionType, ShapeGeometry, ShapeStroke, SoftHyphen, StyleKind, Symbol, Tab,
-    TabAlignment, TabLeader, TabStop, TableAnchor, TableCellProperties, TableFloatPosition,
-    TableLayout, TableOverlap, TableProperties, TableRowProperties, TableXAlign, TableYAlign,
-    TextBox, TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxInsets,
-    TextBoxVerticalAnchor, TextBoxVerticalOverflow, TextDirection, VerticalAlign, VerticalAnchor,
-    VerticalMerge, VerticalPosition, WordprocessingGroup, WrapDistances, WrapMode,
+    MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH, MAX_TEXTBOX_DEPTH, Math, MathExpression,
+    MediaId, MoveKind, MoveRangeEnd, MoveRangeStart, NoBreakHyphen, NoteId, NoteKind,
+    NoteNumberRestart, NotePosition, NoteProperties, NoteReference, PageBorderDisplay,
+    PageBorderOffset, PageBorders, PageMargins, PageNumbering, PageOrientation, PageSize,
+    PageVerticalAlignment, PaperSource, Paragraph, ParagraphProperties, PointEmu, PositionalTab,
+    PositionalTabAlignment, PositionalTabLeader, PositionalTabRelativeTo, PropChange, Revision,
+    RevisionKind, RgbColor, Rgba, Run, RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol,
+    SdtControlData, SdtControlKind, SdtDataBinding, SdtDate, SdtListItem, SdtLock, SdtProperties,
+    SectionBoundary, SectionColumns, SectionId, SectionType, ShapeGeometry, ShapeStroke,
+    SoftHyphen, StyleKind, Symbol, Tab, TabAlignment, TabLeader, TabStop, TableAnchor,
+    TableCellProperties, TableFloatPosition, TableLayout, TableOverlap, TableProperties,
+    TableRowProperties, TableXAlign, TableYAlign, TextBox, TextBoxAutoFit, TextBoxBodyProperties,
+    TextBoxHorizontalOverflow, TextBoxInsets, TextBoxVerticalAnchor, TextBoxVerticalOverflow,
+    TextDirection, VerticalAlign, VerticalAnchor, VerticalMerge, VerticalPosition,
+    WordprocessingGroup, WrapDistances, WrapMode,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::events::{BytesStart, Event};
@@ -147,6 +148,7 @@ enum Segment {
     Math {
         omml: String,
         text: String,
+        expression: Option<MathExpression>,
     },
     /// A symbol glyph (`w:sym`): a font face plus a code point.
     Symbol {
@@ -1454,6 +1456,7 @@ impl BodyParser<'_> {
             .map_err(|_| ImportError::MalformedXml)?;
         let omml = String::from_utf8(writer.into_inner()).map_err(|_| ImportError::MalformedXml)?;
         self.push_segment(Segment::Math {
+            expression: crate::math::parse_math_expression(&omml),
             omml,
             text: String::new(),
         });
@@ -1529,7 +1532,12 @@ impl BodyParser<'_> {
         let omml = String::from_utf8(writer.into_inner()).map_err(|_| ImportError::MalformedXml)?;
         let text = std::mem::take(&mut self.math_text);
         self.math_in_t = false;
-        self.push_segment(Segment::Math { omml, text });
+        let expression = crate::math::parse_math_expression(&omml);
+        self.push_segment(Segment::Math {
+            omml,
+            text,
+            expression,
+        });
         Ok(())
     }
 
@@ -5738,9 +5746,18 @@ impl BodyParser<'_> {
                     form,
                 }))
             }
-            Segment::Math { omml, text } => {
+            Segment::Math {
+                omml,
+                text,
+                expression,
+            } => {
                 let id = self.next_id()?;
-                Ok(InlineNode::Math(Math { id, omml, text }))
+                Ok(InlineNode::Math(Math {
+                    id,
+                    omml,
+                    text,
+                    expression,
+                }))
             }
             Segment::Symbol {
                 font,
@@ -6045,15 +6062,10 @@ fn parse_cnf_style(element: &BytesStart<'_>) -> CnfStyle {
     cnf
 }
 
-/// Whether a local element name is known DrawingML scaffolding for an embedded
-/// picture (consumed silently while inside a `w:drawing`). Anything not listed
-/// still reports, so genuinely unmodeled drawing content is never lost.
-/// Whether a local element name is an OMML equation root (`m:oMath` or
-/// `m:oMathPara`). Matched on local name because these names are unique to the
-/// math namespace — no `w:` element shares them — and the retained-subtree
-/// capture then swallows every inner `m:` element, so a per-prefix namespace
-/// lookup is unnecessary. `m:oMathPara` wraps `m:oMath`, so detecting the
-/// outermost root first retains the whole equation as one node.
+/// Whether a local element name is an OMML equation root. Capture remains
+/// prefix-agnostic so producers using a nonstandard namespace prefix still keep
+/// their raw subtree; the typed projection is stricter and may safely remain
+/// absent when it cannot establish the conventional math qualification.
 fn is_math_root(local: &[u8]) -> bool {
     matches!(local, b"oMath" | b"oMathPara")
 }

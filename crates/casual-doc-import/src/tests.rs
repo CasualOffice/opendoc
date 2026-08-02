@@ -1,6 +1,6 @@
 use casual_doc_model::v1::{
     Alignment, BlockNode, Break, BreakKind, Color, DocumentProtectionEdit, HyperlinkTarget,
-    InlineNode, LevelJustification, LevelSuffix, MoveKind, NumberFormat, Paragraph,
+    InlineNode, LevelJustification, LevelSuffix, MathExpression, MoveKind, NumberFormat, Paragraph,
     PositionalTabAlignment, PositionalTabLeader, PositionalTabRelativeTo, ProofState, RevisionKind,
     RgbColor, SdtControlKind, StyleKind, Symbol,
 };
@@ -5691,7 +5691,7 @@ fn omml_math_is_retained_opaquely_and_never_leaks_into_run_text() {
     // `m:oMath`, whose `m:r`/`m:t` share the local names of `w:r`/`w:t`), and a
     // trailing run. Before the C1 namespace guard the math's `m:r`/`m:t` were
     // mistaken for `w:r`/`w:t` and flattened into the paragraph text; now the
-    // equation is a single opaque `Math` node whose OMML round-trips verbatim.
+    // equation is a single `Math` node whose OMML round-trips verbatim.
     let xml = br#"<w:document xmlns:w="urn:w" xmlns:m="urn:m"><w:body>
         <w:p>
             <w:r><w:t>before</w:t></w:r>
@@ -5718,10 +5718,10 @@ fn omml_math_is_retained_opaquely_and_never_leaks_into_run_text() {
     assert!(matches!(para.inlines[0], InlineNode::Run(_)));
     assert!(matches!(para.inlines[2], InlineNode::Run(_)));
     let InlineNode::Math(math) = &para.inlines[1] else {
-        panic!("expected an opaque math node between the two runs");
+        panic!("expected a math node between the two runs");
     };
 
-    // Exactly one opaque math node.
+    // Exactly one math node.
     assert_eq!(
         para.inlines
             .iter()
@@ -5738,6 +5738,53 @@ fn omml_math_is_retained_opaquely_and_never_leaks_into_run_text() {
     );
     // The plain-text fallback is the concatenated `m:t` text.
     assert_eq!(math.text, "x&y");
+    assert_eq!(
+        math.expression,
+        Some(MathExpression::Text {
+            value: "x&y".to_owned()
+        })
+    );
+}
+
+#[test]
+fn common_omml_constructs_receive_a_typed_projection() {
+    let xml = br#"<w:document xmlns:w="urn:w" xmlns:m="urn:m"><w:body><w:p>
+        <m:oMath>
+          <m:f><m:num><m:r><m:t>a</m:t></m:r></m:num><m:den><m:r><m:t>b</m:t></m:r></m:den></m:f>
+          <m:sSubSup><m:e><m:r><m:t>x</m:t></m:r></m:e><m:sub><m:r><m:t>i</m:t></m:r></m:sub><m:sup><m:r><m:t>2</m:t></m:r></m:sup></m:sSubSup>
+          <m:rad><m:deg><m:r><m:t>3</m:t></m:r></m:deg><m:e><m:r><m:t>y</m:t></m:r></m:e></m:rad>
+          <m:d><m:dPr><m:begChr m:val="["/><m:endChr m:val="]"/></m:dPr><m:e><m:r><m:t>z</m:t></m:r></m:e></m:d>
+        </m:oMath>
+    </w:p></w:body></w:document>"#;
+    let import = import(xml);
+    let InlineNode::Math(math) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected typed math");
+    };
+    let Some(MathExpression::Row { children }) = &math.expression else {
+        panic!("expected a common-construct row projection");
+    };
+    assert_eq!(children.len(), 4);
+    assert!(matches!(children[0], MathExpression::Fraction { .. }));
+    assert!(matches!(children[1], MathExpression::Script { .. }));
+    assert!(matches!(children[2], MathExpression::Radical { .. }));
+    assert!(matches!(
+        &children[3],
+        MathExpression::Delimiter { open, close, .. } if open == "[" && close == "]"
+    ));
+}
+
+#[test]
+fn unsupported_omml_keeps_raw_markup_without_a_projection() {
+    let xml = br#"<w:document xmlns:w="urn:w" xmlns:m="urn:m"><w:body><w:p>
+        <m:oMath><m:m><m:mr><m:e><m:r><m:t>x</m:t></m:r></m:e></m:mr></m:m></m:oMath>
+    </w:p></w:body></w:document>"#;
+    let import = import(xml);
+    let InlineNode::Math(math) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected retained math");
+    };
+    assert!(math.expression.is_none());
+    assert!(math.omml.contains("<m:m>"));
+    assert_eq!(math.text, "x");
 }
 
 #[test]

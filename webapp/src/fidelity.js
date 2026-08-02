@@ -71,8 +71,8 @@ const FIDELITY = [
   },
   {
     family: "Math (OMML)",
-    note: "Imported as an opaque, namespace-guarded node and preserved for export, but not typeset as real math — shown as a placeholder.",
-    modeled: "partial", rendered: "placeholder", editable: "none", roundtrips: "full",
+    note: "Raw OMML is preserved for export. Rows/text, fractions, sub/superscripts, radicals, and delimiters have a bounded typed model and deterministic inline rendering; other constructs use an explicit text placeholder. Not editable.",
+    modeled: "partial", rendered: "partial", editable: "none", roundtrips: "full",
   },
   {
     family: "Charts",

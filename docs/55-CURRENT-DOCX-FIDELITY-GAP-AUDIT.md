@@ -131,12 +131,15 @@ image, when a preview is present) instead of falling into the `_ => {}` arm:
   through the existing image pipeline when one is present, otherwise a typed
   `[chart]`/`[diagram]`/`[object]` text placeholder;
 - ~~`Math` — the retained OMML and best-effort `m:t` text fallback round-trip,
-  but neither is shown~~ done — the `text` best-effort plain-text fallback now
-  shapes as an ordinary run (`[fallback text]`, or `[equation]` when the
-  fallback is empty). **This is fallback-text visibility only, not real OMML
-  typesetting**: no fraction bars, radicals, exponent/subscript layout, or
-  operator spacing — the retained OMML subtree still round-trips verbatim on
-  export but is not consulted for layout;
+  but neither is shown~~ done in two bounded steps: `P1F-INLINE-FLOOR` made the
+  explicit `[fallback text]` / `[equation]` run visible, and
+  `P1F-MATH-TYPED-1` added a semantic projection plus atomic inline layout for
+  rows/text, fractions, sub/superscripts, radicals, and delimiters. Fraction and
+  radical rules reuse deterministic rectangle paint; nested glyphs reuse the
+  document text shaper. Unsupported OMML (matrices, n-ary operators, accents,
+  limits, and other advanced properties) still uses the explicit fallback while
+  the retained subtree round-trips verbatim. Math support remains partial, not a
+  claim of complete OMML typesetting;
 - ~~`NoBreakHyphen` and `SoftHyphen` — visible/break semantics are absent~~
   done — they shape as `U+2011` (non-breaking hyphen) and `U+00AD` (soft
   hyphen) respectively;
@@ -588,7 +591,7 @@ support.
 | `PAGE`/`NUMPAGES` | Yes | Yes | Yes, including anchored boxes | Other fields use cached result |
 | Per-section running-content selection | N/A | Yes | N/A | Continuous-page ownership and band growth remain approximate |
 | Notes | No | No | No | References and bodies not laid out |
-| Embedded objects/math/special hyphens | Yes | Yes | Yes | `P1F-INLINE-FLOOR`: object preview/typed placeholder, math fallback-text run, hyphen glyphs. Math is fallback-text visibility only, not real OMML typesetting |
+| Embedded objects/math/special hyphens | Yes | Yes | Yes | Object preview/typed placeholder and hyphen glyphs; common typed Math constructs render inline (`P1F-MATH-TYPED-1`), unsupported OMML uses retained fallback |
 | Review markup presentation | No | No | No | Wrappers transparent; no view policy |
 
 ## Recommended implementation sequence
@@ -606,8 +609,8 @@ proves a smaller safe combination.
 2. ~~**Inline visibility floor**~~ done (`P1F-INLINE-FLOOR`)
    - ~~render no-break/soft hyphens~~ done;
    - ~~render OMML text fallback and embedded-object previews/placeholders~~
-     done — math fallback text is a plain-text approximation, not real
-     typesetting;
+     done; common typed OMML rendering subsequently landed in
+     `P1F-MATH-TYPED-1`, while advanced constructs remain explicit fallback;
    - explicit compatibility output for display fallbacks beyond the bracketed
      text marker remains open.
 3. **Inline VML image extent**

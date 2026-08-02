@@ -3713,3 +3713,86 @@ fn alt_chunk_with_empty_relationship_id_is_rejected() {
         })
     ));
 }
+
+#[test]
+fn typed_math_projection_round_trips_and_validates() {
+    let expression = MathExpression::Fraction {
+        numerator: Box::new(MathExpression::Text {
+            value: "a".to_owned(),
+        }),
+        denominator: Box::new(MathExpression::Script {
+            base: Box::new(MathExpression::Text {
+                value: "b".to_owned(),
+            }),
+            subscript: None,
+            superscript: Some(Box::new(MathExpression::Text {
+                value: "2".to_owned(),
+            })),
+        }),
+    };
+    let paragraph = BlockNode::Paragraph(Paragraph {
+        id: tid(100),
+        properties: ParagraphProperties::default(),
+        inlines: vec![InlineNode::Math(Math {
+            id: tid(101),
+            omml: "<m:oMath><m:f/></m:oMath>".to_owned(),
+            text: "a/b2".to_owned(),
+            expression: Some(expression),
+        })],
+    });
+    let document = table_document(vec![paragraph]).unwrap();
+    let reloaded =
+        Document::from_json(&document.to_json().unwrap(), SnapshotLimits::default()).unwrap();
+    assert_eq!(document, reloaded);
+}
+
+#[test]
+fn invalid_typed_math_projection_is_rejected() {
+    let paragraph = BlockNode::Paragraph(Paragraph {
+        id: tid(110),
+        properties: ParagraphProperties::default(),
+        inlines: vec![InlineNode::Math(Math {
+            id: tid(111),
+            omml: "<m:oMath/>".to_owned(),
+            text: String::new(),
+            expression: Some(MathExpression::Row {
+                children: Vec::new(),
+            }),
+        })],
+    });
+    assert!(matches!(
+        table_document(vec![paragraph]),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "math.expression.row.children"
+        })
+    ));
+}
+
+#[test]
+fn typed_math_projection_depth_is_bounded() {
+    let mut expression = MathExpression::Text {
+        value: "x".to_owned(),
+    };
+    for _ in 0..MAX_MATH_DEPTH {
+        expression = MathExpression::Radical {
+            degree: None,
+            radicand: Box::new(expression),
+        };
+    }
+    let paragraph = BlockNode::Paragraph(Paragraph {
+        id: tid(120),
+        properties: ParagraphProperties::default(),
+        inlines: vec![InlineNode::Math(Math {
+            id: tid(121),
+            omml: "<m:oMath/>".to_owned(),
+            text: "x".to_owned(),
+            expression: Some(expression),
+        })],
+    });
+    assert!(matches!(
+        table_document(vec![paragraph]),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "math.expression.depth"
+        })
+    ));
+}

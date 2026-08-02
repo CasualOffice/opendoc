@@ -1679,14 +1679,71 @@ pub struct InlineSdt {
 /// Maximum retained OMML markup length, in UTF-8 bytes.
 pub const MAX_MATH_BYTES: usize = 65_536;
 
-/// An opaque inline math object (an OMML `m:oMath` or `m:oMathPara` subtree).
+/// Maximum nesting depth of a typed math expression.
+pub const MAX_MATH_DEPTH: usize = 32;
+
+/// Maximum number of nodes in one typed math expression.
+pub const MAX_MATH_NODES: usize = 4_096;
+
+/// A bounded semantic projection of a supported OMML equation subtree.
 ///
-/// Equation structure is not semantically modeled; the OMML subtree is retained
-/// verbatim in `omml` so it round-trips losslessly, and `text` is a best-effort
-/// plain-text fallback (the concatenated `m:t` runs) for search/accessibility.
-/// This mirrors the opaque-retention treatment of other unmodeled constructs:
-/// the equation survives a round trip and its text never leaks into the
-/// surrounding paragraph runs.
+/// The retained OMML on [`Math`] remains authoritative for export. This tree is
+/// additive render/search structure: unsupported OMML safely has no projection.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum MathExpression {
+    /// Ordered expressions laid out on one math baseline.
+    Row {
+        /// Child expressions in logical order (non-empty).
+        children: Vec<MathExpression>,
+    },
+    /// Literal math text collected from an OMML math run.
+    Text {
+        /// Non-empty UTF-8 text.
+        value: String,
+    },
+    /// A numerator stacked above a denominator with a separating rule.
+    Fraction {
+        /// Numerator expression.
+        numerator: Box<MathExpression>,
+        /// Denominator expression.
+        denominator: Box<MathExpression>,
+    },
+    /// A base with an optional subscript and/or superscript.
+    Script {
+        /// Base expression.
+        base: Box<MathExpression>,
+        /// Subscript expression.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        subscript: Option<Box<MathExpression>>,
+        /// Superscript expression.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        superscript: Option<Box<MathExpression>>,
+    },
+    /// A radical with an optional degree.
+    Radical {
+        /// Optional degree expression.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        degree: Option<Box<MathExpression>>,
+        /// Radicand expression.
+        radicand: Box<MathExpression>,
+    },
+    /// Nested content surrounded by authored delimiter characters.
+    Delimiter {
+        /// Opening delimiter; empty means no opening glyph.
+        open: String,
+        /// Closing delimiter; empty means no closing glyph.
+        close: String,
+        /// Delimited expression.
+        content: Box<MathExpression>,
+    },
+}
+
+/// An inline math object (an OMML `m:oMath` or `m:oMathPara` subtree).
+///
+/// The OMML subtree is retained verbatim in `omml` so it round-trips losslessly;
+/// `expression` is an optional bounded projection of the supported common subset;
+/// and `text` is a best-effort plain-text fallback for search/accessibility.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Math {
@@ -1698,6 +1755,9 @@ pub struct Math {
     /// empty when the equation carries no literal text.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub text: String,
+    /// Typed common-construct projection used for deterministic layout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expression: Option<MathExpression>,
 }
 
 /// Inline content supported by schema v1.
@@ -1755,7 +1815,7 @@ pub enum InlineNode {
     MoveRangeEnd(MoveRangeEnd),
     /// An inline-level content control wrapping inline content.
     Sdt(InlineSdt),
-    /// An opaque inline math object retaining its OMML subtree verbatim.
+    /// An inline math object retaining its OMML subtree verbatim.
     Math(Math),
     /// An inline symbol glyph (a font plus a code point).
     Symbol(Symbol),

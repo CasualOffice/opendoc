@@ -37,6 +37,7 @@ mod comments_ext;
 mod config;
 mod error;
 mod font_table;
+mod math;
 mod media;
 mod metadata;
 mod numbering;
