@@ -939,27 +939,45 @@ fn flow_table(
     let available = (width.raw() - indent).max(1);
     let widths = solve_table_columns(table, shaper, available, ctx, &merge_roles, &style_layers);
 
-    // Cumulative left edge of each column, shifted by the table indent.
+    // Logical grid edges are independent of physical alignment. `w:bidiVisual`
+    // reflects a cell's logical range through the solved table box below.
     let ncols = widths.len();
     let mut edges = Vec::with_capacity(ncols + 1);
-    let mut x = indent;
+    let mut x = 0;
     for w in &widths {
         edges.push(x);
         x += w.raw();
     }
     edges.push(x);
+    let table_width = x;
     let edge = |col: usize| Twip(edges[col.min(edges.len() - 1)]);
 
     let mut rows = Vec::with_capacity(table.rows.len());
     for (row_index, row) in table.rows.iter().enumerate() {
+        let row_origin = table_row_origin(
+            row.properties.alignment.or(table.properties.alignment),
+            table.properties.tbl_bidi_visual,
+            width.raw(),
+            table_width,
+            indent,
+        );
         let mut cells = Vec::new();
         let mut col = 0usize;
         for (index, cell) in row.cells.iter().enumerate() {
             let span = cell.properties.grid_span.unwrap_or(1).max(1) as usize;
-            let cell_x = edge(col);
-            let cell_end = edge(col + span);
-            let cell_width = Twip((cell_end.raw() - cell_x.raw()).max(1));
-            let borders =
+            let logical_start = edge(col);
+            let logical_end = edge(col + span);
+            let cell_width = Twip((logical_end.raw() - logical_start.raw()).max(1));
+            let cell_x = if table.properties.tbl_bidi_visual {
+                Twip(
+                    row_origin
+                        .raw()
+                        .saturating_add(table_width.saturating_sub(logical_end.raw())),
+                )
+            } else {
+                row_origin + logical_start
+            };
+            let mut borders =
                 resolve_cell_borders(&table.rows, &border_candidates, row_index, index, &edges);
             // A cell fill overrides table shading. When the cell omits `w:shd`,
             // the table-style layer applies next: the referenced style's (and
@@ -980,8 +998,11 @@ fn flow_table(
             // the table's `w:tblCellMar`, then to Word's built-in default. Content
             // therefore flows at the reduced inner width; composition offsets it by
             // the start/top margins (and the vertical-alignment slack).
-            let margins =
+            let mut margins =
                 resolve_cell_margins(&cell.properties.margins, &table.properties.cell_margins);
+            if table.properties.tbl_bidi_visual {
+                mirror_cell_geometry(&mut margins, &mut borders, cell_width);
+            }
             let inner_width =
                 Twip((cell_width.raw() - margins.start.raw() - margins.end.raw()).max(1));
             let merge_role = merge_roles[row_index][index];
@@ -1054,6 +1075,48 @@ fn flow_table(
         merge_keep_next: row.merge_keep_next,
         clip: row.clip,
     }));
+}
+
+/// Resolves a row's logical `w:jc` to its physical grid origin. A row-direct
+/// alignment has already been overlaid by the caller. `w:tblInd` is a logical
+/// start inset, so it changes only start placement; center/end resolve against
+/// the full containing block without applying that inset twice.
+fn table_row_origin(
+    alignment: Option<Alignment>,
+    bidi_visual: bool,
+    containing_width: i32,
+    table_width: i32,
+    indent: i32,
+) -> Twip {
+    let remaining = containing_width.saturating_sub(table_width);
+    match alignment.unwrap_or(Alignment::Start) {
+        Alignment::Center => Twip(remaining / 2),
+        Alignment::End if !bidi_visual => Twip(remaining),
+        Alignment::End => Twip::ZERO,
+        Alignment::Start | Alignment::Justify if !bidi_visual => Twip(indent),
+        Alignment::Start | Alignment::Justify => Twip(remaining.saturating_sub(indent)),
+    }
+}
+
+/// Reflects logical start/end geometry into physical left/right geometry for a
+/// visually RTL table. Horizontal segment offsets are relative to the physical
+/// left edge at composition time, so they are reflected and returned in
+/// ascending physical order as well.
+fn mirror_cell_geometry(margins: &mut CellContentMargins, borders: &mut CellBorders, width: Twip) {
+    std::mem::swap(&mut margins.start, &mut margins.end);
+    std::mem::swap(&mut borders.start, &mut borders.end);
+    for segments in [&mut borders.top_segments, &mut borders.bottom_segments] {
+        for segment in segments.iter_mut() {
+            segment.offset = Twip(
+                width
+                    .raw()
+                    .saturating_sub(segment.offset.raw())
+                    .saturating_sub(segment.length.raw())
+                    .max(0),
+            );
+        }
+        segments.reverse();
+    }
 }
 
 fn resolve_table_style_layers(
@@ -6823,8 +6886,9 @@ mod tests {
     // --- Table layout fidelity (P1D-003) --------------------------------------
 
     use casual_doc_model::v1::{
-        BorderEdge, GridColumn, HeightRule, RgbColor, RowHeight, Shading, Table, TableBorders,
-        TableCell, TableCellProperties, TableProperties, TableRow as ModelRow, TableRowProperties,
+        BorderEdge, CellMargins, GridColumn, HeightRule, RgbColor, RowHeight, Shading, Table,
+        TableBorders, TableCell, TableCellProperties, TableProperties, TableRow as ModelRow,
+        TableRowProperties,
     };
 
     fn node(id: u64) -> NodeId {
@@ -6960,6 +7024,257 @@ mod tests {
     }
 
     // --- flow integration ---
+
+    fn aligned_one_cell_table(alignment: Alignment, bidi_visual: bool) -> Table {
+        Table {
+            id: node(45),
+            grid: vec![GridColumn {
+                width_twips: Some(3000),
+            }],
+            grid_change: None,
+            properties: TableProperties {
+                tbl_bidi_visual: bidi_visual,
+                alignment: Some(alignment),
+                width_twips: Some(3000),
+                layout: Some(TableLayout::Fixed),
+                indent_twips: Some(600),
+                ..TableProperties::default()
+            },
+            rows: vec![ModelRow {
+                id: node(46),
+                properties: TableRowProperties::default(),
+                cells: vec![text_cell(47, TableCellProperties::default(), "cell")],
+            }],
+        }
+    }
+
+    #[test]
+    fn table_alignment_maps_logical_edges_for_ltr_and_bidi_visual() {
+        let x = |alignment, bidi_visual| {
+            let BlockFragment::TableRow { cells, .. } =
+                flow_single_row(aligned_one_cell_table(alignment, bidi_visual), Twip(9000))
+            else {
+                panic!("expected a table row");
+            };
+            cells[0].x
+        };
+
+        assert_eq!(x(Alignment::Start, false), Twip(600));
+        assert_eq!(x(Alignment::Center, false), Twip(3000));
+        assert_eq!(x(Alignment::End, false), Twip(6000));
+        assert_eq!(x(Alignment::Start, true), Twip(5400));
+        assert_eq!(x(Alignment::Center, true), Twip(3000));
+        assert_eq!(x(Alignment::End, true), Twip(0));
+    }
+
+    #[test]
+    fn row_alignment_overrides_the_table_alignment_without_changing_its_grid() {
+        let mut table = aligned_one_cell_table(Alignment::End, false);
+        table.rows.push(ModelRow {
+            id: node(48),
+            properties: TableRowProperties {
+                alignment: Some(Alignment::Center),
+                ..TableRowProperties::default()
+            },
+            cells: vec![text_cell(49, TableCellProperties::default(), "override")],
+        });
+
+        let rows = flow_table_rows(table, Twip(9000));
+        let positions: Vec<(Twip, Twip)> = rows
+            .iter()
+            .map(|row| match row {
+                BlockFragment::TableRow { cells, .. } => (cells[0].x, cells[0].width),
+                BlockFragment::Paragraph { .. } => panic!("expected table rows"),
+            })
+            .collect();
+        assert_eq!(
+            positions,
+            vec![(Twip(6000), Twip(3000)), (Twip(3000), Twip(3000))]
+        );
+    }
+
+    #[test]
+    fn bidi_visual_mirrors_unequal_grid_ranges_margins_and_vertical_borders() {
+        let leading = RgbColor { r: 255, g: 0, b: 0 };
+        let trailing = RgbColor { r: 0, g: 0, b: 255 };
+        let first = TableCellProperties {
+            margins: CellMargins {
+                start_twips: Some(111),
+                end_twips: Some(222),
+                ..CellMargins::default()
+            },
+            borders: TableBorders {
+                start: Some(colored_edge("single", 8, leading)),
+                end: Some(colored_edge("double", 24, trailing)),
+                ..TableBorders::default()
+            },
+            ..TableCellProperties::default()
+        };
+        let table = Table {
+            id: node(70),
+            grid: vec![
+                GridColumn {
+                    width_twips: Some(1000),
+                },
+                GridColumn {
+                    width_twips: Some(2000),
+                },
+                GridColumn {
+                    width_twips: Some(3000),
+                },
+            ],
+            grid_change: None,
+            properties: TableProperties {
+                tbl_bidi_visual: true,
+                alignment: Some(Alignment::End),
+                layout: Some(TableLayout::Fixed),
+                ..TableProperties::default()
+            },
+            rows: vec![ModelRow {
+                id: node(71),
+                properties: TableRowProperties::default(),
+                cells: vec![
+                    text_cell(72, first, "logical first"),
+                    text_cell(73, TableCellProperties::default(), "middle"),
+                    text_cell(74, TableCellProperties::default(), "logical last"),
+                ],
+            }],
+        };
+
+        let BlockFragment::TableRow { cells, .. } = flow_single_row(table, Twip(8000)) else {
+            panic!("expected a table row");
+        };
+        assert_eq!(
+            cells
+                .iter()
+                .map(|cell| (cell.x, cell.width))
+                .collect::<Vec<_>>(),
+            vec![
+                (Twip(5000), Twip(1000)),
+                (Twip(3000), Twip(2000)),
+                (Twip(0), Twip(3000)),
+            ]
+        );
+        assert_eq!(
+            (cells[0].margins.start, cells[0].margins.end),
+            (Twip(222), Twip(111))
+        );
+        assert_eq!(
+            cells[0].borders.end.map(|edge| edge.color),
+            Some([255, 0, 0, 255])
+        );
+        assert_eq!(
+            cells[0].borders.start.map(|edge| edge.color),
+            Some([0, 0, 255, 255])
+        );
+    }
+
+    #[test]
+    fn bidi_visual_reflects_a_grid_span_as_one_physical_box() {
+        let table = Table {
+            id: node(80),
+            grid: vec![
+                GridColumn {
+                    width_twips: Some(1000),
+                },
+                GridColumn {
+                    width_twips: Some(2000),
+                },
+                GridColumn {
+                    width_twips: Some(3000),
+                },
+            ],
+            grid_change: None,
+            properties: TableProperties {
+                tbl_bidi_visual: true,
+                alignment: Some(Alignment::End),
+                layout: Some(TableLayout::Fixed),
+                ..TableProperties::default()
+            },
+            rows: vec![ModelRow {
+                id: node(81),
+                properties: TableRowProperties::default(),
+                cells: vec![
+                    text_cell(
+                        82,
+                        TableCellProperties {
+                            grid_span: Some(2),
+                            ..TableCellProperties::default()
+                        },
+                        "logical columns one and two",
+                    ),
+                    text_cell(83, TableCellProperties::default(), "logical column three"),
+                ],
+            }],
+        };
+
+        let BlockFragment::TableRow { cells, .. } = flow_single_row(table, Twip(8000)) else {
+            panic!("expected a table row");
+        };
+        assert_eq!(
+            cells
+                .iter()
+                .map(|cell| (cell.x, cell.width))
+                .collect::<Vec<_>>(),
+            vec![(Twip(3000), Twip(3000)), (Twip(0), Twip(3000))]
+        );
+    }
+
+    #[test]
+    fn bidi_visual_reflects_segmented_horizontal_borders() {
+        let thin = ResolvedEdge {
+            color: [255, 0, 0, 255],
+            width: Twip(10),
+            pattern: BorderPattern::Solid,
+        };
+        let thick = ResolvedEdge {
+            color: [0, 0, 255, 255],
+            width: Twip(30),
+            pattern: BorderPattern::Double,
+        };
+        let mut margins = CellContentMargins {
+            start: Twip(100),
+            end: Twip(200),
+            ..CellContentMargins::default()
+        };
+        let mut borders = CellBorders {
+            start: Some(thin),
+            end: Some(thick),
+            top_segments: vec![
+                ResolvedBorderSegment {
+                    offset: Twip(100),
+                    length: Twip(200),
+                    edge: thin,
+                },
+                ResolvedBorderSegment {
+                    offset: Twip(400),
+                    length: Twip(300),
+                    edge: thick,
+                },
+            ],
+            ..CellBorders::default()
+        };
+
+        mirror_cell_geometry(&mut margins, &mut borders, Twip(1000));
+
+        assert_eq!((margins.start, margins.end), (Twip(200), Twip(100)));
+        assert_eq!((borders.start, borders.end), (Some(thick), Some(thin)));
+        assert_eq!(
+            borders.top_segments,
+            vec![
+                ResolvedBorderSegment {
+                    offset: Twip(300),
+                    length: Twip(300),
+                    edge: thick,
+                },
+                ResolvedBorderSegment {
+                    offset: Twip(700),
+                    length: Twip(200),
+                    edge: thin,
+                },
+            ]
+        );
+    }
 
     #[test]
     fn preferred_cell_width_grows_its_column() {

@@ -303,17 +303,17 @@ paragraph/run formatting, and edge-wise table/cell borders during both intrinsic
 measurement and final flow. The remaining table-style/layout gaps are:
 
 - style-level/conditional row properties and style-provided cell margins;
-- table or row alignment (`w:jc`);
-- `tbl_bidi_visual`;
 - table/row cell spacing;
 - floating-table position and overlap;
 - cell `no_wrap`, `text_direction`, `fit_text`, or `hide_mark`.
 
 Accordingly, authored banding/header-row fill, fonts, paragraph formatting, and
 borders now reach paint, and conditional fonts participate in auto-fit sizing.
-Style-provided margins and row properties are still ignored. Floating tables
-stay in normal block flow. RTL visual column order and separate-cell spacing are
-absent.
+Style-provided margins and row properties are still ignored. Direct table/row
+alignment now resolves logical start/center/end placement, and visually RTL
+tables mirror unequal grid ranges, spans, logical margins, and resolved border
+geometry without changing paragraph direction (`P1F-TBL-ALIGN-BIDI`). Floating
+tables stay in normal block flow. Separate-cell spacing is absent.
 
 Border support is intentionally bounded: common solid/double/dotted/dashed
 families and segmented spans paint, while art/compound tokens use bounded
@@ -330,9 +330,10 @@ remain deferred.
 
 **PR order:** table-style shading, conditional paragraph/run/border cascade, and
 intrinsic inline-box sizing landed (`P1F-TBL-CNF`,
-`P1F-TBL-CNF-TEXT-BORDER`, `P1F-TBL-INTRINSIC-INLINE`). Cell
-spacing/bidi/alignment are next; floating tables remain last, after the
-float-exclusion architecture can support them safely.
+`P1F-TBL-CNF-TEXT-BORDER`, `P1F-TBL-INTRINSIC-INLINE`) and direct
+alignment/visually-RTL geometry landed in `P1F-TBL-ALIGN-BIDI`. Cell spacing is
+next; floating tables remain last, after the float-exclusion architecture can
+support them safely.
 
 ### 7. RTL and per-script typography are partial
 
@@ -638,7 +639,8 @@ proves a smaller safe combination.
 5. **Table style cascade**
    - table `basedOn`, look flags, conditional regions, and cell/paragraph/run
      overlays;
-   - then cell spacing/bidi/alignment; floating tables last.
+   - direct alignment/visually-RTL geometry done; cell spacing next and floating
+     tables last.
 6. **Footnote/endnote fidelity**
    - separator/continuation-separator paint, footnote-only trailing pages,
      full per-section note policy, and real-corpus visual baselines.

@@ -154,7 +154,7 @@ landed, but several modeled properties are still not consumed.
 | Border appearance | Color, total width, and common line families reach paint: solid, double, dotted, dashed, dot-dash, and dot-dot-dash use deterministic portable geometry with a bounded solid fallback. | Implemented by `P1F-TBL-STYLED`; exact compound lines and art-border glyphs remain pending and explicitly fall back to solid. |
 | Vertical merges | The vertical-merge slice resolves conforming restart/continuation runs by exact grid range, gives the restart merged-height/content ownership, and keeps the group page-local. Malformed continuations remain visible ordinary cells. | Implemented by `P1F-TBL-VMERGE`; common side-segment styles are implemented by `P1F-TBL-STYLED`. |
 | Table style and conditional formatting | The per-cell table-style layer now resolves `style_ref`'s `basedOn` chain, unconditional `wholeTable`, and look-gated `cnfStyle` regions in Word precedence. Shading, paragraph/run formatting, and edge-wise table/cell border overrides reach intrinsic measurement and final flow; nested tables replace rather than inherit the outer layer. | Implemented by `P1F-TBL-CNF` + `P1F-TBL-CNF-TEXT-BORDER`. Row-property cascade and margins from table styles remain deferred with the table geometry items below. |
-| Alignment, bidi, and row alignment | `w:jc`, `w:bidiVisual`, and row `w:jc` are modeled but ignored by flow. | **High:** define physical start/end mapping before implementation. |
+| Alignment, bidi, and row alignment | Direct table/row `w:jc` resolves logical start/center/end origins; `w:bidiVisual` mirrors unequal columns/spans, logical margins, vertical borders, and segmented horizontal-border offsets without forcing cell paragraph direction. | Implemented by `P1F-TBL-ALIGN-BIDI`; table-style-provided row geometry and preservation of legacy physical `left`/`right` spelling remain deferred. |
 | Cell spacing | Table/row spacing is modeled but neither cell geometry nor border conflict mode consumes it. | **High:** needs gap geometry plus separately visible table/cell borders. |
 | Floating tables | `tblpPr`, overlap, and from-text distances are modeled but tables remain inline. | **High/design required:** integrate table boxes with float placement and wrapping. |
 | Cell text behavior | `noWrap`, vertical `textDirection`, `fitText`, and `hideMark` are modeled but ignored. | Medium/high, split into bounded layout slices. |
@@ -192,7 +192,7 @@ documented solid fallback.
 3. Render safe embedded-object previews through the existing image path.
 4. Make anchor lookup recurse through table fragments in body and
    header/footer bands.
-5. Design the larger table-style/spacing/bidi/floating-table and text-box
+5. Design the remaining table cell-spacing/floating-table and text-box
    `bodyPr` slices before implementation.
 
 ## Execution roadmap (controlled sequence, not parallel free-for-all)
