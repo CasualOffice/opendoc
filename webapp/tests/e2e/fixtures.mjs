@@ -53,11 +53,9 @@ export async function moveCaretToDocStart(page) {
 }
 
 // The three-state review-mode control (`#reviewModeControl`: Editing /
-// Suggesting / Viewing) lives in the Home ribbon panel, hidden while a
-// contextual Table/Insert panel is showing — switch to Home first. Selects
-// `mode` and confirms its segment became the pressed one.
+// Suggesting / Viewing) lives in the persistent footer. Selects `mode` and
+// confirms its segment became the pressed one.
 export async function setReviewMode(page, mode) {
-  await page.locator("#tabHome").click();
   const button = page.locator(`#reviewModeControl [data-review-mode="${mode}"]`);
   await button.click();
   await expect(button).toHaveAttribute("aria-pressed", "true");

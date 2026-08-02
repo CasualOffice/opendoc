@@ -165,10 +165,10 @@
 
     <div class="ribbon">
       <div class="ribbon-tabs" role="tablist" aria-label="Ribbon">
-        <button id="tabHome" type="button" class="ribbon-tab" data-tab="home" role="tab" aria-selected="true">Home</button>
-        <button id="tabInsert" type="button" class="ribbon-tab" data-tab="insert" role="tab" aria-selected="false">Insert</button>
-        <button id="tabTable" type="button" class="ribbon-tab" data-tab="table" role="tab" aria-selected="false" disabled>Table</button>
-        <button id="tabView" type="button" class="ribbon-tab" data-tab="view" role="tab" aria-selected="false">View</button>
+        <button id="tabHome" type="button" class="ribbon-tab" data-tab="home" role="tab" aria-controls="panelHome" aria-selected="true" tabindex="0">Home</button>
+        <button id="tabInsert" type="button" class="ribbon-tab" data-tab="insert" role="tab" aria-controls="panelInsert" aria-selected="false" tabindex="-1">Insert</button>
+        <button id="tabTable" type="button" class="ribbon-tab" data-tab="table" role="tab" aria-controls="panelTable" aria-selected="false" tabindex="-1" disabled>Table</button>
+        <button id="tabView" type="button" class="ribbon-tab" data-tab="view" role="tab" aria-controls="panelView" aria-selected="false" tabindex="-1">View</button>
         <button id="ribbonViewToggle" type="button" class="ribbon-view-toggle" title="Collapse the ribbon (compact view)" aria-label="Collapse the ribbon" aria-expanded="true"><span class="ms" aria-hidden="true">keyboard_arrow_up</span></button>
       </div>
       <div class="ribbon-body">
@@ -179,24 +179,25 @@
              Dictate/Voice are intentionally omitted (not implemented). Groups
              that do not fit collapse into the "⋯" overflow menu, never a
              scrollbar. -->
-        <div class="ribbon-panel" data-panel="home" role="tabpanel" aria-label="Home">
+        <div id="panelHome" class="ribbon-panel" data-panel="home" role="tabpanel" aria-labelledby="tabHome">
           <div class="rgroup" data-group="undo">
-            <div class="rgroup-ctl">
-              <button id="undoBtn" type="button" class="fmt" title="Undo (⌘Z)" aria-label="Undo" disabled><span class="ms" aria-hidden="true">undo</span></button>
-              <button id="redoBtn" type="button" class="fmt" title="Redo (⌘⇧Z)" aria-label="Redo" disabled><span class="ms" aria-hidden="true">redo</span></button>
+            <div class="rgroup-ctl undo-ctl">
+              <div class="stackrows undo-stack">
+                <button id="undoBtn" type="button" class="fmt" title="Undo (⌘Z)" aria-label="Undo" disabled><span class="ms" aria-hidden="true">undo</span></button>
+                <button id="redoBtn" type="button" class="fmt" title="Redo (⌘⇧Z)" aria-label="Redo" disabled><span class="ms" aria-hidden="true">redo</span></button>
+              </div>
+              <button id="clearFormatting" type="button" class="fmt" title="Clear direct formatting" aria-label="Clear direct formatting"><span class="ms" aria-hidden="true">format_clear</span></button>
             </div>
             <span class="rgroup-label">Undo</span>
           </div>
-          <div class="rgroup" data-group="clipboard">
+          <div class="rgroup" data-group="clipboard" data-ribbon-pinned>
             <div class="rgroup-ctl clipboard-ctl">
               <button id="pasteBtn" type="button" class="fmt fmt-big" title="Paste (⌘V)" aria-label="Paste" disabled>
                 <span class="ms" aria-hidden="true">content_paste</span>
                 <span class="fmt-big-label">Paste</span>
               </button>
-              <div class="stackrows">
-                <button id="cutBtn" type="button" class="fmt fmt-row" title="Cut (⌘X)" aria-label="Cut" disabled><span class="ms" aria-hidden="true">content_cut</span><span class="fmt-row-label">Cut</span></button>
-                <button id="copyBtn" type="button" class="fmt fmt-row" title="Copy (⌘C)" aria-label="Copy" disabled><span class="ms" aria-hidden="true">content_copy</span><span class="fmt-row-label">Copy</span></button>
-              </div>
+              <button id="cutBtn" type="button" class="fmt fmt-big" title="Cut (⌘X)" aria-label="Cut" disabled><span class="ms" aria-hidden="true">content_cut</span><span class="fmt-big-label">Cut</span></button>
+              <button id="copyBtn" type="button" class="fmt fmt-big" title="Copy (⌘C)" aria-label="Copy" disabled><span class="ms" aria-hidden="true">content_copy</span><span class="fmt-big-label">Copy</span></button>
             </div>
             <span class="rgroup-label">Clipboard</span>
           </div>
@@ -204,7 +205,7 @@
             <div class="rgroup-ctl">
               <div class="fmt-rows">
                 <div class="fmt-row-line">
-                  <label class="ctl" title="Font">
+                  <label class="ctl font-family-control" title="Font">
                     <select id="fontFamily">
                       <option value="">Font</option>
                       <option>Arial</option><option>Calibri</option><option>Cambria</option>
@@ -222,7 +223,6 @@
                       <option value="36"></option><option value="48"></option><option value="72"></option>
                     </datalist>
                   </label>
-                  <button id="clearFormatting" type="button" class="fmt" title="Clear direct formatting" aria-label="Clear direct formatting"><span class="ms" aria-hidden="true">format_clear</span></button>
                 </div>
                 <div class="fmt-row-line">
                   <button id="bold" type="button" class="fmt" title="Bold (⌘B)" aria-label="Bold" aria-pressed="false"><span class="format-glyph bold-glyph" aria-hidden="true">B</span></button>
@@ -233,8 +233,9 @@
                   <button id="superscript" type="button" class="fmt" title="Superscript" aria-label="Superscript"><span class="ms" aria-hidden="true">superscript</span></button>
                   <span class="rgroup-mini-divider" aria-hidden="true"></span>
                   <label class="ctl swatch" title="Text color"><span>A</span><input id="textColor" type="color" value="#000000" /></label>
-                  <label class="ctl" title="Highlight">
-                    <select id="highlight">
+                  <label class="ctl highlight-control" title="Highlight">
+                    <span class="ms" aria-hidden="true">ink_highlighter</span>
+                    <select id="highlight" aria-label="Highlight color">
                       <option value="">Mixed</option>
                       <option value="none">No highlight</option>
                       <option value="yellow">Yellow</option><option value="green">Green</option>
@@ -254,9 +255,6 @@
                   <button id="bulletList" type="button" class="fmt" title="Bulleted list" aria-label="Bulleted list" aria-pressed="false"><span class="ms" aria-hidden="true">format_list_bulleted</span></button>
                   <button id="numberedList" type="button" class="fmt" title="Numbered list" aria-label="Numbered list" aria-pressed="false"><span class="ms" aria-hidden="true">format_list_numbered</span></button>
                   <button id="checkList" type="button" class="fmt" title="Checklist" aria-label="Checklist" aria-pressed="false"><span class="ms" aria-hidden="true">checklist</span></button>
-                  <button id="restartList" type="button" class="fmt" title="Restart numbering at 1" aria-label="Restart numbering at 1"><span class="ms" aria-hidden="true">restart_alt</span></button>
-                  <button id="continueList" type="button" class="fmt" title="Continue previous numbering" aria-label="Continue previous numbering"><span class="ms" aria-hidden="true">low_priority</span></button>
-                  <span class="rgroup-mini-divider" aria-hidden="true"></span>
                   <button id="indentDec" type="button" class="fmt" title="Decrease indent (⇧Tab)" aria-label="Decrease indent"><span class="ms" aria-hidden="true">format_indent_decrease</span></button>
                   <button id="indentInc" type="button" class="fmt" title="Increase indent (Tab)" aria-label="Increase indent"><span class="ms" aria-hidden="true">format_indent_increase</span></button>
                   <button id="paraOptsBtn" type="button" class="fmt" title="Paragraph properties" aria-label="Paragraph properties" aria-controls="paragraphPropertiesPanel" aria-expanded="false"><span class="ms" aria-hidden="true">format_paragraph</span></button>
@@ -266,8 +264,9 @@
                   <button id="alignCenter" type="button" class="fmt" title="Center" aria-label="Center" aria-pressed="false"><span class="ms" aria-hidden="true">format_align_center</span></button>
                   <button id="alignEnd" type="button" class="fmt" title="Align right" aria-label="Align right" aria-pressed="false"><span class="ms" aria-hidden="true">format_align_right</span></button>
                   <button id="alignJustify" type="button" class="fmt" title="Justify" aria-label="Justify" aria-pressed="false"><span class="ms" aria-hidden="true">format_align_justify</span></button>
-                  <span class="rgroup-mini-divider" aria-hidden="true"></span>
                   <button id="spacingBtn" type="button" class="fmt" title="Line &amp; paragraph spacing" aria-label="Line and paragraph spacing" aria-haspopup="menu" aria-expanded="false"><span class="ms" aria-hidden="true">format_line_spacing</span></button>
+                  <button id="restartList" type="button" class="fmt" title="Restart numbering at 1" aria-label="Restart numbering at 1"><span class="ms" aria-hidden="true">restart_alt</span></button>
+                  <button id="continueList" type="button" class="fmt" title="Continue previous numbering" aria-label="Continue previous numbering"><span class="ms" aria-hidden="true">low_priority</span></button>
                 </div>
               </div>
             </div>
@@ -275,40 +274,33 @@
           </div>
           <div class="rgroup rgroup-styles" data-group="styles">
             <div class="rgroup-ctl styles-ctl">
-              <button type="button" class="styles-scroll-btn styles-scroll-prev" data-styles-scroll="prev" tabindex="-1" title="Scroll styles left" aria-label="Scroll styles left" hidden><span class="ms" aria-hidden="true">chevron_left</span></button>
-              <div id="stylesGallery" class="styles-gallery" role="listbox" aria-label="Paragraph styles"></div>
-              <button type="button" class="styles-scroll-btn styles-scroll-next" data-styles-scroll="next" tabindex="-1" title="Scroll styles right" aria-label="Scroll styles right" hidden><span class="ms" aria-hidden="true">chevron_right</span></button>
-              <!-- Kept as the accessible fallback + the format-reflection sink
-                   (`paragraphStyleAt`). Visually hidden; the gallery above is the
-                   visible control and stays in sync with it. -->
-              <label class="visually-hidden"><span>Paragraph style</span>
-                <select id="paragraphStyle"><option value="">Style</option></select>
+              <label class="ctl style-select" title="Paragraph style">
+                <select id="paragraphStyle" aria-label="Paragraph style"><option value="">Style</option></select>
               </label>
+              <div id="stylesGallery" class="styles-gallery" role="listbox" aria-label="Paragraph styles"></div>
             </div>
             <span class="rgroup-label">Styles</span>
           </div>
-          <div class="rgroup" data-group="editing">
-            <div class="rgroup-ctl">
-              <div class="stackrows">
-                <button id="findBtn" type="button" class="fmt fmt-row" title="Find and replace (⌘F)" aria-label="Find and replace" disabled><span class="ms" aria-hidden="true">search</span><span class="fmt-row-label">Find</span></button>
-                <button id="replaceBtn" type="button" class="fmt fmt-row" title="Replace (⌘F)" aria-label="Replace" disabled><span class="ms" aria-hidden="true">find_replace</span><span class="fmt-row-label">Replace</span></button>
-              </div>
+          <div class="rgroup" data-group="editing" data-ribbon-pinned>
+            <div class="rgroup-ctl editing-ctl">
+              <button id="findBtn" type="button" class="fmt fmt-big" title="Find and replace (⌘F)" aria-label="Find and replace" disabled><span class="ms" aria-hidden="true">search</span><span class="fmt-big-label">Find</span></button>
+              <button id="replaceBtn" type="button" class="fmt fmt-big" title="Replace (⌘F)" aria-label="Replace" disabled><span class="ms" aria-hidden="true">find_replace</span><span class="fmt-big-label">Replace</span></button>
             </div>
             <span class="rgroup-label">Editing</span>
           </div>
-          <div class="rgroup" data-group="review">
+          <div class="rgroup rgroup-mode" data-group="mode" data-ribbon-pinned>
             <div class="rgroup-ctl">
-              <div id="reviewModeControl" class="review-mode-segmented" role="group" aria-label="Editing mode">
-                <button type="button" class="review-mode-seg" data-review-mode="editing" aria-pressed="true" disabled>Editing</button>
-                <button type="button" class="review-mode-seg" data-review-mode="suggesting" aria-pressed="false" disabled>Suggesting</button>
-                <button type="button" class="review-mode-seg" data-review-mode="viewing" aria-pressed="false" disabled>Viewing</button>
+              <div id="ribbonReviewModeControl" class="review-mode-segmented" role="group" aria-label="Editing mode">
+                <button type="button" class="review-mode-seg" data-review-mode="editing" aria-pressed="true" disabled><span class="ms" aria-hidden="true">edit</span>Edit</button>
+                <button type="button" class="review-mode-seg" data-review-mode="suggesting" aria-pressed="false" disabled><span class="ms" aria-hidden="true">rate_review</span>Suggest</button>
+                <button type="button" class="review-mode-seg" data-review-mode="viewing" aria-pressed="false" disabled><span class="ms" aria-hidden="true">visibility</span>Read only</button>
               </div>
             </div>
-            <span class="rgroup-label">Review</span>
+            <span class="rgroup-label">Mode</span>
           </div>
         </div>
 
-        <div class="ribbon-panel" data-panel="insert" role="tabpanel" aria-label="Insert" hidden>
+        <div id="panelInsert" class="ribbon-panel" data-panel="insert" role="tabpanel" aria-labelledby="tabInsert" hidden>
           <div class="rgroup">
             <div class="rgroup-ctl">
               <button id="insertTableBtn" type="button" class="fmt" title="Insert table" aria-label="Insert table" aria-haspopup="menu" aria-expanded="false" disabled><span class="ms" aria-hidden="true">table_chart</span></button>
@@ -323,7 +315,7 @@
           </div>
         </div>
 
-        <div class="ribbon-panel table-ribbon" data-panel="table" role="tabpanel" aria-label="Table" hidden>
+        <div id="panelTable" class="ribbon-panel table-ribbon" data-panel="table" role="tabpanel" aria-labelledby="tabTable" hidden>
           <div class="rgroup">
             <div class="rgroup-ctl">
               <button type="button" class="fmt" data-table-select="row" title="Select current row" aria-label="Select current row" disabled><span class="ms" aria-hidden="true">table_rows</span></button>
@@ -378,7 +370,7 @@
           </div>
         </div>
 
-        <div class="ribbon-panel" data-panel="view" role="tabpanel" aria-label="View" hidden>
+        <div id="panelView" class="ribbon-panel" data-panel="view" role="tabpanel" aria-labelledby="tabView" hidden>
           <div class="rgroup">
             <div class="rgroup-ctl">
               <button id="viewOutlineBtn" type="button" class="fmt" title="Toggle outline" aria-label="Toggle outline" aria-pressed="false" disabled><span class="ms" aria-hidden="true">toc</span></button>
@@ -402,8 +394,8 @@
         </div>
         <!-- Overflow: groups that don't fit the current width move here instead
              of the ribbon ever showing a horizontal scrollbar (docs/64). -->
-        <button id="ribbonOverflowBtn" type="button" class="fmt ribbon-overflow-btn" title="More commands" aria-label="More commands" aria-haspopup="menu" aria-expanded="false" hidden><span class="ms" aria-hidden="true">more_horiz</span></button>
-        <div id="ribbonOverflowMenu" class="ribbon-overflow-menu" role="menu" aria-label="More ribbon groups" hidden></div>
+        <button id="ribbonOverflowBtn" type="button" class="fmt ribbon-overflow-btn" title="More commands" aria-label="More commands" aria-haspopup="dialog" aria-controls="ribbonOverflowMenu" aria-expanded="false" hidden><span class="ms" aria-hidden="true">more_horiz</span></button>
+        <div id="ribbonOverflowMenu" class="ribbon-overflow-menu" role="dialog" aria-label="More ribbon commands" hidden></div>
       </div>
     </div>
 
@@ -862,6 +854,14 @@
         </span>
       </span>
       <span class="foot-right">
+        <span class="footer-mode">
+          <span class="footer-mode-label">Mode</span>
+          <span id="reviewModeControl" class="review-mode-segmented" role="group" aria-label="Editing mode">
+            <button type="button" class="review-mode-seg" data-review-mode="editing" aria-pressed="true" disabled>Editing</button>
+            <button type="button" class="review-mode-seg" data-review-mode="suggesting" aria-pressed="false" disabled>Suggesting</button>
+            <button type="button" class="review-mode-seg" data-review-mode="viewing" aria-pressed="false" disabled>Read only</button>
+          </span>
+        </span>
         <span id="statPages" class="stat-pages" hidden>Page 1 of 1</span>
         <span class="zoom">
           <button id="zoomOut" type="button" class="zbtn" title="Zoom out" aria-label="Zoom out"><span class="ms" aria-hidden="true">remove</span></button>

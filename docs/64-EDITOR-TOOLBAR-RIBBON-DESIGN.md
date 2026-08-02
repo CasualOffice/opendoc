@@ -1,42 +1,48 @@
 # 64 — Editor Toolbar / Ribbon — Competitive Analysis & Design
 
-Status: Home band rebuilt to the `template.png` reference (P1G-UI-RIBBON-HOME);
+Status: Home band correction implemented (P1G-UI-RIBBON-CORRECTION).
 Insert/Table/View tabs and the contextual Table tab retained.
 Companion to [doc 63](63-EDITOR-UI-UX-DESIGN-SYSTEM.md) (shell & design system).
-Reference: `template.png`.
+Reference: the newer `Vellum.dc.html` shipped inside the owner's
+`Vellum Design Book` bundle (SHA-256
+`3fd9ca86078d224ad83b12115ff138dbbcce8e0ab21317aaeb6a4cc5f35be16e`).
+The checked-in `docs/assets/template-reference-prototype.html` is an older
+revision and must not be treated as the exact toolbar source.
 
-## Home band — as built (mirrors template.png)
+## Home band — corrected placement contract
 
 The Home tab is a single **no-wrap** band of divider-separated groups with a
 small centered label under each, matching the reference's group composition:
 
-- **Undo** — Undo/Redo (opendoc-specific, kept; the reference puts these in a
-  quick-access strip opendoc does not have).
-- **Clipboard** — a big **Paste** button beside stacked **Cut** / **Copy** text
-  rows. All three call the same clipboard actions the command palette/keyboard
-  use. *Format Painter is omitted — not implemented.*
-- **Font** — two rows: (1) font family, size, clear-formatting; (2) B I U S,
+- **Undo** — Undo above Redo in a two-row stack, plus Clear Formatting. Format
+  Painter remains omitted because it is not implemented.
+- **Clipboard** — **Paste**, **Cut**, and **Copy** use uniform vertical tiles
+  (icon above label). All three call the same clipboard actions the command
+  palette/keyboard use. *Format Painter is omitted — not implemented.*
+- **Font** — two rows: (1) font family and size; (2) B I U S,
   sub/super, text color, highlight. *Grow/shrink font and change-case are omitted
   — not implemented.*
-- **Paragraph** — two rows: (1) bullets, numbering, restart-numbering, indent
-  −/＋, ¶ (paragraph properties); (2) align L/C/R/J, line-spacing.
+- **Paragraph** — two rows: (1) bullets, numbering, checklist, indent −/＋, ¶
+  (paragraph properties); (2) align L/C/R/J, line-spacing,
+  restart/continue-numbering.
   *Multilevel list and paragraph sort are omitted — not implemented.*
-- **Styles** — a **live gallery** of style cards built from the document's real
-  styles (`doc.listStyles()`), the visible control driving the (now hidden)
-  `#paragraphStyle` reflection select; horizontal ‹/› scroll on overflow. Known
-  built-in names render in an approximate look (the engine exposes style names,
-  not per-style metrics, to the webapp).
-- **Editing** — **Find** / **Replace** stacked rows (both open Find & Replace).
+- **Styles** — a visible all-styles selector backed by `doc.listStyles()` plus a
+  four-card quick gallery. The selector guarantees every document style remains
+  reachable; the cards are previews, not the sole navigation mechanism.
+- **Editing** — **Find** / **Replace** use the same icon-above-label tiles (both
+  open Find & Replace).
   *Select is omitted — no functional select menu.*
-- **Review** — the three-state Editing/Suggesting/Viewing segmented control
-  (opendoc-specific; the reference's Voice/Dictate group is omitted — no dictation).
+- **Editing mode** — Edit/Suggest/Read only is visible in the Home band and is
+  mirrored persistently in the footer. Both surfaces drive the same mode state.
 
-**No horizontal scrollbar, ever** (superseding the earlier "overflow scrolls"
-note in §3): groups that don't fit the current width collapse, right-to-left,
-into a "⋯" overflow menu (`#ribbonOverflowBtn`/`#ribbonOverflowMenu`) that keeps
-every control reachable. Overflow is recomputed on resize (`ResizeObserver`) and
-synchronously on tab switch. Every icon-only control has a ~350ms delayed
-name+shortcut tooltip plus its `aria-label` (§3).
+**No horizontal scrollbar.** Groups that do not fit collapse, right-to-left,
+into a "⋯" command surface (`#ribbonOverflowBtn`/`#ribbonOverflowMenu`). The
+surface must reflow groups on narrow screens, move keyboard focus into its first
+enabled command, close and restore focus on Escape, and retain tooltips after
+groups move outside the ribbon DOM subtree. Overflow is recomputed on resize and
+synchronously on tab switch. Clipboard and Editing are primary pinned groups;
+the compact Mode group is also kept inline whenever the viewport can contain
+all three (and remains available in the footer at smaller widths).
 
 **Compact ↔ ribbon view.** A toggle in the tab strip (`#ribbonViewToggle`)
 collapses the band to just the tabs (compact view — more document room) and
