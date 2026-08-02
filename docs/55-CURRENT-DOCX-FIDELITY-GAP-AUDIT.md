@@ -107,7 +107,7 @@ still use bounded approximations.
 | P0 (partly closed, P1F-39b) | `altChunk`'s real embedded content is never parsed/laid out | Referenced HTML/RTF/text/sub-document content is preserved but never rendered; a deterministic bordered placeholder box now reserves its layout space and is visually distinguishable from real content, closing the *silent-zero-space* half of this gap — the content-flow half remains open | `flow.rs` `alt_chunk_fragment`/`alt_chunk_decor` (placeholder only, not a parser for the embedded part) |
 | P1 | Footnote/endnote placement is bounded, not Word-complete | Common note references and bodies render, but separator customization, footnote-only trailing pages, and full section policy remain approximations | `notes.rs`; `62-FOOTNOTE-ENDNOTE-PAGINATION-DESIGN.md` |
 | P1 | Square-family exclusion is only local/bounded | Cross-paragraph, page-relative, contour, and overlapping-float cases can still diverge | `flow.rs::shape_with_float_exclusions` |
-| P1 | Table style cascade and advanced table geometry are not consumed | Styled tables lose conditional fills/borders/fonts; floating/bidi/spaced tables become inline approximations | `cascade.rs`; `flow.rs::flow_table` |
+| P1 | Advanced table geometry is not fully consumed | Conditional fills/borders/fonts and modeled inline-box intrinsic widths now render; floating/bidi/spaced tables remain inline approximations | `cascade.rs`; `flow.rs::flow_table` |
 | P1 | Paragraph base direction and per-script run slots — partially fixed | Base direction (`w:bidi`) + RTL alignment edge, per-script font slots (`w:eastAsia`/`w:cs`/`hint`), and complex-script bold/italic/size are now consumed; full bidi *visual reordering*, vertical writing, and theme-only per-script resolution remain open | `flow.rs::line_constraints`/`push_styled_runs`, `cascade.rs::requested_font_family_for`, `script.rs`, `shape.rs::alignment` |
 | P2 (partially closed, P1F-SHAPE-PRESET-1/P1F-SHAPE-ANGULAR-1) | Shape geometry is reduced at paint | Ellipse, round-rectangle, triangle, right-triangle, and diamond primitives now paint distinctly; additional presets and custom/VML paths still use explicit bounding-box fallback | `anchor.rs::place_group_children` |
 | P2 | Review semantics have no view policy | Insertions and deletions both render; comments have no visible anchor/UI | `flow.rs::collect_items` |
@@ -303,31 +303,37 @@ paragraph/run formatting, and edge-wise table/cell borders during both intrinsic
 measurement and final flow. The remaining table-style/layout gaps are:
 
 - style-level/conditional row properties and style-provided cell margins;
-- table or row alignment (`w:jc`);
-- `tbl_bidi_visual`;
 - table/row cell spacing;
 - floating-table position and overlap;
 - cell `no_wrap`, `text_direction`, `fit_text`, or `hide_mark`.
 
 Accordingly, authored banding/header-row fill, fonts, paragraph formatting, and
 borders now reach paint, and conditional fonts participate in auto-fit sizing.
-Style-provided margins and row properties are still ignored. Floating tables
-stay in normal block flow. RTL visual column order and separate-cell spacing are
-absent.
+Style-provided margins and row properties are still ignored. Direct table/row
+alignment now resolves logical start/center/end placement, and visually RTL
+tables mirror unequal grid ranges, spans, logical margins, and resolved border
+geometry without changing paragraph direction (`P1F-TBL-ALIGN-BIDI`). Floating
+tables stay in normal block flow. Separate-cell spacing is absent.
 
 Border support is intentionally bounded: common solid/double/dotted/dashed
 families and segmented spans paint, while art/compound tokens use bounded
 fallbacks. Conflict ranking covers common cases, not every Word tie-break.
 
-Intrinsic table sizing has another cross-feature gap. `block_intrinsic` measures
-paragraphs through `collect_runs`, so inline images, text boxes, fields, object
-previews, and other inline boxes do not contribute their natural width. This can
-mis-size image/table-heavy documents even when the objects later paint.
+Intrinsic table sizing now uses the same `FlowItem` projection as final flow.
+Inline pictures, embedded-object previews, typed math, cached field values,
+authored text boxes, and recursively measured widthless text boxes contribute to
+the cell's minimum/preferred width. The reducer includes glyph, image, text-box,
+and rule right edges. Anchored floats and full-width rules remain available-width
+effects rather than intrinsic demand (`P1F-TBL-INTRINSIC-INLINE`). Natural media
+probing without an authored extent and Word's complete preferred-width negotiation
+remain deferred.
 
-**PR order:** table-style shading and conditional paragraph/run/border cascade
-landed (`P1F-TBL-CNF` + `P1F-TBL-CNF-TEXT-BORDER`); intrinsic inline-box sizing
-is next; then cell spacing/bidi/alignment; floating tables only after the
-float-exclusion architecture can support them safely.
+**PR order:** table-style shading, conditional paragraph/run/border cascade, and
+intrinsic inline-box sizing landed (`P1F-TBL-CNF`,
+`P1F-TBL-CNF-TEXT-BORDER`, `P1F-TBL-INTRINSIC-INLINE`) and direct
+alignment/visually-RTL geometry landed in `P1F-TBL-ALIGN-BIDI`. Cell spacing is
+next; floating tables remain last, after the float-exclusion architecture can
+support them safely.
 
 ### 7. RTL and per-script typography are partial
 
@@ -410,8 +416,10 @@ The normal DrawingML inline-image path paints positive-extent PNG/JPEG content
 as a true in-flow box in the Parley stream. Text and images share advance,
 wrapping, ascent/descent, line height, paint position, and hit-test geometry,
 including table-row height. A conservative split path remains for unsupported
-mixed field/tab/object combinations, and intrinsic table sizing still needs to
-account for all atomic boxes.
+mixed field/tab/object combinations. Table intrinsic sizing now accounts for
+modeled atomic picture, math, field, object-preview, and text-box widths through
+the shared item stream; media without a positive modeled extent remains
+non-rendering and unmeasurable.
 
 The normal inline-image path requires a media entry and a positive `Extent`.
 `image_item` returns `None` otherwise. **Fixed** (`agent/fix-vml-inline-image-size`):
@@ -631,7 +639,8 @@ proves a smaller safe combination.
 5. **Table style cascade**
    - table `basedOn`, look flags, conditional regions, and cell/paragraph/run
      overlays;
-   - then cell spacing/bidi/alignment; floating tables last.
+   - direct alignment/visually-RTL geometry done; cell spacing next and floating
+     tables last.
 6. **Footnote/endnote fidelity**
    - separator/continuation-separator paint, footnote-only trailing pages,
      full per-section note policy, and real-corpus visual baselines.
