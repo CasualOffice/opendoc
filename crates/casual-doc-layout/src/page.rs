@@ -111,6 +111,22 @@ pub enum AnchorContent {
         /// The outline, if stroked.
         stroke: Option<AnchorStroke>,
     },
+    /// An ellipse fitted to the anchor rectangle.
+    Ellipse {
+        /// The fill color (RGBA), if filled.
+        fill: Option<[u8; 4]>,
+        /// The outline, if stroked.
+        stroke: Option<AnchorStroke>,
+    },
+    /// A rounded rectangle with a resolved corner radius.
+    RoundedRectangle {
+        /// Corner radius in twips, clamped to half the shorter side.
+        radius: Twip,
+        /// The fill color (RGBA), if filled.
+        fill: Option<[u8; 4]>,
+        /// The outline, if stroked.
+        stroke: Option<AnchorStroke>,
+    },
     /// A straight line / connector, from `from` to `to` (page-local twips).
     Line {
         /// The line's start point.

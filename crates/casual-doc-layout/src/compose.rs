@@ -237,6 +237,31 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor) {
                 }),
             });
         }
+        AnchorContent::Ellipse { fill, stroke } => {
+            list.push(PaintItem::Ellipse {
+                rect: anchor.rect,
+                fill: fill.map(rgba),
+                stroke: stroke.map(|s| Stroke {
+                    color: rgba(s.color),
+                    width: stroke_px(s.width),
+                }),
+            });
+        }
+        AnchorContent::RoundedRectangle {
+            radius,
+            fill,
+            stroke,
+        } => {
+            list.push(PaintItem::RoundedRect {
+                rect: anchor.rect,
+                radius: *radius,
+                fill: fill.map(rgba),
+                stroke: stroke.map(|s| Stroke {
+                    color: rgba(s.color),
+                    width: stroke_px(s.width),
+                }),
+            });
+        }
         AnchorContent::Line { from, to, stroke } => {
             list.push(PaintItem::Line {
                 from: *from,

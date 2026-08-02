@@ -46,8 +46,8 @@ const FIDELITY = [
   },
   {
     family: "Text boxes & shapes",
-    note: "DrawingML/VML extent, fill, outline, anchoring render; exact paths/gradients, rotation, vertical text, linked boxes pending. Not editable.",
-    modeled: "full", rendered: "partial", editable: "none", roundtrips: "full",
+    note: "Anchored DrawingML shapes retain bounded preset identities/adjustments; rectangles, lines, ellipses, and rounded rectangles render distinctly. Custom paths, non-text inline shapes, gradients, rotation, vertical text, and linked boxes remain partial. Not editable.",
+    modeled: "partial", rendered: "partial", editable: "none", roundtrips: "partial",
   },
   {
     family: "Headers & footers",

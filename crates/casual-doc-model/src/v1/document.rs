@@ -1501,6 +1501,30 @@ impl Document {
                 }
                 GroupChild::Shape(shape) => {
                     check_extent(&shape.extent, "group.shape.extent")?;
+                    if let Some(preset) = &shape.preset {
+                        check_domain(
+                            shape.geometry == ShapeGeometry::Other
+                                && !preset.is_empty()
+                                && preset.len() <= MAX_SHAPE_PRESET_BYTES,
+                            "group.shape.preset",
+                        )?;
+                    }
+                    check_domain(
+                        shape.adjustments.len() <= MAX_SHAPE_ADJUSTMENTS,
+                        "group.shape.adjustments",
+                    )?;
+                    for adjustment in &shape.adjustments {
+                        check_domain(
+                            !adjustment.name.is_empty()
+                                && adjustment.name.len() <= MAX_SHAPE_GUIDE_NAME_BYTES,
+                            "group.shape.adjustment.name",
+                        )?;
+                        check_domain(
+                            !adjustment.formula.is_empty()
+                                && adjustment.formula.len() <= MAX_SHAPE_FORMULA_BYTES,
+                            "group.shape.adjustment.formula",
+                        )?;
+                    }
                     if let Some(stroke) = &shape.stroke {
                         check_domain(
                             (0..=MAX_EMU).contains(&stroke.width_emu),
@@ -1908,9 +1932,34 @@ fn accumulate_group_limits(
             GroupChild::Group(nested) => {
                 accumulate_group_limits(nested, limits, blocks, scalar_values)?;
             }
-            GroupChild::Picture(_) | GroupChild::Shape(_) => {}
+            GroupChild::Shape(shape) => {
+                if let Some(preset) = &shape.preset {
+                    add_scalar_values(preset, limits, scalar_values)?;
+                }
+                for adjustment in &shape.adjustments {
+                    add_scalar_values(&adjustment.name, limits, scalar_values)?;
+                    add_scalar_values(&adjustment.formula, limits, scalar_values)?;
+                }
+            }
+            GroupChild::Picture(_) => {}
         }
     }
+    Ok(())
+}
+
+fn add_scalar_values(
+    value: &str,
+    limits: SnapshotLimits,
+    scalar_values: &mut usize,
+) -> Result<(), SnapshotError> {
+    *scalar_values =
+        scalar_values
+            .checked_add(value.chars().count())
+            .ok_or(SnapshotError::LimitExceeded {
+                limit: "unicode_scalar_values",
+                observed: usize::MAX,
+                allowed: limits.max_unicode_scalar_values,
+            })?;
     Ok(())
 }
 

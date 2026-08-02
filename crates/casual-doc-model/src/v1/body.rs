@@ -559,6 +559,28 @@ pub enum ShapeGeometry {
     Other,
 }
 
+/// Maximum UTF-8 length of a retained DrawingML preset-geometry token.
+pub const MAX_SHAPE_PRESET_BYTES: usize = 64;
+
+/// Maximum adjustment guides retained for one preset shape.
+pub const MAX_SHAPE_ADJUSTMENTS: usize = 32;
+
+/// Maximum UTF-8 length of an adjustment-guide name.
+pub const MAX_SHAPE_GUIDE_NAME_BYTES: usize = 64;
+
+/// Maximum UTF-8 length of an adjustment-guide formula.
+pub const MAX_SHAPE_FORMULA_BYTES: usize = 256;
+
+/// One ordered DrawingML preset adjustment (`a:avLst/a:gd`).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ShapeAdjustment {
+    /// Guide name (`a:gd@name`).
+    pub name: String,
+    /// Guide formula (`a:gd@fmla`, commonly `val 16667`).
+    pub formula: String,
+}
+
 /// A group transform (`wpg:grpSpPr`/`a:grpSpPr` `a:xfrm`): the group's box in its
 /// parent's coordinate space (`a:off`/`a:ext`) and the child coordinate space the
 /// children's offsets/extents are expressed in (`a:chOff`/`a:chExt`). A child
@@ -802,6 +824,13 @@ pub struct GroupShape {
     pub extent: Extent,
     /// The preset geometry (`a:prstGeom@prst`).
     pub geometry: ShapeGeometry,
+    /// Original bounded preset token when [`ShapeGeometry::Other`] has no typed
+    /// primitive yet. Semantic export re-emits it instead of rewriting to `rect`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<String>,
+    /// Ordered preset adjustment guides (`a:avLst/a:gd`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub adjustments: Vec<ShapeAdjustment>,
     /// The fill (`a:solidFill`), if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fill: Option<Rgba>,

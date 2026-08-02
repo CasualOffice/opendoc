@@ -2024,12 +2024,12 @@ fn invalid_text_box_normal_autofit_percentage_is_rejected() {
 }
 
 #[test]
-fn group_with_shape_and_text_box_children_validates_and_round_trips_json() {
+fn group_with_retained_preset_shape_and_text_box_children_validates_and_round_trips_json() {
     use crate::v1::{
         AnchorHorizontal, AnchorVertical, DrawingAnchor, Extent, GroupChild, GroupShape,
         GroupTextBox, GroupTransform, HorizontalAnchor, HorizontalPosition, PointEmu, Rgba,
-        ShapeGeometry, ShapeStroke, VerticalAnchor, VerticalPosition, WordprocessingGroup,
-        WrapMode,
+        ShapeAdjustment, ShapeGeometry, ShapeStroke, VerticalAnchor, VerticalPosition,
+        WordprocessingGroup, WrapMode,
     };
     let ident = GroupTransform {
         offset: PointEmu { x_emu: 0, y_emu: 0 },
@@ -2072,7 +2072,12 @@ fn group_with_shape_and_text_box_children_validates_and_round_trips_json() {
                     width_emu: 1_000_000,
                     height_emu: 500_000,
                 },
-                geometry: ShapeGeometry::Rectangle,
+                geometry: ShapeGeometry::Other,
+                preset: Some("hexagon".to_owned()),
+                adjustments: vec![ShapeAdjustment {
+                    name: "adj".to_owned(),
+                    formula: "val 25000".to_owned(),
+                }],
                 fill: Some(Rgba {
                     r: 255,
                     g: 255,
@@ -2115,6 +2120,101 @@ fn group_with_shape_and_text_box_children_validates_and_round_trips_json() {
     let json = document.to_json().unwrap();
     let reloaded = Document::from_json(&json, SnapshotLimits::default()).unwrap();
     assert_eq!(document, reloaded, "the group survives a JSON round trip");
+}
+
+fn first_group_shape_mut(document: &mut Document) -> &mut GroupShape {
+    let BlockNode::Paragraph(paragraph) = &mut document.body_mut()[0] else {
+        panic!("expected a paragraph");
+    };
+    let InlineNode::Group(group) = &mut paragraph.inlines[0] else {
+        panic!("expected a group");
+    };
+    let GroupChild::Shape(shape) = &mut group.children[0] else {
+        panic!("expected a shape");
+    };
+    shape
+}
+
+#[test]
+fn retained_shape_preset_and_adjustment_bounds_are_validated() {
+    let mut document = table_document(vec![paragraph_block(tid(1))]).unwrap();
+    let paragraph = document.body_mut().first_mut().unwrap();
+    let BlockNode::Paragraph(paragraph) = paragraph else {
+        panic!("expected a paragraph");
+    };
+    paragraph
+        .inlines
+        .push(InlineNode::Group(WordprocessingGroup {
+            id: tid(30),
+            anchor: None,
+            relative_height: None,
+            extent: Extent {
+                width_emu: 1_000_000,
+                height_emu: 500_000,
+            },
+            transform: GroupTransform {
+                offset: PointEmu { x_emu: 0, y_emu: 0 },
+                extent: Extent {
+                    width_emu: 1_000_000,
+                    height_emu: 500_000,
+                },
+                child_offset: PointEmu { x_emu: 0, y_emu: 0 },
+                child_extent: Extent {
+                    width_emu: 1_000_000,
+                    height_emu: 500_000,
+                },
+            },
+            children: vec![GroupChild::Shape(GroupShape {
+                id: tid(31),
+                offset: PointEmu { x_emu: 0, y_emu: 0 },
+                extent: Extent {
+                    width_emu: 1_000_000,
+                    height_emu: 500_000,
+                },
+                geometry: ShapeGeometry::Other,
+                preset: Some("hexagon".to_owned()),
+                adjustments: vec![ShapeAdjustment {
+                    name: "adj".to_owned(),
+                    formula: "val 25000".to_owned(),
+                }],
+                fill: None,
+                stroke: None,
+            })],
+        }));
+    document.validate().unwrap();
+
+    let mut preset_on_typed_geometry = document.clone();
+    first_group_shape_mut(&mut preset_on_typed_geometry).geometry = ShapeGeometry::Rectangle;
+    assert!(matches!(
+        preset_on_typed_geometry.validate(),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "group.shape.preset"
+        })
+    ));
+
+    let mut too_many_adjustments = document.clone();
+    first_group_shape_mut(&mut too_many_adjustments).adjustments = (0..=MAX_SHAPE_ADJUSTMENTS)
+        .map(|index| ShapeAdjustment {
+            name: format!("adj{index}"),
+            formula: "val 1".to_owned(),
+        })
+        .collect();
+    assert!(matches!(
+        too_many_adjustments.validate(),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "group.shape.adjustments"
+        })
+    ));
+
+    let mut overlong_guide = document;
+    first_group_shape_mut(&mut overlong_guide).adjustments[0].name =
+        "x".repeat(MAX_SHAPE_GUIDE_NAME_BYTES + 1);
+    assert!(matches!(
+        overlong_guide.validate(),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "group.shape.adjustment.name"
+        })
+    ));
 }
 
 #[test]

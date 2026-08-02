@@ -109,7 +109,7 @@ still use bounded approximations.
 | P1 | Square-family exclusion is only local/bounded | Cross-paragraph, page-relative, contour, and overlapping-float cases can still diverge | `flow.rs::shape_with_float_exclusions` |
 | P1 | Table style cascade and advanced table geometry are not consumed | Styled tables lose conditional fills/borders/fonts; floating/bidi/spaced tables become inline approximations | `cascade.rs`; `flow.rs::flow_table` |
 | P1 | Paragraph base direction and per-script run slots — partially fixed | Base direction (`w:bidi`) + RTL alignment edge, per-script font slots (`w:eastAsia`/`w:cs`/`hint`), and complex-script bold/italic/size are now consumed; full bidi *visual reordering*, vertical writing, and theme-only per-script resolution remain open | `flow.rs::line_constraints`/`push_styled_runs`, `cascade.rs::requested_font_family_for`, `script.rs`, `shape.rs::alignment` |
-| P2 | Shape geometry is reduced at paint | Ellipse/round-rect/preset/path shapes can paint as rectangles | `anchor.rs::place_group_children` |
+| P2 (partially closed, P1F-SHAPE-PRESET-1) | Shape geometry is reduced at paint | Ellipse and round-rectangle primitives now paint distinctly; additional presets and custom/VML paths still use explicit bounding-box fallback | `anchor.rs::place_group_children` |
 | P2 | Review semantics have no view policy | Insertions and deletions both render; comments have no visible anchor/UI | `flow.rs::collect_items` |
 | P2 | Section/page-furniture long tail is not consumed | Page borders, line numbers, note policy, section text direction, and parity starts diverge | model `SectionBoundary`; layout search |
 | P2 | Field evaluation is limited | Non-page fields rely on cached results and long fielded paragraphs may overflow | `flow.rs::field_kind`, `shape_fielded_paragraph` |
@@ -460,16 +460,24 @@ slices, not this model foundation. Anchors preserve useful position/wrap metadat
 but still defer simple-position override, percentage offsets, exact character
 glyph anchoring, and complete inside/outside parity behavior.
 
-### 9. Shapes and text boxes remain approximate
+### 9. Shapes and text boxes remain partial
 
-`ShapeGeometry` distinguishes rectangle, round rectangle, ellipse, and line.
-The float painter maps only `Line` specially; every other geometry becomes
-`AnchorContent::Rectangle`. Thus an imported ellipse or rounded rectangle paints
-as a rectangular fill/stroke.
+`ShapeGeometry` distinguishes rectangle, round rectangle, ellipse, and line,
+and each now reaches a distinct deterministic float/display primitive. A
+standalone anchored DrawingML shape is normalized to the existing group-of-one
+model rather than dropped. Untyped but bounded `a:prstGeom` identities and their
+ordered adjustment guides are retained and semantically re-emitted; they still
+paint through the documented rectangular fallback until their preset geometry
+is implemented. The common `roundRect` literal `adj` guide controls its clamped
+corner radius.
 
-Generic VML paths are retained by the parser but rendered as bounded-box
-approximations. Gradients, exact preset/custom paths, per-side strokes,
-rotation, vertical writing, and exact diagonal orientation remain open.
+`a:custGeom` is explicitly reported and retained only by source-retention mode;
+its formula/path language is not claimed as typed semantic support. Non-text
+inline DrawingML shapes likewise remain reported pending a true in-flow
+composite box. Generic VML paths are retained by the parser but rendered as
+bounded-box approximations. Gradients, exact additional preset/custom paths,
+per-side strokes, rotation, vertical writing, and exact diagonal orientation
+remain open.
 
 Text-box support is comparatively strong: authored extent, fill/outline,
 independent insets, vertical anchor, overflow, shape autofit, normal-autofit,
@@ -587,6 +595,7 @@ support.
 | `topAndBottom` local reflow | Yes | Yes | Yes | Paragraph/line-relative explicit-offset envelope only |
 | Square/tight/through reflow | Safe subset | Safe subset | Safe subset | Local explicit paragraph/line-relative side exclusion; square bounds only |
 | DrawingML text-box body properties | Yes | Yes | Yes | Rotation/vertical writing/ellipsis/anchorCtr absent |
+| Anchored preset shape primitives | Yes | Yes | Yes | Rectangle/line/ellipse/round-rectangle render; additional preset/custom paths fall back explicitly; non-text inline shapes remain open |
 | VML text-box position/body properties | Safe subset | Yes | Safe subset | Unsafe side/page body cases remain inline |
 | `PAGE`/`NUMPAGES` | Yes | Yes | Yes, including anchored boxes | Other fields use cached result |
 | Per-section running-content selection | N/A | Yes | N/A | Continuous-page ownership and band growth remain approximate |
@@ -631,8 +640,8 @@ proves a smaller safe combination.
     - paragraph base direction, per-script font slots, complex-script
       bold/italic/size, then language-specific line rules.
 8. **Geometry and media**
-    - ellipse/round-rect paint, picture crop/transform, safe additional raster
-      formats, then vector metafile/SVG policy and generic VML paths.
+    - additional preset/custom shape paths, picture transform, safe additional
+      raster formats, then vector metafile/SVG policy and generic VML paths.
 9. **Review and field view policies**
     - immutable revision/comment view;
     - deterministic host-provided field evaluation.

@@ -24,9 +24,9 @@
 
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
-    BlockNode, Document, DrawingAnchor, Extent, GroupChild, HorizontalAlign, HorizontalAnchor,
-    HorizontalPosition, InlineNode, ReviewProjection, Rgba, SectionBoundary, SectionId,
-    ShapeGeometry, ShapeStroke, VerticalAlign, VerticalAnchor, VerticalPosition,
+    BlockNode, Document, DrawingAnchor, Extent, GroupChild, GroupShape, HorizontalAlign,
+    HorizontalAnchor, HorizontalPosition, InlineNode, ReviewProjection, Rgba, SectionBoundary,
+    SectionId, ShapeGeometry, ShapeStroke, VerticalAlign, VerticalAnchor, VerticalPosition,
     WordprocessingGroup, WrapDistances, WrapMode,
 };
 
@@ -792,7 +792,16 @@ fn place_group_children(
                             width: Twip::ZERO,
                         }),
                     },
-                    _ => AnchorContent::Rectangle {
+                    ShapeGeometry::Ellipse => AnchorContent::Ellipse {
+                        fill: shape.fill.map(rgba),
+                        stroke: shape_stroke(shape.stroke),
+                    },
+                    ShapeGeometry::RoundRectangle => AnchorContent::RoundedRectangle {
+                        radius: rounded_rectangle_radius(shape, rect),
+                        fill: shape.fill.map(rgba),
+                        stroke: shape_stroke(shape.stroke),
+                    },
+                    ShapeGeometry::Rectangle | ShapeGeometry::Other => AnchorContent::Rectangle {
                         fill: shape.fill.map(rgba),
                         stroke: shape_stroke(shape.stroke),
                     },
@@ -825,6 +834,21 @@ fn place_group_children(
             }
         }
     }
+}
+
+/// Resolves the common `roundRect` `adj` guide. DrawingML uses 100000-based
+/// percentages; the preset default is 16667 (one sixth of the shorter side).
+fn rounded_rectangle_radius(shape: &GroupShape, rect: Rect) -> Twip {
+    let adjustment = shape
+        .adjustments
+        .iter()
+        .find(|guide| guide.name == "adj")
+        .and_then(|guide| guide.formula.strip_prefix("val "))
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(16_667)
+        .clamp(0, 50_000);
+    let shorter = i64::from(rect.size.width.raw().min(rect.size.height.raw()).max(0));
+    Twip((shorter * adjustment / 100_000).clamp(0, i64::from(i32::MAX)) as i32)
 }
 
 // --- Band walk -------------------------------------------------------------

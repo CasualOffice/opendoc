@@ -65,6 +65,8 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
   // Headers/footers, text boxes, footnotes render but are not editing surfaces.
   assert.equal(by["Headers & footers"].editable, "none");
   assert.equal(by["Text boxes & shapes"].editable, "none");
+  assert.equal(by["Text boxes & shapes"].modeled, "partial");
+  assert.equal(by["Text boxes & shapes"].roundtrips, "partial");
   assert.equal(by["Footnotes & endnotes"].editable, "none");
   assert.equal(by["Fields"].editable, "none");
   // Math has a bounded typed/rendered subset, but remains partial and read-only.

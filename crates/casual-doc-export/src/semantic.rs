@@ -36,14 +36,14 @@ use casual_doc_model::v1::{
     PointEmu, PositionalTabAlignment, PositionalTabLeader, PositionalTabRelativeTo, ProofState,
     PropChange, RevisionKind, RgbColor, Rgba, RunFontHint, RunProperties, SchemeColor, SdtCheckbox,
     SdtCheckboxSymbol, SdtControlData, SdtControlKind, SdtDate, SdtListItem, SdtLock,
-    SdtProperties, SectionBoundary, SectionType, ShapeGeometry, ShapeStroke, Style, StyleId,
-    StyleKind, TabAlignment, TabLeader, Table, TableAnchor, TableBorders, TableCell,
-    TableCellProperties, TableFloatPosition, TableLayout, TableOverlap, TableProperties, TableRow,
-    TableRowProperties, TableStyleOverride, TableStyleRegion, TableXAlign, TableYAlign, TextBox,
-    TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxVerticalAnchor,
-    TextBoxVerticalOverflow, TextDirection, ThemeFontRef, VerticalAlign, VerticalAlignment,
-    VerticalAnchor, VerticalMerge, VerticalPosition, VerticalTextAlignment, WordprocessingGroup,
-    WrapMode, Zoom, ZoomMode,
+    SdtProperties, SectionBoundary, SectionType, ShapeAdjustment, ShapeGeometry, ShapeStroke,
+    Style, StyleId, StyleKind, TabAlignment, TabLeader, Table, TableAnchor, TableBorders,
+    TableCell, TableCellProperties, TableFloatPosition, TableLayout, TableOverlap, TableProperties,
+    TableRow, TableRowProperties, TableStyleOverride, TableStyleRegion, TableXAlign, TableYAlign,
+    TextBox, TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow,
+    TextBoxVerticalAnchor, TextBoxVerticalOverflow, TextDirection, ThemeFontRef, VerticalAlign,
+    VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition, VerticalTextAlignment,
+    WordprocessingGroup, WrapMode, Zoom, ZoomMode,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -4507,7 +4507,11 @@ fn write_group_shape(
     w.write_event(Event::Start(start("wps:spPr")))
         .map_err(pkg)?;
     write_shape_xfrm(w, shape.offset, shape.extent)?;
-    write_prst_geom(w, geometry_prst(shape.geometry))?;
+    let preset = shape
+        .preset
+        .as_deref()
+        .unwrap_or_else(|| geometry_prst(shape.geometry));
+    write_prst_geom_with_adjustments(w, preset, &shape.adjustments)?;
     if let Some(fill) = shape.fill {
         write_solid_fill(w, fill)?;
     }
@@ -4579,10 +4583,30 @@ fn write_shape_xfrm(
 }
 
 fn write_prst_geom(w: &mut Writer<Cursor<Vec<u8>>>, prst: &str) -> Result<(), ExportError> {
+    write_prst_geom_with_adjustments(w, prst, &[])
+}
+
+fn write_prst_geom_with_adjustments(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    prst: &str,
+    adjustments: &[ShapeAdjustment],
+) -> Result<(), ExportError> {
     let mut geom = start("a:prstGeom");
     geom.push_attribute(("prst", prst));
     w.write_event(Event::Start(geom)).map_err(pkg)?;
-    w.write_event(Event::Empty(start("a:avLst"))).map_err(pkg)?;
+    if adjustments.is_empty() {
+        w.write_event(Event::Empty(start("a:avLst"))).map_err(pkg)?;
+    } else {
+        w.write_event(Event::Start(start("a:avLst"))).map_err(pkg)?;
+        for adjustment in adjustments {
+            let mut guide = start("a:gd");
+            guide.push_attribute(("name", adjustment.name.as_str()));
+            guide.push_attribute(("fmla", adjustment.formula.as_str()));
+            w.write_event(Event::Empty(guide)).map_err(pkg)?;
+        }
+        w.write_event(Event::End(BytesEnd::new("a:avLst")))
+            .map_err(pkg)?;
+    }
     w.write_event(Event::End(BytesEnd::new("a:prstGeom")))
         .map_err(pkg)?;
     Ok(())

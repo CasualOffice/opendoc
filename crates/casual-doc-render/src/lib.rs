@@ -129,42 +129,41 @@ pub fn render(
     for item in &list.items {
         match item {
             PaintItem::Rect { rect, fill, stroke } => {
-                let clip = clip_stack.last();
-                if let Some(color) = fill {
-                    let mut paint = Paint::default();
-                    paint.set_color_rgba8(color.r, color.g, color.b, color.a);
-                    paint.anti_alias = true;
-                    if let Some(path) = rect_path(*rect, dpi) {
-                        surface.pixmap.fill_path(
-                            &path,
-                            &paint,
-                            FillRule::Winding,
-                            Transform::identity(),
-                            clip,
-                        );
-                    }
-                }
-                if let Some(stroke) = stroke {
-                    let mut paint = Paint::default();
-                    paint.set_color_rgba8(
-                        stroke.color.r,
-                        stroke.color.g,
-                        stroke.color.b,
-                        stroke.color.a,
+                if let Some(path) = rect_path(*rect, dpi) {
+                    paint_path(
+                        surface,
+                        &path,
+                        fill.as_ref(),
+                        stroke.as_ref(),
+                        clip_stack.last(),
                     );
-                    paint.anti_alias = true;
-                    if let Some(path) = rect_path(*rect, dpi) {
-                        surface.pixmap.stroke_path(
-                            &path,
-                            &paint,
-                            &Stroke {
-                                width: stroke.width,
-                                ..Stroke::default()
-                            },
-                            Transform::identity(),
-                            clip,
-                        );
-                    }
+                }
+            }
+            PaintItem::Ellipse { rect, fill, stroke } => {
+                if let Some(path) = ellipse_path(*rect, dpi) {
+                    paint_path(
+                        surface,
+                        &path,
+                        fill.as_ref(),
+                        stroke.as_ref(),
+                        clip_stack.last(),
+                    );
+                }
+            }
+            PaintItem::RoundedRect {
+                rect,
+                radius,
+                fill,
+                stroke,
+            } => {
+                if let Some(path) = rounded_rect_path(*rect, *radius, dpi) {
+                    paint_path(
+                        surface,
+                        &path,
+                        fill.as_ref(),
+                        stroke.as_ref(),
+                        clip_stack.last(),
+                    );
                 }
             }
             PaintItem::Glyphs { run } => {
@@ -634,6 +633,81 @@ fn rect_path(rect: Rect, dpi: f32) -> Option<tiny_skia::Path> {
     builder.finish()
 }
 
+fn ellipse_path(rect: Rect, dpi: f32) -> Option<tiny_skia::Path> {
+    let x = rect.origin.x.to_device_px(dpi);
+    let y = rect.origin.y.to_device_px(dpi);
+    let width = rect.size.width.to_device_px(dpi).max(0.0);
+    let height = rect.size.height.to_device_px(dpi).max(0.0);
+    PathBuilder::from_oval(SkRect::from_xywh(x, y, width, height)?)
+}
+
+fn rounded_rect_path(
+    rect: Rect,
+    radius: casual_doc_layout::units::Twip,
+    dpi: f32,
+) -> Option<tiny_skia::Path> {
+    let x = rect.origin.x.to_device_px(dpi);
+    let y = rect.origin.y.to_device_px(dpi);
+    let width = rect.size.width.to_device_px(dpi).max(0.0);
+    let height = rect.size.height.to_device_px(dpi).max(0.0);
+    let radius = radius
+        .to_device_px(dpi)
+        .max(0.0)
+        .min(width / 2.0)
+        .min(height / 2.0);
+    let right = x + width;
+    let bottom = y + height;
+    let mut builder = PathBuilder::new();
+    builder.move_to(x + radius, y);
+    builder.line_to(right - radius, y);
+    builder.quad_to(right, y, right, y + radius);
+    builder.line_to(right, bottom - radius);
+    builder.quad_to(right, bottom, right - radius, bottom);
+    builder.line_to(x + radius, bottom);
+    builder.quad_to(x, bottom, x, bottom - radius);
+    builder.line_to(x, y + radius);
+    builder.quad_to(x, y, x + radius, y);
+    builder.close();
+    builder.finish()
+}
+
+fn paint_path(
+    surface: &mut Surface,
+    path: &tiny_skia::Path,
+    fill: Option<&casual_doc_layout::display::Color>,
+    stroke: Option<&casual_doc_layout::display::Stroke>,
+    clip: Option<&Mask>,
+) {
+    if let Some(color) = fill {
+        let mut paint = Paint::default();
+        paint.set_color_rgba8(color.r, color.g, color.b, color.a);
+        paint.anti_alias = true;
+        surface
+            .pixmap
+            .fill_path(path, &paint, FillRule::Winding, Transform::identity(), clip);
+    }
+    if let Some(stroke) = stroke {
+        let mut paint = Paint::default();
+        paint.set_color_rgba8(
+            stroke.color.r,
+            stroke.color.g,
+            stroke.color.b,
+            stroke.color.a,
+        );
+        paint.anti_alias = true;
+        surface.pixmap.stroke_path(
+            path,
+            &paint,
+            &Stroke {
+                width: stroke.width,
+                ..Stroke::default()
+            },
+            Transform::identity(),
+            clip,
+        );
+    }
+}
+
 /// A [`GlyphSource`] backed by a single font blob for `FontId(0)` — the current
 /// default face until the font resolver (`P1C-002`) supplies the full set.
 #[derive(Clone, Copy, Debug)]
@@ -922,6 +996,56 @@ mod tests {
             "with the clip popped, the whole rect is painted (got {:?})",
             &px[..4]
         );
+    }
+
+    #[test]
+    fn ellipse_and_rounded_rectangle_leave_their_bounding_corners_unpainted() {
+        use casual_doc_layout::display::Color as DisplayColor;
+        use casual_doc_layout::units::{Rect, Size};
+
+        // At 1440 dpi, one twip is one device pixel, making the geometry and
+        // sampled pixels exact and platform-independent.
+        let dpi = 1440.0;
+        let mut list = DisplayList::new();
+        list.push(PaintItem::Ellipse {
+            rect: Rect::new(
+                Point::new(Twip(10), Twip(10)),
+                Size::new(Twip(40), Twip(40)),
+            ),
+            fill: Some(DisplayColor::rgb(200, 20, 20)),
+            stroke: None,
+        });
+        list.push(PaintItem::RoundedRect {
+            rect: Rect::new(
+                Point::new(Twip(70), Twip(10)),
+                Size::new(Twip(40), Twip(40)),
+            ),
+            radius: Twip(12),
+            fill: Some(DisplayColor::rgb(20, 80, 200)),
+            stroke: None,
+        });
+
+        let mut surface = Surface::new(120, 60).unwrap();
+        render(
+            &list,
+            &mut surface,
+            dpi,
+            &SingleFontSource::new(ROBOTO_REGULAR),
+            &NoMediaSource,
+        );
+
+        assert_eq!(
+            pixel_at(&surface, 120, 10, 10),
+            [255, 255, 255, 255],
+            "an ellipse does not fill its rectangular corner"
+        );
+        assert_eq!(pixel_at(&surface, 120, 30, 30), [200, 20, 20, 255]);
+        assert_eq!(
+            pixel_at(&surface, 120, 70, 10),
+            [255, 255, 255, 255],
+            "a rounded rectangle does not fill its rectangular corner"
+        );
+        assert_eq!(pixel_at(&surface, 120, 90, 30), [20, 80, 200, 255]);
     }
 
     /// Surface dimensions used by the decoration tests.
