@@ -291,32 +291,29 @@ Additional section gaps:
 
 ### 6. Table layout consumes only a direct-property subset
 
-The table model and importer are substantially richer than layout. The style
-cascade explicitly implements:
+The table model and importer remain richer than layout. The style cascade now
+implements:
 
-`docDefaults → paragraph style → character style → direct`
+`docDefaults → table style → paragraph style → character style → direct`
 
-and (as of `P1F-TBL-CNF`) a table-style **shading** layer:
-`table_style_cell_shading` (`cascade.rs`) resolves `TableProperties::style_ref`'s
-`basedOn` chain for each style's base cell/table fill, then overlays whichever
-`tblStylePr` conditional region the row+cell's combined `cnfStyle` bits select,
-gated by `tblLook`. `flow.rs::flow_table` consumes it as a fallback between a
-cell's own direct `w:shd` and the table's direct `w:shd`. Numbering-layer
-integration remains deferred, and the table-style layer covers **only cell
-background shading** — `flow_table` still does not resolve:
+`table_style_layer` (`cascade.rs`) resolves `TableProperties::style_ref`'s
+`basedOn` chain, unconditional `wholeTable`, and the row+cell's look-gated
+`cnfStyle` regions. `flow.rs::flow_table` consumes its shading,
+paragraph/run formatting, and edge-wise table/cell borders during both intrinsic
+measurement and final flow. The remaining table-style/layout gaps are:
 
-- the same `tblStylePr` conditional regions' paragraph/run overrides (region-
-  specific fonts, bold header text) or table/cell border overrides;
+- style-level/conditional row properties and style-provided cell margins;
 - table or row alignment (`w:jc`);
 - `tbl_bidi_visual`;
 - table/row cell spacing;
 - floating-table position and overlap;
 - cell `no_wrap`, `text_direction`, `fit_text`, or `hide_mark`.
 
-Accordingly, an authored table style's banding/header-row **fill** now reaches
-paint, but its region-specific fonts, paragraph formatting, borders, and margins
-are still lost even though those values are modeled. Floating tables stay in
-normal block flow. RTL visual column order and separate-cell spacing are absent.
+Accordingly, authored banding/header-row fill, fonts, paragraph formatting, and
+borders now reach paint, and conditional fonts participate in auto-fit sizing.
+Style-provided margins and row properties are still ignored. Floating tables
+stay in normal block flow. RTL visual column order and separate-cell spacing are
+absent.
 
 Border support is intentionally bounded: common solid/double/dotted/dashed
 families and segmented spans paint, while art/compound tokens use bounded
@@ -327,9 +324,9 @@ paragraphs through `collect_runs`, so inline images, text boxes, fields, object
 previews, and other inline boxes do not contribute their natural width. This can
 mis-size image/table-heavy documents even when the objects later paint.
 
-**PR order:** table-style cell-shading cascade landed (`P1F-TBL-CNF`); the same
-conditional regions' paragraph/run/border overrides next; then intrinsic inline
-box sizing; then cell spacing/bidi/alignment; floating tables only after the
+**PR order:** table-style shading and conditional paragraph/run/border cascade
+landed (`P1F-TBL-CNF` + `P1F-TBL-CNF-TEXT-BORDER`); intrinsic inline-box sizing
+is next; then cell spacing/bidi/alignment; floating tables only after the
 float-exclusion architecture can support them safely.
 
 ### 7. RTL and per-script typography are partial

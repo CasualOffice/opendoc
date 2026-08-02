@@ -38,7 +38,10 @@ use crate::block::{
     CellContentMargins, CellFragment, CellVAlign, CellVerticalMerge, ParagraphDecor,
     ResolvedBorderSegment, ResolvedEdge,
 };
-use crate::cascade::{StyleCascade, requested_font_family, requested_font_family_for, union_cnf};
+use crate::cascade::{
+    StyleCascade, TableStyleLayer, overlay_table_borders, requested_font_family,
+    requested_font_family_for, union_cnf,
+};
 use crate::incremental::{DirtySet, GalleyCache};
 use crate::model::{ModelPos, ModelRange};
 use crate::numbering::{self, NumberingState, PreparedMarker};
@@ -91,6 +94,9 @@ struct FlowCtx<'a> {
     /// before its inlines are collected. Threaded so each run's effective
     /// properties include the paragraph style's `rPr` in the cascade.
     para_style: Option<StyleId>,
+    /// The resolved table-style layer for the current cell. `None` outside a
+    /// table or inside an unstyled nested-table cell.
+    table_style: Option<TableStyleLayer>,
     /// The document's ordered section boundaries (`w:sectPr`). A body paragraph
     /// whose `w:pPr` carries a section break ends a section; the *following*
     /// section's start type (`w:type`) decides whether a page break follows it.
@@ -156,6 +162,7 @@ pub fn build_galley_with_report(
         palette: palette.as_ref(),
         cascade: StyleCascade::new(document.definitions()),
         para_style: None,
+        table_style: None,
         sections: &document.definitions().sections,
         definitions: document.definitions(),
         numbering: NumberingState::new(),
@@ -219,6 +226,7 @@ fn build_galley_for_blocks_inner(
         palette: palette.as_ref(),
         cascade: StyleCascade::new(document.definitions()),
         para_style: None,
+        table_style: None,
         sections: &document.definitions().sections,
         definitions: document.definitions(),
         numbering: NumberingState::new(),
@@ -278,6 +286,7 @@ fn flow_running_blocks(
         palette: palette.as_ref(),
         cascade: StyleCascade::new(document.definitions()),
         para_style: None,
+        table_style: None,
         // Running content has no section breaks of its own.
         sections: &[],
         definitions: document.definitions(),
@@ -342,6 +351,7 @@ pub fn build_galley_cached(
         palette: palette.as_ref(),
         cascade: StyleCascade::new(document.definitions()),
         para_style: None,
+        table_style: None,
         sections: &document.definitions().sections,
         definitions: document.definitions(),
         numbering: NumberingState::new(),
@@ -723,7 +733,8 @@ fn flow_blocks(
     while index < blocks.len() {
         if let (BlockNode::Paragraph(drop_cap), Some(BlockNode::Paragraph(body))) =
             (&blocks[index], blocks.get(index + 1))
-            && let Some(frame) = effective_drop_cap_frame(drop_cap, &ctx.cascade)
+            && let Some(frame) =
+                effective_drop_cap_frame(drop_cap, &ctx.cascade, ctx.table_style.as_ref())
             && is_single_character_drop_cap(drop_cap)
             && supports_drop_cap_layout(frame)
         {
@@ -771,7 +782,9 @@ fn flow_paragraph(
     // and record its effective style so each run inherits the paragraph style's
     // `rPr`.
     ctx.para_style = ctx.cascade.paragraph_style(&paragraph.properties);
-    let mut props = ctx.cascade.resolve_paragraph(&paragraph.properties);
+    let mut props = ctx
+        .cascade
+        .resolve_paragraph_in_table(&paragraph.properties, ctx.table_style.as_ref());
     if natural_line_height && let Some(spacing) = props.spacing.as_mut() {
         // Word's generated drop-cap paragraph commonly carries an exact line
         // height smaller than its large initial. That box positions the frame; it
@@ -820,7 +833,7 @@ fn contains_drop_cap_pair(blocks: &[BlockNode], cascade: &StyleCascade<'_>) -> b
         let (BlockNode::Paragraph(drop_cap), BlockNode::Paragraph(_)) = (&pair[0], &pair[1]) else {
             return false;
         };
-        effective_drop_cap_frame(drop_cap, cascade).is_some_and(supports_drop_cap_layout)
+        effective_drop_cap_frame(drop_cap, cascade, None).is_some_and(supports_drop_cap_layout)
             && is_single_character_drop_cap(drop_cap)
     })
 }
@@ -828,9 +841,10 @@ fn contains_drop_cap_pair(blocks: &[BlockNode], cascade: &StyleCascade<'_>) -> b
 fn effective_drop_cap_frame(
     paragraph: &Paragraph,
     cascade: &StyleCascade<'_>,
+    table_style: Option<&TableStyleLayer>,
 ) -> Option<DropCapFrame> {
     cascade
-        .resolve_paragraph(&paragraph.properties)
+        .resolve_paragraph_in_table(&paragraph.properties, table_style)
         .drop_cap_frame
 }
 
@@ -919,9 +933,11 @@ fn flow_table(
     ctx: &mut FlowCtx,
 ) {
     let merge_roles = resolve_vertical_merge_roles(table);
+    let style_layers = resolve_table_style_layers(table, &ctx.cascade);
+    let border_candidates = resolve_table_border_candidates(table, &style_layers);
     let indent = table.properties.indent_twips.unwrap_or(0);
     let available = (width.raw() - indent).max(1);
-    let widths = solve_table_columns(table, shaper, available, ctx, &merge_roles);
+    let widths = solve_table_columns(table, shaper, available, ctx, &merge_roles, &style_layers);
 
     // Cumulative left edge of each column, shifted by the table indent.
     let ncols = widths.len();
@@ -943,13 +959,8 @@ fn flow_table(
             let cell_x = edge(col);
             let cell_end = edge(col + span);
             let cell_width = Twip((cell_end.raw() - cell_x.raw()).max(1));
-            let borders = resolve_cell_borders(
-                &table.properties.borders,
-                &table.rows,
-                row_index,
-                index,
-                &edges,
-            );
+            let borders =
+                resolve_cell_borders(&table.rows, &border_candidates, row_index, index, &edges);
             // A cell fill overrides table shading. When the cell omits `w:shd`,
             // the table-style layer applies next: the referenced style's (and
             // its `basedOn` ancestors') base cell/table shading, overlaid by
@@ -957,20 +968,12 @@ fn flow_table(
             // combined `w:cnfStyle` selects (gated by `w:tblLook`) — e.g. a
             // banded-row or header-row fill. Only then does the table's own
             // direct `w:shd` apply through the cell extent.
-            let cnf = union_cnf(
-                row.properties.conditional_format.unwrap_or_default(),
-                cell.properties.conditional_format.unwrap_or_default(),
-            );
-            let style_shading = ctx.cascade.table_style_cell_shading(
-                table.properties.style_ref,
-                table.properties.look,
-                cnf,
-            );
+            let style_layer = &style_layers[row_index][index];
             let shading = cell
                 .properties
                 .shading
                 .fill
-                .or(style_shading)
+                .or(style_layer.shading)
                 .or(table.properties.shading.fill)
                 .map(|c| [c.r, c.g, c.b, 255]);
             // Word insets a cell's content by `w:tcMar` (per-cell), falling back to
@@ -982,16 +985,28 @@ fn flow_table(
             let inner_width =
                 Twip((cell_width.raw() - margins.start.raw() - margins.end.raw()).max(1));
             let merge_role = merge_roles[row_index][index];
+            // Replace, rather than inherit, the enclosing cell's table layer.
+            // This also clears an outer style when a nested table is unstyled.
+            let outer_table_style = std::mem::replace(
+                &mut ctx.table_style,
+                table
+                    .properties
+                    .style_ref
+                    .is_some()
+                    .then(|| style_layer.clone()),
+            );
+            let blocks = if matches!(merge_role, VerticalMergeRole::Continue) {
+                Vec::new()
+            } else {
+                flow_blocks(&cell.blocks, shaper, inner_width, ctx)
+            };
+            ctx.table_style = outer_table_style;
             cells.push(CellFragment {
                 id: cell.id,
                 grid_span: span as u32,
                 x: cell_x,
                 width: cell_width,
-                blocks: if matches!(merge_role, VerticalMergeRole::Continue) {
-                    Vec::new()
-                } else {
-                    flow_blocks(&cell.blocks, shaper, inner_width, ctx)
-                },
+                blocks,
                 margins,
                 vertical_alignment: cell_vertical_alignment(&cell.properties),
                 vertical_merge: if matches!(merge_role, VerticalMergeRole::Continue) {
@@ -1039,6 +1054,105 @@ fn flow_table(
         merge_keep_next: row.merge_keep_next,
         clip: row.clip,
     }));
+}
+
+fn resolve_table_style_layers(
+    table: &Table,
+    cascade: &StyleCascade<'_>,
+) -> Vec<Vec<TableStyleLayer>> {
+    table
+        .rows
+        .iter()
+        .map(|row| {
+            row.cells
+                .iter()
+                .map(|cell| {
+                    let cnf = union_cnf(
+                        row.properties.conditional_format.unwrap_or_default(),
+                        cell.properties.conditional_format.unwrap_or_default(),
+                    );
+                    cascade.table_style_layer(
+                        table.properties.style_ref,
+                        table.properties.look,
+                        cnf,
+                    )
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// Materializes the border candidate on each physical cell side before shared-
+/// edge conflict resolution. This lets conditional table borders vary by cell
+/// while preserving the existing topology/segmentation pass.
+fn resolve_table_border_candidates(
+    table: &Table,
+    layers: &[Vec<TableStyleLayer>],
+) -> Vec<Vec<TableBorders>> {
+    table
+        .rows
+        .iter()
+        .enumerate()
+        .map(|(row_index, row)| {
+            row.cells
+                .iter()
+                .enumerate()
+                .map(|(cell_index, cell)| {
+                    let layer = &layers[row_index][cell_index];
+                    let mut table_borders = layer.table_borders.clone();
+                    overlay_table_borders(&mut table_borders, &table.properties.borders);
+
+                    let mut cell_borders = layer.cell_borders.clone();
+                    overlay_table_borders(&mut cell_borders, &cell.properties.borders);
+
+                    let first = cell_index == 0;
+                    let last = cell_index + 1 == row.cells.len();
+                    let top = row_index == 0;
+                    let bottom = row_index + 1 == table.rows.len();
+                    TableBorders {
+                        top: effective_border(
+                            cell_borders.top.as_ref(),
+                            if top {
+                                table_borders.top.as_ref()
+                            } else {
+                                table_borders.inside_h.as_ref()
+                            },
+                        )
+                        .cloned(),
+                        start: effective_border(
+                            cell_borders.start.as_ref(),
+                            if first {
+                                table_borders.start.as_ref()
+                            } else {
+                                table_borders.inside_v.as_ref()
+                            },
+                        )
+                        .cloned(),
+                        bottom: effective_border(
+                            cell_borders.bottom.as_ref(),
+                            if bottom {
+                                table_borders.bottom.as_ref()
+                            } else {
+                                table_borders.inside_h.as_ref()
+                            },
+                        )
+                        .cloned(),
+                        end: effective_border(
+                            cell_borders.end.as_ref(),
+                            if last {
+                                table_borders.end.as_ref()
+                            } else {
+                                table_borders.inside_v.as_ref()
+                            },
+                        )
+                        .cloned(),
+                        inside_h: None,
+                        inside_v: None,
+                    }
+                })
+                .collect()
+        })
+        .collect()
 }
 
 /// One table row while vertical-merge height constraints are being resolved.
@@ -1277,6 +1391,7 @@ fn solve_table_columns(
     available: i32,
     ctx: &FlowCtx,
     merge_roles: &[Vec<VerticalMergeRole>],
+    style_layers: &[Vec<TableStyleLayer>],
 ) -> Vec<Twip> {
     let ncols = if table.grid.is_empty() {
         table
@@ -1311,7 +1426,12 @@ fn solve_table_columns(
                 merge_roles[row_index][cell_index],
                 VerticalMergeRole::Continue
             ) {
-                let (cmin, cmax) = block_intrinsic(&cell.blocks, shaper, ctx);
+                let table_style = table
+                    .properties
+                    .style_ref
+                    .is_some()
+                    .then_some(&style_layers[row_index][cell_index]);
+                let (cmin, cmax) = block_intrinsic(&cell.blocks, shaper, ctx, table_style);
                 let cpref = cmax.max(cell.properties.width_twips.unwrap_or(0));
                 // A spanning cell's demand is shared over the columns it covers.
                 let per_min = div_ceil(cmin, span as i32);
@@ -1472,7 +1592,12 @@ fn div_ceil(a: i32, b: i32) -> i32 {
 /// with the advances actually shaped) but into a throwaway report — measurement
 /// is internal and must not inflate the substitution counts surfaced for the
 /// rendered galley, which the flow pass records once per run.
-fn block_intrinsic(blocks: &[BlockNode], shaper: &dyn LineShaper, ctx: &FlowCtx) -> (i32, i32) {
+fn block_intrinsic(
+    blocks: &[BlockNode],
+    shaper: &dyn LineShaper,
+    ctx: &FlowCtx,
+    table_style: Option<&TableStyleLayer>,
+) -> (i32, i32) {
     let mut scratch = FontResolutionReport::new();
     let mut mctx = FlowCtx {
         resolver: ctx.resolver,
@@ -1483,6 +1608,7 @@ fn block_intrinsic(blocks: &[BlockNode], shaper: &dyn LineShaper, ctx: &FlowCtx)
         palette: ctx.palette,
         cascade: ctx.cascade,
         para_style: ctx.para_style,
+        table_style: table_style.cloned(),
         // Intrinsic width measurement never paginates, so section breaks are moot.
         sections: &[],
         definitions: ctx.definitions,
@@ -1535,7 +1661,7 @@ fn block_intrinsic(blocks: &[BlockNode], shaper: &dyn LineShaper, ctx: &FlowCtx)
             BlockNode::Sdt(sdt) => {
                 // Transparent wrapper: its children contribute their own
                 // intrinsic widths, mirroring how they flow.
-                let (m, p) = block_intrinsic(&sdt.blocks, shaper, ctx);
+                let (m, p) = block_intrinsic(&sdt.blocks, shaper, ctx, table_style);
                 min = min.max(m);
                 preferred = preferred.max(p);
             }
@@ -1605,76 +1731,49 @@ fn max_line_width(layout: &crate::text::LineLayout) -> i32 {
 /// while top/bottom segment lists resolve each abutting grid interval
 /// independently for composition.
 fn resolve_cell_borders(
-    table: &TableBorders,
     rows: &[TableRow],
+    effective: &[Vec<TableBorders>],
     row_index: usize,
     index: usize,
     column_edges: &[i32],
 ) -> CellBorders {
     let row = &rows[row_index].cells;
-    let own = &row[index].properties.borders;
-    let left = index.checked_sub(1).map(|i| &row[i].properties.borders);
-    let right = row.get(index + 1).map(|c| &c.properties.borders);
-    let is_first = index == 0;
-    let is_last = index + 1 == row.len();
-    let is_top_row = row_index == 0;
-    let is_bottom_row = row_index + 1 == rows.len();
+    let own = &effective[row_index][index];
+    let left = index.checked_sub(1).map(|i| &effective[row_index][i]);
+    let right = effective[row_index].get(index + 1);
     let (start_col, end_col) = cell_column_range(row, index);
-
-    let start_default = if is_first {
-        table.start.as_ref()
-    } else {
-        table.inside_v.as_ref()
-    };
-    let end_default = if is_last {
-        table.end.as_ref()
-    } else {
-        table.inside_v.as_ref()
-    };
 
     // Candidate order follows reading order so exact ties keep the first edge:
     // row above before current, current before row below; left before right.
-    let top_default = if is_top_row {
-        table.top.as_ref()
-    } else {
-        table.inside_h.as_ref()
-    };
     let mut top_candidates = Vec::new();
     if let Some(above) = row_index.checked_sub(1).and_then(|i| rows.get(i)) {
         push_overlapping_edges(
             &mut top_candidates,
             &above.cells,
+            &effective[row_index - 1],
             start_col,
             end_col,
-            table.inside_h.as_ref(),
             |borders| borders.bottom.as_ref(),
         );
     }
-    top_candidates.push(effective_border(own.top.as_ref(), top_default));
+    top_candidates.push(own.top.as_ref());
 
-    let bottom_default = if is_bottom_row {
-        table.bottom.as_ref()
-    } else {
-        table.inside_h.as_ref()
-    };
-    let mut bottom_candidates = vec![effective_border(own.bottom.as_ref(), bottom_default)];
+    let mut bottom_candidates = vec![own.bottom.as_ref()];
     if let Some(below) = rows.get(row_index + 1) {
         push_overlapping_edges(
             &mut bottom_candidates,
             &below.cells,
+            &effective[row_index + 1],
             start_col,
             end_col,
-            table.inside_h.as_ref(),
             |borders| borders.top.as_ref(),
         );
     }
 
-    let own_start = effective_border(own.start.as_ref(), start_default);
-    let left_end =
-        left.map(|borders| effective_border(borders.end.as_ref(), table.inside_v.as_ref()));
-    let own_end = effective_border(own.end.as_ref(), end_default);
-    let right_start =
-        right.map(|borders| effective_border(borders.start.as_ref(), table.inside_v.as_ref()));
+    let own_start = own.start.as_ref();
+    let left_end = left.and_then(|borders| borders.end.as_ref());
+    let own_end = own.end.as_ref();
+    let right_start = right.and_then(|borders| borders.start.as_ref());
 
     let top_segments = row_index
         .checked_sub(1)
@@ -1682,10 +1781,9 @@ fn resolve_cell_borders(
         .map_or_else(Vec::new, |above| {
             resolve_horizontal_segments(
                 own.top.as_ref(),
-                top_default,
                 &above.cells,
+                &effective[row_index - 1],
                 |borders| borders.bottom.as_ref(),
-                table.inside_h.as_ref(),
                 start_col,
                 end_col,
                 column_edges,
@@ -1695,10 +1793,9 @@ fn resolve_cell_borders(
     let bottom_segments = rows.get(row_index + 1).map_or_else(Vec::new, |below| {
         resolve_horizontal_segments(
             own.bottom.as_ref(),
-            bottom_default,
             &below.cells,
+            &effective[row_index + 1],
             |borders| borders.top.as_ref(),
-            table.inside_h.as_ref(),
             start_col,
             end_col,
             column_edges,
@@ -1709,8 +1806,8 @@ fn resolve_cell_borders(
     CellBorders {
         top: resolve_edge(&top_candidates),
         bottom: resolve_edge(&bottom_candidates),
-        start: resolve_edge(&[left_end.flatten(), own_start]),
-        end: resolve_edge(&[own_end, right_start.flatten()]),
+        start: resolve_edge(&[left_end, own_start]),
+        end: resolve_edge(&[own_end, right_start]),
         top_segments,
         bottom_segments,
     }
@@ -1721,20 +1818,18 @@ fn resolve_cell_borders(
 #[allow(clippy::too_many_arguments)]
 fn resolve_horizontal_segments<'a>(
     own: Option<&'a BorderEdge>,
-    own_default: Option<&'a BorderEdge>,
     adjacent: &'a [TableCell],
+    adjacent_borders: &'a [TableBorders],
     adjacent_side: impl Fn(&'a TableBorders) -> Option<&'a BorderEdge>,
-    adjacent_default: Option<&'a BorderEdge>,
     start_col: usize,
     end_col: usize,
     column_edges: &[i32],
     own_first: bool,
 ) -> Vec<ResolvedBorderSegment> {
-    let own = effective_border(own, own_default);
     let mut breaks = vec![start_col, end_col];
     let mut adjacent_ranges = Vec::new();
     let mut cell_start = 0usize;
-    for cell in adjacent {
+    for (cell, borders) in adjacent.iter().zip(adjacent_borders) {
         let span = cell.properties.grid_span.unwrap_or(1).max(1) as usize;
         let cell_end = cell_start.saturating_add(span);
         if cell_start < end_col && start_col < cell_end {
@@ -1742,11 +1837,7 @@ fn resolve_horizontal_segments<'a>(
             let overlap_end = cell_end.min(end_col);
             breaks.push(overlap_start);
             breaks.push(overlap_end);
-            adjacent_ranges.push((
-                overlap_start,
-                overlap_end,
-                effective_border(adjacent_side(&cell.properties.borders), adjacent_default),
-            ));
+            adjacent_ranges.push((overlap_start, overlap_end, adjacent_side(borders)));
         }
         cell_start = cell_end;
         if cell_start >= end_col {
@@ -1824,20 +1915,17 @@ fn cell_column_range(row: &[TableCell], index: usize) -> (usize, usize) {
 fn push_overlapping_edges<'a>(
     candidates: &mut Vec<Option<&'a BorderEdge>>,
     row: &'a [TableCell],
+    borders: &'a [TableBorders],
     start_col: usize,
     end_col: usize,
-    table_default: Option<&'a BorderEdge>,
     side: impl Fn(&'a TableBorders) -> Option<&'a BorderEdge>,
 ) {
     let mut cell_start = 0usize;
-    for cell in row {
+    for (cell, borders) in row.iter().zip(borders) {
         let span = cell.properties.grid_span.unwrap_or(1).max(1) as usize;
         let cell_end = cell_start.saturating_add(span);
         if cell_start < end_col && start_col < cell_end {
-            candidates.push(effective_border(
-                side(&cell.properties.borders),
-                table_default,
-            ));
+            candidates.push(side(borders));
         }
         cell_start = cell_end;
         if cell_start >= end_col {
@@ -3847,7 +3935,9 @@ fn measure_fielded_segment(
 /// palette. Small-caps per-letter size-splitting is done by [`push_styled_runs`],
 /// so this single-run path uppercases without the per-letter size step.
 fn styled_run<'a>(text: &'a str, properties: &RunProperties, ctx: &mut FlowCtx) -> StyledRun<'a> {
-    let effective = ctx.cascade.resolve_run(ctx.para_style, properties);
+    let effective =
+        ctx.cascade
+            .resolve_run_in_table(ctx.para_style, properties, ctx.table_style.as_ref());
     build_styled_run(text, &effective, ctx)
 }
 
@@ -3856,7 +3946,9 @@ fn styled_owned_run(
     properties: &RunProperties,
     ctx: &mut FlowCtx,
 ) -> StyledRun<'static> {
-    let effective = ctx.cascade.resolve_run(ctx.para_style, properties);
+    let effective =
+        ctx.cascade
+            .resolve_run_in_table(ctx.para_style, properties, ctx.table_style.as_ref());
     let (size, baseline_shift) = scaled_run_metrics(&effective, ctx.text_scale);
     let text = case_transform(&text, &effective).into_owned();
     let bold = effective.bold.unwrap_or(false);
@@ -3934,7 +4026,11 @@ fn build_styled_run<'a>(
 /// not the (unbundled, glyph-incompatible) symbol font.
 fn symbol_glyph_run(symbol: &Symbol, ctx: &mut FlowCtx) -> StyledRun<'static> {
     let glyph = crate::symbol_map::resolve_symbol(&symbol.font, symbol.char);
-    let effective = ctx.cascade.resolve_run(ctx.para_style, &symbol.properties);
+    let effective = ctx.cascade.resolve_run_in_table(
+        ctx.para_style,
+        &symbol.properties,
+        ctx.table_style.as_ref(),
+    );
     let (size, baseline_shift) = scaled_run_metrics(&effective, ctx.text_scale);
     let bold = effective.bold.unwrap_or(false);
     let italic = effective.italic.unwrap_or(false);
@@ -4080,7 +4176,9 @@ fn push_styled_runs<'a>(
     // Resolve the effective run properties once (cascade: docDefaults → paragraph
     // style → character style → direct), then build from the resolved value so
     // style-driven size/bold/caps/color are honored, not just direct props.
-    let effective = ctx.cascade.resolve_run(ctx.para_style, properties);
+    let effective =
+        ctx.cascade
+            .resolve_run_in_table(ctx.para_style, properties, ctx.table_style.as_ref());
     if effective.hidden == Some(true) {
         return;
     }
@@ -4533,7 +4631,9 @@ fn prepare_list_marker(
     // size/color, with the level's own `w:rPr` (face/size/color of the number or
     // bullet) layered on top. A space suffix is folded into the run's text.
     let level_rpr = resolved.run_properties.unwrap_or_default();
-    let mut effective = ctx.cascade.resolve_run(ctx.para_style, &level_rpr);
+    let mut effective =
+        ctx.cascade
+            .resolve_run_in_table(ctx.para_style, &level_rpr, ctx.table_style.as_ref());
     // Route the bullet glyph through the symbol map: a Wingdings/Symbol bullet code
     // point becomes its Unicode equivalent (●/○/▪/…). When a glyph is remapped, drop
     // the (unbundled, glyph-incompatible) symbol face so the mapped Unicode char
@@ -4950,6 +5050,7 @@ mod tests {
             palette: None,
             cascade: StyleCascade::new(definitions),
             para_style: None,
+            table_style: None,
             sections: &[],
             definitions,
             numbering: NumberingState::new(),
@@ -5001,6 +5102,7 @@ mod tests {
             palette: None,
             cascade: StyleCascade::new(&definitions),
             para_style: None,
+            table_style: None,
             sections: &[],
             definitions: &definitions,
             numbering: NumberingState::new(),
@@ -6369,6 +6471,7 @@ mod tests {
             palette: None,
             cascade: StyleCascade::new(&definitions),
             para_style: None,
+            table_style: None,
             sections: &[],
             definitions: &definitions,
             numbering: NumberingState::new(),
@@ -6424,6 +6527,7 @@ mod tests {
             palette: None,
             cascade: StyleCascade::new(&definitions),
             para_style: None,
+            table_style: None,
             sections: &[],
             definitions: &definitions,
             numbering: NumberingState::new(),
@@ -8228,6 +8332,260 @@ mod tests {
             unstyled_row[0].shading, None,
             "no style_ref means no table-style layer contributes a fill"
         );
+    }
+
+    #[test]
+    fn conditional_table_style_text_and_borders_drive_measurement_and_final_flow() {
+        use casual_doc_model::v1::{
+            CnfStyle, Color, Style, StyleKind, TableLook, TableStyleOverride, TableStyleRegion,
+        };
+
+        let sid = StyleId::new(NodeId::from_parts(9, 2).unwrap());
+        let green = RgbColor {
+            r: 20,
+            g: 140,
+            b: 60,
+        };
+        let table_style = Style {
+            kind: StyleKind::Table,
+            is_default: false,
+            name: None,
+            aliases: None,
+            based_on: None,
+            next: None,
+            link: None,
+            hidden: false,
+            ui_priority: None,
+            semi_hidden: false,
+            unhide_when_used: false,
+            q_format: false,
+            locked: false,
+            paragraph: None,
+            run: Some(RunProperties {
+                size_half_points: Some(20),
+                ..RunProperties::default()
+            }),
+            table: Some(TableProperties {
+                borders: TableBorders {
+                    top: Some(colored_edge(
+                        "single",
+                        8,
+                        RgbColor {
+                            r: 160,
+                            g: 30,
+                            b: 30,
+                        },
+                    )),
+                    ..TableBorders::default()
+                },
+                ..TableProperties::default()
+            }),
+            table_row: None,
+            table_cell: None,
+            conditional: vec![TableStyleOverride {
+                region: TableStyleRegion::FirstRow,
+                paragraph: Some(ParagraphProperties {
+                    spacing: Some(Spacing {
+                        before_twips: Some(180),
+                        after_twips: Some(180),
+                        ..Spacing::default()
+                    }),
+                    ..ParagraphProperties::default()
+                }),
+                run: Some(RunProperties {
+                    bold: Some(true),
+                    size_half_points: Some(40),
+                    color: Some(Color::Rgb(RgbColor {
+                        r: 30,
+                        g: 60,
+                        b: 120,
+                    })),
+                    ..RunProperties::default()
+                }),
+                table: None,
+                table_row: None,
+                table_cell: Some(TableCellProperties {
+                    borders: TableBorders {
+                        top: Some(colored_edge("double", 16, green)),
+                        ..TableBorders::default()
+                    },
+                    ..TableCellProperties::default()
+                }),
+            }],
+        };
+        let mut definitions = Definitions::default();
+        definitions.styles.insert(sid, table_style);
+        let build = |style_ref| Table {
+            id: node(350),
+            grid: Vec::new(),
+            grid_change: None,
+            properties: TableProperties {
+                style_ref,
+                look: TableLook {
+                    first_row: true,
+                    ..TableLook::default()
+                },
+                ..TableProperties::default()
+            },
+            rows: vec![
+                ModelRow {
+                    id: node(351),
+                    properties: TableRowProperties {
+                        conditional_format: Some(CnfStyle {
+                            first_row: true,
+                            ..CnfStyle::default()
+                        }),
+                        ..TableRowProperties::default()
+                    },
+                    cells: vec![text_cell(
+                        352,
+                        TableCellProperties::default(),
+                        "conditional header metrics",
+                    )],
+                },
+                ModelRow {
+                    id: node(353),
+                    properties: TableRowProperties::default(),
+                    cells: vec![text_cell(
+                        354,
+                        TableCellProperties::default(),
+                        "conditional header metrics",
+                    )],
+                },
+            ],
+        };
+
+        let shaper = ParleyShaper::new();
+        let styled_doc = document_with_definitions(
+            vec![BlockNode::Table(build(Some(sid)))],
+            definitions.clone(),
+        );
+        let styled = build_galley(&styled_doc, &shaper, Twip(9000));
+        let unstyled_doc =
+            document_with_definitions(vec![BlockNode::Table(build(None))], definitions);
+        let unstyled = build_galley(&unstyled_doc, &shaper, Twip(9000));
+
+        fn row(fragment: &BlockFragment) -> (&[CellFragment], Twip) {
+            match fragment {
+                BlockFragment::TableRow { cells, height, .. } => (cells, *height),
+                BlockFragment::Paragraph { .. } => panic!("expected table row"),
+            }
+        }
+        fn run(cell: &CellFragment) -> &GlyphRun {
+            match &cell.blocks[0] {
+                BlockFragment::Paragraph { lines, .. } => &lines.lines[0].runs[0],
+                BlockFragment::TableRow { .. } => panic!("expected paragraph"),
+            }
+        }
+        let (header, header_height) = row(&styled[0]);
+        let (body, body_height) = row(&styled[1]);
+        let (unstyled_header, _) = row(&unstyled[0]);
+
+        assert_eq!(run(&header[0]).size, Twip(400));
+        assert_eq!(run(&header[0]).color, [30, 60, 120, 255]);
+        assert_eq!(run(&body[0]).size, Twip(200));
+        assert!(
+            header_height > body_height,
+            "conditional pPr spacing grows the header row"
+        );
+        assert!(
+            header[0].width > unstyled_header[0].width,
+            "auto-fit measurement uses the conditional 20pt font"
+        );
+        assert_eq!(header[0].borders.top.unwrap().color, [20, 140, 60, 255]);
+        assert_eq!(
+            header[0].borders.top.unwrap().pattern,
+            BorderPattern::Double
+        );
+    }
+
+    #[test]
+    fn an_unstyled_nested_table_does_not_inherit_the_outer_table_style() {
+        use casual_doc_model::v1::{Style, StyleKind};
+
+        let sid = StyleId::new(NodeId::from_parts(9, 3).unwrap());
+        let style = Style {
+            kind: StyleKind::Table,
+            is_default: false,
+            name: None,
+            aliases: None,
+            based_on: None,
+            next: None,
+            link: None,
+            hidden: false,
+            ui_priority: None,
+            semi_hidden: false,
+            unhide_when_used: false,
+            q_format: false,
+            locked: false,
+            paragraph: None,
+            run: Some(RunProperties {
+                size_half_points: Some(40),
+                ..RunProperties::default()
+            }),
+            table: None,
+            table_row: None,
+            table_cell: None,
+            conditional: Vec::new(),
+        };
+        let nested = Table {
+            id: node(420),
+            grid: vec![GridColumn {
+                width_twips: Some(1800),
+            }],
+            grid_change: None,
+            properties: TableProperties::default(),
+            rows: vec![ModelRow {
+                id: node(421),
+                properties: TableRowProperties::default(),
+                cells: vec![text_cell(422, TableCellProperties::default(), "nested")],
+            }],
+        };
+        let outer = Table {
+            id: node(410),
+            grid: vec![GridColumn {
+                width_twips: Some(4000),
+            }],
+            grid_change: None,
+            properties: TableProperties {
+                style_ref: Some(sid),
+                ..TableProperties::default()
+            },
+            rows: vec![ModelRow {
+                id: node(411),
+                properties: TableRowProperties::default(),
+                cells: vec![TableCell {
+                    id: node(412),
+                    properties: TableCellProperties::default(),
+                    blocks: vec![
+                        paragraph(413, vec![run_node(414, "before", RunProperties::default())]),
+                        BlockNode::Table(nested),
+                        paragraph(415, vec![run_node(416, "after", RunProperties::default())]),
+                    ],
+                }],
+            }],
+        };
+        let mut definitions = Definitions::default();
+        definitions.styles.insert(sid, style);
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(
+            &document_with_definitions(vec![BlockNode::Table(outer)], definitions),
+            &shaper,
+            Twip(9000),
+        );
+        let BlockFragment::TableRow { cells, .. } = &galley[0] else {
+            panic!("expected outer row");
+        };
+        let run_size = |block: &BlockFragment| match block {
+            BlockFragment::Paragraph { lines, .. } => lines.lines[0].runs[0].size,
+            BlockFragment::TableRow { cells, .. } => match &cells[0].blocks[0] {
+                BlockFragment::Paragraph { lines, .. } => lines.lines[0].runs[0].size,
+                BlockFragment::TableRow { .. } => panic!("expected nested paragraph"),
+            },
+        };
+        assert_eq!(run_size(&cells[0].blocks[0]), Twip(400));
+        assert_eq!(run_size(&cells[0].blocks[1]), Twip(220));
+        assert_eq!(run_size(&cells[0].blocks[2]), Twip(400));
     }
 
     #[test]
