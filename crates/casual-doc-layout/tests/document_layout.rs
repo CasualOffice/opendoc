@@ -30,6 +30,9 @@ use casual_doc_model::v1::{
     ParagraphProperties, Run, RunProperties, SectionBoundary, SectionColumns, SectionId,
     SectionType, VerticalAlign, VerticalAnchor, VerticalPosition, WrapMode,
 };
+use casual_doc_model::v1::{
+    BorderEdge, PageBorderDisplay, PageBorderOffset, PageBorders, RgbColor,
+};
 
 fn node(id: u64) -> NodeId {
     NodeId::from_parts(id, 1).unwrap()
@@ -937,5 +940,80 @@ fn a_positioned_header_float_reserves_band_so_the_body_clears_it() {
         plain_top < Twip(2_880),
         "an ordinary header reserves only its flowed band ({plain_top:?}), far less \
          than the positioned float's 2880-twip extent"
+    );
+}
+
+fn page_border_edge() -> BorderEdge {
+    BorderEdge {
+        style: "single".to_owned(),
+        size_eighth_points: Some(24),
+        color: Some(RgbColor {
+            r: 20,
+            g: 40,
+            b: 120,
+        }),
+        space_points: Some(24),
+    }
+}
+
+fn count_border_rects(list: &casual_doc_layout::display::DisplayList) -> usize {
+    list.items
+        .iter()
+        .filter(|item| matches!(item, PaintItem::Rect { .. }))
+        .count()
+}
+
+#[test]
+fn page_borders_resolve_per_page_and_compose_paints_the_frame() {
+    let shaper = ParleyShaper::new();
+    let (w, h, margin) = (12_240, 15_840, 1_440);
+    // A section whose page border shows on the first page only (title-page frame),
+    // measured from the page edge.
+    let mut sec = section(9, (w, h), margin, vec![], vec![], false);
+    sec.page_borders = PageBorders {
+        display: Some(PageBorderDisplay::FirstPage),
+        offset_from: Some(PageBorderOffset::Page),
+        top: Some(page_border_edge()),
+        bottom: Some(page_border_edge()),
+        start: Some(page_border_edge()),
+        end: Some(page_border_edge()),
+    };
+    let doc = Document::new(
+        node(1),
+        vec![
+            paragraph(100, vec![run(101, "Page one")]),
+            page_break(110, "Page two"),
+        ],
+        Definitions {
+            sections: vec![sec],
+            ..Definitions::default()
+        },
+    )
+    .unwrap();
+
+    let layout = paginate_document(&doc, &shaper);
+    assert_eq!(layout.page_count(), 2);
+
+    // Page 1 carries the resolved frame, inset 24pt (480 twips) from the page edge.
+    let first = layout.pages[0]
+        .page_borders
+        .expect("first page has a border");
+    assert_eq!(first.rect.origin, Point::new(Twip(480), Twip(480)));
+    assert_eq!(first.rect.right(), Twip(w - 480));
+    assert_eq!(first.rect.bottom(), Twip(h - 480));
+    assert!(first.top.is_some() && first.end.is_some());
+
+    // Page 2 has none (display=firstPage), proving the per-page policy.
+    assert!(
+        layout.pages[1].page_borders.is_none(),
+        "the firstPage policy suppresses the border on later pages"
+    );
+
+    // Compose paints the four edges on page 1 and nothing extra on page 2.
+    let first_rects = count_border_rects(&compose_page(&layout.pages[0]));
+    let second_rects = count_border_rects(&compose_page(&layout.pages[1]));
+    assert!(
+        first_rects >= second_rects + 4,
+        "the framed page paints at least four more border rects ({first_rects} vs {second_rects})"
     );
 }

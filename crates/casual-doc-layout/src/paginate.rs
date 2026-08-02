@@ -1196,6 +1196,8 @@ pub(crate) fn build_page(
         // Filled by the column paginator for multi-column separator sections; the
         // single-column paginator leaves it empty.
         separators: Vec::new(),
+        // Filled by the post-pagination page-border pass, off the hot path.
+        page_borders: None,
         start,
         end,
         flow,

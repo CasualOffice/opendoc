@@ -2203,7 +2203,7 @@ fn effective_border<'a>(
 /// drawable [`ResolvedEdge`] (or `None` if none is visible). An explicit `nil`
 /// suppresses the conflicting edge. Exact ranking ties keep the first candidate
 /// in reading order.
-fn resolve_edge(candidates: &[Option<&BorderEdge>]) -> Option<ResolvedEdge> {
+pub(crate) fn resolve_edge(candidates: &[Option<&BorderEdge>]) -> Option<ResolvedEdge> {
     let mut winner: Option<&BorderEdge> = None;
     for edge in candidates.iter().filter_map(|candidate| *candidate) {
         if edge.style == "nil" {
