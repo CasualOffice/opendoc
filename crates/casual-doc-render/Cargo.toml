@@ -22,10 +22,18 @@ casual-doc-layout.workspace = true
 casual-doc-model.workspace = true
 skrifa = "0.43"
 tiny-skia = "0.11"
-# Raster image decoding for inline pictures (PNG + JPEG). Permissive
-# (MIT-or-Apache-2.0), pure-Rust and WASM-clean: only the `png` and `jpeg`
-# codec features are enabled, so no native/C backends are pulled in.
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# Raster image decoding for inline pictures. Permissive (MIT-or-Apache-2.0),
+# pure-Rust and WASM-clean: only these codec features are enabled, so no
+# native/C backends are pulled in. PNG/JPEG are the common web formats; GIF/BMP/
+# TIFF are common in Office-authored DOCX (pasted art, scanned pages) and shared
+# the same generic decode path — previously they fell back to a placeholder box.
+image = { version = "0.25", default-features = false, features = [
+    "png",
+    "jpeg",
+    "gif",
+    "bmp",
+    "tiff",
+] }
 
 [dev-dependencies]
 casual-doc-import.workspace = true

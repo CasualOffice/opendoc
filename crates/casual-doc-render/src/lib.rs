@@ -1414,6 +1414,36 @@ mod tests {
     }
 
     #[test]
+    fn gif_bmp_tiff_images_decode_and_blit_pixels_into_their_rect() {
+        // Office-authored DOCX commonly embeds these formats (pasted art, scanned
+        // pages); they share the generic decode path and used to fall back to the
+        // placeholder box. Each solid-red raster must now paint red ink inside the
+        // box and leave the surrounding page white.
+        for format in [
+            image::ImageFormat::Gif,
+            image::ImageFormat::Bmp,
+            image::ImageFormat::Tiff,
+        ] {
+            let bytes = solid_image(8, 8, [210, 40, 40, 255], format);
+            assert!(
+                decode_to_pixmap(&bytes).is_some(),
+                "{format:?} decodes to a pixmap"
+            );
+            let surface = render_one_image(bytes);
+            let inside = pixel_at(&surface, 50, 20, 20);
+            assert!(
+                inside[0] > 150 && inside[0] > inside[2] + 40,
+                "the {format:?} red ink lands inside the box (got {inside:?})"
+            );
+            assert_eq!(
+                pixel_at(&surface, 50, 2, 2),
+                [255, 255, 255, 255],
+                "outside the {format:?} image box stays background white"
+            );
+        }
+    }
+
+    #[test]
     fn an_image_over_the_dimension_limit_is_rejected_before_decode_and_placeholdered() {
         // A very wide but shallow PNG keeps the regression fixture small while
         // proving that encoded byte size alone cannot admit an extreme raster:
