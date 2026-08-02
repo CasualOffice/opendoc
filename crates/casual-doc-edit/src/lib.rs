@@ -502,13 +502,11 @@ pub fn apply(
             let old = para.inlines.clone();
             ensure_run_boundary(&mut para.inlines, range.end.offset, ids)?;
             ensure_run_boundary(&mut para.inlines, range.start.offset, ids)?;
-            let covered: Vec<usize> = run_segments(&para.inlines)
-                .into_iter()
-                .filter(|s| s.start >= range.start.offset && s.end <= range.end.offset)
-                .map(|s| s.idx)
-                .collect();
-            for idx in covered {
-                if let InlineNode::Run(run) = &mut para.inlines[idx] {
+            // Descend into wrappers so a run inside a pending suggestion (or a
+            // hyperlink/SDT) is formatted, not silently skipped (docs/86).
+            let covered = covered_run_paths(&para.inlines, range.start.offset, range.end.offset);
+            for path in covered {
+                if let Some(run) = run_at_path_mut(&mut para.inlines, &path) {
                     delta.apply_to(&mut run.properties);
                 }
             }
@@ -531,19 +529,17 @@ pub fn apply(
                 return Err(EditError::OffsetOutOfRange);
             }
             let old = para.inlines.clone();
+            reject_partial_atomic(&para.inlines, range.start.offset, range.end.offset)?;
             ensure_run_boundary(&mut para.inlines, range.end.offset, ids)?;
             ensure_run_boundary(&mut para.inlines, range.start.offset, ids)?;
-            let covered =
-                covered_top_level_indices(&para.inlines, range.start.offset, range.end.offset)?;
-            if covered.is_empty()
-                || covered
-                    .iter()
-                    .any(|index| !matches!(para.inlines[*index], InlineNode::Run(_)))
-            {
+            // Descend into wrappers (docs/86); an all-markup range with no covered
+            // run is still an unsupported clear, as before.
+            let covered = covered_run_paths(&para.inlines, range.start.offset, range.end.offset);
+            if covered.is_empty() {
                 return Err(EditError::Unsupported);
             }
-            for index in covered {
-                if let InlineNode::Run(run) = &mut para.inlines[index] {
+            for path in covered {
+                if let Some(run) = run_at_path_mut(&mut para.inlines, &path) {
                     run.properties = RunProperties::default();
                 }
             }
@@ -1507,14 +1503,18 @@ fn ensure_run_boundary(
     offset: u32,
     ids: &mut dyn RunIds,
 ) -> Result<(), EditError> {
-    let target = run_segments(inlines)
+    // Find the run *strictly* containing the offset — top-level or nested inside a
+    // transparent wrapper (docs/86). A boundary offset needs no split.
+    let target = collect_run_paths(inlines)
         .into_iter()
         .find(|s| offset > s.start && offset < s.end)
-        .map(|s| (s.idx, (offset - s.start) as usize));
-    let Some((idx, local)) = target else {
+        .map(|s| (s.path, (offset - s.start) as usize));
+    let Some((path, local)) = target else {
         return Ok(());
     };
-    let (head, tail, properties) = match &inlines[idx] {
+    let (idx, parent_prefix) = path.split_last().ok_or(EditError::Unsupported)?;
+    let parent = vec_at_path_mut(inlines, parent_prefix).ok_or(EditError::Unsupported)?;
+    let (head, tail, properties) = match &parent[*idx] {
         InlineNode::Run(run) => {
             if !run.text.is_char_boundary(local) {
                 return Err(EditError::NotCharBoundary);
@@ -1528,10 +1528,10 @@ fn ensure_run_boundary(
         _ => return Ok(()),
     };
     let tail_id = ids.next().ok_or(EditError::IdExhausted)?;
-    if let InlineNode::Run(run) = &mut inlines[idx] {
+    if let InlineNode::Run(run) = &mut parent[*idx] {
         run.text = head;
     }
-    inlines.insert(
+    parent.insert(
         idx + 1,
         InlineNode::Run(Run {
             id: tail_id,
@@ -1887,6 +1887,124 @@ fn run_segments(inlines: &[InlineNode]) -> Vec<RunSeg> {
     segs
 }
 
+/// A run leaf located by its index path from a paragraph's top-level `inlines`,
+/// descending through editing-transparent wrappers. `path[0]` indexes the
+/// paragraph's inlines; each later element indexes that wrapper's `inlines`.
+/// The mutation-capable counterpart of [`FlatRun`] (docs/86 REVIEW-GAP-007):
+/// where `flatten_run_segments` yields `&properties` for read-only reflection,
+/// this yields the path so the editing/split paths can descend into a run
+/// nested inside a `Revision`/`Hyperlink`/`Sdt` wrapper and mutate it.
+struct RunPathSeg {
+    path: Vec<usize>,
+    /// Byte offset of the run's first byte in the projected paragraph text.
+    start: u32,
+    /// Byte offset one past the run's last byte.
+    end: u32,
+}
+
+/// Whether an inline is an editing-transparent wrapper whose `inlines` the
+/// split/edit paths may descend into — the same set `push_run_segments`
+/// flattens: hyperlinks, inline SDTs, and final-with-markup-contributing
+/// revisions (a pending `Insertion`/`MoveTo`). A non-contributing revision
+/// (`Deletion`/`MoveFrom`) is zero active width, so no offset resolves into it.
+fn transparent_children(inline: &InlineNode) -> Option<&[InlineNode]> {
+    match inline {
+        InlineNode::Hyperlink(link) => Some(&link.inlines),
+        InlineNode::Revision(revision)
+            if revision
+                .kind
+                .contributes_to(ReviewProjection::FinalWithMarkup) =>
+        {
+            Some(&revision.inlines)
+        }
+        InlineNode::Sdt(sdt) => Some(&sdt.inlines),
+        _ => None,
+    }
+}
+
+fn transparent_children_mut(inline: &mut InlineNode) -> Option<&mut Vec<InlineNode>> {
+    match inline {
+        InlineNode::Hyperlink(link) => Some(&mut link.inlines),
+        InlineNode::Revision(revision)
+            if revision
+                .kind
+                .contributes_to(ReviewProjection::FinalWithMarkup) =>
+        {
+            Some(&mut revision.inlines)
+        }
+        InlineNode::Sdt(sdt) => Some(&mut sdt.inlines),
+        _ => None,
+    }
+}
+
+/// Every run in projected order — top-level and nested inside editing-transparent
+/// wrappers — with its index path and cumulative byte range. The write-side
+/// mirror of [`flatten_run_segments`]; offsets use the same [`inline_text_len`]
+/// accounting so they align with hit-testing and the read-side queries.
+fn collect_run_paths(inlines: &[InlineNode]) -> Vec<RunPathSeg> {
+    let mut out = Vec::new();
+    let mut prefix = Vec::new();
+    let mut cum = 0u32;
+    push_run_paths(inlines, &mut prefix, &mut cum, &mut out);
+    out
+}
+
+fn push_run_paths(
+    inlines: &[InlineNode],
+    prefix: &mut Vec<usize>,
+    cum: &mut u32,
+    out: &mut Vec<RunPathSeg>,
+) {
+    for (idx, inline) in inlines.iter().enumerate() {
+        prefix.push(idx);
+        match inline {
+            InlineNode::Run(run) => {
+                let start = *cum;
+                let end = start.saturating_add(run.text.len() as u32);
+                *cum = end;
+                out.push(RunPathSeg {
+                    path: prefix.clone(),
+                    start,
+                    end,
+                });
+            }
+            _ => {
+                if let Some(children) = transparent_children(inline) {
+                    push_run_paths(children, prefix, cum, out);
+                } else {
+                    *cum = cum.saturating_add(inline_text_len(inline));
+                }
+            }
+        }
+        prefix.pop();
+    }
+}
+
+/// The `Vec<InlineNode>` addressed by `path` — the empty path is the top-level
+/// `inlines`; otherwise the `inlines` of the wrapper reached by following `path`.
+/// Returns `None` if the path leaves the transparent-wrapper set.
+fn vec_at_path_mut<'a>(
+    inlines: &'a mut Vec<InlineNode>,
+    path: &[usize],
+) -> Option<&'a mut Vec<InlineNode>> {
+    let Some((first, rest)) = path.split_first() else {
+        return Some(inlines);
+    };
+    let children = transparent_children_mut(inlines.get_mut(*first)?)?;
+    vec_at_path_mut(children, rest)
+}
+
+/// The mutable `Run` at `path` (its last element indexes the run within its
+/// parent wrapper's `inlines`), or `None` if the path does not end at a run.
+fn run_at_path_mut<'a>(inlines: &'a mut Vec<InlineNode>, path: &[usize]) -> Option<&'a mut Run> {
+    let (idx, parent) = path.split_last()?;
+    let parent_vec = vec_at_path_mut(inlines, parent)?;
+    match parent_vec.get_mut(*idx)? {
+        InlineNode::Run(run) => Some(run),
+        _ => None,
+    }
+}
+
 fn valid_hyperlink_values(target: Option<&HyperlinkTarget>, tooltip: Option<&str>) -> bool {
     let target_valid = target.is_none_or(|target| match target {
         HyperlinkTarget::External(external) => {
@@ -1915,7 +2033,9 @@ fn exact_hyperlink_index(inlines: &[InlineNode], start: u32, end: u32) -> Option
 }
 
 /// Returns the contiguous top-level inline indices exactly covered by
-/// `[start, end)`. A partial overlap with a non-run wrapper is rejected.
+/// `[start, end)`. A partial overlap with a non-run wrapper is rejected. Used by
+/// hyperlink creation, which wraps a contiguous top-level run span and (by
+/// design) refuses a selection that cuts through an existing wrapper.
 fn covered_top_level_indices(
     inlines: &[InlineNode],
     start: u32,
@@ -1937,6 +2057,40 @@ fn covered_top_level_indices(
     Ok(covered)
 }
 
+/// The index paths of every run — top-level or nested in a transparent wrapper —
+/// that lies fully within `[start, end)`. The deep counterpart of the old
+/// top-level-only cover query (docs/86); the caller aligns run boundaries first,
+/// so a run is either fully inside or fully outside.
+fn covered_run_paths(inlines: &[InlineNode], start: u32, end: u32) -> Vec<Vec<usize>> {
+    collect_run_paths(inlines)
+        .into_iter()
+        .filter(|s| s.start >= start && s.end <= end)
+        .map(|s| s.path)
+        .collect()
+}
+
+/// Rejects a range that partially cuts an *atomic* leaf that cannot be split — a
+/// tab or symbol whose interior a boundary would fall inside. Transparent
+/// wrappers are exempt: they are descended into, not split at this level.
+fn reject_partial_atomic(inlines: &[InlineNode], start: u32, end: u32) -> Result<(), EditError> {
+    let mut offset = 0u32;
+    for inline in inlines {
+        let len = inline_text_len(inline);
+        let next = offset.saturating_add(len);
+        let straddles =
+            len > 0 && offset < end && next > start && !(offset >= start && next <= end);
+        if straddles {
+            match inline {
+                InlineNode::Run(_) => {}
+                _ if transparent_children(inline).is_some() => {}
+                _ => return Err(EditError::Unsupported),
+            }
+        }
+        offset = next;
+    }
+    Ok(())
+}
+
 /// Inserts `text` at `offset` into a paragraph's inlines, splicing into the run
 /// the offset lands in (or the nearest run, or a new run for an empty paragraph).
 fn insert_text(
@@ -1945,6 +2099,25 @@ fn insert_text(
     text: &str,
     ids: &mut dyn RunIds,
 ) -> Result<(), EditError> {
+    // Strict interior first, descending into wrappers: an offset *inside* a run
+    // nested in a pending insertion / hyperlink / SDT splices into that run, so
+    // typing inside a suggestion lands there instead of appending a stray
+    // default-property run at the paragraph end (docs/86 REVIEW-GAP-007). A
+    // boundary offset falls through to the top-level logic below, which keeps
+    // today's behaviour of not silently entering an adjacent wrapper.
+    if let Some(seg) = collect_run_paths(inlines)
+        .into_iter()
+        .find(|s| offset > s.start && offset < s.end)
+    {
+        let local = (offset - seg.start) as usize;
+        let run = run_at_path_mut(inlines, &seg.path).ok_or(EditError::Unsupported)?;
+        if !run.text.is_char_boundary(local) {
+            return Err(EditError::NotCharBoundary);
+        }
+        run.text.insert_str(local, text);
+        return Ok(());
+    }
+
     let segs = run_segments(inlines);
 
     // The run whose range contains the offset (interior or either boundary).
@@ -2059,37 +2232,73 @@ fn coalesce_adjacent_runs(inlines: &mut Vec<InlineNode>) {
             i += 1;
         }
     }
+    // Recurse into transparent wrappers so runs left adjacent *inside* a
+    // hyperlink/revision/SDT by a nested edit are merged too. Merging never
+    // crosses a wrapper boundary (a wrapper between two runs is not a run), so
+    // distinct suggestions and links stay distinct (docs/86 REVIEW-GAP-007).
+    for inline in inlines.iter_mut() {
+        if let Some(children) = transparent_children_mut(inline) {
+            coalesce_adjacent_runs(children);
+        }
+    }
 }
 
-/// Removes every inline that lies fully inside `[start, end)`, by cumulative text
+/// Removes every run that lies fully inside `[start, end)`, by cumulative text
 /// length. The caller runs [`ensure_run_boundary`] at both ends first, so every
-/// **run** is then either wholly inside or wholly outside the range. A non-run
-/// wrapper (hyperlink, content control, tab, symbol) cannot be split here, so a
-/// range that only *partially* covers one is refused (`Unsupported`) rather than
-/// silently mis-deleting — editing inside a nested wrapper is a later slice.
+/// **run** is then wholly inside or wholly outside the range. A transparent
+/// wrapper (hyperlink, contributing revision, SDT) only *partially* covered is
+/// descended into — its covered runs are removed and the wrapper is pruned if it
+/// empties — so a delete spanning pending and normal text works (docs/86
+/// REVIEW-GAP-007). A partially-covered *atomic* leaf (tab, symbol) still can't
+/// be split, so it is refused (`Unsupported`) rather than silently mis-deleted.
 fn remove_covered_range(
     inlines: &mut Vec<InlineNode>,
     start: u32,
     end: u32,
 ) -> Result<(), EditError> {
-    // First pass: reject a partial cut into an inline we cannot split.
-    let mut cum = 0u32;
-    for inline in inlines.iter() {
-        let len = inline_text_len(inline);
-        let (s, e) = (cum, cum + len);
-        cum = e;
-        if len > 0 && s < end && e > start && !(s >= start && e <= end) {
-            return Err(EditError::Unsupported);
+    remove_covered_in(inlines, start, end, &mut 0u32)
+}
+
+fn remove_covered_in(
+    inlines: &mut Vec<InlineNode>,
+    start: u32,
+    end: u32,
+    cum: &mut u32,
+) -> Result<(), EditError> {
+    let mut i = 0;
+    while i < inlines.len() {
+        let base = *cum;
+        let len = inline_text_len(&inlines[i]);
+        let (s, e) = (base, base.saturating_add(len));
+        // Advance the cumulative cursor by the *original* projected length so a
+        // removal inside this inline does not shift the offsets of its siblings
+        // (`start`/`end` stay in original-projection coordinates for this pass).
+        *cum = e;
+        if len == 0 {
+            i += 1;
+            continue; // zero-width markup (e.g. a pending deletion) — untouched.
         }
+        if s >= start && e <= end {
+            inlines.remove(i);
+            continue; // fully covered — drop; next inline shifts into index `i`.
+        }
+        if s < end && e > start {
+            // Partial overlap. Runs were boundary-split by the caller, so this is
+            // a transparent wrapper we descend into; an atomic leaf here cannot be
+            // split and is refused.
+            let Some(children) = transparent_children_mut(&mut inlines[i]) else {
+                return Err(EditError::Unsupported);
+            };
+            let mut child_cum = base;
+            remove_covered_in(children, start, end, &mut child_cum)?;
+            let now_empty = transparent_children(&inlines[i]).is_some_and(<[_]>::is_empty);
+            if now_empty {
+                inlines.remove(i);
+                continue; // wrapper emptied — prune (wrapper inlines stay non-empty).
+            }
+        }
+        i += 1;
     }
-    // Second pass: drop the fully-covered inlines.
-    let mut cum = 0u32;
-    inlines.retain(|inline| {
-        let len = inline_text_len(inline);
-        let (s, e) = (cum, cum + len);
-        cum = e;
-        !(len > 0 && s >= start && e <= end)
-    });
     Ok(())
 }
 
@@ -2199,9 +2408,13 @@ fn join_paragraphs(
 }
 
 /// Splits a paragraph's inline content at byte `offset` into (left, right). A run
-/// straddling the offset is split (the right half gets a fresh id). A non-run
-/// inline straddling the offset (a wrapper) is a slice-2 limit → `Unsupported`;
-/// at a boundary it goes wholly to one side.
+/// straddling the offset is split (the right half gets a fresh id). A transparent
+/// wrapper straddling the offset is split recursively into two wrappers, one per
+/// side, each keeping the wrapper's identity and the trailing half taking a fresh
+/// id — so pressing Enter inside a pending suggestion, a hyperlink, or an SDT
+/// splits it across the two paragraphs instead of failing (docs/86
+/// REVIEW-GAP-007). At a boundary the inline goes wholly to one side. An atomic
+/// leaf cannot straddle a char-aligned offset, so it remains `Unsupported`.
 fn split_inlines(
     inlines: Vec<InlineNode>,
     offset: u32,
@@ -2216,25 +2429,69 @@ fn split_inlines(
             right.push(inline);
         } else if cum + len <= offset {
             left.push(inline);
-        } else if let InlineNode::Run(run) = inline {
-            let local = (offset - cum) as usize;
-            if !run.text.is_char_boundary(local) {
-                return Err(EditError::NotCharBoundary);
-            }
-            let (head, tail) = run.text.split_at(local);
-            left.push(InlineNode::Run(Run {
-                id: run.id,
-                properties: run.properties.clone(),
-                text: head.to_string(),
-            }));
-            let tail_id = ids.next().ok_or(EditError::IdExhausted)?;
-            right.push(InlineNode::Run(Run {
-                id: tail_id,
-                properties: run.properties,
-                text: tail.to_string(),
-            }));
         } else {
-            return Err(EditError::Unsupported);
+            let local = offset - cum;
+            match inline {
+                InlineNode::Run(run) => {
+                    let at = local as usize;
+                    if !run.text.is_char_boundary(at) {
+                        return Err(EditError::NotCharBoundary);
+                    }
+                    let (head, tail) = run.text.split_at(at);
+                    left.push(InlineNode::Run(Run {
+                        id: run.id,
+                        properties: run.properties.clone(),
+                        text: head.to_string(),
+                    }));
+                    let tail_id = ids.next().ok_or(EditError::IdExhausted)?;
+                    right.push(InlineNode::Run(Run {
+                        id: tail_id,
+                        properties: run.properties,
+                        text: tail.to_string(),
+                    }));
+                }
+                InlineNode::Hyperlink(mut link) => {
+                    let (lc, rc) = split_inlines(std::mem::take(&mut link.inlines), local, ids)?;
+                    let mut tail = link.clone();
+                    if !lc.is_empty() {
+                        link.inlines = lc;
+                        left.push(InlineNode::Hyperlink(link));
+                    }
+                    if !rc.is_empty() {
+                        tail.id = ids.next().ok_or(EditError::IdExhausted)?;
+                        tail.inlines = rc;
+                        right.push(InlineNode::Hyperlink(tail));
+                    }
+                }
+                InlineNode::Revision(mut revision) => {
+                    let (lc, rc) =
+                        split_inlines(std::mem::take(&mut revision.inlines), local, ids)?;
+                    let mut tail = revision.clone();
+                    if !lc.is_empty() {
+                        revision.inlines = lc;
+                        left.push(InlineNode::Revision(revision));
+                    }
+                    if !rc.is_empty() {
+                        tail.id = ids.next().ok_or(EditError::IdExhausted)?;
+                        tail.inlines = rc;
+                        right.push(InlineNode::Revision(tail));
+                    }
+                }
+                InlineNode::Sdt(mut sdt) => {
+                    let (lc, rc) = split_inlines(std::mem::take(&mut sdt.inlines), local, ids)?;
+                    let mut tail = sdt.clone();
+                    if !lc.is_empty() {
+                        sdt.inlines = lc;
+                        left.push(InlineNode::Sdt(sdt));
+                    }
+                    if !rc.is_empty() {
+                        tail.id = ids.next().ok_or(EditError::IdExhausted)?;
+                        tail.inlines = rc;
+                        right.push(InlineNode::Sdt(tail));
+                    }
+                }
+                _ => return Err(EditError::Unsupported),
+            }
         }
         cum += len;
     }
@@ -3574,5 +3831,340 @@ mod tests {
             end: Pos::new(p, 12),
         };
         assert!(!format_state(&document, plain).bold);
+    }
+
+    // --- REVIEW-GAP-007: revision-aware range splitting (docs/86) -------------
+
+    /// A hyperlink wrapping one run, for the wrapper-descent tests.
+    fn hyperlink(id: u64, run_id: u64, text: &str) -> InlineNode {
+        InlineNode::Hyperlink(Hyperlink {
+            id: n(id),
+            target: external("https://example.com/"),
+            tooltip: None,
+            inlines: vec![run(run_id, text)],
+        })
+    }
+
+    /// The projected (final-with-markup) text of a paragraph's inlines, descending
+    /// into hyperlinks, SDTs, and contributing revisions — so assertions can see a
+    /// run nested inside a pending suggestion.
+    fn deep_text(inlines: &[InlineNode]) -> String {
+        let mut out = String::new();
+        for inline in inlines {
+            match inline {
+                InlineNode::Run(run) => out.push_str(&run.text),
+                InlineNode::Hyperlink(link) => out.push_str(&deep_text(&link.inlines)),
+                InlineNode::Sdt(sdt) => out.push_str(&deep_text(&sdt.inlines)),
+                InlineNode::Revision(revision)
+                    if revision
+                        .kind
+                        .contributes_to(ReviewProjection::FinalWithMarkup) =>
+                {
+                    out.push_str(&deep_text(&revision.inlines));
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
+    fn inlines_of(document: &Document, id: NodeId) -> Vec<InlineNode> {
+        for block in document.body() {
+            if let BlockNode::Paragraph(p) = block
+                && p.id == id
+            {
+                return p.inlines.clone();
+            }
+        }
+        panic!("paragraph not found");
+    }
+
+    #[test]
+    fn typing_inside_a_pending_insertion_splices_into_the_suggestion() {
+        // "AB" + «insertion "CD"» + "EF" → projected "ABCDEF". Typing "X" at offset
+        // 3 (between C and D, inside the suggestion) must land inside that same
+        // revision, not append a stray default-property run at the paragraph end.
+        let p = n(2);
+        let mut d = doc(vec![para(
+            2,
+            vec![
+                run(3, "AB"),
+                revision(10, 4, RevisionKind::Insertion, "CD"),
+                run(5, "EF"),
+            ],
+        )]);
+        let mut ids = IdGenerator::new(20);
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertText {
+                at: Pos::new(p, 3),
+                text: "X".into(),
+            },
+        )
+        .expect("insert inside a suggestion succeeds");
+
+        let after = inlines_of(&d, p);
+        assert_eq!(deep_text(&after), "ABCXDEF");
+        assert_eq!(after.len(), 3, "no stray top-level run was appended");
+        let InlineNode::Revision(rev) = &after[1] else {
+            panic!("the pending insertion is still a revision");
+        };
+        assert_eq!(
+            deep_text(&rev.inlines),
+            "CXD",
+            "text went into the suggestion"
+        );
+
+        apply(&mut d, &mut ids, &inverse).expect("undo removes the typed char");
+        assert_eq!(deep_text(&inlines_of(&d, p)), "ABCDEF");
+    }
+
+    #[test]
+    fn deleting_partway_into_a_pending_insertion_keeps_the_suggestion() {
+        // Delete a range that starts in normal text and ends inside a pending
+        // insertion: the covered normal + suggested bytes go, the suggestion
+        // survives around what remains, and the inverse restores it verbatim.
+        let p = n(2);
+        let original = vec![
+            run(3, "AB"),
+            revision(10, 4, RevisionKind::Insertion, "CD"),
+            run(5, "EF"),
+        ];
+        let mut d = doc(vec![para(2, original.clone())]);
+        let mut ids = IdGenerator::new(20);
+
+        // [1, 3) = "B" (normal) + "C" (inside the insertion).
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::DeleteText {
+                range: Range {
+                    start: Pos::new(p, 1),
+                    end: Pos::new(p, 3),
+                },
+            },
+        )
+        .expect("delete spanning normal + pending text succeeds");
+
+        let after = inlines_of(&d, p);
+        assert_eq!(deep_text(&after), "ADEF");
+        let InlineNode::Revision(rev) = &after[1] else {
+            panic!("the insertion survived");
+        };
+        assert_eq!(deep_text(&rev.inlines), "D");
+
+        apply(&mut d, &mut ids, &inverse).expect("undo");
+        assert_eq!(
+            inlines_of(&d, p),
+            original,
+            "inverse restores the tree exactly"
+        );
+    }
+
+    #[test]
+    fn deleting_the_whole_pending_insertion_prunes_the_empty_wrapper() {
+        // Deleting exactly the suggested span removes the now-empty revision (a
+        // wrapper's inlines must stay non-empty) and coalesces the two default
+        // runs left adjacent across the gap; the inverse restores it exactly.
+        let p = n(2);
+        let original = vec![
+            run(3, "AB"),
+            revision(10, 4, RevisionKind::Insertion, "CD"),
+            run(5, "EF"),
+        ];
+        let mut d = doc(vec![para(2, original.clone())]);
+        let mut ids = IdGenerator::new(20);
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::DeleteText {
+                range: Range {
+                    start: Pos::new(p, 2),
+                    end: Pos::new(p, 4),
+                },
+            },
+        )
+        .expect("delete the whole suggestion");
+
+        let after = inlines_of(&d, p);
+        assert_eq!(deep_text(&after), "ABEF");
+        assert_eq!(
+            after.len(),
+            1,
+            "the emptied revision was pruned and runs merged"
+        );
+
+        apply(&mut d, &mut ids, &inverse).expect("undo");
+        assert_eq!(inlines_of(&d, p), original);
+    }
+
+    #[test]
+    fn formatting_a_pending_suggestion_bolds_the_nested_run() {
+        // Formatting a range that is a pending insertion applies to the nested run
+        // (previously a silent no-op), and the inverse restores it exactly.
+        let p = n(2);
+        let original = vec![
+            run(3, "AB"),
+            revision(10, 4, RevisionKind::Insertion, "CD"),
+            run(5, "EF"),
+        ];
+        let mut d = doc(vec![para(2, original.clone())]);
+        let mut ids = IdGenerator::new(20);
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::FormatText {
+                range: Range {
+                    start: Pos::new(p, 2),
+                    end: Pos::new(p, 4),
+                },
+                delta: FormatDelta {
+                    bold: Some(true),
+                    ..FormatDelta::default()
+                },
+            },
+        )
+        .expect("formatting a suggestion succeeds");
+
+        let after = inlines_of(&d, p);
+        let InlineNode::Revision(rev) = &after[1] else {
+            panic!("still a revision");
+        };
+        let InlineNode::Run(nested) = &rev.inlines[0] else {
+            panic!("nested run");
+        };
+        assert_eq!(
+            nested.properties.bold,
+            Some(true),
+            "the suggestion is now bold"
+        );
+
+        apply(&mut d, &mut ids, &inverse).expect("undo");
+        assert_eq!(inlines_of(&d, p), original);
+    }
+
+    #[test]
+    fn formatting_across_a_hyperlink_boundary_splits_and_formats() {
+        // A range crossing into and out of a hyperlink no longer fails: the outer
+        // runs split at the boundaries and the hyperlink's nested run is formatted.
+        let p = n(2);
+        let original = vec![run(3, "AB"), hyperlink(10, 4, "CD"), run(5, "EF")];
+        let mut d = doc(vec![para(2, original.clone())]);
+        let mut ids = IdGenerator::new(20);
+
+        // [1, 5) = "B" + "CD" (the whole link) + "E".
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::FormatText {
+                range: Range {
+                    start: Pos::new(p, 1),
+                    end: Pos::new(p, 5),
+                },
+                delta: FormatDelta {
+                    bold: Some(true),
+                    ..FormatDelta::default()
+                },
+            },
+        )
+        .expect("formatting across a hyperlink boundary succeeds");
+
+        let after = inlines_of(&d, p);
+        let link = after
+            .iter()
+            .find_map(|i| match i {
+                InlineNode::Hyperlink(h) => Some(h),
+                _ => None,
+            })
+            .expect("hyperlink preserved");
+        let InlineNode::Run(nested) = &link.inlines[0] else {
+            panic!("nested run");
+        };
+        assert_eq!(
+            nested.properties.bold,
+            Some(true),
+            "link text was formatted"
+        );
+        assert_eq!(deep_text(&after), "ABCDEF", "no text was lost");
+
+        apply(&mut d, &mut ids, &inverse).expect("undo");
+        assert_eq!(inlines_of(&d, p), original);
+    }
+
+    #[test]
+    fn splitting_a_paragraph_inside_a_hyperlink_splits_the_link() {
+        // Pressing Enter inside a hyperlink splits it across the two paragraphs
+        // instead of returning Unsupported; each half stays a hyperlink.
+        let p = n(2);
+        let new = n(50);
+        let mut d = doc(vec![para(2, vec![hyperlink(10, 3, "ABCD")])]);
+        let mut ids = IdGenerator::new(20);
+
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::SplitParagraph {
+                at: Pos::new(p, 2),
+                new_id: new,
+            },
+        )
+        .expect("split inside a hyperlink succeeds");
+
+        assert_eq!(d.body().len(), 2, "one paragraph became two");
+        let left = inlines_of(&d, p);
+        let right = inlines_of(&d, new);
+        assert_eq!(deep_text(&left), "AB");
+        assert_eq!(deep_text(&right), "CD");
+        assert!(
+            matches!(left.first(), Some(InlineNode::Hyperlink(_)))
+                && matches!(right.first(), Some(InlineNode::Hyperlink(_))),
+            "each half is still a hyperlink"
+        );
+    }
+
+    #[test]
+    fn coalescing_never_merges_two_runs_across_a_surviving_revision() {
+        // A revision between two equal-property runs is a semantic boundary:
+        // normalizing after an edit must not merge them through it.
+        let p = n(2);
+        let mut d = doc(vec![para(
+            2,
+            vec![
+                run(3, "A"),
+                revision(10, 4, RevisionKind::Insertion, "B"),
+                run(5, "C"),
+            ],
+        )]);
+        let mut ids = IdGenerator::new(20);
+
+        // Format just the middle (the suggestion); coalescing runs afterwards.
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::FormatText {
+                range: Range {
+                    start: Pos::new(p, 1),
+                    end: Pos::new(p, 2),
+                },
+                delta: FormatDelta {
+                    bold: Some(true),
+                    ..FormatDelta::default()
+                },
+            },
+        )
+        .expect("format the middle suggestion");
+
+        let after = inlines_of(&d, p);
+        assert_eq!(
+            after.len(),
+            3,
+            "outer runs were not merged across the revision"
+        );
+        assert!(matches!(&after[0], InlineNode::Run(r) if r.text == "A"));
+        assert!(matches!(&after[2], InlineNode::Run(r) if r.text == "C"));
     }
 }
