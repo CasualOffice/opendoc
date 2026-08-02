@@ -2033,7 +2033,6 @@ async function ensureGlyphCoverage(label) {
   await provisionMissingFallbacks(label);
   if (provisionedFallbackKeys.size !== before) {
     await renderAll();
-    setStatus("");
   }
 }
 
@@ -2046,9 +2045,15 @@ async function renderAll() {
   const dpi = BASE_DPI * zoom * dpr;
   const count = doc.pageCount;
 
-  pagesEl.replaceChildren();
-  pages = [];
-  setStatus(`Rendering ${count} page${count === 1 ? "" : "s"} at ${Math.round(zoom * 100)}%…`);
+  // Build the replacement page set off-DOM and publish it atomically. Keeping
+  // the previous canvases and interaction overlays live until the new render is
+  // complete prevents transiently losing controls (for example a checklist
+  // marker) while an asynchronous font-coverage render is in flight.
+  const nextPages = [];
+  const fragment = document.createDocumentFragment();
+  const renderingStatus =
+    `Rendering ${count} page${count === 1 ? "" : "s"} at ${Math.round(zoom * 100)}%…`;
+  setStatus(renderingStatus);
 
   for (let i = 0; i < count; i++) {
     // Yield so a burst of pages does not freeze the tab; abort if superseded.
@@ -2088,15 +2093,19 @@ async function renderAll() {
     size.free();
 
     wrap.append(canvas, overlay);
-    pagesEl.appendChild(wrap);
-    pages.push({ pageNumber: i + 1, canvas, overlay, wTwip, hTwip });
+    fragment.appendChild(wrap);
+    nextPages.push({ pageNumber: i + 1, canvas, overlay, wTwip, hTwip });
   }
 
-  pagesEl.prepend(ruler); // the ruler sits above the pages, same width
+  if (token !== renderToken) return;
+  pages = nextPages;
+  pagesEl.replaceChildren(ruler, fragment); // ruler sits above the pages, same width
   buildRuler();
   drawSelection(); // re-place any existing selection at the new zoom
   if (token === renderToken) {
-    setStatus("");
+    // A command may have reported a more important status while this async
+    // render was running. Clear only the progress message this render owns.
+    if (statusEl.textContent === renderingStatus) setStatus("");
     updateStats();
   }
 }
@@ -2668,8 +2677,12 @@ function paintChecklistMarkers() {
         anchor: { node: marker.node, offset: 0 },
         focus: { node: marker.node, offset: 0 },
       };
+      // Checklist creation already provisions the symbol fallback that covers
+      // both the checked and unchecked glyphs. Starting another asynchronous
+      // coverage/render pass here races the edit repaint (and, when the edit is
+      // blocked, can erase its read-only feedback), so the toggle uses only the
+      // synchronous dirty-page repaint owned by `runNodeEdit`.
       runNodeEdit(() => doc.toggleChecklistItem(marker.node));
-      void ensureGlyphCoverage("checklist");
       focusEditorSurface();
     });
   }

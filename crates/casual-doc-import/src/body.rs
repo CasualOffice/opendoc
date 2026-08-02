@@ -15,20 +15,22 @@ use casual_doc_model::v1::{
     HorizontalRule, HorizontalRuleAlign, Hyperlink, HyperlinkTarget, InlineNode, InlineSdt,
     InternalTarget, LineNumberRestart, LineNumbering, MAX_DESCR_BYTES, MAX_EMU,
     MAX_FIELD_INSTRUCTION_BYTES, MAX_FORM_FIELD_ENTRIES, MAX_FORM_FIELD_STRING_BYTES,
-    MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH, MAX_TEXTBOX_DEPTH, Math, MediaId, MoveKind,
-    MoveRangeEnd, MoveRangeStart, NoBreakHyphen, NoteId, NoteKind, NoteNumberRestart, NotePosition,
-    NoteProperties, NoteReference, PageBorderDisplay, PageBorderOffset, PageBorders, PageMargins,
-    PageNumbering, PageOrientation, PageSize, PageVerticalAlignment, PaperSource, Paragraph,
-    ParagraphProperties, PointEmu, PositionalTab, PositionalTabAlignment, PositionalTabLeader,
-    PositionalTabRelativeTo, PropChange, Revision, RevisionKind, RgbColor, Rgba, Run,
-    RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind,
-    SdtDataBinding, SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionColumns,
-    SectionId, SectionType, ShapeGeometry, ShapeStroke, SoftHyphen, StyleKind, Symbol, Tab,
-    TabAlignment, TabLeader, TabStop, TableAnchor, TableCellProperties, TableFloatPosition,
-    TableLayout, TableOverlap, TableProperties, TableRowProperties, TableXAlign, TableYAlign,
-    TextBox, TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxInsets,
-    TextBoxVerticalAnchor, TextBoxVerticalOverflow, TextDirection, VerticalAlign, VerticalAnchor,
-    VerticalMerge, VerticalPosition, WordprocessingGroup, WrapDistances, WrapMode,
+    MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH, MAX_SHAPE_ADJUSTMENTS,
+    MAX_SHAPE_FORMULA_BYTES, MAX_SHAPE_GUIDE_NAME_BYTES, MAX_SHAPE_PRESET_BYTES, MAX_TEXTBOX_DEPTH,
+    Math, MathExpression, MediaId, MoveKind, MoveRangeEnd, MoveRangeStart, NoBreakHyphen, NoteId,
+    NoteKind, NoteNumberRestart, NotePosition, NoteProperties, NoteReference, PageBorderDisplay,
+    PageBorderOffset, PageBorders, PageMargins, PageNumbering, PageOrientation, PageSize,
+    PageVerticalAlignment, PaperSource, Paragraph, ParagraphProperties, PointEmu, PositionalTab,
+    PositionalTabAlignment, PositionalTabLeader, PositionalTabRelativeTo, PropChange, Revision,
+    RevisionKind, RgbColor, Rgba, Run, RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol,
+    SdtControlData, SdtControlKind, SdtDataBinding, SdtDate, SdtListItem, SdtLock, SdtProperties,
+    SectionBoundary, SectionColumns, SectionId, SectionType, ShapeAdjustment, ShapeGeometry,
+    ShapeStroke, SoftHyphen, StyleKind, Symbol, Tab, TabAlignment, TabLeader, TabStop, TableAnchor,
+    TableCellProperties, TableFloatPosition, TableLayout, TableOverlap, TableProperties,
+    TableRowProperties, TableXAlign, TableYAlign, TextBox, TextBoxAutoFit, TextBoxBodyProperties,
+    TextBoxHorizontalOverflow, TextBoxInsets, TextBoxVerticalAnchor, TextBoxVerticalOverflow,
+    TextDirection, VerticalAlign, VerticalAnchor, VerticalMerge, VerticalPosition,
+    WordprocessingGroup, WrapDistances, WrapMode,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::events::{BytesStart, Event};
@@ -147,6 +149,7 @@ enum Segment {
     Math {
         omml: String,
         text: String,
+        expression: Option<MathExpression>,
     },
     /// A symbol glyph (`w:sym`): a font face plus a code point.
     Symbol {
@@ -276,6 +279,9 @@ struct ShapeBuilder {
     offset: PointEmu,
     extent: Extent,
     geometry: ShapeGeometry,
+    preset: Option<String>,
+    adjustments: Vec<ShapeAdjustment>,
+    in_adjustment_list: bool,
     fill: Option<Rgba>,
     stroke: Option<ShapeStroke>,
     /// The picture's `a:blip@r:embed`, for a picture child.
@@ -1454,6 +1460,7 @@ impl BodyParser<'_> {
             .map_err(|_| ImportError::MalformedXml)?;
         let omml = String::from_utf8(writer.into_inner()).map_err(|_| ImportError::MalformedXml)?;
         self.push_segment(Segment::Math {
+            expression: crate::math::parse_math_expression(&omml),
             omml,
             text: String::new(),
         });
@@ -1529,7 +1536,12 @@ impl BodyParser<'_> {
         let omml = String::from_utf8(writer.into_inner()).map_err(|_| ImportError::MalformedXml)?;
         let text = std::mem::take(&mut self.math_text);
         self.math_in_t = false;
-        self.push_segment(Segment::Math { omml, text });
+        let expression = crate::math::parse_math_expression(&omml);
+        self.push_segment(Segment::Math {
+            omml,
+            text,
+            expression,
+        });
         Ok(())
     }
 
@@ -2242,6 +2254,9 @@ impl BodyParser<'_> {
                     offset: PointEmu { x_emu: 0, y_emu: 0 },
                     extent: ZERO_EXTENT,
                     geometry: ShapeGeometry::Rectangle,
+                    preset: None,
+                    adjustments: Vec::new(),
+                    in_adjustment_list: false,
                     fill: None,
                     stroke: None,
                     embed: None,
@@ -2262,6 +2277,9 @@ impl BodyParser<'_> {
                     offset: PointEmu { x_emu: 0, y_emu: 0 },
                     extent: ZERO_EXTENT,
                     geometry: ShapeGeometry::Rectangle,
+                    preset: None,
+                    adjustments: Vec::new(),
+                    in_adjustment_list: false,
                     fill: None,
                     stroke: None,
                     embed: None,
@@ -2336,15 +2354,80 @@ impl BodyParser<'_> {
             }
             // The preset geometry (`a:prstGeom@prst`) of the open shape.
             b"prstGeom" if self.pending_shape.is_some() => {
+                let preset = attribute_value(element, b"prst");
+                let invalid_unknown_preset = preset.as_deref().is_some_and(|value| {
+                    !matches!(
+                        value,
+                        "rect"
+                            | "roundRect"
+                            | "ellipse"
+                            | "triangle"
+                            | "rtTriangle"
+                            | "diamond"
+                            | "line"
+                            | "straightConnector1"
+                    ) && (value.is_empty() || value.len() > MAX_SHAPE_PRESET_BYTES)
+                });
                 if let Some(shape) = self.pending_shape.as_mut() {
-                    shape.geometry = match attribute_value(element, b"prst").as_deref() {
-                        Some("rect") => ShapeGeometry::Rectangle,
-                        Some("roundRect") => ShapeGeometry::RoundRectangle,
-                        Some("ellipse") => ShapeGeometry::Ellipse,
-                        Some("line" | "straightConnector1") => ShapeGeometry::Line,
-                        _ => ShapeGeometry::Other,
+                    let (geometry, retained) = match preset.as_deref() {
+                        Some("rect") => (ShapeGeometry::Rectangle, None),
+                        Some("roundRect") => (ShapeGeometry::RoundRectangle, None),
+                        Some("ellipse") => (ShapeGeometry::Ellipse, None),
+                        Some("triangle") => (ShapeGeometry::Triangle, None),
+                        Some("rtTriangle") => (ShapeGeometry::RightTriangle, None),
+                        Some("diamond") => (ShapeGeometry::Diamond, None),
+                        Some("line" | "straightConnector1") => (ShapeGeometry::Line, None),
+                        Some(value)
+                            if !value.is_empty() && value.len() <= MAX_SHAPE_PRESET_BYTES =>
+                        {
+                            (ShapeGeometry::Other, Some(value.to_owned()))
+                        }
+                        _ => (ShapeGeometry::Other, None),
                     };
+                    shape.geometry = geometry;
+                    shape.preset = retained;
                 }
+                if invalid_unknown_preset {
+                    self.reporter.report(b"prstGeom");
+                }
+            }
+            b"avLst" if self.pending_shape.is_some() => {
+                if let Some(shape) = self.pending_shape.as_mut() {
+                    shape.in_adjustment_list = true;
+                }
+            }
+            b"gd"
+                if self
+                    .pending_shape
+                    .as_ref()
+                    .is_some_and(|shape| shape.in_adjustment_list) =>
+            {
+                let name = attribute_value(element, b"name");
+                let formula = attribute_value(element, b"fmla");
+                let valid = name.as_ref().is_some_and(|value| {
+                    !value.is_empty() && value.len() <= MAX_SHAPE_GUIDE_NAME_BYTES
+                }) && formula.as_ref().is_some_and(|value| {
+                    !value.is_empty() && value.len() <= MAX_SHAPE_FORMULA_BYTES
+                });
+                if let Some(shape) = self.pending_shape.as_mut()
+                    && valid
+                    && shape.adjustments.len() < MAX_SHAPE_ADJUSTMENTS
+                {
+                    shape.adjustments.push(ShapeAdjustment {
+                        name: name.expect("validated adjustment name"),
+                        formula: formula.expect("validated adjustment formula"),
+                    });
+                } else {
+                    self.reporter.report(b"gd");
+                }
+            }
+            b"custGeom" if self.pending_shape.is_some() => {
+                if let Some(shape) = self.pending_shape.as_mut() {
+                    shape.geometry = ShapeGeometry::Other;
+                    shape.preset = None;
+                    shape.adjustments.clear();
+                }
+                self.reporter.report(b"custGeom");
             }
             // An outline (`a:ln`): its `@w` is the stroke width; a `solidFill` inside
             // it colors the stroke rather than the fill.
@@ -3553,6 +3636,11 @@ impl BodyParser<'_> {
             b"lnRef" | b"fillRef" | b"effectRef" | b"fontRef" if self.style_ref_depth > 0 => {
                 self.style_ref_depth = self.style_ref_depth.saturating_sub(1);
             }
+            b"avLst" if self.pending_shape.is_some() => {
+                if let Some(shape) = self.pending_shape.as_mut() {
+                    shape.in_adjustment_list = false;
+                }
+            }
             // A transform container closes: stop routing off/ext.
             b"spPr" | b"grpSpPr" if self.drawing_depth > 0 => {
                 self.xfrm_target = XfrmTarget::None;
@@ -3564,12 +3652,12 @@ impl BodyParser<'_> {
                     .as_ref()
                     .is_some_and(|shape| shape.is_picture) =>
             {
-                self.commit_shape();
+                self.commit_shape()?;
             }
             // A shape/text box closes: finalize it into a group child, or (outside a
             // group) into a floating/inline text box segment.
             b"wsp" | b"cxnSp" if self.pending_shape.is_some() => {
-                self.commit_shape();
+                self.commit_shape()?;
             }
             // A group closes: stash the top-level group (`wpg:wgp`) for the enclosing
             // drawing, or fold a nested group (`wpg:grpSp`) into its parent.
@@ -3851,11 +3939,12 @@ impl BodyParser<'_> {
 
     /// Finalizes the open shape (`pic:pic`/`wps:wsp`) at its close. Inside a group
     /// it becomes a [`GroupChild`]; outside one, a text box (floating when an
-    /// anchor is open, else inline). A bare anchored shape with no text is not
-    /// first-class on its own, so it is reported and dropped.
-    fn commit_shape(&mut self) {
+    /// anchor is open, else inline). A bare anchored shape is normalized to the
+    /// existing group-of-one float model; a bare inline shape remains reported
+    /// until the in-flow composite-box slice is implemented.
+    fn commit_shape(&mut self) -> Result<(), ImportError> {
         let Some(mut shape) = self.pending_shape.take() else {
-            return;
+            return Ok(());
         };
         if shape.is_picture {
             // The picture's `a:blip@r:embed` flowed through the shared
@@ -3868,18 +3957,38 @@ impl BodyParser<'_> {
             {
                 group.children.push(child);
             }
-            return;
+            return Ok(());
         }
         // Not in a group: a lone/inline DrawingML text box, or a bare shape.
         let Some(blocks) = shape.textbox_blocks.take() else {
-            // A standalone anchored/inline shape (rectangle/line) with no text is
-            // not modeled on its own; report so nothing is silently lost.
-            self.reporter.report(b"wsp");
-            return;
+            let Some(pending) = self.pending_anchor.take() else {
+                // A non-text inline shape requires a true in-flow composite box;
+                // keep reporting it until that separate layout slice lands.
+                self.reporter.report(b"wsp");
+                return Ok(());
+            };
+            let extent = self
+                .pending_extent
+                .take()
+                .or((shape.extent != ZERO_EXTENT).then_some(shape.extent))
+                .unwrap_or(ZERO_EXTENT);
+            if shape.extent == ZERO_EXTENT {
+                shape.extent = extent;
+            }
+            let child = self
+                .shape_to_group_child(shape)
+                .expect("a non-picture, non-text shape always becomes a group child");
+            let group =
+                self.vml_group_of_one(pending.resolve(), pending.relative_height, extent, child)?;
+            // Defer emission to `commit_drawing`, exactly like a top-level
+            // `wpg:wgp`, so the enclosing drawing is consumed once and is not
+            // also reported as an unresolved picture payload.
+            self.pending_group = Some(group);
+            return Ok(());
         };
         if blocks.is_empty() {
             self.reporter.report(b"txbxContent");
-            return;
+            return Ok(());
         }
         match self.pending_anchor.take() {
             Some(pending) => {
@@ -3919,6 +4028,7 @@ impl BodyParser<'_> {
                 }));
             }
         }
+        Ok(())
     }
 
     /// Converts a finished shape into a [`GroupChild`]. A picture with an
@@ -3957,6 +4067,8 @@ impl BodyParser<'_> {
             offset: shape.offset,
             extent: shape.extent,
             geometry: shape.geometry,
+            preset: shape.preset,
+            adjustments: shape.adjustments,
             fill: shape.fill,
             stroke: shape.stroke,
         }))
@@ -4353,6 +4465,8 @@ impl BodyParser<'_> {
             offset: PointEmu { x_emu: 0, y_emu: 0 },
             extent,
             geometry,
+            preset: None,
+            adjustments: Vec::new(),
             fill,
             stroke,
         });
@@ -4387,6 +4501,8 @@ impl BodyParser<'_> {
             offset: PointEmu { x_emu: 0, y_emu: 0 },
             extent,
             geometry: ShapeGeometry::Line,
+            preset: None,
+            adjustments: Vec::new(),
             fill: vml_fill(&drawing.fill),
             stroke: vml_stroke(&drawing.stroke),
         });
@@ -5738,9 +5854,18 @@ impl BodyParser<'_> {
                     form,
                 }))
             }
-            Segment::Math { omml, text } => {
+            Segment::Math {
+                omml,
+                text,
+                expression,
+            } => {
                 let id = self.next_id()?;
-                Ok(InlineNode::Math(Math { id, omml, text }))
+                Ok(InlineNode::Math(Math {
+                    id,
+                    omml,
+                    text,
+                    expression,
+                }))
             }
             Segment::Symbol {
                 font,
@@ -6045,15 +6170,10 @@ fn parse_cnf_style(element: &BytesStart<'_>) -> CnfStyle {
     cnf
 }
 
-/// Whether a local element name is known DrawingML scaffolding for an embedded
-/// picture (consumed silently while inside a `w:drawing`). Anything not listed
-/// still reports, so genuinely unmodeled drawing content is never lost.
-/// Whether a local element name is an OMML equation root (`m:oMath` or
-/// `m:oMathPara`). Matched on local name because these names are unique to the
-/// math namespace — no `w:` element shares them — and the retained-subtree
-/// capture then swallows every inner `m:` element, so a per-prefix namespace
-/// lookup is unnecessary. `m:oMathPara` wraps `m:oMath`, so detecting the
-/// outermost root first retains the whole equation as one node.
+/// Whether a local element name is an OMML equation root. Capture remains
+/// prefix-agnostic so producers using a nonstandard namespace prefix still keep
+/// their raw subtree; the typed projection is stricter and may safely remain
+/// absent when it cannot establish the conventional math qualification.
 fn is_math_root(local: &[u8]) -> bool {
     matches!(local, b"oMath" | b"oMathPara")
 }

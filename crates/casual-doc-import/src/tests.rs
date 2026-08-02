@@ -1,6 +1,6 @@
 use casual_doc_model::v1::{
     Alignment, BlockNode, Break, BreakKind, Color, DocumentProtectionEdit, HyperlinkTarget,
-    InlineNode, LevelJustification, LevelSuffix, MoveKind, NumberFormat, Paragraph,
+    InlineNode, LevelJustification, LevelSuffix, MathExpression, MoveKind, NumberFormat, Paragraph,
     PositionalTabAlignment, PositionalTabLeader, PositionalTabRelativeTo, ProofState, RevisionKind,
     RgbColor, SdtControlKind, StyleKind, Symbol,
 };
@@ -2327,6 +2327,113 @@ fn wpg_group_maps_to_a_group_with_children_sized_by_their_own_extent() {
     );
     // The whole group is fully modeled, not reported-dropped.
     assert!(!features(&import).contains(&"drawing"));
+}
+
+fn import_standalone_drawingml_shape(geometry: &str) -> Import {
+    let drawing = format!(
+        r#"<w:drawing><wp:anchor behindDoc="0" relativeHeight="17" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>914400</wp:posOffset></wp:positionH><wp:positionV relativeFrom="page"><wp:posOffset>457200</wp:posOffset></wp:positionV><wp:extent cx="1828800" cy="914400"/><wp:wrapNone/><wp:docPr id="1" name="Standalone shape"/><a:graphic><a:graphicData><wps:wsp><wps:cNvPr id="2" name="Shape"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/></a:xfrm>{geometry}<a:solidFill><a:srgbClr val="336699"/></a:solidFill></wps:spPr><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing>"#
+    );
+    let document = format!(
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps"><w:body><w:p><w:r>{drawing}</w:r></w:p></w:body></w:document>"#
+    );
+    import(document.as_bytes())
+}
+
+#[test]
+fn standalone_anchored_ellipse_is_preserved_as_a_group_of_one() {
+    use casual_doc_model::v1::{GroupChild, ShapeGeometry};
+
+    let import =
+        import_standalone_drawingml_shape(r#"<a:prstGeom prst="ellipse"><a:avLst/></a:prstGeom>"#);
+    let InlineNode::Group(group) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected a standalone shape group");
+    };
+    assert!(group.anchor.is_some(), "the authored anchor is preserved");
+    assert_eq!(group.relative_height, Some(17));
+    assert_eq!(group.extent.width_emu, 1_828_800);
+    assert_eq!(group.children.len(), 1);
+    let GroupChild::Shape(shape) = &group.children[0] else {
+        panic!("expected the group child to be a shape");
+    };
+    assert_eq!(shape.geometry, ShapeGeometry::Ellipse);
+    assert_eq!(shape.extent, group.extent);
+    assert!(!features(&import).contains(&"wsp"));
+    assert!(!features(&import).contains(&"drawing"));
+}
+
+#[test]
+fn angular_shape_presets_are_modeled_explicitly() {
+    use casual_doc_model::v1::{GroupChild, ShapeGeometry};
+
+    for (preset, expected) in [
+        ("triangle", ShapeGeometry::Triangle),
+        ("rtTriangle", ShapeGeometry::RightTriangle),
+        ("diamond", ShapeGeometry::Diamond),
+    ] {
+        let geometry = format!(r#"<a:prstGeom prst="{preset}"><a:avLst/></a:prstGeom>"#);
+        let import = import_standalone_drawingml_shape(&geometry);
+        let InlineNode::Group(group) = &paragraph(&import, 0).inlines[0] else {
+            panic!("expected a standalone {preset} group");
+        };
+        let GroupChild::Shape(shape) = &group.children[0] else {
+            panic!("expected a standalone {preset} shape");
+        };
+        assert_eq!(shape.geometry, expected, "preset {preset}");
+        assert_eq!(shape.preset, None, "typed preset does not need retention");
+        assert!(!features(&import).contains(&"prstGeom"));
+    }
+}
+
+#[test]
+fn unknown_preset_and_adjustment_guides_are_retained() {
+    use casual_doc_model::v1::{GroupChild, ShapeAdjustment, ShapeGeometry};
+
+    let import = import_standalone_drawingml_shape(
+        r#"<a:prstGeom prst="hexagon"><a:avLst><a:gd name="adj" fmla="val 25000"/><a:gd name="hf" fmla="*/ h 1 2"/></a:avLst></a:prstGeom>"#,
+    );
+    let InlineNode::Group(group) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected a standalone shape group");
+    };
+    let GroupChild::Shape(shape) = &group.children[0] else {
+        panic!("expected the group child to be a shape");
+    };
+    assert_eq!(shape.geometry, ShapeGeometry::Other);
+    assert_eq!(shape.preset.as_deref(), Some("hexagon"));
+    assert_eq!(
+        shape.adjustments,
+        vec![
+            ShapeAdjustment {
+                name: "adj".to_owned(),
+                formula: "val 25000".to_owned(),
+            },
+            ShapeAdjustment {
+                name: "hf".to_owned(),
+                formula: "*/ h 1 2".to_owned(),
+            },
+        ]
+    );
+}
+
+#[test]
+fn custom_shape_geometry_is_preserved_as_other_and_reported() {
+    use casual_doc_model::v1::{GroupChild, ShapeGeometry};
+
+    let import = import_standalone_drawingml_shape(
+        r#"<a:custGeom><a:avLst/><a:pathLst><a:path w="100" h="100"><a:moveTo><a:pt x="0" y="0"/></a:moveTo></a:path></a:pathLst></a:custGeom>"#,
+    );
+    let InlineNode::Group(group) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected a standalone shape group");
+    };
+    let GroupChild::Shape(shape) = &group.children[0] else {
+        panic!("expected the group child to be a shape");
+    };
+    assert_eq!(shape.geometry, ShapeGeometry::Other);
+    assert!(shape.preset.is_none());
+    assert!(shape.adjustments.is_empty());
+    assert!(
+        features(&import).contains(&"custGeom"),
+        "unsupported custom geometry is reported rather than silently claimed"
+    );
 }
 
 #[test]
@@ -5691,7 +5798,7 @@ fn omml_math_is_retained_opaquely_and_never_leaks_into_run_text() {
     // `m:oMath`, whose `m:r`/`m:t` share the local names of `w:r`/`w:t`), and a
     // trailing run. Before the C1 namespace guard the math's `m:r`/`m:t` were
     // mistaken for `w:r`/`w:t` and flattened into the paragraph text; now the
-    // equation is a single opaque `Math` node whose OMML round-trips verbatim.
+    // equation is a single `Math` node whose OMML round-trips verbatim.
     let xml = br#"<w:document xmlns:w="urn:w" xmlns:m="urn:m"><w:body>
         <w:p>
             <w:r><w:t>before</w:t></w:r>
@@ -5718,10 +5825,10 @@ fn omml_math_is_retained_opaquely_and_never_leaks_into_run_text() {
     assert!(matches!(para.inlines[0], InlineNode::Run(_)));
     assert!(matches!(para.inlines[2], InlineNode::Run(_)));
     let InlineNode::Math(math) = &para.inlines[1] else {
-        panic!("expected an opaque math node between the two runs");
+        panic!("expected a math node between the two runs");
     };
 
-    // Exactly one opaque math node.
+    // Exactly one math node.
     assert_eq!(
         para.inlines
             .iter()
@@ -5738,6 +5845,53 @@ fn omml_math_is_retained_opaquely_and_never_leaks_into_run_text() {
     );
     // The plain-text fallback is the concatenated `m:t` text.
     assert_eq!(math.text, "x&y");
+    assert_eq!(
+        math.expression,
+        Some(MathExpression::Text {
+            value: "x&y".to_owned()
+        })
+    );
+}
+
+#[test]
+fn common_omml_constructs_receive_a_typed_projection() {
+    let xml = br#"<w:document xmlns:w="urn:w" xmlns:m="urn:m"><w:body><w:p>
+        <m:oMath>
+          <m:f><m:num><m:r><m:t>a</m:t></m:r></m:num><m:den><m:r><m:t>b</m:t></m:r></m:den></m:f>
+          <m:sSubSup><m:e><m:r><m:t>x</m:t></m:r></m:e><m:sub><m:r><m:t>i</m:t></m:r></m:sub><m:sup><m:r><m:t>2</m:t></m:r></m:sup></m:sSubSup>
+          <m:rad><m:deg><m:r><m:t>3</m:t></m:r></m:deg><m:e><m:r><m:t>y</m:t></m:r></m:e></m:rad>
+          <m:d><m:dPr><m:begChr m:val="["/><m:endChr m:val="]"/></m:dPr><m:e><m:r><m:t>z</m:t></m:r></m:e></m:d>
+        </m:oMath>
+    </w:p></w:body></w:document>"#;
+    let import = import(xml);
+    let InlineNode::Math(math) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected typed math");
+    };
+    let Some(MathExpression::Row { children }) = &math.expression else {
+        panic!("expected a common-construct row projection");
+    };
+    assert_eq!(children.len(), 4);
+    assert!(matches!(children[0], MathExpression::Fraction { .. }));
+    assert!(matches!(children[1], MathExpression::Script { .. }));
+    assert!(matches!(children[2], MathExpression::Radical { .. }));
+    assert!(matches!(
+        &children[3],
+        MathExpression::Delimiter { open, close, .. } if open == "[" && close == "]"
+    ));
+}
+
+#[test]
+fn unsupported_omml_keeps_raw_markup_without_a_projection() {
+    let xml = br#"<w:document xmlns:w="urn:w" xmlns:m="urn:m"><w:body><w:p>
+        <m:oMath><m:m><m:mr><m:e><m:r><m:t>x</m:t></m:r></m:e></m:mr></m:m></m:oMath>
+    </w:p></w:body></w:document>"#;
+    let import = import(xml);
+    let InlineNode::Math(math) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected retained math");
+    };
+    assert!(math.expression.is_none());
+    assert!(math.omml.contains("<m:m>"));
+    assert_eq!(math.text, "x");
 }
 
 #[test]

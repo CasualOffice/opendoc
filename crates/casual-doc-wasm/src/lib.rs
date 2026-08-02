@@ -7156,7 +7156,11 @@ impl WasmDocument {
                 let kind = match &placed.content {
                     AnchorContent::Image { .. } => "image",
                     AnchorContent::TextBox { .. } => "textbox",
-                    AnchorContent::Rectangle { .. } | AnchorContent::Line { .. } => "shape",
+                    AnchorContent::Rectangle { .. }
+                    | AnchorContent::Ellipse { .. }
+                    | AnchorContent::RoundedRectangle { .. }
+                    | AnchorContent::Polygon { .. }
+                    | AnchorContent::Line { .. } => "shape",
                 };
                 out.push(ObjectBox {
                     node,
@@ -11371,7 +11375,7 @@ impl ObjectHitPayload {
         self.node.clone()
     }
 
-    /// The object kind: `"image"` or `"textbox"` (docs/85 `ObjectKind`).
+    /// The object kind: `"image"`, `"textbox"`, or `"shape"` (docs/85 `ObjectKind`).
     #[wasm_bindgen(getter)]
     #[must_use]
     pub fn kind(&self) -> String {

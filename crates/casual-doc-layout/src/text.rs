@@ -137,6 +137,21 @@ pub struct InlineImageSpec {
     pub crop: Option<casual_doc_model::v1::CropRect>,
 }
 
+/// A pre-laid-out equation handed to the paragraph shaper as one atomic in-flow
+/// box. Child glyph/rule origins are relative to the box's top-left; the shaper
+/// supplies only its final line position and wrapping decision.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InlineMathSpec {
+    /// Byte boundary in the shaper's concatenated paragraph text.
+    pub index: u32,
+    /// Atomic equation box size.
+    pub size: Size,
+    /// Equation glyphs relative to the box top-left.
+    pub runs: Vec<GlyphRun>,
+    /// Fraction bars and radical overbars relative to the box top-left.
+    pub rules: Vec<InlineRule>,
+}
+
 /// Which inline edge of a paragraph-local floating object excludes text.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum InlineFloatSide {
@@ -597,6 +612,53 @@ pub trait LineShaper {
             .unwrap_or(Twip::ZERO);
         constraints.max_width = Twip((constraints.max_width.raw() - exclusion.raw()).max(1));
         self.shape_paragraph_with_inline_images(runs, images, constraints, range)
+    }
+
+    /// Shapes text, images, equations, and paragraph-local float exclusions.
+    ///
+    /// Alternate shapers retain a safe fallback: equations are appended as
+    /// atomic lines after ordinary inline-object shaping. The default Parley
+    /// implementation places their boxes at the authored inline boundary.
+    fn shape_paragraph_with_rich_inline_objects(
+        &self,
+        runs: &[StyledRun<'_>],
+        images: &[InlineImageSpec],
+        maths: &[InlineMathSpec],
+        floats: &[InlineFloatSpec],
+        constraints: LineConstraints,
+        range: ModelRange,
+    ) -> LineLayout {
+        let mut layout =
+            self.shape_paragraph_with_inline_objects(runs, images, floats, constraints, range);
+        let mut y = layout.height();
+        for math in maths {
+            let mut runs = math.runs.clone();
+            let mut rules = math.rules.clone();
+            for run in &mut runs {
+                run.origin.y = run.origin.y + y;
+            }
+            for rule in &mut rules {
+                rule.origin.y = rule.origin.y + y;
+            }
+            layout.lines.push(Line {
+                runs,
+                ascent: math.size.height,
+                descent: Twip::ZERO,
+                height: math.size.height,
+                clip: false,
+                range,
+                line_break: LineBreak::Wrap,
+                page_break_after: false,
+                bars: Vec::new(),
+                images: Vec::new(),
+                fields: Vec::new(),
+                notes: Vec::new(),
+                text_boxes: Vec::new(),
+                rules,
+            });
+            y = y + math.size.height;
+        }
+        layout
     }
 }
 

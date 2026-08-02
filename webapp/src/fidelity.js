@@ -46,8 +46,8 @@ const FIDELITY = [
   },
   {
     family: "Text boxes & shapes",
-    note: "DrawingML/VML extent, fill, outline, anchoring render; exact paths/gradients, rotation, vertical text, linked boxes pending. Not editable.",
-    modeled: "full", rendered: "partial", editable: "none", roundtrips: "full",
+    note: "Anchored DrawingML shapes retain bounded preset identities/adjustments; rectangles, lines, ellipses, rounded rectangles, triangles, right triangles, and diamonds render distinctly. Other preset/custom paths, non-text inline shapes, gradients, rotation, vertical text, and linked boxes remain partial. Not editable.",
+    modeled: "partial", rendered: "partial", editable: "none", roundtrips: "partial",
   },
   {
     family: "Headers & footers",
@@ -71,8 +71,8 @@ const FIDELITY = [
   },
   {
     family: "Math (OMML)",
-    note: "Imported as an opaque, namespace-guarded node and preserved for export, but not typeset as real math — shown as a placeholder.",
-    modeled: "partial", rendered: "placeholder", editable: "none", roundtrips: "full",
+    note: "Raw OMML is preserved for export. Rows/text, fractions, sub/superscripts, radicals, and delimiters have a bounded typed model and deterministic inline rendering; other constructs use an explicit text placeholder. Not editable.",
+    modeled: "partial", rendered: "partial", editable: "none", roundtrips: "full",
   },
   {
     family: "Charts",

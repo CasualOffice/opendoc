@@ -11,7 +11,7 @@ use casual_doc_model::v1::CropRect;
 use serde::{Deserialize, Serialize};
 
 use crate::text::GlyphRun;
-use crate::units::{Point, Rect};
+use crate::units::{Point, Rect, Twip};
 
 /// An 8-bit-per-channel straight-alpha sRGB color.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
@@ -72,6 +72,35 @@ pub enum PaintItem {
     Rect {
         /// The rectangle, in device pixels.
         rect: Rect,
+        /// Fill color, if filled.
+        fill: Option<Color>,
+        /// Stroke, if outlined.
+        stroke: Option<Stroke>,
+    },
+    /// A filled and/or stroked ellipse fitted to `rect`.
+    Ellipse {
+        /// Ellipse bounding rectangle.
+        rect: Rect,
+        /// Fill color, if filled.
+        fill: Option<Color>,
+        /// Stroke, if outlined.
+        stroke: Option<Stroke>,
+    },
+    /// A filled and/or stroked rounded rectangle.
+    RoundedRect {
+        /// Shape bounding rectangle.
+        rect: Rect,
+        /// Corner radius in twips.
+        radius: Twip,
+        /// Fill color, if filled.
+        fill: Option<Color>,
+        /// Stroke, if outlined.
+        stroke: Option<Stroke>,
+    },
+    /// A filled and/or stroked closed polygon.
+    Polygon {
+        /// Vertices in path order, in page-local twips.
+        points: Vec<Point>,
         /// Fill color, if filled.
         fill: Option<Color>,
         /// Stroke, if outlined.

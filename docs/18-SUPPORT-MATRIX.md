@@ -1,7 +1,7 @@
 # Support Matrix
 
 **Status:** Accepted for Phase 0
-**Last updated:** 2026-07-27
+**Last updated:** 2026-08-02
 
 This document distinguishes target support from implemented support. A target is
 not considered supported until its required CI and conformance gates pass.
@@ -85,7 +85,8 @@ report.
 | Images and anchors | Supported | Modeled and imported (Phase 1A); rendered via the z-ordered float layer (groups, floating text boxes, header/footer floats). Paragraph/line-relative `topAndBottom` wrapping now reserves shared flow in the body, nested table cells, headers, and footers; square/tight/through and page-coupled reflow remain pending. Edit surface pending. |
 | Comments and tracked changes | Supported | Modeled, imported, and semantically round-tripped; revision wrappers currently render transparently without final/original/markup view selection, and comments have no visible page/review UI. Edit surface pending (see doc 55). |
 | Fields and notes | Supported or render-only by subtype | Modeled and imported (Phase 1A); `PAGE`/`NUMPAGES` recompute in body, headers/footers, and inline/anchored text boxes. Other fields use cached results and fielded paragraphs do not soft-wrap. Footnote/endnote reference and body placement remain pending (see doc 55). |
-| Shapes, text boxes, VML | Preserve or flatten with warning | DrawingML text boxes preserve extent/fill/outline plus independent `bodyPr` insets, top/center/bottom anchoring, overflow policy, shape autofit, and normal-autofit authored scaling; the same recursive flow/paint path covers body, cells, groups, headers, and footers. VML CSS positioning, wrap metadata/distances, text-box insets/anchor/autofit, and a bounded safe body-float subset are bridged into the shared model. Vertical ellipsis still clips; ellipse/round-rect paint, exact VML paths/gradients, rotation/vertical writing, linked boxes, side wrapping, and page-coupled reflow remain pending (see docs 52, 54, and 55). |
+| Math (OMML) | Preserve all; model/render common subset | Raw OMML subtrees round-trip unchanged. A bounded typed projection and deterministic atomic inline layout cover rows/text, fractions, sub/superscripts, radicals, and delimiters. Matrices, n-ary operators, accents, limits, and other advanced structures remain explicit text fallback; semantic math editing is not implemented (docs 55 and 86). |
+| Shapes, text boxes, VML | Preserve or flatten with warning | Standalone anchored DrawingML shapes normalize to the shared group/float model; unknown bounded preset identities and adjustment guides survive semantic export, and rectangle/line/ellipse/round-rectangle/triangle/right-triangle/diamond primitives paint distinctly. DrawingML text boxes preserve extent/fill/outline plus independent `bodyPr` insets, anchoring, overflow, and autofit across body, cells, groups, headers, and footers. VML positioning and a bounded safe body-float subset share that model. Non-text inline shapes, exact additional preset/custom paths, gradients, rotation/vertical writing, linked boxes, side wrapping, and page-coupled reflow remain pending (docs 52, 54, 55, 87, and 88). |
 | Real-time collaboration | Adapter-based | Post local transaction stability. |
 | Accessibility semantics | Required | Designed, not implemented. |
 

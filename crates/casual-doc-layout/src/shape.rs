@@ -26,8 +26,8 @@ use crate::font_registry::FontRegistry;
 use crate::model::{ModelPos, ModelRange};
 use crate::text::{
     Decoration, FontId, Glyph, GlyphRun, InlineFloatSide, InlineFloatSpec, InlineImage,
-    InlineImageSpec, Line, LineBreak, LineConstraints, LineLayout, LineShaper, StyledRun,
-    TextAlignment,
+    InlineImageSpec, InlineMathSpec, Line, LineBreak, LineConstraints, LineLayout, LineShaper,
+    StyledRun, TextAlignment,
 };
 use crate::units::{Point, Size, Twip};
 
@@ -564,7 +564,7 @@ impl LineShaper for ParleyShaper {
         constraints: LineConstraints,
         range: ModelRange,
     ) -> LineLayout {
-        self.shape_with_objects(runs, &[], &[], constraints, range)
+        self.shape_with_objects(runs, &[], &[], &[], constraints, range)
     }
 
     fn shape_paragraph_with_inline_images(
@@ -574,7 +574,7 @@ impl LineShaper for ParleyShaper {
         constraints: LineConstraints,
         range: ModelRange,
     ) -> LineLayout {
-        self.shape_with_objects(runs, images, &[], constraints, range)
+        self.shape_with_objects(runs, images, &[], &[], constraints, range)
     }
 
     fn shape_paragraph_with_inline_objects(
@@ -585,8 +585,27 @@ impl LineShaper for ParleyShaper {
         constraints: LineConstraints,
         range: ModelRange,
     ) -> LineLayout {
-        self.shape_with_objects(runs, images, floats, constraints, range)
+        self.shape_with_objects(runs, images, &[], floats, constraints, range)
     }
+
+    fn shape_paragraph_with_rich_inline_objects(
+        &self,
+        runs: &[StyledRun<'_>],
+        images: &[InlineImageSpec],
+        maths: &[InlineMathSpec],
+        floats: &[InlineFloatSpec],
+        constraints: LineConstraints,
+        range: ModelRange,
+    ) -> LineLayout {
+        self.shape_with_objects(runs, images, maths, floats, constraints, range)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct InlineObjects<'a> {
+    images: &'a [InlineImageSpec],
+    maths: &'a [InlineMathSpec],
+    floats: &'a [InlineFloatSpec],
 }
 
 impl ParleyShaper {
@@ -596,18 +615,23 @@ impl ParleyShaper {
         &self,
         runs: &[StyledRun<'_>],
         images: &[InlineImageSpec],
+        maths: &[InlineMathSpec],
         floats: &[InlineFloatSpec],
         constraints: LineConstraints,
         range: ModelRange,
     ) -> LineLayout {
+        let objects = InlineObjects {
+            images,
+            maths,
+            floats,
+        };
         // Shape once with the natural (face-metric) line heights. This pass is
         // byte-for-byte identical to the pre-normalization shaper, so Latin-only
         // paragraphs, the bundled/deterministic path, and every golden are
         // unchanged. It also reports whether the paragraph contains a CJK run that
         // shaped with a dynamic (non-bundled) OS/host *fallback* face, whose native
         // line height does not represent the run font's size.
-        let (layout, cjk_fallback) =
-            self.shape_inner(runs, images, floats, constraints, range, false);
+        let (layout, cjk_fallback) = self.shape_inner(runs, objects, constraints, range, false);
         if !cjk_fallback {
             return layout;
         }
@@ -617,10 +641,12 @@ impl ParleyShaper {
         // `parley` (rather than rewriting the box afterwards) keeps the glyph
         // baselines and the line box consistent on every downstream path, including
         // paragraphs that never go through the flow layer's line restacking.
-        let mut normalized = self
-            .shape_inner(runs, images, floats, constraints, range, true)
-            .0;
-        if constraints.alignment == TextAlignment::Start && images.is_empty() && floats.is_empty() {
+        let mut normalized = self.shape_inner(runs, objects, constraints, range, true).0;
+        if constraints.alignment == TextAlignment::Start
+            && images.is_empty()
+            && maths.is_empty()
+            && floats.is_empty()
+        {
             let final_scalar_is_cjk = runs
                 .iter()
                 .rev()
@@ -644,8 +670,7 @@ impl ParleyShaper {
     fn shape_inner(
         &self,
         runs: &[StyledRun<'_>],
-        images: &[InlineImageSpec],
-        floats: &[InlineFloatSpec],
+        objects: InlineObjects<'_>,
         constraints: LineConstraints,
         range: ModelRange,
         normalize_cjk: bool,
@@ -658,7 +683,11 @@ impl ParleyShaper {
         // paragraph mark's own font metrics, which is what Word does. Fabricating a
         // default-size line here silently discards the mark metrics and mis-sizes
         // the empty line, shifting pagination.
-        if runs.is_empty() && images.is_empty() && floats.is_empty() {
+        if runs.is_empty()
+            && objects.images.is_empty()
+            && objects.maths.is_empty()
+            && objects.floats.is_empty()
+        {
             return (LineLayout { lines: Vec::new() }, false);
         }
 
@@ -780,7 +809,7 @@ impl ParleyShaper {
                 builder.push(StyleProperty::Strikethrough(true), *start..*end);
             }
         }
-        for (id, image) in images.iter().enumerate() {
+        for (id, image) in objects.images.iter().enumerate() {
             builder.push_inline_box(InlineBox {
                 id: id as u64,
                 kind: InlineBoxKind::InFlow,
@@ -789,9 +818,18 @@ impl ParleyShaper {
                 height: image.size.height.raw() as f32,
             });
         }
-        for (id, float) in floats.iter().enumerate() {
+        for (id, math) in objects.maths.iter().enumerate() {
             builder.push_inline_box(InlineBox {
-                id: (images.len() + id) as u64,
+                id: (objects.images.len() + id) as u64,
+                kind: InlineBoxKind::InFlow,
+                index: math.index as usize,
+                width: math.size.width.raw() as f32,
+                height: math.size.height.raw() as f32,
+            });
+        }
+        for (id, float) in objects.floats.iter().enumerate() {
+            builder.push_inline_box(InlineBox {
+                id: (objects.images.len() + objects.maths.len() + id) as u64,
                 kind: InlineBoxKind::CustomOutOfFlow,
                 index: float.index as usize,
                 width: 0.0,
@@ -811,10 +849,15 @@ impl ParleyShaper {
                 IndentOptions::default(),
             );
         }
-        if floats.is_empty() {
+        if objects.floats.is_empty() {
             layout.break_all_lines(Some(constraints.max_width.raw() as f32));
         } else {
-            break_lines_around_floats(&mut layout, images.len(), floats, constraints.max_width);
+            break_lines_around_floats(
+                &mut layout,
+                objects.images.len() + objects.maths.len(),
+                objects.floats,
+                constraints.max_width,
+            );
         }
         layout.align(
             alignment(constraints.alignment, constraints.rtl),
@@ -836,6 +879,7 @@ impl ParleyShaper {
             let metrics = line.metrics();
             let mut out_runs = Vec::new();
             let mut out_images = Vec::new();
+            let mut out_rules = Vec::new();
             // A single `parley` shaping run is split into one `GlyphRun` per
             // contiguous style span — a brush (color/highlight) or decoration
             // change splits the run *without* re-shaping, so the spans keep their
@@ -862,7 +906,7 @@ impl ParleyShaper {
             for item in line.items() {
                 let glyph_run = match item {
                     PositionedLayoutItem::InlineBox(inline_box) => {
-                        if let Some(image) = images.get(inline_box.id as usize) {
+                        if let Some(image) = objects.images.get(inline_box.id as usize) {
                             out_images.push(InlineImage {
                                 media: image.media.clone(),
                                 origin: Point::new(
@@ -875,6 +919,27 @@ impl ParleyShaper {
                                 ),
                                 crop: image.crop,
                             });
+                        } else if let Some(math_index) =
+                            (inline_box.id as usize).checked_sub(objects.images.len())
+                            && let Some(math) = objects.maths.get(math_index)
+                        {
+                            let box_x = Twip(inline_box.x.round() as i32);
+                            let box_y = Twip(inline_box.y.round() as i32);
+                            let cluster = base.saturating_add(math.index);
+                            for source in &math.runs {
+                                let mut run = source.clone();
+                                run.origin = Point::new(run.origin.x + box_x, run.origin.y + box_y);
+                                for glyph in &mut run.glyphs {
+                                    glyph.cluster = cluster;
+                                }
+                                out_runs.push(run);
+                            }
+                            for source in &math.rules {
+                                let mut rule = *source;
+                                rule.origin =
+                                    Point::new(rule.origin.x + box_x, rule.origin.y + box_y);
+                                out_rules.push(rule);
+                            }
                         }
                         continue;
                     }
@@ -1060,6 +1125,9 @@ impl ParleyShaper {
             for image in &mut out_images {
                 image.origin.y = image.origin.y + box_delta;
             }
+            for rule in &mut out_rules {
+                rule.origin.y = rule.origin.y + box_delta;
+            }
             lines.push(Line {
                 runs: out_runs,
                 ascent,
@@ -1074,7 +1142,7 @@ impl ParleyShaper {
                 fields: Vec::new(),
                 notes: Vec::new(),
                 text_boxes: Vec::new(),
-                rules: Vec::new(),
+                rules: out_rules,
             });
             output_y = output_y + height;
             source_y = source_y + natural;

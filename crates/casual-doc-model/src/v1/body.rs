@@ -542,21 +542,50 @@ pub struct ShapeStroke {
 }
 
 /// The preset geometry of a simple DrawingML shape (`a:prstGeom@prst`). Only the
-/// handful of presets that occur as group decorations are distinguished; every
-/// other preset is [`ShapeGeometry::Other`] (drawn as its bounding rectangle).
+/// bounded primitive subset implemented by layout/render is distinguished;
+/// every other preset is [`ShapeGeometry::Other`] (drawn as its bounding
+/// rectangle while its original token is retained by [`GroupShape::preset`]).
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ShapeGeometry {
     /// A rectangle (`rect`).
     Rectangle,
-    /// A rounded rectangle (`roundRect`), drawn as a rectangle in this slice.
+    /// A rounded rectangle (`roundRect`).
     RoundRectangle,
     /// An ellipse (`ellipse`).
     Ellipse,
+    /// An isosceles triangle (`triangle`).
+    Triangle,
+    /// A right triangle (`rtTriangle`).
+    RightTriangle,
+    /// A diamond (`diamond`).
+    Diamond,
     /// A straight line / connector (`line`, or a `wps:cxnSp` straight connector).
     Line,
     /// Any other preset, drawn as its bounding rectangle.
     Other,
+}
+
+/// Maximum UTF-8 length of a retained DrawingML preset-geometry token.
+pub const MAX_SHAPE_PRESET_BYTES: usize = 64;
+
+/// Maximum adjustment guides retained for one preset shape.
+pub const MAX_SHAPE_ADJUSTMENTS: usize = 32;
+
+/// Maximum UTF-8 length of an adjustment-guide name.
+pub const MAX_SHAPE_GUIDE_NAME_BYTES: usize = 64;
+
+/// Maximum UTF-8 length of an adjustment-guide formula.
+pub const MAX_SHAPE_FORMULA_BYTES: usize = 256;
+
+/// One ordered DrawingML preset adjustment (`a:avLst/a:gd`).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ShapeAdjustment {
+    /// Guide name (`a:gd@name`).
+    pub name: String,
+    /// Guide formula (`a:gd@fmla`, commonly `val 16667`).
+    pub formula: String,
 }
 
 /// A group transform (`wpg:grpSpPr`/`a:grpSpPr` `a:xfrm`): the group's box in its
@@ -802,6 +831,13 @@ pub struct GroupShape {
     pub extent: Extent,
     /// The preset geometry (`a:prstGeom@prst`).
     pub geometry: ShapeGeometry,
+    /// Original bounded preset token when [`ShapeGeometry::Other`] has no typed
+    /// primitive yet. Semantic export re-emits it instead of rewriting to `rect`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<String>,
+    /// Ordered preset adjustment guides (`a:avLst/a:gd`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub adjustments: Vec<ShapeAdjustment>,
     /// The fill (`a:solidFill`), if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fill: Option<Rgba>,
@@ -1679,14 +1715,71 @@ pub struct InlineSdt {
 /// Maximum retained OMML markup length, in UTF-8 bytes.
 pub const MAX_MATH_BYTES: usize = 65_536;
 
-/// An opaque inline math object (an OMML `m:oMath` or `m:oMathPara` subtree).
+/// Maximum nesting depth of a typed math expression.
+pub const MAX_MATH_DEPTH: usize = 32;
+
+/// Maximum number of nodes in one typed math expression.
+pub const MAX_MATH_NODES: usize = 4_096;
+
+/// A bounded semantic projection of a supported OMML equation subtree.
 ///
-/// Equation structure is not semantically modeled; the OMML subtree is retained
-/// verbatim in `omml` so it round-trips losslessly, and `text` is a best-effort
-/// plain-text fallback (the concatenated `m:t` runs) for search/accessibility.
-/// This mirrors the opaque-retention treatment of other unmodeled constructs:
-/// the equation survives a round trip and its text never leaks into the
-/// surrounding paragraph runs.
+/// The retained OMML on [`Math`] remains authoritative for export. This tree is
+/// additive render/search structure: unsupported OMML safely has no projection.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum MathExpression {
+    /// Ordered expressions laid out on one math baseline.
+    Row {
+        /// Child expressions in logical order (non-empty).
+        children: Vec<MathExpression>,
+    },
+    /// Literal math text collected from an OMML math run.
+    Text {
+        /// Non-empty UTF-8 text.
+        value: String,
+    },
+    /// A numerator stacked above a denominator with a separating rule.
+    Fraction {
+        /// Numerator expression.
+        numerator: Box<MathExpression>,
+        /// Denominator expression.
+        denominator: Box<MathExpression>,
+    },
+    /// A base with an optional subscript and/or superscript.
+    Script {
+        /// Base expression.
+        base: Box<MathExpression>,
+        /// Subscript expression.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        subscript: Option<Box<MathExpression>>,
+        /// Superscript expression.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        superscript: Option<Box<MathExpression>>,
+    },
+    /// A radical with an optional degree.
+    Radical {
+        /// Optional degree expression.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        degree: Option<Box<MathExpression>>,
+        /// Radicand expression.
+        radicand: Box<MathExpression>,
+    },
+    /// Nested content surrounded by authored delimiter characters.
+    Delimiter {
+        /// Opening delimiter; empty means no opening glyph.
+        open: String,
+        /// Closing delimiter; empty means no closing glyph.
+        close: String,
+        /// Delimited expression.
+        content: Box<MathExpression>,
+    },
+}
+
+/// An inline math object (an OMML `m:oMath` or `m:oMathPara` subtree).
+///
+/// The OMML subtree is retained verbatim in `omml` so it round-trips losslessly;
+/// `expression` is an optional bounded projection of the supported common subset;
+/// and `text` is a best-effort plain-text fallback for search/accessibility.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Math {
@@ -1698,6 +1791,9 @@ pub struct Math {
     /// empty when the equation carries no literal text.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub text: String,
+    /// Typed common-construct projection used for deterministic layout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expression: Option<MathExpression>,
 }
 
 /// Inline content supported by schema v1.
@@ -1755,7 +1851,7 @@ pub enum InlineNode {
     MoveRangeEnd(MoveRangeEnd),
     /// An inline-level content control wrapping inline content.
     Sdt(InlineSdt),
-    /// An opaque inline math object retaining its OMML subtree verbatim.
+    /// An inline math object retaining its OMML subtree verbatim.
     Math(Math),
     /// An inline symbol glyph (a font plus a code point).
     Symbol(Symbol),

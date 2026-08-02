@@ -77,6 +77,15 @@ pub enum FlowItem<'a> {
         /// (`P1G-OBJ-MODEL`).
         crop: Option<casual_doc_model::v1::CropRect>,
     },
+    /// A typed equation pre-laid out into an atomic glyph/rule box.
+    Math {
+        /// Equation box size.
+        size: Size,
+        /// Glyph runs relative to the box top-left.
+        runs: Vec<GlyphRun>,
+        /// Fraction and radical rules relative to the box top-left.
+        rules: Vec<InlineRule>,
+    },
     /// An inline field (`w:fldSimple`/`w:instrText`): its resolved kind, a
     /// placeholder value (the producer's cached result) shaped at flow time, and
     /// the styling to reshape a recomputed value. Laid out inline like a run; the
@@ -383,6 +392,7 @@ fn split_blocks<'a>(items: &'a [FlowItem<'a>], base: u32) -> Vec<Block<'a>> {
             // layout paths before the stream reaches the tab/break layer, so none
             // reach here.
             FlowItem::Image { .. }
+            | FlowItem::Math { .. }
             | FlowItem::Field { .. }
             | FlowItem::NoteReference(_)
             | FlowItem::TextBox { .. }

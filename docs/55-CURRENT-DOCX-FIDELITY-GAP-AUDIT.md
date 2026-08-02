@@ -109,7 +109,7 @@ still use bounded approximations.
 | P1 | Square-family exclusion is only local/bounded | Cross-paragraph, page-relative, contour, and overlapping-float cases can still diverge | `flow.rs::shape_with_float_exclusions` |
 | P1 | Table style cascade and advanced table geometry are not consumed | Styled tables lose conditional fills/borders/fonts; floating/bidi/spaced tables become inline approximations | `cascade.rs`; `flow.rs::flow_table` |
 | P1 | Paragraph base direction and per-script run slots — partially fixed | Base direction (`w:bidi`) + RTL alignment edge, per-script font slots (`w:eastAsia`/`w:cs`/`hint`), and complex-script bold/italic/size are now consumed; full bidi *visual reordering*, vertical writing, and theme-only per-script resolution remain open | `flow.rs::line_constraints`/`push_styled_runs`, `cascade.rs::requested_font_family_for`, `script.rs`, `shape.rs::alignment` |
-| P2 | Shape geometry is reduced at paint | Ellipse/round-rect/preset/path shapes can paint as rectangles | `anchor.rs::place_group_children` |
+| P2 (partially closed, P1F-SHAPE-PRESET-1/P1F-SHAPE-ANGULAR-1) | Shape geometry is reduced at paint | Ellipse, round-rectangle, triangle, right-triangle, and diamond primitives now paint distinctly; additional presets and custom/VML paths still use explicit bounding-box fallback | `anchor.rs::place_group_children` |
 | P2 | Review semantics have no view policy | Insertions and deletions both render; comments have no visible anchor/UI | `flow.rs::collect_items` |
 | P2 | Section/page-furniture long tail is not consumed | Page borders, line numbers, note policy, section text direction, and parity starts diverge | model `SectionBoundary`; layout search |
 | P2 | Field evaluation is limited | Non-page fields rely on cached results and long fielded paragraphs may overflow | `flow.rs::field_kind`, `shape_fielded_paragraph` |
@@ -131,12 +131,15 @@ image, when a preview is present) instead of falling into the `_ => {}` arm:
   through the existing image pipeline when one is present, otherwise a typed
   `[chart]`/`[diagram]`/`[object]` text placeholder;
 - ~~`Math` — the retained OMML and best-effort `m:t` text fallback round-trip,
-  but neither is shown~~ done — the `text` best-effort plain-text fallback now
-  shapes as an ordinary run (`[fallback text]`, or `[equation]` when the
-  fallback is empty). **This is fallback-text visibility only, not real OMML
-  typesetting**: no fraction bars, radicals, exponent/subscript layout, or
-  operator spacing — the retained OMML subtree still round-trips verbatim on
-  export but is not consulted for layout;
+  but neither is shown~~ done in two bounded steps: `P1F-INLINE-FLOOR` made the
+  explicit `[fallback text]` / `[equation]` run visible, and
+  `P1F-MATH-TYPED-1` added a semantic projection plus atomic inline layout for
+  rows/text, fractions, sub/superscripts, radicals, and delimiters. Fraction and
+  radical rules reuse deterministic rectangle paint; nested glyphs reuse the
+  document text shaper. Unsupported OMML (matrices, n-ary operators, accents,
+  limits, and other advanced properties) still uses the explicit fallback while
+  the retained subtree round-trips verbatim. Math support remains partial, not a
+  claim of complete OMML typesetting;
 - ~~`NoBreakHyphen` and `SoftHyphen` — visible/break semantics are absent~~
   done — they shape as `U+2011` (non-breaking hyphen) and `U+00AD` (soft
   hyphen) respectively;
@@ -457,16 +460,26 @@ slices, not this model foundation. Anchors preserve useful position/wrap metadat
 but still defer simple-position override, percentage offsets, exact character
 glyph anchoring, and complete inside/outside parity behavior.
 
-### 9. Shapes and text boxes remain approximate
+### 9. Shapes and text boxes remain partial
 
-`ShapeGeometry` distinguishes rectangle, round rectangle, ellipse, and line.
-The float painter maps only `Line` specially; every other geometry becomes
-`AnchorContent::Rectangle`. Thus an imported ellipse or rounded rectangle paints
-as a rectangular fill/stroke.
+`ShapeGeometry` distinguishes rectangle, round rectangle, ellipse, line,
+triangle, right triangle, and diamond. The curved/rectangular shapes reach
+distinct deterministic float/display primitives; the three angular presets
+share a bounded polygon primitive with exact typed vertices. A
+standalone anchored DrawingML shape is normalized to the existing group-of-one
+model rather than dropped. Untyped but bounded `a:prstGeom` identities and their
+ordered adjustment guides are retained and semantically re-emitted; they still
+paint through the documented rectangular fallback until their preset geometry
+is implemented. The common `roundRect` literal `adj` guide controls its clamped
+corner radius.
 
-Generic VML paths are retained by the parser but rendered as bounded-box
-approximations. Gradients, exact preset/custom paths, per-side strokes,
-rotation, vertical writing, and exact diagonal orientation remain open.
+`a:custGeom` is explicitly reported and retained only by source-retention mode;
+its formula/path language is not claimed as typed semantic support. Non-text
+inline DrawingML shapes likewise remain reported pending a true in-flow
+composite box. Generic VML paths are retained by the parser but rendered as
+bounded-box approximations. Gradients, remaining preset/custom paths,
+per-side strokes, rotation, vertical writing, and exact diagonal orientation
+remain open.
 
 Text-box support is comparatively strong: authored extent, fill/outline,
 independent insets, vertical anchor, overflow, shape autofit, normal-autofit,
@@ -584,11 +597,12 @@ support.
 | `topAndBottom` local reflow | Yes | Yes | Yes | Paragraph/line-relative explicit-offset envelope only |
 | Square/tight/through reflow | Safe subset | Safe subset | Safe subset | Local explicit paragraph/line-relative side exclusion; square bounds only |
 | DrawingML text-box body properties | Yes | Yes | Yes | Rotation/vertical writing/ellipsis/anchorCtr absent |
+| Anchored preset shape primitives | Yes | Yes | Yes | Rectangle/line/ellipse/round-rectangle/triangle/right-triangle/diamond render; additional preset/custom paths fall back explicitly; non-text inline shapes remain open |
 | VML text-box position/body properties | Safe subset | Yes | Safe subset | Unsafe side/page body cases remain inline |
 | `PAGE`/`NUMPAGES` | Yes | Yes | Yes, including anchored boxes | Other fields use cached result |
 | Per-section running-content selection | N/A | Yes | N/A | Continuous-page ownership and band growth remain approximate |
 | Notes | No | No | No | References and bodies not laid out |
-| Embedded objects/math/special hyphens | Yes | Yes | Yes | `P1F-INLINE-FLOOR`: object preview/typed placeholder, math fallback-text run, hyphen glyphs. Math is fallback-text visibility only, not real OMML typesetting |
+| Embedded objects/math/special hyphens | Yes | Yes | Yes | Object preview/typed placeholder and hyphen glyphs; common typed Math constructs render inline (`P1F-MATH-TYPED-1`), unsupported OMML uses retained fallback |
 | Review markup presentation | No | No | No | Wrappers transparent; no view policy |
 
 ## Recommended implementation sequence
@@ -606,8 +620,8 @@ proves a smaller safe combination.
 2. ~~**Inline visibility floor**~~ done (`P1F-INLINE-FLOOR`)
    - ~~render no-break/soft hyphens~~ done;
    - ~~render OMML text fallback and embedded-object previews/placeholders~~
-     done — math fallback text is a plain-text approximation, not real
-     typesetting;
+     done; common typed OMML rendering subsequently landed in
+     `P1F-MATH-TYPED-1`, while advanced constructs remain explicit fallback;
    - explicit compatibility output for display fallbacks beyond the bracketed
      text marker remains open.
 3. **Inline VML image extent**
@@ -628,8 +642,8 @@ proves a smaller safe combination.
     - paragraph base direction, per-script font slots, complex-script
       bold/italic/size, then language-specific line rules.
 8. **Geometry and media**
-    - ellipse/round-rect paint, picture crop/transform, safe additional raster
-      formats, then vector metafile/SVG policy and generic VML paths.
+    - additional preset/custom shape paths, picture transform, safe additional
+      raster formats, then vector metafile/SVG policy and generic VML paths.
 9. **Review and field view policies**
     - immutable revision/comment view;
     - deterministic host-provided field evaluation.
