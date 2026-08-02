@@ -58,7 +58,7 @@ test("deleting a selection that crosses into the document's table clears text wi
   await page.locator("#undoBtn").click();
 });
 
-test("an edit that's still unsupported (a partial hyperlink cut) shows a status error instead of silence", async ({
+test("a selection that starts inside a hyperlink and ends outside it deletes cleanly and undoes (REVIEW-GAP-007)", async ({
   page,
   consoleErrors,
 }) => {
@@ -66,8 +66,7 @@ test("an edit that's still unsupported (a partial hyperlink cut) shows a status 
   await clickIntoFirstPage(page);
   await moveCaretToDocStart(page);
 
-  // Build "AB" (hyperlinked) + "CD" (plain) via the rich-paste path, then
-  // select [1,4) — starting *inside* the hyperlink, ending outside it.
+  // Build "AB" (hyperlinked) + "CD" (plain) via the rich-paste path.
   await page.evaluate(() => {
     const dt = new DataTransfer();
     dt.setData("text/html", '<p><a href="https://example.com">AB</a>CD</p>');
@@ -76,19 +75,28 @@ test("an edit that's still unsupported (a partial hyperlink cut) shows a status 
       new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }),
     );
   });
+  await page.waitForTimeout(150);
+  expect(await find(page, "ABCD")).toBe("1 match");
+
+  // Select exactly "BCD": caret after 'A' (inside the link), extend three chars
+  // so the range starts inside the hyperlink and ends outside it. This used to
+  // be refused as an unsupported "partial hyperlink cut"; revision-aware range
+  // splitting (docs/86) now descends into the wrapper and deletes cleanly,
+  // shrinking the link to "A".
   await page.keyboard.press("Home");
-  await page.keyboard.press("ArrowRight"); // caret between 'A' and 'B' — inside the link
-  await page.keyboard.press("Shift+End"); // selects "BCD": starts inside the link, ends outside it
+  await page.keyboard.press("ArrowRight");
+  for (let i = 0; i < 3; i += 1) await page.keyboard.press("Shift+ArrowRight");
 
   await page.keyboard.press("Backspace");
   await page.waitForTimeout(200);
 
-  await expect(page.locator("#status")).toHaveText(/isn't supported/i);
-
-  // Nothing was silently corrupted — the text is untouched.
-  const status = await find(page, "ABCD");
-  expect(status).toBe("1 match");
+  // The edit succeeded: no rejection status, and "BCD" is gone.
+  expect(await page.locator("#status").textContent()).not.toMatch(/isn't supported|not supported/i);
+  expect(await find(page, "ABCD")).toBe("No match");
+  expect(await find(page, "BCD")).toBe("No match");
   expect(consoleErrors).toEqual([]);
 
-  await page.locator("#undoBtn").click(); // the paste that built the fixture
+  // The delete has an exact inverse — undo restores the original text verbatim.
+  await page.locator("#undoBtn").click();
+  expect(await find(page, "ABCD")).toBe("1 match");
 });
