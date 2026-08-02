@@ -1862,7 +1862,7 @@ body.modal-open {
   align-items: center;
   justify-content: space-between;
   gap: 3px;
-  padding: 0 5px;
+  padding: 0 3px;
   border-right: 1px solid var(--line);
   flex: 0 0 auto;
 }
@@ -1874,7 +1874,7 @@ body.modal-open {
 .rgroup-ctl {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 2px;
   min-height: 32px;
 }
 
@@ -2448,7 +2448,7 @@ body.modal-open {
 .review-popover-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .review-inline-bar { display: none !important; }
 .review-mode-segmented { display: inline-flex; gap: 2px; padding: 2px; border-radius: 999px; background: var(--bg-2); }
-.review-mode-seg { border: 1px solid transparent; border-radius: 999px; padding: 4px 9px; background: transparent; color: var(--muted); font: inherit; font-size: 11px; font-weight: 550; cursor: pointer; white-space: nowrap; }
+.review-mode-seg { border: 1px solid transparent; border-radius: 999px; padding: 4px 8px; background: transparent; color: var(--muted); font: inherit; font-size: 11px; font-weight: 550; cursor: pointer; white-space: nowrap; }
 .review-mode-seg[aria-pressed="true"] { color: #137333; border-color: #188038; background: color-mix(in srgb, #188038 12%, var(--surface)); }
 .review-mode-seg[data-review-mode="viewing"][aria-pressed="true"] { color: var(--ink); border-color: var(--accent); background: var(--accent-soft); }
 .review-mode-seg:disabled { opacity: 0.45; cursor: default; }
