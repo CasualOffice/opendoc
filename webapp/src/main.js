@@ -1645,8 +1645,10 @@ const paraControls = [
 const saveBtn = document.getElementById("save");
 const zoomInBtn = document.getElementById("zoomIn");
 const zoomOutBtn = document.getElementById("zoomOut");
+const documentChrome = document.getElementById("documentChrome");
 const docTitleEl = document.getElementById("docTitle");
-const titleDividerEl = document.getElementById("titleDivider");
+const documentStateEl = document.getElementById("documentState");
+const documentStateText = document.getElementById("documentStateText");
 const statsEl = document.getElementById("stats");
 const statWords = document.getElementById("statWords");
 const statParas = document.getElementById("statParas");
@@ -1702,6 +1704,9 @@ let pendingLinkHover = null;
 let pendingFormat = null;
 /** The open document's filename, for the Save download. */
 let currentName = "document.docx";
+/** Honest local-file lifecycle shown beside the title. OpenDoc does not claim
+ * cloud persistence: a mutation is Edited until the user downloads a copy. */
+let documentState = "opened";
 /** True while an IME composition is active on the canvas editor surface. */
 let composingText = false;
 /** Host gesture identity for history coalescing. The engine also validates exact
@@ -1752,6 +1757,20 @@ function setStatus(text, kind = "", { timeout = 0 } = {}) {
       statusClearTimer = 0;
     }, timeout);
   }
+}
+
+function setDocumentState(state) {
+  const states = {
+    opened: { icon: "check_circle", text: "Opened" },
+    edited: { icon: "edit", text: "Edited" },
+    downloaded: { icon: "download_done", text: "Downloaded" },
+  };
+  const next = states[state] ?? states.opened;
+  documentState = state in states ? state : "opened";
+  documentStateEl.dataset.state = documentState;
+  documentStateEl.querySelector(".ms").textContent = next.icon;
+  documentStateText.textContent = next.text;
+  documentStateEl.title = next.text;
 }
 
 function clearObjectStatus() {
@@ -1889,8 +1908,8 @@ async function openBytes(bytes, name) {
     breakTypingSession();
     currentName = name;
     docTitleEl.value = name;
-    docTitleEl.hidden = false;
-    titleDividerEl.hidden = false;
+    documentChrome.hidden = false;
+    setDocumentState("opened");
     saveBtn.disabled = false;
     railOutline.disabled = false;
     populateStyles();
@@ -1926,8 +1945,10 @@ function commitRename() {
     return;
   }
   const named = /\.docx$/i.test(trimmed) ? trimmed : `${trimmed}.docx`;
+  const changed = named !== currentName;
   currentName = named;
   docTitleEl.value = named;
+  if (changed) setDocumentState("edited");
 }
 
 docTitleEl.addEventListener("keydown", (e) => {
@@ -4233,28 +4254,41 @@ function repaintPage(i) {
   canvas.getContext("2d").putImageData(new ImageData(bmp.rgba, bmp.widthPx, bmp.heightPx), 0, 0);
 }
 
-/** Scroll the caret in the editor viewport (not an arbitrary page ancestor).
- * Navigation callers can request a centered target so headings/anchors have
- * useful reading room below the destination instead of landing on the viewport
- * edge. Normal caret movement keeps nearest-only behavior to avoid jitter. */
-function scrollCaretIntoView(block = "nearest") {
-  const caret = pagesEl.querySelector(".overlay .caret");
-  if (!caret) return;
-  const caretRect = caret.getBoundingClientRect();
+/** Scroll one engine-derived overlay marker in the editor viewport (not an
+ * arbitrary page ancestor). The selection is painted before this runs, so its
+ * DOM rectangle is only a projection of model geometry, never a source of
+ * document state. */
+function scrollOverlayIntoView(marker, block = "nearest") {
+  if (!marker) return;
+  const markerRect = marker.getBoundingClientRect();
   const viewportRect = viewportEl.getBoundingClientRect();
   const current = viewportEl.scrollTop;
   const max = Math.max(0, viewportEl.scrollHeight - viewportEl.clientHeight);
   let target = current;
   if (block === "center") {
-    target = current + caretRect.top + caretRect.height / 2 - (viewportRect.top + viewportRect.height / 2);
-  } else if (caretRect.top < viewportRect.top) {
-    target = current + caretRect.top - viewportRect.top;
-  } else if (caretRect.bottom > viewportRect.bottom) {
-    target = current + caretRect.bottom - viewportRect.bottom;
+    target = current + markerRect.top + markerRect.height / 2 - (viewportRect.top + viewportRect.height / 2);
+  } else if (markerRect.top < viewportRect.top) {
+    target = current + markerRect.top - viewportRect.top;
+  } else if (markerRect.bottom > viewportRect.bottom) {
+    target = current + markerRect.bottom - viewportRect.bottom;
   } else {
     return;
   }
   viewportEl.scrollTo({ top: Math.max(0, Math.min(max, target)), behavior: "auto" });
+}
+
+/** Scroll the caret in the editor viewport. Navigation callers can request a
+ * centered target so headings/anchors retain useful reading room. */
+function scrollCaretIntoView(block = "nearest") {
+  scrollOverlayIntoView(pagesEl.querySelector(".overlay .caret"), block);
+}
+
+/** Find selects a real range, so paintSelection deliberately emits highlights
+ * and no caret. Scroll its first rectangle into view; querying only `.caret`
+ * made Previous/Next update the selection on an off-screen page without moving
+ * the canvas. */
+function scrollFindMatchIntoView() {
+  scrollOverlayIntoView(pagesEl.querySelector(".overlay .highlight"), "center");
 }
 
 /** Apply an EditResult: place the caret, repaint only the dirty pages (or rebuild
@@ -4350,6 +4384,7 @@ async function runEdit(thunk, { typing = false, gate = false } = {}) {
     return;
   }
   await applyEditResult(res);
+  setDocumentState("edited");
 }
 
 /** Move the caret by arrow key. Shift extends (moves the focus); plain collapses. */
@@ -4413,6 +4448,7 @@ async function runToolbarEdit(thunk, { allowInSuggesting = false } = {}) {
     drawSelection();
   }
   scheduleChromeRefresh({ outline: true });
+  setDocumentState("edited");
 }
 
 /** The uniform run-format state over the selection, or null if not a range. */
@@ -6038,7 +6074,7 @@ for (const mode of reviewModeButtons) {
   mode.addEventListener("click", () => setReviewMode(mode.dataset.reviewMode));
 }
 
-// ---- Command palette (⌘K) — fuzzy search over real editor actions -----------
+// ---- Command palette (⌘⇧P) — fuzzy search over real editor actions ----------
 const cmdPalette = document.getElementById("cmdPalette");
 const cmdInput = document.getElementById("cmdInput");
 const cmdList = document.getElementById("cmdList");
@@ -6055,6 +6091,7 @@ function editorCommands(context = { surface: "palette" }) {
   const cmds = [
     { id: "file.open", label: "Open…", group: "File", kw: "load docx", noDoc: true, run: () => fileEl.click() },
     { id: "file.save", label: "Save (download .docx)", group: "File", kw: "export download", shortcut: "⌘S", run: () => saveDocx() },
+    { id: "file.properties", label: "Document properties", group: "File", kw: "metadata title author", run: () => toggleProperties(true) },
     {
       id: "edit.undo",
       label: doc?.undoLabel ? `Undo ${doc.undoLabel}` : "Undo",
@@ -6121,32 +6158,33 @@ function editorCommands(context = { surface: "palette" }) {
       run: () => selectAll(),
     },
     { id: "edit.find", label: "Find and replace", group: "Edit", kw: "search replace", shortcut: "⌘F", run: () => openFind() },
-    { id: "format.bold", label: "Bold", group: "Format", kw: "strong", shortcut: "⌘B", run: fmt("bold") },
-    { id: "format.italic", label: "Italic", group: "Format", kw: "emphasis", shortcut: "⌘I", run: fmt("italic") },
-    { id: "format.underline", label: "Underline", group: "Format", kw: "", shortcut: "⌘U", run: fmt("underline") },
-    { id: "format.strike", label: "Strikethrough", group: "Format", kw: "strike", run: fmt("strike") },
-    { id: "format.superscript", label: "Superscript", group: "Format", kw: "raise exponent", run: () => superBtn.click() },
-    { id: "format.subscript", label: "Subscript", group: "Format", kw: "lower", run: () => subBtn.click() },
-    { id: "format.clear", label: "Clear direct formatting", group: "Format", kw: "reset defaults", run: () => clearFormattingBtn.click() },
-    { id: "paragraph.align.start", label: "Align left", group: "Paragraph", kw: "", run: align("start") },
-    { id: "paragraph.align.center", label: "Align center", group: "Paragraph", kw: "centre", run: align("center") },
-    { id: "paragraph.align.end", label: "Align right", group: "Paragraph", kw: "", run: align("end") },
-    { id: "paragraph.align.justify", label: "Justify", group: "Paragraph", kw: "align", run: align("justify") },
-    { id: "paragraph.list.bullet", label: "Bullet list", group: "Paragraph", kw: "unordered", run: () => runToolbarEdit((s, o, e, f) => doc.toggleList(s, o, e, f, "bullet")) },
-    { id: "paragraph.list.numbered", label: "Numbered list", group: "Paragraph", kw: "ordered", run: () => runToolbarEdit((s, o, e, f) => doc.toggleList(s, o, e, f, "numbered")) },
+    { id: "format.bold", label: "Bold", group: "Format", kw: "strong", shortcut: "⌘B", enabled: !!selection, disabledReason: "Place the caret or select text", run: fmt("bold") },
+    { id: "format.italic", label: "Italic", group: "Format", kw: "emphasis", shortcut: "⌘I", enabled: !!selection, disabledReason: "Place the caret or select text", run: fmt("italic") },
+    { id: "format.underline", label: "Underline", group: "Format", kw: "", shortcut: "⌘U", enabled: !!selection, disabledReason: "Place the caret or select text", run: fmt("underline") },
+    { id: "format.strike", label: "Strikethrough", group: "Format", kw: "strike", enabled: !!selection, disabledReason: "Place the caret or select text", run: fmt("strike") },
+    { id: "format.superscript", label: "Superscript", group: "Format", kw: "raise exponent", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => superBtn.click() },
+    { id: "format.subscript", label: "Subscript", group: "Format", kw: "lower", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => subBtn.click() },
+    { id: "format.clear", label: "Clear direct formatting", group: "Format", kw: "reset defaults", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => clearFormattingBtn.click() },
+    { id: "paragraph.align.start", label: "Align left", group: "Paragraph", kw: "", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: align("start") },
+    { id: "paragraph.align.center", label: "Align center", group: "Paragraph", kw: "centre", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: align("center") },
+    { id: "paragraph.align.end", label: "Align right", group: "Paragraph", kw: "", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: align("end") },
+    { id: "paragraph.align.justify", label: "Justify", group: "Paragraph", kw: "align", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: align("justify") },
+    { id: "paragraph.list.bullet", label: "Bullet list", group: "Paragraph", kw: "unordered", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => runToolbarEdit((s, o, e, f) => doc.toggleList(s, o, e, f, "bullet")) },
+    { id: "paragraph.list.numbered", label: "Numbered list", group: "Paragraph", kw: "ordered", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => runToolbarEdit((s, o, e, f) => doc.toggleList(s, o, e, f, "numbered")) },
     { id: "paragraph.list.restart", label: "Restart numbering", group: "Paragraph", kw: "list restart 1", run: () => selection && runNodeEdit(() => doc.restartList(selection.focus.node)) },
     { id: "paragraph.list.continue", label: "Continue numbering", group: "Paragraph", kw: "list continue resume", run: () => selection && runNodeEdit(() => doc.continueList(selection.focus.node)) },
-    { id: "paragraph.indent.increase", label: "Increase indent", group: "Paragraph", kw: "", run: () => adjustIndentCommand(360) },
-    { id: "paragraph.indent.decrease", label: "Decrease indent", group: "Paragraph", kw: "outdent", run: () => adjustIndentCommand(-360) },
-    { id: "insert.table", label: "Insert table (3×3)", group: "Insert", kw: "grid", run: () => selection && runEdit(() => doc.insertTable(selection.focus.node, 3, 3), { gate: true }) },
-    { id: "insert.link", label: "Add or edit link", group: "Insert", kw: "hyperlink url bookmark toc", shortcut: "⌘K", run: () => editSelectionLink() },
+    { id: "paragraph.indent.increase", label: "Increase indent", group: "Paragraph", kw: "", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => adjustIndentCommand(360) },
+    { id: "paragraph.indent.decrease", label: "Decrease indent", group: "Paragraph", kw: "outdent", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => adjustIndentCommand(-360) },
+    { id: "insert.table", label: "Insert table (3×3)", group: "Insert", kw: "grid", enabled: !!selection, disabledReason: "Place the caret before inserting a table", run: () => selection && runEdit(() => doc.insertTable(selection.focus.node, 3, 3), { gate: true }) },
+    { id: "insert.link", label: "Add or edit link", group: "Insert", kw: "hyperlink url bookmark toc", shortcut: "⌘K", enabled: context.hasRange ?? hasRange(), disabledReason: "Select text to add a link", run: () => editSelectionLink() },
     { id: "insert.bookmark", label: "Bookmark manager", group: "Insert", kw: "bookmarks navigate links", run: () => openBookmarkManager() },
     { id: "view.outline", label: "Toggle outline", group: "View", kw: "headings navigation", run: () => toggleOutline() },
     { id: "view.zoomIn", label: "Zoom in", group: "View", kw: "", run: () => stepZoom(1) },
     { id: "view.zoomOut", label: "Zoom out", group: "View", kw: "", run: () => stepZoom(-1) },
     { id: "view.settings", label: "Settings", group: "View", kw: "theme accent dark", run: () => settingsBtn.click() },
     { id: "layout.pageSetup", label: "Page setup", group: "Layout", kw: "margins orientation paper size", run: () => togglePageSetup(true) },
-    { id: "layout.paragraph", label: "Paragraph properties", group: "Layout", kw: "spacing borders shading indent", run: () => toggleParagraphProperties(true) },
+    { id: "layout.paragraph", label: "Paragraph properties", group: "Layout", kw: "spacing borders shading indent", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => toggleParagraphProperties(true) },
+    { id: "help.commands", label: "Keyboard shortcuts and commands", group: "Help", kw: "help shortcuts command palette", shortcut: "⌘⇧P", noDoc: true, run: () => openCmd() },
     {
       id: "review.comment",
       label: "Add comment",
@@ -6180,6 +6218,190 @@ function editorCommands(context = { surface: "palette" }) {
   return cmds.filter((command) => doc || command.noDoc);
 }
 
+// ---- Application menus -----------------------------------------------------
+// The Vellum reference supplies the two-row title/menu composition, but its
+// labels all route to one prototype palette. OpenDoc renders real categorized
+// menus from the same command descriptors used by the palette and context menu,
+// so availability, shortcuts, mutation gates, and dynamic Undo/Redo labels stay
+// consistent across every command surface.
+const appMenuBar = document.getElementById("appMenuBar");
+const appMenuButtons = [...appMenuBar.querySelectorAll(".app-menu-button")];
+const appMenuPopover = document.getElementById("appMenuPopover");
+let activeAppMenu = null;
+let activeAppMenuTrigger = null;
+
+const APP_MENU_SECTIONS = {
+  file: [["file.open", "file.save"], ["file.properties"]],
+  edit: [
+    ["edit.undo", "edit.redo"],
+    ["edit.cut", "edit.copy", "edit.paste"],
+    ["edit.selectAll", "edit.find"],
+  ],
+  view: [
+    ["view.outline", "review.toggle"],
+    ["view.zoomIn", "view.zoomOut"],
+    ["review.mode.editing", "review.mode.suggesting", "review.mode.viewing"],
+  ],
+  insert: [["insert.table", "insert.link", "insert.bookmark"], ["review.comment"]],
+  format: [
+    ["format.bold", "format.italic", "format.underline", "format.strike"],
+    ["format.superscript", "format.subscript", "format.clear"],
+    ["paragraph.align.start", "paragraph.align.center", "paragraph.align.end", "paragraph.align.justify"],
+    ["paragraph.list.bullet", "paragraph.list.numbered"],
+    ["paragraph.indent.decrease", "paragraph.indent.increase", "layout.paragraph"],
+  ],
+  tools: [["layout.pageSetup", "layout.paragraph"], ["file.properties", "view.settings"]],
+  help: [["help.commands"]],
+};
+
+function appMenuFocusableItems() {
+  return [...appMenuPopover.querySelectorAll(".app-menu-item:not(:disabled)")];
+}
+
+function positionAppMenu(trigger) {
+  const rect = trigger.getBoundingClientRect();
+  const viewportWidth = document.documentElement.clientWidth;
+  const width = appMenuPopover.offsetWidth;
+  appMenuPopover.style.left = `${Math.max(8, Math.min(rect.left, viewportWidth - width - 8))}px`;
+  appMenuPopover.style.top = `${rect.bottom + 4}px`;
+}
+
+function closeAppMenu({ restoreFocus = false } = {}) {
+  if (appMenuPopover.hidden) return;
+  appMenuPopover.hidden = true;
+  for (const button of appMenuButtons) button.setAttribute("aria-expanded", "false");
+  const trigger = activeAppMenuTrigger;
+  activeAppMenu = null;
+  activeAppMenuTrigger = null;
+  if (restoreFocus) trigger?.focus({ preventScroll: true });
+}
+
+function renderAppMenu(name) {
+  const byId = new Map(
+    editorCommands({ surface: "menu", hasRange: hasRange() }).map((command) => [command.id, command]),
+  );
+  appMenuPopover.replaceChildren();
+  let renderedSections = 0;
+  for (const ids of APP_MENU_SECTIONS[name] ?? []) {
+    const commands = ids.map((id) => byId.get(id)).filter(Boolean);
+    if (!commands.length) continue;
+    if (renderedSections > 0) {
+      const separator = document.createElement("div");
+      separator.className = "app-menu-separator";
+      separator.setAttribute("role", "separator");
+      appMenuPopover.appendChild(separator);
+    }
+    renderedSections += 1;
+    for (const command of commands) {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "app-menu-item";
+      item.setAttribute("role", "menuitem");
+      item.dataset.command = command.id;
+      item.disabled = command.enabled === false;
+      if (command.disabledReason) item.title = command.disabledReason;
+
+      const label = document.createElement("span");
+      label.className = "app-menu-item-label";
+      label.textContent = command.label;
+      const hint = document.createElement("span");
+      hint.className = "app-menu-item-hint";
+      hint.textContent = command.shortcut ?? "";
+      item.append(label, hint);
+      item.addEventListener("click", () => {
+        if (command.enabled === false) return;
+        const trigger = activeAppMenuTrigger;
+        closeAppMenu();
+        trigger?.focus({ preventScroll: true });
+        command.run();
+      });
+      appMenuPopover.appendChild(item);
+    }
+  }
+}
+
+function openAppMenu(name, { focusFirst = true } = {}) {
+  const trigger = appMenuButtons.find((button) => button.dataset.menu === name);
+  if (!trigger) return;
+  for (const button of appMenuButtons) {
+    button.setAttribute("aria-expanded", String(button === trigger));
+  }
+  activeAppMenu = name;
+  activeAppMenuTrigger = trigger;
+  renderAppMenu(name);
+  appMenuPopover.setAttribute("aria-label", `${trigger.textContent.trim()} menu`);
+  appMenuPopover.hidden = false;
+  positionAppMenu(trigger);
+  if (focusFirst) appMenuFocusableItems()[0]?.focus({ preventScroll: true });
+}
+
+function adjacentAppMenuTrigger(trigger, direction) {
+  const index = appMenuButtons.indexOf(trigger);
+  return appMenuButtons[(index + direction + appMenuButtons.length) % appMenuButtons.length];
+}
+
+for (const button of appMenuButtons) {
+  button.addEventListener("click", () => {
+    if (!appMenuPopover.hidden && activeAppMenu === button.dataset.menu) {
+      closeAppMenu({ restoreFocus: true });
+    } else {
+      openAppMenu(button.dataset.menu);
+    }
+  });
+  button.addEventListener("pointerenter", () => {
+    if (!appMenuPopover.hidden && activeAppMenu !== button.dataset.menu) {
+      openAppMenu(button.dataset.menu, { focusFirst: false });
+    }
+  });
+  button.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      openAppMenu(button.dataset.menu);
+    } else if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+      event.preventDefault();
+      const next = adjacentAppMenuTrigger(button, event.key === "ArrowRight" ? 1 : -1);
+      next.focus({ preventScroll: true });
+      next.scrollIntoView({ inline: "nearest", block: "nearest" });
+    } else if (event.key === "Escape") {
+      closeAppMenu({ restoreFocus: true });
+    }
+  });
+}
+
+appMenuPopover.addEventListener("keydown", (event) => {
+  const items = appMenuFocusableItems();
+  const index = items.indexOf(document.activeElement);
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    const direction = event.key === "ArrowDown" ? 1 : -1;
+    items[(index + direction + items.length) % items.length]?.focus();
+  } else if (event.key === "Home" || event.key === "End") {
+    event.preventDefault();
+    items[event.key === "Home" ? 0 : items.length - 1]?.focus();
+  } else if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+    event.preventDefault();
+    const next = adjacentAppMenuTrigger(activeAppMenuTrigger, event.key === "ArrowRight" ? 1 : -1);
+    next.scrollIntoView({ inline: "nearest", block: "nearest" });
+    openAppMenu(next.dataset.menu);
+  } else if (event.key === "Escape") {
+    event.preventDefault();
+    closeAppMenu({ restoreFocus: true });
+  } else if (event.key === "Tab") {
+    closeAppMenu();
+  }
+});
+
+document.addEventListener("pointerdown", (event) => {
+  if (
+    !appMenuPopover.hidden &&
+    !appMenuPopover.contains(event.target) &&
+    !appMenuBar.contains(event.target)
+  ) {
+    closeAppMenu();
+  }
+});
+window.addEventListener("resize", () => closeAppMenu());
+
 function buildCommands() {
   return editorCommands({ surface: "palette" });
 }
@@ -6206,7 +6428,7 @@ function renderCommands(query) {
   const q = query.trim().toLowerCase();
   const all = buildCommands();
   cmdMatches = q
-    ? all.filter((c) => `${c.label} ${c.group} ${c.kw}`.toLowerCase().includes(q))
+    ? all.filter((c) => `${c.label} ${c.group} ${c.kw} ${c.shortcut ?? ""}`.toLowerCase().includes(q))
     : all;
   cmdSel = cmdMatches.findIndex((command) => command.enabled !== false);
   cmdList.replaceChildren();
@@ -6263,6 +6485,7 @@ function runCommand(i) {
 }
 
 function openCmd() {
+  closeAppMenu();
   cmdReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   cmdPalette.hidden = false;
   searchTrigger.setAttribute("aria-expanded", "true");
@@ -6328,7 +6551,7 @@ document.addEventListener("keydown", (e) => {
 });
 // Visible entry point for the palette (doc 69 §1.4.1): the shortcut already
 // worked, it just had no on-screen affordance to discover it.
-searchTrigger.addEventListener("click", openCmd);
+searchTrigger.addEventListener("click", () => openCmd());
 
 // ---- Find / replace ---------------------------------------------------------
 const FIND_SCAN_CAP = 5000;
@@ -6482,7 +6705,7 @@ function selectTextMatch(match) {
   // stealing focus back to the canvas mid-typing sent subsequent keystrokes
   // to the document instead of the find box. Focus returns to the canvas
   // only when the panel actually closes (closeFind).
-  scrollCaretIntoView();
+  scrollFindMatchIntoView();
   updateFindStatus();
   return true;
 }
@@ -6782,6 +7005,7 @@ function saveDocx() {
     a.download = currentName.toLowerCase().endsWith(".docx") ? currentName : `${currentName}.docx`;
     a.click();
     URL.revokeObjectURL(url);
+    setDocumentState("downloaded");
     setStatus(`Saved ${a.download}`);
   } catch (err) {
     console.error(err);

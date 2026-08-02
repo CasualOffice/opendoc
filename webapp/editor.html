@@ -18,18 +18,32 @@
       <div class="brand">
         <img class="brand-logo" src="./opendoc-mark.svg" alt="" width="24" height="24" />
         <span class="mark">OpenDoc</span>
-        <span class="testing" title="Developer test harness — not a product or supported viewer.">testing</span>
-        <span class="divider" hidden id="titleDivider"></span>
-        <input
-          class="doc-title"
-          id="docTitle"
-          type="text"
-          hidden
-          autocomplete="off"
-          spellcheck="false"
-          aria-label="Document name"
-          title="Rename document"
-        />
+      </div>
+      <div id="documentChrome" class="document-chrome" hidden>
+        <div class="document-title-row">
+          <input
+            class="doc-title"
+            id="docTitle"
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            aria-label="Document name"
+            title="Rename document"
+          />
+          <span id="documentState" class="document-state" data-state="opened" aria-live="polite">
+            <span class="ms" aria-hidden="true">check_circle</span>
+            <span id="documentStateText">Opened</span>
+          </span>
+        </div>
+        <nav id="appMenuBar" class="app-menu-bar" aria-label="Application menus">
+          <button type="button" class="app-menu-button" data-menu="file" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">File</button>
+          <button type="button" class="app-menu-button" data-menu="edit" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">Edit</button>
+          <button type="button" class="app-menu-button" data-menu="view" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">View</button>
+          <button type="button" class="app-menu-button" data-menu="insert" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">Insert</button>
+          <button type="button" class="app-menu-button" data-menu="format" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">Format</button>
+          <button type="button" class="app-menu-button" data-menu="tools" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">Tools</button>
+          <button type="button" class="app-menu-button" data-menu="help" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">Help</button>
+        </nav>
       </div>
       <button
         id="searchTrigger"
@@ -62,6 +76,8 @@
         </button>
       </div>
     </header>
+
+    <div id="appMenuPopover" class="app-menu-popover" role="menu" aria-label="Application menu" hidden></div>
 
     <div id="propertiesPanel" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="propertiesTitle" aria-describedby="propertiesDescription">
       <section class="dialog-card properties-dialog">
@@ -530,9 +546,15 @@
     <div id="tableStyleMenu" class="context-menu table-style-menu" hidden role="menu" aria-label="Table styles"></div>
 
     <div id="splitCellDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="splitCellTitle" aria-describedby="splitCellDescription">
-      <section class="dialog-card" style="max-width: 360px">
+      <section class="dialog-card dialog-card-compact">
         <header class="dialog-head">
-          <div class="dialog-heading"><span class="ms dialog-heading-icon" aria-hidden="true">splitscreen</span><span><strong id="splitCellTitle" class="dialog-title">Split cell</strong><small id="splitCellDescription">Choose how many columns to create.</small></span></div>
+          <div class="dialog-heading">
+            <span class="ms dialog-heading-icon" aria-hidden="true">splitscreen</span>
+            <div>
+              <h2 id="splitCellTitle">Split cell</h2>
+              <p id="splitCellDescription">Choose how many columns to create.</p>
+            </div>
+          </div>
           <button id="splitCellClose" type="button" class="dialog-close" title="Close" aria-label="Close split cell dialog"><span class="ms" aria-hidden="true">close</span></button>
         </header>
         <div class="dialog-body">
@@ -558,21 +580,29 @@
     </div>
 
     <div id="findPanel" class="find-panel" role="dialog" aria-label="Find and replace" hidden>
-      <div class="find-row">
-        <input id="findInput" type="text" placeholder="Find" autocomplete="off" spellcheck="false" aria-label="Find" />
-        <span id="findStatus" class="find-status"></span>
-        <button id="findPrev" type="button" class="btn icon-only" title="Previous match (Shift+Enter)" aria-label="Previous match"><span class="ms" aria-hidden="true">keyboard_arrow_up</span></button>
-        <button id="findNext" type="button" class="btn icon-only" title="Next match (Enter)" aria-label="Next match"><span class="ms" aria-hidden="true">keyboard_arrow_down</span></button>
-        <span class="find-sep"></span>
-        <label class="find-case" title="Match case"><input id="findCase" type="checkbox" /> Aa</label>
-        <label class="find-case" title="Match whole words"><input id="findWholeWord" type="checkbox" /> Ab</label>
-        <label class="find-case" title="Search only the current selection"><input id="findSelection" type="checkbox" /> Sel</label>
-        <button id="findClose" type="button" class="btn icon-only" title="Close (Esc)" aria-label="Close find"><span class="ms" aria-hidden="true">close</span></button>
-      </div>
-      <div class="find-row find-replace-row">
-        <input id="replaceInput" type="text" placeholder="Replace with" autocomplete="off" spellcheck="false" aria-label="Replace with" />
-        <button id="replaceOne" type="button" class="chip-btn">Replace</button>
-        <button id="replaceAll" type="button" class="chip-btn chip-btn-primary">Replace all</button>
+      <header class="find-panel-head">
+        <div>
+          <strong class="find-panel-title">Find and replace</strong>
+          <span id="findStatus" class="find-status"></span>
+        </div>
+        <button id="findClose" type="button" class="dialog-close" title="Close (Esc)" aria-label="Close find"><span class="ms" aria-hidden="true">close</span></button>
+      </header>
+      <div class="find-panel-body">
+        <div class="find-search-row">
+          <input id="findInput" type="text" placeholder="Find" autocomplete="off" spellcheck="false" aria-label="Find" />
+          <button id="findPrev" type="button" class="btn icon-only" title="Previous match (Shift+Enter)" aria-label="Previous match"><span class="ms" aria-hidden="true">keyboard_arrow_up</span></button>
+          <button id="findNext" type="button" class="btn icon-only" title="Next match (Enter)" aria-label="Next match"><span class="ms" aria-hidden="true">keyboard_arrow_down</span></button>
+        </div>
+        <div class="find-options" role="group" aria-label="Find options">
+          <label class="find-option"><input id="findCase" type="checkbox" /> Match case</label>
+          <label class="find-option"><input id="findWholeWord" type="checkbox" /> Whole words</label>
+          <label class="find-option"><input id="findSelection" type="checkbox" /> Selection only</label>
+        </div>
+        <input id="replaceInput" class="find-replacement" type="text" placeholder="Replace with" autocomplete="off" spellcheck="false" aria-label="Replace with" />
+        <div class="find-actions">
+          <button id="replaceOne" type="button" class="dialog-button">Replace</button>
+          <button id="replaceAll" type="button" class="dialog-button dialog-button-primary">Replace all</button>
+        </div>
       </div>
     </div>
 

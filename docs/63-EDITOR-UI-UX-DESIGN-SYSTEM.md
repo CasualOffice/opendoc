@@ -35,8 +35,9 @@ Borrowed from the reference, adapted to the CasualOffice brand:
   chrome does not depend on a runtime font request.
 - **Neutrals** — near-white surfaces on a light-grey canvas; hairline dividers
   (`--line`); soft, low-contrast shadows for lifted surfaces (menus, panels).
-- **Shape & space** — rounded surfaces (`--radius` 8px, small controls 6–7px),
-  generous whitespace, 4px control gaps, comfortable 28–32px control heights.
+- **Shape & space** — rounded surfaces (`--radius` 8px, small controls 7px,
+  popovers 10px, dialogs 12px), a 4/8/12/16/20/24px spacing grid, 30px toolbar
+  controls, 34px actions, and 36px form fields.
 - **Light & dark** — both first-class (`:root[data-theme]` + `prefers-color-scheme`).
 - **Motion** — quick (120ms) fades/slides for popovers and panels; nothing bouncy.
 
@@ -46,7 +47,7 @@ The reference calls out six regions; our shell is a CSS grid of:
 
 ```
 ┌───────────────────────── top bar ─────────────────────────┐
-│ brand · (menu/title) · doc title ✓saved   settings · save  │
+│ brand · doc title + local state · File/Edit/…  settings · save │
 ├──────────────────────── toolbar/ribbon ───────────────────┤   (1)
 │  grouped formatting controls (evolves toward tabs)         │
 ├──────┬───────────────── document viewport ─────┬──────────┤
@@ -57,17 +58,17 @@ The reference calls out six regions; our shell is a CSS grid of:
 ├──────┴──────────────────── status bar ─────────┴──────────┤   (5)
 │ page X/Y · words · language · mode · view · zoom · sync    │
 └────────────────────────────────────────────────────────────┘
-Overlays (float above): command palette ⌘K (6), floating selection
+Overlays (float above): command palette ⌘⇧P (6), floating selection
 toolbar, context menus, toolbar popovers.
 ```
 
 | # | Region | Purpose | Contents (functional, added over time) |
 |---|--------|---------|----------------------------------------|
-| 1 | **Top bar + toolbar** | identity + primary actions + formatting | brand, document title + save state, Open/Save/Settings; formatting controls grouped (Style/Font/Size · B I U · align/spacing/indent · lists · tables). Later: menu bar, ribbon tabs. |
+| 1 | **Top bar + toolbar** | identity + primary actions + formatting | brand; two-row document block with title, honest local `Opened`/`Edited`/`Downloaded` state, and functional File/Edit/View/Insert/Format/Tools/Help menus; Open/Save/Properties/Settings; tabbed formatting ribbon. |
 | 3 | **Left nav rail + panel** | document navigation | **Outline** (heading tree → scroll-to) first; later Pages (thumbnails), Search/Find. The rail only shows an icon once its panel is functional. |
 | 4 | **Right context panel** | inspect/act on the selection | later: Styles (apply), Properties (paragraph/table inspector), Comments (needs a comments model — a later phase). Collapsible; never empty. |
 | 5 | **Status bar** | document state | page X of Y, word/paragraph counts, zoom (−/＋/%), later language, edit mode, view toggles, save/sync state. |
-| 6 | **Command palette (⌘K)** | fast command access | fuzzy search over every action (insert table, apply style, export, …). |
+| 6 | **Command palette (⌘⇧P)** | fast command access | fuzzy search over every action (insert table, apply style, export, …). `⌘K` remains the document-standard Add/Edit Link shortcut. |
 | — | **Floating selection toolbar** | quick format at the selection | mini B/I/U · highlight · color · link · comment above a range; complements our engine-drawn selection. |
 | — | **Rulers** | measure + indent/tabs | horizontal (done: margins, indent markers, tab stops); vertical (top/bottom margins) later. |
 
@@ -85,15 +86,29 @@ Reuse these; don't invent per-feature variants.
   and Page Setup. Dialogs use a dimmed backdrop, explicit Close/Cancel/Apply
   actions, restore focus to their trigger, and keep the action row reachable while
   the body scrolls on narrow screens. Do not force form-heavy workflows into
-  toolbar-sized popovers.
+  toolbar-sized popovers. Use one of three widths: compact 380px (a short decision
+  such as Split Cell), standard 640px (metadata/forms), or wide 760px (forms with
+  a preview such as Page Setup). All share a 12px radius, 16px title, 30px Close,
+  36px fields, and 34px footer actions; mobile width is viewport-bounded.
+- **Application menu** (`.app-menu-bar` + `.app-menu-popover`) — top-level
+  File/Edit/View/Insert/Format/Tools/Help triggers backed by the shared command
+  registry. Arrow keys move within and between menus, Escape restores the active
+  trigger, unavailable commands expose a reason, and narrow layouts contain the
+  full strip in a local horizontal scroller rather than overflowing the page.
 - **Panel** — an inset, bordered surface (left/right) with
   `--radius-popover`, low desktop elevation, a heading row (title + close), and
   a scrollable body. Narrow-screen inspectors become viewport-inset drawers
   with the same radius/border and stronger popover elevation. Docking changes;
   surface shape does not. Empty states remain *useful* (never dead).
+- **Find / Replace card** (`.find-panel`) — a 440px top-right popover with a
+  heading/status row, dedicated search row, wrapping option chips, replacement
+  field, and trailing action row. It becomes an 8px-inset viewport card on narrow
+  screens. Previous/Next select a model-backed range and center its engine-drawn
+  highlight in the document viewport; the card itself remains fixed.
 - **Segmented** (`.segmented`) — mutually-exclusive choices (theme, vertical align).
 - **Chips / mini-grids** — border presets, insert-table grid picker.
-- **Inputs** — numeric fields (indent/spacing) right-aligned, tabular numerals.
+- **Inputs** — dialog and Find fields are 36px high; numeric fields
+  (indent/spacing) are right-aligned with tabular numerals.
 
 ## 4. Feature-placement map
 
@@ -107,9 +122,9 @@ Where things live, so we stay consistent as we add features:
   select/structure/merge; compact cell-format popover; right properties inspector
   for measurements and layout. The right-click structure menu remains an
   alternative pointer path.
-- **Navigation** (outline, pages, find) → left rail/panel + ⌘K.
+- **Navigation** (outline, pages, find) → left rail/panel + menus + ⌘⇧P.
 - **Inspect/apply** (styles, properties, comments) → right context panel.
-- **Document actions** (open/save/export/print, page setup) → top bar + ⌘K.
+- **Document actions** (open/save/export/print, page setup) → top bar + menus + ⌘⇧P.
 - **View** (zoom, page/width, dark mode) → status bar + Settings.
 
 ## 5. Decisions
@@ -119,20 +134,20 @@ Where things live, so we stay consistent as we add features:
 - **Tabbed ribbon**: the working Home/Insert/Table/View ribbon is now the primary
   toolbar. Tabs and controls appear only when the underlying command is real;
   unavailable contextual commands remain visibly disabled.
-- **Comments / collaboration / Share** in the reference depend on a comments model
-  and multi-user sync (later phases). We do **not** stub them; the right panel ships
-  with only its functional tabs.
+- **Collaboration avatars / Share** in the reference depend on a host-owned
+  multi-user identity and sync contract. We do **not** stub them. Comments and
+  suggestions remain available through their implemented local review surfaces.
 
 ## 6. Delivery phases (incremental, each fully functional)
 
 1. **Shell + restyle** — grid scaffold, refined tokens, restyled top bar / toolbar /
    status bar. Plus the first functional left region: **Outline** (heading tree that
    scrolls the document). *(this slice)*
-2. **Command palette (⌘K)** — over existing actions.
+2. **Command palette (⌘⇧P)** — over existing actions.
 3. **Right context panel — Styles** (apply a paragraph style) then **Properties**
    (live selection inspector).
 4. **Floating selection toolbar.**
-5. **Find / Replace** (rail + ⌘K).
+5. **Find / Replace** (rail + menu + ⌘⇧P).
 6. **Vertical ruler.**
 7. **Ribbon tabs** (if/when control count warrants).
 8. **Comments** (needs a comments model — gated on that phase).

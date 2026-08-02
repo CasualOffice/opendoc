@@ -14,9 +14,99 @@ test("the ribbon Find button opens the panel", async ({ page, consoleErrors }) =
   await page.locator("#findBtn").click();
   await expect(page.locator("#findPanel")).toBeVisible();
   await expect(page.locator("#findInput")).toBeFocused();
+  await expect(page.locator(".find-panel-title")).toHaveText("Find and replace");
+  await expect(page.locator(".find-options")).toBeVisible();
+  await expect(page.locator(".find-actions")).toBeVisible();
+
+  const desktopLayout = await page.evaluate(() => {
+    const panel = document.querySelector("#findPanel").getBoundingClientRect();
+    const rows = [
+      ".find-panel-head",
+      ".find-search-row",
+      ".find-options",
+      ".find-replacement",
+      ".find-actions",
+    ].map((selector) => document.querySelector(selector).getBoundingClientRect());
+    return {
+      contained: rows.every(
+        (row) =>
+          row.left >= panel.left - 1 &&
+          row.right <= panel.right + 1 &&
+          row.top >= panel.top - 1 &&
+          row.bottom <= panel.bottom + 1,
+      ),
+      ordered: rows.every((row, index) => index === 0 || row.top >= rows[index - 1].bottom - 1),
+    };
+  });
+  expect(desktopLayout).toEqual({ contained: true, ordered: true });
+
+  await page.setViewportSize({ width: 480, height: 720 });
+  const narrowLayout = await page.evaluate(() => {
+    const panel = document.querySelector("#findPanel");
+    const rect = panel.getBoundingClientRect();
+    return {
+      left: rect.left,
+      right: rect.right,
+      viewportWidth: document.documentElement.clientWidth,
+      panelOverflow: panel.scrollWidth - panel.clientWidth,
+      documentOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    };
+  });
+  expect(narrowLayout.left).toBeGreaterThanOrEqual(0);
+  expect(narrowLayout.right).toBeLessThanOrEqual(narrowLayout.viewportWidth);
+  expect(narrowLayout.panelOverflow).toBeLessThanOrEqual(1);
+  expect(narrowLayout.documentOverflow).toBeLessThanOrEqual(0);
 
   await page.keyboard.press("Escape");
   await expect(page.locator("#findPanel")).toBeHidden();
+  expect(consoleErrors).toEqual([]);
+});
+
+test("previous and next scroll the canvas to the selected match", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+
+  const marker = "FIND_SCROLL_TARGET";
+  await moveCaretToDocStart(page);
+  await page.keyboard.type(marker);
+  await page.keyboard.press(`${MOD}+End`);
+  await page.keyboard.type(marker);
+  await moveCaretToDocStart(page);
+
+  await page.keyboard.press(`${MOD}+f`);
+  await page.locator("#findInput").fill(marker);
+  const initialStatus = await page.locator("#findStatus").textContent();
+  expect(initialStatus).toMatch(/^[12] of 2$/);
+
+  const firstScroll = await page.locator("#viewport").evaluate((el) => el.scrollTop);
+  const panelTop = (await page.locator("#findPanel").boundingBox()).y;
+  await page.locator("#findNext").click();
+  await expect(page.locator("#findStatus")).not.toHaveText(initialStatus);
+  const nextState = await page.evaluate(() => {
+    const viewport = document.querySelector("#viewport");
+    const viewportRect = viewport.getBoundingClientRect();
+    const highlight = document.querySelector(".overlay .highlight").getBoundingClientRect();
+    return {
+      scrollTop: viewport.scrollTop,
+      visible: highlight.top >= viewportRect.top && highlight.bottom <= viewportRect.bottom,
+      panelTop: document.querySelector("#findPanel").getBoundingClientRect().top,
+    };
+  });
+  expect(Math.abs(nextState.scrollTop - firstScroll)).toBeGreaterThan(10);
+  expect(nextState.visible).toBe(true);
+  expect(nextState.panelTop).toBeCloseTo(panelTop, 0);
+
+  await page.locator("#findPrev").click();
+  await expect(page.locator("#findStatus")).toHaveText(initialStatus);
+  const previousScroll = await page.locator("#viewport").evaluate((el) => el.scrollTop);
+  expect(Math.abs(previousScroll - nextState.scrollTop)).toBeGreaterThan(10);
+
+  await page.keyboard.press("Escape");
+  await page.locator("#undoBtn").click();
+  await page.locator("#undoBtn").click();
   expect(consoleErrors).toEqual([]);
 });
 
