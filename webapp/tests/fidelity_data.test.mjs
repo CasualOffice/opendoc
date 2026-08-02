@@ -67,8 +67,10 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
   assert.equal(by["Text boxes & shapes"].editable, "none");
   assert.equal(by["Footnotes & endnotes"].editable, "none");
   assert.equal(by["Fields"].editable, "none");
-  // Math is a placeholder, not real typesetting.
-  assert.equal(by["Math (OMML)"].rendered, "placeholder");
+  // Math has a bounded typed/rendered subset, but remains partial and read-only.
+  assert.equal(by["Math (OMML)"].modeled, "partial");
+  assert.equal(by["Math (OMML)"].rendered, "partial");
+  assert.equal(by["Math (OMML)"].editable, "none");
   // Charts / SmartArt are preserved, not rendered as charts/diagrams.
   assert.equal(by["Charts"].rendered, "preserved");
   assert.equal(by["SmartArt"].rendered, "preserved");
