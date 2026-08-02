@@ -26,7 +26,7 @@ use casual_doc_model::v1::{
     HorizontalAnchor, HorizontalPosition, HorizontalRule as ModelHorizontalRule,
     HorizontalRuleAlign, Indentation, InlineNode, InlineSdt, LevelSuffix, LineRule, MathExpression,
     MediaId, MediaReference, NoteKind, NoteReference, Paragraph, ParagraphProperties,
-    ReviewProjection, Rgba, RunFontHint, RunProperties, SchemeColor, SdtControlData,
+    ReviewProjection, RevisionKind, Rgba, RunFontHint, RunProperties, SchemeColor, SdtControlData,
     SectionBoundary, SectionId, SectionType, ShapeStroke, StyleId, Symbol, TabAlignment, TabLeader,
     TabStop, Table, TableBorders, TableCell, TableLayout, TableRow, TableRowProperties, TextBox,
     TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxVerticalAnchor,
@@ -72,7 +72,83 @@ pub(crate) type ParagraphFloatExclusions = BTreeMap<NodeId, Vec<ParagraphFloatEx
 /// Context threaded through the flow: the font resolver, the document's theme
 /// font scheme (needed to turn `w:rFonts@*Theme` slots into concrete families),
 /// and the running font-resolution report.
+/// How a galley presents tracked changes and comments (docs/93). The editor uses
+/// [`ReviewView::Editing`] (final-with-markup byte space, no baked review styling
+/// — the webapp draws markup in its DOM overlay); a read-only viewer requests
+/// [`ReviewView::Markup`] to bake struck deletions, author-colored/underlined
+/// insertions, and highlighted comment ranges into the galley itself.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ReviewView {
+    /// The live-editor view: today's behavior, unchanged. Deletions/moveFrom are
+    /// zero active width; insertions carry no baked markup.
+    #[default]
+    Editing,
+    /// A read-only markup view: deleted/moved-from text is shown and struck,
+    /// insertions/moveTo are author-colored and underlined, and comment ranges are
+    /// highlighted. Never fed to caret/selection/hit-test (its byte space differs).
+    Markup,
+}
+
+/// A soft-yellow highlight fill for a comment range in the read-only markup view.
+const COMMENT_HIGHLIGHT: [u8; 4] = [255, 246, 176, 255];
+
+/// The neutral fill for an unattributed change (no author), matching the webapp
+/// overlay's `REVIEW_AUTHOR_FALLBACK_COLOR` (`#5f6368`).
+const REVIEW_AUTHOR_FALLBACK: [u8; 4] = [0x5f, 0x63, 0x68, 0xff];
+
+/// The ten author hues, byte-identical to the webapp overlay's
+/// `REVIEW_AUTHOR_PALETTE` (P1G-REVIEW-048), so an author reads the same color in
+/// the read-only markup render and the live-editor overlay. Presentation-only.
+const REVIEW_AUTHOR_HUES: [[u8; 4]; 10] = [
+    [0x1a, 0x73, 0xe8, 0xff], // blue
+    [0x18, 0x80, 0x38, 0xff], // green
+    [0xd9, 0x30, 0x25, 0xff], // red
+    [0x93, 0x34, 0xe6, 0xff], // purple
+    [0xe3, 0x74, 0x00, 0xff], // orange
+    [0x0b, 0x80, 0x43, 0xff], // deep green
+    [0xa5, 0x0e, 0x0e, 0xff], // dark red
+    [0x84, 0x30, 0xce, 0xff], // violet
+    [0xb0, 0x60, 0x00, 0xff], // amber-brown
+    [0x12, 0x80, 0x5c, 0xff], // teal
+];
+
+/// Maps a revision's author to a stable hue via the same case-folded FNV-1a hash
+/// the webapp overlay uses (docs/93 decision 4); an absent/empty author gets the
+/// neutral fallback rather than masquerading as a specific reviewer.
+fn review_author_color(author: Option<&str>) -> [u8; 4] {
+    let key = author.unwrap_or("").trim().to_lowercase();
+    if key.is_empty() {
+        return REVIEW_AUTHOR_FALLBACK;
+    }
+    let mut hash: u32 = 0x811c_9dc5;
+    for ch in key.chars() {
+        hash ^= ch as u32;
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    REVIEW_AUTHOR_HUES[(hash as usize) % REVIEW_AUTHOR_HUES.len()]
+}
+
+/// Stamps the author color and the kind's decoration onto the runs just emitted
+/// for a revision in the read-only markup view: underline for an insertion or
+/// move-to, strikethrough for a deletion or move-from (docs/93).
+fn apply_revision_markup(items: &mut [FlowItem<'_>], kind: RevisionKind, author: Option<&str>) {
+    let color = review_author_color(author);
+    let struck = matches!(kind, RevisionKind::Deletion | RevisionKind::MoveFrom);
+    for item in items {
+        if let FlowItem::Run(run) = item {
+            run.color = color;
+            if struck {
+                run.decoration.strikethrough = true;
+            } else {
+                run.decoration.underline = true;
+            }
+        }
+    }
+}
+
 struct FlowCtx<'a> {
+    /// The review presentation policy for this galley (docs/93).
+    review_view: ReviewView,
     resolver: &'a FontResolver,
     scheme: Option<&'a FontScheme>,
     report: &'a mut FontResolutionReport,
@@ -145,6 +221,34 @@ pub fn build_galley_with_report(
     shaper: &dyn LineShaper,
     content_width: Twip,
 ) -> (Vec<BlockFragment>, FontResolutionReport) {
+    build_galley_with_report_view(document, shaper, content_width, ReviewView::Editing)
+}
+
+/// A read-only galley that bakes tracked-change and comment markup (docs/93):
+/// struck deletions/moves-from, author-colored/underlined insertions/moves-to,
+/// and highlighted comment ranges. Its byte space differs from the editing view
+/// (deletions are shown), so it is for read-only rendering — the native
+/// fidelity/PNG viewer — and must never be fed to caret/selection/hit-test. Not
+/// cached (the incremental cache path is editing-only).
+#[must_use]
+pub fn build_galley_markup(
+    document: &Document,
+    shaper: &dyn LineShaper,
+    content_width: Twip,
+) -> Vec<BlockFragment> {
+    build_galley_with_report_view(document, shaper, content_width, ReviewView::Markup).0
+}
+
+/// The shared galley builder, parameterized by the [`ReviewView`] presentation
+/// policy (docs/93). `Editing` is the live-editor default; `Markup` bakes review
+/// markup for a read-only viewer.
+#[must_use]
+pub fn build_galley_with_report_view(
+    document: &Document,
+    shaper: &dyn LineShaper,
+    content_width: Twip,
+    review_view: ReviewView,
+) -> (Vec<BlockFragment>, FontResolutionReport) {
     let resolver = FontResolver::new();
     let mut report = FontResolutionReport::new();
     // Resolve the theme color palette once so every run's `w:themeColor` resolves
@@ -155,6 +259,7 @@ pub fn build_galley_with_report(
         .as_ref()
         .map(resolve_palette);
     let mut ctx = FlowCtx {
+        review_view,
         resolver: &resolver,
         scheme: document.definitions().font_scheme.as_ref(),
         report: &mut report,
@@ -219,6 +324,7 @@ fn build_galley_for_blocks_inner(
         .as_ref()
         .map(resolve_palette);
     let mut ctx = FlowCtx {
+        review_view: ReviewView::Editing,
         resolver: &resolver,
         scheme: document.definitions().font_scheme.as_ref(),
         report: &mut report,
@@ -279,6 +385,7 @@ fn flow_running_blocks(
         .as_ref()
         .map(resolve_palette);
     let mut ctx = FlowCtx {
+        review_view: ReviewView::Editing,
         resolver: &resolver,
         scheme: document.definitions().font_scheme.as_ref(),
         report: &mut report,
@@ -344,6 +451,7 @@ pub fn build_galley_cached(
         .as_ref()
         .map(resolve_palette);
     let mut ctx = FlowCtx {
+        review_view: ReviewView::Editing,
         resolver: &resolver,
         scheme: document.definitions().font_scheme.as_ref(),
         report: &mut report,
@@ -1787,6 +1895,7 @@ fn block_intrinsic(
 ) -> (i32, i32) {
     let mut scratch = FontResolutionReport::new();
     let mut mctx = FlowCtx {
+        review_view: ReviewView::Editing,
         resolver: ctx.resolver,
         scheme: ctx.scheme,
         report: &mut scratch,
@@ -2346,6 +2455,9 @@ fn collect_items_with_measure<'a>(
     ctx: &mut FlowCtx,
     intrinsic: Option<IntrinsicPass>,
 ) {
+    // Under the read-only markup view, the `out` index at each open comment range
+    // start, so its runs get a highlight when the range closes (docs/93).
+    let mut comment_starts: Vec<usize> = Vec::new();
     for inline in inlines {
         match inline {
             InlineNode::Run(run) => {
@@ -2419,14 +2531,48 @@ fn collect_items_with_measure<'a>(
             // text here changes line wrapping and leaks a superscript
             // "[comment]" glyph into the document canvas.
             InlineNode::CommentReference(_) => {}
-            InlineNode::Revision(revision)
-                if revision
-                    .kind
-                    .contributes_to(ReviewProjection::FinalWithMarkup) =>
-            {
-                collect_items_with_measure(&revision.inlines, out, shaper, width, ctx, intrinsic)
+            // Comment ranges: under the markup view, remember where the range's
+            // runs begin and highlight them when it closes (docs/93). Under the
+            // editing view they are invisible markers, as today.
+            InlineNode::CommentRangeStart(_) if ctx.review_view == ReviewView::Markup => {
+                comment_starts.push(out.len());
             }
-            InlineNode::Revision(_) => {}
+            InlineNode::CommentRangeEnd(_) if ctx.review_view == ReviewView::Markup => {
+                if let Some(start) = comment_starts.pop() {
+                    for item in &mut out[start..] {
+                        if let FlowItem::Run(run) = item {
+                            run.highlight = Some(COMMENT_HIGHLIGHT);
+                        }
+                    }
+                }
+            }
+            InlineNode::Revision(revision) => {
+                // A revision's content is kept when it contributes to the projected
+                // text (Insertion/MoveTo) or, under the read-only markup view, always
+                // — so deleted/moved-from text is shown and struck (docs/93). Under
+                // the editing view a non-contributing revision stays zero-width.
+                let contributes = revision
+                    .kind
+                    .contributes_to(ReviewProjection::FinalWithMarkup);
+                if contributes || ctx.review_view == ReviewView::Markup {
+                    let start = out.len();
+                    collect_items_with_measure(
+                        &revision.inlines,
+                        out,
+                        shaper,
+                        width,
+                        ctx,
+                        intrinsic,
+                    );
+                    if ctx.review_view == ReviewView::Markup {
+                        apply_revision_markup(
+                            &mut out[start..],
+                            revision.kind,
+                            revision.author.as_deref(),
+                        );
+                    }
+                }
+            }
             InlineNode::Sdt(sdt) => {
                 // A native checkbox content control (`w14:checkbox`) declares its
                 // checked/unchecked glyphs, but producers routinely leave the
@@ -5367,10 +5513,19 @@ mod tests {
         definitions: &'a Definitions,
         inlines: &'a [InlineNode],
     ) -> Vec<FlowItem<'a>> {
+        collected_items_view(definitions, inlines, ReviewView::Editing)
+    }
+
+    fn collected_items_view<'a>(
+        definitions: &'a Definitions,
+        inlines: &'a [InlineNode],
+        review_view: ReviewView,
+    ) -> Vec<FlowItem<'a>> {
         let resolver = FontResolver::new();
         let shaper = ParleyShaper::new();
         let mut report = FontResolutionReport::new();
         let mut ctx = FlowCtx {
+            review_view,
             resolver: &resolver,
             scheme: definitions.font_scheme.as_ref(),
             report: &mut report,
@@ -5423,6 +5578,7 @@ mod tests {
         let resolver = FontResolver::new();
         let mut report = FontResolutionReport::new();
         let mut ctx = FlowCtx {
+            review_view: ReviewView::Editing,
             resolver: &resolver,
             scheme: definitions.font_scheme.as_ref(),
             report: &mut report,
@@ -6491,6 +6647,90 @@ mod tests {
                 .all(|item| !matches!(item, FlowItem::Run(run) if run.text.contains("comment"))),
             "comment references never emit an in-document glyph"
         );
+    }
+
+    #[test]
+    fn markup_view_bakes_tracked_change_and_comment_markup() {
+        use casual_doc_model::v1::{CommentRangeEnd, CommentRangeStart, Revision, RevisionKind};
+
+        let rev = |id: u64, run_id: u64, kind: RevisionKind, text: &str| {
+            InlineNode::Revision(Revision {
+                id: NodeId::from_parts(id, 1).unwrap(),
+                kind,
+                author: Some("Ada".to_owned()),
+                date: None,
+                revision_id: None,
+                editor_group: None,
+                inlines: vec![run_node(run_id, text, RunProperties::default())],
+            })
+        };
+        let comment = CommentId::new(NodeId::from_parts(50, 1).unwrap());
+        let inlines = vec![
+            InlineNode::CommentRangeStart(CommentRangeStart {
+                id: NodeId::from_parts(60, 1).unwrap(),
+                comment,
+            }),
+            run_node(2, "kept", RunProperties::default()),
+            InlineNode::CommentRangeEnd(CommentRangeEnd {
+                id: NodeId::from_parts(61, 1).unwrap(),
+                comment,
+            }),
+            rev(10, 3, RevisionKind::Insertion, "ins"),
+            rev(11, 4, RevisionKind::Deletion, "del"),
+        ];
+        let definitions = Definitions::default();
+
+        // Editing (default): the deletion is dropped and no markup is baked in.
+        let editing = collected_items(&definitions, &inlines);
+        assert_eq!(
+            run_texts(&editing),
+            vec!["kept", "ins"],
+            "the editing view drops the deletion"
+        );
+        assert!(
+            editing
+                .iter()
+                .all(|item| !matches!(item, FlowItem::Run(run) if run.highlight.is_some())),
+            "no comment highlight in the editing view"
+        );
+
+        // Markup (read-only): the deletion is shown + struck, the insertion is
+        // underlined and author-colored, and the comment range is highlighted.
+        let items = collected_items_view(&definitions, &inlines, ReviewView::Markup);
+        let run = |text: &str| {
+            items
+                .iter()
+                .find_map(|item| match item {
+                    FlowItem::Run(run) if run.text == text => Some(run),
+                    _ => None,
+                })
+                .expect("run present")
+        };
+        assert_eq!(
+            run_texts(&items),
+            vec!["kept", "ins", "del"],
+            "the markup view shows the deleted text"
+        );
+        assert!(
+            run("kept").highlight.is_some(),
+            "the comment range is highlighted"
+        );
+        let ins = run("ins");
+        assert!(
+            ins.decoration.underline && !ins.decoration.strikethrough,
+            "an insertion is underlined, not struck"
+        );
+        assert_ne!(
+            ins.color,
+            [0, 0, 0, 255],
+            "an insertion is author-colored, not default black"
+        );
+        let del = run("del");
+        assert!(
+            del.decoration.strikethrough && !del.decoration.underline,
+            "a deletion is struck, not underlined"
+        );
+        assert_eq!(del.color, ins.color, "the same author gets the same color");
     }
 
     #[test]
@@ -7871,6 +8111,7 @@ mod tests {
             let resolver = FontResolver::new();
             let mut report = FontResolutionReport::new();
             let ctx = FlowCtx {
+                review_view: ReviewView::Editing,
                 resolver: &resolver,
                 scheme: definitions.font_scheme.as_ref(),
                 report: &mut report,
