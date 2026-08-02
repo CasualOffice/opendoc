@@ -102,6 +102,7 @@ The runtime is not a UI toolkit and is not a DOCX-only editor. It is a determini
 82. `82-REVIEW-IDENTITY-AND-HISTORY-DESIGN.md` — review identity, scoped review operations, and history safety.
 83. `83-SDK-PACKAGING-EMBEDDING-AND-EXTENSIBILITY-ARCHITECTURE.md` — SDK packaging, embedding, preview mode, collaboration, MCP AI tools, and plugin extensibility architecture.
 86. `86-REVISION-AWARE-EDITING-DESIGN.md` — revision-aware range splitting/normalization so typing, deleting, and formatting work inside pending suggestions and across Revision/Hyperlink/SDT wrappers (REVIEW-GAP-007).
+93. `93-REVIEW-MARKUP-RENDER-VIEW-POLICY-DESIGN.md` — a read-only `ReviewView::Markup` galley policy so the native/PNG viewer shows struck deletions, author-colored/underlined insertions, and highlighted comment ranges without double-marking the webapp editor (docs/55 §11).
 
 Also present (not in the numbered sequence): `PHASE-1A-SEMANTIC-MODELING-TRACKER.md`.
 
