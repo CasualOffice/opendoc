@@ -543,6 +543,23 @@ const reviewSidebarHeader = document.getElementById("reviewSidebarHeader");
 let reviewMode = "editing";
 let reviewRevisionCursor = -1;
 let activeReviewCommentId = null;
+
+// The read-only "Show changes" markup preview (docs/93): renders struck
+// deletions + author-colored insertions + highlighted comments from the engine's
+// markup layout. A view toggle only — it never changes the model or the caret.
+const showChangesToggle = document.getElementById("showChangesToggle");
+let showingChanges = false;
+if (showChangesToggle) {
+  showChangesToggle.addEventListener("click", async () => {
+    if (!doc) return;
+    showingChanges = !showingChanges;
+    showChangesToggle.setAttribute("aria-pressed", String(showingChanges));
+    showChangesToggle.title = showingChanges
+      ? "Showing tracked changes (read-only) — click to hide"
+      : "Show tracked changes (read-only markup preview)";
+    await renderAll();
+  });
+}
 let activeReviewItemId = null;
 let reviewPopover = null;
 let reviewSidebarPreference = null;
@@ -705,6 +722,8 @@ function updateReviewControls() {
   let count = 0;
   try { count = (JSON.parse(doc.listRevisions()) ?? []).length; } catch { count = 0; }
   for (const button of reviewModeButtons) button.disabled = false;
+  // The read-only markup preview is available whenever a document is loaded.
+  if (showChangesToggle) showChangesToggle.disabled = false;
   if (reviewPrevious) reviewPrevious.disabled = count === 0;
   if (reviewNext) reviewNext.disabled = count === 0;
   const canDecide = count > 0 && reviewMode !== "viewing";
@@ -2038,6 +2057,10 @@ async function ensureGlyphCoverage(label) {
 
 async function renderAll() {
   if (!doc) return;
+  // Keep the engine's render layout in sync with the "Show changes" toggle: a
+  // fresh markup layout when on (so a preview reflects the latest document), the
+  // live editing layout when off. Caret/selection always use the editing layout.
+  doc.setShowChanges(showingChanges);
   clearFindParagraphCache();
   const token = ++renderToken;
   const zoom = Number(zoomEl.value);
