@@ -171,7 +171,7 @@ jobs:
       - name: Restore Cargo cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: Install wasm-pack
-        uses: taiki-e/install-action@7572810d7dd469b651bb7793945692cf78da5dd7
+        uses: taiki-e/install-action@6a1bd70eaac3c8bdf093356838d7ee09fda951cf
         with:
           tool: wasm-pack@0.15.0
           fallback: none
@@ -241,7 +241,7 @@ jobs:
         with:
           toolchain: 1.96.0
       - name: Install cargo-deny
-        uses: taiki-e/install-action@7572810d7dd469b651bb7793945692cf78da5dd7
+        uses: taiki-e/install-action@6a1bd70eaac3c8bdf093356838d7ee09fda951cf
         with:
           tool: cargo-deny@0.20.2
           fallback: none
@@ -252,7 +252,7 @@ jobs:
           cargo deny --manifest-path fuzz/Cargo.toml --locked
           check bans licenses sources
       - name: Install cargo-audit
-        uses: taiki-e/install-action@7572810d7dd469b651bb7793945692cf78da5dd7
+        uses: taiki-e/install-action@6a1bd70eaac3c8bdf093356838d7ee09fda951cf
         with:
           tool: cargo-audit@0.22.2
           fallback: none
