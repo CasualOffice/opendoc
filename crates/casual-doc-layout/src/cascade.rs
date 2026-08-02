@@ -14,14 +14,16 @@
 //! chain) → character style (runs only) → **direct** formatting. Each layer
 //! overlays the one below it, property by property. This module implements the
 //! `docDefaults → paragraph-style-chain → character-style-chain → direct` core of
-//! that cascade (table-style and numbering layers are a later slice); the
+//! that cascade, including the per-cell table-style layer (numbering is resolved
+//! by the flow engine); the
 //! `basedOn` chain is walked root-first so a child style overrides its parent, and
 //! walking is depth-bounded and cycle-guarded (the model validates against cycles,
 //! but the resolver never trusts that).
 
 use casual_doc_model::v1::{
     CnfStyle, DocumentDefaults, FontRef, FontScheme, Indentation, ParagraphProperties, RgbColor,
-    RunProperties, Spacing, Style, StyleId, StyleKind, TableLook, TableStyleRegion, ThemeFontRef,
+    RunProperties, Spacing, Style, StyleId, StyleKind, TableBorders, TableLook, TableStyleRegion,
+    ThemeFontRef,
 };
 use casual_doc_model::v1::{DefinitionMap, Definitions};
 
@@ -41,6 +43,20 @@ pub struct StyleCascade<'a> {
     /// The default paragraph style (`w:style@w:default="1"` of paragraph kind),
     /// applied to a paragraph that names no `pStyle` (Word's implicit `Normal`).
     default_paragraph_style: Option<StyleId>,
+}
+
+/// The property layer a table style contributes to one cell after `basedOn`,
+/// `wholeTable`, and active conditional regions have been resolved.
+///
+/// This is deliberately a layout value rather than model state: callers reuse
+/// it during intrinsic measurement and final flow, then discard it.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct TableStyleLayer {
+    pub(crate) paragraph: ParagraphProperties,
+    pub(crate) run: RunProperties,
+    pub(crate) table_borders: TableBorders,
+    pub(crate) cell_borders: TableBorders,
+    pub(crate) shading: Option<RgbColor>,
 }
 
 impl<'a> StyleCascade<'a> {
@@ -88,10 +104,24 @@ impl<'a> StyleCascade<'a> {
     /// `w:pPr`. The result carries the same `style_ref` the paragraph declared.
     #[must_use]
     pub fn resolve_paragraph(&self, direct: &ParagraphProperties) -> ParagraphProperties {
+        self.resolve_paragraph_in_table(direct, None)
+    }
+
+    /// Resolves a paragraph with an optional table-style layer between document
+    /// defaults and the ordinary paragraph-style chain.
+    #[must_use]
+    pub(crate) fn resolve_paragraph_in_table(
+        &self,
+        direct: &ParagraphProperties,
+        table: Option<&TableStyleLayer>,
+    ) -> ParagraphProperties {
         let mut effective = self
             .defaults
             .and_then(|d| d.paragraph.clone())
             .unwrap_or_default();
+        if let Some(table) = table {
+            overlay_paragraph(&mut effective, &table.paragraph);
+        }
         for id in self.style_chain(self.paragraph_style(direct)) {
             if let Some(style) = self.styles.get(&id)
                 && let Some(ppr) = &style.paragraph
@@ -113,10 +143,25 @@ impl<'a> StyleCascade<'a> {
         paragraph_style: Option<StyleId>,
         direct: &RunProperties,
     ) -> RunProperties {
+        self.resolve_run_in_table(paragraph_style, direct, None)
+    }
+
+    /// Resolves a run with an optional table-style layer between document
+    /// defaults and the paragraph/character style chains.
+    #[must_use]
+    pub(crate) fn resolve_run_in_table(
+        &self,
+        paragraph_style: Option<StyleId>,
+        direct: &RunProperties,
+        table: Option<&TableStyleLayer>,
+    ) -> RunProperties {
         let mut effective = self
             .defaults
             .and_then(|d| d.run.clone())
             .unwrap_or_default();
+        if let Some(table) = table {
+            overlay_run(&mut effective, &table.run);
+        }
         // The paragraph style contributes its run properties to every run.
         for id in self.style_chain(paragraph_style) {
             if let Some(style) = self.styles.get(&id)
@@ -137,21 +182,46 @@ impl<'a> StyleCascade<'a> {
         effective
     }
 
-    /// The effective cell background fill contributed by the **table-style**
-    /// layer (`w:tblStyle` → its `basedOn` chain, root → leaf): each style's own
-    /// region-less base cell/table shading, overlaid by whichever conditional
-    /// `w:tblStylePr` regions `cnf` selects (gated by `look`, Word's "Table Style
-    /// Options" checkboxes), applied in Word's region precedence — banding
-    /// lowest, header/footer row and first/last column next, corner cells
-    /// highest — so a cell that matches more than one region (e.g. the header
-    /// row's first column) resolves to the more specific one.
-    ///
-    /// Returns `None` when nothing in the style chain contributes a fill; the
-    /// caller falls back further (the table's own direct `w:shd`, then no fill).
-    /// This is the table-style layer described in `docs/46` (§ table findings,
-    /// "Table style and conditional formatting"): only cell shading is resolved
-    /// here — the style's paragraph/run emphasis (e.g. bold header text) and
-    /// table/cell border regions are a separate, still-open slice.
+    /// Resolves every table-style property consumed by layout for one cell.
+    /// Matching regions are applied in increasing precedence and duplicate
+    /// region blocks retain document order.
+    #[must_use]
+    pub(crate) fn table_style_layer(
+        &self,
+        style_ref: Option<StyleId>,
+        look: TableLook,
+        cnf: CnfStyle,
+    ) -> TableStyleLayer {
+        let regions = active_table_regions(look, cnf);
+        let mut layer = TableStyleLayer::default();
+        for id in self.style_chain(style_ref) {
+            let Some(style) = self.styles.get(&id) else {
+                continue;
+            };
+            apply_style_properties(
+                &mut layer,
+                style.paragraph.as_ref(),
+                style.run.as_ref(),
+                style.table.as_ref(),
+                style.table_cell.as_ref(),
+            );
+            // Matching conditional regions overlay the base, in precedence order.
+            for region in &regions {
+                for over in style.conditional.iter().filter(|c| c.region == *region) {
+                    apply_style_properties(
+                        &mut layer,
+                        over.paragraph.as_ref(),
+                        over.run.as_ref(),
+                        over.table.as_ref(),
+                        over.table_cell.as_ref(),
+                    );
+                }
+            }
+        }
+        layer
+    }
+
+    /// Compatibility helper for the original shading-only consumer.
     #[must_use]
     pub fn table_style_cell_shading(
         &self,
@@ -159,41 +229,53 @@ impl<'a> StyleCascade<'a> {
         look: TableLook,
         cnf: CnfStyle,
     ) -> Option<RgbColor> {
-        let regions = active_table_regions(look, cnf);
-        let mut fill = None;
-        for id in self.style_chain(style_ref) {
-            let Some(style) = self.styles.get(&id) else {
-                continue;
-            };
-            // The style's own region-less base: cell-level shading wins over the
-            // style's whole-table shading when both are set.
-            if let Some(table_cell) = &style.table_cell
-                && table_cell.shading.fill.is_some()
-            {
-                fill = table_cell.shading.fill;
-            } else if let Some(table) = &style.table
-                && table.shading.fill.is_some()
-            {
-                fill = table.shading.fill;
-            }
-            // Matching conditional regions overlay the base, in precedence order.
-            for region in &regions {
-                let Some(over) = style.conditional.iter().find(|c| c.region == *region) else {
-                    continue;
-                };
-                if let Some(cell) = &over.table_cell
-                    && cell.shading.fill.is_some()
-                {
-                    fill = cell.shading.fill;
-                } else if let Some(table) = &over.table
-                    && table.shading.fill.is_some()
-                {
-                    fill = table.shading.fill;
-                }
-            }
-        }
-        fill
+        self.table_style_layer(style_ref, look, cnf).shading
     }
+}
+
+fn apply_style_properties(
+    layer: &mut TableStyleLayer,
+    paragraph: Option<&ParagraphProperties>,
+    run: Option<&RunProperties>,
+    table: Option<&casual_doc_model::v1::TableProperties>,
+    cell: Option<&casual_doc_model::v1::TableCellProperties>,
+) {
+    if let Some(paragraph) = paragraph {
+        overlay_paragraph(&mut layer.paragraph, paragraph);
+    }
+    if let Some(run) = run {
+        overlay_run(&mut layer.run, run);
+    }
+    if let Some(table) = table {
+        overlay_table_borders(&mut layer.table_borders, &table.borders);
+        if table.shading.fill.is_some() {
+            layer.shading = table.shading.fill;
+        }
+    }
+    if let Some(cell) = cell {
+        overlay_table_borders(&mut layer.cell_borders, &cell.borders);
+        if cell.shading.fill.is_some() {
+            layer.shading = cell.shading.fill;
+        }
+    }
+}
+
+/// Deep-merges a border container so one higher-precedence edge does not erase
+/// unrelated inherited edges.
+pub(crate) fn overlay_table_borders(base: &mut TableBorders, over: &TableBorders) {
+    macro_rules! edge {
+        ($field:ident) => {
+            if over.$field.is_some() {
+                base.$field = over.$field.clone();
+            }
+        };
+    }
+    edge!(top);
+    edge!(start);
+    edge!(bottom);
+    edge!(end);
+    edge!(inside_h);
+    edge!(inside_v);
 }
 
 /// Combines a row's and a cell's `w:cnfStyle` selector bits: Word tolerates a
@@ -224,7 +306,8 @@ pub fn union_cnf(row: CnfStyle, cell: CnfStyle) -> CnfStyle {
 /// horizontal banding, last/first column, last/first row, then the four corner
 /// cells (which require both the row and column flag enabled).
 fn active_table_regions(look: TableLook, cnf: CnfStyle) -> Vec<TableStyleRegion> {
-    let mut regions = Vec::new();
+    // `wholeTable` is unconditional and is the lowest-precedence region.
+    let mut regions = vec![TableStyleRegion::WholeTable];
     if !look.no_v_band {
         if cnf.even_v_band {
             regions.push(TableStyleRegion::Band2Vertical);
@@ -552,8 +635,9 @@ mod tests {
     use super::*;
     use casual_doc_model::NodeId;
     use casual_doc_model::v1::{
-        Alignment, Definitions, FontCollection, FontName, LineRule, RgbColor, Shading,
-        TableCellProperties, TableStyleOverride, ThemeFont, ThemeFontEntry,
+        Alignment, BorderEdge, Color, Definitions, FontCollection, FontName, LineRule, RgbColor,
+        Shading, TableCellProperties, TableProperties, TableStyleOverride, ThemeFont,
+        ThemeFontEntry,
     };
 
     fn style_id(n: u64) -> StyleId {
@@ -620,6 +704,15 @@ mod tests {
         TableCellProperties {
             shading: Shading { fill: Some(fill) },
             ..TableCellProperties::default()
+        }
+    }
+
+    fn border(style: &str, size: u32, color: RgbColor) -> BorderEdge {
+        BorderEdge {
+            style: style.to_owned(),
+            size_eighth_points: Some(size),
+            color: Some(color),
+            space_points: None,
         }
     }
 
@@ -991,6 +1084,149 @@ mod tests {
             Some(rgb(10, 20, 30)),
             "child style inherits the ancestor's base fill"
         );
+    }
+
+    #[test]
+    fn whole_table_and_first_row_text_resolve_below_paragraph_and_direct_styles() {
+        let mut table = table_style(None, None, Vec::new());
+        table.run = Some(RunProperties {
+            size_half_points: Some(20),
+            ..RunProperties::default()
+        });
+        table.conditional = vec![
+            TableStyleOverride {
+                region: TableStyleRegion::WholeTable,
+                paragraph: Some(ParagraphProperties {
+                    alignment: Some(Alignment::Center),
+                    ..ParagraphProperties::default()
+                }),
+                run: Some(RunProperties {
+                    bold: Some(true),
+                    ..RunProperties::default()
+                }),
+                table: None,
+                table_row: None,
+                table_cell: None,
+            },
+            TableStyleOverride {
+                region: TableStyleRegion::FirstRow,
+                paragraph: None,
+                run: Some(RunProperties {
+                    color: Some(Color::Rgb(rgb(20, 40, 80))),
+                    size_half_points: Some(40),
+                    ..RunProperties::default()
+                }),
+                table: None,
+                table_row: None,
+                table_cell: None,
+            },
+        ];
+        let paragraph = Style {
+            run: Some(RunProperties {
+                italic: Some(true),
+                size_half_points: Some(30),
+                ..RunProperties::default()
+            }),
+            ..paragraph_style(2, None, ParagraphProperties::default())
+        };
+        let definitions = defs_with(vec![(1, table), (2, paragraph)], None);
+        let cascade = StyleCascade::new(&definitions);
+        let layer = cascade.table_style_layer(
+            Some(style_id(1)),
+            TableLook {
+                first_row: true,
+                ..TableLook::default()
+            },
+            CnfStyle {
+                first_row: true,
+                ..CnfStyle::default()
+            },
+        );
+
+        let ppr = ParagraphProperties {
+            style_ref: Some(style_id(2)),
+            ..ParagraphProperties::default()
+        };
+        let effective_p = cascade.resolve_paragraph_in_table(&ppr, Some(&layer));
+        assert_eq!(effective_p.alignment, Some(Alignment::Center));
+
+        let effective_r = cascade.resolve_run_in_table(
+            Some(style_id(2)),
+            &RunProperties {
+                size_half_points: Some(24),
+                ..RunProperties::default()
+            },
+            Some(&layer),
+        );
+        assert_eq!(effective_r.bold, Some(true), "wholeTable is unconditional");
+        assert_eq!(
+            effective_r.italic,
+            Some(true),
+            "paragraph style overlays table"
+        );
+        assert_eq!(effective_r.color, Some(Color::Rgb(rgb(20, 40, 80))));
+        assert_eq!(
+            effective_r.size_half_points,
+            Some(24),
+            "direct run formatting wins"
+        );
+    }
+
+    #[test]
+    fn conditional_table_and_cell_borders_merge_edge_by_edge_across_inheritance() {
+        let red = rgb(180, 20, 20);
+        let blue = rgb(20, 40, 180);
+        let green = rgb(20, 140, 60);
+        let mut base = table_style(None, None, Vec::new());
+        base.table = Some(TableProperties {
+            borders: TableBorders {
+                top: Some(border("single", 8, red)),
+                inside_h: Some(border("dashed", 12, blue)),
+                ..TableBorders::default()
+            },
+            ..TableProperties::default()
+        });
+        let mut child = table_style(Some(1), None, Vec::new());
+        child.conditional = vec![TableStyleOverride {
+            region: TableStyleRegion::FirstRow,
+            paragraph: None,
+            run: None,
+            table: Some(TableProperties {
+                borders: TableBorders {
+                    top: Some(border("double", 16, green)),
+                    ..TableBorders::default()
+                },
+                ..TableProperties::default()
+            }),
+            table_row: None,
+            table_cell: Some(TableCellProperties {
+                borders: TableBorders {
+                    bottom: Some(border("dotted", 10, blue)),
+                    ..TableBorders::default()
+                },
+                ..TableCellProperties::default()
+            }),
+        }];
+        let definitions = defs_with(vec![(1, base), (2, child)], None);
+        let layer = StyleCascade::new(&definitions).table_style_layer(
+            Some(style_id(2)),
+            TableLook {
+                first_row: true,
+                ..TableLook::default()
+            },
+            CnfStyle {
+                first_row: true,
+                ..CnfStyle::default()
+            },
+        );
+
+        assert_eq!(layer.table_borders.top, Some(border("double", 16, green)));
+        assert_eq!(
+            layer.table_borders.inside_h,
+            Some(border("dashed", 12, blue)),
+            "overriding top preserves the inherited inside edge"
+        );
+        assert_eq!(layer.cell_borders.bottom, Some(border("dotted", 10, blue)));
     }
 
     #[test]

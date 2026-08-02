@@ -1729,8 +1729,9 @@ mod semantic_tests {
     #[test]
     fn table_style_with_banding_survives_the_semantic_round_trip() {
         // A table style with style-level `w:tblPr` borders plus two `w:tblStylePr`
-        // conditional-format blocks: a `firstRow` with bold run + shaded/bordered
-        // cell, and a `band1Horz` with a distinct cell fill. The conditional
+        // conditional-format blocks: `wholeTable` paragraph/run/table borders,
+        // a `firstRow` with bold run + shaded/bordered cell, and a `band1Horz`
+        // with a distinct cell fill. The conditional
         // formatting (what drives banding / first-row emphasis) must survive the
         // model round trip unchanged.
         use casual_doc_model::v1::{RgbColor, StyleKind, TableStyleRegion};
@@ -1744,6 +1745,11 @@ mod semantic_tests {
                         <w:insideH w:val="single" w:sz="4" w:color="000000"/>
                     </w:tblBorders>
                 </w:tblPr>
+                <w:tblStylePr w:type="wholeTable">
+                    <w:pPr><w:jc w:val="center"/></w:pPr>
+                    <w:rPr><w:sz w:val="20"/></w:rPr>
+                    <w:tblPr><w:tblBorders><w:end w:val="double" w:sz="12" w:color="102030"/></w:tblBorders></w:tblPr>
+                </w:tblStylePr>
                 <w:tblStylePr w:type="firstRow">
                     <w:rPr><w:b/></w:rPr>
                     <w:tcPr>
@@ -1768,7 +1774,18 @@ mod semantic_tests {
         assert!(style.is_default);
         assert_eq!(style.name.as_deref(), Some("Table Grid"));
         assert!(style.table.as_ref().unwrap().borders.top.is_some());
-        assert_eq!(style.conditional.len(), 2);
+        assert_eq!(style.conditional.len(), 3);
+        let whole = style
+            .conditional
+            .iter()
+            .find(|over| over.region == TableStyleRegion::WholeTable)
+            .expect("wholeTable override");
+        assert_eq!(
+            whole.paragraph.as_ref().unwrap().alignment,
+            Some(casual_doc_model::v1::Alignment::Center)
+        );
+        assert_eq!(whole.run.as_ref().unwrap().size_half_points, Some(20));
+        assert!(whole.table.as_ref().unwrap().borders.end.is_some());
         let first_row = style
             .conditional
             .iter()
