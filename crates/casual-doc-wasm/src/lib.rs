@@ -4648,6 +4648,36 @@ impl WasmDocument {
             text: text.to_owned(),
         })];
         let mut body = review_paragraph_body(&self.document, node).map_err(to_js)?;
+        // docs/86 decision 1: typing strictly inside the author's own pending
+        // insertion extends that suggestion (continuing its group), rather than
+        // failing on the interior offset or starting a fresh adjacent revision.
+        if let Some(interior_group) = extend_authored_insertion_interior(
+            &mut body,
+            node,
+            offset,
+            &addition,
+            author.as_deref(),
+            &mut self.edit_ids,
+        ) {
+            let operation = update_review_operation(&self.document, &body, None).map_err(to_js)?;
+            let caret = Pos::new(node, offset + text.len() as u32);
+            return match typing_session {
+                Some(session) => self
+                    .apply_review_typing_action(
+                        vec![operation],
+                        caret,
+                        start,
+                        session,
+                        interior_group,
+                        true,
+                        true,
+                    )
+                    .map_err(to_js),
+                None => self
+                    .apply_action_caret_as(vec![operation], caret, HistoryKind::Review)
+                    .map_err(to_js),
+            };
+        }
         let changed = if continuing_group.is_some() {
             extend_review_group_insertion(&mut body, node, offset, group, addition)
         } else {
@@ -4764,6 +4794,35 @@ impl WasmDocument {
             ),
         );
         let mut body = review_paragraph_body(&self.document, node).map_err(to_js)?;
+        // docs/86 decision 1: styled typing strictly inside the author's own
+        // pending insertion extends that suggestion too.
+        if let Some(interior_group) = extend_authored_insertion_interior(
+            &mut body,
+            node,
+            offset,
+            &inlines,
+            author.as_deref(),
+            &mut self.edit_ids,
+        ) {
+            let operation = update_review_operation(&self.document, &body, None).map_err(to_js)?;
+            let caret = Pos::new(node, offset + text.len() as u32);
+            return match typing_session {
+                Some(session) => self
+                    .apply_review_typing_action(
+                        vec![operation],
+                        caret,
+                        start,
+                        session,
+                        interior_group,
+                        true,
+                        true,
+                    )
+                    .map_err(to_js),
+                None => self
+                    .apply_action_caret_as(vec![operation], caret, HistoryKind::Review)
+                    .map_err(to_js),
+            };
+        }
         let changed = if continuing_group.is_some() {
             extend_review_group_insertion(&mut body, node, offset, group, inlines)
         } else {
@@ -8750,6 +8809,131 @@ fn insert_review_revision(
             }
             BlockNode::AltChunk(_) => continue,
         }
+    }
+    false
+}
+
+/// docs/86 decision 1: typing *inside* the current author's own pending
+/// insertion extends that same suggestion instead of failing or starting a new
+/// one. If `offset` is strictly interior to an `Insertion` revision authored by
+/// `author` (and editor-grouped, i.e. a suggestion this session can continue),
+/// splice `addition` into its runs at the local offset and return the group so a
+/// typing session keeps merging into it. Returns `None` when no such suggestion
+/// contains the offset (the caller then takes the top-level insert path).
+fn extend_authored_insertion_interior(
+    blocks: &mut [BlockNode],
+    node: NodeId,
+    offset: u32,
+    addition: &[InlineNode],
+    author: Option<&str>,
+    ids: &mut IdGenerator,
+) -> Option<RevisionGroup> {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) if paragraph.id == node => {
+                let mut cursor = 0_u32;
+                for inline in &mut paragraph.inlines {
+                    let next = cursor.saturating_add(inline_anchor_len_for_review(inline));
+                    if offset > cursor && offset < next {
+                        let InlineNode::Revision(revision) = inline else {
+                            return None;
+                        };
+                        if revision.kind != RevisionKind::Insertion
+                            || revision.author.as_deref() != author
+                        {
+                            return None;
+                        }
+                        let group = revision.editor_group?;
+                        let local = offset - cursor;
+                        if splice_addition_into_runs(&mut revision.inlines, local, addition, ids) {
+                            coalesce_review_runs(&mut revision.inlines);
+                            return Some(group);
+                        }
+                        return None;
+                    }
+                    cursor = next;
+                }
+                return None;
+            }
+            BlockNode::Paragraph(_) => continue,
+            BlockNode::Table(table) => {
+                for row in &mut table.rows {
+                    for cell in &mut row.cells {
+                        if let Some(group) = extend_authored_insertion_interior(
+                            &mut cell.blocks,
+                            node,
+                            offset,
+                            addition,
+                            author,
+                            ids,
+                        ) {
+                            return Some(group);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(group) = extend_authored_insertion_interior(
+                    &mut sdt.blocks,
+                    node,
+                    offset,
+                    addition,
+                    author,
+                    ids,
+                ) {
+                    return Some(group);
+                }
+            }
+            BlockNode::AltChunk(_) => continue,
+        }
+    }
+    None
+}
+
+/// Splices `addition` into a suggestion's runs at byte `local`, splitting the run
+/// the offset lands inside (fresh id for the tail). Returns `false` if `local`
+/// falls inside a non-run inline (a suggestion normally wraps plain runs) or at a
+/// non-char boundary. Callers `coalesce_review_runs` afterwards, so a default-
+/// property insert merges back into one run.
+fn splice_addition_into_runs(
+    inlines: &mut Vec<InlineNode>,
+    local: u32,
+    addition: &[InlineNode],
+    ids: &mut IdGenerator,
+) -> bool {
+    let mut cursor = 0_u32;
+    for index in 0..inlines.len() {
+        let len = inline_anchor_len_for_review(&inlines[index]);
+        let next = cursor.saturating_add(len);
+        if local > cursor && local < next {
+            let InlineNode::Run(run) = &inlines[index] else {
+                return false;
+            };
+            let split = (local - cursor) as usize;
+            if !run.text.is_char_boundary(split) {
+                return false;
+            }
+            let tail_id = match ids.next_id() {
+                Ok(id) => id,
+                Err(_) => return false,
+            };
+            let tail = Run {
+                id: tail_id,
+                properties: run.properties.clone(),
+                text: run.text[split..].to_owned(),
+            };
+            if let InlineNode::Run(head) = &mut inlines[index] {
+                head.text.truncate(split);
+            }
+            let mut insert_at = index + 1;
+            for node in addition.iter().cloned() {
+                inlines.insert(insert_at, node);
+                insert_at += 1;
+            }
+            inlines.insert(insert_at, InlineNode::Run(tail));
+            return true;
+        }
+        cursor = next;
     }
     false
 }
@@ -18339,5 +18523,162 @@ mod tests {
         assert_eq!(hit.anchor(), "_Toc1");
         assert_eq!(hit.target_node(), target_id.to_string());
         assert!(hit.target_page() > 0);
+    }
+
+    // --- REVIEW-GAP-007 phase 2: typing inside a pending insertion (docs/86) --
+
+    fn wn(counter: u64) -> NodeId {
+        NodeId::from_parts(90, counter).unwrap()
+    }
+
+    fn wrun(id: u64, text: &str) -> InlineNode {
+        InlineNode::Run(Run {
+            id: wn(id),
+            properties: RunProperties::default(),
+            text: text.to_owned(),
+        })
+    }
+
+    /// "AB" + «insertion "CD" by `author`, grouped» + "EF"; projected "ABCDEF".
+    fn suggestion_paragraph(author: Option<&str>, grouped: bool) -> (NodeId, Vec<BlockNode>) {
+        let node = wn(1);
+        let group = grouped.then(|| RevisionGroup {
+            id: wn(9),
+            kind: RevisionGroupKind::Typing,
+        });
+        let blocks = vec![BlockNode::Paragraph(Paragraph {
+            id: node,
+            properties: ParagraphProperties::default(),
+            inlines: vec![
+                wrun(2, "AB"),
+                InlineNode::Revision(Revision {
+                    id: wn(3),
+                    kind: RevisionKind::Insertion,
+                    author: author.map(str::to_owned),
+                    date: None,
+                    revision_id: Some("1".to_owned()),
+                    editor_group: group,
+                    inlines: vec![wrun(4, "CD")],
+                }),
+                wrun(5, "EF"),
+            ],
+        })];
+        (node, blocks)
+    }
+
+    fn only_revision_text(blocks: &[BlockNode]) -> Option<String> {
+        let BlockNode::Paragraph(p) = &blocks[0] else {
+            return None;
+        };
+        let revs: Vec<&Revision> = p
+            .inlines
+            .iter()
+            .filter_map(|i| match i {
+                InlineNode::Revision(r) => Some(r),
+                _ => None,
+            })
+            .collect();
+        if revs.len() != 1 {
+            return None;
+        }
+        Some(
+            revs[0]
+                .inlines
+                .iter()
+                .filter_map(|i| match i {
+                    InlineNode::Run(r) => Some(r.text.clone()),
+                    _ => None,
+                })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn interior_typing_extends_the_authors_own_suggestion() {
+        let (node, mut blocks) = suggestion_paragraph(Some("Me"), true);
+        let addition = vec![wrun(20, "X")];
+        let mut ids = IdGenerator::new(100);
+
+        // Offset 3 is between C and D, strictly inside the insertion "CD".
+        let group = extend_authored_insertion_interior(
+            &mut blocks,
+            node,
+            3,
+            &addition,
+            Some("Me"),
+            &mut ids,
+        );
+
+        assert_eq!(
+            group,
+            Some(RevisionGroup {
+                id: wn(9),
+                kind: RevisionGroupKind::Typing
+            })
+        );
+        assert_eq!(
+            only_revision_text(&blocks).as_deref(),
+            Some("CXD"),
+            "the typed text joined the same suggestion, still one revision"
+        );
+    }
+
+    #[test]
+    fn interior_typing_ignores_a_boundary_offset() {
+        let (node, mut blocks) = suggestion_paragraph(Some("Me"), true);
+        let addition = vec![wrun(20, "X")];
+        let mut ids = IdGenerator::new(100);
+
+        // Offset 2 is the leading boundary and 4 the trailing boundary of the
+        // insertion — neither is strictly interior, so the caller's top-level /
+        // typing-session path handles them instead.
+        assert_eq!(
+            extend_authored_insertion_interior(
+                &mut blocks,
+                node,
+                2,
+                &addition,
+                Some("Me"),
+                &mut ids
+            ),
+            None
+        );
+        assert_eq!(
+            extend_authored_insertion_interior(
+                &mut blocks,
+                node,
+                4,
+                &addition,
+                Some("Me"),
+                &mut ids
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn interior_typing_will_not_touch_another_authors_suggestion() {
+        let (node, mut blocks) = suggestion_paragraph(Some("Alice"), true);
+        let addition = vec![wrun(20, "X")];
+        let mut ids = IdGenerator::new(100);
+
+        // Bob typing inside Alice's pending insertion must not mutate it here; the
+        // caller falls through to author Bob's own adjacent insertion instead.
+        assert_eq!(
+            extend_authored_insertion_interior(
+                &mut blocks,
+                node,
+                3,
+                &addition,
+                Some("Bob"),
+                &mut ids
+            ),
+            None
+        );
+        assert_eq!(
+            only_revision_text(&blocks).as_deref(),
+            Some("CD"),
+            "unchanged"
+        );
     }
 }
