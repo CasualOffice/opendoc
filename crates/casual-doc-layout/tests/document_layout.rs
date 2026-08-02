@@ -13,10 +13,15 @@
 //! - header content flows the full galley pipeline — a header holding an image
 //!   renders (the uniform-flow-pipeline invariant).
 
+use casual_doc_layout::block::BlockFragment;
 use casual_doc_layout::compose::compose_page;
 use casual_doc_layout::display::PaintItem;
-use casual_doc_layout::document_layout::{document_page_config, paginate_document};
+use casual_doc_layout::document_layout::{
+    document_page_config, paginate_document, paginate_document_view,
+};
+use casual_doc_layout::flow::ReviewView;
 use casual_doc_layout::flow::{build_galley, flow_header_footer};
+use casual_doc_layout::page::PaginatedLayout;
 use casual_doc_layout::paginate::{paginate, resolve_fields};
 use casual_doc_layout::running::{HeaderFooter, RunningContent, place_running_content};
 use casual_doc_layout::shape::ParleyShaper;
@@ -1015,5 +1020,72 @@ fn page_borders_resolve_per_page_and_compose_paints_the_frame() {
     assert!(
         first_rects >= second_rects + 4,
         "the framed page paints at least four more border rects ({first_rects} vs {second_rects})"
+    );
+}
+
+/// (total glyphs, glyphs painted in struck runs) across a layout's body paragraphs.
+fn glyph_and_struck_counts(layout: &PaginatedLayout) -> (usize, usize) {
+    let mut total = 0;
+    let mut struck = 0;
+    for page in &layout.pages {
+        for placed in &page.placed {
+            if let BlockFragment::Paragraph { lines, .. } = &placed.fragment {
+                for line in &lines.lines {
+                    for run in &line.runs {
+                        total += run.glyphs.len();
+                        if run.decoration.strikethrough {
+                            struck += run.glyphs.len();
+                        }
+                    }
+                }
+            }
+        }
+    }
+    (total, struck)
+}
+
+#[test]
+fn markup_view_shows_struck_deletions_the_editing_view_drops() {
+    use casual_doc_model::v1::{Revision, RevisionKind};
+
+    let deletion = InlineNode::Revision(Revision {
+        id: node(20),
+        kind: RevisionKind::Deletion,
+        author: Some("Ada".to_owned()),
+        date: None,
+        revision_id: None,
+        editor_group: None,
+        inlines: vec![run(21, "GONE")],
+    });
+    let doc = Document::new(
+        node(1),
+        vec![BlockNode::Paragraph(Paragraph {
+            id: node(2),
+            properties: ParagraphProperties::default(),
+            inlines: vec![run(3, "keep"), deletion],
+        })],
+        Definitions {
+            sections: vec![section(9, (12_240, 15_840), 1_440, vec![], vec![], false)],
+            ..Definitions::default()
+        },
+    )
+    .unwrap();
+    let shaper = ParleyShaper::new();
+
+    // The editing view drops the deletion: no struck glyphs at all.
+    let (editing_total, editing_struck) =
+        glyph_and_struck_counts(&paginate_document(&doc, &shaper));
+    assert_eq!(editing_struck, 0, "the editing view shows no struck text");
+
+    // The markup view shows the deleted "GONE" and strikes it — more glyphs, some struck.
+    let (markup_total, markup_struck) =
+        glyph_and_struck_counts(&paginate_document_view(&doc, &shaper, ReviewView::Markup));
+    assert!(
+        markup_struck > 0,
+        "the markup view strikes the deleted text"
+    );
+    assert!(
+        markup_total > editing_total,
+        "the markup view shows the deleted text the editing view drops ({markup_total} vs {editing_total})"
     );
 }

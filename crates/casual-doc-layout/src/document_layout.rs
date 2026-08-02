@@ -49,8 +49,8 @@ use crate::columns::{
     ColumnLayout, SectionRun, column_layout, paginate_columns, section_starts_new_page,
 };
 use crate::flow::{
-    ParagraphFloatExclusion, ParagraphFloatExclusions, build_galley_cached,
-    build_galley_for_blocks, build_galley_for_blocks_with_exclusions, flow_header_footer,
+    ParagraphFloatExclusion, ParagraphFloatExclusions, ReviewView, build_galley_cached,
+    build_galley_for_blocks_inner, flow_header_footer,
 };
 use crate::incremental::{DirtySet, GalleyCache};
 use crate::notes::{paginate_section_footnotes, run_has_body_footnotes};
@@ -265,8 +265,9 @@ fn build_section_runs(
     document: &Document,
     shaper: &dyn crate::text::LineShaper,
     plans: &[SectionPlan],
+    review_view: ReviewView,
 ) -> Vec<SectionRun> {
-    build_section_runs_inner(document, shaper, plans, None)
+    build_section_runs_inner(document, shaper, plans, None, review_view)
 }
 
 fn build_section_runs_with_exclusions(
@@ -274,8 +275,9 @@ fn build_section_runs_with_exclusions(
     shaper: &dyn crate::text::LineShaper,
     plans: &[SectionPlan],
     exclusions: &ParagraphFloatExclusions,
+    review_view: ReviewView,
 ) -> Vec<SectionRun> {
-    build_section_runs_inner(document, shaper, plans, Some(exclusions))
+    build_section_runs_inner(document, shaper, plans, Some(exclusions), review_view)
 }
 
 fn build_section_runs_inner(
@@ -283,6 +285,7 @@ fn build_section_runs_inner(
     shaper: &dyn crate::text::LineShaper,
     plans: &[SectionPlan],
     exclusions: Option<&ParagraphFloatExclusions>,
+    review_view: ReviewView,
 ) -> Vec<SectionRun> {
     let sections = &document.definitions().sections;
     let body = document.body();
@@ -291,7 +294,14 @@ fn build_section_runs_inner(
         let content = config.content_area();
         let layout = ColumnLayout::single(content);
         let blocks = body_with_appended_endnotes(document, body, body);
-        let galley = build_body_galley(document, shaper, &blocks, layout.flow_width(), exclusions);
+        let galley = build_body_galley(
+            document,
+            shaper,
+            &blocks,
+            layout.flow_width(),
+            exclusions,
+            review_view,
+        );
         return vec![SectionRun {
             config,
             layout,
@@ -312,6 +322,7 @@ fn build_section_runs_inner(
             boundary,
             &body[start..end_excl],
             exclusions,
+            review_view,
             &mut runs,
         );
         start = end_excl;
@@ -326,6 +337,7 @@ fn build_section_runs_inner(
             last,
             &trailing,
             exclusions,
+            review_view,
             &mut runs,
         );
     }
@@ -483,6 +495,7 @@ fn section_break_points<'a>(
 /// Flows one section's block slice at its column width and appends its
 /// [`SectionRun`]. An empty slice (a section that carries no body block of its own)
 /// is skipped so it never emits a stray band.
+#[allow(clippy::too_many_arguments)]
 fn push_section_run(
     document: &Document,
     shaper: &dyn crate::text::LineShaper,
@@ -490,6 +503,7 @@ fn push_section_run(
     boundary: &SectionBoundary,
     blocks: &[BlockNode],
     exclusions: Option<&ParagraphFloatExclusions>,
+    review_view: ReviewView,
     runs: &mut Vec<SectionRun>,
 ) {
     if blocks.is_empty() {
@@ -498,12 +512,21 @@ fn push_section_run(
     let config = plan.config;
 
     let layout = column_layout(&boundary.columns, config.content_area());
-    let galley = build_body_galley(document, shaper, blocks, layout.flow_width(), exclusions);
+    let galley = build_body_galley(
+        document,
+        shaper,
+        blocks,
+        layout.flow_width(),
+        exclusions,
+        review_view,
+    );
     let column_galleys = if layout.has_unequal_widths() {
         layout
             .flow_widths()
             .into_iter()
-            .map(|width| build_body_galley(document, shaper, blocks, width, exclusions))
+            .map(|width| {
+                build_body_galley(document, shaper, blocks, width, exclusions, review_view)
+            })
             .collect()
     } else {
         Vec::new()
@@ -523,13 +546,9 @@ fn build_body_galley(
     blocks: &[BlockNode],
     width: Twip,
     exclusions: Option<&ParagraphFloatExclusions>,
+    review_view: ReviewView,
 ) -> Vec<BlockFragment> {
-    exclusions.map_or_else(
-        || build_galley_for_blocks(document, shaper, blocks, width),
-        |exclusions| {
-            build_galley_for_blocks_with_exclusions(document, shaper, blocks, width, exclusions)
-        },
-    )
+    build_galley_for_blocks_inner(document, shaper, blocks, width, exclusions, review_view)
 }
 
 /// Lays a whole [`Document`] out into a finished, ready-to-render
@@ -558,12 +577,27 @@ pub fn paginate_document(
     document: &Document,
     shaper: &dyn crate::text::LineShaper,
 ) -> crate::page::PaginatedLayout {
+    paginate_document_view(document, shaper, ReviewView::Editing)
+}
+
+/// [`paginate_document`] under an explicit [`ReviewView`] (docs/93). `Editing`
+/// (the default entry) is the live-editor byte space; `Markup` produces a
+/// **read-only** layout that shows struck deletions and author-colored/underlined
+/// insertions + highlighted comment ranges — for a "show changes" viewer. The
+/// markup layout's byte space differs (deletions are shown), so it must not drive
+/// caret/selection; it is a render-only view.
+#[must_use]
+pub fn paginate_document_view(
+    document: &Document,
+    shaper: &dyn crate::text::LineShaper,
+    review_view: ReviewView,
+) -> crate::page::PaginatedLayout {
     let plans = build_section_plans(document, shaper);
     // Build one paginated run per section, each flowed at its own column width,
     // then paginate them into shared pages (column-aware, section boundaries
     // carried across pages).
-    let runs = build_section_runs(document, shaper, &plans);
-    finish_pagination(document, shaper, &plans, &runs)
+    let runs = build_section_runs(document, shaper, &plans, review_view);
+    finish_pagination(document, shaper, &plans, &runs, review_view)
 }
 
 /// The incremental counterpart to [`paginate_document`]: identical output, but the
@@ -590,7 +624,7 @@ pub fn paginate_document_cached(
 ) -> crate::page::PaginatedLayout {
     let plans = build_section_plans(document, shaper);
     let runs = build_section_runs_cached(document, shaper, &plans, cache, dirty);
-    finish_pagination(document, shaper, &plans, &runs)
+    finish_pagination(document, shaper, &plans, &runs, ReviewView::Editing)
 }
 
 /// The shared pagination tail: paginate the section runs into pages, then run the
@@ -602,6 +636,7 @@ fn finish_pagination(
     shaper: &dyn crate::text::LineShaper,
     plans: &[SectionPlan],
     runs: &[SectionRun],
+    review_view: ReviewView,
 ) -> crate::page::PaginatedLayout {
     let mut layout = finish_pagination_pass(document, shaper, plans, runs);
     let mut exclusions = paragraph_float_exclusions(document, shaper, plans, &layout);
@@ -615,7 +650,8 @@ fn finish_pagination(
     let mut previous_exclusions = exclusions.clone();
     for _ in 0..3 {
         let applied_exclusions = exclusions.clone();
-        let runs = build_section_runs_with_exclusions(document, shaper, plans, &exclusions);
+        let runs =
+            build_section_runs_with_exclusions(document, shaper, plans, &exclusions, review_view);
         let next = finish_pagination_pass(document, shaper, plans, &runs);
         let next_exclusions = paragraph_float_exclusions(document, shaper, plans, &next);
         if next_exclusions == exclusions {
@@ -633,7 +669,8 @@ fn finish_pagination(
     // observed on either side persists for the greatest observed clearance. One
     // final pagination cannot paint text into a previously observed float band.
     let conservative = conservative_exclusions(&previous_exclusions, &exclusions);
-    let runs = build_section_runs_with_exclusions(document, shaper, plans, &conservative);
+    let runs =
+        build_section_runs_with_exclusions(document, shaper, plans, &conservative, review_view);
     finish_pagination_pass(document, shaper, plans, &runs)
 }
 
@@ -874,7 +911,7 @@ fn build_section_runs_cached(
     if !document.definitions().sections.is_empty()
         || !referenced_endnotes(document.body()).is_empty()
     {
-        return build_section_runs(document, shaper, plans);
+        return build_section_runs(document, shaper, plans, ReviewView::Editing);
     }
     // Single-section fast path: one full-width run over the whole body, built
     // incrementally. Mirrors the `sections.is_empty()` arm of `build_section_runs`,
