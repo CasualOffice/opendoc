@@ -1,9 +1,10 @@
 # 63 — Editor UI/UX Design System & Shell
 
 Status: accepted direction (living document)
-Reference: `docs/assets/template-reference-prototype.html` (the recovered
-`Vellum.dc.html` source behind `template.png`) — a Vellum-style, Office-grade
-document editor.
+Reference: the newer `Vellum.dc.html` from the owner's `Vellum Design Book`
+bundle (recorded precisely in doc 64). The checked-in
+`docs/assets/template-reference-prototype.html` is an older revision and remains
+historical reference material, not the exact toolbar source.
 
 This note is the **single reference for the editor's UI/UX**. Every feature we add
 to `webapp/` is placed and styled per the shell and tokens below, so the editor

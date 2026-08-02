@@ -21,12 +21,56 @@ test("the Home ribbon never horizontally scrolls; narrow widths collapse groups 
   await gotoEditor(page);
   await clickIntoFirstPage(page);
 
-  // Wide (the default 1280 test viewport): the whole band fits, no overflow
-  // control, and — crucially — no horizontal scrollbar.
+  // Wide (the default 1280 test viewport): the whole corrected band fits, no
+  // overflow control, and — crucially — no horizontal scrollbar.
   await expect(page.locator("#ribbonOverflowBtn")).toBeHidden();
   expect(await ribbonHasNoHScroll(page)).toBe(true);
-  // Spec-critical groups are inline at this width.
+  // Editing mode follows the Vellum reference into the footer and remains
+  // visible independently of Home-band overflow; the requested Home control is
+  // mirrored from the same mode state.
   await expect(page.locator('#reviewModeControl [data-review-mode="suggesting"]')).toBeVisible();
+  await expect(page.locator("#ribbonReviewModeControl")).toBeVisible();
+
+  // Undo/Redo occupy distinct rows; Clipboard and Editing expose their authored
+  // icons rather than appearing as text-only/empty commands.
+  const undoBox = await page.locator("#undoBtn").boundingBox();
+  const redoBox = await page.locator("#redoBtn").boundingBox();
+  expect(redoBox.y).toBeGreaterThan(undoBox.y);
+  await expect(page.locator("#pasteBtn .ms")).toHaveText("content_paste");
+  await expect(page.locator("#copyBtn .ms")).toHaveText("content_copy");
+  await expect(page.locator("#findBtn .ms")).toHaveText("search");
+  await expect(page.locator("#replaceBtn .ms")).toHaveText("find_replace");
+  const tileContentFits = await page.evaluate(() =>
+    ["cutBtn", "copyBtn", "findBtn", "replaceBtn"].every((id) => {
+      const button = document.getElementById(id).getBoundingClientRect();
+      const icon = document.querySelector(`#${id} .ms`).getBoundingClientRect();
+      const label = document.querySelector(`#${id} .fmt-big-label`).getBoundingClientRect();
+      return (
+        icon.left >= button.left &&
+        icon.right <= button.right &&
+        label.left >= button.left &&
+        label.right <= button.right &&
+        label.top > icon.top
+      );
+    }),
+  );
+  expect(tileContentFits).toBe(true);
+
+  const highlightDividerClearance = await page.evaluate(() => {
+    const highlight = document.querySelector(".highlight-control").getBoundingClientRect();
+    const fontGroup = document.querySelector('[data-group="font"]').getBoundingClientRect();
+    return fontGroup.right - highlight.right;
+  });
+  expect(highlightDividerClearance).toBeGreaterThanOrEqual(12);
+
+  await page.locator('#ribbonReviewModeControl [data-review-mode="suggesting"]').click();
+  await expect(
+    page.locator('#reviewModeControl [data-review-mode="suggesting"]'),
+  ).toHaveAttribute("aria-pressed", "true");
+  await page.locator('#reviewModeControl [data-review-mode="editing"]').click();
+  await expect(
+    page.locator('#ribbonReviewModeControl [data-review-mode="editing"]'),
+  ).toHaveAttribute("aria-pressed", "true");
 
   // Narrow: groups that don't fit move into the "⋯" menu — still no scrollbar.
   await page.setViewportSize({ width: 760, height: 720 });
@@ -37,10 +81,8 @@ test("the Home ribbon never horizontally scrolls; narrow widths collapse groups 
   await page.locator("#ribbonOverflowBtn").click();
   const menu = page.locator("#ribbonOverflowMenu");
   await expect(menu).toBeVisible();
-  await expect(menu.locator(".rgroup-label", { hasText: "Review" })).toBeVisible();
-  await expect(
-    menu.locator('#reviewModeControl [data-review-mode="suggesting"]'),
-  ).toBeVisible();
+  await expect(menu.locator(".rgroup-label", { hasText: "Paragraph" })).toBeVisible();
+  await expect(menu.locator("#alignCenter")).toBeVisible();
 
   await page.setViewportSize({ width: 1280, height: 720 });
   expect(consoleErrors).toEqual([]);
@@ -68,6 +110,46 @@ test("icon-only ribbon controls show a delayed name + shortcut tooltip", async (
   await expect(tooltip).toBeHidden();
   await expect(page.locator("#bold")).toHaveAttribute("title", /Bold/);
 
+  expect(consoleErrors).toEqual([]);
+});
+
+test("overflowed icon controls keep tooltips and the command surface restores focus on Escape", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await page.setViewportSize({ width: 760, height: 720 });
+
+  const trigger = page.locator("#ribbonOverflowBtn");
+  const menu = page.locator("#ribbonOverflowMenu");
+  await trigger.click();
+  await expect(menu).toBeVisible();
+  await expect(page.locator("#fontFamily")).toBeFocused();
+
+  await page.locator("#alignCenter").hover();
+  await expect(page.locator(".ribbon-tooltip")).toContainText("Center");
+
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(trigger).toBeFocused();
+  expect(consoleErrors).toEqual([]);
+});
+
+test("ribbon tabs use roving focus and arrow-key activation", async ({ page, consoleErrors }) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+
+  await page.locator("#tabHome").focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.locator("#tabInsert")).toBeFocused();
+  await expect(page.locator("#tabInsert")).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("#tabHome")).toHaveAttribute("tabindex", "-1");
+  await expect(page.locator("#panelInsert")).toBeVisible();
+
+  await page.keyboard.press("End");
+  await expect(page.locator("#tabView")).toBeFocused();
+  await expect(page.locator("#panelView")).toBeVisible();
   expect(consoleErrors).toEqual([]);
 });
 
@@ -103,7 +185,7 @@ test("the ribbon collapses to a compact tab strip and expands again", async ({
   expect(consoleErrors).toEqual([]);
 });
 
-test("the live Styles gallery applies a real document style", async ({
+test("the Styles selector exposes every style and the quick gallery applies a real style", async ({
   page,
   consoleErrors,
 }) => {
@@ -112,6 +194,13 @@ test("the live Styles gallery applies a real document style", async ({
 
   const gallery = page.locator("#stylesGallery");
   await expect(gallery.locator(".style-card").first()).toBeVisible();
+  await expect(gallery.locator(".style-card")).toHaveCount(4);
+  expect(await page.locator("#paragraphStyle option").count()).toBeGreaterThan(4);
+  const styleWidths = await page.evaluate(() => [
+    document.querySelector("#paragraphStyle").getBoundingClientRect().width,
+    document.querySelector("#stylesGallery").getBoundingClientRect().width,
+  ]);
+  expect(Math.abs(styleWidths[0] - styleWidths[1])).toBeLessThanOrEqual(1);
 
   // Apply the first offered style; the gallery reflects the active style back
   // (its card becomes aria-selected), proving the click ran a real edit that

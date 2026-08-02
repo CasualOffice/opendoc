@@ -42,6 +42,8 @@ test("clicking an inline image selects it as an object and draws eight handles",
   await expect(page.locator(".overlay .object-outline")).toHaveCount(1);
   await expect(page.locator(".overlay .object-handle")).toHaveCount(8);
   await expect(page.locator(".object-context-bar")).toBeVisible();
+  await expect(page.locator(".object-context-bar")).toContainText("Drag handles to resize");
+  await expect(page.locator(".object-context-bar")).not.toContainText(/coming soon|later editing slice/i);
 
   expect(consoleErrors).toEqual([]);
 });
@@ -81,7 +83,7 @@ test("clicking body text deselects the object", async ({ page, consoleErrors }) 
   expect(consoleErrors).toEqual([]);
 });
 
-test("a selected object swallows text keys and Delete is deferred to a later slice", async ({
+test("a selected object swallows text keys and unsupported Delete feedback clears on exit", async ({
   page,
   consoleErrors,
 }) => {
@@ -96,14 +98,30 @@ test("a selected object swallows text keys and Delete is deferred to a later sli
   // Delete is a no-op this slice (object deletion is the mutation slice).
   await page.keyboard.press("Delete");
   await expect(page.locator("#pages")).toHaveAttribute("data-object-mode", "selected");
-  await expect(page.locator("#status")).toContainText("later editing slice");
+  await expect(page.locator("#status")).toContainText("Object deletion is not supported");
 
   // The document was not mutated: the typed text is not findable.
   await page.keyboard.press("Escape");
+  await expect(page.locator("#status")).toHaveText("");
   await page.keyboard.press(`${MOD}+f`);
   await page.locator("#findInput").fill("XYZ");
   await expect(page.locator("#findStatus")).toHaveText("No match");
   await page.keyboard.press("Escape");
 
+  expect(consoleErrors).toEqual([]);
+});
+
+test("image-options feedback is transient and clears when object selection exits", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await clickImage(page);
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#status")).toContainText("drag its handles to resize");
+
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#status")).toHaveText("");
+  await expect(page.locator("#pages")).not.toHaveAttribute("data-object-selected", /.*/);
   expect(consoleErrors).toEqual([]);
 });

@@ -1934,8 +1934,8 @@ body.modal-open {
 
 /* --- Home band composition (template.png / docs/64) ----------------------- */
 
-/* Accessible-only element kept in the DOM for handlers/reflection/specs but not
-   shown (e.g. the `#paragraphStyle` select behind the Styles gallery). */
+/* General accessible-only utility for controls or explanatory text that must
+   remain in the accessibility tree without occupying visual layout. */
 .visually-hidden {
   position: absolute;
   width: 1px;
@@ -1963,19 +1963,90 @@ body.modal-open {
   min-height: 26px;
 }
 
+/* Vellum's compact two-row font geometry: the authored family stays readable,
+   while highlight remains a real native select behind an icon-sized trigger. */
+.font-family-control select {
+  width: 120px;
+}
+
+.highlight-control {
+  position: relative;
+  justify-content: center;
+  width: var(--h-control);
+  height: var(--h-control);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+}
+
+.highlight-control:hover {
+  background: var(--bg-2);
+}
+
+.highlight-control > .ms {
+  font-size: var(--icon-control);
+  pointer-events: none;
+}
+
+.highlight-control > select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* Keep the last Font control visibly inside its group instead of touching the
+   Paragraph divider. The slightly tighter row gap matches the Vellum source. */
+[data-group="font"] .fmt-row-line {
+  gap: 2px;
+}
+
+[data-group="font"] .highlight-control {
+  margin-right: 10px;
+}
+
 /* Clipboard group: a big Paste button beside stacked Cut/Copy text rows. */
 .clipboard-ctl {
   align-items: stretch;
-  gap: 6px;
+  gap: 2px;
 }
 
-.fmt-big {
+/* Clipboard remains visibly discoverable even before a caret/range makes an
+   action available; disabled controls are muted, not visually erased. */
+.clipboard-ctl .fmt:disabled {
+  opacity: 0.82;
+  color: var(--faint);
+}
+
+.undo-ctl {
+  align-items: center;
+}
+
+.undo-stack {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+}
+
+.undo-stack .fmt {
+  height: 30px;
+}
+
+.fmt.fmt-big {
   flex-direction: column;
   gap: 2px;
   width: auto;
   min-width: 46px;
   height: auto;
   padding: 5px 8px;
+}
+
+.editing-ctl {
+  align-items: stretch;
+  gap: 2px;
 }
 
 .fmt-big .ms {
@@ -1988,63 +2059,58 @@ body.modal-open {
   line-height: 1;
 }
 
-.stackrows {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  justify-content: center;
-}
-
-/* Icon + label text rows (Cut/Copy, Find/Replace). */
-.fmt-row {
-  width: auto;
-  height: auto;
-  min-height: 22px;
-  padding: 2px 8px 2px 5px;
-  justify-content: flex-start;
-  gap: 6px;
-}
-
-.fmt-row .ms {
-  font-size: 16px;
-}
-
-.fmt-row-label {
-  font-size: 11.5px;
-  font-weight: 450;
-}
-
-/* Styles gallery: a live strip of style cards (template.png), each rendered in
-   its own look; the visible control that drives the hidden `#paragraphStyle`
-   select. Horizontal scroll on overflow via the chevron buttons — never wraps. */
+/* Styles follows the intended Vellum composition: one visible all-styles
+   selector above four quick-preview cards. The selector, not horizontal
+   scrolling, guarantees every imported/custom style is reachable. */
 .rgroup-styles {
   min-width: 0;
+  padding-inline: 3px;
 }
 
 .styles-ctl {
+  flex-direction: column;
+  align-items: stretch;
   gap: 2px;
-  max-width: 150px;
+  width: 202px;
+  max-width: 202px;
   min-width: 0;
+}
+
+.style-select,
+.style-select select {
+  width: 100%;
+  max-width: none;
+}
+
+.style-select select {
+  height: 30px;
+}
+
+/* Stronger than the later generic `.ctl select { max-width: 150px }`: the
+   style selector must cover the same complete width as its preview row. */
+.styles-ctl .style-select select {
+  width: 100%;
+  max-width: none;
 }
 
 .styles-gallery {
   display: flex;
   align-items: stretch;
-  gap: 6px;
+  gap: 2px;
+  width: 100%;
   overflow: hidden;
-  scroll-behavior: smooth;
-  padding: 1px;
+  padding: 0;
 }
 
 .style-card {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  flex: 0 0 auto;
-  min-width: 58px;
-  max-width: 120px;
-  height: 44px;
-  padding: 4px 10px;
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: none;
+  height: 30px;
+  padding: 3px 6px;
   border: 1px solid var(--line-strong);
   border-radius: 7px;
   background: var(--surface);
@@ -2089,28 +2155,6 @@ body.modal-open {
 .style-card-subtitle .style-card-name { font-size: 12px; font-weight: 500; color: var(--muted); }
 .style-card-normal .style-card-name { font-size: 12px; font-weight: 450; }
 
-.styles-scroll-btn {
-  display: inline-grid;
-  place-items: center;
-  width: 20px;
-  height: 44px;
-  flex: 0 0 auto;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--surface);
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.styles-scroll-btn:hover {
-  background: var(--bg-2);
-  color: var(--ink);
-}
-
-.styles-scroll-btn[hidden] {
-  display: none;
-}
-
 /* Overflow "⋯" button + menu — collects groups that don't fit the width. */
 .ribbon-overflow-btn {
   position: absolute;
@@ -2127,10 +2171,12 @@ body.modal-open {
   position: fixed;
   z-index: 40;
   display: flex;
+  flex-direction: column;
   align-items: flex-start;
-  gap: 4px;
-  max-width: min(92vw, 760px);
-  flex-wrap: wrap;
+  gap: 0;
+  width: min(560px, calc(100vw - 12px));
+  max-height: calc(100vh - 132px);
+  overflow: auto;
   padding: 10px 12px;
   border: 1px solid var(--line-strong);
   border-radius: 10px;
@@ -2142,10 +2188,38 @@ body.modal-open {
   display: none;
 }
 
-/* A group living in the overflow menu keeps its label but drops the divider. */
+/* A relocated group becomes a full-width, internally wrapping command row.
+   This avoids carrying a desktop-wide Font/Table group unchanged into a 360px
+   popover. */
 .ribbon-overflow-menu .rgroup {
+  align-items: stretch;
+  width: 100%;
+  padding: 6px 0 8px;
   border-right: none;
-  padding: 0 6px;
+  border-bottom: 1px solid var(--line);
+  gap: 6px;
+}
+
+.ribbon-overflow-menu .rgroup:last-child {
+  border-bottom: none;
+}
+
+.ribbon-overflow-menu .rgroup-label {
+  order: -1;
+  text-align: left;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.ribbon-overflow-menu .rgroup-ctl,
+.ribbon-overflow-menu .fmt-row-line {
+  flex-wrap: wrap;
+}
+
+.ribbon-overflow-menu .styles-ctl,
+.ribbon-overflow-menu .styles-gallery {
+  width: 100%;
+  max-width: none;
 }
 
 /* Delayed hover/focus tooltip for icon-only ribbon controls (docs/64 §3). */
@@ -2448,7 +2522,8 @@ body.modal-open {
 .review-popover-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .review-inline-bar { display: none !important; }
 .review-mode-segmented { display: inline-flex; gap: 2px; padding: 2px; border-radius: 999px; background: var(--bg-2); }
-.review-mode-seg { border: 1px solid transparent; border-radius: 999px; padding: 4px 8px; background: transparent; color: var(--muted); font: inherit; font-size: 11px; font-weight: 550; cursor: pointer; white-space: nowrap; }
+.review-mode-seg { display: inline-flex; align-items: center; gap: 4px; border: 1px solid transparent; border-radius: 999px; padding: 4px 8px; background: transparent; color: var(--muted); font: inherit; font-size: 11px; font-weight: 550; cursor: pointer; white-space: nowrap; }
+.review-mode-seg .ms { font-size: 15px; }
 .review-mode-seg[aria-pressed="true"] { color: #137333; border-color: #188038; background: color-mix(in srgb, #188038 12%, var(--surface)); }
 .review-mode-seg[data-review-mode="viewing"][aria-pressed="true"] { color: var(--ink); border-color: var(--accent); background: var(--accent-soft); }
 .review-mode-seg:disabled { opacity: 0.45; cursor: default; }
@@ -3439,6 +3514,34 @@ body:not(.doc-loaded) .drop-title {
   min-width: 0;
 }
 
+.footer-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.footer-mode-label {
+  color: var(--faint);
+}
+
+.footer .review-mode-segmented {
+  padding: 1px;
+}
+
+.footer .review-mode-seg {
+  padding: 2px 7px;
+  font-size: 10.5px;
+}
+
+.rgroup-mode .review-mode-seg {
+  padding: 5px;
+}
+
+.rgroup-mode .review-mode-seg .ms {
+  display: none;
+}
+
 .status {
   font-variant-numeric: tabular-nums;
   overflow: hidden;
@@ -3573,6 +3676,28 @@ body:not(.doc-loaded) .drop-title {
 
   .controls {
     gap: 4px;
+  }
+
+  .footer {
+    gap: 4px;
+    padding-inline: 6px;
+  }
+
+  .footer .foot-left,
+  .footer-mode-label,
+  .footer .stat-pages {
+    display: none;
+  }
+
+  .footer .foot-right {
+    width: 100%;
+    justify-content: space-between;
+    gap: 4px;
+  }
+
+  .footer .review-mode-seg {
+    padding-inline: 5px;
+    font-size: 10px;
   }
 
   .controls .btn {

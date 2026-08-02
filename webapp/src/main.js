@@ -155,7 +155,11 @@ const findCloseBtn = document.getElementById("findClose");
 
 /** Shows the named ribbon tab's panel and marks its tab selected. */
 function selectRibbonTab(name) {
-  for (const t of ribbonTabs) t.setAttribute("aria-selected", String(t.dataset.tab === name));
+  for (const t of ribbonTabs) {
+    const selected = t.dataset.tab === name;
+    t.setAttribute("aria-selected", String(selected));
+    t.tabIndex = selected ? 0 : -1;
+  }
   for (const p of ribbonPanels) p.hidden = p.dataset.panel !== name;
   // Recompute overflow synchronously (not on a later frame) so a control is
   // already in its final inline-or-overflow location the moment the panel shows —
@@ -170,6 +174,21 @@ for (const t of ribbonTabs) {
     if (ribbonViewCollapsed) setRibbonCollapsed(false);
   });
 }
+
+document.querySelector(".ribbon-tabs")?.addEventListener("keydown", (event) => {
+  if (!event.target.matches(".ribbon-tab")) return;
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  const enabled = ribbonTabs.filter((tab) => !tab.disabled);
+  const current = enabled.indexOf(event.target);
+  if (current < 0 || enabled.length === 0) return;
+  let next = current;
+  if (event.key === "Home") next = 0;
+  else if (event.key === "End") next = enabled.length - 1;
+  else next = (current + (event.key === "ArrowRight" ? 1 : -1) + enabled.length) % enabled.length;
+  event.preventDefault();
+  enabled[next].click();
+  enabled[next].focus();
+});
 
 // --- Compact ↔ ribbon view toggle (collapse/expand the band) -----------------
 const ribbonViewToggle = document.getElementById("ribbonViewToggle");
@@ -226,19 +245,23 @@ cutBtn.addEventListener("click", () => { cut(); });
 copyBtn.addEventListener("click", () => { copySelection(); });
 replaceBtn.addEventListener("click", () => { if (!findBtn.disabled) findBtn.click(); });
 
-// Live Styles gallery — the visible control (template.png). It is populated from
-// the document's real styles (`doc.listStyles()`, the same source as the hidden
-// `#paragraphStyle` select it drives) and applies a style through the identical
-// `setParagraphStyle` path the select's change handler uses.
+// Quick Styles gallery — populated from the document's real styles alongside
+// the visible all-styles `#paragraphStyle` selector. Both controls apply through
+// the same `setParagraphStyle` path.
 const stylesGallery = document.getElementById("stylesGallery");
-const stylesScrollPrev = document.querySelector('[data-styles-scroll="prev"]');
-const stylesScrollNext = document.querySelector('[data-styles-scroll="next"]');
 
 /** Rebuilds the Styles gallery cards from the document's style names. */
 function buildStylesGallery(styles) {
   if (!stylesGallery) return;
   stylesGallery.replaceChildren();
-  for (const name of styles) {
+  const preferred = ["Normal", "Body Text", "Title", "Heading 1", "Heading 2", "Subtitle"];
+  const quickStyles = [];
+  for (const preferredName of preferred) {
+    const match = styles.find((name) => name.toLowerCase() === preferredName.toLowerCase());
+    if (match && !quickStyles.includes(match)) quickStyles.push(match);
+  }
+  for (const name of styles) if (!quickStyles.includes(name)) quickStyles.push(name);
+  for (const name of quickStyles.slice(0, 4)) {
     const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
     const card = document.createElement("button");
     card.type = "button";
@@ -257,7 +280,6 @@ function buildStylesGallery(styles) {
     });
     stylesGallery.appendChild(card);
   }
-  updateStylesScrollAffordance();
 }
 
 /** Highlights the gallery card matching the reflected paragraph style. */
@@ -267,27 +289,6 @@ function syncStylesGalleryActive() {
   for (const card of stylesGallery.children) {
     card.setAttribute("aria-selected", String(card.dataset.style === active));
   }
-}
-
-/** Shows the ‹/› scroll chevrons only when the gallery overflows its box. */
-function updateStylesScrollAffordance() {
-  if (!stylesGallery || !stylesScrollPrev || !stylesScrollNext) return;
-  const overflowing = stylesGallery.scrollWidth > stylesGallery.clientWidth + 1;
-  const atStart = stylesGallery.scrollLeft <= 1;
-  const atEnd =
-    stylesGallery.scrollLeft + stylesGallery.clientWidth >= stylesGallery.scrollWidth - 1;
-  stylesScrollPrev.hidden = !overflowing || atStart;
-  stylesScrollNext.hidden = !overflowing || atEnd;
-}
-
-if (stylesScrollPrev && stylesScrollNext && stylesGallery) {
-  stylesScrollPrev.addEventListener("click", () => {
-    stylesGallery.scrollBy({ left: -140, behavior: "smooth" });
-  });
-  stylesScrollNext.addEventListener("click", () => {
-    stylesGallery.scrollBy({ left: 140, behavior: "smooth" });
-  });
-  stylesGallery.addEventListener("scroll", updateStylesScrollAffordance, { passive: true });
 }
 
 // --- Ribbon overflow: collapse groups that don't fit into a "⋯" menu ---------
@@ -300,10 +301,11 @@ const ribbonPanelGroups = new Map(
   ribbonPanels.map((p) => [p, [...p.querySelectorAll(":scope > .rgroup")]]),
 );
 
-function closeRibbonOverflow() {
+function closeRibbonOverflow({ restoreFocus = false } = {}) {
   if (!ribbonOverflowMenu) return;
   ribbonOverflowMenu.hidden = true;
   ribbonOverflowBtn?.setAttribute("aria-expanded", "false");
+  if (restoreFocus) ribbonOverflowBtn?.focus();
 }
 
 /** Reflows the active ribbon panel: groups that don't fit move into the "⋯"
@@ -313,7 +315,7 @@ function updateRibbonOverflow() {
   closeRibbonOverflow();
   // Restore every group to its home panel in canonical order before measuring.
   for (const [panel, groups] of ribbonPanelGroups) {
-    for (const g of groups) if (g.parentElement !== panel) panel.appendChild(g);
+    for (const group of groups) panel.appendChild(group);
   }
   ribbonOverflowMenu.replaceChildren();
   ribbonOverflowBtn.hidden = true;
@@ -323,22 +325,32 @@ function updateRibbonOverflow() {
   const style = getComputedStyle(active);
   const avail =
     active.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
-  const widths = groups.map((g) => g.offsetWidth);
-  const total = widths.reduce((a, b) => a + b, 0);
+  const widths = new Map(groups.map((group) => [group, group.offsetWidth]));
+  const total = groups.reduce((sum, group) => sum + widths.get(group), 0);
   if (total <= avail + 0.5) return; // everything fits — no overflow control
-  // Reserve room for the ⋯ button and keep the widest fitting prefix inline.
+  // Reserve room for the ⋯ button. Clipboard, Editing, and Mode are persistent
+  // anchors; relocate the other groups from right to left until the inline set
+  // fits. Mode can fall back to the footer at very small widths.
   const reserve = 44;
-  let used = 0;
-  let cut = groups.length;
-  for (let i = 0; i < groups.length; i++) {
-    if (used + widths[i] > avail - reserve) {
-      cut = i;
-      break;
-    }
-    used += widths[i];
+  let inlineWidth = total;
+  const moved = [];
+  for (let i = groups.length - 1; i >= 0 && inlineWidth > avail - reserve; i--) {
+    const group = groups[i];
+    if (group.hasAttribute("data-ribbon-pinned")) continue;
+    moved.push(group);
+    inlineWidth -= widths.get(group);
   }
-  if (cut < 1) cut = 1; // always keep at least one group inline
-  for (let i = cut; i < groups.length; i++) ribbonOverflowMenu.appendChild(groups[i]);
+  // If a future pinned composition cannot fit at an extremely small width,
+  // preserve Clipboard and move the remaining pinned group as the last resort.
+  if (inlineWidth > avail - reserve) {
+    for (let i = groups.length - 1; i >= 0 && inlineWidth > avail - reserve; i--) {
+      const group = groups[i];
+      if (moved.includes(group) || group.dataset.group === "clipboard") continue;
+      moved.push(group);
+      inlineWidth -= widths.get(group);
+    }
+  }
+  for (const group of groups) if (moved.includes(group)) ribbonOverflowMenu.appendChild(group);
   ribbonOverflowBtn.hidden = false;
 }
 
@@ -356,19 +368,34 @@ if (ribbonOverflowBtn && ribbonOverflowMenu) {
     const rect = ribbonOverflowBtn.getBoundingClientRect();
     const mw = ribbonOverflowMenu.offsetWidth;
     const left = Math.max(6, Math.min(rect.right - mw, window.innerWidth - mw - 6));
+    const top = Math.round(rect.bottom + 4);
     ribbonOverflowMenu.style.left = `${Math.round(left)}px`;
-    ribbonOverflowMenu.style.top = `${Math.round(rect.bottom + 4)}px`;
+    ribbonOverflowMenu.style.top = `${top}px`;
+    ribbonOverflowMenu.style.maxHeight = `${Math.max(120, window.innerHeight - top - 6)}px`;
   };
   ribbonOverflowBtn.addEventListener("click", () => {
     const open = ribbonOverflowMenu.hidden;
     ribbonOverflowMenu.hidden = !open;
     ribbonOverflowBtn.setAttribute("aria-expanded", String(open));
-    if (open) positionOverflowMenu();
+    if (open) {
+      positionOverflowMenu();
+      requestAnimationFrame(() => {
+        ribbonOverflowMenu.querySelector(
+          'button:not(:disabled), select:not(:disabled), input:not(:disabled), [tabindex]:not([tabindex="-1"])',
+        )?.focus();
+      });
+    }
   });
   document.addEventListener("pointerdown", (e) => {
     if (ribbonOverflowMenu.hidden) return;
     if (e.target.closest("#ribbonOverflowMenu, #ribbonOverflowBtn")) return;
     closeRibbonOverflow();
+  });
+  ribbonOverflowMenu.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    event.stopPropagation();
+    closeRibbonOverflow({ restoreFocus: true });
   });
   if (typeof ResizeObserver === "function" && ribbonBodyEl) {
     new ResizeObserver(scheduleRibbonOverflow).observe(ribbonBodyEl);
@@ -383,7 +410,7 @@ if (ribbonOverflowBtn && ribbonOverflowMenu) {
 // is suppressed only while the control is actively hovered so it never appears
 // alongside the custom one, and is restored on leave (keeping dynamic titles and
 // accessibility intact).
-const TIP_SELECTOR = ".fmt, .ribbon-tab, .review-mode-seg, .style-card, .styles-scroll-btn";
+const TIP_SELECTOR = ".fmt, .ribbon-tab, .review-mode-seg, .style-card";
 const ribbonTooltip = document.createElement("div");
 ribbonTooltip.className = "ribbon-tooltip";
 ribbonTooltip.setAttribute("role", "tooltip");
@@ -453,33 +480,37 @@ function disarmTip(el) {
   }
 }
 
-if (ribbonEl) {
-  ribbonEl.addEventListener("pointerover", (e) => {
+function bindRibbonTooltipSurface(surface) {
+  if (!surface) return;
+  surface.addEventListener("pointerover", (e) => {
     const el = e.target.closest(TIP_SELECTOR);
-    if (!el || !ribbonEl.contains(el) || el === tipTarget) return;
+    if (!el || !surface.contains(el) || el === tipTarget) return;
     if (tipTarget) disarmTip(tipTarget);
     armTip(el);
   });
-  ribbonEl.addEventListener("pointerout", (e) => {
+  surface.addEventListener("pointerout", (e) => {
     if (!tipTarget) return;
     if (e.relatedTarget && tipTarget.contains(e.relatedTarget)) return;
     disarmTip(tipTarget);
   });
-  ribbonEl.addEventListener("focusin", (e) => {
+  surface.addEventListener("focusin", (e) => {
     const el = e.target.closest(TIP_SELECTOR);
     if (!el) return;
     if (tipTarget && tipTarget !== el) disarmTip(tipTarget);
     armTip(el);
   });
-  ribbonEl.addEventListener("focusout", (e) => {
+  surface.addEventListener("focusout", (e) => {
     const el = e.target.closest(TIP_SELECTOR);
     if (el) disarmTip(el);
   });
-  ribbonEl.addEventListener("click", () => {
+  surface.addEventListener("click", () => {
     if (tipTarget) disarmTip(tipTarget);
   });
-  window.addEventListener("scroll", () => { if (tipTarget) disarmTip(tipTarget); }, true);
 }
+
+bindRibbonTooltipSurface(ribbonEl);
+bindRibbonTooltipSurface(ribbonOverflowMenu);
+window.addEventListener("scroll", () => { if (tipTarget) disarmTip(tipTarget); }, true);
 
 undoBtn.addEventListener("click", () => runEdit(() => doc.undo()));
 redoBtn.addEventListener("click", () => runEdit(() => doc.redo()));
@@ -502,10 +533,6 @@ const reviewNext = document.getElementById("reviewNext");
 const reviewAcceptAll = document.getElementById("reviewAcceptAll");
 const reviewRejectAll = document.getElementById("reviewRejectAll");
 const reviewBulkActions = document.getElementById("reviewBulkActions");
-const reviewModeControl = document.getElementById("reviewModeControl");
-const reviewModeSegButtons = reviewModeControl
-  ? [...reviewModeControl.querySelectorAll("[data-review-mode]")]
-  : [];
 const suggestingBanner = document.getElementById("suggestingBanner");
 const suggestingBannerEdit = document.getElementById("suggestingBannerEdit");
 const viewingBanner = document.getElementById("viewingBanner");
@@ -677,7 +704,7 @@ function updateReviewControls() {
   if (!doc) return;
   let count = 0;
   try { count = (JSON.parse(doc.listRevisions()) ?? []).length; } catch { count = 0; }
-  for (const button of reviewModeSegButtons) button.disabled = false;
+  for (const button of reviewModeButtons) button.disabled = false;
   if (reviewPrevious) reviewPrevious.disabled = count === 0;
   if (reviewNext) reviewNext.disabled = count === 0;
   const canDecide = count > 0 && reviewMode !== "viewing";
@@ -1711,9 +1738,24 @@ function clientPointEvent(clientX, clientY) {
   return { clientX, clientY };
 }
 
-function setStatus(text, kind = "") {
+let statusClearTimer = 0;
+
+function setStatus(text, kind = "", { timeout = 0 } = {}) {
+  clearTimeout(statusClearTimer);
+  statusClearTimer = 0;
   statusEl.textContent = text;
   statusEl.className = `status ${kind}`;
+  if (text && timeout > 0) {
+    statusClearTimer = window.setTimeout(() => {
+      statusEl.textContent = "";
+      statusEl.className = "status";
+      statusClearTimer = 0;
+    }, timeout);
+  }
+}
+
+function clearObjectStatus() {
+  if (/^(Image selected|Object deletion)/.test(statusEl.textContent)) setStatus("");
 }
 
 // Concise polite announcements for review events (comment added, change
@@ -2391,10 +2433,9 @@ function updateObjectSelectionState() {
 /** The lazily-created placeholder object context bar (docs/85 §4.1). */
 let objectContextBarEl = null;
 
-/** Shows/positions a placeholder context bar above a selected object, naming the
- *  object kind and the actions later slices will make real. Hidden when no object
- *  is selected. This is the §4.1 "context bar" seam; real `editorCommands(object)`
- *  descriptors are the P1G-OBJ-GRAMMAR command slice. */
+/** Shows/positions a context bar above a selected object. It describes only
+ *  interactions that work in the current build; deferred actions never appear
+ *  as product placeholders. */
 function updateObjectContextBar() {
   if (!objectContextBarEl) {
     objectContextBarEl = document.createElement("div");
@@ -2440,10 +2481,7 @@ function updateObjectContextBar() {
     objectContextBarEl.appendChild(hint);
   } else {
     const hint = document.createElement("small");
-    hint.textContent =
-      objectSelection.kind === "textbox"
-        ? "Drag handles to resize · Replace / Fill / Wrap (coming soon)"
-        : "Drag handles to resize · Replace / Crop / Alt text (coming soon)";
+    hint.textContent = "Drag handles to resize";
     objectContextBarEl.appendChild(hint);
   }
   objectContextBarEl.hidden = false;
@@ -2570,7 +2608,7 @@ function cancelObjectMove() {
 function enterObjectEditMode() {
   if (!objectSelection) return;
   if (objectSelection.kind !== "textbox") {
-    setStatus("Image options (replace / crop / alt text) are a later editing slice");
+    setStatus("Image selected — drag its handles to resize", "", { timeout: 3000 });
     return;
   }
   objectSelection = { ...objectSelection, mode: "editing" };
@@ -2855,6 +2893,7 @@ function onPointerDown(page, event) {
   // A click that is not on an object deselects any selected object and proceeds
   // with ordinary text hit-testing.
   objectSelection = null;
+  clearObjectStatus();
   const anchor = anchorAt(page, event);
   if (!anchor) {
     updateObjectSelectionState();
@@ -4317,6 +4356,7 @@ async function runEdit(thunk, { typing = false, gate = false } = {}) {
 function navCaret(dir, extend) {
   if (!selection) return;
   objectSelection = null; // moving the caret leaves any object selection
+  clearObjectStatus();
   breakTypingSession();
   pendingFormat = null; // caret moved → disarm typing format
   const collapseToStart = dir === "left" || dir === "wordLeft";
@@ -7113,6 +7153,7 @@ document.addEventListener("keydown", async (e) => {
       } else {
         objectSelection = null; // collapse to the surrounding-text caret
       }
+      clearObjectStatus();
       drawSelection();
       return;
     }
@@ -7124,7 +7165,7 @@ document.addEventListener("keydown", async (e) => {
       }
       if (key === "Delete" || key === "Backspace") {
         e.preventDefault();
-        setStatus("Deleting an object is a later editing slice");
+        setStatus("Object deletion is not supported in this build", "error", { timeout: 3500 });
         return;
       }
       // Swallow text-producing keys; navigation/modifier combos fall through so
