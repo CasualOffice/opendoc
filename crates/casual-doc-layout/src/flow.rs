@@ -1584,14 +1584,14 @@ fn div_ceil(a: i32, b: i32) -> i32 {
 }
 
 /// A cell's intrinsic content widths `(min, preferred)` in twips: `min` is the
-/// widest run that cannot be line-broken (measured by shaping at a 1-twip width);
-/// `preferred` is the natural, unwrapped width (shaping at an effectively
+/// widest run or inline box that cannot be line-broken (measured at a 1-twip
+/// width); `preferred` is the natural, unwrapped width (measured at an effectively
 /// unbounded width). Nested tables contribute their declared grid width.
 ///
-/// Runs are resolved to their concrete face (so intrinsic widths are measured
-/// with the advances actually shaped) but into a throwaway report — measurement
-/// is internal and must not inflate the substitution counts surfaced for the
-/// rendered galley, which the flow pass records once per run.
+/// Runs are resolved to their concrete face and modeled inline objects use the
+/// same `FlowItem` projection as final flow, but into a throwaway report —
+/// measurement is internal and must not inflate the substitution counts surfaced
+/// for the rendered galley, which the flow pass records once per run.
 fn block_intrinsic(
     blocks: &[BlockNode],
     shaper: &dyn LineShaper,
@@ -1625,25 +1625,47 @@ fn block_intrinsic(
         match block {
             BlockNode::Paragraph(paragraph) => {
                 mctx.para_style = mctx.cascade.paragraph_style(&paragraph.properties);
-                let mut runs = Vec::new();
-                collect_runs(&paragraph.inlines, &mut runs, &mut mctx);
-                if runs.is_empty() {
-                    continue;
-                }
+                let props = mctx
+                    .cascade
+                    .resolve_paragraph_in_table(&paragraph.properties, mctx.table_style.as_ref());
                 let range = ModelRange::new(
                     ModelPos::new(paragraph.id, 0),
                     ModelPos::new(paragraph.id, 0),
                 );
-                let narrow = shaper.shape_paragraph(
-                    &runs,
+                let mut narrow_items = Vec::new();
+                collect_items_with_measure(
+                    &paragraph.inlines,
+                    &mut narrow_items,
+                    shaper,
+                    Twip(1),
+                    &mut mctx,
+                    Some(IntrinsicPass::Minimum),
+                );
+                let narrow = shape_paragraph_items(
+                    shaper,
+                    &narrow_items,
+                    &props.tabs,
+                    mctx.default_tab,
                     LineConstraints {
                         max_width: Twip(1),
                         ..LineConstraints::default()
                     },
                     range,
                 );
-                let wide = shaper.shape_paragraph(
-                    &runs,
+                let mut wide_items = Vec::new();
+                collect_items_with_measure(
+                    &paragraph.inlines,
+                    &mut wide_items,
+                    shaper,
+                    Twip(1_000_000),
+                    &mut mctx,
+                    Some(IntrinsicPass::Preferred),
+                );
+                let wide = shape_paragraph_items(
+                    shaper,
+                    &wide_items,
+                    &props.tabs,
+                    mctx.default_tab,
                     LineConstraints {
                         max_width: Twip(1_000_000),
                         ..LineConstraints::default()
@@ -1708,13 +1730,41 @@ fn max_line_width(layout: &crate::text::LineLayout) -> i32 {
         .lines
         .iter()
         .map(|line| {
-            line.runs
+            let run_edge = line
+                .runs
                 .iter()
                 .map(|run| {
-                    run.origin.x.raw() + run.glyphs.iter().map(|g| g.advance.raw()).sum::<i32>()
+                    run.glyphs.iter().fold(run.origin.x.raw(), |edge, glyph| {
+                        edge.saturating_add(glyph.advance.raw())
+                    })
                 })
                 .max()
-                .unwrap_or(0)
+                .unwrap_or(0);
+            let image_edge = line
+                .images
+                .iter()
+                .map(|image| image.origin.x.raw().saturating_add(image.size.width.raw()))
+                .max()
+                .unwrap_or(0);
+            let text_box_edge = line
+                .text_boxes
+                .iter()
+                .map(|text_box| {
+                    text_box
+                        .origin
+                        .x
+                        .raw()
+                        .saturating_add(text_box.size.width.raw())
+                })
+                .max()
+                .unwrap_or(0);
+            let rule_edge = line
+                .rules
+                .iter()
+                .map(|rule| rule.origin.x.raw().saturating_add(rule.size.width.raw()))
+                .max()
+                .unwrap_or(0);
+            run_edge.max(image_edge).max(text_box_edge).max(rule_edge)
         })
         .max()
         .unwrap_or(0)
@@ -2019,7 +2069,7 @@ fn border_rank(edge: &BorderEdge) -> (u32, u32, u32) {
 /// layout** the shaper indexes — so a UTF-8 byte offset from hit-testing
 /// (`crate::hittest`, `ModelPos::offset`) slices this string at the caret the
 /// user clicked. This is the authoritative source for copy-in-view: it mirrors
-/// `collect_runs`'s text contributions exactly (`Run` text, `Tab` → `\t`,
+/// the text-bearing flow contributions exactly (`Run` text, `Tab` → `\t`,
 /// `Symbol` → its code point, and recursion through visible
 /// `Hyperlink`/`Revision`/`Sdt` wrappers); every other inline kind contributes
 /// no shaped text bytes.
@@ -2066,50 +2116,34 @@ fn append_node_plain_text(inlines: &[InlineNode], projection: ReviewProjection, 
     }
 }
 
-/// Flattens a paragraph's inline nodes into styled text runs, recursing through
-/// the wrappers that carry inline content (hyperlinks, revisions, content
-/// controls). Text-bearing runs and explicit tabs contribute text; other inline
-/// nodes are not yet laid out.
-///
-/// A run whose effective properties mark it hidden (`w:vanish`) is skipped
-/// entirely: it is neither shaped nor painted, matching Word's screen view.
-/// Visibility is decided in [`push_styled_runs`] after the full run-property
-/// cascade is resolved, so direct formatting can override an inherited value.
-fn collect_runs<'a>(inlines: &'a [InlineNode], out: &mut Vec<StyledRun<'a>>, ctx: &mut FlowCtx) {
-    for inline in inlines {
-        match inline {
-            InlineNode::Run(run) => push_styled_runs(&run.text, &run.properties, ctx, out),
-            InlineNode::Tab(_) => out.push(styled_run("\t", &RunProperties::default(), ctx)),
-            InlineNode::PositionalTab(_) => {
-                out.push(styled_run("\t", &RunProperties::default(), ctx))
-            }
-            InlineNode::Symbol(symbol) => out.push(symbol_glyph_run(symbol, ctx)),
-            InlineNode::Hyperlink(hyperlink) => collect_runs(&hyperlink.inlines, out, ctx),
-            InlineNode::Revision(revision)
-                if revision
-                    .kind
-                    .contributes_to(ReviewProjection::FinalWithMarkup) =>
-            {
-                collect_runs(&revision.inlines, out, ctx);
-            }
-            InlineNode::Revision(_) => {}
-            InlineNode::Sdt(sdt) => collect_runs(&sdt.inlines, out, ctx),
-            _ => {}
-        }
-    }
-}
-
 /// Flattens a paragraph's inline nodes into a [`FlowItem`] stream — styled runs
 /// interleaved with the explicit tabs (`w:tab`) and hard breaks (`w:br`/`w:cr`)
-/// that control horizontal advance and forced lines. Unlike [`collect_runs`],
-/// tabs and breaks are preserved as first-class items so the tab/break layer can
-/// resolve them; recursion through wrappers matches [`collect_runs`].
+/// that control horizontal advance and forced lines. Tabs and breaks are
+/// preserved as first-class items so the tab/break layer can resolve them;
+/// recursion through wrappers matches final visible flow.
 fn collect_items<'a>(
     inlines: &'a [InlineNode],
     out: &mut Vec<FlowItem<'a>>,
     shaper: &dyn LineShaper,
     width: Twip,
     ctx: &mut FlowCtx,
+) {
+    collect_items_with_measure(inlines, out, shaper, width, ctx, None);
+}
+
+#[derive(Clone, Copy)]
+enum IntrinsicPass {
+    Minimum,
+    Preferred,
+}
+
+fn collect_items_with_measure<'a>(
+    inlines: &'a [InlineNode],
+    out: &mut Vec<FlowItem<'a>>,
+    shaper: &dyn LineShaper,
+    width: Twip,
+    ctx: &mut FlowCtx,
+    intrinsic: Option<IntrinsicPass>,
 ) {
     for inline in inlines {
         match inline {
@@ -2133,34 +2167,44 @@ fn collect_items<'a>(
             }
             InlineNode::EmbeddedObject(object) => embedded_object_items(object, out, ctx),
             InlineNode::AnchoredDrawing(drawing) => {
-                if let Some(item) = float_flow_item(&drawing.anchor, &drawing.extent) {
+                if intrinsic.is_none()
+                    && let Some(item) = float_flow_item(&drawing.anchor, &drawing.extent)
+                {
                     out.push(item);
                 }
             }
             InlineNode::Field(field) => out.push(field_item(field, ctx)),
-            InlineNode::HorizontalRule(rule) => out.push(hr_item(rule, width)),
+            InlineNode::HorizontalRule(rule) => {
+                let rule_width = if intrinsic.is_some() { Twip(1) } else { width };
+                out.push(hr_item(rule, rule_width));
+            }
             // A floating text box (`anchor` set) is removed from the inline flow —
             // it is placed absolutely by the float layer ([`crate::anchor`]). Only
             // an inline text box flows here.
             InlineNode::TextBox(text_box) if text_box.anchor.is_none() => {
-                out.push(textbox_item(text_box, shaper, width, ctx))
+                let box_width = intrinsic
+                    .map(|pass| intrinsic_text_box_width(text_box, shaper, ctx, pass))
+                    .unwrap_or(width);
+                out.push(textbox_item(text_box, shaper, box_width, ctx))
             }
             InlineNode::TextBox(text_box) => {
-                if let (Some(anchor), Some(extent)) = (&text_box.anchor, &text_box.extent)
+                if intrinsic.is_none()
+                    && let (Some(anchor), Some(extent)) = (&text_box.anchor, &text_box.extent)
                     && let Some(item) = float_flow_item(anchor, extent)
                 {
                     out.push(item);
                 }
             }
             InlineNode::Group(group) => {
-                if let Some(anchor) = &group.anchor
+                if intrinsic.is_none()
+                    && let Some(anchor) = &group.anchor
                     && let Some(item) = float_flow_item(anchor, &group.extent)
                 {
                     out.push(item);
                 }
             }
             InlineNode::Hyperlink(hyperlink) => {
-                collect_items(&hyperlink.inlines, out, shaper, width, ctx)
+                collect_items_with_measure(&hyperlink.inlines, out, shaper, width, ctx, intrinsic)
             }
             InlineNode::NoteReference(reference) => {
                 out.push(FlowItem::NoteReference(NoteMarker {
@@ -2179,10 +2223,12 @@ fn collect_items<'a>(
                     .kind
                     .contributes_to(ReviewProjection::FinalWithMarkup) =>
             {
-                collect_items(&revision.inlines, out, shaper, width, ctx)
+                collect_items_with_measure(&revision.inlines, out, shaper, width, ctx, intrinsic)
             }
             InlineNode::Revision(_) => {}
-            InlineNode::Sdt(sdt) => collect_items(&sdt.inlines, out, shaper, width, ctx),
+            InlineNode::Sdt(sdt) => {
+                collect_items_with_measure(&sdt.inlines, out, shaper, width, ctx, intrinsic)
+            }
             InlineNode::Math(math) => {
                 let base = styled_owned_run("x".to_owned(), &RunProperties::default(), ctx);
                 if let Some(expression) = &math.expression
@@ -2432,6 +2478,45 @@ fn textbox_item(
         fill: text_box.fill.map(rgba),
         content_layout: flowed.content_layout,
     }
+}
+
+fn intrinsic_text_box_width(
+    text_box: &TextBox,
+    shaper: &dyn LineShaper,
+    ctx: &mut FlowCtx,
+    pass: IntrinsicPass,
+) -> Twip {
+    if let Some(authored) = text_box
+        .extent
+        .as_ref()
+        .map(extent_to_size)
+        .map(|size| size.width)
+        .filter(|width| width.raw() > 0)
+    {
+        return authored;
+    }
+
+    let (local_scale, local_reduction) = text_box_text_adjustments(&text_box.body_properties);
+    let previous_scale = ctx.text_scale;
+    let previous_reduction = ctx.line_spacing_reduction;
+    ctx.text_scale = ((u64::from(previous_scale) * u64::from(local_scale)) / 100_000)
+        .min(u64::from(u32::MAX)) as u32;
+    ctx.line_spacing_reduction = combine_percentage_reductions(previous_reduction, local_reduction);
+    let (minimum, preferred) =
+        block_intrinsic(&text_box.blocks, shaper, ctx, ctx.table_style.as_ref());
+    ctx.text_scale = previous_scale;
+    ctx.line_spacing_reduction = previous_reduction;
+    let content = match pass {
+        IntrinsicPass::Minimum => minimum,
+        IntrinsicPass::Preferred => preferred,
+    };
+    let insets = text_box_insets(&text_box.body_properties);
+    clamp_twip(
+        i64::from(content)
+            .saturating_add(i64::from(insets.left.raw()))
+            .saturating_add(i64::from(insets.right.raw())),
+    )
+    .max(Twip(1))
 }
 
 /// A text box after recursive block flow and box-model resolution. Used by both
@@ -6447,9 +6532,8 @@ mod tests {
 
     #[test]
     fn a_vanished_run_is_not_collected_into_styled_runs() {
-        // `collect_runs` is the single funnel that turns inline runs into shaped
-        // text; a `w:vanish` (hidden) run must be dropped here so it is never
-        // shaped or painted.
+        // The shared item collector must drop a `w:vanish` run so it is never
+        // measured, shaped, or painted.
         let hidden = RunProperties {
             hidden: Some(true),
             ..RunProperties::default()
@@ -6458,29 +6542,15 @@ mod tests {
             run_node(1, "shown", RunProperties::default()),
             run_node(2, "secret", hidden),
         ];
-        let resolver = FontResolver::new();
-        let mut report = FontResolutionReport::new();
-        let media = DefinitionMap::default();
         let definitions = Definitions::default();
-        let mut ctx = FlowCtx {
-            resolver: &resolver,
-            scheme: None,
-            report: &mut report,
-            default_tab: crate::tabs::DEFAULT_TAB_STOP,
-            media: &media,
-            palette: None,
-            cascade: StyleCascade::new(&definitions),
-            para_style: None,
-            table_style: None,
-            sections: &[],
-            definitions: &definitions,
-            numbering: NumberingState::new(),
-            text_scale: 100_000,
-            line_spacing_reduction: 0,
-            paragraph_float_exclusions: None,
-        };
-        let mut runs = Vec::new();
-        collect_runs(&inlines, &mut runs, &mut ctx);
+        let items = collected_items(&definitions, &inlines);
+        let runs: Vec<_> = items
+            .iter()
+            .filter_map(|item| match item {
+                FlowItem::Run(run) => Some(run),
+                _ => None,
+            })
+            .collect();
         assert_eq!(runs.len(), 1, "only the visible run is collected");
         assert_eq!(&*runs[0].text, "shown");
     }
@@ -6514,29 +6584,15 @@ mod tests {
             properties: RunProperties::default(),
         });
         let inlines = vec![checkbox, unknown];
-        let resolver = FontResolver::new();
-        let mut report = FontResolutionReport::new();
-        let media = DefinitionMap::default();
         let definitions = Definitions::default();
-        let mut ctx = FlowCtx {
-            resolver: &resolver,
-            scheme: None,
-            report: &mut report,
-            default_tab: crate::tabs::DEFAULT_TAB_STOP,
-            media: &media,
-            palette: None,
-            cascade: StyleCascade::new(&definitions),
-            para_style: None,
-            table_style: None,
-            sections: &[],
-            definitions: &definitions,
-            numbering: NumberingState::new(),
-            text_scale: 100_000,
-            line_spacing_reduction: 0,
-            paragraph_float_exclusions: None,
-        };
-        let mut runs = Vec::new();
-        collect_runs(&inlines, &mut runs, &mut ctx);
+        let items = collected_items(&definitions, &inlines);
+        let runs: Vec<_> = items
+            .iter()
+            .filter_map(|item| match item {
+                FlowItem::Run(run) => Some(run),
+                _ => None,
+            })
+            .collect();
         assert_eq!(runs.len(), 2, "both symbols emit a glyph run");
         assert_eq!(
             runs[0].size,
@@ -6977,6 +7033,229 @@ mod tests {
             "the narrow column grew past its tiny declared width: {}",
             cells[0].width.raw()
         );
+    }
+
+    #[test]
+    fn modeled_inline_boxes_contribute_to_cell_intrinsic_widths() {
+        use casual_doc_model::v1::{
+            Drawing, Field, InlineSdt, SdtProperties, TextBox, TextBoxBodyProperties, TextBoxInsets,
+        };
+
+        fn measure(definitions: &Definitions, inlines: Vec<InlineNode>) -> (i32, i32) {
+            let resolver = FontResolver::new();
+            let mut report = FontResolutionReport::new();
+            let ctx = FlowCtx {
+                resolver: &resolver,
+                scheme: definitions.font_scheme.as_ref(),
+                report: &mut report,
+                default_tab: crate::tabs::DEFAULT_TAB_STOP,
+                media: &definitions.media,
+                palette: None,
+                cascade: StyleCascade::new(definitions),
+                para_style: None,
+                table_style: None,
+                sections: &definitions.sections,
+                definitions,
+                numbering: NumberingState::new(),
+                text_scale: 100_000,
+                line_spacing_reduction: 0,
+                paragraph_float_exclusions: None,
+            };
+            block_intrinsic(&[paragraph(700, inlines)], &ParleyShaper::new(), &ctx, None)
+        }
+
+        let media = MediaId::new(node(701));
+        let mut definitions = Definitions::default();
+        definitions.media.insert(
+            media,
+            MediaReference {
+                relationship_id: "rIdImage".to_owned(),
+                media_type: "image/png".to_owned(),
+                part_name: "word/media/intrinsic.png".to_owned(),
+            },
+        );
+        let picture = InlineNode::Sdt(InlineSdt {
+            id: node(714),
+            properties: SdtProperties::default(),
+            inlines: vec![InlineNode::Drawing(Drawing {
+                id: node(702),
+                media,
+                extent: Some(Extent {
+                    width_emu: 1_905_000,
+                    height_emu: 635_000,
+                }),
+                descr: None,
+                crop: None,
+            })],
+        });
+        let preview = InlineNode::EmbeddedObject(EmbeddedObject {
+            id: node(703),
+            kind: EmbeddedKind::Chart,
+            part: EmbeddedPart {
+                relationship_id: "rIdChart".to_owned(),
+                relationship_type: "chart".to_owned(),
+                part_name: "word/charts/chart1.xml".to_owned(),
+            },
+            extra_parts: Vec::new(),
+            preview: Some(media),
+            extent: Extent {
+                width_emu: 1_587_500,
+                height_emu: 635_000,
+            },
+            prog_id: None,
+        });
+        let math = InlineNode::Math(Math {
+            id: node(704),
+            omml: "<m:oMath/>".to_owned(),
+            text: "fraction".to_owned(),
+            expression: Some(MathExpression::Fraction {
+                numerator: Box::new(MathExpression::Text {
+                    value: "numerator".to_owned(),
+                }),
+                denominator: Box::new(MathExpression::Text {
+                    value: "denominator".to_owned(),
+                }),
+            }),
+        });
+        let field = InlineNode::Field(Field {
+            id: node(705),
+            instruction: "DOCPROPERTY Title".to_owned(),
+            inlines: vec![run_node(
+                706,
+                "cached-field-result",
+                RunProperties::default(),
+            )],
+            form: None,
+        });
+        let authored_box = InlineNode::TextBox(TextBox {
+            id: node(707),
+            anchor: None,
+            relative_height: None,
+            extent: Some(Extent {
+                width_emu: 1_397_000,
+                height_emu: 635_000,
+            }),
+            fill: None,
+            border: None,
+            body_properties: TextBoxBodyProperties::default(),
+            blocks: vec![paragraph(
+                708,
+                vec![run_node(709, "boxed", RunProperties::default())],
+            )],
+        });
+        let widthless_box = InlineNode::TextBox(TextBox {
+            id: node(710),
+            anchor: None,
+            relative_height: None,
+            extent: None,
+            fill: None,
+            border: None,
+            body_properties: TextBoxBodyProperties {
+                insets: TextBoxInsets {
+                    left_emu: 63_500,
+                    right_emu: 63_500,
+                    top_emu: 0,
+                    bottom_emu: 0,
+                },
+                ..TextBoxBodyProperties::default()
+            },
+            blocks: vec![paragraph(
+                711,
+                vec![run_node(
+                    712,
+                    "widthless-box-content",
+                    RunProperties::default(),
+                )],
+            )],
+        });
+
+        assert!(measure(&definitions, vec![picture]).0 >= 3_000);
+        assert!(measure(&definitions, vec![preview]).0 >= 2_500);
+        let math_width = measure(&definitions, vec![math]);
+        assert!(math_width.0 > 1 && math_width.1 >= math_width.0);
+        let field_width = measure(&definitions, vec![field]);
+        assert!(field_width.0 > 1 && field_width.1 >= field_width.0);
+        let authored_width = measure(&definitions, vec![authored_box]);
+        assert!(authored_width.0 >= 2_200 && authored_width.1 >= 2_200);
+        let inner_width = measure(
+            &definitions,
+            vec![run_node(
+                713,
+                "widthless-box-content",
+                RunProperties::default(),
+            )],
+        );
+        let widthless_width = measure(&definitions, vec![widthless_box]);
+        assert!(widthless_width.0 >= inner_width.0.saturating_add(200));
+        assert!(widthless_width.1 >= inner_width.1.saturating_add(200));
+    }
+
+    #[test]
+    fn inline_picture_intrinsic_width_grows_an_autofit_table_column() {
+        use casual_doc_model::v1::Drawing;
+
+        let media = MediaId::new(node(720));
+        let mut definitions = Definitions::default();
+        definitions.media.insert(
+            media,
+            MediaReference {
+                relationship_id: "rIdImage".to_owned(),
+                media_type: "image/png".to_owned(),
+                part_name: "word/media/autofit.png".to_owned(),
+            },
+        );
+        let object_cell = TableCell {
+            id: node(721),
+            properties: TableCellProperties::default(),
+            blocks: vec![paragraph(
+                722,
+                vec![InlineNode::Drawing(Drawing {
+                    id: node(723),
+                    media,
+                    extent: Some(Extent {
+                        width_emu: 1_905_000,
+                        height_emu: 635_000,
+                    }),
+                    descr: None,
+                    crop: None,
+                })],
+            )],
+        };
+        let table = Table {
+            id: node(724),
+            grid: vec![
+                GridColumn {
+                    width_twips: Some(200),
+                },
+                GridColumn {
+                    width_twips: Some(200),
+                },
+            ],
+            grid_change: None,
+            properties: TableProperties::default(),
+            rows: vec![ModelRow {
+                id: node(725),
+                properties: TableRowProperties::default(),
+                cells: vec![
+                    object_cell,
+                    text_cell(726, TableCellProperties::default(), "x"),
+                ],
+            }],
+        };
+        let doc = document_with_definitions(vec![BlockNode::Table(table)], definitions);
+        let galley = build_galley(&doc, &ParleyShaper::new(), Twip(6_000));
+        let BlockFragment::TableRow { cells, .. } = &galley[0] else {
+            panic!("expected a table row");
+        };
+        assert!(
+            cells[0].width.raw() >= 3_000,
+            "the 3000-twip picture must participate in auto-fit: {:?}",
+            cells
+                .iter()
+                .map(|cell| cell.width.raw())
+                .collect::<Vec<_>>()
+        );
+        assert!(cells[0].width > cells[1].width);
     }
 
     #[test]

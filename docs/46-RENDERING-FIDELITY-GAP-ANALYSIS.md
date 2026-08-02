@@ -146,6 +146,7 @@ landed, but several modeled properties are still not consumed.
 | Surface | Current behavior | Status / next slice |
 | --- | --- | --- |
 | Width, grid span, fixed/autofit, indent | Consumed by the width solver. | Implemented for horizontal spans. |
+| Intrinsic inline-box sizing | The cell minimum/preferred passes use the same `FlowItem` projection as final flow. Fixed inline pictures, embedded-object previews, typed math, cached fields, authored text boxes, and recursively sized widthless text boxes contribute their resolved right edge; floats and full-width rules do not claim the unwrapped sentinel. | Implemented by `P1F-TBL-INTRINSIC-INLINE`; natural media probing without an extent and Word's complete preferred-width negotiation remain deferred. |
 | Cell margins and vertical alignment | Resolved in flow and applied in composition. | Implemented. |
 | Table/cell shading | Cell fill is painted; table-level `w:shd` now supplies the fallback when a cell has no overriding fill. | Implemented by `P1F-TBL-TOPO`. |
 | Horizontal border topology | Perimeter vs `insideH` is selected by row position; conflicts inspect abutting cells above/below, including differing grid-span partitions. A spanning side now retains independently resolved, coalesced twip segments at those partitions. | Implemented by `P1F-TBL-TOPO` + `P1F-TBL-STYLED`. |
