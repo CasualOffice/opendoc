@@ -1862,7 +1862,7 @@ body.modal-open {
   align-items: center;
   justify-content: space-between;
   gap: 3px;
-  padding: 0 3px;
+  padding: 0 2px;
   border-right: 1px solid var(--line);
   flex: 0 0 auto;
 }
@@ -2039,9 +2039,9 @@ body.modal-open {
   flex-direction: column;
   gap: 2px;
   width: auto;
-  min-width: 46px;
+  min-width: 44px;
   height: auto;
-  padding: 5px 8px;
+  padding: 5px 6px;
 }
 
 .editing-ctl {
