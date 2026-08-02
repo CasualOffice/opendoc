@@ -296,25 +296,23 @@ pub fn build_galley_for_blocks(
     blocks: &[BlockNode],
     content_width: Twip,
 ) -> Vec<BlockFragment> {
-    build_galley_for_blocks_inner(document, shaper, blocks, content_width, None)
+    build_galley_for_blocks_inner(
+        document,
+        shaper,
+        blocks,
+        content_width,
+        None,
+        ReviewView::Editing,
+    )
 }
 
-pub(crate) fn build_galley_for_blocks_with_exclusions(
-    document: &Document,
-    shaper: &dyn LineShaper,
-    blocks: &[BlockNode],
-    content_width: Twip,
-    exclusions: &ParagraphFloatExclusions,
-) -> Vec<BlockFragment> {
-    build_galley_for_blocks_inner(document, shaper, blocks, content_width, Some(exclusions))
-}
-
-fn build_galley_for_blocks_inner(
+pub(crate) fn build_galley_for_blocks_inner(
     document: &Document,
     shaper: &dyn LineShaper,
     blocks: &[BlockNode],
     content_width: Twip,
     exclusions: Option<&ParagraphFloatExclusions>,
+    review_view: ReviewView,
 ) -> Vec<BlockFragment> {
     let resolver = FontResolver::new();
     let mut report = FontResolutionReport::new();
@@ -324,7 +322,7 @@ fn build_galley_for_blocks_inner(
         .as_ref()
         .map(resolve_palette);
     let mut ctx = FlowCtx {
-        review_view: ReviewView::Editing,
+        review_view,
         resolver: &resolver,
         scheme: document.definitions().font_scheme.as_ref(),
         report: &mut report,
