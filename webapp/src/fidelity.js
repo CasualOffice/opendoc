@@ -17,15 +17,15 @@ const FIDELITY = [
   {
     family: "Paragraphs & text",
     note: "Typing, IME, selection, navigation, undo/redo, alignment, indentation, spacing, keepNext/keepLines, widow/orphan and contextualSpacing all render and edit. Document-grid line/character snapping and before/after autospacing sizing remain approximate.",
-    modeled: "full",
-    rendered: "partial",
-    editable: "full",
-    roundtrips: "full",
+    modeled: "full", rendered: "partial", editable: "full", roundtrips: "full",
   },
   {
     family: "Character / run formatting",
     note: "Bold, italic, underline, strike, color, highlight, size, font, super/subscript render and edit. Typed underline styles (double/wavy/dotted/thick) and colored underlines paint as a plain single line, and rare effects (double-strike, emphasis marks, outline/shadow, run border) are preserved for export but not painted.",
-    modeled: "full", rendered: "partial", editable: "full", roundtrips: "full",
+    modeled: "full",
+    rendered: "partial",
+    editable: "full",
+    roundtrips: "full",
   },
   {
     family: "Paragraph & named styles",
@@ -192,7 +192,7 @@ const FORMAT_SUPPORT = [
   },
   {
     format: "ODT",
-    note: "ODF 1.2–1.4 admission plus generic WASM/browser Open and Save are implemented. Import/export and therefore host support remain partial: core text, safe links, bookmarks, bounded direct/named styles, nested bullet/number lists, and recursive tables map through the normalized model and matching writer. The table subset includes bounded repeated/header rows and cells, nested blocks, and validated horizontal/vertical merges; unsafe merge geometry is visibly projected and reported. Style defaults/broader properties, advanced list continuation/item overrides and label layout, table formatting, notes, media, metadata, edit-tolerant preservation, and conformance remain in progress.",
+    note: "ODF 1.2–1.4 admission plus generic WASM/browser Open and Save are implemented. Import/export and therefore host support remain partial: core text, safe links, bookmarks, bounded direct/named styles, nested bullet/number lists, recursive tables, and typed footnotes/endnotes map through the normalized model and matching writer. Note bodies reuse recursive paragraphs, lists, and tables; authored citation labels and non-one-to-one note ownership are reported explicitly. The table subset includes bounded repeated/header rows and cells, nested blocks, and validated horizontal/vertical merges; unsafe merge geometry is visibly projected and reported. Style defaults/broader properties, advanced list continuation/item overrides and label layout, table formatting, media, metadata, edit-tolerant preservation, and conformance remain in progress.",
     validation: "full",
     import: "partial",
     export: "partial",

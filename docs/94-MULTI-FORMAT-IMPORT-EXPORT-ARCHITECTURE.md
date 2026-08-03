@@ -24,8 +24,10 @@ external/internal hyperlinks, bookmark points/ranges, bounded direct/named
 styles, and core nested lists into a validated schema-v1 document with
 semantic-fact-derived identities and bounded findings. Ordered recursive tables,
 bounded repeats, header rows, nested content, and validated rectangular merge
-geometry are also mapped on import. Slice E now has a
-deterministic bounded ODF 1.4 writer for that matching core/style/list/table subset,
+geometry are also mapped on import. Typed footnote/endnote references and
+recursive note bodies map through the same normalized definitions. Slice E now
+has a deterministic bounded ODF 1.4 writer for the matching
+core/style/list/table/note subset, including semantic and byte fixed points,
 registered semantic export, and exact unchanged-byte recovery. The remaining
 Slice D semantic surface, edit-tolerant ODF preservation, native SDK, and
 production conformance work remain incomplete. The WASM
@@ -499,19 +501,19 @@ Slice D is in progress on `feature/multi-format-io`:
   version, and required parts and rejects encrypted or active content;
 - the namespace-aware importer maps core text, safe external/internal links,
   paired bookmark markers, bounded direct/named style chains, and core nested
-  bullet/number lists with deterministic IDs and explicit deferred/blocked
-  findings;
+  bullet/number lists, ordered recursive tables, and typed footnote/endnote
+  definitions with deterministic IDs and explicit deferred/blocked findings;
 - definitive registry detection, optional original-byte retention, and package
   and content fuzz targets are implemented;
 - style defaults/broader properties, advanced list counters/label layout,
-  tables, notes, media, metadata, and broader preservation remain pending under
-  doc 95.
+  table formatting, media, metadata, and broader preservation remain pending
+  under doc 95.
 
 Slice E is in progress on `feature/multi-format-io`:
 
 - a deterministic bounded ODF 1.4 writer emits the implemented core
-  text/style/list subset and explicit compatibility findings for model content
-  it cannot carry;
+  text/style/list/table/note subset and explicit compatibility findings for
+  model content it cannot carry;
 - the built-in ODT adapter exposes semantic export and exact unchanged-byte
   recovery, but does not advertise edit-tolerant preservation;
 - the WASM facade now auto-detects registered formats through `open(bytes)`,

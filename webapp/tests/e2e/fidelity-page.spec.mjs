@@ -34,6 +34,12 @@ test("the fidelity matrix page renders an accessible, data-grounded table", asyn
   await expect(page.locator(".fidelity-notes")).toContainText(
     "Unsafe merge geometry is visibly projected and reported",
   );
+  await expect(page.locator(".fidelity-notes")).toContainText(
+    "Typed footnotes and endnotes map through shared-model definitions",
+  );
+  await expect(page.locator(".fidelity-notes")).toContainText(
+    "Authored citation labels",
+  );
 
   const table = page.locator("#docx-fidelity-table");
   await expect(table).toBeVisible();

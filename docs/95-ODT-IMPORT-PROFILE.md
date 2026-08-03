@@ -60,8 +60,15 @@ The work lands as reviewable commits:
   out-of-range merge topology fails atomically. Table, expanded row/cell, and
   nesting limits are independent, and repeated nested content is also charged
   to the expanded paragraph/inline/text/table budgets before model construction.
+- Checkpoint 9 maps inline footnote/endnote containers to typed note references
+  and definitions. Note bodies reuse the recursive paragraph/list/table block
+  pipeline, including when the reference occurs inside an enclosing table cell.
+  Surrounding paragraph, hyperlink, span, list, and bookmark state is suspended
+  and restored deterministically. Duplicate source IDs, nested notes, malformed
+  containers, and over-limit note counts fail atomically. Authored citation text
+  is reported as degraded because schema v1 does not model that display label.
 - Style defaults and broader properties, advanced list counters/label layout,
-  table formatting, notes, media, metadata,
+  table formatting, media, metadata,
   and the remaining structures in sections 4 and 6 remain in progress. Generic
   WASM open/export methods and capability-driven browser Open/Save controls are
   implemented, while the native SDK and production ODT gates remain incomplete;
@@ -151,7 +158,7 @@ In addition to `PackageLimits`, `OdfImportLimits` bounds:
 - manifest, `content.xml`, and optional `styles.xml` input bytes (independently);
 - XML depth, element count, attribute count, and attribute bytes;
 - accumulated character data;
-- paragraphs, inline nodes, tables, rows, cells, lists, and nesting depth;
+- paragraphs, inline nodes, tables, rows, cells, lists, notes, and nesting depth;
 - retained part count and bytes;
 - compatibility findings.
 
@@ -175,7 +182,34 @@ Slice D is complete only when:
 7. workspace test, strict Clippy, rustdoc, MSRV, WASM, format, and diff gates
    pass.
 
-## 9. Normative references
+## 9. Provisional coverage accounting
+
+Coverage is not one scalar. The official ODF 1.4 Relax NG schema contains 599
+distinct element names and 1,300 distinct attribute names across text,
+spreadsheet, presentation, drawing, chart, database, forms, and shared style
+namespaces. `.ods`, `.odp`, and other non-text bodies are intentionally outside
+this runtime's word-processing model, so dividing implemented ODT elements by
+the entire schema would not measure useful ODT fidelity.
+
+Until MFIO-007 generates a versioned element/attribute disposition inventory,
+the checkpoint-9 audit records these conservative engineering ranges:
+
+| Measure | Implemented now | Remaining | Interpretation |
+| --- | ---: | ---: | --- |
+| Shared schema-v1 capacity for ODT-relevant semantic families | 60–70% | 30–40% | The common model already has paragraphs, runs, lists, tables, links/bookmarks, notes, sections, headers/footers, media, fields, comments, revisions, math, drawings, and document properties, largely because DOCX uses the same model. ODT-specific defaults, master/page-style semantics, indexes, variables, advanced fields, and some drawing/style concepts still need additive modeling or preservation-only treatment. |
+| ODT adapter coverage of the broad ODT semantic/schema surface | 20–30% | 70–80% | Counts implemented import/export mappings, not merely model types. Core text, a bounded style/list subset, links/bookmarks, table structure/merges, and notes are mapped; the remaining families listed below are not. |
+| Typical editable text-document feature set | 50–60% | 40–50% | A user-weighted view of ordinary prose documents, not a standards-conformance percentage. It gives more weight to text, common formatting, lists, tables, links, and notes than to scripts, forms, indexes, embedded objects, or specialized fields. |
+| Package admission and security profile | 75–85% | 15–25% | Core MIME/manifest/version/ZIP bounds, encryption refusal, DTD and active-content controls are implemented; signature validation, broader producer corpus evidence, and conformance/interoperability campaigns remain. |
+
+The largest remaining ODT adapter families are style defaults and broader
+paragraph/run/table properties; page/master styles, sections, headers, and
+footers; frames and embedded media; metadata; fields, variables, indexes/TOC,
+and cross-references; annotations and tracked changes; formulas and embedded
+objects; edit-tolerant preservation; and schema/corpus/interoperability gates.
+These ranges must move only with an auditable inventory, not by counting tests
+or treating partial feature families as complete.
+
+## 10. Normative references
 
 - OASIS, [OpenDocument Version 1.4, Part 2: Packages](https://docs.oasis-open.org/office/OpenDocument/v1.4/os/part2-packages/OpenDocument-v1.4-os-part2-packages.html).
 - OASIS, [OpenDocument Version 1.4, Part 3: OpenDocument Schema](https://docs.oasis-open.org/office/OpenDocument/v1.4/os/part3-schema/OpenDocument-v1.4-os-part3-schema.html).

@@ -46,6 +46,8 @@ test("format pipeline rows are complete and do not overstate ODT", () => {
   assert.equal(odt.host, "partial");
   assert.match(odt.note, /nested bullet\/number lists/);
   assert.match(odt.note, /recursive tables/);
+  assert.match(odt.note, /typed footnotes\/endnotes/);
+  assert.match(odt.note, /authored citation labels/);
   assert.match(odt.note, /matching writer/);
   assert.match(odt.note, /unsafe merge geometry is visibly projected and reported/i);
   assert.match(odt.note, /advanced list continuation\/item overrides/);

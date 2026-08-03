@@ -62,11 +62,21 @@ Vertical-merge continuations that are orphaned, span-mismatched, or carry
 non-canonical content/properties are written as visible regular cells and receive
 a merge-loss finding instead of becoming invalid or hiding their content.
 
+The note checkpoint emits normalized footnote/endnote references as canonical
+inline `text:note` containers. Transport IDs derive deterministically from the
+model note ID; note bodies reuse recursive paragraph/list/table writing and form
+a semantic and byte fixed point for the supported shape. A definition referenced
+more than once is emitted visibly with a unique occurrence ID and a degraded
+finding because ODT owns note content at the inline occurrence. Nested references
+are explicitly omitted, and unreferenced definitions receive an omission finding.
+Authored ODT citation labels are not present in schema v1, so semantic output uses
+an empty canonical citation element.
+
 Until their dedicated import/export mappings land, wrappers and complex blocks
 may emit a bounded visible-text projection only when that projection is safe.
 Every such case is reported as degraded; content with no safe projection is
 reported as omitted. Unsupported run/paragraph properties, definitions,
-resources, table formatting, lists, links, notes, bookmarks, media, tracked
+resources, table formatting, advanced lists, links, bookmarks, media, tracked
 changes, fields, controls, math, drawings, and embedded objects may not silently
 disappear from the report.
 
@@ -85,7 +95,7 @@ not advertise edit-tolerant preservation until that path exists.
 ## 5. Bounds and atomicity
 
 `OdfExportLimits` bounds content XML bytes, final package bytes, paragraph/block
-visits, inline visits, table-row/cell visits, table columns, recursion depth, emitted text
+visits, inline visits, table-row/cell visits, table columns, note occurrences, recursion depth, emitted text
 bytes, and compatibility feature buckets. Limit, model-validation,
 XML-character, serialization, or ZIP failure returns no partial artifact.
 
@@ -135,7 +145,9 @@ semantic fixed point. Named `styles.xml` resolution and same-family inheritance
 also feed that normalized subset on import. Bounded list import/export covers
 the label systems and nesting described in section 3, with deterministic
 reopen/re-export tests. Recursive table import/export covers the geometry and
-fallback rules described in section 3 with the same fixed-point tests. Style
+fallback rules described in section 3 with the same fixed-point tests. Typed
+footnote/endnote import/export covers recursive note bodies, deterministic IDs,
+occurrence bounds, and the non-one-to-one outcomes described in section 3. Style
 defaults, broader style and table properties, advanced list continuation/item
 overrides and label layout, edit-tolerant source preservation, broader semantic writing, stable
 native SDK surfaces, Relax NG validation, interoperability fixtures, and
