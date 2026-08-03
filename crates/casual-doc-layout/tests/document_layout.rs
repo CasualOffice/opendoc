@@ -36,7 +36,7 @@ use casual_doc_model::v1::{
     SectionType, VerticalAlign, VerticalAnchor, VerticalPosition, WrapMode,
 };
 use casual_doc_model::v1::{
-    BorderEdge, PageBorderDisplay, PageBorderOffset, PageBorders, RgbColor,
+    BorderEdge, PageBorderDisplay, PageBorderOffset, PageBorders, PageVerticalAlignment, RgbColor,
 };
 
 fn node(id: u64) -> NodeId {
@@ -1087,5 +1087,54 @@ fn markup_view_shows_struck_deletions_the_editing_view_drops() {
     assert!(
         markup_total > editing_total,
         "the markup view shows the deleted text the editing view drops ({markup_total} vs {editing_total})"
+    );
+}
+
+/// Section `w:vAlign` shifts the placed body content within the content area:
+/// `Bottom` pushes a short block's bottom to the content-area bottom, `Center`
+/// lands halfway, and the default (`Top`) leaves it at the content-area top.
+#[test]
+fn section_valign_positions_body_content_in_the_content_area() {
+    let shaper = ParleyShaper::new();
+    let make = |valign: Option<PageVerticalAlignment>| {
+        let mut section = section(9, (12_240, 15_840), 1_440, vec![], vec![], false);
+        section.vertical_alignment = valign;
+        Document::new(
+            node(1),
+            vec![paragraph(100, vec![run(101, "Only line")])],
+            Definitions {
+                sections: vec![section],
+                ..Definitions::default()
+            },
+        )
+        .unwrap()
+    };
+    let placed_y = |doc: &Document| {
+        let layout = paginate_document(doc, &shaper);
+        let page = &layout.pages[0];
+        let placed = &page.placed[0];
+        (
+            placed.rect.origin.y.raw(),
+            (placed.rect.origin.y + placed.rect.size.height).raw(),
+            page.content_area.origin.y.raw(),
+            (page.content_area.origin.y + page.content_area.size.height).raw(),
+        )
+    };
+
+    let (top_y, _, content_top, _) = placed_y(&make(None));
+    assert_eq!(top_y, content_top, "the default keeps content at the top");
+
+    let (bottom_y, bottom_bottom, _, content_bottom) =
+        placed_y(&make(Some(PageVerticalAlignment::Bottom)));
+    assert!(bottom_y > top_y, "bottom vAlign pushes the block down");
+    assert_eq!(
+        bottom_bottom, content_bottom,
+        "the block's bottom aligns to the content-area bottom"
+    );
+
+    let (center_y, ..) = placed_y(&make(Some(PageVerticalAlignment::Center)));
+    assert!(
+        center_y > top_y && center_y < bottom_y,
+        "center sits between top ({top_y}) and bottom ({bottom_y}), got {center_y}"
     );
 }
