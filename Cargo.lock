@@ -136,6 +136,7 @@ dependencies = [
  "casual-doc-model",
  "casual-doc-ooxml",
  "image",
+ "serde_json",
  "skrifa",
  "tiny-skia",
 ]

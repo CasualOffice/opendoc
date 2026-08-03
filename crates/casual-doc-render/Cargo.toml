@@ -38,6 +38,7 @@ image = { version = "0.25", default-features = false, features = [
 [dev-dependencies]
 casual-doc-import.workspace = true
 casual-doc-ooxml.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

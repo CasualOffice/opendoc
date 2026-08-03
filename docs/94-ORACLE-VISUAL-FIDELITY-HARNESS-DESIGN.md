@@ -72,11 +72,22 @@ Each run emits a per-fixture report: max/mean geometry delta (twips), changed-pi
 ## Phasing
 
 - **H1 — CPU render + geometry dump + pixel diff, self-referential.** Land the harness comparing our render to *committed baselines of our own output* (a pure regression gate, no oracle yet). Immediate value: locks current behavior; catches accidental visual regressions in the remaining fixes.
-- **H2 — LibreOffice oracle for the core corpus.** Add the pinned container, generate `oracle/*.png`, wire the perceptual + geometry gates for the single-concern fixtures. This is where geometry-subtle fixes get their reference.
+- **H2 — LibreOffice oracle for the core corpus.** *(scaffolding landed)* Diff our page geometry against a pinned-LibreOffice reference. See §H2 concretely below.
 - **H3 — Complex/smoke tier + matrix wiring.** Diff the user's complex corpus at looser tolerance; feed measured scores into the matrix.
+
+## H2 concretely (as built)
+
+The H2 scaffolding is in place; the reference data is produced by the re-bless job when it first runs.
+
+- **Corpus:** the existing redistributable `fixtures/corpus/real-producer-libreoffice.docx` (Apache-2.0, already LibreOffice-authored) is the first oracle fixture — no new corpus needed. More fixtures join the `FIXTURES` map in the re-bless workflow and the `oracle_geometry` test.
+- **Reference geometry (resolved open question #1):** auto-extracted from the LibreOffice PDF, *not* hand-blessed. `scripts/oracle/extract-geometry.sh` runs pinned `soffice --convert-to pdf`, then `pdftotext -bbox`, and reduces the word boxes to a per-page reference: `{ "pages": [ { "sizeTwips": [w,h], "contentBboxTwips": [x0,y0,x1,y1]|null } ] }` (PDF points → twips, origin top-left, the content bbox = union of the page's word boxes). Committed under `fixtures/oracle/<id>.geom.json`.
+- **Comparison:** `crates/casual-doc-render/tests/oracle_geometry.rs` imports the fixture, paginates, reduces our placed body fragments to the same per-page shape, and diffs against the reference within a **±40-twip (2pt)** tolerance band (page count exact; page size and each content-bbox edge within tolerance). Reports every out-of-tolerance edge by name.
+- **Inert until blessed:** a fixture with no committed reference is **skipped**, so the test never reddens the main CI before the oracle job has run; it becomes a live fidelity gate the moment a reference lands.
+- **Hermetic main CI + reviewed re-bless:** `.github/workflows/oracle-geometry.yml` is a manual (`workflow_dispatch`) job that installs a pinned LibreOffice and **only** the bundled metric-compatible faces (Liberation/Carlito/Caladea — the font-parity crux), regenerates the references, and opens a PR whose geometry diff a maintainer reviews. The everyday CI stays hermetic (no LibreOffice, no network) and just compares against the committed references.
+- **Platform:** the geometry comparison is pinned to Linux/macOS and skipped on Windows, whose text stack shapes differently (the same reason H1 is Windows-gated — see the H1 test and PR #316).
 
 ## Open questions
 
-1. Geometry extraction from the oracle: PDF text-layer bounding boxes vs a committed hand-verified geometry baseline for H2? (Leaning: committed baseline, re-blessed like the PNGs — simpler and avoids a PDF-parsing dependency.)
-2. Perceptual metric: tolerance-banded pixel-fraction is the floor; is SSIM worth the dependency, or is pixel-fraction + geometry enough? (Leaning: start without SSIM.)
-3. Corpus location and licensing of any real-world sample docs (must be redistributable to live in-repo).
+1. ~~Geometry extraction from the oracle~~ — **resolved:** auto-extract from the LibreOffice PDF via `pdftotext -bbox` (see §H2). Per-*block* correspondence between the two renderers is unstable, so H2 compares **page-level** geometry (size + content bbox); per-block diffing is deferred unless a stable correspondence is found.
+2. Perceptual metric: tolerance-banded pixel-fraction is the floor; is SSIM worth the dependency, or is pixel-fraction + geometry enough? (Leaning: start without SSIM. The H2 image-diff gate is not yet built — geometry lands first.)
+3. Corpus location and licensing of any real-world sample docs (must be redistributable to live in-repo). H2 starts on the already-vetted `real-producer-libreoffice.docx`; expanding to the user's complex corpus (H3) still needs a redistribution check.
