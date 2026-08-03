@@ -7,10 +7,10 @@ use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, Bookmark, BookmarkEnd,
     BookmarkId, BookmarkStart, Break, BreakKind, Color, Definitions, Document, ExternalTarget,
     GridColumn, Hyperlink, HyperlinkTarget, InlineNode, InternalTarget, LevelJustification,
-    LevelSuffix, MAX_TABLE_DEPTH, NumberFormat, NumberingInstance, NumberingInstanceId,
-    NumberingLevel, NumberingRef, Paragraph, ParagraphProperties, RgbColor, Run, RunProperties,
-    Tab, Table, TableCell, TableCellProperties, TableProperties, TableRow, TableRowProperties,
-    VerticalMerge,
+    LevelSuffix, MAX_TABLE_DEPTH, Note, NoteId, NoteKind, NoteReference, NumberFormat,
+    NumberingInstance, NumberingInstanceId, NumberingLevel, NumberingRef, Paragraph,
+    ParagraphProperties, RgbColor, Run, RunProperties, Tab, Table, TableCell, TableCellProperties,
+    TableProperties, TableRow, TableRowProperties, VerticalMerge,
 };
 use casual_doc_package::CancellationToken;
 use quick_xml::NsReader;
@@ -134,6 +134,8 @@ pub struct OdfImportLimits {
     pub max_table_cells: usize,
     /// Maximum nested table depth.
     pub max_table_depth: usize,
+    /// Maximum footnote and endnote definitions.
+    pub max_notes: usize,
     /// Maximum aggregate normalized text bytes.
     pub max_text_bytes: usize,
     /// Maximum spaces emitted by one `text:s` element.
@@ -173,6 +175,8 @@ impl OdfImportLimits {
     pub const HARD_MAX_TABLE_CELLS: usize = 16_000_000;
     /// Compiled maximum nested table depth, aligned with the normalized model.
     pub const HARD_MAX_TABLE_DEPTH: usize = MAX_TABLE_DEPTH as usize;
+    /// Compiled maximum footnote and endnote count.
+    pub const HARD_MAX_NOTES: usize = 2_000_000;
     /// Compiled maximum aggregate normalized text bytes.
     pub const HARD_MAX_TEXT_BYTES: usize = 512 * 1024 * 1024;
     /// Compiled maximum one-element space expansion.
@@ -249,6 +253,7 @@ impl OdfImportLimits {
                 self.max_table_depth,
                 Self::HARD_MAX_TABLE_DEPTH,
             ),
+            ("odf_content_notes", self.max_notes, Self::HARD_MAX_NOTES),
             (
                 "odf_content_text_bytes",
                 self.max_text_bytes,
@@ -295,6 +300,7 @@ impl Default for OdfImportLimits {
             max_table_rows: 1_000_000,
             max_table_cells: 4_000_000,
             max_table_depth: 16,
+            max_notes: 250_000,
             max_text_bytes: 128 * 1024 * 1024,
             max_space_repeat: 65_536,
             max_report_features: 4_096,
@@ -316,6 +322,10 @@ enum InlineDraft {
     },
     BookmarkStart(usize),
     BookmarkEnd(usize),
+    NoteReference {
+        index: usize,
+        kind: NoteKind,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -369,6 +379,38 @@ struct TableCellDraft {
     column_span: u32,
     row_span: u32,
     blocks: Vec<BlockDraft>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct NoteDraft {
+    source_id: String,
+    kind: NoteKind,
+    blocks: Vec<BlockDraft>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SuspendedInlineContext {
+    paragraph: ParagraphDraft,
+    active_link: Option<LinkDraft>,
+    active_run_properties: RunProperties,
+    open_spans: Vec<OpenSpan>,
+    open_lists: Vec<OpenList>,
+    open_list_items: Vec<OpenListItem>,
+    open_bookmarks: BTreeMap<String, usize>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OpenNote {
+    depth: usize,
+    body_depth: Option<usize>,
+    body_seen: bool,
+    citation_depth: Option<usize>,
+    citation_has_text: bool,
+    source_id: String,
+    kind: NoteKind,
+    blocks: Vec<BlockDraft>,
+    table_stack_len: usize,
+    outer: SuspendedInlineContext,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1511,6 +1553,9 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
     let mut table_count = 0_usize;
     let mut table_row_count = 0_usize;
     let mut table_cell_count = 0_usize;
+    let mut notes = Vec::new();
+    let mut note_source_ids = BTreeSet::new();
+    let mut open_note = None;
 
     loop {
         check_cancelled(cancellation)?;
@@ -1563,6 +1608,48 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                         return Err(OdfError::MalformedContent);
                     }
                     if text_body_depth.is_some()
+                        && current.is_some()
+                        && is_name(&name, NamespaceKind::Text, b"note")
+                    {
+                        start_note(
+                            &reader,
+                            &element,
+                            depth,
+                            limits,
+                            &mut attributes,
+                            &mut attribute_bytes,
+                            &mut current,
+                            &mut active_link,
+                            &mut active_run_properties,
+                            &mut open_spans,
+                            &mut open_lists,
+                            &mut open_list_items,
+                            &mut open_bookmarks,
+                            &open_tables,
+                            &notes,
+                            &mut note_source_ids,
+                            &mut open_note,
+                            &mut reporter,
+                        )?;
+                    } else if open_note
+                        .as_ref()
+                        .is_some_and(|note: &OpenNote| note.body_depth.is_none())
+                    {
+                        if !process_note_container_start(
+                            &reader,
+                            &element,
+                            &name,
+                            depth,
+                            limits,
+                            &mut attributes,
+                            &mut attribute_bytes,
+                            &mut open_note,
+                            false,
+                            &mut reporter,
+                        )? {
+                            return Err(OdfError::MalformedContent);
+                        }
+                    } else if text_body_depth.is_some()
                         && current.is_none()
                         && is_name(&name, NamespaceKind::Text, b"list")
                     {
@@ -1662,6 +1749,29 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                 {
                     count_attributes_only(&element, &mut attributes, &mut attribute_bytes, limits)?;
                 } else if text_body_depth.is_some()
+                    && current.is_some()
+                    && is_name(&name, NamespaceKind::Text, b"note")
+                {
+                    return Err(OdfError::MalformedContent);
+                } else if open_note
+                    .as_ref()
+                    .is_some_and(|note: &OpenNote| note.body_depth.is_none())
+                {
+                    if !process_note_container_start(
+                        &reader,
+                        &element,
+                        &name,
+                        depth + 1,
+                        limits,
+                        &mut attributes,
+                        &mut attribute_bytes,
+                        &mut open_note,
+                        true,
+                        &mut reporter,
+                    )? {
+                        return Err(OdfError::MalformedContent);
+                    }
+                } else if text_body_depth.is_some()
                     && current.is_none()
                     && name.namespace == NamespaceKind::Table
                 {
@@ -1698,6 +1808,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                         &mut paragraphs,
                         &mut blocks,
                         &mut open_tables,
+                        &mut open_note,
                         &mut inline_nodes,
                         &mut text_bytes,
                         &style_catalog.automatic,
@@ -1735,6 +1846,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                         &mut paragraphs,
                         &mut blocks,
                         &mut open_tables,
+                        &mut open_note,
                         paragraph,
                         limits,
                     )?;
@@ -1783,7 +1895,45 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                     table.row_container_header = false;
                 }
                 if open_tables.last().is_some_and(|table| table.depth == depth) {
-                    finish_table(&mut open_tables, &mut blocks)?;
+                    finish_table(&mut open_tables, &mut blocks, &mut open_note)?;
+                }
+                if open_note
+                    .as_ref()
+                    .is_some_and(|note: &OpenNote| note.citation_depth == Some(depth))
+                {
+                    open_note
+                        .as_mut()
+                        .ok_or(OdfError::MalformedContent)?
+                        .citation_depth = None;
+                }
+                if open_note
+                    .as_ref()
+                    .is_some_and(|note: &OpenNote| note.body_depth == Some(depth))
+                {
+                    open_note
+                        .as_mut()
+                        .ok_or(OdfError::MalformedContent)?
+                        .body_depth = None;
+                }
+                if open_note
+                    .as_ref()
+                    .is_some_and(|note: &OpenNote| note.depth == depth)
+                {
+                    finish_note(
+                        limits,
+                        &mut current,
+                        &mut active_link,
+                        &mut active_run_properties,
+                        &mut open_spans,
+                        &mut open_lists,
+                        &mut open_list_items,
+                        &mut open_bookmarks,
+                        &open_tables,
+                        &mut inline_nodes,
+                        &mut notes,
+                        &mut open_note,
+                        &mut reporter,
+                    )?;
                 }
                 if automatic_styles_depth == Some(depth) {
                     automatic_styles_depth = None;
@@ -1809,7 +1959,18 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                 let decoded = text.decode().map_err(|_| OdfError::MalformedContent)?;
                 let value = quick_xml::escape::unescape(&decoded)
                     .map_err(|_| OdfError::MalformedContent)?;
-                if let Some(paragraph) = &mut current {
+                if let Some(note) = &mut open_note
+                    && note.citation_depth.is_some()
+                {
+                    note.citation_has_text |= !value.is_empty();
+                } else if open_note
+                    .as_ref()
+                    .is_some_and(|note: &OpenNote| note.body_depth.is_none())
+                {
+                    if !value.trim().is_empty() {
+                        return Err(OdfError::MalformedContent);
+                    }
+                } else if let Some(paragraph) = &mut current {
                     append_text(
                         paragraph,
                         &mut active_link,
@@ -1827,7 +1988,18 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                     return Err(OdfError::MalformedContent);
                 }
                 let value = text.decode().map_err(|_| OdfError::MalformedContent)?;
-                if let Some(paragraph) = &mut current {
+                if let Some(note) = &mut open_note
+                    && note.citation_depth.is_some()
+                {
+                    note.citation_has_text |= !value.is_empty();
+                } else if open_note
+                    .as_ref()
+                    .is_some_and(|note: &OpenNote| note.body_depth.is_none())
+                {
+                    if !value.trim().is_empty() {
+                        return Err(OdfError::MalformedContent);
+                    }
+                } else if let Some(paragraph) = &mut current {
                     append_text(
                         paragraph,
                         &mut active_link,
@@ -1845,7 +2017,18 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                     return Err(OdfError::MalformedContent);
                 }
                 let value = decode_reference(&reference)?;
-                if let Some(paragraph) = &mut current {
+                if let Some(note) = &mut open_note
+                    && note.citation_depth.is_some()
+                {
+                    note.citation_has_text |= !value.is_empty();
+                } else if open_note
+                    .as_ref()
+                    .is_some_and(|note: &OpenNote| note.body_depth.is_none())
+                {
+                    if !value.trim().is_empty() {
+                        return Err(OdfError::MalformedContent);
+                    }
+                } else if let Some(paragraph) = &mut current {
                     append_text(
                         paragraph,
                         &mut active_link,
@@ -1876,6 +2059,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
         || !open_lists.is_empty()
         || !open_list_items.is_empty()
         || !open_tables.is_empty()
+        || open_note.is_some()
     {
         return Err(OdfError::MalformedContent);
     }
@@ -1887,6 +2071,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
             &mut paragraphs,
             &mut blocks,
             &mut open_tables,
+            &mut open_note,
             ParagraphDraft {
                 depth: 0,
                 outline_level: None,
@@ -1909,11 +2094,12 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
     for paragraph in &mut paragraphs {
         normalize_inline_drafts(&mut paragraph.inlines, &bookmarks, &mut reporter);
     }
-    enforce_expanded_block_limits(&blocks, &paragraphs, limits)?;
+    enforce_expanded_block_limits(&blocks, &notes, &paragraphs, limits)?;
     let document = build_document(
         expected_version,
         &paragraphs,
         &blocks,
+        &notes,
         &bookmarks,
         &style_catalog.lists,
         &mut reporter,
@@ -2610,6 +2796,7 @@ fn finish_table_row(
 fn finish_table(
     open_tables: &mut Vec<OpenTable>,
     blocks: &mut Vec<BlockDraft>,
+    open_note: &mut Option<OpenNote>,
 ) -> Result<(), OdfError> {
     let table = open_tables.pop().ok_or(OdfError::MalformedContent)?;
     if table.current_row.is_some() || table.row_container_depth.is_some() || table.rows.is_empty() {
@@ -2628,7 +2815,7 @@ fn finish_table(
         rows: table.rows,
     };
     validate_table_topology(&draft)?;
-    push_block_draft(blocks, open_tables, BlockDraft::Table(draft))
+    push_block_draft(blocks, open_tables, open_note, BlockDraft::Table(draft))
 }
 
 fn validate_table_topology(table: &TableDraft) -> Result<(), OdfError> {
@@ -2693,9 +2880,19 @@ fn validate_table_topology(table: &TableDraft) -> Result<(), OdfError> {
 fn push_block_draft(
     blocks: &mut Vec<BlockDraft>,
     open_tables: &mut [OpenTable],
+    open_note: &mut Option<OpenNote>,
     block: BlockDraft,
 ) -> Result<(), OdfError> {
-    if let Some(table) = open_tables.last_mut() {
+    if open_note
+        .as_ref()
+        .is_some_and(|note| open_tables.len() <= note.table_stack_len)
+    {
+        open_note
+            .as_mut()
+            .ok_or(OdfError::MalformedContent)?
+            .blocks
+            .push(block);
+    } else if let Some(table) = open_tables.last_mut() {
         let cell = table
             .current_row
             .as_mut()
@@ -2705,6 +2902,214 @@ fn push_block_draft(
     } else {
         blocks.push(block);
     }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn start_note(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    depth: usize,
+    limits: OdfImportLimits,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    current: &mut Option<ParagraphDraft>,
+    active_link: &mut Option<LinkDraft>,
+    active_run_properties: &mut RunProperties,
+    open_spans: &mut Vec<OpenSpan>,
+    open_lists: &mut Vec<OpenList>,
+    open_list_items: &mut Vec<OpenListItem>,
+    open_bookmarks: &mut BTreeMap<String, usize>,
+    open_tables: &[OpenTable],
+    notes: &[NoteDraft],
+    note_source_ids: &mut BTreeSet<String>,
+    open_note: &mut Option<OpenNote>,
+    reporter: &mut Reporter,
+) -> Result<(), OdfError> {
+    if open_note.is_some() {
+        return Err(OdfError::MalformedContent);
+    }
+    enforce(
+        "odf_content_notes",
+        notes
+            .len()
+            .checked_add(1)
+            .ok_or(OdfError::MalformedContent)?,
+        limits.max_notes,
+    )?;
+    let mut source_id = None;
+    let mut kind = None;
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        if namespace_kind(&namespace) == NamespaceKind::Text && local.as_ref() == b"id" {
+            if source_id.is_some() {
+                return Err(OdfError::MalformedContent);
+            }
+            source_id = Some(decode_attribute(&attribute)?);
+        } else if namespace_kind(&namespace) == NamespaceKind::Text
+            && local.as_ref() == b"note-class"
+        {
+            if kind.is_some() {
+                return Err(OdfError::MalformedContent);
+            }
+            kind = Some(match decode_attribute(&attribute)?.as_str() {
+                "footnote" => NoteKind::Footnote,
+                "endnote" => NoteKind::Endnote,
+                _ => return Err(OdfError::MalformedContent),
+            });
+        } else if !is_namespace_declaration(&attribute) {
+            reporter.report(
+                attribute_feature(reader, &attribute),
+                ModelOutcome::Degraded,
+            );
+        }
+    }
+    let source_id = source_id.ok_or(OdfError::MalformedContent)?;
+    if source_id.is_empty() || source_id.len() > 255 || !note_source_ids.insert(source_id.clone()) {
+        return Err(OdfError::MalformedContent);
+    }
+    let outer = SuspendedInlineContext {
+        paragraph: current.take().ok_or(OdfError::MalformedContent)?,
+        active_link: active_link.take(),
+        active_run_properties: std::mem::take(active_run_properties),
+        open_spans: std::mem::take(open_spans),
+        open_lists: std::mem::take(open_lists),
+        open_list_items: std::mem::take(open_list_items),
+        open_bookmarks: std::mem::take(open_bookmarks),
+    };
+    *open_note = Some(OpenNote {
+        depth,
+        body_depth: None,
+        body_seen: false,
+        citation_depth: None,
+        citation_has_text: false,
+        source_id,
+        kind: kind.ok_or(OdfError::MalformedContent)?,
+        blocks: Vec::new(),
+        table_stack_len: open_tables.len(),
+        outer,
+    });
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn process_note_container_start(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    name: &ResolvedName,
+    depth: usize,
+    limits: OdfImportLimits,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    open_note: &mut Option<OpenNote>,
+    empty: bool,
+    reporter: &mut Reporter,
+) -> Result<bool, OdfError> {
+    let note = open_note.as_mut().ok_or(OdfError::MalformedContent)?;
+    if depth != note.depth + 1 {
+        return Ok(false);
+    }
+    if is_name(name, NamespaceKind::Text, b"note-citation") {
+        if note.citation_depth.is_some() || note.body_seen {
+            return Err(OdfError::MalformedContent);
+        }
+        count_and_report_attributes(
+            reader,
+            element,
+            attributes,
+            attribute_bytes,
+            limits,
+            reporter,
+        )?;
+        if !empty {
+            note.citation_depth = Some(depth);
+        }
+        return Ok(true);
+    }
+    if is_name(name, NamespaceKind::Text, b"note-body") {
+        if note.body_seen || note.citation_depth.is_some() {
+            return Err(OdfError::MalformedContent);
+        }
+        count_and_report_attributes(
+            reader,
+            element,
+            attributes,
+            attribute_bytes,
+            limits,
+            reporter,
+        )?;
+        note.body_seen = true;
+        if !empty {
+            note.body_depth = Some(depth);
+        }
+        return Ok(true);
+    }
+    Err(OdfError::MalformedContent)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_note(
+    limits: OdfImportLimits,
+    current: &mut Option<ParagraphDraft>,
+    active_link: &mut Option<LinkDraft>,
+    active_run_properties: &mut RunProperties,
+    open_spans: &mut Vec<OpenSpan>,
+    open_lists: &mut Vec<OpenList>,
+    open_list_items: &mut Vec<OpenListItem>,
+    open_bookmarks: &mut BTreeMap<String, usize>,
+    open_tables: &[OpenTable],
+    inline_nodes: &mut usize,
+    notes: &mut Vec<NoteDraft>,
+    open_note: &mut Option<OpenNote>,
+    reporter: &mut Reporter,
+) -> Result<(), OdfError> {
+    let note = open_note.take().ok_or(OdfError::MalformedContent)?;
+    if !note.body_seen
+        || note.body_depth.is_some()
+        || note.citation_depth.is_some()
+        || current.is_some()
+        || active_link.is_some()
+        || !open_spans.is_empty()
+        || !open_lists.is_empty()
+        || !open_list_items.is_empty()
+        || !open_bookmarks.is_empty()
+        || open_tables.len() != note.table_stack_len
+    {
+        return Err(OdfError::MalformedContent);
+    }
+    if note.citation_has_text {
+        reporter.report(
+            "odf.element.text.note-citation".to_owned(),
+            ModelOutcome::Degraded,
+        );
+    }
+    let index = notes.len();
+    let kind = note.kind;
+    notes.push(NoteDraft {
+        source_id: note.source_id,
+        kind,
+        blocks: note.blocks,
+    });
+    *current = Some(note.outer.paragraph);
+    *active_link = note.outer.active_link;
+    *active_run_properties = note.outer.active_run_properties;
+    *open_spans = note.outer.open_spans;
+    *open_lists = note.outer.open_lists;
+    *open_list_items = note.outer.open_list_items;
+    *open_bookmarks = note.outer.open_bookmarks;
+    *inline_nodes = checked_increment(*inline_nodes)?;
+    enforce(
+        "odf_content_inline_nodes",
+        *inline_nodes,
+        limits.max_inline_nodes,
+    )?;
+    push_inline_draft(
+        current.as_mut().ok_or(OdfError::MalformedContent)?,
+        active_link,
+        InlineDraft::NoteReference { index, kind },
+    );
     Ok(())
 }
 
@@ -2864,6 +3269,7 @@ fn process_empty(
     paragraphs: &mut Vec<ParagraphDraft>,
     blocks: &mut Vec<BlockDraft>,
     open_tables: &mut [OpenTable],
+    open_note: &mut Option<OpenNote>,
     inline_nodes: &mut usize,
     text_bytes: &mut usize,
     automatic_styles: &AutomaticStyles,
@@ -2920,6 +3326,7 @@ fn process_empty(
             paragraphs,
             blocks,
             open_tables,
+            open_note,
             current.take().ok_or(OdfError::MalformedContent)?,
             limits,
         )?;
@@ -3487,11 +3894,17 @@ struct ExpandedBlockCounts {
 
 fn enforce_expanded_block_limits(
     blocks: &[BlockDraft],
+    notes: &[NoteDraft],
     paragraphs: &[ParagraphDraft],
     limits: OdfImportLimits,
 ) -> Result<(), OdfError> {
     let mut counts = ExpandedBlockCounts::default();
-    count_expanded_blocks(blocks, paragraphs, limits, &mut counts)
+    count_expanded_blocks(blocks, paragraphs, limits, &mut counts)?;
+    enforce("odf_content_notes", notes.len(), limits.max_notes)?;
+    for note in notes {
+        count_expanded_blocks(&note.blocks, paragraphs, limits, &mut counts)?;
+    }
+    Ok(())
 }
 
 fn count_expanded_blocks(
@@ -3608,7 +4021,8 @@ fn inline_draft_text_bytes(inlines: &[InlineDraft]) -> Result<usize, OdfError> {
             InlineDraft::Tab
             | InlineDraft::LineBreak
             | InlineDraft::BookmarkStart(_)
-            | InlineDraft::BookmarkEnd(_) => {}
+            | InlineDraft::BookmarkEnd(_)
+            | InlineDraft::NoteReference { .. } => {}
         }
     }
     Ok(total)
@@ -3669,18 +4083,20 @@ fn push_paragraph_block(
     paragraphs: &mut Vec<ParagraphDraft>,
     blocks: &mut Vec<BlockDraft>,
     open_tables: &mut [OpenTable],
+    open_note: &mut Option<OpenNote>,
     paragraph: ParagraphDraft,
     limits: OdfImportLimits,
 ) -> Result<(), OdfError> {
     let index = paragraphs.len();
     push_paragraph(paragraphs, paragraph, limits)?;
-    push_block_draft(blocks, open_tables, BlockDraft::Paragraph(index))
+    push_block_draft(blocks, open_tables, open_note, BlockDraft::Paragraph(index))
 }
 
 fn build_document(
     version: OdfVersion,
     paragraphs: &[ParagraphDraft],
     blocks: &[BlockDraft],
+    notes: &[NoteDraft],
     bookmarks: &[BookmarkDraft],
     list_styles: &ListStyles,
     reporter: &mut Reporter,
@@ -3716,6 +4132,18 @@ fn build_document(
         }
     }
     hash_block_drafts(&mut namespace, blocks);
+    for note in notes {
+        hash_bytes(&mut namespace, b"note");
+        hash_bytes(&mut namespace, note.source_id.as_bytes());
+        hash_bytes(
+            &mut namespace,
+            match note.kind {
+                NoteKind::Footnote => b"footnote".as_slice(),
+                NoteKind::Endnote => b"endnote".as_slice(),
+            },
+        );
+        hash_block_drafts(&mut namespace, &note.blocks);
+    }
     if namespace == 0 {
         namespace = 1;
     }
@@ -3807,7 +4235,42 @@ fn build_document(
             bookmark_ids.push(None);
         }
     }
-    let body = build_blocks(blocks, paragraphs, &mut ids, &bookmark_ids, &numbering_ids)?;
+    let mut note_ids = Vec::with_capacity(notes.len());
+    for _ in notes {
+        note_ids.push(NoteId::new(
+            ids.next_id().map_err(|_| OdfError::InvalidModel)?,
+        ));
+    }
+    for (index, note) in notes.iter().enumerate() {
+        let blocks = build_blocks(
+            &note.blocks,
+            paragraphs,
+            &mut ids,
+            &bookmark_ids,
+            &numbering_ids,
+            &note_ids,
+        )?;
+        match note.kind {
+            NoteKind::Footnote => {
+                definitions
+                    .footnotes
+                    .insert(note_ids[index], Note { blocks });
+            }
+            NoteKind::Endnote => {
+                definitions
+                    .endnotes
+                    .insert(note_ids[index], Note { blocks });
+            }
+        }
+    }
+    let body = build_blocks(
+        blocks,
+        paragraphs,
+        &mut ids,
+        &bookmark_ids,
+        &numbering_ids,
+        &note_ids,
+    )?;
     Document::new(document_id, body, definitions).map_err(|_| OdfError::InvalidModel)
 }
 
@@ -3847,6 +4310,7 @@ fn build_blocks(
     ids: &mut IdGenerator,
     bookmark_ids: &[Option<BookmarkId>],
     numbering_ids: &BTreeMap<usize, NumberingInstanceId>,
+    note_ids: &[NoteId],
 ) -> Result<Vec<BlockNode>, OdfError> {
     let mut blocks = Vec::with_capacity(drafts.len());
     for draft in drafts {
@@ -3856,6 +4320,7 @@ fn build_blocks(
                 ids,
                 bookmark_ids,
                 numbering_ids,
+                note_ids,
             )?),
             BlockDraft::Table(table) => BlockNode::Table(build_table(
                 table,
@@ -3863,6 +4328,7 @@ fn build_blocks(
                 ids,
                 bookmark_ids,
                 numbering_ids,
+                note_ids,
             )?),
         });
     }
@@ -3874,6 +4340,7 @@ fn build_paragraph(
     ids: &mut IdGenerator,
     bookmark_ids: &[Option<BookmarkId>],
     numbering_ids: &BTreeMap<usize, NumberingInstanceId>,
+    note_ids: &[NoteId],
 ) -> Result<Paragraph, OdfError> {
     let id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
     let properties = ParagraphProperties {
@@ -3888,7 +4355,7 @@ fn build_paragraph(
     Ok(Paragraph {
         id,
         properties,
-        inlines: build_inlines(&draft.inlines, ids, bookmark_ids)?,
+        inlines: build_inlines(&draft.inlines, ids, bookmark_ids, note_ids)?,
     })
 }
 
@@ -3906,6 +4373,7 @@ fn build_table(
     ids: &mut IdGenerator,
     bookmark_ids: &[Option<BookmarkId>],
     numbering_ids: &BTreeMap<usize, NumberingInstanceId>,
+    note_ids: &[NoteId],
 ) -> Result<Table, OdfError> {
     let owners = table_owners(draft)?;
     let id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
@@ -3916,8 +4384,14 @@ fn build_table(
         for (column_index, slot) in row.slots.iter().enumerate() {
             match slot {
                 TableSlotDraft::Cell(cell) => {
-                    let mut blocks =
-                        build_blocks(&cell.blocks, paragraphs, ids, bookmark_ids, numbering_ids)?;
+                    let mut blocks = build_blocks(
+                        &cell.blocks,
+                        paragraphs,
+                        ids,
+                        bookmark_ids,
+                        numbering_ids,
+                        note_ids,
+                    )?;
                     if blocks.is_empty() {
                         blocks.push(build_empty_paragraph(ids)?);
                     }
@@ -4041,6 +4515,17 @@ fn hash_inline_draft(hash: &mut u64, inline: &InlineDraft, bookmarks: &[Bookmark
                 hash_bytes(hash, bookmarks[*index].name.as_bytes());
             }
         }
+        InlineDraft::NoteReference { index, kind } => {
+            hash_bytes(hash, b"note-reference");
+            hash_bytes(hash, &index.to_le_bytes());
+            hash_bytes(
+                hash,
+                match kind {
+                    NoteKind::Footnote => b"footnote".as_slice(),
+                    NoteKind::Endnote => b"endnote".as_slice(),
+                },
+            );
+        }
     }
 }
 
@@ -4077,6 +4562,7 @@ fn build_inlines(
     drafts: &[InlineDraft],
     ids: &mut IdGenerator,
     bookmark_ids: &[Option<BookmarkId>],
+    note_ids: &[NoteId],
 ) -> Result<Vec<InlineNode>, OdfError> {
     let mut inlines = Vec::with_capacity(drafts.len());
     for draft in drafts {
@@ -4112,7 +4598,7 @@ fn build_inlines(
                 id,
                 target: target.clone(),
                 tooltip: None,
-                inlines: build_inlines(children, ids, bookmark_ids)?,
+                inlines: build_inlines(children, ids, bookmark_ids, note_ids)?,
             }),
             InlineDraft::BookmarkStart(_) => InlineNode::BookmarkStart(BookmarkStart {
                 id,
@@ -4122,6 +4608,13 @@ fn build_inlines(
                 id,
                 bookmark: bookmark.ok_or(OdfError::InvalidModel)?,
             }),
+            InlineDraft::NoteReference { index, kind } => {
+                InlineNode::NoteReference(NoteReference {
+                    id,
+                    kind: *kind,
+                    note: *note_ids.get(*index).ok_or(OdfError::InvalidModel)?,
+                })
+            }
         });
     }
     Ok(inlines)

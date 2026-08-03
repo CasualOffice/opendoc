@@ -19,6 +19,7 @@ const FUZZ_LIMITS: OdfImportLimits = OdfImportLimits {
     max_table_rows: 10_000,
     max_table_cells: 40_000,
     max_table_depth: 8,
+    max_notes: 10_000,
     max_text_bytes: 512 * 1024,
     max_space_repeat: 8_192,
     max_report_features: 512,

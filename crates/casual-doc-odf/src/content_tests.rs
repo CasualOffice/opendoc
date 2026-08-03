@@ -1,6 +1,6 @@
 use casual_doc_model::v1::{
-    Alignment, BlockNode, BreakKind, Color, HyperlinkTarget, InlineNode, NumberFormat, RgbColor,
-    VerticalMerge,
+    Alignment, BlockNode, BreakKind, Color, HyperlinkTarget, InlineNode, NoteKind, NumberFormat,
+    RgbColor, VerticalMerge,
 };
 use casual_doc_package::CancellationToken;
 
@@ -788,4 +788,124 @@ fn content_limits_and_cancellation_are_atomic() {
     .unwrap();
     assert_eq!(import.report.entries.len(), 1);
     assert_eq!(import.report.entries[0].feature, "odf.report.overflow");
+}
+
+#[test]
+fn footnotes_and_endnotes_map_to_typed_definitions_in_source_order() {
+    let xml = content(
+        "1.4",
+        r#"<text:p>before<text:note text:id="fn-1" text:note-class="footnote"><text:note-citation>*</text:note-citation><text:note-body><text:p>foot body</text:p></text:note-body></text:note>middle<text:note text:note-class="endnote" text:id="en-1"><text:note-citation>i</text:note-citation><text:note-body><text:p>end body</text:p></text:note-body></text:note>after</text:p>"#,
+    );
+    let first = import_content_xml(&xml, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
+    let second = import_content_xml(&xml, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
+    assert_eq!(first, second);
+    first.document.validate().unwrap();
+
+    let paragraph = paragraph(&first, 0);
+    assert!(matches!(&paragraph.inlines[0], InlineNode::Run(run) if run.text == "before"));
+    let InlineNode::NoteReference(footnote_reference) = &paragraph.inlines[1] else {
+        panic!("footnote reference")
+    };
+    assert_eq!(footnote_reference.kind, NoteKind::Footnote);
+    assert!(matches!(&paragraph.inlines[2], InlineNode::Run(run) if run.text == "middle"));
+    let InlineNode::NoteReference(endnote_reference) = &paragraph.inlines[3] else {
+        panic!("endnote reference")
+    };
+    assert_eq!(endnote_reference.kind, NoteKind::Endnote);
+    assert!(matches!(&paragraph.inlines[4], InlineNode::Run(run) if run.text == "after"));
+
+    let footnote = first
+        .document
+        .definitions()
+        .footnotes
+        .get(&footnote_reference.note)
+        .unwrap();
+    assert!(
+        matches!(&footnote.blocks[0], BlockNode::Paragraph(paragraph) if matches!(&paragraph.inlines[0], InlineNode::Run(run) if run.text == "foot body"))
+    );
+    let endnote = first
+        .document
+        .definitions()
+        .endnotes
+        .get(&endnote_reference.note)
+        .unwrap();
+    assert!(
+        matches!(&endnote.blocks[0], BlockNode::Paragraph(paragraph) if matches!(&paragraph.inlines[0], InlineNode::Run(run) if run.text == "end body"))
+    );
+    assert!(first.report.entries.iter().any(|entry| {
+        entry.feature == "odf.element.text.note-citation"
+            && entry.occurrences == 2
+            && entry.model_outcome == ModelOutcome::Degraded
+    }));
+}
+
+#[test]
+fn note_blocks_route_outside_the_enclosing_table_cell_and_may_nest_tables() {
+    let xml = content(
+        "1.4",
+        r#"<table:table><table:table-row><table:table-cell><text:p>cell<text:note text:id="n" text:note-class="footnote"><text:note-body><text:p>note paragraph</text:p><table:table><table:table-row><table:table-cell><text:p>nested</text:p></table:table-cell></table:table-row></table:table></text:note-body></text:note>tail</text:p></table:table-cell></table:table-row></table:table>"#,
+    );
+    let imported = import_content_xml(&xml, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
+    imported.document.validate().unwrap();
+
+    let BlockNode::Table(outer) = &imported.document.body()[0] else {
+        panic!("outer table")
+    };
+    let BlockNode::Paragraph(cell_paragraph) = &outer.rows[0].cells[0].blocks[0] else {
+        panic!("cell paragraph")
+    };
+    let InlineNode::NoteReference(reference) = &cell_paragraph.inlines[1] else {
+        panic!("note reference")
+    };
+    assert!(matches!(&cell_paragraph.inlines[2], InlineNode::Run(run) if run.text == "tail"));
+    let note = imported
+        .document
+        .definitions()
+        .footnotes
+        .get(&reference.note)
+        .unwrap();
+    assert_eq!(note.blocks.len(), 2);
+    assert!(matches!(&note.blocks[0], BlockNode::Paragraph(_)));
+    assert!(matches!(&note.blocks[1], BlockNode::Table(_)));
+    assert_eq!(outer.rows[0].cells[0].blocks.len(), 1);
+}
+
+#[test]
+fn malformed_or_over_limit_notes_fail_atomically() {
+    for body in [
+        r#"<text:p><text:note text:id="n" text:note-class="footnote"/></text:p>"#,
+        r#"<text:p><text:note text:id="n" text:note-class="other"><text:note-body/></text:note></text:p>"#,
+        r#"<text:p><text:note text:id="n" text:note-class="footnote"><text:note-body><text:p><text:note text:id="nested" text:note-class="footnote"><text:note-body/></text:note></text:p></text:note-body></text:note></text:p>"#,
+        r#"<text:p><text:note text:id="n" text:note-class="footnote"><text:note-body/></text:note><text:note text:id="n" text:note-class="endnote"><text:note-body/></text:note></text:p>"#,
+    ] {
+        assert_eq!(
+            import_content_xml(
+                &content("1.4", body),
+                OdfVersion::V1_4,
+                OdfImportLimits::default(),
+            )
+            .unwrap_err(),
+            OdfError::MalformedContent
+        );
+    }
+
+    let two_notes = content(
+        "1.4",
+        r#"<text:p><text:note text:id="a" text:note-class="footnote"><text:note-body/></text:note><text:note text:id="b" text:note-class="endnote"><text:note-body/></text:note></text:p>"#,
+    );
+    assert!(matches!(
+        import_content_xml(
+            &two_notes,
+            OdfVersion::V1_4,
+            OdfImportLimits {
+                max_notes: 1,
+                ..OdfImportLimits::default()
+            },
+        ),
+        Err(OdfError::LimitExceeded {
+            limit: "odf_content_notes",
+            observed: 2,
+            allowed: 1,
+        })
+    ));
 }

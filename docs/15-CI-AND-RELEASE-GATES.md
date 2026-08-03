@@ -48,13 +48,18 @@ corpus lands in MFIO-007.
 
 The ODT semantic-import gate additionally requires namespace/prefix and
 attribute-order invariance, strict version/document-kind checks, DTD and active
-content refusal, bounded XML/text/paragraph/inline/list/table/report resources,
+content refusal, bounded XML/text/paragraph/inline/list/table/note/report resources,
 cooperative cancellation, normalized-model validation, and explicit findings
 for every deferred construct family. Synthetic fixtures additionally lock table
 block order, bounded repetition and nesting, empty-cell normalization, and
 strict horizontal/vertical covered-cell topology. The independently locked
 `odt_content` fuzz target compiles in pull-request CI. Rights-reviewed ODF
 fixtures remain a Slice D completion requirement.
+
+Synthetic note fixtures additionally require typed footnote/endnote reference
+resolution, recursive note-body block placement (including notes referenced
+from table cells), deterministic identity, custom-citation loss reporting, and
+atomic rejection of nested, duplicate, malformed, or over-limit notes.
 
 The matching ODT semantic-export gate requires deterministic recursive table
 XML, independent row/cell/column bounds, model → ODT → model equality, byte-stable
