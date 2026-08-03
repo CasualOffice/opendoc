@@ -934,7 +934,11 @@ fn paragraph_flag_and_outline_properties_are_mapped() {
     assert!(props.keep_next);
     assert!(props.keep_lines);
     assert!(props.page_break_before);
-    assert!(!props.widow_control, "val=0 clears the toggle");
+    assert_eq!(
+        props.widow_control,
+        Some(false),
+        "explicit val=0 records an off that survives (default is ON)"
+    );
     assert!(props.contextual_spacing);
     assert!(props.suppress_line_numbers);
     assert_eq!(props.outline_level, Some(2));

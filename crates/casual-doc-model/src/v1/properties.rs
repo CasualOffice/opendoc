@@ -832,12 +832,13 @@ pub struct ParagraphProperties {
     /// Force a page break before this paragraph (`w:pageBreakBefore`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub page_break_before: bool,
-    /// Suppress the first/last-line widow/orphan control (`w:widowControl`).
-    ///
-    /// `true` means widow control is ON (OOXML default is on; a value of `false`
-    /// only appears when a producer explicitly disables it).
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub widow_control: bool,
+    /// First/last-line widow/orphan control (`w:widowControl`). Tri-state: the
+    /// OOXML default is ON, so `None` means "unset, control is on" and `Some(false)`
+    /// is an explicit off that must survive the cascade (a plain `bool` defaulting
+    /// `false` would strand lines in every document that omits the element). The
+    /// effective flag is resolved with `.unwrap_or(true)` at the layout boundary.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub widow_control: Option<bool>,
     /// Do not add spacing between paragraphs of the same style
     /// (`w:contextualSpacing`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

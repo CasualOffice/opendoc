@@ -5011,7 +5011,8 @@ fn break_control(properties: &ParagraphProperties) -> BreakControl {
         page_break_before: properties.page_break_before,
         keep_next: properties.keep_next,
         keep_lines: properties.keep_lines,
-        widow_control: properties.widow_control,
+        // OOXML default is ON: an unset `w:widowControl` still protects widows.
+        widow_control: properties.widow_control.unwrap_or(true),
     }
 }
 
@@ -5471,6 +5472,24 @@ fn alt_chunk_decor(width: Twip) -> ParagraphDecor {
 mod tests {
     use super::*;
     use crate::shape::ParleyShaper;
+
+    #[test]
+    fn unset_widow_control_resolves_on_by_default() {
+        // OOXML default is ON: a document that never emits `w:widowControl`
+        // (the overwhelming majority) must still get widow/orphan protection.
+        let props = ParagraphProperties::default();
+        assert_eq!(props.widow_control, None, "model leaves it unset");
+        assert!(
+            break_control(&props).widow_control,
+            "an unset widow_control resolves to ON at the layout boundary"
+        );
+        // An explicit off survives resolution and disables protection.
+        let off = ParagraphProperties {
+            widow_control: Some(false),
+            ..ParagraphProperties::default()
+        };
+        assert!(!break_control(&off).widow_control);
+    }
     use casual_doc_model::NodeId;
     use casual_doc_model::v1::{
         BlockNode, CommentId, Definitions, Document, EmbeddedObject, EmbeddedPart, Extent,

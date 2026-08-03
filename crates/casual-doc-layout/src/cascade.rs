@@ -506,7 +506,9 @@ fn overlay_paragraph(base: &mut ParagraphProperties, over: &ParagraphProperties)
     base.keep_next |= over.keep_next;
     base.keep_lines |= over.keep_lines;
     base.page_break_before |= over.page_break_before;
-    base.widow_control |= over.widow_control;
+    if over.widow_control.is_some() {
+        base.widow_control = over.widow_control;
+    }
     base.contextual_spacing |= over.contextual_spacing;
     if over.outline_level.is_some() {
         base.outline_level = over.outline_level;
