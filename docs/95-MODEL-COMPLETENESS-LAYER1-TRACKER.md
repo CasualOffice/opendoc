@@ -30,8 +30,8 @@ Derived from a 14-agent, evidence-cited model-completeness sweep, prevalence-ran
 | | Note-number mark in note body | `w:footnoteRef`/`w:endnoteRef` | ubiquitous | S |
 | ✅ | do-not-proof | `w:noProof` | common | S |
 | | Style tab stops *(partial)* | `w:pPr/w:tabs` in styles.xml | common | S |
-| | Page gutter margin | `w:pgMar@gutter` | common | S |
-| | Update-fields-on-open | `w:updateFields` | common | S |
+| ✅ | Page gutter margin | `w:pgMar@gutter` | common | S |
+| ✅ | Update-fields-on-open | `w:updateFields` | common | S |
 | | Footnote/endnote numFmt → enum *(partial)* | `w:footnotePr/w:numFmt` | common | S |
 | | Shape/picture flip | `a:xfrm@flipH/@flipV` | common | S |
 | | Math func / accent / limits | `m:func`,`m:acc`,`m:limLow/Upp` | common | S |

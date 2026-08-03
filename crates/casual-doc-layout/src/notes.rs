@@ -464,6 +464,7 @@ mod tests {
                 end_twips: 1_440,
                 header_twips: None,
                 footer_twips: None,
+                gutter_twips: None,
             },
             columns: SectionColumns {
                 count: 1,
