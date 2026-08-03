@@ -1433,9 +1433,9 @@ pub fn write_odt(document: &Document, limits: OdfExportLimits) -> Result<OdtExpo
     }
     if let Some(properties) = document.properties() {
         if properties.custom.iter().any(|property| {
-            !matches!(
+            matches!(
                 property.value,
-                casual_doc_model::v1::CustomValue::Text { .. }
+                casual_doc_model::v1::CustomValue::Other { .. }
             )
         }) || properties.app.company.is_some()
             || properties.app.manager.is_some()
@@ -1589,13 +1589,21 @@ fn metadata_xml(
         ));
     }
     for property in &properties.custom {
-        if let casual_doc_model::v1::CustomValue::Text { value } = &property.value {
-            xml.push_str("<meta:user-defined meta:name=\"");
-            xml.push_str(&escape(&property.name));
-            xml.push_str("\">");
-            xml.push_str(&escape(value));
-            xml.push_str("</meta:user-defined>");
-        }
+        let (kind, value) = match &property.value {
+            casual_doc_model::v1::CustomValue::Text { value } => ("string", value.clone()),
+            casual_doc_model::v1::CustomValue::I4 { value } => ("long", value.to_string()),
+            casual_doc_model::v1::CustomValue::R8 { value } => ("float", value.clone()),
+            casual_doc_model::v1::CustomValue::Bool { value } => ("boolean", value.to_string()),
+            casual_doc_model::v1::CustomValue::FileTime { value } => ("date", value.clone()),
+            casual_doc_model::v1::CustomValue::Other { value, .. } => ("string", value.clone()),
+        };
+        xml.push_str("<meta:user-defined meta:name=\"");
+        xml.push_str(&escape(&property.name));
+        xml.push_str("\" meta:value-type=\"");
+        xml.push_str(kind);
+        xml.push_str("\">");
+        xml.push_str(&escape(&value));
+        xml.push_str("</meta:user-defined>");
     }
     xml.push_str("</office:meta></office:document-meta>");
     Ok(xml.into_bytes())

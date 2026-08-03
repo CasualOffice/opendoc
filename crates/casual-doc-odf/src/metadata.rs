@@ -32,7 +32,7 @@ pub(crate) fn parse_metadata(
     let mut custom = Vec::new();
     let mut findings = Vec::new();
     let mut current: Option<(String, String)> = None;
-    let mut custom_name: Option<String> = None;
+    let mut custom_name: Option<(String, String)> = None;
     let mut depth = 0usize;
     loop {
         match reader
@@ -54,13 +54,17 @@ pub(crate) fn parse_metadata(
                     read_statistics(&start, &mut app, &mut findings);
                 }
                 if prefix == b"meta" && local == b"user-defined" {
+                    let mut name = None;
+                    let mut kind = String::from("string");
                     for attr in start.attributes().flatten() {
                         let (_, attr_name) = split_name(attr.key.as_ref());
                         if attr_name == b"name" {
-                            custom_name =
-                                Some(String::from_utf8_lossy(attr.value.as_ref()).into_owned());
+                            name = Some(String::from_utf8_lossy(attr.value.as_ref()).into_owned());
+                        } else if attr_name == b"value-type" {
+                            kind = String::from_utf8_lossy(attr.value.as_ref()).into_owned();
                         }
                     }
+                    custom_name = name.map(|name| (name, kind));
                 }
                 if local == b"meta" || local == b"document-meta" || local == b"document-statistic" {
                     // Container elements are handled structurally.
@@ -119,11 +123,11 @@ pub(crate) fn parse_metadata(
                             ));
                         }
                     } else if name == "user-defined" {
-                        if let Some(name) = custom_name.take() {
+                        if let Some((name, kind)) = custom_name.take() {
                             if !name.is_empty() {
                                 custom.push(CustomProperty {
                                     name,
-                                    value: CustomValue::Text { value },
+                                    value: parse_custom_value(&kind, value, &mut findings),
                                 });
                             } else {
                                 findings.push((
@@ -149,6 +153,41 @@ pub(crate) fn parse_metadata(
         buf.clear();
     }
     Ok((DocumentProperties { core, app, custom }, findings))
+}
+
+fn parse_custom_value(
+    kind: &str,
+    value: String,
+    findings: &mut Vec<MetadataFinding>,
+) -> CustomValue {
+    match kind {
+        "float" | "percentage" | "currency" => CustomValue::R8 { value },
+        "boolean" => match value.trim() {
+            "true" | "1" => CustomValue::Bool { value: true },
+            "false" | "0" => CustomValue::Bool { value: false },
+            _ => {
+                findings.push((
+                    "odf.metadata.user-defined.boolean".to_owned(),
+                    ModelOutcome::Degraded,
+                    RetentionOutcome::NotRetained,
+                ));
+                CustomValue::Text { value }
+            }
+        },
+        "date" | "time" => CustomValue::FileTime { value },
+        "long" | "short" | "int" => match value.trim().parse::<i32>() {
+            Ok(value) => CustomValue::I4 { value },
+            Err(_) => {
+                findings.push((
+                    "odf.metadata.user-defined.integer".to_owned(),
+                    ModelOutcome::Degraded,
+                    RetentionOutcome::NotRetained,
+                ));
+                CustomValue::Text { value }
+            }
+        },
+        _ => CustomValue::Text { value },
+    }
 }
 
 fn read_statistics(
@@ -219,5 +258,20 @@ mod tests {
         assert_eq!(properties.app.words, Some(12));
         assert_eq!(properties.custom.len(), 1);
         assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn maps_typed_user_defined_values() {
+        let xml = br#"<office:document-meta xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0"><office:meta><meta:user-defined meta:name="Count" meta:value-type="long">7</meta:user-defined><meta:user-defined meta:name="Ready" meta:value-type="boolean">true</meta:user-defined></office:meta></office:document-meta>"#;
+        let (properties, findings) = parse_metadata(xml, OdfImportLimits::default()).unwrap();
+        assert!(findings.is_empty());
+        assert!(matches!(
+            properties.custom[0].value,
+            CustomValue::I4 { value: 7 }
+        ));
+        assert!(matches!(
+            properties.custom[1].value,
+            CustomValue::Bool { value: true }
+        ));
     }
 }

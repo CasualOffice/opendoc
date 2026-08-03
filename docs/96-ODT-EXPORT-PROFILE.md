@@ -103,8 +103,8 @@ When present, supported `DocumentProperties` core fields are emitted in a
 deterministic `meta.xml` part and registered in the manifest. Application name
 is emitted as `meta:generator`; unsupported application/custom fields are
 reported rather than silently represented as unrelated ODT metadata.
-Numeric page/word statistics and text-valued custom properties are emitted as
-their corresponding ODT metadata elements.
+Numeric page/word statistics and typed custom properties are emitted as their
+corresponding ODT metadata elements.
 
 ## 6. Acceptance gates
 
