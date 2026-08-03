@@ -53,12 +53,21 @@ supported output stable across reopen and re-export. Unsupported number systems,
 multi-placeholder labels, and unimplemented level formatting are reported;
 labels that cannot be represented safely are projected as plain paragraphs.
 
+The table checkpoint emits recursive tables with canonical grid-column counts,
+leading header-row containers, implemented nested cell blocks, horizontal spans,
+and rectangular vertical spans represented by covered cells. Supported table
+geometry reopens to the same normalized document and re-exports byte-identically.
+Row/cell formatting and non-default grid widths are explicit loss findings.
+Vertical-merge continuations that are orphaned, span-mismatched, or carry
+non-canonical content/properties are written as visible regular cells and receive
+a merge-loss finding instead of becoming invalid or hiding their content.
+
 Until their dedicated import/export mappings land, wrappers and complex blocks
 may emit a bounded visible-text projection only when that projection is safe.
 Every such case is reported as degraded; content with no safe projection is
 reported as omitted. Unsupported run/paragraph properties, definitions,
-resources, tables, lists, links, notes, bookmarks, media, tracked changes,
-fields, controls, math, drawings, and embedded objects may not silently
+resources, table formatting, lists, links, notes, bookmarks, media, tracked
+changes, fields, controls, math, drawings, and embedded objects may not silently
 disappear from the report.
 
 ## 4. Export modes
@@ -76,9 +85,9 @@ not advertise edit-tolerant preservation until that path exists.
 ## 5. Bounds and atomicity
 
 `OdfExportLimits` bounds content XML bytes, final package bytes, paragraph/block
-visits, inline visits, recursion depth, emitted text bytes, and compatibility
-feature buckets. Limit, model-validation, XML-character, serialization, or ZIP
-failure returns no partial artifact.
+visits, inline visits, table-row/cell visits, table columns, recursion depth, emitted text
+bytes, and compatibility feature buckets. Limit, model-validation,
+XML-character, serialization, or ZIP failure returns no partial artifact.
 
 ## 6. Acceptance gates
 
@@ -125,7 +134,9 @@ The matching automatic-style import subset is implemented and tested as a
 semantic fixed point. Named `styles.xml` resolution and same-family inheritance
 also feed that normalized subset on import. Bounded list import/export covers
 the label systems and nesting described in section 3, with deterministic
-reopen/re-export tests. Style defaults, broader style properties, advanced list
-continuation/item overrides and label layout, edit-tolerant source preservation, broader semantic writing, stable
+reopen/re-export tests. Recursive table import/export covers the geometry and
+fallback rules described in section 3 with the same fixed-point tests. Style
+defaults, broader style and table properties, advanced list continuation/item
+overrides and label layout, edit-tolerant source preservation, broader semantic writing, stable
 native SDK surfaces, Relax NG validation, interoperability fixtures, and
 production claims remain pending.

@@ -181,11 +181,12 @@
             subset import and export, and named parent-style chains feed the
             same import subset. Nested bullet and common numbered lists also map
             through normalized numbering definitions and the matching writer.
-            Table import preserves block order, bounded repeated/header rows and
-            cells, nested blocks, and validated horizontal/vertical merges;
-            table export to ODT is not implemented yet.
+            Recursive tables map through the matching writer with preserved
+            block order, bounded repeated/header rows and cells, nested blocks,
+            and validated horizontal/vertical merges. Unsafe merge geometry is
+            visibly projected and reported.
             Style defaults and broader properties, advanced list continuation,
-            item overrides and label layout, table formatting/export, notes,
+            item overrides and label layout, table formatting, notes,
             media, metadata,
             edit-tolerant preservation, and conformance evidence are still in
             progress, so this is not a full ODT fidelity claim.

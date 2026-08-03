@@ -56,6 +56,11 @@ strict horizontal/vertical covered-cell topology. The independently locked
 `odt_content` fuzz target compiles in pull-request CI. Rights-reviewed ODF
 fixtures remain a Slice D completion requirement.
 
+The matching ODT semantic-export gate requires deterministic recursive table
+XML, independent row/cell/column bounds, model → ODT → model equality, byte-stable
+re-export for the supported geometry, and explicit visible fallback for merge
+topology that cannot be represented safely.
+
 Release workflows are separate and receive no write permission during pull
 request validation.
 

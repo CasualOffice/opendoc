@@ -6,7 +6,8 @@ use std::io::{Cursor, Write};
 use casual_doc_model::v1::{
     Alignment, BlockNode, BreakKind, Color, Definitions, Document, GroupChild, InlineNode,
     LevelJustification, LevelSuffix, NumberFormat, NumberingInstanceId, Paragraph,
-    ParagraphProperties, RevisionKind, RunProperties,
+    ParagraphProperties, RevisionKind, RunProperties, Table, TableCell, TableCellProperties,
+    TableRow, TableRowProperties, VerticalMerge,
 };
 use zip::CompressionMethod;
 use zip::write::{SimpleFileOptions, ZipWriter};
@@ -16,7 +17,7 @@ use crate::{
     OdfError, RetentionOutcome,
 };
 
-const CONTENT_HEADER: &str = r#"<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.4">"#;
+const CONTENT_HEADER: &str = r#"<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" office:version="1.4">"#;
 const BODY_PREFIX: &str = "<office:body><office:text>";
 const CONTENT_SUFFIX: &str = "</office:text></office:body></office:document-content>";
 const MANIFEST: &str = r#"<?xml version="1.0" encoding="UTF-8"?><manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.4"><manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.text" manifest:version="1.4"/><manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/></manifest:manifest>"#;
@@ -32,6 +33,12 @@ pub struct OdfExportLimits {
     pub max_blocks: usize,
     /// Maximum visited inline nodes.
     pub max_inline_nodes: usize,
+    /// Maximum visited table rows.
+    pub max_table_rows: usize,
+    /// Maximum visited table cells.
+    pub max_table_cells: usize,
+    /// Maximum table grid columns.
+    pub max_table_columns: usize,
     /// Maximum nested transparent-wrapper depth.
     pub max_recursion_depth: usize,
     /// Maximum aggregate source text bytes projected into XML.
@@ -49,6 +56,12 @@ impl OdfExportLimits {
     pub const HARD_MAX_BLOCKS: usize = 4_000_000;
     /// Compiled maximum visited inline nodes.
     pub const HARD_MAX_INLINE_NODES: usize = 16_000_000;
+    /// Compiled maximum visited table rows.
+    pub const HARD_MAX_TABLE_ROWS: usize = 2_000_000;
+    /// Compiled maximum visited table cells.
+    pub const HARD_MAX_TABLE_CELLS: usize = 16_000_000;
+    /// Compiled maximum table grid columns, aligned with the import profile.
+    pub const HARD_MAX_TABLE_COLUMNS: usize = 16_384;
     /// Compiled maximum wrapper depth.
     pub const HARD_MAX_RECURSION_DEPTH: usize = 256;
     /// Compiled maximum projected text bytes.
@@ -74,6 +87,21 @@ impl OdfExportLimits {
                 "odt_export_inline_nodes",
                 self.max_inline_nodes,
                 Self::HARD_MAX_INLINE_NODES,
+            ),
+            (
+                "odt_export_table_rows",
+                self.max_table_rows,
+                Self::HARD_MAX_TABLE_ROWS,
+            ),
+            (
+                "odt_export_table_cells",
+                self.max_table_cells,
+                Self::HARD_MAX_TABLE_CELLS,
+            ),
+            (
+                "odt_export_table_columns",
+                self.max_table_columns,
+                Self::HARD_MAX_TABLE_COLUMNS,
             ),
             (
                 "odt_export_recursion_depth",
@@ -110,6 +138,9 @@ impl Default for OdfExportLimits {
             max_package_bytes: 256 * 1024 * 1024,
             max_blocks: 500_000,
             max_inline_nodes: 4_000_000,
+            max_table_rows: 1_000_000,
+            max_table_cells: 4_000_000,
+            max_table_columns: Self::HARD_MAX_TABLE_COLUMNS,
             max_recursion_depth: 64,
             max_text_bytes: 128 * 1024 * 1024,
             max_report_features: 4_096,
@@ -255,6 +286,18 @@ struct OdtListStyle {
     levels: BTreeMap<u8, OdtListLevel>,
 }
 
+#[derive(Clone, Copy)]
+struct ActiveVerticalMerge {
+    anchor: (usize, usize),
+    span: u32,
+}
+
+#[derive(Default)]
+struct TableMergeAnalysis {
+    row_spans: BTreeMap<(usize, usize), usize>,
+    continuations: BTreeSet<(usize, usize)>,
+}
+
 impl OdtRunStyle {
     fn is_empty(&self) -> bool {
         self == &Self::default()
@@ -311,6 +354,8 @@ struct Writer {
     limits: OdfExportLimits,
     blocks: usize,
     inlines: usize,
+    table_rows: usize,
+    table_cells: usize,
     text_bytes: usize,
     paragraphs_written: usize,
     reporter: Reporter,
@@ -327,6 +372,8 @@ impl Writer {
             limits,
             blocks: 0,
             inlines: 0,
+            table_rows: 0,
+            table_cells: 0,
             text_bytes: 0,
             paragraphs_written: 0,
             reporter: Reporter::new(limits.max_report_features),
@@ -471,15 +518,157 @@ impl Writer {
                         .record("odt.export.block_content_control", ModelOutcome::Degraded);
                     self.write_blocks(&sdt.blocks, depth + 1)?;
                 }
-                BlockNode::Table(_) => self
-                    .reporter
-                    .record("odt.export.table", ModelOutcome::Omitted),
+                BlockNode::Table(table) => self.write_table(table, depth + 1)?,
                 BlockNode::AltChunk(_) => self
                     .reporter
                     .record("odt.export.alt_chunk", ModelOutcome::Omitted),
             }
         }
         Ok(())
+    }
+
+    fn write_table(&mut self, table: &Table, depth: usize) -> Result<(), OdfError> {
+        self.check_depth(depth)?;
+        self.table_rows = checked_add(
+            self.table_rows,
+            table.rows.len(),
+            "odt_export_table_rows",
+            self.limits.max_table_rows,
+        )?;
+        let mut columns = table.grid.len();
+        for row in &table.rows {
+            self.table_cells = checked_add(
+                self.table_cells,
+                row.cells.len(),
+                "odt_export_table_cells",
+                self.limits.max_table_cells,
+            )?;
+            columns = columns.max(table_row_width(row)?);
+        }
+        enforce(
+            "odt_export_table_columns",
+            columns,
+            self.limits.max_table_columns,
+        )?;
+        if table.grid.len() != columns {
+            self.reporter
+                .record("odt.export.table_grid", ModelOutcome::Degraded);
+        }
+        if table.grid.iter().any(|column| column.width_twips.is_some()) {
+            self.reporter
+                .record("odt.export.table_grid_widths", ModelOutcome::Omitted);
+        }
+        if table.grid_change.is_some() {
+            self.reporter
+                .record("odt.export.table_grid_change", ModelOutcome::Omitted);
+        }
+        if table.properties != Default::default() {
+            self.reporter
+                .record("odt.export.table_properties", ModelOutcome::Omitted);
+        }
+
+        let merges = analyze_table_merges(table)?;
+        self.push("<table:table>")?;
+        self.push("<table:table-column")?;
+        if columns > 1 {
+            self.push(" table:number-columns-repeated=\"")?;
+            self.push(&columns.to_string())?;
+            self.push("\"")?;
+        }
+        self.push("/>")?;
+
+        let header_rows = table
+            .rows
+            .iter()
+            .take_while(|row| row.properties.header)
+            .count();
+        if header_rows != 0 {
+            self.push("<table:table-header-rows>")?;
+        }
+        for (row_index, row) in table.rows.iter().enumerate() {
+            if row_index == header_rows && header_rows != 0 {
+                self.push("</table:table-header-rows>")?;
+            }
+            let header_mapped = row_index < header_rows;
+            let mut remainder = row.properties.clone();
+            remainder.header = false;
+            if remainder != TableRowProperties::default()
+                || (row.properties.header && !header_mapped)
+            {
+                self.reporter
+                    .record("odt.export.table_row_properties", ModelOutcome::Omitted);
+            }
+            self.write_table_row(table, row_index, &merges, depth + 1)?;
+        }
+        if header_rows == table.rows.len() {
+            self.push("</table:table-header-rows>")?;
+        }
+        self.push("</table:table>")
+    }
+
+    fn write_table_row(
+        &mut self,
+        table: &Table,
+        row_index: usize,
+        merges: &TableMergeAnalysis,
+        depth: usize,
+    ) -> Result<(), OdfError> {
+        self.check_depth(depth)?;
+        self.push("<table:table-row>")?;
+        let row = &table.rows[row_index];
+        for (cell_index, cell) in row.cells.iter().enumerate() {
+            let coordinate = (row_index, cell_index);
+            let span = cell.properties.grid_span.unwrap_or(1);
+            let mut remainder = cell.properties.clone();
+            remainder.grid_span = None;
+            remainder.vertical_merge = None;
+            if remainder != TableCellProperties::default() {
+                self.reporter
+                    .record("odt.export.table_cell_properties", ModelOutcome::Omitted);
+            }
+            if cell.properties.grid_span == Some(1) {
+                self.reporter
+                    .record("odt.export.table_cell_properties", ModelOutcome::Degraded);
+            }
+            if cell.properties.vertical_merge == Some(VerticalMerge::Continue)
+                && merges.continuations.contains(&coordinate)
+            {
+                for _ in 0..span {
+                    self.push("<table:covered-table-cell/>")?;
+                }
+                continue;
+            }
+
+            let row_span = merges.row_spans.get(&coordinate).copied().unwrap_or(1);
+            if matches!(
+                cell.properties.vertical_merge,
+                Some(VerticalMerge::Continue)
+            ) || (cell.properties.vertical_merge == Some(VerticalMerge::Restart)
+                && row_span == 1)
+            {
+                self.reporter
+                    .record("odt.export.table_merge", ModelOutcome::Degraded);
+            }
+
+            self.push("<table:table-cell")?;
+            if span > 1 {
+                self.push(" table:number-columns-spanned=\"")?;
+                self.push(&span.to_string())?;
+                self.push("\"")?;
+            }
+            if row_span > 1 {
+                self.push(" table:number-rows-spanned=\"")?;
+                self.push(&row_span.to_string())?;
+                self.push("\"")?;
+            }
+            self.push(">")?;
+            self.write_blocks(&cell.blocks, depth + 1)?;
+            self.push("</table:table-cell>")?;
+            for _ in 1..span {
+                self.push("<table:covered-table-cell/>")?;
+            }
+        }
+        self.push("</table:table-row>")
     }
 
     fn write_list(
@@ -782,6 +971,72 @@ impl Writer {
         plain.clear();
         self.push(&escaped)
     }
+}
+
+fn table_row_width(row: &TableRow) -> Result<usize, OdfError> {
+    row.cells.iter().try_fold(0_usize, |width, cell| {
+        width
+            .checked_add(cell.properties.grid_span.unwrap_or(1) as usize)
+            .ok_or(OdfError::SerializationFailed)
+    })
+}
+
+fn analyze_table_merges(table: &Table) -> Result<TableMergeAnalysis, OdfError> {
+    let mut analysis = TableMergeAnalysis::default();
+    let mut active = BTreeMap::<usize, ActiveVerticalMerge>::new();
+    for (row_index, row) in table.rows.iter().enumerate() {
+        let mut previous = std::mem::take(&mut active);
+        let mut column = 0_usize;
+        for (cell_index, cell) in row.cells.iter().enumerate() {
+            let span = cell.properties.grid_span.unwrap_or(1);
+            let coordinate = (row_index, cell_index);
+            match cell.properties.vertical_merge {
+                Some(VerticalMerge::Restart) => {
+                    analysis.row_spans.insert(coordinate, 1);
+                    active.insert(
+                        column,
+                        ActiveVerticalMerge {
+                            anchor: coordinate,
+                            span,
+                        },
+                    );
+                }
+                Some(VerticalMerge::Continue) if canonical_continuation_cell(cell) => {
+                    if let Some(previous_merge) = previous.remove(&column)
+                        && previous_merge.span == span
+                    {
+                        let row_span = analysis
+                            .row_spans
+                            .get_mut(&previous_merge.anchor)
+                            .ok_or(OdfError::SerializationFailed)?;
+                        *row_span = row_span
+                            .checked_add(1)
+                            .ok_or(OdfError::SerializationFailed)?;
+                        analysis.continuations.insert(coordinate);
+                        active.insert(column, previous_merge);
+                    }
+                }
+                Some(VerticalMerge::Continue) | None => {}
+            }
+            column = column
+                .checked_add(span as usize)
+                .ok_or(OdfError::SerializationFailed)?;
+        }
+    }
+    Ok(analysis)
+}
+
+fn canonical_continuation_cell(cell: &TableCell) -> bool {
+    let mut properties = cell.properties.clone();
+    properties.grid_span = None;
+    properties.vertical_merge = None;
+    properties == TableCellProperties::default()
+        && matches!(
+            cell.blocks.as_slice(),
+            [BlockNode::Paragraph(paragraph)]
+                if paragraph.properties == ParagraphProperties::default()
+                    && paragraph.inlines.is_empty()
+        )
 }
 
 fn odt_list_label(
@@ -1309,6 +1564,100 @@ mod tests {
         assert_eq!(levels, [0, 1, 1, 0]);
         let reexported = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
         assert_eq!(reexported.bytes, first.bytes);
+    }
+
+    #[test]
+    fn tables_are_deterministic_nested_and_semantically_stable() {
+        let source = r#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" office:version="1.4"><office:body><office:text><text:p>before</text:p><table:table><table:table-column table:number-columns-repeated="3"/><table:table-header-rows><table:table-row><table:table-cell><text:p>H1</text:p></table:table-cell><table:table-cell><text:p>H2</text:p></table:table-cell><table:table-cell><text:p>H3</text:p></table:table-cell></table:table-row></table:table-header-rows><table:table-row><table:table-cell table:number-columns-spanned="2" table:number-rows-spanned="2"><text:p>merged</text:p></table:table-cell><table:covered-table-cell/><table:table-cell><table:table><table:table-row><table:table-cell><text:p>nested</text:p></table:table-cell></table:table-row></table:table></table:table-cell></table:table-row><table:table-row><table:covered-table-cell table:number-columns-repeated="2"/><table:table-cell><text:p>lower</text:p></table:table-cell></table:table-row></table:table><text:p>after</text:p></office:text></office:body></office:document-content>"#;
+        let imported = import_content_xml(
+            source.as_bytes(),
+            OdfVersion::V1_4,
+            OdfImportLimits::default(),
+        )
+        .unwrap();
+        assert!(imported.report.entries.is_empty(), "{:?}", imported.report);
+        let document = imported.document;
+
+        let first = write_odt(&document, OdfExportLimits::default()).unwrap();
+        let second = write_odt(&document, OdfExportLimits::default()).unwrap();
+        assert_eq!(first.bytes, second.bytes);
+        assert!(first.report.entries.is_empty(), "{:?}", first.report);
+
+        let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+        let content = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+        assert!(content.contains(
+            "<table:table><table:table-column table:number-columns-repeated=\"3\"/><table:table-header-rows>"
+        ));
+        assert!(content.contains(
+            "<table:table-cell table:number-columns-spanned=\"2\" table:number-rows-spanned=\"2\">"
+        ));
+        assert!(content.contains("<table:covered-table-cell/><table:covered-table-cell/>"));
+        assert!(content.matches("<table:table>").count() >= 2);
+
+        let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+        assert!(reopened.report.entries.is_empty(), "{:?}", reopened.report);
+        assert_eq!(reopened.document, document);
+        let reexported = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+        assert_eq!(reexported.bytes, first.bytes);
+
+        for limits in [
+            OdfExportLimits {
+                max_table_rows: 3,
+                ..OdfExportLimits::default()
+            },
+            OdfExportLimits {
+                max_table_cells: 7,
+                ..OdfExportLimits::default()
+            },
+            OdfExportLimits {
+                max_table_columns: 2,
+                ..OdfExportLimits::default()
+            },
+        ] {
+            assert!(matches!(
+                write_odt(&document, limits),
+                Err(OdfError::LimitExceeded { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn non_rectangular_vertical_merge_is_reported_and_content_is_kept() {
+        let source = r#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" office:version="1.4"><office:body><office:text><table:table><table:table-row><table:table-cell table:number-rows-spanned="2"><text:p>top</text:p></table:table-cell></table:table-row><table:table-row><table:covered-table-cell/></table:table-row></table:table></office:text></office:body></office:document-content>"#;
+        let mut document = import_content_xml(
+            source.as_bytes(),
+            OdfVersion::V1_4,
+            OdfImportLimits::default(),
+        )
+        .unwrap()
+        .document;
+        let BlockNode::Table(table) = &mut document.body_mut()[0] else {
+            panic!("table")
+        };
+        let BlockNode::Paragraph(paragraph) = &mut table.rows[1].cells[0].blocks[0] else {
+            panic!("continuation paragraph")
+        };
+        paragraph.properties.alignment = Some(Alignment::Center);
+
+        let exported = write_odt(&document, OdfExportLimits::default()).unwrap();
+        assert!(exported.report.entries.iter().any(|entry| {
+            entry.feature == "odt.export.table_merge"
+                && entry.model_outcome == ModelOutcome::Degraded
+        }));
+        let mut package = OdtPackage::open(&exported.bytes, OdfPackageLimits::default()).unwrap();
+        let content = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+        assert!(!content.contains("table:number-rows-spanned"));
+        assert!(content.contains("<text:p text:style-name=\"P_center\"></text:p>"));
+        let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+        let BlockNode::Table(table) = &reopened.document.body()[0] else {
+            panic!("reopened table")
+        };
+        assert_eq!(table.rows[0].cells[0].properties.vertical_merge, None);
+        assert_eq!(table.rows[1].cells[0].properties.vertical_merge, None);
+        let BlockNode::Paragraph(paragraph) = &table.rows[1].cells[0].blocks[0] else {
+            panic!("reopened paragraph")
+        };
+        assert_eq!(paragraph.properties.alignment, Some(Alignment::Center));
     }
 
     #[test]

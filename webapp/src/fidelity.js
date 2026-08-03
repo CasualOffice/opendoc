@@ -192,7 +192,7 @@ const FORMAT_SUPPORT = [
   },
   {
     format: "ODT",
-    note: "ODF 1.2–1.4 admission plus generic WASM/browser Open and Save are implemented. Import/export and therefore host support remain partial: core text, safe links, bookmarks, bounded direct/named styles, and nested bullet/number lists map through the normalized model and matching writer. Import also maps ordered recursive tables, bounded repeated/header rows and cells, nested blocks, and validated horizontal/vertical merges; ODT table export is not implemented yet. Style defaults/broader properties, advanced list continuation/item overrides and label layout, table formatting/export, notes, media, metadata, edit-tolerant preservation, and conformance remain in progress.",
+    note: "ODF 1.2–1.4 admission plus generic WASM/browser Open and Save are implemented. Import/export and therefore host support remain partial: core text, safe links, bookmarks, bounded direct/named styles, nested bullet/number lists, and recursive tables map through the normalized model and matching writer. The table subset includes bounded repeated/header rows and cells, nested blocks, and validated horizontal/vertical merges; unsafe merge geometry is visibly projected and reported. Style defaults/broader properties, advanced list continuation/item overrides and label layout, table formatting, notes, media, metadata, edit-tolerant preservation, and conformance remain in progress.",
     validation: "full",
     import: "partial",
     export: "partial",

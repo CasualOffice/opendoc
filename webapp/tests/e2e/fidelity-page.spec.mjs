@@ -29,10 +29,10 @@ test("the fidelity matrix page renders an accessible, data-grounded table", asyn
     "advanced list continuation",
   );
   await expect(page.locator(".fidelity-notes")).toContainText(
-    "Table import preserves block order",
+    "Recursive tables map through the matching writer",
   );
   await expect(page.locator(".fidelity-notes")).toContainText(
-    "table export to ODT is not implemented yet",
+    "Unsafe merge geometry is visibly projected and reported",
   );
 
   const table = page.locator("#docx-fidelity-table");

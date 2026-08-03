@@ -61,7 +61,7 @@ The work lands as reviewable commits:
   nesting limits are independent, and repeated nested content is also charged
   to the expanded paragraph/inline/text/table budgets before model construction.
 - Style defaults and broader properties, advanced list counters/label layout,
-  table formatting and table export, notes, media, metadata,
+  table formatting, notes, media, metadata,
   and the remaining structures in sections 4 and 6 remain in progress. Generic
   WASM open/export methods and capability-driven browser Open/Save controls are
   implemented, while the native SDK and production ODT gates remain incomplete;
