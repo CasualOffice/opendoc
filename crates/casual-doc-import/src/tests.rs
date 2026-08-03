@@ -1848,6 +1848,66 @@ fn numbering_reference_resolves_to_a_definition() {
 }
 
 #[test]
+fn style_inherited_numbering_is_resolved_not_dropped() {
+    // A paragraph style that carries its list membership via `w:pPr/w:numPr`
+    // (e.g. ListBullet -> numId) used to be dropped by the styles parser, so a
+    // paragraph inheriting its list from the style rendered with no marker.
+    let styles = br#"<w:styles xmlns:w="urn:w">
+        <w:style w:type="paragraph" w:styleId="ListBullet">
+            <w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>
+        </w:style>
+    </w:styles>"#;
+    let numbering = br#"<w:numbering xmlns:w="urn:w">
+        <w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/>
+            <w:numFmt w:val="bullet"/></w:lvl></w:abstractNum>
+        <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
+    </w:numbering>"#;
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:pPr><w:pStyle w:val="ListBullet"/></w:pPr><w:r><w:t>x</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import_with_sources(
+        document,
+        Some(styles),
+        Some(numbering),
+        None,
+        &std::collections::BTreeMap::new(),
+        None,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        None,
+        &[],
+        &std::collections::BTreeMap::new(),
+        &std::collections::BTreeMap::new(),
+        ImportConfig::default(),
+    )
+    .unwrap();
+
+    // The style now carries the resolved numbering reference; the layout cascade
+    // already inherits it, so the paragraph gets its marker.
+    let numbered_style = import
+        .document
+        .definitions()
+        .styles
+        .iter()
+        .map(|(_, style)| style)
+        .find(|style| {
+            style
+                .paragraph
+                .as_ref()
+                .is_some_and(|p| p.numbering.is_some())
+        });
+    assert!(
+        numbered_style.is_some(),
+        "a paragraph style's w:numPr must be resolved, not dropped"
+    );
+    // And it was not spuriously reported as unmodeled.
+    assert!(!features(&import).contains(&"numPr"));
+}
+
+#[test]
 fn numbering_level_detail_is_modeled_not_reported() {
     // A level carrying numFmt/lvlText/lvlJc/suff/isLgl plus pPr (indent) and rPr
     // (bold): every piece is mapped into the level, and none is reported.

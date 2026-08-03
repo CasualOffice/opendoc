@@ -22,6 +22,7 @@ use quick_xml::events::{BytesStart, Event};
 
 use crate::config::ImportConfig;
 use crate::error::ImportError;
+use crate::numbering::Numbering;
 use crate::properties::{
     apply_paragraph_property, apply_run_property, attribute_value, is_true, parse_rgb,
     style_kind_from,
@@ -34,6 +35,36 @@ pub(crate) struct Styles {
     by_name: BTreeMap<String, (StyleId, StyleKind)>,
     definitions: DefinitionMap<StyleId, Style>,
     document_defaults: Option<DocumentDefaults>,
+    /// Styles whose `w:pPr/w:numPr` was captured raw during parse; resolved to
+    /// each style's `paragraph.numbering` by [`Styles::resolve_numbering`] once the
+    /// numbering part is parsed (the numbering `numId -> instance` map does not
+    /// exist while the styles part is being parsed).
+    pending_numbering: Vec<(StyleId, String, u8)>,
+}
+
+impl Styles {
+    /// Resolves the deferred style-level `w:numPr` captures (a paragraph style's
+    /// list membership, e.g. `ListBullet -> numId`) against the now-parsed
+    /// numbering table, setting each style's `paragraph.numbering`. Must run after
+    /// the numbering part is parsed. A `numId` with no instance (or an undefined
+    /// level) is reported, matching the body parser.
+    pub(crate) fn resolve_numbering(&mut self, numbering: &Numbering, reporter: &mut Reporter) {
+        for (style_id, num_id, level) in std::mem::take(&mut self.pending_numbering) {
+            let Some(mut style) = self.definitions.get(&style_id).cloned() else {
+                continue;
+            };
+            match numbering.resolve(&num_id, level) {
+                Some(reference) => {
+                    style
+                        .paragraph
+                        .get_or_insert_with(ParagraphProperties::default)
+                        .numbering = Some(reference);
+                    self.definitions.insert(style_id, style);
+                }
+                None => reporter.report(b"numPr"),
+            }
+        }
+    }
 }
 
 impl Styles {
@@ -78,6 +109,9 @@ struct RawStyle {
     table_row: Option<TableRowProperties>,
     table_cell: Option<TableCellProperties>,
     conditional: Vec<TableStyleOverride>,
+    /// A style's `w:pPr/w:numPr` (raw numId + ilvl), resolved to the style's
+    /// `paragraph.numbering` in the deferred pass once numbering is parsed.
+    pending_numbering: Option<(String, u8)>,
 }
 
 /// Parses the styles part into resolved styles, allocating ids from `ids`.
@@ -143,7 +177,11 @@ pub(crate) fn parse(
     }
 
     let mut definitions = DefinitionMap::default();
+    let mut pending_numbering: Vec<(StyleId, String, u8)> = Vec::new();
     for (id, kind, based_on, style) in candidates {
+        if let Some((num_id, ilvl)) = style.pending_numbering.clone() {
+            pending_numbering.push((id, num_id, ilvl));
+        }
         let based_on = if cyclic.contains(&id) {
             reporter.report(b"basedOn");
             None
@@ -185,6 +223,7 @@ pub(crate) fn parse(
         by_name,
         definitions,
         document_defaults,
+        pending_numbering,
     })
 }
 
@@ -311,6 +350,12 @@ fn skip_subtree(
 struct PropAcc {
     paragraph: ParagraphProperties,
     has_paragraph: bool,
+    /// A style's `w:pPr/w:numPr` (numId + ilvl) captured raw, because the
+    /// numbering part is parsed after the styles part so the `numId -> instance`
+    /// map is not yet available; resolved to `paragraph.numbering` in a deferred
+    /// pass ([`Styles::resolve_numbering`]) once numbering is parsed.
+    pending_num_id: Option<String>,
+    pending_ilvl: u8,
     run: RunProperties,
     has_run: bool,
     table: TableProperties,
@@ -389,6 +434,7 @@ fn empty_style(element: &BytesStart<'_>) -> RawStyle {
         table_row: None,
         table_cell: None,
         conditional: Vec::new(),
+        pending_numbering: None,
     }
 }
 
@@ -501,6 +547,10 @@ fn read_style(
         }
     }
     raw.paragraph = acc.has_paragraph.then_some(acc.paragraph);
+    raw.pending_numbering = acc
+        .pending_num_id
+        .take()
+        .map(|num_id| (num_id, acc.pending_ilvl));
     raw.run = acc.has_run.then_some(acc.run);
     raw.table = acc.has_table.then_some(acc.table);
     raw.table_row = acc.has_table_row.then_some(acc.table_row);
@@ -693,6 +743,17 @@ fn read_paragraph_container(
                         depth + 1,
                         &mut acc.paragraph.borders,
                     )?;
+                    consumed = true;
+                }
+            }
+            // `w:numPr` is a container of `w:numId`/`w:ilvl` leaves, so the flat
+            // `apply_paragraph_property` cannot read it. A paragraph style that
+            // carries list membership (e.g. ListBullet -> numId) must not lose it,
+            // so capture the raw numId+ilvl here for the deferred resolve pass
+            // (the numbering part is not parsed yet). Mirrors the body parser.
+            b"numPr" => {
+                if open {
+                    read_style_num_pr(reader, buffer, ctx, depth + 1, acc)?;
                     consumed = true;
                 }
             }
@@ -1001,6 +1062,42 @@ fn read_borders(
 /// six edges (`top`/`bottom`/`start`|`left`/`end`|`right`/`between`/`bar`) each
 /// map to one slot; a `nil`/`none` edge is retained verbatim so it can override an
 /// inherited border, matching the body parser.
+/// Reads a style's `w:pPr/w:numPr`, capturing the raw `w:numId`/`w:ilvl` values
+/// onto `acc` for the deferred numbering resolution ([`Styles::resolve_numbering`]).
+fn read_style_num_pr(
+    reader: &mut Reader<&[u8]>,
+    buffer: &mut Vec<u8>,
+    ctx: &mut Ctx,
+    depth: u64,
+    acc: &mut PropAcc,
+) -> Result<(), ImportError> {
+    ctx.check_depth(depth)?;
+    loop {
+        let (child, open) = match read_node(reader, buffer, ctx)? {
+            Node::Open(child) => (child, true),
+            Node::Empty(child) => (child, false),
+            Node::Close | Node::Eof => break,
+        };
+        match child.local_name().as_ref() {
+            b"numId" => {
+                if let Some(value) = attribute_value(&child, b"val") {
+                    acc.pending_num_id = Some(value);
+                }
+            }
+            b"ilvl" => {
+                if let Some(level) = attribute_value(&child, b"val").and_then(|v| v.parse().ok()) {
+                    acc.pending_ilvl = level;
+                }
+            }
+            _ => {}
+        }
+        if open {
+            skip_subtree(reader, buffer, ctx)?;
+        }
+    }
+    Ok(())
+}
+
 fn read_paragraph_borders(
     reader: &mut Reader<&[u8]>,
     buffer: &mut Vec<u8>,
