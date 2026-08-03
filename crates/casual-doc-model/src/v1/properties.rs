@@ -295,6 +295,16 @@ pub struct RgbColor {
 pub struct ThemeColor {
     /// The referenced slot.
     pub slot: ThemeColorRef,
+    /// Tint applied to the slot color (`w:themeTint`/`w:themeFillTint`), a hex byte
+    /// `00..=FF`: the fraction of the slot color kept while the remainder blends
+    /// toward white. Absent leaves the slot color unmodified.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme_tint: Option<u8>,
+    /// Shade applied to the slot color (`w:themeShade`/`w:themeFillShade`), a hex
+    /// byte `00..=FF`: the fraction of the slot color kept while the remainder
+    /// blends toward black. Absent leaves the slot color unmodified.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme_shade: Option<u8>,
 }
 
 /// A run color: theme reference or explicit RGB.

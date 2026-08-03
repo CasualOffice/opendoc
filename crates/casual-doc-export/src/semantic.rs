@@ -42,9 +42,9 @@ use casual_doc_model::v1::{
     TableFloatPosition, TableLayout, TableOverlap, TableProperties, TableRow, TableRowProperties,
     TableStyleOverride, TableStyleRegion, TableWidth, TableXAlign, TableYAlign, TextBox,
     TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxVerticalAnchor,
-    TextBoxVerticalOverflow, TextDirection, ThemeFontRef, VerticalAlign, VerticalAlignment,
-    VerticalAnchor, VerticalMerge, VerticalPosition, VerticalTextAlignment, WidthType,
-    WordprocessingGroup, WrapMode, Zoom, ZoomMode,
+    TextBoxVerticalOverflow, TextDirection, ThemeColorRef, ThemeFontRef, VerticalAlign,
+    VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition, VerticalTextAlignment,
+    WidthType, WordprocessingGroup, WrapMode, Zoom, ZoomMode,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -3248,18 +3248,58 @@ fn write_shading(
     w: &mut Writer<Cursor<Vec<u8>>>,
     shading: &casual_doc_model::v1::Shading,
 ) -> Result<(), ExportError> {
-    if let Some(fill) = &shading.fill {
-        let mut el = start("w:shd");
-        el.push_attribute(("w:val", "clear"));
-        el.push_attribute(("w:color", "auto"));
-        el.push_attribute(("w:fill", rgb_hex(fill).as_str()));
-        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    if shading.is_empty() {
+        return Ok(());
     }
+    let mut el = start("w:shd");
+    el.push_attribute(("w:val", "clear"));
+    el.push_attribute(("w:color", "auto"));
+    // Theme background fill (`w:themeFill` + optional tint/shade); the formatted
+    // tint/shade strings must outlive the attribute pushes.
+    let tint_str;
+    let shade_str;
+    if let Some(theme) = &shading.theme_fill {
+        el.push_attribute(("w:themeFill", theme_color_token(theme.slot)));
+        if let Some(tint) = theme.theme_tint {
+            tint_str = format!("{tint:02X}");
+            el.push_attribute(("w:themeFillTint", tint_str.as_str()));
+        }
+        if let Some(shade) = theme.theme_shade {
+            shade_str = format!("{shade:02X}");
+            el.push_attribute(("w:themeFillShade", shade_str.as_str()));
+        }
+    }
+    let fill_str;
+    if let Some(fill) = &shading.fill {
+        fill_str = rgb_hex(fill);
+        el.push_attribute(("w:fill", fill_str.as_str()));
+    }
+    w.write_event(Event::Empty(el)).map_err(pkg)?;
     Ok(())
 }
 
 fn rgb_hex(color: &RgbColor) -> String {
     format!("{:02X}{:02X}{:02X}", color.r, color.g, color.b)
+}
+
+/// The `w:themeColor`/`w:themeFill` token (`ST_ThemeColor`) for a theme slot. The
+/// twelve canonical slot spellings; the four mapped aliases Word also accepts
+/// normalize to these on import.
+fn theme_color_token(slot: ThemeColorRef) -> &'static str {
+    match slot {
+        ThemeColorRef::Dark1 => "dark1",
+        ThemeColorRef::Light1 => "light1",
+        ThemeColorRef::Dark2 => "dark2",
+        ThemeColorRef::Light2 => "light2",
+        ThemeColorRef::Accent1 => "accent1",
+        ThemeColorRef::Accent2 => "accent2",
+        ThemeColorRef::Accent3 => "accent3",
+        ThemeColorRef::Accent4 => "accent4",
+        ThemeColorRef::Accent5 => "accent5",
+        ThemeColorRef::Accent6 => "accent6",
+        ThemeColorRef::Hyperlink => "hyperlink",
+        ThemeColorRef::FollowedHyperlink => "followedHyperlink",
+    }
 }
 
 fn write_paragraph(
@@ -5780,9 +5820,26 @@ fn write_run_property_children(
             el.push_attribute(("w:val", "auto"));
             w.write_event(Event::Empty(el)).map_err(pkg)?;
         }
-        // Color::Theme is not yet emitted by import (a later Layer-1 item); it
-        // round-trips through the opaque retention path until then.
-        Some(Color::Theme(_)) | None => {}
+        Some(Color::Theme(theme)) => {
+            let mut el = start("w:color");
+            // `CT_Color` requires `@w:val`; the concrete fallback Word writes beside
+            // `@w:themeColor` is not modeled, so emit `auto` and let the theme
+            // reference carry the palette slot (with any tint/shade).
+            el.push_attribute(("w:val", "auto"));
+            el.push_attribute(("w:themeColor", theme_color_token(theme.slot)));
+            let tint_str;
+            let shade_str;
+            if let Some(tint) = theme.theme_tint {
+                tint_str = format!("{tint:02X}");
+                el.push_attribute(("w:themeTint", tint_str.as_str()));
+            }
+            if let Some(shade) = theme.theme_shade {
+                shade_str = format!("{shade:02X}");
+                el.push_attribute(("w:themeShade", shade_str.as_str()));
+            }
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+        None => {}
     }
     if let Some(size) = properties.size_half_points {
         let mut el = start("w:sz");

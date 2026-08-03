@@ -978,6 +978,7 @@ fn table_properties_round_trip_and_default_omits_the_key() {
             },
             shading: Shading {
                 fill: Some(RgbColor { r: 1, g: 2, b: 3 }),
+                ..Shading::default()
             },
             ..TableProperties::default()
         },
@@ -1604,6 +1605,7 @@ fn paragraph_borders_shading_tabs_round_trip_and_bound() {
         },
         shading: Shading {
             fill: Some(RgbColor { r: 1, g: 2, b: 3 }),
+            ..Shading::default()
         },
         tabs: vec![TabStop {
             position_twips: 2160,

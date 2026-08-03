@@ -1132,6 +1132,110 @@ mod semantic_tests {
     }
 
     #[test]
+    fn run_theme_color_with_tint_and_shade_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, Color, InlineNode, ThemeColor, ThemeColorRef};
+        // Word writes a concrete `w:val` fallback beside `w:themeColor`; the theme
+        // reference — with its hex-byte `w:themeTint`/`w:themeShade` — is what must
+        // be captured and round-tripped (the concrete fallback is recomputed).
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p>
+                <w:r><w:rPr><w:color w:val="4472C4" w:themeColor="accent1" w:themeTint="99"/></w:rPr><w:t>tint</w:t></w:r>
+                <w:r><w:rPr><w:color w:val="2E74B5" w:themeColor="hyperlink" w:themeShade="BF"/></w:rPr><w:t>shade</w:t></w:r>
+            </w:p>
+        </w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(
+            m1, m2,
+            "the run theme colors survive write -> reopen unchanged"
+        );
+
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Run(tint_run) = &paragraph.inlines[0] else {
+            panic!("expected a run");
+        };
+        assert_eq!(
+            tint_run.properties.color,
+            Some(Color::Theme(ThemeColor {
+                slot: ThemeColorRef::Accent1,
+                theme_tint: Some(0x99),
+                theme_shade: None,
+            })),
+            "themeColor + themeTint is captured, not the concrete w:val fallback"
+        );
+        let InlineNode::Run(shade_run) = &paragraph.inlines[1] else {
+            panic!("expected a run");
+        };
+        assert_eq!(
+            shade_run.properties.color,
+            Some(Color::Theme(ThemeColor {
+                slot: ThemeColorRef::Hyperlink,
+                theme_tint: None,
+                theme_shade: Some(0xBF),
+            })),
+        );
+    }
+
+    #[test]
+    fn shading_theme_fill_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, ThemeColor, ThemeColorRef};
+        // Word emits `w:themeFill` (with optional `w:themeFillTint`/`w:themeFillShade`)
+        // *without* a duplicate concrete `w:fill`, on paragraphs, tables, and cells.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:pPr><w:shd w:val="clear" w:color="auto" w:themeFill="accent2" w:themeFillTint="33"/></w:pPr>
+                <w:r><w:t>para</w:t></w:r></w:p>
+            <w:tbl>
+                <w:tblPr><w:shd w:val="clear" w:color="auto" w:themeFill="accent4"/></w:tblPr>
+                <w:tblGrid><w:gridCol w:w="4500"/></w:tblGrid>
+                <w:tr><w:tc>
+                    <w:tcPr><w:shd w:val="clear" w:color="auto" w:themeFill="accent1" w:themeFillShade="80"/></w:tcPr>
+                    <w:p><w:r><w:t>cell</w:t></w:r></w:p>
+                </w:tc></w:tr>
+            </w:tbl>
+        </w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(m1, m2, "the theme fills survive write -> reopen unchanged");
+
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        assert_eq!(
+            paragraph.properties.shading.theme_fill,
+            Some(ThemeColor {
+                slot: ThemeColorRef::Accent2,
+                theme_tint: Some(0x33),
+                theme_shade: None,
+            }),
+        );
+        assert_eq!(
+            paragraph.properties.shading.fill, None,
+            "the theme fill carries no concrete fill"
+        );
+
+        let BlockNode::Table(table) = &m1.body()[1] else {
+            panic!("expected a table");
+        };
+        assert_eq!(
+            table.properties.shading.theme_fill,
+            Some(ThemeColor {
+                slot: ThemeColorRef::Accent4,
+                theme_tint: None,
+                theme_shade: None,
+            }),
+        );
+        let cell = &table.rows[0].cells[0];
+        assert_eq!(
+            cell.properties.shading.theme_fill,
+            Some(ThemeColor {
+                slot: ThemeColorRef::Accent1,
+                theme_tint: None,
+                theme_shade: Some(0x80),
+            }),
+        );
+    }
+
+    #[test]
     fn typed_table_and_cell_widths_survive_the_semantic_round_trip() {
         use casual_doc_model::v1::{BlockNode, TableWidth, WidthType};
         // AutoFit-to-window: the table's preferred width is a percentage (pct,
