@@ -85,6 +85,10 @@ impl ParleyShaper {
         let mut fonts = FontContext::new();
         let mut families: Vec<(u32, String)> = Vec::with_capacity(crate::fonts::FAMILIES.len());
         let mut bundled_blobs = HashSet::new();
+        // Parley family ids of every bundled family, wired below as mutual
+        // fallbacks so a glyph missing from a run's own bundled face is drawn
+        // from a sibling family that has it instead of `.notdef` (tofu).
+        let mut bundled_family_ids: Vec<_> = Vec::with_capacity(crate::fonts::FAMILIES.len());
         for family in crate::fonts::FAMILIES {
             let mut family_id = None;
             for offset in 0..4u32 {
@@ -98,10 +102,32 @@ impl ParleyShaper {
                     family_id = registered.first().map(|(id, _)| *id);
                 }
             }
+            if let Some(id) = family_id {
+                bundled_family_ids.push(id);
+            }
             let name = family_id
                 .and_then(|id| fonts.collection.family_name(id).map(str::to_owned))
                 .unwrap_or_else(|| family.name.to_owned());
             families.push((family.base, name));
+        }
+        // Wire the bundled families as mutual coverage fallbacks: a run shaped in
+        // one bundled face (e.g. a Calibri run substituted to the narrower Carlito)
+        // that hits a code point the face lacks falls back to a sibling bundled
+        // family that covers it (e.g. Roboto or Liberation Serif) instead of
+        // painting `.notdef` (tofu). `append_fallbacks` only registers candidates —
+        // parley skips any that do not cover a given cluster — so appending every
+        // bundled family across the scripts they collectively support is safe.
+        // Scripts none of the bundled faces cover (CJK, Arabic, Devanagari, …)
+        // still need a host fallback via `register_fallback_font`; because these
+        // fallbacks are appended (not set), a host face registered later for such a
+        // script still takes precedence.
+        for code in [
+            "Latn", "Grek", "Cyrl", "Copt", "Armn", "Geor", "Hebr", "Zyyy",
+        ] {
+            let script = Script::from_str_unchecked(code);
+            fonts
+                .collection
+                .append_fallbacks(script, bundled_family_ids.iter().copied());
         }
         let default_family = families
             .iter()
@@ -1184,6 +1210,47 @@ mod tests {
             max_width: Twip::from_points(width_points),
             ..LineConstraints::default()
         }
+    }
+
+    #[test]
+    fn a_glyph_missing_from_the_default_face_falls_back_to_a_bundled_sibling() {
+        use crate::resolve::covers;
+        // The run() helper shapes in the default bundled face (FontId(0)). Find a
+        // code point that face lacks but some sibling bundled family covers — the
+        // exact case that rendered as .notdef before the mutual-fallback wiring.
+        let default_face = FontId(0);
+        let target = ('\u{00C0}'..='\u{24FF}').find(|&ch| {
+            !covers(default_face, ch)
+                && crate::fonts::FAMILIES
+                    .iter()
+                    .any(|f| covers(f.face_id(false, false), ch))
+        });
+        let Some(ch) = target else {
+            // The bundled set always differs somewhere across Latin-Extended /
+            // punctuation / symbols; a None here means the corpus changed.
+            panic!("expected a code point covered by a sibling but not the default face");
+        };
+
+        let shaper = ParleyShaper::new();
+        let text = ch.to_string();
+        let line = shaper.shape_paragraph(&[run(&text)], constraints(400), para_range());
+
+        // The character no longer shapes to tofu: no .notdef glyph, and it is not
+        // recorded as an uncovered code point.
+        let has_notdef = line
+            .lines
+            .iter()
+            .flat_map(|l| &l.runs)
+            .flat_map(|r| &r.glyphs)
+            .any(|g| g.id == 0);
+        assert!(
+            !has_notdef,
+            "{ch:?} should fall back to a covering bundled face, not .notdef"
+        );
+        assert!(
+            !shaper.registry().missing_coverage().contains(&ch),
+            "{ch:?} is covered by a bundled sibling and must not be reported as missing",
+        );
     }
 
     fn fallback_widow_line(
