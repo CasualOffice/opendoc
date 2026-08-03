@@ -760,6 +760,7 @@ mod tests {
             paragraph_properties: None,
             run_properties: None,
             style_ref: None,
+            lvl_restart: None,
         }
     }
 
@@ -769,9 +770,13 @@ mod tests {
     ) -> (Definitions, Vec<NumberingInstanceId>) {
         let mut definitions = Definitions::default();
         let abs_id = AbstractNumberingId::new(NodeId::from_parts(1000, 1).unwrap());
-        definitions
-            .abstract_numbering
-            .insert(abs_id, AbstractNumbering { levels });
+        definitions.abstract_numbering.insert(
+            abs_id,
+            AbstractNumbering {
+                levels,
+                multi_level_type: None,
+            },
+        );
         let mut ids = Vec::new();
         for i in 0..instances {
             let inst = NumberingInstanceId::new(NodeId::from_parts(2000 + i as u64, 1).unwrap());

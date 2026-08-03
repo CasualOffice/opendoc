@@ -7362,6 +7362,7 @@ impl WasmDocument {
             abs_id,
             AbstractNumbering {
                 levels: (0..=8).map(|level| list_level(numbered, level)).collect(),
+                multi_level_type: None,
             },
         );
         defs.numbering.insert(
@@ -7412,6 +7413,7 @@ impl WasmDocument {
                 levels: (0..=8)
                     .map(|level| checklist_level(checked, level))
                     .collect(),
+                multi_level_type: None,
             },
         );
         defs.numbering.insert(
@@ -12878,6 +12880,7 @@ fn list_level(numbered: bool, level: u8) -> NumberingLevel {
         }),
         run_properties: None,
         style_ref: None,
+        lvl_restart: None,
     }
 }
 

@@ -2001,6 +2001,19 @@ fn numbering_xml(
         let mut el = start("w:abstractNum");
         el.push_attribute(("w:abstractNumId", abstract_id_token(*id).as_str()));
         w.write_event(Event::Start(el)).map_err(pkg)?;
+        if let Some(kind) = abstract_num.multi_level_type {
+            use casual_doc_model::v1::MultiLevelType;
+            let mut mlt = start("w:multiLevelType");
+            mlt.push_attribute((
+                "w:val",
+                match kind {
+                    MultiLevelType::SingleLevel => "singleLevel",
+                    MultiLevelType::Multilevel => "multilevel",
+                    MultiLevelType::HybridMultilevel => "hybridMultilevel",
+                },
+            ));
+            w.write_event(Event::Empty(mlt)).map_err(pkg)?;
+        }
         for level in &abstract_num.levels {
             write_level(&mut w, level)?;
         }
@@ -2050,6 +2063,12 @@ fn write_level(w: &mut Writer<Cursor<Vec<u8>>>, level: &NumberingLevel) -> Resul
     if let Some(format) = &level.num_fmt {
         let mut el = start("w:numFmt");
         el.push_attribute(("w:val", number_format_token(format)));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    // `w:lvlRestart` follows numFmt in CT_Lvl schema order, before isLgl.
+    if let Some(restart) = level.lvl_restart {
+        let mut el = start("w:lvlRestart");
+        el.push_attribute(("w:val", restart.to_string().as_str()));
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
     if level.is_lgl {
