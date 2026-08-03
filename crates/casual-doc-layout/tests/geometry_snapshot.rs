@@ -224,7 +224,91 @@ fn fixtures() -> Vec<(&'static str, Document)> {
             "bullet-list",
             numbered_list("\u{2022}", NumberFormat::Bullet),
         ),
+        // 8. A three-level nested list: each level indents further and carries its
+        //    own marker, so the golden locks per-level indentation and the nested
+        //    marker/body columns as items descend and ascend the levels.
+        ("multilevel-list", multilevel_list()),
     ]
+}
+
+/// A three-level list (`1.` / `a.` / `i.`), each level at a deeper hanging indent
+/// (720/1440/2160 twips), with items walking L0 → L1 → L1 → L2 → L0 so the golden
+/// captures per-level indentation, nested markers, and the counter reset on the
+/// return to L0.
+fn multilevel_list() -> Document {
+    let abs_id = AbstractNumberingId::new(node(920));
+    let inst_id = NumberingInstanceId::new(node(921));
+    let level = |index: u8, num_fmt: NumberFormat, text: &str| {
+        let indent = 720 * i32::from(index + 1);
+        NumberingLevel {
+            level: index,
+            start: 1,
+            num_fmt: Some(num_fmt),
+            lvl_text: Some(text.to_owned()),
+            lvl_jc: None,
+            suff: Some(LevelSuffix::Tab),
+            is_lgl: false,
+            paragraph_properties: Some(ParagraphProperties {
+                indentation: Some(Indentation {
+                    start_twips: Some(indent),
+                    hanging_twips: Some(360),
+                    ..Indentation::default()
+                }),
+                tabs: vec![TabStop {
+                    position_twips: indent,
+                    alignment: TabAlignment::Start,
+                    leader: None,
+                }],
+                ..ParagraphProperties::default()
+            }),
+            run_properties: None,
+            style_ref: None,
+        }
+    };
+    let mut definitions = Definitions::default();
+    definitions.abstract_numbering.insert(
+        abs_id,
+        AbstractNumbering {
+            levels: vec![
+                level(0, NumberFormat::Decimal, "%1."),
+                level(1, NumberFormat::LowerLetter, "%2."),
+                level(2, NumberFormat::LowerRoman, "%3."),
+            ],
+        },
+    );
+    definitions.numbering.insert(
+        inst_id,
+        NumberingInstance {
+            abstract_ref: abs_id,
+            overrides: Vec::new(),
+        },
+    );
+    definitions.sections = vec![section(9, None)];
+    let item = |id: u64, level: u8, text: &str| {
+        BlockNode::Paragraph(Paragraph {
+            id: node(id),
+            properties: ParagraphProperties {
+                numbering: Some(NumberingRef {
+                    instance: inst_id,
+                    level,
+                }),
+                ..ParagraphProperties::default()
+            },
+            inlines: vec![run(id + 1, text)],
+        })
+    };
+    Document::new(
+        node(1),
+        vec![
+            item(700, 0, "One"),
+            item(710, 1, "Nested a"),
+            item(720, 1, "Nested b"),
+            item(730, 2, "Deep i"),
+            item(740, 0, "Two"),
+        ],
+        definitions,
+    )
+    .unwrap()
 }
 
 /// A two-item single-level list at a 720-twip hanging indent (marker protrudes
