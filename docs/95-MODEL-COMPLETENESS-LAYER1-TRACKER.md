@@ -26,21 +26,21 @@ Derived from a 14-agent, evidence-cited model-completeness sweep, prevalence-ran
 | ✅ | Abstract `multiLevelType` | `w:multiLevelType` | ubiquitous | S |
 | ✅ | Level restart trigger | `w:lvlRestart` | common | S |
 | ✅ | Run text color "auto" | `w:color@val=auto` | ubiquitous | S |
-| | Numbering level → paragraph-style link | `w:lvl/w:pStyle` | ubiquitous | S |
+| ✅ | Numbering level → paragraph-style link | `w:lvl/w:pStyle` | ubiquitous | S |
 | | Note-number mark in note body | `w:footnoteRef`/`w:endnoteRef` | ubiquitous | S |
 | ✅ | do-not-proof | `w:noProof` | common | S |
-| | Style tab stops *(partial)* | `w:pPr/w:tabs` in styles.xml | common | S |
+| ✅ | Style tab stops *(partial)* | `w:pPr/w:tabs` in styles.xml | common | S |
 | ✅ | Page gutter margin | `w:pgMar@gutter` | common | S |
 | ✅ | Update-fields-on-open | `w:updateFields` | common | S |
-| | Footnote/endnote numFmt → enum *(partial)* | `w:footnotePr/w:numFmt` | common | S |
-| | Shape/picture flip | `a:xfrm@flipH/@flipV` | common | S |
+| ✅ | Footnote/endnote numFmt → enum *(partial)* | `w:footnotePr/w:numFmt` | common | S |
+| ✅ | Shape/picture flip | `a:xfrm@flipH/@flipV` | common | S |
 | | Math func / accent / limits | `m:func`,`m:acc`,`m:limLow/Upp` | common | S |
 | | Run theme color + tint/shade *(partial)* | `w:color@themeColor/@themeTint/@themeShade` | ubiquitous | M |
-| | Percentage table/cell width (AutoFit) | `w:tblW`/`w:tcW@type=pct\|auto` | ubiquitous | M |
-| | Reusable list-style linkage | `w:numStyleLink`,`w:styleLink` | common | M |
-| | Shape/picture rotation | `a:xfrm@rot` | common | M |
+| ✅ | Percentage table/cell width (AutoFit) | `w:tblW`/`w:tcW@type=pct\|auto` | ubiquitous | M |
+| ✅ | Reusable list-style linkage | `w:numStyleLink`,`w:styleLink` | common | M |
+| ✅ | Shape/picture rotation | `a:xfrm@rot` | common | M |
 | | Line dash + arrowheads *(partial)* | `a:prstDash`,`a:headEnd/tailEnd` | common | M |
-| | Doc-default footnote/endnote props | `w:settings/w:footnotePr` | common | M |
+| ✅ | Doc-default footnote/endnote props | `w:settings/w:footnotePr` | common | M |
 | | Paragraph-mark revision | `pPr/rPr/w:ins\|w:del` | common | M |
 | | Shading theme fill *(partial)* | `w:shd@themeFill/…` | common | M |
 | | Math n-ary / matrix / eqArr | `m:nary`,`m:m`,`m:eqArr` | common | M |
