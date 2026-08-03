@@ -41,7 +41,7 @@ use crate::error::ImportError;
 use crate::numbering::Numbering;
 use crate::properties::{
     apply_paragraph_property, apply_run_property, attribute_value, break_kind, is_true, parse_rgb,
-    symbol_glyph,
+    parse_table_width, symbol_glyph,
 };
 use crate::report::Reporter;
 use crate::styles::Styles;
@@ -2989,16 +2989,10 @@ impl BodyParser<'_> {
                     VerticalMerge::Continue
                 });
             }
-            b"tcW" if self.tcpr_depth > 0 => {
-                // Only `dxa` (twips) widths are modeled; `pct`/`auto` are reported.
-                let is_dxa = attribute_value(element, b"type")
-                    .map(|kind| kind == "dxa")
-                    .unwrap_or(true);
-                match attr_i32(element, b"w") {
-                    Some(width) if is_dxa => self.tables.set_cell_width(width.clamp(0, 31_680)),
-                    _ => self.reporter.report(b"tcW"),
-                }
-            }
+            b"tcW" if self.tcpr_depth > 0 => match parse_table_width(element) {
+                Some(width) => self.tables.set_cell_width(width),
+                None => self.reporter.report(b"tcW"),
+            },
             // ---- table properties (`w:tblPr`) --------------------------------
             b"tblStyle" if self.tblpr_depth > 0 => {
                 match self.resolve_style(element, StyleKind::Table) {
@@ -3013,15 +3007,10 @@ impl BodyParser<'_> {
                 Some(alignment) => self.tables.set_table_alignment(alignment),
                 None => self.reporter.report(b"jc"),
             },
-            b"tblW" if self.tblpr_depth > 0 => {
-                let is_dxa = attribute_value(element, b"type")
-                    .map(|kind| kind == "dxa")
-                    .unwrap_or(true);
-                match attr_i32(element, b"w") {
-                    Some(width) if is_dxa => self.tables.set_table_width(width.clamp(0, 31_680)),
-                    _ => self.reporter.report(b"tblW"),
-                }
-            }
+            b"tblW" if self.tblpr_depth > 0 => match parse_table_width(element) {
+                Some(width) => self.tables.set_table_width(width),
+                None => self.reporter.report(b"tblW"),
+            },
             b"tblLayout" if self.tblpr_depth > 0 => {
                 match attribute_value(element, b"type").as_deref() {
                     Some("fixed") => self.tables.set_table_layout(TableLayout::Fixed),

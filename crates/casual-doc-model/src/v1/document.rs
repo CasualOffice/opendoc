@@ -954,8 +954,8 @@ impl Document {
         {
             return Err(ModelError::DanglingStyleRef(style.node_id()));
         }
-        if let Some(width) = properties.width_twips {
-            check_domain((0..=31_680).contains(&width), "table.width")?;
+        if let Some(width) = properties.width {
+            check_domain(width.is_valid(), "table.width")?;
         }
         // `both` (justify) is not a valid `ST_JcTable` value, and the table
         // importer never yields it (it maps `both` -> None). Reject it so an
@@ -1028,8 +1028,8 @@ impl Document {
         if let Some(span) = properties.grid_span {
             check_domain((1..=16_384).contains(&span), "table.cell.grid_span")?;
         }
-        if let Some(width) = properties.width_twips {
-            check_domain((0..=31_680).contains(&width), "table.cell.width")?;
+        if let Some(width) = properties.width {
+            check_domain(width.is_valid(), "table.cell.width")?;
         }
         check_borders(&properties.borders, "table.cell.borders")?;
         check_margins(&properties.margins, "table.cell.margins")?;

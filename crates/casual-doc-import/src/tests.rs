@@ -611,7 +611,10 @@ fn table_row_and_cell_properties_are_mapped() {
     let table = first_table(&import).expect("table modeled");
     // Table properties.
     assert_eq!(table.properties.alignment, Some(Alignment::Center));
-    assert_eq!(table.properties.width_twips, Some(9000));
+    assert_eq!(
+        table.properties.width,
+        Some(casual_doc_model::v1::TableWidth::dxa(9000))
+    );
     assert_eq!(table.properties.layout, Some(TableLayout::Fixed));
     assert!(table.properties.look.first_row);
     assert!(table.properties.look.no_v_band);
@@ -897,8 +900,9 @@ fn border_edge_without_a_style_is_reported_not_modeled() {
 
 #[test]
 fn degraded_table_properties_are_reported_not_silently_mapped() {
-    // pct table width, a table jc=both (justify), an unknown vAlign, and a
-    // patterned shd are each reported; the modeled fill is still captured.
+    // A table jc=both (justify), an unknown vAlign, and a patterned shd are each
+    // reported; the modeled fill is still captured. The pct table width is now
+    // typed (`WidthType::Pct`), not reported.
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
         <w:tbl>
             <w:tblPr><w:tblW w:type="pct" w:w="5000"/><w:jc w:val="both"/></w:tblPr>
@@ -910,9 +914,16 @@ fn degraded_table_properties_are_reported_not_silently_mapped() {
     </w:body></w:document>"#;
     let import = import(xml);
     let table = first_table(&import).expect("table modeled");
-    assert_eq!(table.properties.width_twips, None, "pct width not modeled");
+    assert_eq!(
+        table.properties.width,
+        Some(casual_doc_model::v1::TableWidth::pct(5000)),
+        "pct width is typed"
+    );
     assert_eq!(table.properties.alignment, None, "justify not modeled");
-    assert!(features(&import).contains(&"tblW"));
+    assert!(
+        !features(&import).contains(&"tblW"),
+        "pct width not reported"
+    );
     assert!(features(&import).contains(&"jc"));
     assert!(features(&import).contains(&"vAlign"));
     // The patterned shd is reported but its fill is still captured (partial).
@@ -3169,7 +3180,10 @@ fn real_producer_table_merges_map_grid_span_and_vertical_merge() {
     // Row 1, cell 1 spans two grid columns (w:gridSpan) and carries a dxa width.
     let spanning = &table.rows[0].cells[0];
     assert_eq!(spanning.properties.grid_span, Some(2));
-    assert_eq!(spanning.properties.width_twips, Some(2027));
+    assert_eq!(
+        spanning.properties.width,
+        Some(casual_doc_model::v1::TableWidth::dxa(2027))
+    );
 
     // Row 2 opens a vertical merge; row 3 continues it (w:vMerge).
     assert_eq!(
@@ -3191,9 +3205,9 @@ fn real_producer_table_merges_map_grid_span_and_vertical_merge() {
 }
 
 #[test]
-fn nested_tables_nest_and_percent_cell_width_is_reported() {
+fn nested_tables_nest_and_percent_cell_width_is_typed() {
     // A table whose cell contains a nested table; the outer cell also carries a
-    // percentage width (w:tcW type="pct"), which is not modeled and is reported.
+    // percentage width (w:tcW type="pct"), now carried as a typed `WidthType::Pct`.
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
         <w:tbl>
             <w:tblGrid><w:gridCol w:w="5000"/></w:tblGrid>
@@ -3210,9 +3224,12 @@ fn nested_tables_nest_and_percent_cell_width_is_reported() {
     assert_eq!(outer.grid.len(), 1);
     assert_eq!(outer.grid[0].width_twips, Some(5000));
     let cell = &outer.rows[0].cells[0];
-    // Percentage width is not modeled (dxa only); it stays None and is reported.
-    assert_eq!(cell.properties.width_twips, None);
-    assert!(features(&import).contains(&"tcW"));
+    // Percentage width is now typed (fiftieths of a percent) and not reported.
+    assert_eq!(
+        cell.properties.width,
+        Some(casual_doc_model::v1::TableWidth::pct(2500))
+    );
+    assert!(!features(&import).contains(&"tcW"));
 
     // The cell holds its paragraph and then a nested table (document order).
     assert!(matches!(cell.blocks[0], BlockNode::Paragraph(_)));

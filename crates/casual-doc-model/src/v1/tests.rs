@@ -970,7 +970,7 @@ fn table_properties_round_trip_and_default_omits_the_key() {
         grid: Vec::new(),
         grid_change: None,
         properties: TableProperties {
-            width_twips: Some(9000),
+            width: Some(TableWidth::dxa(9000)),
             layout: Some(TableLayout::Fixed),
             look: TableLook {
                 first_row: true,
@@ -1167,7 +1167,7 @@ fn over_range_table_width_is_rejected() {
         grid: Vec::new(),
         grid_change: None,
         properties: TableProperties {
-            width_twips: Some(40_000),
+            width: Some(TableWidth::dxa(40_000)),
             ..TableProperties::default()
         },
         rows: vec![TableRow {

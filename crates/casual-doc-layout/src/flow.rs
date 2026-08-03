@@ -1796,7 +1796,12 @@ fn solve_table_columns(
                     .is_some()
                     .then_some(&style_layers[row_index][cell_index]);
                 let (cmin, cmax) = block_intrinsic(&cell.blocks, shaper, ctx, table_style);
-                let cpref = cmax.max(cell.properties.width_twips.unwrap_or(0));
+                let cell_pref = cell
+                    .properties
+                    .width
+                    .and_then(|width| width.dxa_twips())
+                    .unwrap_or(0);
+                let cpref = cmax.max(cell_pref);
                 // A spanning cell's demand is shared over the columns it covers.
                 let per_min = div_ceil(cmin, span as i32);
                 let per_pref = div_ceil(cpref, span as i32);
@@ -1817,7 +1822,8 @@ fn solve_table_columns(
 
     let spec = table
         .properties
-        .width_twips
+        .width
+        .and_then(|width| width.dxa_twips())
         .map_or(WidthSpec::Auto, WidthSpec::Dxa);
     let layout = match table.properties.layout {
         Some(TableLayout::Fixed) => TableLayout::Fixed,
@@ -7735,7 +7741,7 @@ mod tests {
     use casual_doc_model::v1::{
         BorderEdge, CellMargins, GridColumn, HeightRule, RgbColor, RowHeight, Shading, Table,
         TableBorders, TableCell, TableCellProperties, TableProperties, TableRow as ModelRow,
-        TableRowProperties,
+        TableRowProperties, TableWidth,
     };
 
     fn node(id: u64) -> NodeId {
@@ -7882,7 +7888,7 @@ mod tests {
             properties: TableProperties {
                 tbl_bidi_visual: bidi_visual,
                 alignment: Some(alignment),
-                width_twips: Some(3000),
+                width: Some(TableWidth::dxa(3000)),
                 layout: Some(TableLayout::Fixed),
                 indent_twips: Some(600),
                 ..TableProperties::default()
@@ -7953,7 +7959,7 @@ mod tests {
             ],
             grid_change: None,
             properties: TableProperties {
-                width_twips: Some(6000),
+                width: Some(TableWidth::dxa(6000)),
                 layout: Some(TableLayout::Fixed),
                 cell_spacing_twips: Some(spacing),
                 ..TableProperties::default()
@@ -8343,7 +8349,7 @@ mod tests {
                     text_cell(
                         60,
                         TableCellProperties {
-                            width_twips: Some(4000),
+                            width: Some(TableWidth::dxa(4000)),
                             ..TableCellProperties::default()
                         },
                         "a",

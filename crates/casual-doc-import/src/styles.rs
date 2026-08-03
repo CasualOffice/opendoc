@@ -25,7 +25,7 @@ use crate::error::ImportError;
 use crate::numbering::Numbering;
 use crate::properties::{
     apply_paragraph_property, apply_run_property, attribute_value, is_true, parse_rgb,
-    style_kind_from,
+    parse_table_width, style_kind_from,
 };
 use crate::report::Reporter;
 
@@ -830,8 +830,8 @@ fn read_table_container(
                 Some(alignment) => props.alignment = Some(alignment),
                 None => ctx.report(b"jc"),
             },
-            b"tblW" => match dxa_twips(&child) {
-                Some(width) => props.width_twips = Some(width.clamp(0, 31_680)),
+            b"tblW" => match parse_table_width(&child) {
+                Some(width) => props.width = Some(width),
                 None => ctx.report(b"tblW"),
             },
             b"tblCellSpacing" => match dxa_twips(&child) {
@@ -965,8 +965,8 @@ fn read_cell_container(
         };
         let mut consumed = false;
         match child.local_name().as_ref() {
-            b"tcW" => match dxa_twips(&child) {
-                Some(width) => props.width_twips = Some(width.clamp(0, 31_680)),
+            b"tcW" => match parse_table_width(&child) {
+                Some(width) => props.width = Some(width),
                 None => ctx.report(b"tcW"),
             },
             b"gridSpan" => match attribute_value(&child, b"val")
