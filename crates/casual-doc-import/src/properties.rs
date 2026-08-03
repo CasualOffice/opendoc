@@ -8,8 +8,8 @@ use casual_doc_model::v1::{
     Alignment, BreakKind, Color, DropCapFrame, DropCapMode, EmphasisMark, FontName, FontRef,
     FrameHorizontalAlignment, FrameHorizontalAnchor, FrameVerticalAlignment, FrameVerticalAnchor,
     FrameWrap, HighlightColor, Indentation, Language, LineRule, MAX_SYMBOL_FONT_LEN,
-    ParagraphProperties, RgbColor, RunFontHint, RunProperties, Spacing, StyleKind, ThemeFont,
-    ThemeFontRef, UnderlineStyle, VerticalAlignment, VerticalTextAlignment,
+    ParagraphProperties, RgbColor, RunFontHint, RunProperties, Spacing, StyleKind, TableWidth,
+    ThemeFont, ThemeFontRef, UnderlineStyle, VerticalAlignment, VerticalTextAlignment, WidthType,
 };
 use quick_xml::events::BytesStart;
 
@@ -532,6 +532,29 @@ pub(crate) fn symbol_glyph(element: &BytesStart<'_>) -> Option<(String, u32)> {
     let raw = attribute_value(element, b"char")?;
     let char = u32::from_str_radix(raw.trim_start_matches("0x"), 16).ok()?;
     Some((font, char))
+}
+
+/// Parses a preferred table/cell width (`w:tblW`/`w:tcW`, `CT_TblWidth`) into a
+/// typed `TableWidth`. Reads `@w:type` (defaulting to `dxa` when absent) and the
+/// magnitude `@w:w`. `dxa`/`pct` require a numeric `w:w` and clamp it to their
+/// valid domain; `auto`/`nil` carry no magnitude (`value = 0`). An unknown type
+/// token, or a missing/non-numeric `w:w` for `dxa`/`pct`, yields `None` so the
+/// caller reports the element rather than dropping it silently.
+pub(crate) fn parse_table_width(element: &BytesStart<'_>) -> Option<TableWidth> {
+    let width_type = match attribute_value(element, b"type").as_deref() {
+        Some("dxa") | None => WidthType::Dxa,
+        Some("pct") => WidthType::Pct,
+        Some("auto") => WidthType::Auto,
+        Some("nil") => WidthType::Nil,
+        Some(_) => return None,
+    };
+    let raw = attribute_value(element, b"w").and_then(|value| value.parse::<i32>().ok());
+    let value = match width_type {
+        WidthType::Dxa => raw?.clamp(0, 31_680),
+        WidthType::Pct => raw?.clamp(0, 5_000),
+        WidthType::Auto | WidthType::Nil => 0,
+    };
+    Some(TableWidth { value, width_type })
 }
 
 pub(crate) fn attribute_value(element: &BytesStart<'_>, name: &[u8]) -> Option<String> {

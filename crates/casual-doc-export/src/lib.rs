@@ -869,6 +869,43 @@ mod semantic_tests {
     }
 
     #[test]
+    fn typed_table_and_cell_widths_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, TableWidth, WidthType};
+        // AutoFit-to-window: the table's preferred width is a percentage (pct,
+        // fiftieths of a percent — 5000 = 100%), and the cell's width is
+        // content-sized (auto). Both the magnitude and the unit must round-trip.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:tbl>
+                <w:tblPr><w:tblW w:type="pct" w:w="5000"/></w:tblPr>
+                <w:tblGrid><w:gridCol w:w="4500"/></w:tblGrid>
+                <w:tr>
+                    <w:tc><w:tcPr><w:tcW w:type="auto" w:w="0"/></w:tcPr>
+                        <w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc>
+                </w:tr>
+            </w:tbl>
+        </w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(m1, m2, "typed widths are a write -> reopen fixed point");
+
+        let BlockNode::Table(table) = &m2.body()[0] else {
+            panic!("expected a table");
+        };
+        assert_eq!(
+            table.properties.width,
+            Some(TableWidth::pct(5000)),
+            "pct table width round-trips with its type",
+        );
+        assert_eq!(
+            table.rows[0].cells[0].properties.width,
+            Some(TableWidth {
+                value: 0,
+                width_type: WidthType::Auto,
+            }),
+            "auto cell width round-trips with its type",
+        );
+    }
+
+    #[test]
     fn expanded_table_properties_survive_the_semantic_round_trip() {
         // The additive table/row/cell properties: tblOverlap, tblCellSpacing,
         // tblInd, tblCaption/tblDescription; a per-row jc + tblCellSpacing; and

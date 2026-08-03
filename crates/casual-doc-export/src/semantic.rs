@@ -39,11 +39,11 @@ use casual_doc_model::v1::{
     SdtProperties, SectionBoundary, SectionType, ShapeAdjustment, ShapeGeometry, ShapeStroke,
     Style, StyleId, StyleKind, TabAlignment, TabLeader, Table, TableAnchor, TableBorders,
     TableCell, TableCellProperties, TableFloatPosition, TableLayout, TableOverlap, TableProperties,
-    TableRow, TableRowProperties, TableStyleOverride, TableStyleRegion, TableXAlign, TableYAlign,
-    TextBox, TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow,
+    TableRow, TableRowProperties, TableStyleOverride, TableStyleRegion, TableWidth, TableXAlign,
+    TableYAlign, TextBox, TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow,
     TextBoxVerticalAnchor, TextBoxVerticalOverflow, TextDirection, ThemeFontRef, VerticalAlign,
     VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition, VerticalTextAlignment,
-    WordprocessingGroup, WrapMode, Zoom, ZoomMode,
+    WidthType, WordprocessingGroup, WrapMode, Zoom, ZoomMode,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -2791,11 +2791,8 @@ fn write_table_properties(
         jc.push_attribute(("w:val", alignment_token(alignment)));
         w.write_event(Event::Empty(jc)).map_err(pkg)?;
     }
-    if let Some(width) = properties.width_twips {
-        let mut el = start("w:tblW");
-        el.push_attribute(("w:type", "dxa"));
-        el.push_attribute(("w:w", width.to_string().as_str()));
-        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    if let Some(width) = properties.width {
+        write_table_width(w, "w:tblW", width)?;
     }
     if let Some(spacing) = properties.cell_spacing_twips {
         let mut el = start("w:tblCellSpacing");
@@ -3074,11 +3071,8 @@ fn write_cell_properties(
     }
     w.write_event(Event::Start(start("w:tcPr"))).map_err(pkg)?;
     write_cnf_style(w, properties.conditional_format)?;
-    if let Some(width) = properties.width_twips {
-        let mut el = start("w:tcW");
-        el.push_attribute(("w:type", "dxa"));
-        el.push_attribute(("w:w", width.to_string().as_str()));
-        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    if let Some(width) = properties.width {
+        write_table_width(w, "w:tcW", width)?;
     }
     if let Some(span) = properties.grid_span {
         let mut el = start("w:gridSpan");
@@ -5741,6 +5735,30 @@ fn emphasis_token(emphasis: EmphasisMark) -> &'static str {
         EmphasisMark::Circle => "circle",
         EmphasisMark::UnderDot => "underDot",
     }
+}
+
+/// The `w:type` token for a preferred table/cell width unit (`ST_TblWidth`).
+fn width_type_token(width_type: WidthType) -> &'static str {
+    match width_type {
+        WidthType::Dxa => "dxa",
+        WidthType::Pct => "pct",
+        WidthType::Auto => "auto",
+        WidthType::Nil => "nil",
+    }
+}
+
+/// Writes a `CT_TblWidth` element (`w:tblW`/`w:tcW`) carrying both `@w:w` and
+/// `@w:type` so the typed width round-trips.
+fn write_table_width<W: std::io::Write>(
+    w: &mut Writer<W>,
+    name: &str,
+    width: TableWidth,
+) -> Result<(), ExportError> {
+    let mut el = start(name);
+    el.push_attribute(("w:type", width_type_token(width.width_type)));
+    el.push_attribute(("w:w", width.value.to_string().as_str()));
+    w.write_event(Event::Empty(el)).map_err(pkg)?;
+    Ok(())
 }
 
 fn alignment_token(alignment: Alignment) -> &'static str {

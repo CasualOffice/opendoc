@@ -11,7 +11,7 @@ use casual_doc_model::v1::{
     BlockNode, BorderEdge, CellMargins, CellVerticalAlignment, CnfStyle, GridColumn, HeightRule,
     MAX_TABLE_DEPTH, Paragraph, ParagraphProperties, PropChange, StyleId, Table, TableBorders,
     TableCell, TableCellProperties, TableFloatPosition, TableLayout, TableOverlap, TableProperties,
-    TableRow, TableRowProperties, TextDirection, VerticalMerge,
+    TableRow, TableRowProperties, TableWidth, TextDirection, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 
@@ -178,10 +178,10 @@ impl TableStack {
         }
     }
 
-    /// Sets the (dxa) width on the current cell.
-    pub(crate) fn set_cell_width(&mut self, width_twips: i32) {
+    /// Sets the preferred width on the current cell (`w:tcW`).
+    pub(crate) fn set_cell_width(&mut self, width: TableWidth) {
         if let Some(cell) = self.current_cell() {
-            cell.properties.width_twips = Some(width_twips);
+            cell.properties.width = Some(width);
         }
     }
 
@@ -313,10 +313,10 @@ impl TableStack {
         }
     }
 
-    /// Sets the preferred table width in twips (`w:tblW` dxa).
-    pub(crate) fn set_table_width(&mut self, width_twips: i32) {
+    /// Sets the preferred table width (`w:tblW`).
+    pub(crate) fn set_table_width(&mut self, width: TableWidth) {
         if let Some(properties) = self.table_properties() {
-            properties.width_twips = Some(width_twips);
+            properties.width = Some(width);
         }
     }
 

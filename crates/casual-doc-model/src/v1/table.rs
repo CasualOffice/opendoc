@@ -11,6 +11,79 @@ use crate::NodeId;
 /// value so authored and imported documents share one bound.
 pub const MAX_TABLE_DEPTH: u32 = 32;
 
+/// The unit a preferred table or cell width is expressed in (`w:tblW`/`w:tcW`
+/// `@w:type`, `ST_TblWidth`, ECMA-376 §17.18.90).
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WidthType {
+    /// Absolute width in twips (`dxa`). The default when a width is present but
+    /// its type is omitted.
+    #[default]
+    Dxa,
+    /// Percentage of the reference width, in fiftieths of a percent (`pct`);
+    /// `5000` is 100%.
+    Pct,
+    /// Width chosen automatically by the layout algorithm (`auto`).
+    Auto,
+    /// No preferred width (`nil`).
+    Nil,
+}
+
+/// A preferred table or cell width (`w:tblW`/`w:tcW`, `CT_TblWidth`). The `value`
+/// is interpreted per `width_type`: twips for `dxa`, fiftieths of a percent for
+/// `pct` (`5000` = 100%), and carried as `0` for `auto`/`nil`, which express no
+/// magnitude. Carrying the type (rather than assuming `dxa`) lets AutoFit-to-window
+/// (`pct`) and content-sized (`auto`) widths round-trip.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TableWidth {
+    /// Width magnitude (`w:w`): twips for `dxa`, fiftieths of a percent for `pct`,
+    /// `0` for `auto`/`nil`.
+    pub value: i32,
+    /// The unit `value` is measured in (`w:type`).
+    pub width_type: WidthType,
+}
+
+impl TableWidth {
+    /// Constructs an absolute (`dxa`) width in twips.
+    #[must_use]
+    pub fn dxa(twips: i32) -> Self {
+        Self {
+            value: twips,
+            width_type: WidthType::Dxa,
+        }
+    }
+
+    /// Constructs a percentage (`pct`) width in fiftieths of a percent.
+    #[must_use]
+    pub fn pct(fiftieths: i32) -> Self {
+        Self {
+            value: fiftieths,
+            width_type: WidthType::Pct,
+        }
+    }
+
+    /// The absolute width in twips, when (and only when) this is a `dxa` width.
+    /// `pct`/`auto`/`nil` widths carry no twip magnitude and yield `None`, so
+    /// layout that only understands absolute widths ignores them as before.
+    #[must_use]
+    pub fn dxa_twips(&self) -> Option<i32> {
+        (self.width_type == WidthType::Dxa).then_some(self.value)
+    }
+
+    /// Whether `value` lies in the domain of its `width_type`: twips
+    /// (`0..=31_680`) for `dxa`, fiftieths of a percent (`0..=5_000`, i.e.
+    /// `0..=100%`) for `pct`, and exactly `0` for the magnitude-less `auto`/`nil`.
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        match self.width_type {
+            WidthType::Dxa => (0..=31_680).contains(&self.value),
+            WidthType::Pct => (0..=5_000).contains(&self.value),
+            WidthType::Auto | WidthType::Nil => self.value == 0,
+        }
+    }
+}
+
 /// One column in a table's shared grid (`w:gridCol`).
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -349,9 +422,10 @@ pub struct TableProperties {
     /// Table alignment (`w:jc`); start/center/end (justify reported at import).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alignment: Option<Alignment>,
-    /// Preferred table width in twips, `dxa` only (`w:tblW`; `0..=31_680`).
+    /// Preferred table width (`w:tblW`), typed by unit: absolute (`dxa`),
+    /// percentage (`pct`, AutoFit-to-window), automatic (`auto`), or none (`nil`).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub width_twips: Option<i32>,
+    pub width: Option<TableWidth>,
     /// Layout algorithm (`w:tblLayout`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub layout: Option<TableLayout>,
@@ -513,9 +587,10 @@ pub struct TableCellProperties {
     /// Vertical merge role (`w:vMerge`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vertical_merge: Option<VerticalMerge>,
-    /// Cell width in twips when the source width type is `dxa` (`0..=31_680`).
+    /// Preferred cell width (`w:tcW`), typed by unit: absolute (`dxa`),
+    /// percentage (`pct`), automatic (`auto`), or none (`nil`).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub width_twips: Option<i32>,
+    pub width: Option<TableWidth>,
     /// Cell background shading (`w:shd`).
     #[serde(default, skip_serializing_if = "Shading::is_empty")]
     pub shading: Shading,
