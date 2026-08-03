@@ -26,10 +26,10 @@ use casual_doc_model::v1::{
     PropChange, Revision, RevisionKind, RgbColor, Rgba, Run, RunProperties, SchemeColor,
     SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind, SdtDataBinding, SdtDate,
     SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionColumns, SectionId, SectionType,
-    ShapeAdjustment, ShapeGeometry, ShapeStroke, SoftHyphen, StyleKind, Symbol, Tab, TabAlignment,
-    TabLeader, TabStop, TableAnchor, TableCellProperties, TableFloatPosition, TableLayout,
-    TableOverlap, TableProperties, TableRowProperties, TableXAlign, TableYAlign, TextBox,
-    TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxInsets,
+    Shading, ShapeAdjustment, ShapeGeometry, ShapeStroke, SoftHyphen, StyleKind, Symbol, Tab,
+    TabAlignment, TabLeader, TabStop, TableAnchor, TableCellProperties, TableFloatPosition,
+    TableLayout, TableOverlap, TableProperties, TableRowProperties, TableXAlign, TableYAlign,
+    TextBox, TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxInsets,
     TextBoxVerticalAnchor, TextBoxVerticalOverflow, TextDirection, VerticalAlign, VerticalAnchor,
     VerticalMerge, VerticalPosition, WordprocessingGroup, WrapDistances, WrapMode,
 };
@@ -42,7 +42,7 @@ use crate::error::ImportError;
 use crate::numbering::Numbering;
 use crate::properties::{
     apply_paragraph_property, apply_run_property, attribute_value, break_kind, is_true, parse_rgb,
-    parse_table_width, symbol_glyph,
+    parse_shading, parse_table_width, symbol_glyph,
 };
 use crate::report::Reporter;
 use crate::styles::Styles;
@@ -3185,8 +3185,8 @@ impl BodyParser<'_> {
             // a `w:tblPr`/`w:tcPr` was left unclosed by malformed markup) is not
             // misrouted to the table/cell — it wins at the paragraph arm below.
             b"shd" if self.tblpr_depth > 0 && self.ppr_depth == 0 => {
-                let fill = self.shading_fill(element);
-                self.tables.set_table_shading(fill);
+                let shading = self.parse_shd(element);
+                self.tables.set_table_shading(shading);
             }
             // ---- row properties (`w:trPr`) -----------------------------------
             b"cnfStyle" if self.trpr_depth > 0 => {
@@ -3230,8 +3230,8 @@ impl BodyParser<'_> {
                     .set_cell_conditional_format(parse_cnf_style(element));
             }
             b"shd" if self.tcpr_depth > 0 && self.ppr_depth == 0 => {
-                let fill = self.shading_fill(element);
-                self.tables.set_cell_shading(fill);
+                let shading = self.parse_shd(element);
+                self.tables.set_cell_shading(shading);
             }
             // Border / margin containers open an edge-capture scope. The
             // table-vs-cell level is `tblpr_depth`/`tcpr_depth`; the scope
@@ -3253,7 +3253,7 @@ impl BodyParser<'_> {
             // Paragraph shading (`w:shd`), a direct `w:pPr` child — NOT the mark's
             // `w:rPr` shd (a run property, left reported), and not a cell/table shd.
             b"shd" if self.ppr_depth > 0 && self.rpr_depth == 0 && self.mark_rpr_depth == 0 => {
-                self.paragraph_properties.shading.fill = self.shading_fill(element);
+                self.paragraph_properties.shading = self.parse_shd(element);
             }
             // Run border (`w:bdr`): a single edge directly on the run's `w:rPr`
             // (not a `pBdr`-style container). Reuses the shared edge builder.
@@ -3263,7 +3263,7 @@ impl BodyParser<'_> {
             },
             // Run shading (`w:shd`): the same fill-only modeling as paragraph/cell.
             b"shd" if self.rpr_depth > 0 => {
-                self.run_properties.shading.fill = self.shading_fill(element);
+                self.run_properties.shading = self.parse_shd(element);
             }
             // A `w:tabs` container: its `w:tab` children are custom tab stops.
             b"tabs" if self.ppr_depth > 0 && self.mark_rpr_depth == 0 => self.in_tabs = true,
@@ -4740,30 +4740,17 @@ impl BodyParser<'_> {
         })
     }
 
-    /// Parses a `w:shd`'s background fill: an explicit sRGB `@w:fill` becomes an
-    /// `RgbColor`; `auto`/theme fills yield `None`. A real pattern (`@w:val` other
-    /// than `clear`/`nil`) or a non-`auto` pattern color (`@w:color`) is also
-    /// reported (degraded) so no visible shading is silently lost.
-    fn shading_fill(&mut self, element: &BytesStart<'_>) -> Option<RgbColor> {
-        let pattern_modeled = matches!(
-            attribute_value(element, b"val").as_deref(),
-            None | Some("clear") | Some("nil")
-        );
-        let pattern_color_default = matches!(
-            attribute_value(element, b"color").as_deref(),
-            None | Some("auto")
-        );
-        // A theme fill/color (`w:themeFill`/`w:themeColor`) carries a visible
-        // background we do not model as sRGB; report it so it is not silently
-        // lost (Word routinely emits `themeFill` without a duplicate `w:fill`).
-        let has_theme = attribute_value(element, b"themeFill").is_some()
-            || attribute_value(element, b"themeColor").is_some();
-        if !pattern_modeled || !pattern_color_default || has_theme {
+    /// Parses a `w:shd` into a modeled [`Shading`] (explicit sRGB `@w:fill` and/or a
+    /// `@w:themeFill` palette slot with tint/shade), reporting when unmodeled detail
+    /// remains — a real pattern (`@w:val` other than `clear`/`nil`), a non-`auto`
+    /// pattern foreground (`@w:color`/`@w:themeColor`), or an unmappable `@w:themeFill`
+    /// — so no visible shading is silently lost.
+    fn parse_shd(&mut self, element: &BytesStart<'_>) -> Shading {
+        let (shading, degraded) = parse_shading(element);
+        if degraded {
             self.reporter.report(b"shd");
         }
-        attribute_value(element, b"fill")
-            .filter(|value| value != "auto")
-            .and_then(|value| parse_rgb(&value))
+        shading
     }
 
     /// Routes a border/margin edge child (`top`/`start`/…) to the table or cell

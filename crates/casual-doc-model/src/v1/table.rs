@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{Alignment, BlockNode, PropChange, RgbColor, StyleId};
+use super::{Alignment, BlockNode, PropChange, RgbColor, StyleId, ThemeColor};
 use crate::NodeId;
 
 /// Maximum table nesting depth enforced by validation. A root-level table is
@@ -112,13 +112,18 @@ pub struct Shading {
     /// Background fill (`w:fill`), explicit sRGB; `auto` yields `None`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fill: Option<RgbColor>,
+    /// Theme background fill (`w:themeFill`, with optional `w:themeFillTint`/
+    /// `w:themeFillShade`), a palette slot resolved by the consumer. Word emits
+    /// this without a duplicate concrete `w:fill`, so it is modeled separately.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme_fill: Option<ThemeColor>,
 }
 
 impl Shading {
     /// Whether this shading carries no modeled value (serializes to nothing).
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.fill.is_none()
+        self.fill.is_none() && self.theme_fill.is_none()
     }
 }
 

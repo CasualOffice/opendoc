@@ -6,7 +6,7 @@
 //! from `w:tbl`/`w:tr`/`w:tc` events; finished paragraphs (and nested tables)
 //! are routed into the innermost open cell via [`TableStack::push_block`].
 
-use casual_doc_model::v1::{Alignment, RgbColor};
+use casual_doc_model::v1::{Alignment, Shading};
 use casual_doc_model::v1::{
     BlockNode, BorderEdge, CellMargins, CellVerticalAlignment, CnfStyle, GridColumn, HeightRule,
     MAX_TABLE_DEPTH, Paragraph, ParagraphProperties, PropChange, StyleId, Table, TableBorders,
@@ -185,10 +185,10 @@ impl TableStack {
         }
     }
 
-    /// Sets the background shading fill on the current cell.
-    pub(crate) fn set_cell_shading(&mut self, fill: Option<RgbColor>) {
+    /// Sets the background shading on the current cell.
+    pub(crate) fn set_cell_shading(&mut self, shading: Shading) {
         if let Some(cell) = self.current_cell() {
-            cell.properties.shading.fill = fill;
+            cell.properties.shading = shading;
         }
     }
 
@@ -397,10 +397,10 @@ impl TableStack {
         }
     }
 
-    /// Sets the table background shading fill (`w:shd`).
-    pub(crate) fn set_table_shading(&mut self, fill: Option<RgbColor>) {
+    /// Sets the table background shading (`w:shd`).
+    pub(crate) fn set_table_shading(&mut self, shading: Shading) {
         if let Some(properties) = self.table_properties() {
-            properties.shading.fill = fill;
+            properties.shading = shading;
         }
     }
 

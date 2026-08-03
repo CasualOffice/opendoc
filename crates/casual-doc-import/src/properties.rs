@@ -8,8 +8,9 @@ use casual_doc_model::v1::{
     Alignment, BreakKind, Color, DropCapFrame, DropCapMode, EmphasisMark, FontName, FontRef,
     FrameHorizontalAlignment, FrameHorizontalAnchor, FrameVerticalAlignment, FrameVerticalAnchor,
     FrameWrap, HighlightColor, Indentation, Language, LineRule, MAX_SYMBOL_FONT_LEN,
-    ParagraphProperties, RgbColor, RunFontHint, RunProperties, Spacing, StyleKind, TableWidth,
-    ThemeFont, ThemeFontRef, UnderlineStyle, VerticalAlignment, VerticalTextAlignment, WidthType,
+    ParagraphProperties, RgbColor, RunFontHint, RunProperties, Shading, Spacing, StyleKind,
+    TableWidth, ThemeColor, ThemeColorRef, ThemeFont, ThemeFontRef, UnderlineStyle,
+    VerticalAlignment, VerticalTextAlignment, WidthType,
 };
 use quick_xml::events::BytesStart;
 
@@ -66,15 +67,36 @@ pub(crate) fn apply_run_property(
                 None => return false,
             }
         }
-        b"color" => match value.as_deref() {
-            // `w:val="auto"` is the automatic color; keep it typed so it overrides
-            // an inherited style color instead of being dropped.
-            Some("auto") => properties.color = Some(Color::Auto),
-            other => match other.and_then(parse_rgb) {
-                Some(rgb) => properties.color = Some(Color::Rgb(rgb)),
-                None => return false,
-            },
-        },
+        b"color" => {
+            // A `w:themeColor` reference (with optional `w:themeTint`/`w:themeShade`)
+            // resolves against the document theme palette and takes precedence over
+            // the concrete `w:val` fallback that Word writes beside it. An unmapped
+            // theme token (or none at all) falls back to the explicit `auto`/sRGB.
+            if let Some(slot) = attribute_value(element, b"themeColor")
+                .as_deref()
+                .and_then(theme_color_ref)
+            {
+                properties.color = Some(Color::Theme(ThemeColor {
+                    slot,
+                    theme_tint: attribute_value(element, b"themeTint")
+                        .as_deref()
+                        .and_then(parse_hex_byte),
+                    theme_shade: attribute_value(element, b"themeShade")
+                        .as_deref()
+                        .and_then(parse_hex_byte),
+                }));
+            } else {
+                match value.as_deref() {
+                    // `w:val="auto"` is the automatic color; keep it typed so it
+                    // overrides an inherited style color instead of being dropped.
+                    Some("auto") => properties.color = Some(Color::Auto),
+                    other => match other.and_then(parse_rgb) {
+                        Some(rgb) => properties.color = Some(Color::Rgb(rgb)),
+                        None => return false,
+                    },
+                }
+            }
+        }
         // Toggle marks (`CT_OnOff`): present means on unless `val` is 0/false/off.
         b"caps" => properties.all_caps = Some(is_true(value.as_deref())),
         b"smallCaps" => properties.small_caps = Some(is_true(value.as_deref())),
@@ -644,4 +666,76 @@ pub(crate) fn parse_rgb(value: &str) -> Option<RgbColor> {
         g: channel(2..4)?,
         b: channel(4..6)?,
     })
+}
+
+/// Maps a `w:themeColor`/`w:themeFill` slot token (`ST_ThemeColor`) to a
+/// [`ThemeColorRef`]. The four "mapped" spellings Word also writes
+/// (`text1`/`background1`/`text2`/`background2`) resolve to their default color-map
+/// slots; `none` and any unknown token yield `None` (no theme reference).
+pub(crate) fn theme_color_ref(value: &str) -> Option<ThemeColorRef> {
+    Some(match value {
+        "dark1" | "text1" => ThemeColorRef::Dark1,
+        "light1" | "background1" => ThemeColorRef::Light1,
+        "dark2" | "text2" => ThemeColorRef::Dark2,
+        "light2" | "background2" => ThemeColorRef::Light2,
+        "accent1" => ThemeColorRef::Accent1,
+        "accent2" => ThemeColorRef::Accent2,
+        "accent3" => ThemeColorRef::Accent3,
+        "accent4" => ThemeColorRef::Accent4,
+        "accent5" => ThemeColorRef::Accent5,
+        "accent6" => ThemeColorRef::Accent6,
+        "hyperlink" => ThemeColorRef::Hyperlink,
+        "followedHyperlink" => ThemeColorRef::FollowedHyperlink,
+        _ => return None,
+    })
+}
+
+/// Parses a `w:themeTint`/`w:themeShade` value (`ST_UcharHexNumber`): one or two
+/// hex digits forming a `u8`. Anything else yields `None`.
+pub(crate) fn parse_hex_byte(value: &str) -> Option<u8> {
+    if value.is_empty() || value.len() > 2 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    u8::from_str_radix(value, 16).ok()
+}
+
+/// Parses a `w:shd` element's background into a [`Shading`]: an explicit sRGB
+/// `@w:fill` and/or a `@w:themeFill` palette slot (with `@w:themeFillTint`/
+/// `@w:themeFillShade`). Returns the shading and whether unmodeled detail remains —
+/// a real pattern (`@w:val`), a non-default pattern foreground (`@w:color`/
+/// `@w:themeColor`), or a `@w:themeFill` whose slot token we could not map — so the
+/// caller can report it (no visible shading silently lost).
+pub(crate) fn parse_shading(element: &BytesStart<'_>) -> (Shading, bool) {
+    let fill = attribute_value(element, b"fill")
+        .filter(|value| value != "auto")
+        .and_then(|value| parse_rgb(&value));
+    let theme_fill_attr = attribute_value(element, b"themeFill");
+    let theme_fill = theme_fill_attr
+        .as_deref()
+        .and_then(theme_color_ref)
+        .map(|slot| ThemeColor {
+            slot,
+            theme_tint: attribute_value(element, b"themeFillTint")
+                .as_deref()
+                .and_then(parse_hex_byte),
+            theme_shade: attribute_value(element, b"themeFillShade")
+                .as_deref()
+                .and_then(parse_hex_byte),
+        });
+    let pattern_modeled = matches!(
+        attribute_value(element, b"val").as_deref(),
+        None | Some("clear") | Some("nil")
+    );
+    let pattern_color_default = matches!(
+        attribute_value(element, b"color").as_deref(),
+        None | Some("auto")
+    ) && attribute_value(element, b"themeColor").is_none();
+    // A `themeFill` token we could not map (unknown, not the explicit `none`) is a
+    // visible background we would silently drop — report it as degraded.
+    let theme_fill_unmapped = theme_fill.is_none()
+        && theme_fill_attr
+            .as_deref()
+            .is_some_and(|value| value != "none");
+    let degraded = !pattern_modeled || !pattern_color_default || theme_fill_unmapped;
+    (Shading { fill, theme_fill }, degraded)
 }

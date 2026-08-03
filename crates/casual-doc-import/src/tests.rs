@@ -763,13 +763,14 @@ fn table_and_row_property_change_revisions_do_not_overwrite() {
 }
 
 #[test]
-fn theme_shading_is_reported_not_silently_dropped() {
-    // Regression (adversarial review, major): a w:themeFill carries a visible
-    // background we do not model as sRGB; it must be reported (Word emits it
-    // without a duplicate w:fill).
+fn theme_shading_fill_is_captured_not_reported() {
+    // A w:themeFill carries a visible background (Word emits it without a duplicate
+    // w:fill). It is now modeled as a theme-slot fill — captured, not degraded — so
+    // it resolves against the palette and round-trips.
+    use casual_doc_model::v1::{ThemeColor, ThemeColorRef};
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
         <w:tbl><w:tr><w:tc>
-            <w:tcPr><w:shd w:val="clear" w:color="auto" w:themeFill="accent1"/></w:tcPr>
+            <w:tcPr><w:shd w:val="clear" w:color="auto" w:themeFill="accent1" w:themeFillShade="80"/></w:tcPr>
             <w:p><w:r><w:t>c</w:t></w:r></w:p>
         </w:tc></w:tr></w:tbl>
     </w:body></w:document>"#;
@@ -777,11 +778,20 @@ fn theme_shading_is_reported_not_silently_dropped() {
     let cell = &first_table(&import).expect("table").rows[0].cells[0];
     assert!(
         cell.properties.shading.fill.is_none(),
-        "theme fill not sRGB"
+        "theme fill carries no concrete sRGB"
+    );
+    assert_eq!(
+        cell.properties.shading.theme_fill,
+        Some(ThemeColor {
+            slot: ThemeColorRef::Accent1,
+            theme_tint: None,
+            theme_shade: Some(0x80),
+        }),
+        "the themeFill slot and shade are captured"
     );
     assert!(
-        features(&import).contains(&"shd"),
-        "theme shading reported, not silently dropped"
+        !features(&import).contains(&"shd"),
+        "a modeled theme fill is not reported as degraded"
     );
 }
 
