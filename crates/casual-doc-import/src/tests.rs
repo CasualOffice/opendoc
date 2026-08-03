@@ -6048,15 +6048,17 @@ fn common_omml_constructs_receive_a_typed_projection() {
 
 #[test]
 fn unsupported_omml_keeps_raw_markup_without_a_projection() {
+    // `m:bar` (an overbar/underbar) is outside the projected subset: the OMML is
+    // retained verbatim and no typed projection is produced.
     let xml = br#"<w:document xmlns:w="urn:w" xmlns:m="urn:m"><w:body><w:p>
-        <m:oMath><m:m><m:mr><m:e><m:r><m:t>x</m:t></m:r></m:e></m:mr></m:m></m:oMath>
+        <m:oMath><m:bar><m:e><m:r><m:t>x</m:t></m:r></m:e></m:bar></m:oMath>
     </w:p></w:body></w:document>"#;
     let import = import(xml);
     let InlineNode::Math(math) = &paragraph(&import, 0).inlines[0] else {
         panic!("expected retained math");
     };
     assert!(math.expression.is_none());
-    assert!(math.omml.contains("<m:m>"));
+    assert!(math.omml.contains("<m:bar>"));
     assert_eq!(math.text, "x");
 }
 

@@ -1843,6 +1843,72 @@ pub enum MathExpression {
         /// Delimited expression.
         content: Box<MathExpression>,
     },
+    /// A named function applied to an argument (e.g. `sin x`), from `m:func`.
+    Function {
+        /// The function-name expression (the `m:fName`).
+        name: Box<MathExpression>,
+        /// The argument expression (the `m:e`).
+        argument: Box<MathExpression>,
+    },
+    /// A base decorated with a combining accent character, from `m:acc`.
+    Accent {
+        /// The accent character (`m:accPr/m:chr@m:val`); empty means the OOXML
+        /// default combining circumflex.
+        accent: String,
+        /// The accented base expression.
+        base: Box<MathExpression>,
+    },
+    /// A base with a limit set below or above it, from `m:limLow`/`m:limUpp`.
+    Limit {
+        /// The base expression (the `m:e`).
+        base: Box<MathExpression>,
+        /// The limit expression (the `m:lim`).
+        limit: Box<MathExpression>,
+        /// Whether the limit sits below or above the base.
+        position: LimitPosition,
+    },
+    /// An n-ary operator (integral, summation, product, …), from `m:nary`.
+    Nary {
+        /// The operator character (`m:naryPr/m:chr@m:val`); empty means the
+        /// OOXML default integral sign.
+        operator: String,
+        /// The optional lower bound / subscript (the `m:sub`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lower: Option<Box<MathExpression>>,
+        /// The optional upper bound / superscript (the `m:sup`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        upper: Option<Box<MathExpression>>,
+        /// The operand expression (the `m:e`).
+        base: Box<MathExpression>,
+    },
+    /// A matrix of expression cells in row-major order, from `m:m`.
+    Matrix {
+        /// The rows of cells (non-empty).
+        rows: Vec<MathMatrixRow>,
+    },
+    /// A vertically stacked equation array, from `m:eqArr`.
+    EqArray {
+        /// The stacked rows (non-empty).
+        rows: Vec<MathExpression>,
+    },
+}
+
+/// Whether a [`MathExpression::Limit`] places its limit below or above the base.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LimitPosition {
+    /// The limit sits below the base (`m:limLow`).
+    Lower,
+    /// The limit sits above the base (`m:limUpp`).
+    Upper,
+}
+
+/// One row of a [`MathExpression::Matrix`]: an ordered list of cell expressions.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MathMatrixRow {
+    /// The cell expressions in column order (non-empty).
+    pub cells: Vec<MathExpression>,
 }
 
 /// An inline math object (an OMML `m:oMath` or `m:oMathPara` subtree).

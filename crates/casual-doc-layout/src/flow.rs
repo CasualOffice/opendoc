@@ -3791,6 +3791,43 @@ fn layout_math_expression(
             }
             math_row(children)
         }
+        MathExpression::Function { name, argument } => {
+            // A function apply lays out as its name followed by its argument on a
+            // shared baseline (e.g. `sin x`).
+            let name = layout_math_expression(shaper, name, base, scale_permille)?;
+            let argument = layout_math_expression(shaper, argument, base, scale_permille)?;
+            math_row(vec![name, argument])
+        }
+        MathExpression::Nary {
+            operator,
+            lower,
+            upper,
+            base: operand,
+        } => {
+            // The operator glyph carries the bounds as sub/superscripts, followed
+            // by the operand on the shared baseline.
+            let operator = shape_math_text(shaper, operator, base, scale_permille)?;
+            let bound_scale = scaled_permille(scale_permille, 700);
+            let lower = match lower.as_deref() {
+                Some(value) => Some(layout_math_expression(shaper, value, base, bound_scale)?),
+                None => None,
+            };
+            let upper = match upper.as_deref() {
+                Some(value) => Some(layout_math_expression(shaper, value, base, bound_scale)?),
+                None => None,
+            };
+            let operator = script_box(operator, lower, upper, base.size)?;
+            let operand = layout_math_expression(shaper, operand, base, scale_permille)?;
+            math_row(vec![operator, operand])
+        }
+        // Accents, limits, matrices, and equation arrays need dedicated 2-D
+        // geometry that this projection does not yet lay out. Returning `None`
+        // falls back to the bounded plain-text placeholder, exactly as an
+        // unprojected (opaque) equation does — no regression, no invented layout.
+        MathExpression::Accent { .. }
+        | MathExpression::Limit { .. }
+        | MathExpression::Matrix { .. }
+        | MathExpression::EqArray { .. } => None,
     }
 }
 

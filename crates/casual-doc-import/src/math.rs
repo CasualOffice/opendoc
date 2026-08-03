@@ -1,6 +1,8 @@
 //! Bounded semantic projection of retained Office Math Markup Language.
 
-use casual_doc_model::v1::{MAX_MATH_BYTES, MAX_MATH_DEPTH, MAX_MATH_NODES, MathExpression};
+use casual_doc_model::v1::{
+    LimitPosition, MAX_MATH_BYTES, MAX_MATH_DEPTH, MAX_MATH_NODES, MathExpression, MathMatrixRow,
+};
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Reader, XmlVersion};
 
@@ -203,11 +205,70 @@ fn convert(element: &Element) -> Option<Option<MathExpression>> {
                 content: Box::new(wrapper_expression(element, b"e")?),
             }
         }
+        b"func" => MathExpression::Function {
+            name: Box::new(wrapper_expression(element, b"fName")?),
+            argument: Box::new(wrapper_expression(element, b"e")?),
+        },
+        b"acc" => MathExpression::Accent {
+            accent: property_character(element, b"accPr", "\u{0302}"),
+            base: Box::new(wrapper_expression(element, b"e")?),
+        },
+        b"limLow" => MathExpression::Limit {
+            base: Box::new(wrapper_expression(element, b"e")?),
+            limit: Box::new(wrapper_expression(element, b"lim")?),
+            position: LimitPosition::Lower,
+        },
+        b"limUpp" => MathExpression::Limit {
+            base: Box::new(wrapper_expression(element, b"e")?),
+            limit: Box::new(wrapper_expression(element, b"lim")?),
+            position: LimitPosition::Upper,
+        },
+        b"nary" => MathExpression::Nary {
+            operator: property_character(element, b"naryPr", "\u{222B}"),
+            lower: wrapper_expression_optional(element, b"sub").map(Box::new),
+            upper: wrapper_expression_optional(element, b"sup").map(Box::new),
+            base: Box::new(wrapper_expression(element, b"e")?),
+        },
+        b"m" => {
+            let mut rows = Vec::new();
+            for mr in element
+                .children
+                .iter()
+                .filter(|c| c.name.as_slice() == b"mr")
+            {
+                let mut cells = Vec::new();
+                for cell in mr.children.iter().filter(|c| c.name.as_slice() == b"e") {
+                    cells.push(row_from_children(&cell.children)?);
+                }
+                if cells.is_empty() {
+                    return None;
+                }
+                rows.push(MathMatrixRow { cells });
+            }
+            if rows.is_empty() {
+                return None;
+            }
+            MathExpression::Matrix { rows }
+        }
+        b"eqArr" => {
+            let mut rows = Vec::new();
+            for row in element
+                .children
+                .iter()
+                .filter(|c| c.name.as_slice() == b"e")
+            {
+                rows.push(row_from_children(&row.children)?);
+            }
+            if rows.is_empty() {
+                return None;
+            }
+            MathExpression::EqArray { rows }
+        }
         // Property containers affect advanced typography and are intentionally
         // ignored for this first common-construct projection.
         name if name.ends_with(b"Pr") || name == b"ctrlPr" => return Some(None),
         // Wrappers are consumed by their owning construct, never independently.
-        b"t" | b"e" | b"num" | b"den" | b"sub" | b"sup" | b"deg" => {
+        b"t" | b"e" | b"num" | b"den" | b"sub" | b"sup" | b"deg" | b"fName" | b"lim" | b"mr" => {
             return Some(None);
         }
         _ => return None,
@@ -242,6 +303,16 @@ fn wrapper_expression(element: &Element, name: &[u8]) -> Option<MathExpression> 
 fn wrapper_expression_optional(element: &Element, name: &[u8]) -> Option<MathExpression> {
     let wrapper = child(element, name)?;
     row_from_children(&wrapper.children)
+}
+
+/// Reads a property container's `m:chr@m:val` character, falling back to the
+/// OOXML default glyph when the property (or its container) is absent.
+fn property_character(element: &Element, container: &[u8], default: &str) -> String {
+    child(element, container)
+        .and_then(|properties| child(properties, b"chr"))
+        .and_then(|character| attribute(character, b"val"))
+        .unwrap_or(default)
+        .to_owned()
 }
 
 fn child<'a>(element: &'a Element, name: &[u8]) -> Option<&'a Element> {
@@ -286,6 +357,23 @@ fn expression_within_bounds(expression: &MathExpression, depth: usize, nodes: &m
             degree.as_deref().is_none_or(&mut check) && check(radicand)
         }
         MathExpression::Delimiter { content, .. } => check(content),
+        MathExpression::Function { name, argument } => check(name) && check(argument),
+        MathExpression::Accent { base, .. } => check(base),
+        MathExpression::Limit { base, limit, .. } => check(base) && check(limit),
+        MathExpression::Nary {
+            lower, upper, base, ..
+        } => {
+            lower.as_deref().is_none_or(&mut check)
+                && upper.as_deref().is_none_or(&mut check)
+                && check(base)
+        }
+        MathExpression::Matrix { rows } => {
+            !rows.is_empty()
+                && rows
+                    .iter()
+                    .all(|row| !row.cells.is_empty() && row.cells.iter().all(&mut check))
+        }
+        MathExpression::EqArray { rows } => !rows.is_empty() && rows.iter().all(&mut check),
     }
 }
 
@@ -315,11 +403,71 @@ mod tests {
 
     #[test]
     fn unsupported_structure_has_no_projection() {
+        // `m:bar` (an overbar/underbar) is not yet part of the projected subset.
         assert!(
             parse_math_expression(
-                "<m:oMath><m:m><m:mr><m:e><m:r><m:t>x</m:t></m:r></m:e></m:mr></m:m></m:oMath>"
+                "<m:oMath><m:bar><m:e><m:r><m:t>x</m:t></m:r></m:e></m:bar></m:oMath>"
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn projects_function_accent_limit_nary_matrix_and_eqarray() {
+        let function = parse_math_expression(concat!(
+            "<m:oMath><m:func><m:fName><m:r><m:t>sin</m:t></m:r></m:fName>",
+            "<m:e><m:r><m:t>x</m:t></m:r></m:e></m:func></m:oMath>"
+        ));
+        assert!(matches!(function, Some(MathExpression::Function { .. })));
+
+        let accent = parse_math_expression(concat!(
+            "<m:oMath><m:acc><m:accPr><m:chr m:val=\"^\"/></m:accPr>",
+            "<m:e><m:r><m:t>x</m:t></m:r></m:e></m:acc></m:oMath>"
+        ));
+        assert!(matches!(
+            accent,
+            Some(MathExpression::Accent { accent, .. }) if accent == "^"
+        ));
+
+        let limit = parse_math_expression(concat!(
+            "<m:oMath><m:limLow><m:e><m:r><m:t>lim</m:t></m:r></m:e>",
+            "<m:lim><m:r><m:t>n</m:t></m:r></m:lim></m:limLow></m:oMath>"
+        ));
+        assert!(matches!(
+            limit,
+            Some(MathExpression::Limit {
+                position: LimitPosition::Lower,
+                ..
+            })
+        ));
+
+        let nary = parse_math_expression(concat!(
+            "<m:oMath><m:nary><m:naryPr><m:chr m:val=\"\u{2211}\"/></m:naryPr>",
+            "<m:sub><m:r><m:t>i</m:t></m:r></m:sub><m:sup><m:r><m:t>n</m:t></m:r></m:sup>",
+            "<m:e><m:r><m:t>x</m:t></m:r></m:e></m:nary></m:oMath>"
+        ));
+        assert!(matches!(
+            nary,
+            Some(MathExpression::Nary { operator, lower: Some(_), upper: Some(_), .. })
+                if operator == "\u{2211}"
+        ));
+
+        let matrix = parse_math_expression(concat!(
+            "<m:oMath><m:m><m:mr><m:e><m:r><m:t>a</m:t></m:r></m:e>",
+            "<m:e><m:r><m:t>b</m:t></m:r></m:e></m:mr></m:m></m:oMath>"
+        ));
+        assert!(matches!(
+            matrix,
+            Some(MathExpression::Matrix { rows }) if rows.len() == 1 && rows[0].cells.len() == 2
+        ));
+
+        let eq_array = parse_math_expression(concat!(
+            "<m:oMath><m:eqArr><m:e><m:r><m:t>a</m:t></m:r></m:e>",
+            "<m:e><m:r><m:t>b</m:t></m:r></m:e></m:eqArr></m:oMath>"
+        ));
+        assert!(matches!(
+            eq_array,
+            Some(MathExpression::EqArray { rows }) if rows.len() == 2
+        ));
     }
 }
