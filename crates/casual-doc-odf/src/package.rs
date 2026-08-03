@@ -365,7 +365,7 @@ impl<'a> OdtPackage<'a> {
                     line_numbering: LineNumbering::default(),
                     footnote_props: NoteProperties::default(),
                     endnote_props: NoteProperties::default(),
-                    text_direction: None,
+                    text_direction: geometry.text_direction,
                     bidi: false,
                 });
         }

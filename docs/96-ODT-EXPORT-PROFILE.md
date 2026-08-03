@@ -110,6 +110,7 @@ Total editing time is emitted as a canonical `PT#H#M` duration.
 When schema-v1 sections are present, the writer emits a deterministic
 `styles.xml` page-layout definition and manifest entry for page geometry.
 Section column count, gap, and separator settings are emitted when present.
+Supported section writing modes are emitted as `style:writing-mode`.
 
 ## 6. Acceptance gates
 

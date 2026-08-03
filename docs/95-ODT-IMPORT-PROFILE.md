@@ -146,6 +146,8 @@ schema-v1 section: page width/height, margins, and portrait/landscape
 orientation use deterministic unit conversion and IDs.
 Equal-width column count, gap, and separator flags are mapped from the same
 page-layout element.
+Writing modes `lr-tb`, `tb-rl`, and `bt-lr` map to the section text-direction
+model.
 
 - Namespace seeds are derived from admitted semantic source facts, not ZIP entry
   order or host filenames.

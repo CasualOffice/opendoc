@@ -1,6 +1,6 @@
 //! Bounded import of the first ODT page-layout geometry into schema-v1.
 
-use casual_doc_model::v1::{PageMargins, PageOrientation, PageSize};
+use casual_doc_model::v1::{PageMargins, PageOrientation, PageSize, TextDirection};
 use quick_xml::Reader;
 use quick_xml::events::Event;
 
@@ -13,6 +13,7 @@ pub(crate) struct PageLayoutGeometry {
     pub columns: u16,
     pub column_gap_twips: Option<i32>,
     pub column_separator: Option<bool>,
+    pub text_direction: Option<TextDirection>,
 }
 
 pub(crate) fn parse_page_layout(bytes: &[u8]) -> Option<PageLayoutGeometry> {
@@ -34,6 +35,7 @@ pub(crate) fn parse_page_layout(bytes: &[u8]) -> Option<PageLayoutGeometry> {
                 let mut columns = 1u16;
                 let mut column_gap_twips = None;
                 let mut column_separator = None;
+                let mut text_direction = None;
                 for attr in start.attributes().flatten() {
                     let key = attr.key.as_ref().split(|byte| *byte == b':').next_back()?;
                     let value = String::from_utf8_lossy(attr.value.as_ref());
@@ -60,6 +62,14 @@ pub(crate) fn parse_page_layout(bytes: &[u8]) -> Option<PageLayoutGeometry> {
                         }
                         b"column-gap" => column_gap_twips = parse_twips(&value),
                         b"column-sep" => column_separator = Some(value == "true" || value == "1"),
+                        b"writing-mode" => {
+                            text_direction = match value.as_ref() {
+                                "lr-tb" => Some(TextDirection::LrTb),
+                                "tb-rl" => Some(TextDirection::TbRl),
+                                "bt-lr" => Some(TextDirection::BtLr),
+                                _ => None,
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -81,6 +91,7 @@ pub(crate) fn parse_page_layout(bytes: &[u8]) -> Option<PageLayoutGeometry> {
                     columns,
                     column_gap_twips,
                     column_separator,
+                    text_direction,
                 });
             }
             Event::Eof => return None,

@@ -1586,7 +1586,20 @@ fn page_styles_xml(document: &Document) -> Option<Vec<u8>> {
             )
         })
         .unwrap_or_default();
-    Some(format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document-styles xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" xmlns:style=\"urn:oasis:names:tc:opendocument:xmlns:style:1.0\" xmlns:fo=\"urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0\" office:version=\"1.4\"><office:automatic-styles><style:page-layout style:name=\"pm1\"><style:page-layout-properties fo:page-width=\"{}\" fo:page-height=\"{}\" fo:margin-top=\"{}\" fo:margin-bottom=\"{}\" fo:margin-left=\"{}\" fo:margin-right=\"{}\" style:print-orientation=\"{}\" style:column-count=\"{}\"{}{} /></style:page-layout></office:automatic-styles></office:document-styles>", cm(section.page_size.width_twips), cm(section.page_size.height_twips), cm(section.page_margins.top_twips), cm(section.page_margins.bottom_twips), cm(section.page_margins.start_twips), cm(section.page_margins.end_twips), orientation, section.columns.count, gap, separator).into_bytes())
+    let writing_mode = section
+        .text_direction
+        .map(|value| {
+            format!(
+                " style:writing-mode=\"{}\"",
+                match value {
+                    casual_doc_model::v1::TextDirection::LrTb => "lr-tb",
+                    casual_doc_model::v1::TextDirection::TbRl => "tb-rl",
+                    casual_doc_model::v1::TextDirection::BtLr => "bt-lr",
+                }
+            )
+        })
+        .unwrap_or_default();
+    Some(format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document-styles xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" xmlns:style=\"urn:oasis:names:tc:opendocument:xmlns:style:1.0\" xmlns:fo=\"urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0\" office:version=\"1.4\"><office:automatic-styles><style:page-layout style:name=\"pm1\"><style:page-layout-properties fo:page-width=\"{}\" fo:page-height=\"{}\" fo:margin-top=\"{}\" fo:margin-bottom=\"{}\" fo:margin-left=\"{}\" fo:margin-right=\"{}\" style:print-orientation=\"{}\" style:column-count=\"{}\"{}{}{} /></style:page-layout></office:automatic-styles></office:document-styles>", cm(section.page_size.width_twips), cm(section.page_size.height_twips), cm(section.page_margins.top_twips), cm(section.page_margins.bottom_twips), cm(section.page_margins.start_twips), cm(section.page_margins.end_twips), orientation, section.columns.count, gap, separator, writing_mode).into_bytes())
 }
 
 fn metadata_xml(
