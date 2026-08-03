@@ -11113,7 +11113,9 @@ fn run_style_from_effective_runs(document: &Document, properties: &[RunPropertie
             .flatten()
             .map_or_else(String::new, |color| match color {
                 Color::Rgb(c) => format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b),
-                Color::Theme(_) => String::new(),
+                // Automatic and theme colors surface as no explicit swatch (the
+                // toolbar shows the default/automatic state).
+                Color::Auto | Color::Theme(_) => String::new(),
             }),
         color_mixed,
         font: font.unwrap_or_default(),

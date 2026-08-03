@@ -266,6 +266,10 @@ pub struct ThemeColor {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Color {
+    /// The automatic color (`w:val="auto"`) — resolved by the consumer (black on
+    /// a light background). Distinct from absent: an explicit `auto` *overrides*
+    /// an inherited style color back to automatic instead of being dropped.
+    Auto,
     /// A theme color slot.
     Theme(ThemeColor),
     /// An explicit RGB color.
@@ -1083,6 +1087,10 @@ pub struct RunProperties {
     /// Hidden in web view (`w:webHidden`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub web_hidden: Option<bool>,
+    /// Do not check spelling/grammar for this run (`w:noProof`). Common on code,
+    /// URLs, product names, and generated fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub no_proof: Option<bool>,
     /// Double strike-through (`w:dstrike`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub double_strike: Option<bool>,

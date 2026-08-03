@@ -4926,6 +4926,9 @@ fn small_caps_spans(text: &str) -> Vec<(&str, bool)> {
 fn run_color(color: Option<Color>, palette: Option<&ResolvedPalette>) -> [u8; 4] {
     match color {
         Some(Color::Rgb(rgb)) => [rgb.r, rgb.g, rgb.b, 255],
+        // Automatic color resolves to black on the (light) page background — the
+        // same as an unset color, but it explicitly overrides an inherited color.
+        Some(Color::Auto) => [0, 0, 0, 255],
         Some(Color::Theme(theme)) => match palette {
             // The model carries no tint/shade on a theme color yet, so the factors
             // are `None` today; routing every theme color through `apply_tint_shade`
