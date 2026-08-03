@@ -1,0 +1,133 @@
+# 95 — ODT Import Profile
+
+**Status:** Accepted for Slice D implementation
+**Date:** 2026-08-04
+**Tracker:** MFIO-005
+**Parent:** `94-MULTI-FORMAT-IMPORT-EXPORT-ARCHITECTURE.md`
+
+## 1. Purpose
+
+Define the first bounded OpenDocument Text (`.odt`) admission and semantic
+import profile. This is an implementation contract, not a claim that ODT export
+or the public SDK surfaces are complete.
+
+The work lands as reviewable commits:
+
+1. ODF package/profile admission and manifest preservation facts;
+2. bounded `content.xml` semantic import for core text structure;
+3. styles, lists, tables, links, notes, bookmarks, media, and metadata;
+4. registry integration, compatibility/preservation reporting, fixtures, fuzz,
+   and full gates.
+
+## 2. Normative package profile
+
+An admitted ODT is a format-neutral `BoundedPackage` plus ODF rules:
+
+- `META-INF/manifest.xml`, `mimetype`, and `content.xml` are required;
+- `mimetype` is ZIP entry zero, stored, has no local-header extra field, and is
+  exactly `application/vnd.oasis.opendocument.text` with no BOM or newline;
+- the manifest root is `manifest:manifest`, and versions `1.2`, `1.3`, and `1.4`
+  are accepted;
+- the manifest has one root `/` entry whose media type equals `mimetype`;
+- every non-`mimetype`, non-`META-INF/` package file has exactly one manifest
+  file entry; duplicate, unsafe, missing, or contradictory entries fail closed;
+- a `manifest:encryption-data` descendant produces a typed unsupported-encrypted
+  result; encrypted payload bytes are never passed to XML parsers;
+- signature files may be retained for exact unchanged export but are never
+  represented as a valid signature after semantic import or edit;
+- scripts, macros, event listeners, and executable embedded content are blocked
+  by the first profile and never executed or fetched;
+- all XML parsing rejects DTDs, external entities, malformed UTF-8/XML, excess
+  depth, excess elements/attributes, and excess accumulated text.
+
+The ODF rules above follow OpenDocument 1.4 Part 2 sections 2.2, 3.2–3.5, and
+4.2–4.4. The 1.2 and 1.3 profiles use the same admitted package invariants with
+their version-specific manifest value.
+
+## 3. Document profile
+
+`content.xml` must have an `office:document-content` root with a supported
+`office:version`, one `office:body`, and an `office:text` body. Spreadsheet,
+presentation, drawing, chart, and database bodies are recognized as non-text
+ODF and rejected with a typed unsupported-document-kind result.
+
+The importer maps into `casual_doc_model::v1::Document`; XML is never retained
+as editor state or used as layout truth.
+
+## 4. Semantic mapping order
+
+The initial mapping is intentionally layered:
+
+| ODF source | Normalized destination | First-profile disposition |
+| --- | --- | --- |
+| `text:p`, `text:h` | paragraph, heading paragraph properties | Mapped |
+| character data, `text:span` | runs and run properties | Mapped for supported style properties; otherwise degraded/reported |
+| `text:s`, `text:tab`, `text:line-break` | spaces, tab, line break | Mapped |
+| `text:a` | hyperlink with visible children | Mapped for safe internal/external targets; no fetch |
+| `text:list` / list item | numbering definitions and paragraph numbering refs | Mapped for bullet/number basics; unsupported label detail reported |
+| `table:table` / rows / cells | recursive normalized table | Mapped; spans and covered cells validated |
+| `text:note` | footnote/endnote definition and inline reference | Mapped |
+| bookmark start/end/point | bookmark definitions and markers | Mapped |
+| `draw:frame` + package image | media definition and drawing | Mapped for embedded package images; linked images blocked/not fetched |
+| document metadata | `DocumentProperties` | Mapped where schema-v1 has a field; otherwise reported |
+| change tracking | revision nodes | Deferred within Slice D until pairing/order evidence is complete; preserved/reported, never silently flattened |
+| formulas, scripts, events, OLE, foreign XML | none in first profile | Blocked or preserved/reported according to safety |
+
+## 5. Determinism and identity
+
+- Namespace seeds are derived from admitted semantic source facts, not ZIP entry
+  order or host filenames.
+- XML attribute order and manifest entry order do not change the normalized
+  document, report ordering, or preservation manifest.
+- Definition maps and compatibility findings use stable sorted identities.
+- Import is atomic: no document or partial preservation state escapes after any
+  package, XML, relationship, resource, or model-validation failure.
+
+## 6. Preservation and reporting
+
+The adapter envelope is tagged with the ODT format ID and adapter version. In
+retention mode it owns the original bytes and bounded admitted part bytes. Parts
+and constructs are classified as consumed, preserved, blocked, or rejected.
+
+The import report uses the format-neutral dual-axis outcomes from doc 94. Safe
+unknown package parts and XML constructs are preserved when feasible and always
+reported. Cross-format export does not copy ODF-native opaque data into DOCX or
+JSON. Exact unchanged export may return the original ODT bytes after Slice E;
+semantic ODT writing remains Slice E.
+
+## 7. Security limits
+
+In addition to `PackageLimits`, `OdfImportLimits` bounds:
+
+- manifest and XML input bytes;
+- XML depth, element count, attribute count, and attribute bytes;
+- accumulated character data;
+- paragraphs, inline nodes, tables, rows, cells, lists, and nesting depth;
+- retained part count and bytes;
+- compatibility findings.
+
+Configured limits may tighten but never exceed compiled hard ceilings.
+
+## 8. Acceptance gates
+
+Slice D is complete only when:
+
+1. malformed, traversal, duplicate, overlapping, high-expansion, encrypted,
+   wrong-mimetype, wrong-order, extra-field, active-content, and DTD cases fail
+   with stable redacted errors;
+2. ODF 1.2, 1.3, and 1.4 fixtures import deterministically;
+3. ZIP and XML reorder tests preserve semantic identity where order is not
+   meaningful;
+4. core text, styles, lists, tables, links, notes, bookmarks, media, and metadata
+   have positive and limit tests;
+5. every unsupported construct has a compatibility/preservation outcome;
+6. dedicated package/content fuzz targets compile under the independent fuzz
+   lockfile;
+7. workspace test, strict Clippy, rustdoc, MSRV, WASM, format, and diff gates
+   pass.
+
+## 9. Normative references
+
+- OASIS, [OpenDocument Version 1.4, Part 2: Packages](https://docs.oasis-open.org/office/OpenDocument/v1.4/os/part2-packages/OpenDocument-v1.4-os-part2-packages.html).
+- OASIS, [OpenDocument Version 1.4, Part 3: OpenDocument Schema](https://docs.oasis-open.org/office/OpenDocument/v1.4/os/part3-schema/OpenDocument-v1.4-os-part3-schema.html).
+- OASIS, [OpenDocument Version 1.4 Relax NG schemas](https://docs.oasis-open.org/office/OpenDocument/v1.4/os/schemas/).

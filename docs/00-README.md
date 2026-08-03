@@ -104,6 +104,7 @@ The runtime is not a UI toolkit and is not a DOCX-only editor. It is a determini
 86. `86-REVISION-AWARE-EDITING-DESIGN.md` — revision-aware range splitting/normalization so typing, deleting, and formatting work inside pending suggestions and across Revision/Hyperlink/SDT wrappers (REVIEW-GAP-007).
 93. `93-REVIEW-MARKUP-RENDER-VIEW-POLICY-DESIGN.md` — a read-only `ReviewView::Markup` galley policy so the native/PNG viewer shows struck deletions, author-colored/underlined insertions, and highlighted comment ranges without double-marking the webapp editor (docs/55 §11).
 94. `94-MULTI-FORMAT-IMPORT-EXPORT-ARCHITECTURE.md` — accepted format-neutral detection, adapter registry, preservation sidecar, package substrate, and SDK/WASM migration for DOCX, ODT, normalized JSON, plain text, and later trusted format adapters.
+95. `95-ODT-IMPORT-PROFILE.md` — bounded ODF package admission and staged ODT-to-schema-v1 semantic mapping, preservation, compatibility, and security rules.
 
 Also present (not in the numbered sequence): `PHASE-1A-SEMANTIC-MODELING-TRACKER.md`.
 

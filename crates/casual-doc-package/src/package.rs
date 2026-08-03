@@ -32,6 +32,12 @@ pub struct PackageEntry {
     pub expanded_bytes: u64,
     /// Accepted compression method.
     pub compression: PartCompression,
+    /// Local-file-header extra-field bytes.
+    ///
+    /// Container profiles such as ODF may require this to be zero for a
+    /// well-known leading entry. The generic substrate records but does not
+    /// assign format-specific meaning to it.
+    pub local_extra_bytes: u64,
 }
 
 /// Thread-safe cancellation flag for package admission and part reads.
@@ -164,6 +170,9 @@ impl<'a> BoundedPackage<'a> {
                 compressed_bytes: file.compressed_size(),
                 expanded_bytes: file.size(),
                 compression,
+                local_extra_bytes: file
+                    .extra_data()
+                    .map_or(0, |bytes| usize_to_u64(bytes.len())),
             });
         }
         entries.sort_by(|left, right| left.part_name.cmp(&right.part_name));

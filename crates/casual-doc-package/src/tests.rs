@@ -78,6 +78,7 @@ fn arbitrary_zip_is_admitted_and_read_deterministically() {
     assert_eq!(package.source_order("z-last.txt"), Some(0));
     assert_eq!(package.source_order("mimetype"), Some(1));
     assert_eq!(package.entries()[0].compression, PartCompression::Stored);
+    assert_eq!(package.entries()[0].local_extra_bytes, 0);
     assert_eq!(
         package
             .entries()

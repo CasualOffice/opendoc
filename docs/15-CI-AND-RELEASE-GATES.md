@@ -4,7 +4,7 @@
 **CI provider:** GitHub Actions
 **Development toolchain:** Rust 1.96.0
 **MSRV:** Rust 1.88.0
-**Last updated:** 2026-07-31
+**Last updated:** 2026-08-04
 
 ## Purpose
 
@@ -42,7 +42,9 @@ Every pull request and push to `main` runs required checks with stable job names
 - `repository-policy`.
 
 Scheduled CI adds dependency advisories and a bounded seeded DOCX package fuzz
-campaign.
+campaign. Pull-request CI builds the format-neutral ZIP, DOCX, and ODT package
+fuzz targets; seeded ODT campaigns become required when the rights-reviewed ODT
+corpus lands in MFIO-007.
 Release workflows are separate and receive no write permission during pull
 request validation.
 

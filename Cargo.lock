@@ -130,6 +130,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "casual-doc-odf"
+version = "0.0.1"
+dependencies = [
+ "casual-doc-package",
+ "quick-xml",
+ "zip",
+]
+
+[[package]]
 name = "casual-doc-ooxml"
 version = "0.0.1"
 dependencies = [

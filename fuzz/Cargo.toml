@@ -12,6 +12,7 @@ cargo-fuzz = true
 [dependencies]
 casual-doc-package = { path = "../crates/casual-doc-package", version = "=0.0.1" }
 casual-doc-ooxml = { path = "../crates/casual-doc-ooxml", version = "=0.0.1" }
+casual-doc-odf = { path = "../crates/casual-doc-odf", version = "=0.0.1" }
 libfuzzer-sys = "=0.4.13"
 
 [[bin]]
@@ -24,6 +25,13 @@ bench = false
 [[bin]]
 name = "docx_package"
 path = "fuzz_targets/docx_package.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "odt_package"
+path = "fuzz_targets/odt_package.rs"
 test = false
 doc = false
 bench = false

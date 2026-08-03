@@ -1,0 +1,20 @@
+[package]
+name = "casual-doc-odf"
+description = "Security-bounded OpenDocument package admission and semantic import for OpenDoc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+casual-doc-package.workspace = true
+quick-xml.workspace = true
+
+[dev-dependencies]
+zip.workspace = true
+
+[lints]
+workspace = true
