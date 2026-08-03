@@ -10,6 +10,9 @@ pub(crate) struct PageLayoutGeometry {
     pub size: PageSize,
     pub margins: PageMargins,
     pub orientation: Option<PageOrientation>,
+    pub columns: u16,
+    pub column_gap_twips: Option<i32>,
+    pub column_separator: Option<bool>,
 }
 
 pub(crate) fn parse_page_layout(bytes: &[u8]) -> Option<PageLayoutGeometry> {
@@ -28,6 +31,9 @@ pub(crate) fn parse_page_layout(bytes: &[u8]) -> Option<PageLayoutGeometry> {
                 let mut height = None;
                 let mut margins = [None; 4];
                 let mut orientation = None;
+                let mut columns = 1u16;
+                let mut column_gap_twips = None;
+                let mut column_separator = None;
                 for attr in start.attributes().flatten() {
                     let key = attr.key.as_ref().split(|byte| *byte == b':').next_back()?;
                     let value = String::from_utf8_lossy(attr.value.as_ref());
@@ -45,6 +51,15 @@ pub(crate) fn parse_page_layout(bytes: &[u8]) -> Option<PageLayoutGeometry> {
                                 _ => None,
                             }
                         }
+                        b"column-count" => {
+                            columns = value
+                                .parse()
+                                .ok()
+                                .filter(|value: &u16| *value > 0)
+                                .unwrap_or(1)
+                        }
+                        b"column-gap" => column_gap_twips = parse_twips(&value),
+                        b"column-sep" => column_separator = Some(value == "true" || value == "1"),
                         _ => {}
                     }
                 }
@@ -63,6 +78,9 @@ pub(crate) fn parse_page_layout(bytes: &[u8]) -> Option<PageLayoutGeometry> {
                         gutter_twips: None,
                     },
                     orientation,
+                    columns,
+                    column_gap_twips,
+                    column_separator,
                 });
             }
             Event::Eof => return None,

@@ -1571,7 +1571,22 @@ fn page_styles_xml(document: &Document) -> Option<Vec<u8>> {
     )
     .then_some("landscape")
     .unwrap_or("portrait");
-    Some(format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document-styles xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" xmlns:style=\"urn:oasis:names:tc:opendocument:xmlns:style:1.0\" xmlns:fo=\"urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0\" office:version=\"1.4\"><office:automatic-styles><style:page-layout style:name=\"pm1\"><style:page-layout-properties fo:page-width=\"{}\" fo:page-height=\"{}\" fo:margin-top=\"{}\" fo:margin-bottom=\"{}\" fo:margin-left=\"{}\" fo:margin-right=\"{}\" style:print-orientation=\"{}\"/></style:page-layout></office:automatic-styles></office:document-styles>", cm(section.page_size.width_twips), cm(section.page_size.height_twips), cm(section.page_margins.top_twips), cm(section.page_margins.bottom_twips), cm(section.page_margins.start_twips), cm(section.page_margins.end_twips), orientation).into_bytes())
+    let gap = section
+        .columns
+        .space_twips
+        .map(|value| format!(" fo:column-gap=\"{}\"", cm(value)))
+        .unwrap_or_default();
+    let separator = section
+        .columns
+        .separator
+        .map(|value| {
+            format!(
+                " style:column-sep=\"{}\"",
+                if value { "true" } else { "false" }
+            )
+        })
+        .unwrap_or_default();
+    Some(format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document-styles xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" xmlns:style=\"urn:oasis:names:tc:opendocument:xmlns:style:1.0\" xmlns:fo=\"urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0\" office:version=\"1.4\"><office:automatic-styles><style:page-layout style:name=\"pm1\"><style:page-layout-properties fo:page-width=\"{}\" fo:page-height=\"{}\" fo:margin-top=\"{}\" fo:margin-bottom=\"{}\" fo:margin-left=\"{}\" fo:margin-right=\"{}\" style:print-orientation=\"{}\" style:column-count=\"{}\"{}{} /></style:page-layout></office:automatic-styles></office:document-styles>", cm(section.page_size.width_twips), cm(section.page_size.height_twips), cm(section.page_margins.top_twips), cm(section.page_margins.bottom_twips), cm(section.page_margins.start_twips), cm(section.page_margins.end_twips), orientation, section.columns.count, gap, separator).into_bytes())
 }
 
 fn metadata_xml(

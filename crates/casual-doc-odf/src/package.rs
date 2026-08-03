@@ -346,9 +346,9 @@ impl<'a> OdtPackage<'a> {
                     page_size: geometry.size,
                     page_margins: geometry.margins,
                     columns: SectionColumns {
-                        count: 1,
-                        space_twips: None,
-                        separator: None,
+                        count: geometry.columns,
+                        space_twips: geometry.column_gap_twips,
+                        separator: geometry.column_separator,
                         equal_width: None,
                         columns: Vec::new(),
                     },
