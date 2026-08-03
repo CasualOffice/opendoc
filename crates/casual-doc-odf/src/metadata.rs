@@ -1,5 +1,7 @@
 //! Bounded ODT `meta.xml` metadata mapping.
 
+use std::collections::BTreeSet;
+
 use casual_doc_model::v1::{
     AppProperties, CoreProperties, CustomProperty, CustomValue, DocumentProperties,
 };
@@ -30,6 +32,10 @@ pub(crate) fn parse_metadata(
     let mut core = CoreProperties::default();
     let mut app = AppProperties::default();
     let mut custom = Vec::new();
+    let mut custom_names = BTreeSet::new();
+    let mut elements = 0usize;
+    let mut attributes = 0usize;
+    let mut attribute_bytes = 0usize;
     let mut findings = Vec::new();
     let mut current: Option<(String, String)> = None;
     let mut custom_name: Option<(String, String)> = None;
@@ -40,6 +46,32 @@ pub(crate) fn parse_metadata(
             .map_err(|_| OdfError::MalformedContent)?
         {
             Event::Start(start) => {
+                elements = elements.saturating_add(1);
+                if elements > limits.max_xml_elements {
+                    return Err(OdfError::LimitExceeded {
+                        limit: "odf_metadata_xml_elements",
+                        observed: elements,
+                        allowed: limits.max_xml_elements,
+                    });
+                }
+                for attr in start.attributes().flatten() {
+                    attributes = attributes.saturating_add(1);
+                    attribute_bytes = attribute_bytes.saturating_add(attr.value.len());
+                }
+                if attributes > limits.max_xml_attributes {
+                    return Err(OdfError::LimitExceeded {
+                        limit: "odf_metadata_xml_attributes",
+                        observed: attributes,
+                        allowed: limits.max_xml_attributes,
+                    });
+                }
+                if attribute_bytes > limits.max_xml_attribute_bytes {
+                    return Err(OdfError::LimitExceeded {
+                        limit: "odf_metadata_xml_attribute_bytes",
+                        observed: attribute_bytes,
+                        allowed: limits.max_xml_attribute_bytes,
+                    });
+                }
                 depth = depth.saturating_add(1);
                 if depth > limits.max_xml_depth {
                     return Err(OdfError::LimitExceeded {
@@ -75,6 +107,32 @@ pub(crate) fn parse_metadata(
                 }
             }
             Event::Empty(empty) => {
+                elements = elements.saturating_add(1);
+                if elements > limits.max_xml_elements {
+                    return Err(OdfError::LimitExceeded {
+                        limit: "odf_metadata_xml_elements",
+                        observed: elements,
+                        allowed: limits.max_xml_elements,
+                    });
+                }
+                for attr in empty.attributes().flatten() {
+                    attributes = attributes.saturating_add(1);
+                    attribute_bytes = attribute_bytes.saturating_add(attr.value.len());
+                }
+                if attributes > limits.max_xml_attributes {
+                    return Err(OdfError::LimitExceeded {
+                        limit: "odf_metadata_xml_attributes",
+                        observed: attributes,
+                        allowed: limits.max_xml_attributes,
+                    });
+                }
+                if attribute_bytes > limits.max_xml_attribute_bytes {
+                    return Err(OdfError::LimitExceeded {
+                        limit: "odf_metadata_xml_attribute_bytes",
+                        observed: attribute_bytes,
+                        allowed: limits.max_xml_attribute_bytes,
+                    });
+                }
                 let name = empty.name();
                 let (prefix, local) = split_name(name.as_ref());
                 if prefix == b"meta" && local == b"document-statistic" {
@@ -125,10 +183,18 @@ pub(crate) fn parse_metadata(
                     } else if name == "user-defined" {
                         if let Some((name, kind)) = custom_name.take() {
                             if !name.is_empty() {
-                                custom.push(CustomProperty {
-                                    name,
-                                    value: parse_custom_value(&kind, value, &mut findings),
-                                });
+                                if custom_names.insert(name.clone()) {
+                                    custom.push(CustomProperty {
+                                        name,
+                                        value: parse_custom_value(&kind, value, &mut findings),
+                                    });
+                                } else {
+                                    findings.push((
+                                        "odf.metadata.user-defined.duplicate".to_owned(),
+                                        ModelOutcome::Degraded,
+                                        RetentionOutcome::NotRetained,
+                                    ));
+                                }
                             } else {
                                 findings.push((
                                     "odf.metadata.user-defined".to_owned(),
@@ -273,5 +339,22 @@ mod tests {
             properties.custom[1].value,
             CustomValue::Bool { value: true }
         ));
+    }
+
+    #[test]
+    fn metadata_limits_and_duplicate_names_are_explicit() {
+        let xml = br#"<office:document-meta xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0"><office:meta><meta:user-defined meta:name="x">a</meta:user-defined><meta:user-defined meta:name="x">b</meta:user-defined></office:meta></office:document-meta>"#;
+        let limits = OdfImportLimits {
+            max_xml_elements: 1,
+            ..OdfImportLimits::default()
+        };
+        assert!(parse_metadata(xml, limits).is_err());
+        let (properties, findings) = parse_metadata(xml, OdfImportLimits::default()).unwrap();
+        assert_eq!(properties.custom.len(), 1);
+        assert!(
+            findings
+                .iter()
+                .any(|(feature, _, _)| feature.ends_with("duplicate"))
+        );
     }
 }

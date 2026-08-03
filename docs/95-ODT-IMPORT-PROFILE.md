@@ -133,6 +133,10 @@ The initial mapping is intentionally layered:
 
 ## 5. Determinism and identity
 
+`meta.xml` is subject to the same XML depth, element, attribute, and aggregate
+attribute-byte ceilings as content/style XML. Duplicate custom-property names
+retain the first value and produce a deterministic degraded finding.
+
 - Namespace seeds are derived from admitted semantic source facts, not ZIP entry
   order or host filenames.
 - XML attribute order and manifest entry order do not change the normalized
