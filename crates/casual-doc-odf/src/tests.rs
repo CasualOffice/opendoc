@@ -1,12 +1,13 @@
 use std::io::{Cursor, Write};
 
+use casual_doc_model::v1::{Alignment, BlockNode, Color, InlineNode, RgbColor};
 use casual_doc_package::CancellationToken;
 use zip::CompressionMethod;
 use zip::write::{FullFileOptions, ZipWriter};
 
 use crate::{
     CONTENT_PART, MANIFEST_PART, MIMETYPE_PART, ODT_MIME, OdfError, OdfImportLimits,
-    OdfPackageLimits, OdfVersion, OdtPackage,
+    OdfPackageLimits, OdfVersion, OdtPackage, STYLES_PART,
 };
 
 const CONTENT: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?>
@@ -95,6 +96,78 @@ fn odf_1_2_through_1_4_are_admitted_deterministically() {
             assert_eq!(imported.document.body().len(), 1);
         }
     }
+}
+
+#[test]
+fn named_styles_part_and_parent_chain_apply_to_content() {
+    let content = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.4"><office:body><office:text><text:p text:style-name="PChild"><text:span text:style-name="TChild">named</text:span></text:p></office:text></office:body></office:document-content>"#;
+    let styles = br##"<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.4"><office:styles><style:style style:name="PBase" style:family="paragraph"><style:paragraph-properties fo:text-align="end"/></style:style><style:style style:name="PChild" style:family="paragraph" style:parent-style-name="PBase"/><style:style style:name="TBase" style:family="text"><style:text-properties fo:font-weight="bold" fo:color="#123456"/></style:style><style:style style:name="TMid" style:family="text" style:parent-style-name="TBase"><style:text-properties fo:font-style="italic"/></style:style><style:style style:name="TChild" style:family="text" style:parent-style-name="TMid"><style:text-properties style:text-underline-style="none"/></style:style></office:styles></office:document-styles>"##;
+    let manifest = format!(
+        r#"<m:manifest xmlns:m="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" m:version="1.4"><m:file-entry m:full-path="/" m:media-type="{ODT_MIME}" m:version="1.4"/><m:file-entry m:full-path="content.xml" m:media-type="text/xml"/><m:file-entry m:full-path="styles.xml" m:media-type="text/xml"/></m:manifest>"#
+    )
+    .into_bytes();
+    let entries = vec![
+        Entry {
+            name: MIMETYPE_PART,
+            bytes: ODT_MIME.as_bytes().to_vec(),
+            compression: CompressionMethod::Stored,
+            local_extra: false,
+        },
+        Entry {
+            name: MANIFEST_PART,
+            bytes: manifest,
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+        Entry {
+            name: CONTENT_PART,
+            bytes: content.to_vec(),
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+        Entry {
+            name: STYLES_PART,
+            bytes: styles.to_vec(),
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+    ];
+    let bytes = package(&entries);
+    let mut package = OdtPackage::open(&bytes, OdfPackageLimits::default()).unwrap();
+    let imported = package.import_document(OdfImportLimits::default()).unwrap();
+    assert!(imported.report.entries.is_empty());
+    let BlockNode::Paragraph(paragraph) = &imported.document.body()[0] else {
+        panic!("paragraph")
+    };
+    assert_eq!(paragraph.properties.alignment, Some(Alignment::End));
+    let InlineNode::Run(run) = &paragraph.inlines[0] else {
+        panic!("run")
+    };
+    assert_eq!(run.properties.bold, Some(true));
+    assert_eq!(run.properties.italic, Some(true));
+    assert_eq!(run.properties.underline, Some(false));
+    assert_eq!(
+        run.properties.color,
+        Some(Color::Rgb(RgbColor {
+            r: 0x12,
+            g: 0x34,
+            b: 0x56,
+        }))
+    );
+
+    let error = package
+        .import_document(OdfImportLimits {
+            max_styles_bytes: 8,
+            ..OdfImportLimits::default()
+        })
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        OdfError::LimitExceeded {
+            limit: "odf_styles_bytes",
+            ..
+        }
+    ));
 }
 
 #[test]

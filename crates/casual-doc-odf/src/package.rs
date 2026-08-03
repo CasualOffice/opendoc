@@ -13,6 +13,8 @@ pub const MIMETYPE_PART: &str = "mimetype";
 pub const MANIFEST_PART: &str = "META-INF/manifest.xml";
 /// Required packaged document-content part.
 pub const CONTENT_PART: &str = "content.xml";
+/// Optional packaged named-style definitions.
+pub const STYLES_PART: &str = "styles.xml";
 /// OpenDocument Text media type.
 pub const ODT_MIME: &str = "application/vnd.oasis.opendocument.text";
 
@@ -266,8 +268,19 @@ impl<'a> OdtPackage<'a> {
         cancellation: &CancellationToken,
     ) -> Result<OdtImport, OdfError> {
         let content = self.read_part_with_cancellation(CONTENT_PART, cancellation)?;
-        crate::content::import_content_xml_with_cancellation(
+        let styles = if self
+            .package
+            .entries()
+            .iter()
+            .any(|entry| entry.part_name == STYLES_PART)
+        {
+            Some(self.read_part_with_cancellation(STYLES_PART, cancellation)?)
+        } else {
+            None
+        };
+        crate::content::import_content_xml_with_styles_and_cancellation(
             &content,
+            styles.as_deref(),
             self.version,
             limits,
             cancellation,

@@ -1,6 +1,6 @@
 //! Bounded, namespace-aware semantic import of ODT `content.xml`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
@@ -100,6 +100,8 @@ pub struct OdtImport {
 pub struct OdfImportLimits {
     /// Maximum expanded `content.xml` bytes.
     pub max_content_bytes: usize,
+    /// Maximum expanded optional `styles.xml` bytes.
+    pub max_styles_bytes: usize,
     /// Maximum XML element nesting depth.
     pub max_xml_depth: usize,
     /// Maximum XML elements.
@@ -125,6 +127,8 @@ pub struct OdfImportLimits {
 impl OdfImportLimits {
     /// Compiled maximum expanded `content.xml` bytes.
     pub const HARD_MAX_CONTENT_BYTES: usize = 512 * 1024 * 1024;
+    /// Compiled maximum expanded `styles.xml` bytes.
+    pub const HARD_MAX_STYLES_BYTES: usize = 512 * 1024 * 1024;
     /// Compiled maximum XML nesting depth.
     pub const HARD_MAX_XML_DEPTH: usize = 256;
     /// Compiled maximum XML element count.
@@ -152,6 +156,11 @@ impl OdfImportLimits {
                 "odf_content_bytes",
                 self.max_content_bytes,
                 Self::HARD_MAX_CONTENT_BYTES,
+            ),
+            (
+                "odf_styles_bytes",
+                self.max_styles_bytes,
+                Self::HARD_MAX_STYLES_BYTES,
             ),
             (
                 "odf_content_xml_depth",
@@ -220,6 +229,7 @@ impl Default for OdfImportLimits {
     fn default() -> Self {
         Self {
             max_content_bytes: 128 * 1024 * 1024,
+            max_styles_bytes: 64 * 1024 * 1024,
             max_xml_depth: 96,
             max_xml_elements: 1_000_000,
             max_xml_attributes: 3_000_000,
@@ -305,6 +315,7 @@ enum StyleFamily {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct OdfStyle {
     family: Option<StyleFamily>,
+    parent: Option<String>,
     alignment: Option<Alignment>,
     run_properties: RunProperties,
 }
@@ -391,8 +402,51 @@ impl Reporter {
 
 type AutomaticStyles = BTreeMap<(StyleFamily, String), OdfStyle>;
 
-fn parse_automatic_styles(
+#[allow(clippy::too_many_arguments)]
+fn parse_style_catalog(
+    content: &[u8],
+    styles_part: Option<&[u8]>,
+    expected_version: OdfVersion,
+    limits: OdfImportLimits,
+    cancellation: &CancellationToken,
+    reporter: &mut Reporter,
+) -> Result<AutomaticStyles, OdfError> {
+    let mut catalog = if let Some(styles_part) = styles_part {
+        parse_style_document(
+            styles_part,
+            b"document-styles",
+            true,
+            expected_version,
+            limits,
+            cancellation,
+            reporter,
+        )?
+    } else {
+        AutomaticStyles::new()
+    };
+    let content_styles = parse_style_document(
+        content,
+        b"document-content",
+        false,
+        expected_version,
+        limits,
+        cancellation,
+        reporter,
+    )?;
+    for (key, style) in content_styles {
+        if catalog.insert(key, style).is_some() {
+            reporter.report("odf.style.shadowed".to_owned(), ModelOutcome::Degraded);
+        }
+    }
+    resolve_style_inheritance(&catalog, limits, reporter)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn parse_style_document(
     bytes: &[u8],
+    expected_root: &[u8],
+    include_common_styles: bool,
+    expected_version: OdfVersion,
     limits: OdfImportLimits,
     cancellation: &CancellationToken,
     reporter: &mut Reporter,
@@ -406,8 +460,11 @@ fn parse_automatic_styles(
     let mut elements = 0_usize;
     let mut attributes = 0_usize;
     let mut attribute_bytes = 0_usize;
-    let mut automatic_depth = None;
+    let mut style_container_depth = None;
     let mut automatic_seen = false;
+    let mut common_seen = false;
+    let mut root_seen = false;
+    let mut root_closed = false;
     let mut open_style: Option<OpenStyle> = None;
     let mut styles = AutomaticStyles::new();
 
@@ -433,14 +490,43 @@ fn parse_automatic_styles(
                 if is_active(&name) {
                     return Err(OdfError::ActiveContent);
                 }
-                if depth == 2 && is_name(&name, NamespaceKind::Office, b"automatic-styles") {
+                if depth == 1 {
+                    if root_seen
+                        || root_closed
+                        || !is_name(&name, NamespaceKind::Office, expected_root)
+                    {
+                        return Err(OdfError::MalformedContent);
+                    }
+                    root_seen = true;
+                    if read_version(
+                        &reader,
+                        &element,
+                        &mut attributes,
+                        &mut attribute_bytes,
+                        limits,
+                        reporter,
+                    )? != expected_version
+                    {
+                        return Err(OdfError::ManifestMismatch);
+                    }
+                } else if depth == 2 && is_name(&name, NamespaceKind::Office, b"automatic-styles") {
                     if automatic_seen {
                         return Err(OdfError::MalformedContent);
                     }
                     automatic_seen = true;
-                    automatic_depth = Some(depth);
+                    style_container_depth = Some(depth);
                     count_attributes_only(&element, &mut attributes, &mut attribute_bytes, limits)?;
-                } else if automatic_depth.is_some() {
+                } else if depth == 2
+                    && include_common_styles
+                    && is_name(&name, NamespaceKind::Office, b"styles")
+                {
+                    if common_seen {
+                        return Err(OdfError::MalformedContent);
+                    }
+                    common_seen = true;
+                    style_container_depth = Some(depth);
+                    count_attributes_only(&element, &mut attributes, &mut attribute_bytes, limits)?;
+                } else if style_container_depth.is_some() {
                     process_style_element(
                         &reader,
                         &element,
@@ -471,13 +557,26 @@ fn parse_automatic_styles(
                     return Err(OdfError::ActiveContent);
                 }
                 let event_depth = depth.checked_add(1).ok_or(OdfError::MalformedContent)?;
-                if event_depth == 2 && is_name(&name, NamespaceKind::Office, b"automatic-styles") {
+                if event_depth == 1 {
+                    return Err(OdfError::MalformedContent);
+                } else if event_depth == 2
+                    && is_name(&name, NamespaceKind::Office, b"automatic-styles")
+                {
                     if automatic_seen {
                         return Err(OdfError::MalformedContent);
                     }
                     automatic_seen = true;
                     count_attributes_only(&element, &mut attributes, &mut attribute_bytes, limits)?;
-                } else if automatic_depth.is_some() {
+                } else if event_depth == 2
+                    && include_common_styles
+                    && is_name(&name, NamespaceKind::Office, b"styles")
+                {
+                    if common_seen {
+                        return Err(OdfError::MalformedContent);
+                    }
+                    common_seen = true;
+                    count_attributes_only(&element, &mut attributes, &mut attribute_bytes, limits)?;
+                } else if style_container_depth.is_some() {
                     process_style_element(
                         &reader,
                         &element,
@@ -495,19 +594,25 @@ fn parse_automatic_styles(
                     count_attributes_only(&element, &mut attributes, &mut attribute_bytes, limits)?;
                 }
             }
-            Event::End(_) => {
+            Event::End(element) => {
                 if open_style
                     .as_ref()
                     .is_some_and(|style: &OpenStyle| style.depth == depth)
                 {
                     finish_style(&mut open_style, &mut styles)?;
                 }
-                if automatic_depth == Some(depth) {
-                    automatic_depth = None;
+                if style_container_depth == Some(depth) {
+                    style_container_depth = None;
+                }
+                if depth == 1 {
+                    if element.local_name().as_ref() != expected_root {
+                        return Err(OdfError::MalformedContent);
+                    }
+                    root_closed = true;
                 }
                 depth = depth.checked_sub(1).ok_or(OdfError::MalformedContent)?;
             }
-            Event::Text(text) if automatic_depth.is_some() => {
+            Event::Text(text) if style_container_depth.is_some() => {
                 let decoded = text.decode().map_err(|_| OdfError::MalformedContent)?;
                 let value = quick_xml::escape::unescape(&decoded)
                     .map_err(|_| OdfError::MalformedContent)?;
@@ -521,7 +626,7 @@ fn parse_automatic_styles(
                     .map_err(|_| OdfError::MalformedContent)?
                     .trim()
                     .is_empty();
-                if automatic_depth.is_some() && non_whitespace {
+                if style_container_depth.is_some() && non_whitespace {
                     return Err(OdfError::MalformedContent);
                 }
             }
@@ -529,10 +634,83 @@ fn parse_automatic_styles(
         }
         buffer.clear();
     }
-    if depth != 0 || automatic_depth.is_some() || open_style.is_some() {
+    if !root_seen
+        || !root_closed
+        || depth != 0
+        || style_container_depth.is_some()
+        || open_style.is_some()
+    {
         return Err(OdfError::MalformedContent);
     }
     Ok(styles)
+}
+
+fn resolve_style_inheritance(
+    raw: &AutomaticStyles,
+    limits: OdfImportLimits,
+    reporter: &mut Reporter,
+) -> Result<AutomaticStyles, OdfError> {
+    let mut resolved = AutomaticStyles::new();
+    let mut visiting = BTreeSet::new();
+    for key in raw.keys() {
+        resolve_style(key, raw, &mut resolved, &mut visiting, 0, limits, reporter)?;
+    }
+    Ok(resolved)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_style(
+    key: &(StyleFamily, String),
+    raw: &AutomaticStyles,
+    resolved: &mut AutomaticStyles,
+    visiting: &mut BTreeSet<(StyleFamily, String)>,
+    depth: usize,
+    limits: OdfImportLimits,
+    reporter: &mut Reporter,
+) -> Result<OdfStyle, OdfError> {
+    if let Some(style) = resolved.get(key) {
+        return Ok(style.clone());
+    }
+    enforce("odf_style_inheritance_depth", depth, limits.max_xml_depth)?;
+    let mut style = raw.get(key).cloned().ok_or(OdfError::MalformedContent)?;
+    if !visiting.insert(key.clone()) {
+        reporter.report(
+            "odf.style.inheritance-cycle".to_owned(),
+            ModelOutcome::Degraded,
+        );
+        style.parent = None;
+        return Ok(style);
+    }
+    if let Some(parent_name) = style.parent.clone() {
+        let parent_key = (key.0, parent_name);
+        if raw.contains_key(&parent_key) {
+            let mut inherited = resolve_style(
+                &parent_key,
+                raw,
+                resolved,
+                visiting,
+                depth + 1,
+                limits,
+                reporter,
+            )?;
+            if style.alignment.is_some() {
+                inherited.alignment = style.alignment;
+            }
+            merge_run_properties(&mut inherited.run_properties, &style.run_properties);
+            inherited.family = style.family;
+            inherited.parent = None;
+            style = inherited;
+        } else {
+            reporter.report(
+                "odf.style.unresolved-parent".to_owned(),
+                ModelOutcome::Degraded,
+            );
+            style.parent = None;
+        }
+    }
+    visiting.remove(key);
+    resolved.insert(key.clone(), style.clone());
+    Ok(style)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -627,6 +805,7 @@ fn read_style_header(
     let mut name = None;
     let mut family = None;
     let mut family_seen = false;
+    let mut parent = None;
     for attribute in element.attributes() {
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
@@ -653,6 +832,13 @@ fn read_style_header(
                     None
                 }
             };
+        } else if namespace_kind(&namespace) == NamespaceKind::Style
+            && local.as_ref() == b"parent-style-name"
+        {
+            if parent.is_some() {
+                return Err(OdfError::MalformedContent);
+            }
+            parent = Some(decode_attribute(&attribute)?);
         } else if !is_namespace_declaration(&attribute) {
             reporter.report(
                 attribute_feature(reader, &attribute),
@@ -672,6 +858,7 @@ fn read_style_header(
         name,
         style: OdfStyle {
             family,
+            parent,
             ..OdfStyle::default()
         },
     })
@@ -872,12 +1059,42 @@ pub fn import_content_xml_with_cancellation(
     limits: OdfImportLimits,
     cancellation: &CancellationToken,
 ) -> Result<OdtImport, OdfError> {
+    import_content_xml_with_styles_and_cancellation(
+        bytes,
+        None,
+        expected_version,
+        limits,
+        cancellation,
+    )
+}
+
+pub(crate) fn import_content_xml_with_styles_and_cancellation(
+    bytes: &[u8],
+    styles_bytes: Option<&[u8]>,
+    expected_version: OdfVersion,
+    limits: OdfImportLimits,
+    cancellation: &CancellationToken,
+) -> Result<OdtImport, OdfError> {
     limits.validate()?;
     enforce("odf_content_bytes", bytes.len(), limits.max_content_bytes)?;
+    if let Some(styles_bytes) = styles_bytes {
+        enforce(
+            "odf_styles_bytes",
+            styles_bytes.len(),
+            limits.max_styles_bytes,
+        )?;
+    }
     check_cancelled(cancellation)?;
 
     let mut reporter = Reporter::new(limits.max_report_features);
-    let automatic_styles = parse_automatic_styles(bytes, limits, cancellation, &mut reporter)?;
+    let automatic_styles = parse_style_catalog(
+        bytes,
+        styles_bytes,
+        expected_version,
+        limits,
+        cancellation,
+        &mut reporter,
+    )?;
 
     let mut reader = NsReader::from_reader(bytes);
     reader

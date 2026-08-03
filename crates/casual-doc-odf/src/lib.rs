@@ -23,4 +23,5 @@ pub use export::{OdfExportLimits, OdtExport, write_odt};
 pub use manifest::ManifestEntry;
 pub use package::{
     CONTENT_PART, MANIFEST_PART, MIMETYPE_PART, ODT_MIME, OdfPackageLimits, OdfVersion, OdtPackage,
+    STYLES_PART,
 };

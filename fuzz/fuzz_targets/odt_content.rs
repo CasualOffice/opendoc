@@ -5,6 +5,7 @@ use libfuzzer_sys::fuzz_target;
 
 const FUZZ_LIMITS: OdfImportLimits = OdfImportLimits {
     max_content_bytes: 1024 * 1024,
+    max_styles_bytes: 1024 * 1024,
     max_xml_depth: 64,
     max_xml_elements: 20_000,
     max_xml_attributes: 60_000,

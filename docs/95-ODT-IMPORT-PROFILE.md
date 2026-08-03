@@ -44,11 +44,15 @@ The work lands as reviewable commits:
   explicit-off values override their parents, and unsupported style attributes
   remain findings. The matching doc 96 writer now forms a semantic fixed point
   for this subset.
-- Named styles from `styles.xml`, inheritance, lists, tables, notes, media,
-  metadata, and the remaining structures in sections 4 and 6 remain in progress.
-  Generic WASM open/export methods and capability-driven browser Open/Save
-  controls are implemented, while the native SDK and production ODT gates remain
-  incomplete; this is still not a general support claim.
+- Checkpoint 6 admits optional `styles.xml` under an independent byte bound,
+  resolves named paragraph/text styles and same-family parent chains for that
+  subset, and reports shadowing, missing parents, and inheritance cycles without
+  losing safe direct properties.
+- Style defaults and broader properties, lists, tables, notes, media, metadata,
+  and the remaining structures in sections 4 and 6 remain in progress. Generic
+  WASM open/export methods and capability-driven browser Open/Save controls are
+  implemented, while the native SDK and production ODT gates remain incomplete;
+  this is still not a general support claim.
 
 ## 2. Normative package profile
 
@@ -131,7 +135,7 @@ edit-tolerant preservation remains incomplete.
 
 In addition to `PackageLimits`, `OdfImportLimits` bounds:
 
-- manifest and XML input bytes;
+- manifest, `content.xml`, and optional `styles.xml` input bytes (independently);
 - XML depth, element count, attribute count, and attribute bytes;
 - accumulated character data;
 - paragraphs, inline nodes, tables, rows, cells, lists, and nesting depth;

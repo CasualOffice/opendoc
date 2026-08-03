@@ -156,6 +156,43 @@ fn unsupported_automatic_style_values_are_reported_without_partial_mapping() {
 }
 
 #[test]
+fn named_style_cycles_and_missing_parents_degrade_without_losing_direct_properties() {
+    let content = content(
+        "1.4",
+        r#"<text:p><text:span text:style-name="A">cycle</text:span><text:span text:style-name="Missing">missing</text:span></text:p>"#,
+    );
+    let styles = br#"<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.4"><office:styles><style:style style:name="A" style:family="text" style:parent-style-name="B"><style:text-properties fo:font-weight="bold"/></style:style><style:style style:name="B" style:family="text" style:parent-style-name="A"><style:text-properties fo:font-style="italic"/></style:style><style:style style:name="Missing" style:family="text" style:parent-style-name="Absent"><style:text-properties style:text-underline-style="solid"/></style:style></office:styles></office:document-styles>"#;
+    let imported = crate::content::import_content_xml_with_styles_and_cancellation(
+        &content,
+        Some(styles),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+        &CancellationToken::default(),
+    )
+    .unwrap();
+    let paragraph = paragraph(&imported, 0);
+    let InlineNode::Run(cycle) = &paragraph.inlines[0] else {
+        panic!("cycle run")
+    };
+    assert_eq!(cycle.properties.bold, Some(true));
+    assert_eq!(cycle.properties.italic, Some(true));
+    let InlineNode::Run(missing) = &paragraph.inlines[1] else {
+        panic!("missing-parent run")
+    };
+    assert_eq!(missing.properties.underline, Some(true));
+    for feature in ["odf.style.inheritance-cycle", "odf.style.unresolved-parent"] {
+        assert!(
+            imported
+                .report
+                .entries
+                .iter()
+                .any(|entry| entry.feature == feature),
+            "missing {feature}"
+        );
+    }
+}
+
+#[test]
 fn identity_and_reports_ignore_prefix_and_attribute_order() {
     let first = br#"<o:document-content xmlns:o="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:t="urn:oasis:names:tc:opendocument:xmlns:text:1.0" o:version="1.3"><o:body><o:text><t:p t:style-name="Body">same<t:s t:c="2"/>text</t:p></o:text></o:body></o:document-content>"#;
     let reordered = br#"<office:document-content office:version="1.3" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"><office:body><office:text><text:p text:style-name="Body">same<text:s text:c="2"/>text</text:p></office:text></office:body></office:document-content>"#;
