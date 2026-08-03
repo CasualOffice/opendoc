@@ -10485,6 +10485,9 @@ mod tests {
                     a: 255,
                 },
                 width_emu: 19_050,
+                dash: None,
+                head_end: None,
+                tail_end: None,
             }),
             body_properties: TextBoxBodyProperties::default(),
             blocks: vec![paragraph(

@@ -21,7 +21,7 @@ use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, AltChunk, AnchorHorizontal, AnchorVertical,
     AnchoredDrawing, AppProperties, BlockNode, BorderEdge, BreakKind, CellVerticalAlignment,
     CnfStyle, Color, ColorScheme, Comment, CommentId, CoreProperties, CropRect, CustomProperty,
-    CustomValue, DefinitionMap, Definitions, DocGridType, Document, DocumentDefaults,
+    CustomValue, DashStyle, DefinitionMap, Definitions, DocGridType, Document, DocumentDefaults,
     DocumentProtectionEdit, DocumentSettings, DropCapFrame, DropCapMode, EmbeddedKind,
     EmbeddedObject, EmbeddedPart, EmphasisMark, Extent, FontCollection, FontDescriptor,
     FontFamilyKind, FontPitch, FontRef, FontScheme, FormCheckBoxSize, FormFieldData, FormFieldKind,
@@ -29,21 +29,22 @@ use casual_doc_model::v1::{
     FrameVerticalAnchor, FrameWrap, GridColumn, GroupChild, GroupShape, GroupTextBox,
     GroupTransform, HeaderFooterId, HeaderFooterKind, HeightRule, HighlightColor, HorizontalAlign,
     HorizontalAnchor, HorizontalPosition, HorizontalRuleAlign, HyperlinkTarget, InlineNode,
-    LevelJustification, LevelSuffix, LineNumberRestart, LineRule, MediaId, MediaReference,
-    MoveKind, Note, NoteId, NoteKind, NoteNumberRestart, NotePosition, NoteProperties,
-    NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel, PageBorderDisplay,
-    PageBorderOffset, PageOrientation, PageVerticalAlignment, ParagraphProperties, Person,
-    PointEmu, PositionalTabAlignment, PositionalTabLeader, PositionalTabRelativeTo, ProofState,
-    PropChange, RevisionKind, RgbColor, Rgba, RunFontHint, RunProperties, SchemeColor, SdtCheckbox,
-    SdtCheckboxSymbol, SdtControlData, SdtControlKind, SdtDate, SdtListItem, SdtLock,
-    SdtProperties, SectionBoundary, SectionType, ShapeAdjustment, ShapeGeometry, ShapeStroke,
-    Style, StyleId, StyleKind, TabAlignment, TabLeader, Table, TableAnchor, TableBorders,
-    TableCell, TableCellProperties, TableFloatPosition, TableLayout, TableOverlap, TableProperties,
-    TableRow, TableRowProperties, TableStyleOverride, TableStyleRegion, TableWidth, TableXAlign,
-    TableYAlign, TextBox, TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow,
-    TextBoxVerticalAnchor, TextBoxVerticalOverflow, TextDirection, ThemeFontRef, VerticalAlign,
-    VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition, VerticalTextAlignment,
-    WidthType, WordprocessingGroup, WrapMode, Zoom, ZoomMode,
+    LevelJustification, LevelSuffix, LineEnd, LineEndKind, LineEndSize, LineNumberRestart,
+    LineRule, MediaId, MediaReference, MoveKind, Note, NoteId, NoteKind, NoteNumberRestart,
+    NotePosition, NoteProperties, NumberFormat, NumberingInstance, NumberingInstanceId,
+    NumberingLevel, PageBorderDisplay, PageBorderOffset, PageOrientation, PageVerticalAlignment,
+    ParagraphProperties, Person, PointEmu, PositionalTabAlignment, PositionalTabLeader,
+    PositionalTabRelativeTo, ProofState, PropChange, RevisionKind, RgbColor, Rgba, RunFontHint,
+    RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind,
+    SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionType, ShapeAdjustment,
+    ShapeGeometry, ShapeStroke, Style, StyleId, StyleKind, TabAlignment, TabLeader, Table,
+    TableAnchor, TableBorders, TableCell, TableCellProperties, TableFloatPosition, TableLayout,
+    TableOverlap, TableProperties, TableRow, TableRowProperties, TableStyleOverride,
+    TableStyleRegion, TableWidth, TableXAlign, TableYAlign, TextBox, TextBoxAutoFit,
+    TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxVerticalAnchor,
+    TextBoxVerticalOverflow, TextDirection, ThemeFontRef, VerticalAlign, VerticalAlignment,
+    VerticalAnchor, VerticalMerge, VerticalPosition, VerticalTextAlignment, WidthType,
+    WordprocessingGroup, WrapMode, Zoom, ZoomMode,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -4775,7 +4776,8 @@ fn write_solid_fill(w: &mut Writer<Cursor<Vec<u8>>>, color: Rgba) -> Result<(), 
     Ok(())
 }
 
-/// Emits an `a:ln` outline (width + solid fill), or `a:ln > a:noFill` when absent.
+/// Emits an `a:ln` outline (width + solid fill, plus any dash/line-end
+/// decorations in schema order), or `a:ln > a:noFill` when absent.
 fn write_outline(
     w: &mut Writer<Cursor<Vec<u8>>>,
     stroke: Option<ShapeStroke>,
@@ -4785,7 +4787,16 @@ fn write_outline(
             let mut ln = start("a:ln");
             ln.push_attribute(("w", stroke.width_emu.to_string().as_str()));
             w.write_event(Event::Start(ln)).map_err(pkg)?;
+            // Schema order (`CT_LineProperties`): fill, then prstDash, then the
+            // head/tail line-end decorations.
             write_solid_fill(w, stroke.color)?;
+            if let Some(dash) = stroke.dash {
+                let mut prst = start("a:prstDash");
+                prst.push_attribute(("val", dash_style_token(dash)));
+                w.write_event(Event::Empty(prst)).map_err(pkg)?;
+            }
+            write_line_end(w, "a:headEnd", stroke.head_end)?;
+            write_line_end(w, "a:tailEnd", stroke.tail_end)?;
             w.write_event(Event::End(BytesEnd::new("a:ln")))
                 .map_err(pkg)?;
         }
@@ -4798,6 +4809,67 @@ fn write_outline(
         }
     }
     Ok(())
+}
+
+/// Emits an `a:headEnd`/`a:tailEnd` line-end decoration (`@type` plus any
+/// `@w`/`@len` size tokens) when present.
+fn write_line_end(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    tag: &str,
+    line_end: Option<LineEnd>,
+) -> Result<(), ExportError> {
+    let Some(line_end) = line_end else {
+        return Ok(());
+    };
+    let mut el = start(tag);
+    el.push_attribute(("type", line_end_kind_token(line_end.kind)));
+    if let Some(width) = line_end.width {
+        el.push_attribute(("w", line_end_size_token(width)));
+    }
+    if let Some(length) = line_end.length {
+        el.push_attribute(("len", line_end_size_token(length)));
+    }
+    w.write_event(Event::Empty(el)).map_err(pkg)?;
+    Ok(())
+}
+
+/// Maps a [`DashStyle`] to its `a:prstDash@val` (`ST_PresetLineDashVal`) token.
+fn dash_style_token(dash: DashStyle) -> &'static str {
+    match dash {
+        DashStyle::Solid => "solid",
+        DashStyle::Dot => "dot",
+        DashStyle::Dash => "dash",
+        DashStyle::LargeDash => "lgDash",
+        DashStyle::DashDot => "dashDot",
+        DashStyle::LargeDashDot => "lgDashDot",
+        DashStyle::LargeDashDotDot => "lgDashDotDot",
+        DashStyle::SystemDash => "sysDash",
+        DashStyle::SystemDot => "sysDot",
+        DashStyle::SystemDashDot => "sysDashDot",
+        DashStyle::SystemDashDotDot => "sysDashDotDot",
+    }
+}
+
+/// Maps a [`LineEndKind`] to its `@type` (`ST_LineEndType`) token.
+fn line_end_kind_token(kind: LineEndKind) -> &'static str {
+    match kind {
+        LineEndKind::None => "none",
+        LineEndKind::Triangle => "triangle",
+        LineEndKind::Stealth => "stealth",
+        LineEndKind::Diamond => "diamond",
+        LineEndKind::Oval => "oval",
+        LineEndKind::Arrow => "arrow",
+    }
+}
+
+/// Maps a [`LineEndSize`] to its `@w`/`@len` (`ST_LineEndWidth`/`ST_LineEndLength`)
+/// token.
+fn line_end_size_token(size: LineEndSize) -> &'static str {
+    match size {
+        LineEndSize::Small => "sm",
+        LineEndSize::Medium => "med",
+        LineEndSize::Large => "lg",
+    }
 }
 
 fn hex_rgb(color: Rgba) -> String {

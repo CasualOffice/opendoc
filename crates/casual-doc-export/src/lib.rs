@@ -683,6 +683,72 @@ mod semantic_tests {
     }
 
     #[test]
+    fn shape_stroke_dash_and_arrowheads_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{
+            BlockNode, DashStyle, GroupChild, InlineNode, LineEndKind, LineEndSize,
+        };
+        use std::io::Read;
+
+        // A grouped shape whose outline is dash-dotted with a medium/large triangle
+        // head-end and a stealth tail-end (a common dashed connector/callout leader),
+        // plus a second shape carrying only a large-dash pattern. Each
+        // `a:prstDash@val` / `a:headEnd` / `a:tailEnd` must survive the round trip.
+        let xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic" xmlns:wps="urn:wps" xmlns:wpg="urn:wpg"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="0" relativeHeight="251659264" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="2000000" cy="1000000"/><wp:wrapNone/><wp:docPr id="1" name="Group 1"/><a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2000000" cy="1000000"/><a:chOff x="0" y="0"/><a:chExt cx="2000000" cy="1000000"/></a:xfrm></wpg:grpSpPr><wps:wsp><wps:cNvPr id="2" name="Connector"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2000000" cy="0"/></a:xfrm><a:prstGeom prst="line"/><a:ln w="19050"><a:solidFill><a:srgbClr val="00FF00"/></a:solidFill><a:prstDash val="dashDot"/><a:headEnd type="triangle" w="med" len="lg"/><a:tailEnd type="stealth"/></a:ln></wps:spPr><wps:bodyPr/></wps:wsp><wps:wsp><wps:cNvPr id="3" name="Rectangle"/><wps:spPr><a:xfrm><a:off x="0" y="200000"/><a:ext cx="800000" cy="300000"/></a:xfrm><a:prstGeom prst="rect"/><a:ln w="9525"><a:solidFill><a:srgbClr val="0000FF"/></a:solidFill><a:prstDash val="lgDash"/></a:ln></wps:spPr><wps:bodyPr/></wps:wsp></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Group(group) = &paragraph.inlines[0] else {
+            panic!("expected a group, got {:?}", paragraph.inlines[0]);
+        };
+
+        let GroupChild::Shape(connector) = &group.children[0] else {
+            panic!("expected a shape");
+        };
+        let stroke = connector.stroke.expect("the connector outline");
+        assert_eq!(stroke.dash, Some(DashStyle::DashDot));
+        let head = stroke.head_end.expect("the head-end arrowhead");
+        assert_eq!(head.kind, LineEndKind::Triangle);
+        assert_eq!(head.width, Some(LineEndSize::Medium));
+        assert_eq!(head.length, Some(LineEndSize::Large));
+        let tail = stroke.tail_end.expect("the tail-end arrowhead");
+        assert_eq!(tail.kind, LineEndKind::Stealth);
+        assert_eq!(tail.width, None);
+        assert_eq!(tail.length, None);
+
+        let GroupChild::Shape(rectangle) = &group.children[1] else {
+            panic!("expected a shape");
+        };
+        let rect_stroke = rectangle.stroke.expect("the rectangle outline");
+        assert_eq!(rect_stroke.dash, Some(DashStyle::LargeDash));
+        assert_eq!(rect_stroke.head_end, None);
+        assert_eq!(rect_stroke.tail_end, None);
+
+        assert_eq!(m1, m2, "dash + arrowheads survive write -> reopen");
+
+        // The writer emits the decorations in `CT_LineProperties` schema order
+        // (fill, then prstDash, then headEnd, then tailEnd) inside the `a:ln`.
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
+        let mut written = String::new();
+        zip.by_name("word/document.xml")
+            .unwrap()
+            .read_to_string(&mut written)
+            .unwrap();
+        let dash = written
+            .find(r#"<a:prstDash val="dashDot"/>"#)
+            .expect("prstDash");
+        let head = written
+            .find(r#"<a:headEnd type="triangle" w="med" len="lg"/>"#)
+            .expect("headEnd");
+        let tail = written
+            .find(r#"<a:tailEnd type="stealth"/>"#)
+            .expect("tailEnd");
+        assert!(dash < head && head < tail, "prstDash < headEnd < tailEnd");
+    }
+
+    #[test]
     fn group_flip_and_rotation_survive_the_semantic_round_trip() {
         use casual_doc_model::v1::{BlockNode, GroupChild, InlineNode};
 

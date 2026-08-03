@@ -6,28 +6,29 @@ use casual_doc_model::v1::{
     Alignment, AltChunk, AltChunkProperties, AnchorHorizontal, AnchorVertical, AnchoredDrawing,
     BlockNode, BlockSdt, Bookmark, BookmarkEnd, BookmarkId, BookmarkStart, BorderEdge, Break,
     BreakKind, CellVerticalAlignment, CnfStyle, ColorScheme, ColumnDef, Comment, CommentId,
-    CommentRangeEnd, CommentRangeStart, CommentReference, CropRect, DefinitionMap, DocGrid,
-    DocGridType, Drawing, DrawingAnchor, EmbeddedKind, EmbeddedObject, EmbeddedPart, Extent,
-    ExternalTarget, Field, FormCheckBox, FormCheckBoxSize, FormDropDown, FormFieldData,
+    CommentRangeEnd, CommentRangeStart, CommentReference, CropRect, DashStyle, DefinitionMap,
+    DocGrid, DocGridType, Drawing, DrawingAnchor, EmbeddedKind, EmbeddedObject, EmbeddedPart,
+    Extent, ExternalTarget, Field, FormCheckBox, FormCheckBoxSize, FormDropDown, FormFieldData,
     FormFieldKind, FormTextInput, FormTextType, GridColumn, GroupChild, GroupPicture, GroupShape,
     GroupTextBox, GroupTransform, HR_FULL_WIDTH_PERMILLE, HeaderFooterId, HeaderFooterKind,
     HeaderFooterRef, HeightRule, HorizontalAlign, HorizontalAnchor, HorizontalPosition,
     HorizontalRule, HorizontalRuleAlign, Hyperlink, HyperlinkTarget, InlineNode, InlineSdt,
-    InternalTarget, LineNumberRestart, LineNumbering, MAX_DESCR_BYTES, MAX_EMU,
-    MAX_FIELD_INSTRUCTION_BYTES, MAX_FORM_FIELD_ENTRIES, MAX_FORM_FIELD_STRING_BYTES,
-    MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH, MAX_SHAPE_ADJUSTMENTS,
-    MAX_SHAPE_FORMULA_BYTES, MAX_SHAPE_GUIDE_NAME_BYTES, MAX_SHAPE_PRESET_BYTES, MAX_TEXTBOX_DEPTH,
-    Math, MathExpression, MediaId, MoveKind, MoveRangeEnd, MoveRangeStart, NoBreakHyphen, NoteId,
-    NoteKind, NoteNumberRestart, NotePosition, NoteProperties, NoteReference, PageBorderDisplay,
-    PageBorderOffset, PageBorders, PageMargins, PageNumbering, PageOrientation, PageSize,
-    PageVerticalAlignment, PaperSource, Paragraph, ParagraphProperties, PointEmu, PositionalTab,
-    PositionalTabAlignment, PositionalTabLeader, PositionalTabRelativeTo, PropChange, Revision,
-    RevisionKind, RgbColor, Rgba, Run, RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol,
-    SdtControlData, SdtControlKind, SdtDataBinding, SdtDate, SdtListItem, SdtLock, SdtProperties,
-    SectionBoundary, SectionColumns, SectionId, SectionType, ShapeAdjustment, ShapeGeometry,
-    ShapeStroke, SoftHyphen, StyleKind, Symbol, Tab, TabAlignment, TabLeader, TabStop, TableAnchor,
-    TableCellProperties, TableFloatPosition, TableLayout, TableOverlap, TableProperties,
-    TableRowProperties, TableXAlign, TableYAlign, TextBox, TextBoxAutoFit, TextBoxBodyProperties,
+    InternalTarget, LineEnd, LineEndKind, LineEndSize, LineNumberRestart, LineNumbering,
+    MAX_DESCR_BYTES, MAX_EMU, MAX_FIELD_INSTRUCTION_BYTES, MAX_FORM_FIELD_ENTRIES,
+    MAX_FORM_FIELD_STRING_BYTES, MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH,
+    MAX_SHAPE_ADJUSTMENTS, MAX_SHAPE_FORMULA_BYTES, MAX_SHAPE_GUIDE_NAME_BYTES,
+    MAX_SHAPE_PRESET_BYTES, MAX_TEXTBOX_DEPTH, Math, MathExpression, MediaId, MoveKind,
+    MoveRangeEnd, MoveRangeStart, NoBreakHyphen, NoteId, NoteKind, NoteNumberRestart, NotePosition,
+    NoteProperties, NoteReference, PageBorderDisplay, PageBorderOffset, PageBorders, PageMargins,
+    PageNumbering, PageOrientation, PageSize, PageVerticalAlignment, PaperSource, Paragraph,
+    ParagraphProperties, PointEmu, PositionalTab, PositionalTabAlignment, PositionalTabLeader,
+    PositionalTabRelativeTo, PropChange, Revision, RevisionKind, RgbColor, Rgba, Run,
+    RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind,
+    SdtDataBinding, SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionColumns,
+    SectionId, SectionType, ShapeAdjustment, ShapeGeometry, ShapeStroke, SoftHyphen, StyleKind,
+    Symbol, Tab, TabAlignment, TabLeader, TabStop, TableAnchor, TableCellProperties,
+    TableFloatPosition, TableLayout, TableOverlap, TableProperties, TableRowProperties,
+    TableXAlign, TableYAlign, TextBox, TextBoxAutoFit, TextBoxBodyProperties,
     TextBoxHorizontalOverflow, TextBoxInsets, TextBoxVerticalAnchor, TextBoxVerticalOverflow,
     TextDirection, VerticalAlign, VerticalAnchor, VerticalMerge, VerticalPosition,
     WordprocessingGroup, WrapDistances, WrapMode,
@@ -820,6 +821,13 @@ struct BodyParser<'a> {
     style_ref_depth: u32,
     /// The `a:ln@w` outline width (EMU) of the open outline.
     ln_width_emu: i64,
+    /// The `a:prstDash@val` dash pattern captured inside the open `a:ln`, applied
+    /// to the shape's stroke when the outline closes.
+    ln_dash: Option<DashStyle>,
+    /// The `a:headEnd` decoration captured inside the open `a:ln`.
+    ln_head_end: Option<LineEnd>,
+    /// The `a:tailEnd` decoration captured inside the open `a:ln`.
+    ln_tail_end: Option<LineEnd>,
     /// The open DrawingML color element being accumulated (base + modifiers).
     pending_color: Option<PendingColor>,
     /// The resolved 12-slot theme color palette (DrawingML `schemeClr` targets),
@@ -1056,6 +1064,9 @@ impl<'a> BodyParser<'a> {
             xfrm_target: XfrmTarget::None,
             ln_depth: 0,
             ln_width_emu: 0,
+            ln_dash: None,
+            ln_head_end: None,
+            ln_tail_end: None,
             style_ref_depth: 0,
             pending_color: None,
             palette,
@@ -2486,8 +2497,27 @@ impl BodyParser<'_> {
             // An outline (`a:ln`): its `@w` is the stroke width; a `solidFill` inside
             // it colors the stroke rather than the fill.
             b"ln" if self.pending_shape.is_some() => {
+                if self.ln_depth == 0 {
+                    self.ln_dash = None;
+                    self.ln_head_end = None;
+                    self.ln_tail_end = None;
+                }
                 self.ln_depth += 1;
                 self.ln_width_emu = attr_i64(element, b"w").filter(|w| *w >= 0).unwrap_or(0);
+            }
+            // A preset dash pattern (`a:prstDash@val`) inside the open outline: buffer
+            // it until the `a:ln` closes and applies it to the shape's stroke.
+            b"prstDash" if self.ln_depth > 0 => {
+                self.ln_dash = attribute_value(element, b"val")
+                    .as_deref()
+                    .and_then(parse_dash_style);
+            }
+            // A line-end decoration (`a:headEnd`/`a:tailEnd`) inside the open outline.
+            b"headEnd" if self.ln_depth > 0 => {
+                self.ln_head_end = Some(parse_line_end(element));
+            }
+            b"tailEnd" if self.ln_depth > 0 => {
+                self.ln_tail_end = Some(parse_line_end(element));
             }
             // An explicit `a:noFill`: clears the shape fill or (inside `a:ln`) the
             // stroke, so a later default is not assumed.
@@ -3676,9 +3706,22 @@ impl BodyParser<'_> {
             b"srgbClr" | b"schemeClr" | b"sysClr" if self.pending_color.is_some() => {
                 self.commit_color();
             }
-            // An outline closes: leave the shape's captured stroke, drop the depth.
+            // An outline closes: apply the buffered dash/line-ends to the shape's
+            // captured stroke (if any), then drop the depth and clear the buffers.
             b"ln" if self.ln_depth > 0 => {
                 self.ln_depth = self.ln_depth.saturating_sub(1);
+                if self.ln_depth == 0 {
+                    if let Some(shape) = self.pending_shape.as_mut()
+                        && let Some(stroke) = shape.stroke.as_mut()
+                    {
+                        stroke.dash = self.ln_dash;
+                        stroke.head_end = self.ln_head_end;
+                        stroke.tail_end = self.ln_tail_end;
+                    }
+                    self.ln_dash = None;
+                    self.ln_head_end = None;
+                    self.ln_tail_end = None;
+                }
             }
             b"lnRef" | b"fillRef" | b"effectRef" | b"fontRef" if self.style_ref_depth > 0 => {
                 self.style_ref_depth = self.style_ref_depth.saturating_sub(1);
@@ -4007,6 +4050,11 @@ impl BodyParser<'_> {
                 shape.stroke = Some(ShapeStroke {
                     color: rgba,
                     width_emu: color.stroke_width_emu,
+                    // Dash/line-end are applied from the outline buffers when the
+                    // enclosing `a:ln` closes (they follow the fill in schema order).
+                    dash: None,
+                    head_end: None,
+                    tail_end: None,
                 });
             }
         }
@@ -6214,6 +6262,59 @@ fn attr_i64(element: &BytesStart<'_>, name: &[u8]) -> Option<i64> {
     attribute_value(element, name).and_then(|value| value.parse().ok())
 }
 
+/// Maps an `a:prstDash@val` (`ST_PresetLineDashVal`) token to a [`DashStyle`].
+/// An unrecognized token yields `None` (the outline stays solid).
+fn parse_dash_style(token: &str) -> Option<DashStyle> {
+    Some(match token {
+        "solid" => DashStyle::Solid,
+        "dot" => DashStyle::Dot,
+        "dash" => DashStyle::Dash,
+        "lgDash" => DashStyle::LargeDash,
+        "dashDot" => DashStyle::DashDot,
+        "lgDashDot" => DashStyle::LargeDashDot,
+        "lgDashDotDot" => DashStyle::LargeDashDotDot,
+        "sysDash" => DashStyle::SystemDash,
+        "sysDot" => DashStyle::SystemDot,
+        "sysDashDot" => DashStyle::SystemDashDot,
+        "sysDashDotDot" => DashStyle::SystemDashDotDot,
+        _ => return None,
+    })
+}
+
+/// Parses an `a:headEnd`/`a:tailEnd` (`CT_LineEndProperties`) into a [`LineEnd`].
+/// A missing/unrecognized `@type` defaults to [`LineEndKind::None`]; unrecognized
+/// `@w`/`@len` size tokens drop that attribute.
+fn parse_line_end(element: &BytesStart<'_>) -> LineEnd {
+    let kind = match attribute_value(element, b"type").as_deref() {
+        Some("triangle") => LineEndKind::Triangle,
+        Some("stealth") => LineEndKind::Stealth,
+        Some("diamond") => LineEndKind::Diamond,
+        Some("oval") => LineEndKind::Oval,
+        Some("arrow") => LineEndKind::Arrow,
+        _ => LineEndKind::None,
+    };
+    LineEnd {
+        kind,
+        width: attribute_value(element, b"w")
+            .as_deref()
+            .and_then(parse_line_end_size),
+        length: attribute_value(element, b"len")
+            .as_deref()
+            .and_then(parse_line_end_size),
+    }
+}
+
+/// Maps an `a:headEnd`/`a:tailEnd` `@w`/`@len` size token (`ST_LineEndWidth`/
+/// `ST_LineEndLength`) to a [`LineEndSize`]. Unrecognized tokens yield `None`.
+fn parse_line_end_size(token: &str) -> Option<LineEndSize> {
+    Some(match token {
+        "sm" => LineEndSize::Small,
+        "med" => LineEndSize::Medium,
+        "lg" => LineEndSize::Large,
+        _ => return None,
+    })
+}
+
 /// Parses a `w:tblpPr` (`CT_TblPPr`) into a [`TableFloatPosition`]. Unrecognized
 /// anchor/spec tokens drop the individual attribute (leaving it `None`); signed
 /// offsets clamp to `-31_680..=31_680` and unsigned from-text distances to
@@ -6941,6 +7042,9 @@ fn vml_stroke(stroke: &VmlStroke) -> Option<ShapeStroke> {
             a: 255,
         }),
         width_emu: twip_emu_len(stroke.weight_twips.unwrap_or(0)),
+        dash: None,
+        head_end: None,
+        tail_end: None,
     })
 }
 
@@ -6959,6 +7063,9 @@ fn vml_path_outline(fill: &VmlFill, stroke: &VmlStroke) -> ShapeStroke {
     ShapeStroke {
         color,
         width_emu: stroke.weight_twips.map(twip_emu_len).unwrap_or(0),
+        dash: None,
+        head_end: None,
+        tail_end: None,
     }
 }
 
