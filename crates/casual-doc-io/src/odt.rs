@@ -227,6 +227,8 @@ fn feature_namespace(feature: &str) -> Option<&'static str> {
         Some("urn:oasis:names:tc:opendocument:xmlns:text:1.0")
     } else if feature.contains(".script.") {
         Some("urn:oasis:names:tc:opendocument:xmlns:script:1.0")
+    } else if feature.contains(".xlink.") {
+        Some("http://www.w3.org/1999/xlink")
     } else {
         None
     }

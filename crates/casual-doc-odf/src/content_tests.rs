@@ -1,8 +1,8 @@
-use casual_doc_model::v1::{BlockNode, BreakKind, InlineNode};
+use casual_doc_model::v1::{BlockNode, BreakKind, HyperlinkTarget, InlineNode};
 use casual_doc_package::CancellationToken;
 
 use crate::{
-    ModelOutcome, OdfError, OdfImportLimits, OdfVersion, import_content_xml,
+    ModelOutcome, OdfError, OdfImportLimits, OdfVersion, RetentionOutcome, import_content_xml,
     import_content_xml_with_cancellation,
 };
 
@@ -70,6 +70,19 @@ fn identity_and_reports_ignore_prefix_and_attribute_order() {
         import_content_xml(reordered, OdfVersion::V1_3, OdfImportLimits::default()).unwrap();
     assert_eq!(first.document, reordered.document);
     assert_eq!(first.report, reordered.report);
+
+    let linked_first = br##"<o:document-content xmlns:o="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:t="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:x="http://www.w3.org/1999/xlink" o:version="1.4"><o:body><o:text><t:p><t:bookmark t:name="anchor"/><t:a x:type="simple" x:href="#anchor">same</t:a></t:p></o:text></o:body></o:document-content>"##;
+    let linked_reordered = br##"<office:document-content xmlns:xlink="http://www.w3.org/1999/xlink" office:version="1.4" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"><office:body><office:text><text:p><text:bookmark text:name="anchor"/><text:a xlink:href="#anchor" xlink:type="simple">same</text:a></text:p></office:text></office:body></office:document-content>"##;
+    let linked_first =
+        import_content_xml(linked_first, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
+    let linked_reordered = import_content_xml(
+        linked_reordered,
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    assert_eq!(linked_first.document, linked_reordered.document);
+    assert_eq!(linked_first.report, linked_reordered.report);
 }
 
 #[test]
@@ -133,14 +146,11 @@ fn empty_text_body_and_deferred_containers_have_explicit_outcomes() {
         import_content_xml(&deferred, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
     assert_eq!(paragraph(&imported, 0).inlines.len(), 1);
     assert!(
-        matches!(&paragraph(&imported, 0).inlines[0], InlineNode::Run(run) if run.text == "visible")
+        matches!(&paragraph(&imported, 0).inlines[0], InlineNode::Hyperlink(link)
+        if matches!(&link.target, HyperlinkTarget::External(target) if target.url == "https://example.invalid/")
+        && matches!(&link.inlines[0], InlineNode::Run(run) if run.text == "visible"))
     );
-    for expected in [
-        "odf.element.text.list",
-        "odf.element.text.list-item",
-        "odf.element.text.a",
-        "odf.attribute.foreign.href",
-    ] {
+    for expected in ["odf.element.text.list", "odf.element.text.list-item"] {
         assert!(
             imported
                 .report
@@ -149,6 +159,88 @@ fn empty_text_body_and_deferred_containers_have_explicit_outcomes() {
                 .any(|entry| entry.feature == expected)
         );
     }
+}
+
+#[test]
+fn hyperlinks_and_bookmarks_map_without_fetching_or_flattening() {
+    let xml = content(
+        "1.4",
+        r##"<text:p><text:bookmark-start text:name="section"/>before <text:a xlink:type="simple" xlink:href="https://example.invalid/path">external</text:a> <text:a xlink:href="#section">internal</text:a><text:bookmark-end text:name="section"/><text:bookmark text:name="point"/></text:p>"##,
+    );
+    let imported = import_content_xml(&xml, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
+    imported.document.validate().unwrap();
+    assert_eq!(imported.document.definitions().bookmarks.len(), 2);
+    let inlines = &paragraph(&imported, 0).inlines;
+    assert!(matches!(inlines[0], InlineNode::BookmarkStart(_)));
+    assert!(matches!(&inlines[2], InlineNode::Hyperlink(link)
+        if matches!(&link.target, HyperlinkTarget::External(target) if target.url == "https://example.invalid/path")
+        && matches!(&link.inlines[0], InlineNode::Run(run) if run.text == "external")));
+    assert!(matches!(&inlines[4], InlineNode::Hyperlink(link)
+        if matches!(&link.target, HyperlinkTarget::Internal(target) if target.anchor == "section")
+        && matches!(&link.inlines[0], InlineNode::Run(run) if run.text == "internal")));
+    assert!(matches!(inlines[5], InlineNode::BookmarkEnd(_)));
+    assert!(matches!(inlines[6], InlineNode::BookmarkStart(_)));
+    assert!(matches!(inlines[7], InlineNode::BookmarkEnd(_)));
+    assert!(!imported.report.entries.iter().any(|entry| {
+        matches!(
+            entry.feature.as_str(),
+            "odf.element.text.a"
+                | "odf.attribute.xlink.href"
+                | "odf.element.text.bookmark"
+                | "odf.element.text.bookmark-start"
+                | "odf.element.text.bookmark-end"
+        )
+    }));
+}
+
+#[test]
+fn invalid_or_unpaired_links_and_bookmarks_degrade_explicitly() {
+    let long_href = "x".repeat(2_049);
+    let long_name = "n".repeat(256);
+    let xml = content(
+        "1.4",
+        &format!(
+            r#"<text:p><text:a>missing</text:a><text:a xlink:href="{long_href}">long</text:a><text:a xlink:href="javascript:alert(1)">blocked</text:a><text:a xlink:href="https://example.invalid/"/><text:bookmark-start text:name="open"/><text:bookmark-end text:name="missing"/><text:bookmark text:name="{long_name}"/>tail</text:p>"#
+        ),
+    );
+    let imported = import_content_xml(&xml, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
+    imported.document.validate().unwrap();
+    assert!(imported.document.definitions().bookmarks.is_empty());
+    assert!(
+        paragraph(&imported, 0)
+            .inlines
+            .iter()
+            .all(|inline| matches!(inline, InlineNode::Run(_)))
+    );
+    for expected in [
+        "odf.element.text.a",
+        "odf.hyperlink.blocked-scheme",
+        "odf.attribute.text.name",
+        "odf.element.text.bookmark-start",
+        "odf.element.text.bookmark-end",
+    ] {
+        assert!(
+            imported
+                .report
+                .entries
+                .iter()
+                .any(|entry| entry.feature == expected),
+            "missing {expected} finding"
+        );
+    }
+    assert!(imported.report.entries.iter().any(|entry| {
+        entry.feature == "odf.hyperlink.blocked-scheme"
+            && entry.retention_outcome == RetentionOutcome::Blocked
+    }));
+
+    let nested = content(
+        "1.4",
+        r#"<text:p><text:a xlink:href="https://outer.invalid/"><text:a xlink:href="https://inner.invalid/">bad</text:a></text:a></text:p>"#,
+    );
+    assert_eq!(
+        import_content_xml(&nested, OdfVersion::V1_4, OdfImportLimits::default()).unwrap_err(),
+        OdfError::MalformedContent
+    );
 }
 
 #[test]

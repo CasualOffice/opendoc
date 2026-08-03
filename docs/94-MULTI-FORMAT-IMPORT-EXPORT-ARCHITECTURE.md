@@ -18,8 +18,9 @@ This is an architecture design, not a support claim. No format becomes supported
 until its security, corpus, round-trip, and compatibility gates pass.
 
 Implementation snapshot (2026-08-04): Slices A–C, bounded ODT package admission,
-and the core `content.xml` importer are complete. The importer maps paragraphs,
-headings, spans, explicit spaces, tabs, and line breaks into a validated
+and the staged `content.xml` importer are in progress. The importer maps
+paragraphs, headings, spans, explicit spaces, tabs, line breaks, safe
+external/internal hyperlinks, and bookmark points/ranges into a validated
 schema-v1 document with semantic-fact-derived identities and bounded findings.
 Slice E now has a deterministic bounded ODF 1.4 writer for that same core subset,
 registered semantic export, and exact unchanged-byte recovery. The remaining
@@ -490,11 +491,12 @@ Slice D is in progress on `feature/multi-format-io`:
 - bounded ODF 1.2–1.4 package admission validates the ODT media type, manifest,
   version, and required parts and rejects encrypted or active content;
 - the core namespace-aware importer maps paragraphs, headings, spans, spaces,
-  tabs, and line breaks with deterministic IDs and explicit deferred findings;
+  tabs, line breaks, safe external/internal links, and paired bookmark markers
+  with deterministic IDs and explicit deferred/blocked findings;
 - definitive registry detection, optional original-byte retention, and package
   and content fuzz targets are implemented;
-- styles, lists, tables, links, notes, bookmarks, media, metadata, and broader
-  preservation remain pending under doc 95.
+- styles, lists, tables, notes, media, metadata, and broader preservation remain
+  pending under doc 95.
 
 Slice E is in progress on `feature/multi-format-io`:
 

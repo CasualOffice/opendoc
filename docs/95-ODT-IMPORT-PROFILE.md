@@ -8,8 +8,8 @@
 ## 1. Purpose
 
 Define the first bounded OpenDocument Text (`.odt`) admission and semantic
-import profile. This is an implementation contract, not a claim that ODT export
-or the public SDK surfaces are complete.
+import profile. This is an implementation contract, not a claim that ODT
+fidelity or the public SDK surfaces are complete.
 
 The work lands as reviewable commits:
 
@@ -30,14 +30,19 @@ The work lands as reviewable commits:
   XML reference handling; semantic-fact-derived deterministic IDs; typed
   redacted failures; cancellation; and explicit compatibility findings for
   deferred constructs.
-- Checkpoint 3 registers that bounded subset as an import-only ODT adapter with
-  definitive package-based detection, deterministic report translation,
-  optional original-byte retention, explicit no-export capabilities, and a
-  dedicated `content.xml` fuzz target. Stable SDK/WASM host methods are still
-  absent, so this is internal registry availability rather than a public host
+- Checkpoint 3 registers that bounded subset with definitive package-based
+  detection, deterministic report translation, optional original-byte
+  retention, and a dedicated `content.xml` fuzz target.
+- Checkpoint 4 maps bounded external/internal hyperlinks without fetching,
+  blocks unsafe URI schemes from becoming active model links, and maps bookmark
+  points and paired ranges into definitions plus position-preserving markers.
+  Missing/oversized targets, empty links, invalid names, and unpaired markers
+  degrade explicitly without producing an invalid normalized document.
+- Named/automatic style resolution, lists, tables, notes, media, metadata, and
+  the remaining structures in sections 4 and 6 remain in progress. Partial ODT
+  export is tracked separately under doc 96. Stable SDK/WASM host methods are
+  still absent, so availability remains internal rather than a public host
   support claim.
-- Named/automatic style resolution and all complex structures in sections 4 and
-  6 remain in progress. ODT export and public host surfaces remain Slice E.
 
 ## 2. Normative package profile
 
@@ -78,20 +83,20 @@ as editor state or used as layout truth.
 
 The initial mapping is intentionally layered:
 
-| ODF source | Normalized destination | First-profile disposition |
-| --- | --- | --- |
-| `text:p`, `text:h` | paragraph, heading paragraph properties | Mapped |
-| character data, `text:span` | runs and run properties | Mapped for supported style properties; otherwise degraded/reported |
-| `text:s`, `text:tab`, `text:line-break` | spaces, tab, line break | Mapped |
-| `text:a` | hyperlink with visible children | Mapped for safe internal/external targets; no fetch |
-| `text:list` / list item | numbering definitions and paragraph numbering refs | Mapped for bullet/number basics; unsupported label detail reported |
-| `table:table` / rows / cells | recursive normalized table | Mapped; spans and covered cells validated |
-| `text:note` | footnote/endnote definition and inline reference | Mapped |
-| bookmark start/end/point | bookmark definitions and markers | Mapped |
-| `draw:frame` + package image | media definition and drawing | Mapped for embedded package images; linked images blocked/not fetched |
-| document metadata | `DocumentProperties` | Mapped where schema-v1 has a field; otherwise reported |
-| change tracking | revision nodes | Deferred within Slice D until pairing/order evidence is complete; preserved/reported, never silently flattened |
-| formulas, scripts, events, OLE, foreign XML | none in first profile | Blocked or preserved/reported according to safety |
+| ODF source                                  | Normalized destination                             | First-profile disposition                                                                                      |
+| ------------------------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `text:p`, `text:h`                          | paragraph, heading paragraph properties            | Mapped                                                                                                         |
+| character data, `text:span`                 | runs and run properties                            | Mapped for supported style properties; otherwise degraded/reported                                             |
+| `text:s`, `text:tab`, `text:line-break`     | spaces, tab, line break                            | Mapped                                                                                                         |
+| `text:a`                                    | hyperlink with visible children                    | Mapped for safe internal/external targets; no fetch                                                            |
+| `text:list` / list item                     | numbering definitions and paragraph numbering refs | Mapped for bullet/number basics; unsupported label detail reported                                             |
+| `table:table` / rows / cells                | recursive normalized table                         | Mapped; spans and covered cells validated                                                                      |
+| `text:note`                                 | footnote/endnote definition and inline reference   | Mapped                                                                                                         |
+| bookmark start/end/point                    | bookmark definitions and markers                   | Mapped                                                                                                         |
+| `draw:frame` + package image                | media definition and drawing                       | Mapped for embedded package images; linked images blocked/not fetched                                          |
+| document metadata                           | `DocumentProperties`                               | Mapped where schema-v1 has a field; otherwise reported                                                         |
+| change tracking                             | revision nodes                                     | Deferred within Slice D until pairing/order evidence is complete; preserved/reported, never silently flattened |
+| formulas, scripts, events, OLE, foreign XML | none in first profile                              | Blocked or preserved/reported according to safety                                                              |
 
 ## 5. Determinism and identity
 
@@ -112,8 +117,9 @@ and constructs are classified as consumed, preserved, blocked, or rejected.
 The import report uses the format-neutral dual-axis outcomes from doc 94. Safe
 unknown package parts and XML constructs are preserved when feasible and always
 reported. Cross-format export does not copy ODF-native opaque data into DOCX or
-JSON. Exact unchanged export may return the original ODT bytes after Slice E;
-semantic ODT writing remains Slice E.
+JSON. Exact unchanged export now returns explicitly retained original ODT bytes
+under doc 96. Partial semantic ODT writing is also implemented there;
+edit-tolerant preservation remains incomplete.
 
 ## 7. Security limits
 

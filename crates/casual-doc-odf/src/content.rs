@@ -4,8 +4,9 @@ use std::collections::BTreeMap;
 
 use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
-    BlockNode, Break, BreakKind, Definitions, Document, InlineNode, Paragraph, ParagraphProperties,
-    Run, RunProperties, Tab,
+    BlockNode, Bookmark, BookmarkEnd, BookmarkId, BookmarkStart, Break, BreakKind, Definitions,
+    Document, ExternalTarget, Hyperlink, HyperlinkTarget, InlineNode, InternalTarget, Paragraph,
+    ParagraphProperties, Run, RunProperties, Tab,
 };
 use casual_doc_package::CancellationToken;
 use quick_xml::NsReader;
@@ -17,6 +18,7 @@ use crate::{OdfError, OdfVersion};
 const OFFICE_NS: &[u8] = b"urn:oasis:names:tc:opendocument:xmlns:office:1.0";
 const TEXT_NS: &[u8] = b"urn:oasis:names:tc:opendocument:xmlns:text:1.0";
 const SCRIPT_NS: &[u8] = b"urn:oasis:names:tc:opendocument:xmlns:script:1.0";
+const XLINK_NS: &[u8] = b"http://www.w3.org/1999/xlink";
 const MAX_NAMESPACE_DECLARATIONS_PER_ELEMENT: usize = 4_096;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -24,6 +26,7 @@ enum NamespaceKind {
     Office,
     Text,
     Script,
+    Xlink,
     Foreign,
 }
 
@@ -232,6 +235,25 @@ enum InlineDraft {
     Text(String),
     Tab,
     LineBreak,
+    Hyperlink {
+        target: HyperlinkTarget,
+        inlines: Vec<InlineDraft>,
+    },
+    BookmarkStart(usize),
+    BookmarkEnd(usize),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct LinkDraft {
+    depth: usize,
+    target: Option<HyperlinkTarget>,
+    inlines: Vec<InlineDraft>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct BookmarkDraft {
+    name: String,
+    paired: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -243,20 +265,24 @@ struct ParagraphDraft {
 
 impl ParagraphDraft {
     fn push_text(&mut self, value: &str) {
-        if value.is_empty() {
-            return;
-        }
-        if let Some(InlineDraft::Text(previous)) = self.inlines.last_mut() {
-            previous.push_str(value);
-        } else {
-            self.inlines.push(InlineDraft::Text(value.to_owned()));
-        }
+        push_text_draft(&mut self.inlines, value);
+    }
+}
+
+fn push_text_draft(inlines: &mut Vec<InlineDraft>, value: &str) {
+    if value.is_empty() {
+        return;
+    }
+    if let Some(InlineDraft::Text(previous)) = inlines.last_mut() {
+        previous.push_str(value);
+    } else {
+        inlines.push(InlineDraft::Text(value.to_owned()));
     }
 }
 
 #[derive(Debug)]
 struct Reporter {
-    counts: BTreeMap<(String, ModelOutcome), u32>,
+    counts: BTreeMap<(String, ModelOutcome, RetentionOutcome), u32>,
     overflow: u32,
     max_features: usize,
 }
@@ -271,7 +297,16 @@ impl Reporter {
     }
 
     fn report(&mut self, feature: String, outcome: ModelOutcome) {
-        let key = (feature, outcome);
+        self.report_with_retention(feature, outcome, RetentionOutcome::NotRetained);
+    }
+
+    fn report_with_retention(
+        &mut self,
+        feature: String,
+        outcome: ModelOutcome,
+        retention: RetentionOutcome,
+    ) {
+        let key = (feature, outcome, retention);
         if let Some(count) = self.counts.get_mut(&key) {
             *count = count.saturating_add(1);
         } else if self.counts.len() < self.max_features {
@@ -286,11 +321,11 @@ impl Reporter {
             .counts
             .into_iter()
             .map(
-                |((feature, model_outcome), occurrences)| CompatibilityEntry {
+                |((feature, model_outcome, retention_outcome), occurrences)| CompatibilityEntry {
                     feature,
                     occurrences,
                     model_outcome,
-                    retention_outcome: RetentionOutcome::NotRetained,
+                    retention_outcome,
                 },
             )
             .collect::<Vec<_>>();
@@ -306,6 +341,7 @@ impl Reporter {
             left.feature
                 .cmp(&right.feature)
                 .then_with(|| left.model_outcome.cmp(&right.model_outcome))
+                .then_with(|| left.retention_outcome.cmp(&right.retention_outcome))
         });
         CompatibilityReport { entries }
     }
@@ -355,7 +391,10 @@ pub fn import_content_xml_with_cancellation(
     let mut leaf_depth = None;
     let mut body_kind_seen = false;
     let mut current = None;
+    let mut active_link = None;
     let mut paragraphs = Vec::new();
+    let mut bookmarks = Vec::new();
+    let mut open_bookmarks = BTreeMap::new();
     let mut reporter = Reporter::new(limits.max_report_features);
 
     loop {
@@ -417,6 +456,9 @@ pub fn import_content_xml_with_cancellation(
                         &mut leaf_depth,
                         &mut body_kind_seen,
                         &mut current,
+                        &mut active_link,
+                        &mut bookmarks,
+                        &mut open_bookmarks,
                         &mut inline_nodes,
                         &mut text_bytes,
                         &mut reporter,
@@ -451,6 +493,9 @@ pub fn import_content_xml_with_cancellation(
                     text_body_depth,
                     &mut body_kind_seen,
                     &mut current,
+                    &mut active_link,
+                    &mut bookmarks,
+                    &mut open_bookmarks,
                     &mut paragraphs,
                     &mut inline_nodes,
                     &mut text_bytes,
@@ -460,6 +505,12 @@ pub fn import_content_xml_with_cancellation(
             Event::End(element) => {
                 if leaf_depth == Some(depth) {
                     leaf_depth = None;
+                }
+                if active_link
+                    .as_ref()
+                    .is_some_and(|link: &LinkDraft| link.depth == depth)
+                {
+                    finish_link(&mut current, &mut active_link, &mut reporter)?;
                 }
                 if current
                     .as_ref()
@@ -490,7 +541,7 @@ pub fn import_content_xml_with_cancellation(
                 let value = quick_xml::escape::unescape(&decoded)
                     .map_err(|_| OdfError::MalformedContent)?;
                 if let Some(paragraph) = &mut current {
-                    append_text(paragraph, &value, &mut text_bytes, limits)?;
+                    append_text(paragraph, &mut active_link, &value, &mut text_bytes, limits)?;
                 } else if !value.trim().is_empty() {
                     return Err(OdfError::MalformedContent);
                 }
@@ -501,7 +552,7 @@ pub fn import_content_xml_with_cancellation(
                 }
                 let value = text.decode().map_err(|_| OdfError::MalformedContent)?;
                 if let Some(paragraph) = &mut current {
-                    append_text(paragraph, &value, &mut text_bytes, limits)?;
+                    append_text(paragraph, &mut active_link, &value, &mut text_bytes, limits)?;
                 } else if !value.trim().is_empty() {
                     return Err(OdfError::MalformedContent);
                 }
@@ -512,7 +563,7 @@ pub fn import_content_xml_with_cancellation(
                 }
                 let value = decode_reference(&reference)?;
                 if let Some(paragraph) = &mut current {
-                    append_text(paragraph, &value, &mut text_bytes, limits)?;
+                    append_text(paragraph, &mut active_link, &value, &mut text_bytes, limits)?;
                 } else if !value.trim().is_empty() {
                     return Err(OdfError::MalformedContent);
                 }
@@ -529,6 +580,7 @@ pub fn import_content_xml_with_cancellation(
         || text_body_depth.is_some()
         || leaf_depth.is_some()
         || current.is_some()
+        || active_link.is_some()
     {
         return Err(OdfError::MalformedContent);
     }
@@ -546,21 +598,27 @@ pub fn import_content_xml_with_cancellation(
             limits,
         )?;
     }
+    for index in open_bookmarks.into_values() {
+        if let Some(bookmark) = bookmarks.get_mut(index) {
+            bookmark.paired = false;
+        }
+        reporter.report(
+            "odf.element.text.bookmark-start".to_owned(),
+            ModelOutcome::Omitted,
+        );
+    }
+    for paragraph in &mut paragraphs {
+        normalize_inline_drafts(&mut paragraph.inlines, &bookmarks, &mut reporter);
+    }
     let normalized_inline_nodes = paragraphs.iter().try_fold(0_usize, |total, paragraph| {
-        total
-            .checked_add(paragraph.inlines.len())
-            .ok_or(OdfError::LimitExceeded {
-                limit: "odf_content_inline_nodes",
-                observed: usize::MAX,
-                allowed: limits.max_inline_nodes,
-            })
+        count_inline_drafts(&paragraph.inlines, total)
     })?;
     enforce(
         "odf_content_inline_nodes",
         normalized_inline_nodes,
         limits.max_inline_nodes,
     )?;
-    let document = build_document(expected_version, &paragraphs)?;
+    let document = build_document(expected_version, &paragraphs, &bookmarks)?;
     Ok(OdtImport {
         document,
         report: reporter.finish(),
@@ -582,6 +640,9 @@ fn process_start(
     leaf_depth: &mut Option<usize>,
     body_kind_seen: &mut bool,
     current: &mut Option<ParagraphDraft>,
+    active_link: &mut Option<LinkDraft>,
+    bookmarks: &mut Vec<BookmarkDraft>,
+    open_bookmarks: &mut BTreeMap<String, usize>,
     inline_nodes: &mut usize,
     text_bytes: &mut usize,
     reporter: &mut Reporter,
@@ -647,7 +708,8 @@ fn process_start(
     } else if current.is_some() {
         let is_leaf = is_name(name, NamespaceKind::Text, b"s")
             || is_name(name, NamespaceKind::Text, b"tab")
-            || is_name(name, NamespaceKind::Text, b"line-break");
+            || is_name(name, NamespaceKind::Text, b"line-break")
+            || is_bookmark_element(name);
         process_inline(
             reader,
             element,
@@ -656,6 +718,10 @@ fn process_start(
             attributes,
             attribute_bytes,
             current,
+            active_link,
+            bookmarks,
+            open_bookmarks,
+            depth,
             inline_nodes,
             text_bytes,
             reporter,
@@ -695,6 +761,9 @@ fn process_empty(
     text_body_depth: Option<usize>,
     body_kind_seen: &mut bool,
     current: &mut Option<ParagraphDraft>,
+    active_link: &mut Option<LinkDraft>,
+    bookmarks: &mut Vec<BookmarkDraft>,
+    open_bookmarks: &mut BTreeMap<String, usize>,
     paragraphs: &mut Vec<ParagraphDraft>,
     inline_nodes: &mut usize,
     text_bytes: &mut usize,
@@ -754,10 +823,17 @@ fn process_empty(
             attributes,
             attribute_bytes,
             current,
+            active_link,
+            bookmarks,
+            open_bookmarks,
+            depth,
             inline_nodes,
             text_bytes,
             reporter,
         )?;
+        if is_name(name, NamespaceKind::Text, b"a") {
+            finish_link(current, active_link, reporter)?;
+        }
     } else {
         count_and_report_attributes(
             reader,
@@ -840,6 +916,10 @@ fn process_inline(
     attributes: &mut usize,
     attribute_bytes: &mut usize,
     current: &mut Option<ParagraphDraft>,
+    active_link: &mut Option<LinkDraft>,
+    bookmarks: &mut Vec<BookmarkDraft>,
+    open_bookmarks: &mut BTreeMap<String, usize>,
+    depth: usize,
     inline_nodes: &mut usize,
     text_bytes: &mut usize,
     reporter: &mut Reporter,
@@ -868,6 +948,7 @@ fn process_inline(
         let spaces = " ".repeat(count);
         append_text(
             current.as_mut().ok_or(OdfError::MalformedContent)?,
+            active_link,
             &spaces,
             text_bytes,
             limits,
@@ -889,15 +970,49 @@ fn process_inline(
             *inline_nodes,
             limits.max_inline_nodes,
         )?;
-        current
-            .as_mut()
-            .ok_or(OdfError::MalformedContent)?
-            .inlines
-            .push(if is_name(name, NamespaceKind::Text, b"tab") {
+        push_inline_draft(
+            current.as_mut().ok_or(OdfError::MalformedContent)?,
+            active_link,
+            if is_name(name, NamespaceKind::Text, b"tab") {
                 InlineDraft::Tab
             } else {
                 InlineDraft::LineBreak
-            });
+            },
+        );
+    } else if is_name(name, NamespaceKind::Text, b"a") {
+        if active_link.is_some() {
+            return Err(OdfError::MalformedContent);
+        }
+        *active_link = Some(LinkDraft {
+            depth,
+            target: read_link_target(
+                reader,
+                element,
+                attributes,
+                attribute_bytes,
+                limits,
+                reporter,
+            )?,
+            inlines: Vec::new(),
+        });
+    } else if is_bookmark_element(name) {
+        let name_value = read_bookmark_name(
+            reader,
+            element,
+            attributes,
+            attribute_bytes,
+            limits,
+            reporter,
+        )?;
+        process_bookmark(
+            name,
+            name_value,
+            current.as_mut().ok_or(OdfError::MalformedContent)?,
+            active_link,
+            bookmarks,
+            open_bookmarks,
+            reporter,
+        )?;
     } else if is_name(name, NamespaceKind::Text, b"span") {
         count_and_report_attributes(
             reader,
@@ -923,6 +1038,7 @@ fn process_inline(
 
 fn append_text(
     paragraph: &mut ParagraphDraft,
+    active_link: &mut Option<LinkDraft>,
     value: &str,
     text_bytes: &mut usize,
     limits: OdfImportLimits,
@@ -935,8 +1051,256 @@ fn append_text(
             allowed: limits.max_text_bytes,
         })?;
     enforce("odf_content_text_bytes", *text_bytes, limits.max_text_bytes)?;
-    paragraph.push_text(value);
+    if let Some(link) = active_link {
+        push_text_draft(&mut link.inlines, value);
+    } else {
+        paragraph.push_text(value);
+    }
     Ok(())
+}
+
+fn push_inline_draft(
+    paragraph: &mut ParagraphDraft,
+    active_link: &mut Option<LinkDraft>,
+    inline: InlineDraft,
+) {
+    if let Some(link) = active_link {
+        link.inlines.push(inline);
+    } else {
+        paragraph.inlines.push(inline);
+    }
+}
+
+fn finish_link(
+    current: &mut Option<ParagraphDraft>,
+    active_link: &mut Option<LinkDraft>,
+    reporter: &mut Reporter,
+) -> Result<(), OdfError> {
+    let link = active_link.take().ok_or(OdfError::MalformedContent)?;
+    let paragraph = current.as_mut().ok_or(OdfError::MalformedContent)?;
+    if let Some(target) = link.target
+        && !link.inlines.is_empty()
+    {
+        paragraph.inlines.push(InlineDraft::Hyperlink {
+            target,
+            inlines: link.inlines,
+        });
+    } else {
+        if link.inlines.is_empty() {
+            reporter.report("odf.element.text.a".to_owned(), ModelOutcome::Omitted);
+        }
+        for inline in link.inlines {
+            match inline {
+                InlineDraft::Text(text) => paragraph.push_text(&text),
+                inline => paragraph.inlines.push(inline),
+            }
+        }
+    }
+    Ok(())
+}
+
+fn read_link_target(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    limits: OdfImportLimits,
+    reporter: &mut Reporter,
+) -> Result<Option<HyperlinkTarget>, OdfError> {
+    let mut href = None;
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        if namespace_kind(&namespace) == NamespaceKind::Xlink && local.as_ref() == b"href" {
+            if href.is_some() {
+                return Err(OdfError::MalformedContent);
+            }
+            href = Some(decode_attribute(&attribute)?);
+        } else if namespace_kind(&namespace) == NamespaceKind::Xlink
+            && local.as_ref() == b"type"
+            && decode_attribute(&attribute)? == "simple"
+        {
+            // The model's hyperlink target already implies the simple-link type.
+        } else if !is_namespace_declaration(&attribute) {
+            reporter.report(
+                attribute_feature(reader, &attribute),
+                ModelOutcome::Degraded,
+            );
+        }
+    }
+    let Some(href) = href else {
+        reporter.report("odf.element.text.a".to_owned(), ModelOutcome::Degraded);
+        return Ok(None);
+    };
+    let blocked_scheme = has_blocked_link_scheme(&href);
+    let target = if let Some(anchor) = href.strip_prefix('#') {
+        if anchor.is_empty() || anchor.len() > 255 {
+            None
+        } else {
+            Some(HyperlinkTarget::Internal(InternalTarget {
+                anchor: anchor.to_owned(),
+            }))
+        }
+    } else if href.is_empty() || href.len() > 2_048 || blocked_scheme {
+        if blocked_scheme {
+            reporter.report_with_retention(
+                "odf.hyperlink.blocked-scheme".to_owned(),
+                ModelOutcome::Degraded,
+                RetentionOutcome::Blocked,
+            );
+        }
+        None
+    } else {
+        Some(HyperlinkTarget::External(ExternalTarget { url: href }))
+    };
+    if target.is_none() {
+        reporter.report("odf.element.text.a".to_owned(), ModelOutcome::Degraded);
+    }
+    Ok(target)
+}
+
+fn has_blocked_link_scheme(href: &str) -> bool {
+    let Some((scheme, _)) = href.split_once(':') else {
+        return false;
+    };
+    !matches!(
+        scheme.to_ascii_lowercase().as_str(),
+        "http" | "https" | "mailto"
+    )
+}
+
+fn is_bookmark_element(name: &ResolvedName) -> bool {
+    name.namespace == NamespaceKind::Text
+        && matches!(
+            name.local.as_slice(),
+            b"bookmark" | b"bookmark-start" | b"bookmark-end"
+        )
+}
+
+fn read_bookmark_name(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    limits: OdfImportLimits,
+    reporter: &mut Reporter,
+) -> Result<Option<String>, OdfError> {
+    let mut name = None;
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        if namespace_kind(&namespace) == NamespaceKind::Text && local.as_ref() == b"name" {
+            if name.is_some() {
+                return Err(OdfError::MalformedContent);
+            }
+            name = Some(decode_attribute(&attribute)?);
+        } else if !is_namespace_declaration(&attribute) {
+            reporter.report(
+                attribute_feature(reader, &attribute),
+                ModelOutcome::Degraded,
+            );
+        }
+    }
+    if name
+        .as_ref()
+        .is_none_or(|name| name.is_empty() || name.len() > 255)
+    {
+        reporter.report("odf.attribute.text.name".to_owned(), ModelOutcome::Omitted);
+        Ok(None)
+    } else {
+        Ok(name)
+    }
+}
+
+fn process_bookmark(
+    element_name: &ResolvedName,
+    name: Option<String>,
+    paragraph: &mut ParagraphDraft,
+    active_link: &mut Option<LinkDraft>,
+    bookmarks: &mut Vec<BookmarkDraft>,
+    open_bookmarks: &mut BTreeMap<String, usize>,
+    reporter: &mut Reporter,
+) -> Result<(), OdfError> {
+    let Some(name) = name else {
+        return Ok(());
+    };
+    if element_name.local == b"bookmark" {
+        let index = bookmarks.len();
+        bookmarks.push(BookmarkDraft { name, paired: true });
+        push_inline_draft(paragraph, active_link, InlineDraft::BookmarkStart(index));
+        push_inline_draft(paragraph, active_link, InlineDraft::BookmarkEnd(index));
+    } else if element_name.local == b"bookmark-start" {
+        if open_bookmarks.contains_key(&name) {
+            return Err(OdfError::MalformedContent);
+        }
+        let index = bookmarks.len();
+        bookmarks.push(BookmarkDraft {
+            name: name.clone(),
+            paired: false,
+        });
+        open_bookmarks.insert(name, index);
+        push_inline_draft(paragraph, active_link, InlineDraft::BookmarkStart(index));
+    } else {
+        let Some(index) = open_bookmarks.remove(&name) else {
+            reporter.report(
+                "odf.element.text.bookmark-end".to_owned(),
+                ModelOutcome::Omitted,
+            );
+            return Ok(());
+        };
+        bookmarks[index].paired = true;
+        push_inline_draft(paragraph, active_link, InlineDraft::BookmarkEnd(index));
+    }
+    Ok(())
+}
+
+fn count_inline_drafts(inlines: &[InlineDraft], mut total: usize) -> Result<usize, OdfError> {
+    for inline in inlines {
+        total = total.checked_add(1).ok_or(OdfError::LimitExceeded {
+            limit: "odf_content_inline_nodes",
+            observed: usize::MAX,
+            allowed: usize::MAX,
+        })?;
+        if let InlineDraft::Hyperlink { inlines, .. } = inline {
+            total = count_inline_drafts(inlines, total)?;
+        }
+    }
+    Ok(total)
+}
+
+fn normalize_inline_drafts(
+    inlines: &mut Vec<InlineDraft>,
+    bookmarks: &[BookmarkDraft],
+    reporter: &mut Reporter,
+) {
+    let mut normalized = Vec::with_capacity(inlines.len());
+    for mut inline in std::mem::take(inlines) {
+        if let InlineDraft::Hyperlink {
+            inlines: children, ..
+        } = &mut inline
+        {
+            normalize_inline_drafts(children, bookmarks, reporter);
+            if children.is_empty() {
+                reporter.report("odf.element.text.a".to_owned(), ModelOutcome::Omitted);
+                continue;
+            }
+        }
+        if let InlineDraft::BookmarkStart(index) | InlineDraft::BookmarkEnd(index) = &inline
+            && !bookmarks
+                .get(*index)
+                .is_some_and(|bookmark| bookmark.paired)
+        {
+            continue;
+        }
+        if let InlineDraft::Text(text) = inline {
+            push_text_draft(&mut normalized, &text);
+        } else {
+            normalized.push(inline);
+        }
+    }
+    *inlines = normalized;
 }
 
 fn push_paragraph(
@@ -960,6 +1324,7 @@ fn push_paragraph(
 fn build_document(
     version: OdfVersion,
     paragraphs: &[ParagraphDraft],
+    bookmarks: &[BookmarkDraft],
 ) -> Result<Document, OdfError> {
     let mut namespace = 0xcbf2_9ce4_8422_2325_u64;
     hash_bytes(&mut namespace, version.as_str().as_bytes());
@@ -970,14 +1335,7 @@ fn build_document(
             &[paragraph.outline_level.unwrap_or(u8::MAX)],
         );
         for inline in &paragraph.inlines {
-            match inline {
-                InlineDraft::Text(value) => {
-                    hash_bytes(&mut namespace, b"t");
-                    hash_bytes(&mut namespace, value.as_bytes());
-                }
-                InlineDraft::Tab => hash_bytes(&mut namespace, b"tab"),
-                InlineDraft::LineBreak => hash_bytes(&mut namespace, b"br"),
-            }
+            hash_inline_draft(&mut namespace, inline, bookmarks);
         }
     }
     if namespace == 0 {
@@ -985,6 +1343,22 @@ fn build_document(
     }
     let mut ids = IdGenerator::new(namespace);
     let document_id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
+    let mut definitions = Definitions::default();
+    let mut bookmark_ids = Vec::with_capacity(bookmarks.len());
+    for bookmark in bookmarks {
+        if bookmark.paired {
+            let id = BookmarkId::new(ids.next_id().map_err(|_| OdfError::InvalidModel)?);
+            definitions.bookmarks.insert(
+                id,
+                Bookmark {
+                    name: bookmark.name.clone(),
+                },
+            );
+            bookmark_ids.push(Some(id));
+        } else {
+            bookmark_ids.push(None);
+        }
+    }
     let mut body = Vec::with_capacity(paragraphs.len());
     for draft in paragraphs {
         let paragraph_id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
@@ -992,29 +1366,111 @@ fn build_document(
             outline_level: draft.outline_level,
             ..ParagraphProperties::default()
         };
-        let mut inlines = Vec::with_capacity(draft.inlines.len());
-        for inline in &draft.inlines {
-            let id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
-            inlines.push(match inline {
-                InlineDraft::Text(text) => InlineNode::Run(Run {
-                    id,
-                    properties: RunProperties::default(),
-                    text: text.clone(),
-                }),
-                InlineDraft::Tab => InlineNode::Tab(Tab { id }),
-                InlineDraft::LineBreak => InlineNode::Break(Break {
-                    id,
-                    kind: BreakKind::Line,
-                }),
-            });
-        }
+        let inlines = build_inlines(&draft.inlines, &mut ids, &bookmark_ids)?;
         body.push(BlockNode::Paragraph(Paragraph {
             id: paragraph_id,
             properties,
             inlines,
         }));
     }
-    Document::new(document_id, body, Definitions::default()).map_err(|_| OdfError::InvalidModel)
+    Document::new(document_id, body, definitions).map_err(|_| OdfError::InvalidModel)
+}
+
+fn hash_inline_draft(hash: &mut u64, inline: &InlineDraft, bookmarks: &[BookmarkDraft]) {
+    match inline {
+        InlineDraft::Text(value) => {
+            hash_bytes(hash, b"t");
+            hash_bytes(hash, value.as_bytes());
+        }
+        InlineDraft::Tab => hash_bytes(hash, b"tab"),
+        InlineDraft::LineBreak => hash_bytes(hash, b"br"),
+        InlineDraft::Hyperlink { target, inlines } => {
+            hash_bytes(hash, b"link");
+            match target {
+                HyperlinkTarget::External(target) => {
+                    hash_bytes(hash, b"external");
+                    hash_bytes(hash, target.url.as_bytes());
+                }
+                HyperlinkTarget::Internal(target) => {
+                    hash_bytes(hash, b"internal");
+                    hash_bytes(hash, target.anchor.as_bytes());
+                }
+            }
+            for inline in inlines {
+                hash_inline_draft(hash, inline, bookmarks);
+            }
+        }
+        InlineDraft::BookmarkStart(index) | InlineDraft::BookmarkEnd(index) => {
+            if bookmarks
+                .get(*index)
+                .is_some_and(|bookmark| bookmark.paired)
+            {
+                hash_bytes(
+                    hash,
+                    if matches!(inline, InlineDraft::BookmarkStart(_)) {
+                        b"bookmark-start".as_slice()
+                    } else {
+                        b"bookmark-end".as_slice()
+                    },
+                );
+                hash_bytes(hash, bookmarks[*index].name.as_bytes());
+            }
+        }
+    }
+}
+
+fn build_inlines(
+    drafts: &[InlineDraft],
+    ids: &mut IdGenerator,
+    bookmark_ids: &[Option<BookmarkId>],
+) -> Result<Vec<InlineNode>, OdfError> {
+    let mut inlines = Vec::with_capacity(drafts.len());
+    for draft in drafts {
+        let bookmark = match draft {
+            InlineDraft::BookmarkStart(index) | InlineDraft::BookmarkEnd(index) => {
+                bookmark_ids.get(*index).copied().flatten()
+            }
+            _ => None,
+        };
+        if matches!(
+            draft,
+            InlineDraft::BookmarkStart(_) | InlineDraft::BookmarkEnd(_)
+        ) && bookmark.is_none()
+        {
+            continue;
+        }
+        let id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
+        inlines.push(match draft {
+            InlineDraft::Text(text) => InlineNode::Run(Run {
+                id,
+                properties: RunProperties::default(),
+                text: text.clone(),
+            }),
+            InlineDraft::Tab => InlineNode::Tab(Tab { id }),
+            InlineDraft::LineBreak => InlineNode::Break(Break {
+                id,
+                kind: BreakKind::Line,
+            }),
+            InlineDraft::Hyperlink {
+                target,
+                inlines: children,
+            } => InlineNode::Hyperlink(Hyperlink {
+                id,
+                target: target.clone(),
+                tooltip: None,
+                inlines: build_inlines(children, ids, bookmark_ids)?,
+            }),
+            InlineDraft::BookmarkStart(_) => InlineNode::BookmarkStart(BookmarkStart {
+                id,
+                bookmark: bookmark.ok_or(OdfError::InvalidModel)?,
+            }),
+            InlineDraft::BookmarkEnd(_) => InlineNode::BookmarkEnd(BookmarkEnd {
+                id,
+                bookmark: bookmark.ok_or(OdfError::InvalidModel)?,
+            }),
+        });
+    }
+    Ok(inlines)
 }
 
 fn hash_bytes(hash: &mut u64, bytes: &[u8]) {
@@ -1172,6 +1628,7 @@ fn namespace_kind(namespace: &ResolveResult<'_>) -> NamespaceKind {
         ResolveResult::Bound(Namespace(value)) if *value == OFFICE_NS => NamespaceKind::Office,
         ResolveResult::Bound(Namespace(value)) if *value == TEXT_NS => NamespaceKind::Text,
         ResolveResult::Bound(Namespace(value)) if *value == SCRIPT_NS => NamespaceKind::Script,
+        ResolveResult::Bound(Namespace(value)) if *value == XLINK_NS => NamespaceKind::Xlink,
         _ => NamespaceKind::Foreign,
     }
 }
@@ -1194,6 +1651,7 @@ const fn namespace_label(namespace: NamespaceKind) -> &'static str {
         NamespaceKind::Office => "office",
         NamespaceKind::Text => "text",
         NamespaceKind::Script => "script",
+        NamespaceKind::Xlink => "xlink",
         NamespaceKind::Foreign => "foreign",
     }
 }
