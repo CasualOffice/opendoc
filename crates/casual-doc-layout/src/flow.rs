@@ -620,6 +620,7 @@ const fn tab_alignment_key(alignment: TabAlignment) -> u8 {
         TabAlignment::End => 2,
         TabAlignment::Decimal => 3,
         TabAlignment::Bar => 4,
+        TabAlignment::Clear => 5,
     }
 }
 
@@ -4323,7 +4324,9 @@ fn layout_fielded_line(
         } else {
             let stop = tabs::resolve_stop(tabs[i - 1], pen, tab_stops, default_tab, constraints);
             let mut l = match stop.alignment {
-                TabAlignment::Start | TabAlignment::Bar => stop.position,
+                // A resolved stop is never `Clear` (filtered out of resolution);
+                // fold it in defensively at the stop position.
+                TabAlignment::Start | TabAlignment::Bar | TabAlignment::Clear => stop.position,
                 TabAlignment::End | TabAlignment::Decimal => stop.position - seg.width.raw(),
                 TabAlignment::Center => stop.position - seg.width.raw() / 2,
             };

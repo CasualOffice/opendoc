@@ -1113,13 +1113,19 @@ fn paragraph_borders_shading_and_tabs_are_mapped() {
             b: 0xEE
         })
     );
-    // Two modeled tab stops (the `clear` tab is reported, not modeled).
-    assert_eq!(p.tabs.len(), 2);
+    // Three modeled tab stops: the `clear` tab is now captured (a suppression of an
+    // inherited/default stop), not dropped-and-reported.
+    assert_eq!(p.tabs.len(), 3);
     assert_eq!(p.tabs[0].alignment, TabAlignment::Center);
     assert_eq!(p.tabs[0].position_twips, 2160);
     assert_eq!(p.tabs[0].leader, Some(TabLeader::Dot));
     assert_eq!(p.tabs[1].alignment, TabAlignment::End);
-    assert!(features(&import).contains(&"tab"), "clear tab reported");
+    assert_eq!(p.tabs[2].alignment, TabAlignment::Clear);
+    assert_eq!(p.tabs[2].position_twips, 100);
+    assert!(
+        !features(&import).contains(&"tab"),
+        "a modeled clear tab is not reported"
+    );
 }
 
 #[test]

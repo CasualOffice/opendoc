@@ -479,7 +479,9 @@ fn layout_tabbed_line(
             let stop = resolve_stop(block.tabs[i - 1], pen, tab_stops, default_tab, constraints);
             // Where the following segment's box is placed relative to the stop.
             left = match stop.alignment {
-                TabAlignment::Start | TabAlignment::Bar => stop.position,
+                // A resolved stop is never `Clear` (cleared stops are filtered out
+                // of resolution); fold it in defensively at the stop position.
+                TabAlignment::Start | TabAlignment::Bar | TabAlignment::Clear => stop.position,
                 TabAlignment::End => stop.position - seg.width.raw(),
                 TabAlignment::Center => stop.position - seg.width.raw() / 2,
                 TabAlignment::Decimal => stop.position - seg.decimal_x.unwrap_or(seg.width).raw(),
@@ -869,7 +871,13 @@ pub(crate) fn resolve_next_stop(
 ) -> ResolvedStop {
     let explicit = tab_stops
         .iter()
-        .filter(|t| t.alignment != TabAlignment::Bar && t.position_twips > pen)
+        .filter(|t| {
+            // A bar is a vertical rule, not a stop; a cleared stop (`w:val="clear"`)
+            // only suppresses an inherited/default stop — neither advances a tab.
+            t.alignment != TabAlignment::Bar
+                && t.alignment != TabAlignment::Clear
+                && t.position_twips > pen
+        })
         .min_by_key(|t| t.position_twips);
     if let Some(stop) = explicit {
         return ResolvedStop {

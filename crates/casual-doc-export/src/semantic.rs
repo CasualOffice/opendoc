@@ -3512,6 +3512,18 @@ fn write_paragraph_properties(
         w.write_event(Event::End(BytesEnd::new("w:tabs")))
             .map_err(pkg)?;
     }
+    if let Some(direction) = properties.text_direction {
+        let mut el = start("w:textDirection");
+        el.push_attribute((
+            "w:val",
+            match direction {
+                TextDirection::LrTb => "lrTb",
+                TextDirection::TbRl => "tbRl",
+                TextDirection::BtLr => "btLr",
+            },
+        ));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
     // The paragraph-mark run properties (`w:pPr > w:rPr`) precede `w:sectPr` in
     // CT_PPr. A `Some(default)` still emits a bare `<w:rPr/>` so the mark's
     // presence round-trips (the property writer elides an all-default value).
@@ -5994,6 +6006,7 @@ fn tab_alignment_token(alignment: TabAlignment) -> &'static str {
         TabAlignment::End => "end",
         TabAlignment::Decimal => "decimal",
         TabAlignment::Bar => "bar",
+        TabAlignment::Clear => "clear",
     }
 }
 

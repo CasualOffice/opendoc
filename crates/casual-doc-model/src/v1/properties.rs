@@ -2,7 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{BorderEdge, NumberingInstanceId, RevisionGroup, SectionId, Shading, StyleId};
+use super::{
+    BorderEdge, NumberingInstanceId, RevisionGroup, SectionId, Shading, StyleId, TextDirection,
+};
 
 /// A format-change tracked revision (`w:rPrChange`, `w:pPrChange`,
 /// `w:tblPrChange`, `w:trPrChange`, `w:tcPrChange`, `w:tblGridChange`): the
@@ -121,6 +123,9 @@ pub enum TabAlignment {
     Decimal,
     /// A vertical bar.
     Bar,
+    /// Clears (suppresses) an inherited/default tab stop at this position
+    /// (`w:val="clear"`); carries no leader.
+    Clear,
 }
 
 /// A custom tab stop's leader glyph (`w:tab/@w:leader`).
@@ -139,7 +144,8 @@ pub enum TabLeader {
     Heavy,
 }
 
-/// A custom tab stop (`w:tabs > w:tab`). A `clear` tab is not modeled (reported).
+/// A custom tab stop (`w:tabs > w:tab`). A `clear` tab is modeled as a
+/// [`TabAlignment::Clear`] stop (a suppression of an inherited/default stop).
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TabStop {
@@ -951,6 +957,11 @@ pub struct ParagraphProperties {
     /// Vertical alignment of text on the line (`w:textAlignment`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text_alignment: Option<VerticalTextAlignment>,
+    /// Paragraph text-flow direction (`w:textDirection`), reusing the same
+    /// `TextDirection` vocabulary as sections and table cells. Additive, omitted
+    /// when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_direction: Option<TextDirection>,
     /// Formatting of the paragraph mark itself (`w:pPr > w:rPr`) — the run
     /// properties applied to the end-of-paragraph glyph. `Some` (even when
     /// default) means the `w:rPr` was present; additive, omitted when absent.
