@@ -81,11 +81,11 @@ pub(crate) fn parse_metadata(
                     });
                 }
                 let name = start.name();
-                let (prefix, local) = split_name(name.as_ref());
-                if prefix == b"meta" && local == b"document-statistic" {
+                let (_, local) = split_name(name.as_ref());
+                if local == b"document-statistic" {
                     read_statistics(&start, &mut app, &mut findings);
                 }
-                if prefix == b"meta" && local == b"user-defined" {
+                if local == b"user-defined" {
                     let mut name = None;
                     let mut kind = String::from("string");
                     for attr in start.attributes().flatten() {
@@ -100,9 +100,22 @@ pub(crate) fn parse_metadata(
                 }
                 if local == b"meta" || local == b"document-meta" || local == b"document-statistic" {
                     // Container elements are handled structurally.
-                } else if local != b"document-statistic"
-                    && matches!(prefix, b"dc" | b"dcterms" | b"meta")
-                {
+                } else if matches!(
+                    local,
+                    b"title"
+                        | b"subject"
+                        | b"description"
+                        | b"language"
+                        | b"creator"
+                        | b"initial-creator"
+                        | b"creation-date"
+                        | b"date"
+                        | b"keyword"
+                        | b"generator"
+                        | b"editing-duration"
+                        | b"editing-cycles"
+                        | b"user-defined"
+                ) {
                     current = Some((String::from_utf8_lossy(local).into_owned(), String::new()));
                 }
             }
@@ -134,8 +147,8 @@ pub(crate) fn parse_metadata(
                     });
                 }
                 let name = empty.name();
-                let (prefix, local) = split_name(name.as_ref());
-                if prefix == b"meta" && local == b"document-statistic" {
+                let (_, local) = split_name(name.as_ref());
+                if local == b"document-statistic" {
                     read_statistics(&empty, &mut app, &mut findings);
                 }
             }
@@ -405,6 +418,14 @@ mod tests {
         let xml = br#"<office:document-meta xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0"><office:meta><meta:editing-duration>PT1H30M</meta:editing-duration></office:meta></office:document-meta>"#;
         let (properties, findings) = parse_metadata(xml, OdfImportLimits::default()).unwrap();
         assert_eq!(properties.app.total_time, Some(90));
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn metadata_mapping_is_independent_of_namespace_prefixes() {
+        let xml = br#"<o:document-meta xmlns:o="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:d="http://purl.org/dc/elements/1.1/"><o:meta><d:title>Title</d:title></o:meta></o:document-meta>"#;
+        let (properties, findings) = parse_metadata(xml, OdfImportLimits::default()).unwrap();
+        assert_eq!(properties.core.title.as_deref(), Some("Title"));
         assert!(findings.is_empty());
     }
 }
