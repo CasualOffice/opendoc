@@ -1852,6 +1852,37 @@ fn numbering_reference_resolves_to_a_definition() {
 }
 
 #[test]
+fn instance_start_override_is_imported_not_dropped() {
+    // `<w:num><w:lvlOverride w:ilvl><w:startOverride w:val>` restarts a list at a
+    // per-instance value; the layout already honors instance.overrides, so the
+    // only gap was import dropping the override entirely.
+    let numbering = br#"<w:numbering xmlns:w="urn:w">
+        <w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/>
+            <w:numFmt w:val="decimal"/></w:lvl></w:abstractNum>
+        <w:num w:numId="1"><w:abstractNumId w:val="0"/>
+            <w:lvlOverride w:ilvl="0"><w:startOverride w:val="5"/></w:lvlOverride>
+        </w:num>
+    </w:numbering>"#;
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>
+            <w:r><w:t>item</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import_with_numbering(document, numbering);
+
+    let reference = paragraph(&import, 0).properties.numbering.unwrap();
+    let definitions = import.document.definitions();
+    let instance = definitions.numbering.get(&reference.instance).unwrap();
+    assert_eq!(instance.overrides.len(), 1, "the startOverride is captured");
+    assert_eq!(instance.overrides[0].level, 0);
+    assert_eq!(instance.overrides[0].start, Some(5));
+    assert!(
+        !features(&import).contains(&"lvlOverride")
+            && !features(&import).contains(&"startOverride"),
+        "the override is mapped, not reported unsupported"
+    );
+}
+
+#[test]
 fn style_inherited_numbering_is_resolved_not_dropped() {
     // A paragraph style that carries its list membership via `w:pPr/w:numPr`
     // (e.g. ListBullet -> numId) used to be dropped by the styles parser, so a
