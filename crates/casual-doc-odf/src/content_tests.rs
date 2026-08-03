@@ -1,0 +1,262 @@
+use casual_doc_model::v1::{BlockNode, BreakKind, InlineNode};
+use casual_doc_package::CancellationToken;
+
+use crate::{
+    ModelOutcome, OdfError, OdfImportLimits, OdfVersion, import_content_xml,
+    import_content_xml_with_cancellation,
+};
+
+fn content(version: &str, body: &str) -> Vec<u8> {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<office:document-content
+ xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+ xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+ xmlns:xlink="http://www.w3.org/1999/xlink"
+ office:version="{version}">
+ <office:body><office:text>{body}</office:text></office:body>
+</office:document-content>"#
+    )
+    .into_bytes()
+}
+
+fn paragraph(import: &crate::OdtImport, index: usize) -> &casual_doc_model::v1::Paragraph {
+    let BlockNode::Paragraph(paragraph) = &import.document.body()[index] else {
+        panic!("expected paragraph")
+    };
+    paragraph
+}
+
+#[test]
+fn core_text_constructs_map_to_valid_normalized_nodes() {
+    for (version, expected) in [
+        ("1.2", OdfVersion::V1_2),
+        ("1.3", OdfVersion::V1_3),
+        ("1.4", OdfVersion::V1_4),
+    ] {
+        let xml = content(version, "<text:p>versioned</text:p>");
+        import_content_xml(&xml, expected, OdfImportLimits::default()).unwrap();
+    }
+
+    let xml = content(
+        "1.4",
+        r#"<text:p>Hello <text:span text:style-name="Emphasis">world</text:span><text:s text:c="2"/><text:tab/><text:line-break/>tail &amp; end</text:p><text:h text:outline-level="2">Heading</text:h>"#,
+    );
+    let import = import_content_xml(&xml, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
+    import.document.validate().unwrap();
+    assert_eq!(import.document.body().len(), 2);
+
+    let first = paragraph(&import, 0);
+    assert!(matches!(&first.inlines[0], InlineNode::Run(run) if run.text == "Hello world  "));
+    assert!(matches!(&first.inlines[1], InlineNode::Tab(_)));
+    assert!(matches!(&first.inlines[2], InlineNode::Break(node) if node.kind == BreakKind::Line));
+    assert!(matches!(&first.inlines[3], InlineNode::Run(run) if run.text == "tail & end"));
+    assert_eq!(paragraph(&import, 1).properties.outline_level, Some(1));
+    assert_eq!(paragraph(&import, 1).inlines.len(), 1);
+
+    assert!(import.report.entries.iter().any(|entry| {
+        entry.feature == "odf.attribute.text.style-name"
+            && entry.occurrences == 1
+            && entry.model_outcome == ModelOutcome::Degraded
+    }));
+}
+
+#[test]
+fn identity_and_reports_ignore_prefix_and_attribute_order() {
+    let first = br#"<o:document-content xmlns:o="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:t="urn:oasis:names:tc:opendocument:xmlns:text:1.0" o:version="1.3"><o:body><o:text><t:p t:style-name="Body">same<t:s t:c="2"/>text</t:p></o:text></o:body></o:document-content>"#;
+    let reordered = br#"<office:document-content office:version="1.3" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"><office:body><office:text><text:p text:style-name="Body">same<text:s text:c="2"/>text</text:p></office:text></office:body></office:document-content>"#;
+    let first = import_content_xml(first, OdfVersion::V1_3, OdfImportLimits::default()).unwrap();
+    let reordered =
+        import_content_xml(reordered, OdfVersion::V1_3, OdfImportLimits::default()).unwrap();
+    assert_eq!(first.document, reordered.document);
+    assert_eq!(first.report, reordered.report);
+}
+
+#[test]
+fn wrong_version_document_kind_dtd_and_active_content_fail_closed() {
+    let mismatch = content("1.2", "<text:p>x</text:p>");
+    assert_eq!(
+        import_content_xml(&mismatch, OdfVersion::V1_4, OdfImportLimits::default()).unwrap_err(),
+        OdfError::ManifestMismatch
+    );
+
+    let spreadsheet = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" office:version="1.4"><office:body><office:spreadsheet/></office:body></office:document-content>"#;
+    assert_eq!(
+        import_content_xml(spreadsheet, OdfVersion::V1_4, OdfImportLimits::default()).unwrap_err(),
+        OdfError::UnsupportedDocumentKind
+    );
+
+    let dtd = br#"<!DOCTYPE x [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" office:version="1.4"><office:body><office:text/></office:body></office:document-content>"#;
+    assert_eq!(
+        import_content_xml(dtd, OdfVersion::V1_4, OdfImportLimits::default()).unwrap_err(),
+        OdfError::MalformedContent
+    );
+
+    let active = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" office:version="1.4"><office:scripts/><office:body><office:text/></office:body></office:document-content>"#;
+    assert_eq!(
+        import_content_xml(active, OdfVersion::V1_4, OdfImportLimits::default()).unwrap_err(),
+        OdfError::ActiveContent
+    );
+
+    let event_listener = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:script="urn:oasis:names:tc:opendocument:xmlns:script:1.0" office:version="1.4"><office:body><office:text><script:event-listener/></office:text></office:body></office:document-content>"#;
+    assert_eq!(
+        import_content_xml(event_listener, OdfVersion::V1_4, OdfImportLimits::default())
+            .unwrap_err(),
+        OdfError::ActiveContent
+    );
+
+    let undeclared_entity = content("1.4", "<text:p>&unknown;</text:p>");
+    assert_eq!(
+        import_content_xml(
+            &undeclared_entity,
+            OdfVersion::V1_4,
+            OdfImportLimits::default()
+        )
+        .unwrap_err(),
+        OdfError::MalformedContent
+    );
+}
+
+#[test]
+fn empty_text_body_and_deferred_containers_have_explicit_outcomes() {
+    let empty = content("1.4", "");
+    let imported =
+        import_content_xml(&empty, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
+    assert_eq!(imported.document.body().len(), 1);
+    assert!(paragraph(&imported, 0).inlines.is_empty());
+
+    let deferred = content(
+        "1.4",
+        r#"<text:list><text:list-item><text:p><text:a xlink:href="https://example.invalid/">visible</text:a></text:p></text:list-item></text:list>"#,
+    );
+    let imported =
+        import_content_xml(&deferred, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
+    assert_eq!(paragraph(&imported, 0).inlines.len(), 1);
+    assert!(
+        matches!(&paragraph(&imported, 0).inlines[0], InlineNode::Run(run) if run.text == "visible")
+    );
+    for expected in [
+        "odf.element.text.list",
+        "odf.element.text.list-item",
+        "odf.element.text.a",
+        "odf.attribute.foreign.href",
+    ] {
+        assert!(
+            imported
+                .report
+                .entries
+                .iter()
+                .any(|entry| entry.feature == expected)
+        );
+    }
+}
+
+#[test]
+fn malformed_leaf_content_and_duplicate_bodies_are_rejected() {
+    let nonempty_leaf = content("1.4", "<text:p><text:tab>bad</text:tab></text:p>");
+    assert_eq!(
+        import_content_xml(&nonempty_leaf, OdfVersion::V1_4, OdfImportLimits::default())
+            .unwrap_err(),
+        OdfError::MalformedContent
+    );
+
+    let duplicate = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" office:version="1.4"><office:body><office:text/></office:body><office:body/></office:document-content>"#;
+    assert_eq!(
+        import_content_xml(duplicate, OdfVersion::V1_4, OdfImportLimits::default()).unwrap_err(),
+        OdfError::MalformedContent
+    );
+}
+
+#[test]
+fn content_limits_and_cancellation_are_atomic() {
+    let xml = content("1.4", "<text:p>x<text:s text:c=\"4\"/></text:p>");
+    let cancellation = CancellationToken::default();
+    cancellation.cancel();
+    assert_eq!(
+        import_content_xml_with_cancellation(
+            &xml,
+            OdfVersion::V1_4,
+            OdfImportLimits::default(),
+            &cancellation,
+        )
+        .unwrap_err(),
+        OdfError::Cancelled
+    );
+
+    for limits in [
+        OdfImportLimits {
+            max_content_bytes: 8,
+            ..OdfImportLimits::default()
+        },
+        OdfImportLimits {
+            max_paragraphs: 0,
+            ..OdfImportLimits::default()
+        },
+        OdfImportLimits {
+            max_inline_nodes: 0,
+            ..OdfImportLimits::default()
+        },
+        OdfImportLimits {
+            max_text_bytes: 1,
+            ..OdfImportLimits::default()
+        },
+        OdfImportLimits {
+            max_space_repeat: 3,
+            ..OdfImportLimits::default()
+        },
+        OdfImportLimits {
+            max_xml_depth: 2,
+            ..OdfImportLimits::default()
+        },
+        OdfImportLimits {
+            max_xml_elements: 2,
+            ..OdfImportLimits::default()
+        },
+        OdfImportLimits {
+            max_xml_attributes: 0,
+            ..OdfImportLimits::default()
+        },
+        OdfImportLimits {
+            max_xml_attribute_bytes: 0,
+            ..OdfImportLimits::default()
+        },
+        OdfImportLimits {
+            max_xml_name_bytes: 3,
+            ..OdfImportLimits::default()
+        },
+    ] {
+        let result = import_content_xml(&xml, OdfVersion::V1_4, limits);
+        assert!(
+            matches!(result, Err(OdfError::LimitExceeded { .. })),
+            "expected limit failure for {limits:?}, got {result:?}"
+        );
+    }
+
+    let invalid = OdfImportLimits {
+        max_xml_depth: usize::MAX,
+        ..OdfImportLimits::default()
+    };
+    assert!(matches!(
+        import_content_xml(&xml, OdfVersion::V1_4, invalid),
+        Err(OdfError::InvalidLimitConfiguration {
+            limit: "odf_content_xml_depth",
+            ..
+        })
+    ));
+
+    let reported = content(
+        "1.4",
+        "<text:list><text:list-item><text:p>x</text:p></text:list-item></text:list>",
+    );
+    let import = import_content_xml(
+        &reported,
+        OdfVersion::V1_4,
+        OdfImportLimits {
+            max_report_features: 0,
+            ..OdfImportLimits::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(import.report.entries.len(), 1);
+    assert_eq!(import.report.entries[0].feature, "odf.report.overflow");
+}

@@ -71,7 +71,7 @@ report.
 | TXT import/export | Yes | Bounded strict UTF-8 import, deterministic semantic LF export, exact retained unchanged bytes, and compatibility-loss reporting are implemented in the internal format registry; stable SDK/WASM host surfaces are pending. |
 | Page render to raster (PNG) | Yes | CPU backend implemented: real pages, tables, images, and VML render via `tiny-skia`/`skrifa`; structurally strong, not yet pixel-perfect Word-grade (see doc 46). |
 | PDF render/export | Yes | Backend decision pending. |
-| ODT import/export | Later | Architecture accepted in doc 94; the format-neutral registry and bounded ZIP substrate are implemented, but no ODF/ODT adapter or support claim exists yet. Not a v1 release gate. |
+| ODT import/export | Later | In progress under docs 94–95. Bounded ODF 1.2–1.4 ODT package/profile admission is implemented. The internal semantic importer maps validated core paragraphs, headings, spans, explicit spaces, tabs, and line breaks with deterministic identity and explicit findings for deferred constructs. Styles, lists, tables, links, notes, bookmarks, media, metadata, preservation, registry/host integration, export, corpus conformance, and interoperability gates remain incomplete; this is not yet a general ODT support claim or v1 release gate. |
 | HTML/Markdown interchange | Later | Not an editing source of truth. |
 | Macros/VBA execution | No | Blocked by policy. |
 

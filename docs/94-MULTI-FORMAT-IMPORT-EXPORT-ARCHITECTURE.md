@@ -17,6 +17,13 @@ seam for later Markdown/HTML interchange or trusted host-provided adapters.
 This is an architecture design, not a support claim. No format becomes supported
 until its security, corpus, round-trip, and compatibility gates pass.
 
+Implementation snapshot (2026-08-04): Slices A–C and the bounded ODT package
+checkpoint of Slice D are complete. Slice D's core `content.xml` importer now
+maps paragraphs, headings, spans, explicit spaces, tabs, and line breaks into a
+validated schema-v1 document with semantic-fact-derived identities and bounded
+compatibility findings. The remaining Slice D surface and all ODT export/host
+work remain incomplete; see docs 14, 18, and 95 for the exact status.
+
 ## 2. Scope
 
 ### In scope

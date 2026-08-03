@@ -3,13 +3,20 @@
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]
 
+mod content;
 mod error;
 mod manifest;
 mod package;
 
 #[cfg(test)]
+mod content_tests;
+#[cfg(test)]
 mod tests;
 
+pub use content::{
+    CompatibilityEntry, CompatibilityReport, ModelOutcome, OdfImportLimits, OdtImport,
+    RetentionOutcome, import_content_xml, import_content_xml_with_cancellation,
+};
 pub use error::OdfError;
 pub use manifest::ManifestEntry;
 pub use package::{

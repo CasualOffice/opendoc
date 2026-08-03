@@ -5,8 +5,8 @@ use zip::CompressionMethod;
 use zip::write::{FullFileOptions, ZipWriter};
 
 use crate::{
-    CONTENT_PART, MANIFEST_PART, MIMETYPE_PART, ODT_MIME, OdfError, OdfPackageLimits, OdfVersion,
-    OdtPackage,
+    CONTENT_PART, MANIFEST_PART, MIMETYPE_PART, ODT_MIME, OdfError, OdfImportLimits,
+    OdfPackageLimits, OdfVersion, OdtPackage,
 };
 
 const CONTENT: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?>
@@ -90,6 +90,10 @@ fn odf_1_2_through_1_4_are_admitted_deterministically() {
             vec!["/", CONTENT_PART]
         );
         assert!(!odt.has_signatures());
+        if expected == OdfVersion::V1_4 {
+            let imported = odt.import_document(OdfImportLimits::default()).unwrap();
+            assert_eq!(imported.document.body().len(), 1);
+        }
     }
 }
 

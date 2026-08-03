@@ -19,6 +19,20 @@ The work lands as reviewable commits:
 4. registry integration, compatibility/preservation reporting, fixtures, fuzz,
    and full gates.
 
+### Implementation status
+
+- Checkpoint 1 is complete: bounded ODF 1.2–1.4 package/profile admission,
+  manifest validation, encryption/active-content refusal, signature-presence
+  facts, cancellation, regression tests, and the package fuzz target.
+- Checkpoint 2 implements the bounded core `content.xml` pipeline: strict
+  namespace/version/text-body validation; paragraphs and headings; flattened
+  spans with reported deferred styling; explicit spaces, tabs, and line breaks;
+  XML reference handling; semantic-fact-derived deterministic IDs; typed
+  redacted failures; cancellation; and explicit compatibility findings for
+  deferred constructs.
+- Named/automatic style resolution and all complex structures in sections 4 and
+  6 remain in progress. ODT export and public host surfaces remain Slice E.
+
 ## 2. Normative package profile
 
 An admitted ODT is a format-neutral `BoundedPackage` plus ODF rules:

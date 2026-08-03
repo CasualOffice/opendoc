@@ -51,6 +51,12 @@ pub enum OdfError {
     EncryptedDocument,
     /// The first ODT profile refuses scripts, macros, or executable content.
     ActiveContent,
+    /// `content.xml` is malformed or violates the admitted text-document profile.
+    MalformedContent,
+    /// The ODF body is not an OpenDocument Text body.
+    UnsupportedDocumentKind,
+    /// Parsed content could not satisfy normalized-model invariants.
+    InvalidModel,
     /// A requested admitted ODF part does not exist.
     PartNotFound,
     /// A requested admitted ODF part could not be verified.
@@ -98,6 +104,13 @@ impl fmt::Display for OdfError {
                 formatter.write_str("encrypted ODF documents are unsupported")
             }
             Self::ActiveContent => formatter.write_str("ODF active content is blocked by policy"),
+            Self::MalformedContent => formatter.write_str("ODF document content is malformed"),
+            Self::UnsupportedDocumentKind => {
+                formatter.write_str("ODF document kind is not supported")
+            }
+            Self::InvalidModel => {
+                formatter.write_str("ODF content does not form a valid normalized document")
+            }
             Self::PartNotFound => formatter.write_str("ODF package part was not found"),
             Self::PartReadFailed => formatter.write_str("ODF package part could not be verified"),
         }

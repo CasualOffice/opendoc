@@ -45,6 +45,15 @@ Scheduled CI adds dependency advisories and a bounded seeded DOCX package fuzz
 campaign. Pull-request CI builds the format-neutral ZIP, DOCX, and ODT package
 fuzz targets; seeded ODT campaigns become required when the rights-reviewed ODT
 corpus lands in MFIO-007.
+
+The ODT semantic-import gate additionally requires namespace/prefix and
+attribute-order invariance, strict version/document-kind checks, DTD and active
+content refusal, bounded XML/text/paragraph/inline/report resources,
+cooperative cancellation, normalized-model validation, and explicit findings
+for every deferred construct family. The initial core-text checkpoint exercises
+these properties with synthetic fixtures; rights-reviewed ODF fixtures and a
+dedicated `content.xml` fuzz target remain Slice D completion requirements.
+
 Release workflows are separate and receive no write permission during pull
 request validation.
 

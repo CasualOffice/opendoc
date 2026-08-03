@@ -11,13 +11,40 @@ import { readFileSync } from "node:fs";
 // can't be `require`d, and it must stay import/export-free for the browser).
 // Evaluate it in a sandbox with a fake `module` and no `document`, so its
 // data-export block runs while its DOM render is skipped.
-const source = readFileSync(new URL("../src/fidelity.js", import.meta.url), "utf8");
+const source = readFileSync(
+  new URL("../src/fidelity.js", import.meta.url),
+  "utf8",
+);
 const sandbox = { exports: {} };
 new Function("module", source)(sandbox);
-const { FIDELITY, FIDELITY_STAGE } = sandbox.exports;
+const { FIDELITY, FIDELITY_STAGE, FORMAT_SUPPORT } = sandbox.exports;
 
 const STAGES = ["modeled", "rendered", "editable", "roundtrips"];
 const VALUES = new Set(["full", "partial", "placeholder", "preserved", "none"]);
+
+test("format pipeline rows are complete and do not overstate ODT", () => {
+  assert.deepEqual(
+    FORMAT_SUPPORT.map((row) => row.format),
+    ["DOCX", "Normalized JSON", "Plain text", "ODT"],
+  );
+  for (const row of FORMAT_SUPPORT) {
+    assert.ok(
+      row.note && row.note.trim().length > 0,
+      `${row.format} has a note`,
+    );
+    for (const stage of ["validation", "import", "export", "host"]) {
+      assert.ok(
+        VALUES.has(row[stage]),
+        `${row.format}.${stage} is a known stage value`,
+      );
+    }
+  }
+  const odt = FORMAT_SUPPORT.find((row) => row.format === "ODT");
+  assert.equal(odt.validation, "full");
+  assert.equal(odt.import, "partial");
+  assert.equal(odt.export, "none");
+  assert.equal(odt.host, "none");
+});
 
 test("every construct family in the expected set is present exactly once", () => {
   const expected = [
@@ -42,18 +69,31 @@ test("every construct family in the expected set is present exactly once", () =>
     "Content controls (w:sdt)",
   ];
   const actual = FIDELITY.map((row) => row.family);
-  assert.deepEqual(actual, expected, "construct list drifted — update the page and this guard together");
+  assert.deepEqual(
+    actual,
+    expected,
+    "construct list drifted — update the page and this guard together",
+  );
 });
 
 test("every row is well-formed with a note and valid stage values", () => {
   for (const row of FIDELITY) {
-    assert.ok(row.note && row.note.trim().length > 0, `${row.family} has a note`);
+    assert.ok(
+      row.note && row.note.trim().length > 0,
+      `${row.family} has a note`,
+    );
     for (const stage of STAGES) {
-      assert.ok(VALUES.has(row[stage]), `${row.family}.${stage} is a known stage value (got ${row[stage]})`);
+      assert.ok(
+        VALUES.has(row[stage]),
+        `${row.family}.${stage} is a known stage value (got ${row[stage]})`,
+      );
     }
     // Every stage value the page can render must have a glyph/label.
     for (const stage of STAGES) {
-      assert.ok(FIDELITY_STAGE[row[stage]], `${row.family}.${stage} maps to a legend entry`);
+      assert.ok(
+        FIDELITY_STAGE[row[stage]],
+        `${row.family}.${stage} maps to a legend entry`,
+      );
     }
   }
 });
@@ -84,7 +124,17 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
   assert.equal(by["Charts"].rendered, "preserved");
   assert.equal(by["SmartArt"].rendered, "preserved");
   // Nothing claims "full" editable for charts/smartart/math/images/headers.
-  for (const family of ["Charts", "SmartArt", "Math (OMML)", "Images & inline drawings", "Headers & footers"]) {
-    assert.notEqual(by[family].editable, "full", `${family} must not claim full editability`);
+  for (const family of [
+    "Charts",
+    "SmartArt",
+    "Math (OMML)",
+    "Images & inline drawings",
+    "Headers & footers",
+  ]) {
+    assert.notEqual(
+      by[family].editable,
+      "full",
+      `${family} must not claim full editability`,
+    );
   }
 });

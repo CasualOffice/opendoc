@@ -180,7 +180,7 @@ Details: [fidelity gap analysis](docs/46-RENDERING-FIDELITY-GAP-ANALYSIS.md) ·
 | `casual-doc-selection` | Logical caret/range validation and mapping |
 | `casual-doc-package` | Format-neutral, security-bounded ZIP admission and part reads |
 | `casual-doc-ooxml` | Security-bounded OOXML package inspection |
-| `casual-doc-odf` | Security-bounded ODF package/profile admission and ODT import foundation |
+| `casual-doc-odf` | Security-bounded ODF package/profile admission and incremental ODT semantic import |
 | `casual-doc-import` | WordprocessingML semantic import into the normalized model |
 | `casual-doc-export` | DOCX writers: byte-identical reconstruction and the semantic model → WordprocessingML writer |
 | `casual-doc-io` | Format-neutral identities, capability descriptors, deterministic detection/dispatch, preservation envelopes, and built-in adapters |

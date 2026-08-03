@@ -5,7 +5,7 @@ use casual_doc_package::{
 };
 
 use crate::manifest::{Manifest, enforce, parse_manifest};
-use crate::{ManifestEntry, OdfError};
+use crate::{ManifestEntry, OdfError, OdfImportLimits, OdtImport};
 
 /// Required ODF MIME-type part.
 pub const MIMETYPE_PART: &str = "mimetype";
@@ -252,6 +252,26 @@ impl<'a> OdtPackage<'a> {
         self.package
             .read_part_with_cancellation(part_name, cancellation)
             .map_err(OdfError::from)
+    }
+
+    /// Imports the admitted ODT's `content.xml` into the normalized v1 model.
+    pub fn import_document(&mut self, limits: OdfImportLimits) -> Result<OdtImport, OdfError> {
+        self.import_document_with_cancellation(limits, &CancellationToken::default())
+    }
+
+    /// Imports `content.xml` while honoring cooperative cancellation.
+    pub fn import_document_with_cancellation(
+        &mut self,
+        limits: OdfImportLimits,
+        cancellation: &CancellationToken,
+    ) -> Result<OdtImport, OdfError> {
+        let content = self.read_part_with_cancellation(CONTENT_PART, cancellation)?;
+        crate::content::import_content_xml_with_cancellation(
+            &content,
+            self.version,
+            limits,
+            cancellation,
+        )
     }
 }
 
