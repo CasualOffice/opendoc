@@ -829,6 +829,46 @@ fn paragraph_hash(
 /// Flows a sequence of block nodes (a body or a table cell) into shaped
 /// fragments at `width`. Paragraphs shape to lines; tables expand to their rows;
 /// block content controls are laid out in a later slice.
+/// The previously emitted paragraph in a block sequence, tracked so
+/// `w:contextualSpacing` can suppress the space between two adjacent paragraphs
+/// of the same style (see [`collapse_contextual_spacing`]). Any non-paragraph
+/// block (table, altChunk) breaks adjacency and clears this.
+struct ContextualNeighbor {
+    /// Index of the paragraph's fragment in the galley being built.
+    galley_index: usize,
+    /// Effective (applied) paragraph style — the identity Word compares.
+    style: Option<StyleId>,
+    /// Whether this paragraph's resolved `w:contextualSpacing` is on.
+    contextual: bool,
+}
+
+/// Applies `w:contextualSpacing` at the boundary between the just-pushed
+/// paragraph (`current`) and its predecessor: when the two share a paragraph
+/// style, each paragraph's own flag suppresses its edge of the shared gap —
+/// the current paragraph's space-before and the previous paragraph's
+/// space-after (ECMA-376 §17.3.1.9). In the ubiquitous case (a run of
+/// same-style list/body paragraphs that all carry the flag) both edges
+/// collapse and the inter-paragraph gap becomes zero.
+fn collapse_contextual_spacing(
+    galley: &mut [BlockFragment],
+    current: &ContextualNeighbor,
+    prev: &ContextualNeighbor,
+) {
+    if prev.style != current.style {
+        return;
+    }
+    if current.contextual
+        && let BlockFragment::Paragraph { box_metrics, .. } = &mut galley[current.galley_index]
+    {
+        box_metrics.space_before = Twip::ZERO;
+    }
+    if prev.contextual
+        && let BlockFragment::Paragraph { box_metrics, .. } = &mut galley[prev.galley_index]
+    {
+        box_metrics.space_after = Twip::ZERO;
+    }
+}
+
 fn flow_blocks(
     blocks: &[BlockNode],
     shaper: &dyn LineShaper,
@@ -837,6 +877,9 @@ fn flow_blocks(
 ) -> Vec<BlockFragment> {
     let mut galley = Vec::new();
     let mut index = 0;
+    // Tracks the previous paragraph for `w:contextualSpacing` collapsing; any
+    // non-paragraph block resets it (adjacency is broken across tables etc.).
+    let mut prev_para: Option<ContextualNeighbor> = None;
     while index < blocks.len() {
         if let (BlockNode::Paragraph(drop_cap), Some(BlockNode::Paragraph(body))) =
             (&blocks[index], blocks.get(index + 1))
@@ -850,6 +893,9 @@ fn flow_blocks(
             galley.push(drop_fragment);
             let exclusions = exclusion.into_iter().collect::<Vec<_>>();
             galley.push(flow_paragraph(body, shaper, width, ctx, &exclusions, false));
+            // A drop-cap frame is a distinct visual context; don't collapse
+            // spacing across it.
+            prev_para = None;
             index += 2;
             continue;
         }
@@ -857,19 +903,43 @@ fn flow_blocks(
         let block = &blocks[index];
         match block {
             BlockNode::Paragraph(paragraph) => {
+                // Effective style + resolved contextualSpacing flag drive the
+                // same-style adjacency collapse below.
+                let style = ctx.cascade.paragraph_style(&paragraph.properties);
+                let contextual = ctx
+                    .cascade
+                    .resolve_paragraph(&paragraph.properties)
+                    .contextual_spacing;
+                let galley_index = galley.len();
                 galley.push(flow_paragraph(paragraph, shaper, width, ctx, &[], false));
+                let current = ContextualNeighbor {
+                    galley_index,
+                    style,
+                    contextual,
+                };
+                if let Some(prev) = &prev_para {
+                    collapse_contextual_spacing(&mut galley, &current, prev);
+                }
+                prev_para = Some(current);
             }
-            BlockNode::Table(table) => flow_table(table, shaper, width, &mut galley, ctx),
+            BlockNode::Table(table) => {
+                flow_table(table, shaper, width, &mut galley, ctx);
+                prev_para = None;
+            }
             BlockNode::Sdt(sdt) => {
                 // Transparent wrapper (see the body loop): flow its children
                 // through this same path so SDTs inside table cells / nested
-                // contexts also flow. Nested SDTs recurse naturally.
+                // contexts also flow. Nested SDTs recurse naturally. The nested
+                // flow does its own contextual collapsing; treat the wrapper as
+                // an adjacency break at this level.
                 galley.extend(flow_blocks(&sdt.blocks, shaper, width, ctx));
+                prev_para = None;
             }
             // TODO(altchunk): same bounded placeholder as the body-flow site
             // above (no fallback blocks in the model to recurse into for real).
             BlockNode::AltChunk(chunk) => {
                 galley.push(alt_chunk_fragment(chunk, shaper, width, ctx));
+                prev_para = None;
             }
         }
         index += 1;
@@ -5524,6 +5594,76 @@ mod tests {
 
     fn document_with_definitions(body: Vec<BlockNode>, definitions: Definitions) -> Document {
         Document::new(NodeId::from_parts(1, 1).unwrap(), body, definitions).unwrap()
+    }
+
+    #[test]
+    fn contextual_spacing_collapses_gap_between_same_style_paragraphs() {
+        let shaper = ParleyShaper::new();
+        let spaced = |id: u64, contextual: bool| {
+            BlockNode::Paragraph(Paragraph {
+                id: NodeId::from_parts(id, 1).unwrap(),
+                properties: ParagraphProperties {
+                    spacing: Some(Spacing {
+                        before_twips: Some(200),
+                        after_twips: Some(200),
+                        ..Spacing::default()
+                    }),
+                    contextual_spacing: contextual,
+                    ..ParagraphProperties::default()
+                },
+                inlines: vec![run_node(id * 10, "x", RunProperties::default())],
+            })
+        };
+        let metrics = |galley: &[BlockFragment], i: usize| {
+            let BlockFragment::Paragraph { box_metrics, .. } = &galley[i] else {
+                panic!("paragraph fragment expected at {i}");
+            };
+            (box_metrics.space_before, box_metrics.space_after)
+        };
+
+        // Two same-(default)-style paragraphs that both carry the flag: the shared
+        // gap collapses from both sides — first's space-after and second's
+        // space-before both zero.
+        let both = build_galley(
+            &document(vec![spaced(2, true), spaced(3, true)]),
+            &shaper,
+            Twip::from_points(400),
+        );
+        assert_eq!(
+            metrics(&both, 0).1,
+            Twip::ZERO,
+            "first space_after collapses"
+        );
+        assert_eq!(
+            metrics(&both, 1).0,
+            Twip::ZERO,
+            "second space_before collapses"
+        );
+        // The outer edges (first's before, second's after) are untouched.
+        assert_eq!(metrics(&both, 0).0, Twip(200));
+        assert_eq!(metrics(&both, 1).1, Twip(200));
+
+        // Only the second paragraph carries the flag: each paragraph's own flag
+        // governs its edge, so only the second's space-before collapses.
+        let one = build_galley(
+            &document(vec![spaced(2, false), spaced(3, true)]),
+            &shaper,
+            Twip::from_points(400),
+        );
+        assert_eq!(metrics(&one, 0).1, Twip(200), "unflagged first keeps after");
+        assert_eq!(
+            metrics(&one, 1).0,
+            Twip::ZERO,
+            "flagged second drops before"
+        );
+
+        // A flag with no same-style predecessor does nothing.
+        let alone = build_galley(
+            &document(vec![spaced(2, true)]),
+            &shaper,
+            Twip::from_points(400),
+        );
+        assert_eq!(metrics(&alone, 0), (Twip(200), Twip(200)));
     }
 
     fn collected_items<'a>(
