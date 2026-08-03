@@ -1061,6 +1061,13 @@ pub(crate) fn import_with_sources(
         Some(xml) => numbering::parse(xml, &mut ids, &mut reporter, config)?,
         None => Numbering::default(),
     };
+    // Resolve style-level `w:numPr` now that both parts are parsed: a paragraph
+    // style's list membership (captured raw during styles parsing, since the
+    // numbering `numId -> instance` map did not exist yet) becomes the style's
+    // `paragraph.numbering`, so a paragraph that inherits its list from its style
+    // renders with a marker.
+    let mut styles = styles;
+    styles.resolve_numbering(&numbering, &mut reporter);
     let font_table = match font_table_xml {
         Some(xml) => font_table::parse(xml, font_table_rels, config)?,
         None => Vec::new(),
