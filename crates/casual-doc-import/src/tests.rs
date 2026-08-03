@@ -3328,6 +3328,8 @@ fn simple_field_maps_instruction_and_cached_result() {
         panic!("expected a field");
     };
     assert_eq!(field.instruction, " PAGE ");
+    // The instruction is additionally projected to a typed kind.
+    assert_eq!(field.kind, casual_doc_model::v1::FieldKind::Page);
     let mut text = String::new();
     field.inlines.iter().for_each(|c| inline_text(c, &mut text));
     assert_eq!(text, "7");

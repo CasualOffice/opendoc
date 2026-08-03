@@ -8,13 +8,13 @@ use casual_doc_model::v1::{
     BreakKind, CellVerticalAlignment, CnfStyle, ColorScheme, ColumnDef, Comment, CommentId,
     CommentRangeEnd, CommentRangeStart, CommentReference, CropRect, DashStyle, DefinitionMap,
     DocGrid, DocGridType, Drawing, DrawingAnchor, EmbeddedKind, EmbeddedObject, EmbeddedPart,
-    Extent, ExternalTarget, Field, FormCheckBox, FormCheckBoxSize, FormDropDown, FormFieldData,
-    FormFieldKind, FormTextInput, FormTextType, GridColumn, GroupChild, GroupPicture, GroupShape,
-    GroupTextBox, GroupTransform, HR_FULL_WIDTH_PERMILLE, HeaderFooterId, HeaderFooterKind,
-    HeaderFooterRef, HeightRule, HorizontalAlign, HorizontalAnchor, HorizontalPosition,
-    HorizontalRule, HorizontalRuleAlign, Hyperlink, HyperlinkTarget, InlineNode, InlineSdt,
-    InternalTarget, LineEnd, LineEndKind, LineEndSize, LineNumberRestart, LineNumbering,
-    MAX_DESCR_BYTES, MAX_EMU, MAX_FIELD_INSTRUCTION_BYTES, MAX_FORM_FIELD_ENTRIES,
+    Extent, ExternalTarget, Field, FieldKind, FormCheckBox, FormCheckBoxSize, FormDropDown,
+    FormFieldData, FormFieldKind, FormTextInput, FormTextType, GridColumn, GroupChild,
+    GroupPicture, GroupShape, GroupTextBox, GroupTransform, HR_FULL_WIDTH_PERMILLE, HeaderFooterId,
+    HeaderFooterKind, HeaderFooterRef, HeightRule, HorizontalAlign, HorizontalAnchor,
+    HorizontalPosition, HorizontalRule, HorizontalRuleAlign, Hyperlink, HyperlinkTarget,
+    InlineNode, InlineSdt, InternalTarget, LineEnd, LineEndKind, LineEndSize, LineNumberRestart,
+    LineNumbering, MAX_DESCR_BYTES, MAX_EMU, MAX_FIELD_INSTRUCTION_BYTES, MAX_FORM_FIELD_ENTRIES,
     MAX_FORM_FIELD_STRING_BYTES, MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH,
     MAX_SHAPE_ADJUSTMENTS, MAX_SHAPE_FORMULA_BYTES, MAX_SHAPE_GUIDE_NAME_BYTES,
     MAX_SHAPE_PRESET_BYTES, MAX_TEXTBOX_DEPTH, MarkRevision, MarkRevisionKind, Math,
@@ -6054,9 +6054,11 @@ impl BodyParser<'_> {
                 for child in children {
                     inlines.push(self.segment_to_inline(child)?);
                 }
+                let kind = FieldKind::parse(&instruction);
                 Ok(InlineNode::Field(Field {
                     id,
                     instruction,
+                    kind,
                     inlines,
                     form,
                 }))
