@@ -192,10 +192,10 @@ const FORMAT_SUPPORT = [
   },
   {
     format: "ODT",
-    note: "ODF 1.2–1.4 package admission and internal registry dispatch are complete. The bounded importer currently maps core paragraphs, headings, spans, spaces, tabs, and line breaks; styles, complex structures, export, stable host APIs, and browser support remain in progress.",
+    note: "ODF 1.2–1.4 package admission and internal registry dispatch are complete. The bounded importer and deterministic ODF 1.4 writer cover core paragraphs, headings, text, spaces, tabs, and line breaks. Styles, complex structures, edit-tolerant preservation, stable host APIs, and browser support remain in progress.",
     validation: "full",
     import: "partial",
-    export: "none",
+    export: "partial",
     host: "none",
   },
 ];

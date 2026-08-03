@@ -845,7 +845,12 @@ mod tests {
                 .into_iter()
                 .map(FormatId::as_str)
                 .collect::<Vec<_>>(),
-            vec![formats::NORMALIZED_JSON, formats::DOCX, formats::TEXT]
+            vec![
+                formats::NORMALIZED_JSON,
+                formats::ODT,
+                formats::DOCX,
+                formats::TEXT,
+            ]
         );
     }
 }

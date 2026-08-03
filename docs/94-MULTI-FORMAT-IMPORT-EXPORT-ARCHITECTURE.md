@@ -17,14 +17,14 @@ seam for later Markdown/HTML interchange or trusted host-provided adapters.
 This is an architecture design, not a support claim. No format becomes supported
 until its security, corpus, round-trip, and compatibility gates pass.
 
-Implementation snapshot (2026-08-04): Slices A–C and the bounded ODT package
-checkpoint of Slice D are complete. Slice D's core `content.xml` importer now
-maps paragraphs, headings, spans, explicit spaces, tabs, and line breaks into a
-validated schema-v1 document with semantic-fact-derived identities and bounded
-compatibility findings. The remaining Slice D surface and all ODT export/host
-work remain incomplete. The core subset is registered as an import-only adapter
-with definitive package evidence and optional exact-source retention; see docs
-14, 18, and 95 for the exact status.
+Implementation snapshot (2026-08-04): Slices A–C, bounded ODT package admission,
+and the core `content.xml` importer are complete. The importer maps paragraphs,
+headings, spans, explicit spaces, tabs, and line breaks into a validated
+schema-v1 document with semantic-fact-derived identities and bounded findings.
+Slice E now has a deterministic bounded ODF 1.4 writer for that same core subset,
+registered semantic export, and exact unchanged-byte recovery. The remaining
+Slice D semantic surface, edit-tolerant ODF preservation, generic host APIs, and
+production conformance work remain incomplete; see docs 14, 18, 95, and 96.
 
 ## 2. Scope
 
@@ -312,7 +312,7 @@ unchanged original byte stream.
 | DOCX | Existing semantic importer | Existing semantic writer | Preserve current behavior, then wire the retained-parts sidecar into sessions |
 | Normalized JSON | Existing strict, bounded schema-v1 loader | Existing deterministic compact schema-v1 exporter | Exact unchanged bytes when explicitly retained; no opaque semantic sidecar |
 | Plain text | Strict, bounded UTF-8 | UTF-8 with deterministic LF newline policy | Exact unchanged bytes when explicitly retained; otherwise semantic only |
-| ODT | New ODF 1.2–1.4 text-document importer | New writer; emitted version finalized from interoperability evidence | Unchanged package plus safe edit-tolerant foreign-part preservation |
+| ODT | Partial ODF 1.2–1.4 text-document importer | Partial deterministic ODF 1.4 semantic writer | Exact unchanged package bytes implemented; safe edit-tolerant foreign-part preservation remains pending |
 
 The ODT first supported surface is paragraphs/spans, named and automatic styles,
 lists, tables, page/master-page geometry, headers/footers, notes, hyperlinks,
@@ -484,6 +484,25 @@ Slice C is complete on `feature/multi-format-io`:
 - JSON's validated definite probe outranks text's possible probe, while explicit
   format selection still performs complete adapter validation;
 - stable SDK, WASM, and web generic-format surfaces remain deferred to Slice E.
+
+Slice D is in progress on `feature/multi-format-io`:
+
+- bounded ODF 1.2–1.4 package admission validates the ODT media type, manifest,
+  version, and required parts and rejects encrypted or active content;
+- the core namespace-aware importer maps paragraphs, headings, spans, spaces,
+  tabs, and line breaks with deterministic IDs and explicit deferred findings;
+- definitive registry detection, optional original-byte retention, and package
+  and content fuzz targets are implemented;
+- styles, lists, tables, links, notes, bookmarks, media, metadata, and broader
+  preservation remain pending under doc 95.
+
+Slice E is in progress on `feature/multi-format-io`:
+
+- a deterministic bounded ODF 1.4 writer emits the implemented core semantic
+  subset and explicit compatibility findings for model content it cannot carry;
+- the built-in ODT adapter exposes semantic export and exact unchanged-byte
+  recovery, but does not advertise edit-tolerant preservation;
+- stable native SDK, WASM, and browser open/save surfaces remain pending.
 
 ## 18. Normative references
 

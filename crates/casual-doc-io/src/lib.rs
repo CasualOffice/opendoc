@@ -2,8 +2,8 @@
 //!
 //! This crate is the adapter boundary described by doc 94. It does not parse or
 //! write document formats itself: registered adapters map source bytes to the
-//! normalized v1 model and back. The first built-in adapter delegates to the
-//! existing DOCX package, importer, and semantic writer without changing them.
+//! normalized v1 model and back. Built-in adapters cover DOCX, bounded ODT,
+//! normalized JSON, and UTF-8 plain text with explicit capability descriptors.
 
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]

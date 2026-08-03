@@ -1,6 +1,6 @@
 [package]
 name = "casual-doc-odf"
-description = "Security-bounded OpenDocument package admission and semantic import for OpenDoc"
+description = "Security-bounded OpenDocument package admission and semantic import/export for OpenDoc"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,8 +13,6 @@ publish = false
 casual-doc-model.workspace = true
 casual-doc-package.workspace = true
 quick-xml.workspace = true
-
-[dev-dependencies]
 zip.workspace = true
 
 [lints]

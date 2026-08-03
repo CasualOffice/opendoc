@@ -202,9 +202,13 @@ pub fn builtin_registry() -> FormatRegistry {
     registry
         .register_exporter(adapter)
         .expect("built-in text exporter registration is unique");
+    let adapter = Arc::new(OdtAdapter::default());
     registry
-        .register_importer(Arc::new(OdtAdapter::default()))
+        .register_importer(adapter.clone())
         .expect("built-in ODT importer registration is unique");
+    registry
+        .register_exporter(adapter)
+        .expect("built-in ODT exporter registration is unique");
     registry
 }
 

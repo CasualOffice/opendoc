@@ -5,6 +5,7 @@
 
 mod content;
 mod error;
+mod export;
 mod manifest;
 mod package;
 
@@ -18,6 +19,7 @@ pub use content::{
     RetentionOutcome, import_content_xml, import_content_xml_with_cancellation,
 };
 pub use error::OdfError;
+pub use export::{OdfExportLimits, OdtExport, write_odt};
 pub use manifest::ManifestEntry;
 pub use package::{
     CONTENT_PART, MANIFEST_PART, MIMETYPE_PART, ODT_MIME, OdfPackageLimits, OdfVersion, OdtPackage,

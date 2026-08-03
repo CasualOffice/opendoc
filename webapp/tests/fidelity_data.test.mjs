@@ -42,7 +42,7 @@ test("format pipeline rows are complete and do not overstate ODT", () => {
   const odt = FORMAT_SUPPORT.find((row) => row.format === "ODT");
   assert.equal(odt.validation, "full");
   assert.equal(odt.import, "partial");
-  assert.equal(odt.export, "none");
+  assert.equal(odt.export, "partial");
   assert.equal(odt.host, "none");
 });
 

@@ -20,7 +20,8 @@ test("the fidelity matrix page renders an accessible, data-grounded table", asyn
     has: page.getByRole("rowheader", { name: /ODT/ }),
   });
   await expect(odtRow.locator("td.cell").nth(1)).toContainText("Partial");
-  await expect(odtRow.locator("td.cell").nth(2)).toContainText("Not yet");
+  await expect(odtRow.locator("td.cell").nth(2)).toContainText("Partial");
+  await expect(odtRow.locator("td.cell").nth(3)).toContainText("Not yet");
 
   const table = page.locator("#docx-fidelity-table");
   await expect(table).toBeVisible();

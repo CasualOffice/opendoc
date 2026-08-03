@@ -1,0 +1,645 @@
+//! Deterministic bounded ODF 1.4 writing for the implemented ODT subset.
+
+use std::collections::BTreeMap;
+use std::io::{Cursor, Write};
+
+use casual_doc_model::v1::{
+    BlockNode, BreakKind, Definitions, Document, GroupChild, InlineNode, ParagraphProperties,
+    RevisionKind, RunProperties,
+};
+use zip::CompressionMethod;
+use zip::write::{SimpleFileOptions, ZipWriter};
+
+use crate::{
+    CompatibilityEntry, CompatibilityReport, MANIFEST_PART, MIMETYPE_PART, ModelOutcome, ODT_MIME,
+    OdfError, RetentionOutcome,
+};
+
+const CONTENT_PREFIX: &str = r#"<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.4"><office:body><office:text>"#;
+const CONTENT_SUFFIX: &str = "</office:text></office:body></office:document-content>";
+const MANIFEST: &str = r#"<?xml version="1.0" encoding="UTF-8"?><manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.4"><manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.text" manifest:version="1.4"/><manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/></manifest:manifest>"#;
+
+/// Resource limits for deterministic ODT semantic export.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OdfExportLimits {
+    /// Maximum generated `content.xml` bytes.
+    pub max_content_bytes: usize,
+    /// Maximum final ODT package bytes.
+    pub max_package_bytes: usize,
+    /// Maximum visited body blocks.
+    pub max_blocks: usize,
+    /// Maximum visited inline nodes.
+    pub max_inline_nodes: usize,
+    /// Maximum nested transparent-wrapper depth.
+    pub max_recursion_depth: usize,
+    /// Maximum aggregate source text bytes projected into XML.
+    pub max_text_bytes: usize,
+    /// Maximum distinct compatibility feature buckets before overflow folding.
+    pub max_report_features: usize,
+}
+
+impl OdfExportLimits {
+    /// Compiled maximum content XML bytes.
+    pub const HARD_MAX_CONTENT_BYTES: usize = 512 * 1024 * 1024;
+    /// Compiled maximum final package bytes.
+    pub const HARD_MAX_PACKAGE_BYTES: usize = 1024 * 1024 * 1024;
+    /// Compiled maximum visited blocks.
+    pub const HARD_MAX_BLOCKS: usize = 4_000_000;
+    /// Compiled maximum visited inline nodes.
+    pub const HARD_MAX_INLINE_NODES: usize = 16_000_000;
+    /// Compiled maximum wrapper depth.
+    pub const HARD_MAX_RECURSION_DEPTH: usize = 256;
+    /// Compiled maximum projected text bytes.
+    pub const HARD_MAX_TEXT_BYTES: usize = 512 * 1024 * 1024;
+    /// Compiled maximum report feature buckets.
+    pub const HARD_MAX_REPORT_FEATURES: usize = 16_384;
+
+    /// Validates configured limits against compiled safety ceilings.
+    pub fn validate(self) -> Result<(), OdfError> {
+        for (limit, value, hard_ceiling) in [
+            (
+                "odt_export_content_bytes",
+                self.max_content_bytes,
+                Self::HARD_MAX_CONTENT_BYTES,
+            ),
+            (
+                "odt_export_package_bytes",
+                self.max_package_bytes,
+                Self::HARD_MAX_PACKAGE_BYTES,
+            ),
+            ("odt_export_blocks", self.max_blocks, Self::HARD_MAX_BLOCKS),
+            (
+                "odt_export_inline_nodes",
+                self.max_inline_nodes,
+                Self::HARD_MAX_INLINE_NODES,
+            ),
+            (
+                "odt_export_recursion_depth",
+                self.max_recursion_depth,
+                Self::HARD_MAX_RECURSION_DEPTH,
+            ),
+            (
+                "odt_export_text_bytes",
+                self.max_text_bytes,
+                Self::HARD_MAX_TEXT_BYTES,
+            ),
+            (
+                "odt_export_report_features",
+                self.max_report_features,
+                Self::HARD_MAX_REPORT_FEATURES,
+            ),
+        ] {
+            if value > hard_ceiling {
+                return Err(OdfError::InvalidLimitConfiguration {
+                    limit,
+                    value,
+                    hard_ceiling,
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Default for OdfExportLimits {
+    fn default() -> Self {
+        Self {
+            max_content_bytes: 128 * 1024 * 1024,
+            max_package_bytes: 256 * 1024 * 1024,
+            max_blocks: 500_000,
+            max_inline_nodes: 4_000_000,
+            max_recursion_depth: 64,
+            max_text_bytes: 128 * 1024 * 1024,
+            max_report_features: 4_096,
+        }
+    }
+}
+
+/// Successful deterministic semantic ODT export.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OdtExport {
+    /// Complete ODF 1.4 package bytes.
+    pub bytes: Vec<u8>,
+    /// Explicit findings for model semantics not fully represented.
+    pub report: CompatibilityReport,
+}
+
+#[derive(Debug)]
+struct Reporter {
+    counts: BTreeMap<(String, ModelOutcome), u32>,
+    overflow: u32,
+    max_features: usize,
+}
+
+impl Reporter {
+    fn new(max_features: usize) -> Self {
+        Self {
+            counts: BTreeMap::new(),
+            overflow: 0,
+            max_features,
+        }
+    }
+
+    fn record(&mut self, feature: &'static str, outcome: ModelOutcome) {
+        let key = (feature.to_owned(), outcome);
+        if let Some(count) = self.counts.get_mut(&key) {
+            *count = count.saturating_add(1);
+        } else if self.counts.len() < self.max_features {
+            self.counts.insert(key, 1);
+        } else {
+            self.overflow = self.overflow.saturating_add(1);
+        }
+    }
+
+    fn finish(self) -> CompatibilityReport {
+        let mut entries = self
+            .counts
+            .into_iter()
+            .map(
+                |((feature, model_outcome), occurrences)| CompatibilityEntry {
+                    feature,
+                    occurrences,
+                    model_outcome,
+                    retention_outcome: RetentionOutcome::NotRetained,
+                },
+            )
+            .collect::<Vec<_>>();
+        if self.overflow != 0 {
+            entries.push(CompatibilityEntry {
+                feature: "odt.export.report.overflow".to_owned(),
+                occurrences: self.overflow,
+                model_outcome: ModelOutcome::Omitted,
+                retention_outcome: RetentionOutcome::NotRetained,
+            });
+        }
+        entries.sort_by(|left, right| {
+            left.feature
+                .cmp(&right.feature)
+                .then_with(|| left.model_outcome.cmp(&right.model_outcome))
+        });
+        CompatibilityReport { entries }
+    }
+}
+
+struct Writer {
+    xml: String,
+    limits: OdfExportLimits,
+    blocks: usize,
+    inlines: usize,
+    text_bytes: usize,
+    paragraphs_written: usize,
+    reporter: Reporter,
+}
+
+impl Writer {
+    fn new(limits: OdfExportLimits) -> Result<Self, OdfError> {
+        let mut writer = Self {
+            xml: String::new(),
+            limits,
+            blocks: 0,
+            inlines: 0,
+            text_bytes: 0,
+            paragraphs_written: 0,
+            reporter: Reporter::new(limits.max_report_features),
+        };
+        writer.push(CONTENT_PREFIX)?;
+        Ok(writer)
+    }
+
+    fn push(&mut self, value: &str) -> Result<(), OdfError> {
+        let observed = self
+            .xml
+            .len()
+            .checked_add(value.len())
+            .ok_or(OdfError::LimitExceeded {
+                limit: "odt_export_content_bytes",
+                observed: usize::MAX,
+                allowed: self.limits.max_content_bytes,
+            })?;
+        enforce(
+            "odt_export_content_bytes",
+            observed,
+            self.limits.max_content_bytes,
+        )?;
+        self.xml.push_str(value);
+        Ok(())
+    }
+
+    fn visit_block(&mut self) -> Result<(), OdfError> {
+        self.blocks = checked_add(self.blocks, 1, "odt_export_blocks", self.limits.max_blocks)?;
+        Ok(())
+    }
+
+    fn visit_inline(&mut self) -> Result<(), OdfError> {
+        self.inlines = checked_add(
+            self.inlines,
+            1,
+            "odt_export_inline_nodes",
+            self.limits.max_inline_nodes,
+        )?;
+        Ok(())
+    }
+
+    fn check_depth(&self, depth: usize) -> Result<(), OdfError> {
+        enforce(
+            "odt_export_recursion_depth",
+            depth,
+            self.limits.max_recursion_depth,
+        )
+    }
+
+    fn write_blocks(&mut self, blocks: &[BlockNode], depth: usize) -> Result<(), OdfError> {
+        self.check_depth(depth)?;
+        for block in blocks {
+            self.visit_block()?;
+            match block {
+                BlockNode::Paragraph(paragraph) => {
+                    self.paragraphs_written = self.paragraphs_written.saturating_add(1);
+                    let mut remainder = paragraph.properties.clone();
+                    let outline = remainder.outline_level.take();
+                    if remainder != ParagraphProperties::default() {
+                        self.reporter
+                            .record("odt.export.paragraph_properties", ModelOutcome::Omitted);
+                    }
+                    if let Some(level) = outline {
+                        self.push("<text:h text:outline-level=\"")?;
+                        self.push(&(u16::from(level) + 1).to_string())?;
+                        self.push("\">")?;
+                    } else {
+                        self.push("<text:p>")?;
+                    }
+                    self.write_inlines(&paragraph.inlines, depth + 1)?;
+                    self.push(if outline.is_some() {
+                        "</text:h>"
+                    } else {
+                        "</text:p>"
+                    })?;
+                }
+                BlockNode::Sdt(sdt) => {
+                    self.reporter
+                        .record("odt.export.block_content_control", ModelOutcome::Degraded);
+                    self.write_blocks(&sdt.blocks, depth + 1)?;
+                }
+                BlockNode::Table(_) => self
+                    .reporter
+                    .record("odt.export.table", ModelOutcome::Omitted),
+                BlockNode::AltChunk(_) => self
+                    .reporter
+                    .record("odt.export.alt_chunk", ModelOutcome::Omitted),
+            }
+        }
+        Ok(())
+    }
+
+    fn write_inlines(&mut self, inlines: &[InlineNode], depth: usize) -> Result<(), OdfError> {
+        self.check_depth(depth)?;
+        for inline in inlines {
+            self.visit_inline()?;
+            match inline {
+                InlineNode::Run(run) => {
+                    if run.properties != RunProperties::default() {
+                        self.reporter
+                            .record("odt.export.run_properties", ModelOutcome::Omitted);
+                    }
+                    self.write_text(&run.text)?;
+                }
+                InlineNode::Tab(_) => self.push("<text:tab/>")?,
+                InlineNode::Break(node) => {
+                    if node.kind != BreakKind::Line {
+                        self.reporter
+                            .record("odt.export.page_or_column_break", ModelOutcome::Degraded);
+                    }
+                    self.push("<text:line-break/>")?;
+                }
+                InlineNode::Hyperlink(link) => {
+                    self.reporter
+                        .record("odt.export.hyperlink", ModelOutcome::Degraded);
+                    self.write_inlines(&link.inlines, depth + 1)?;
+                }
+                InlineNode::Field(field) => {
+                    self.reporter
+                        .record("odt.export.field", ModelOutcome::Degraded);
+                    self.write_inlines(&field.inlines, depth + 1)?;
+                }
+                InlineNode::Revision(revision) => {
+                    self.reporter
+                        .record("odt.export.revision", ModelOutcome::Degraded);
+                    if matches!(
+                        revision.kind,
+                        RevisionKind::Insertion | RevisionKind::MoveTo
+                    ) {
+                        self.write_inlines(&revision.inlines, depth + 1)?;
+                    }
+                }
+                InlineNode::Sdt(sdt) => {
+                    self.reporter
+                        .record("odt.export.inline_content_control", ModelOutcome::Degraded);
+                    self.write_inlines(&sdt.inlines, depth + 1)?;
+                }
+                InlineNode::Drawing(drawing) => {
+                    self.write_alt(drawing.descr.as_deref(), "odt.export.drawing")?
+                }
+                InlineNode::AnchoredDrawing(drawing) => {
+                    self.write_alt(drawing.descr.as_deref(), "odt.export.anchored_drawing")?
+                }
+                InlineNode::Math(math) => {
+                    self.reporter
+                        .record("odt.export.math", ModelOutcome::Degraded);
+                    self.write_text(&math.text)?;
+                }
+                InlineNode::Symbol(symbol) => {
+                    self.reporter
+                        .record("odt.export.symbol_font", ModelOutcome::Degraded);
+                    if let Some(character) = char::from_u32(symbol.char) {
+                        self.write_text(&character.to_string())?;
+                    }
+                }
+                InlineNode::NoBreakHyphen(_) => self.write_text("\u{2011}")?,
+                InlineNode::SoftHyphen(_) => self.write_text("\u{00ad}")?,
+                InlineNode::PositionalTab(_) => {
+                    self.reporter
+                        .record("odt.export.positional_tab", ModelOutcome::Degraded);
+                    self.push("<text:tab/>")?;
+                }
+                InlineNode::EmbeddedObject(_) => self
+                    .reporter
+                    .record("odt.export.embedded_object", ModelOutcome::Omitted),
+                InlineNode::TextBox(_) => self
+                    .reporter
+                    .record("odt.export.text_box", ModelOutcome::Omitted),
+                InlineNode::Group(group) => {
+                    self.reporter
+                        .record("odt.export.group", ModelOutcome::Omitted);
+                    if group
+                        .children
+                        .iter()
+                        .any(|child| matches!(child, GroupChild::TextBox(_) | GroupChild::Group(_)))
+                    {
+                        self.reporter
+                            .record("odt.export.group_text", ModelOutcome::Omitted);
+                    }
+                }
+                InlineNode::NoteReference(_) => self
+                    .reporter
+                    .record("odt.export.note_reference", ModelOutcome::Omitted),
+                InlineNode::CommentReference(_)
+                | InlineNode::CommentRangeStart(_)
+                | InlineNode::CommentRangeEnd(_) => self
+                    .reporter
+                    .record("odt.export.comment", ModelOutcome::Omitted),
+                InlineNode::BookmarkStart(_) | InlineNode::BookmarkEnd(_) => self
+                    .reporter
+                    .record("odt.export.bookmark", ModelOutcome::Omitted),
+                InlineNode::MoveRangeStart(_) | InlineNode::MoveRangeEnd(_) => self
+                    .reporter
+                    .record("odt.export.move_range", ModelOutcome::Omitted),
+                InlineNode::HorizontalRule(_) => self
+                    .reporter
+                    .record("odt.export.horizontal_rule", ModelOutcome::Omitted),
+            }
+        }
+        Ok(())
+    }
+
+    fn write_alt(
+        &mut self,
+        description: Option<&str>,
+        feature: &'static str,
+    ) -> Result<(), OdfError> {
+        if let Some(description) = description {
+            self.reporter.record(feature, ModelOutcome::Degraded);
+            self.write_text(description)
+        } else {
+            self.reporter.record(feature, ModelOutcome::Omitted);
+            Ok(())
+        }
+    }
+
+    fn write_text(&mut self, text: &str) -> Result<(), OdfError> {
+        self.text_bytes = checked_add(
+            self.text_bytes,
+            text.len(),
+            "odt_export_text_bytes",
+            self.limits.max_text_bytes,
+        )?;
+        let mut plain = String::new();
+        let mut characters = text.chars().peekable();
+        while let Some(character) = characters.next() {
+            match character {
+                ' ' => {
+                    self.flush_plain(&mut plain)?;
+                    let mut count = 1_usize;
+                    while characters.peek() == Some(&' ') {
+                        characters.next();
+                        count += 1;
+                    }
+                    if count == 1 {
+                        self.push("<text:s/>")?;
+                    } else {
+                        self.push("<text:s text:c=\"")?;
+                        self.push(&count.to_string())?;
+                        self.push("\"/>")?;
+                    }
+                }
+                '\t' => {
+                    self.flush_plain(&mut plain)?;
+                    self.push("<text:tab/>")?;
+                }
+                '\r' => {
+                    self.flush_plain(&mut plain)?;
+                    if characters.peek() == Some(&'\n') {
+                        characters.next();
+                    }
+                    self.push("<text:line-break/>")?;
+                }
+                '\n' => {
+                    self.flush_plain(&mut plain)?;
+                    self.push("<text:line-break/>")?;
+                }
+                value if is_xml_character(value) => plain.push(value),
+                _ => return Err(OdfError::InvalidXmlCharacter),
+            }
+        }
+        self.flush_plain(&mut plain)
+    }
+
+    fn flush_plain(&mut self, plain: &mut String) -> Result<(), OdfError> {
+        if plain.is_empty() {
+            return Ok(());
+        }
+        let escaped = quick_xml::escape::escape(plain.as_str()).into_owned();
+        plain.clear();
+        self.push(&escaped)
+    }
+}
+
+/// Writes a validated normalized document as a deterministic ODF 1.4 package.
+pub fn write_odt(document: &Document, limits: OdfExportLimits) -> Result<OdtExport, OdfError> {
+    limits.validate()?;
+    document.validate().map_err(|_| OdfError::InvalidModel)?;
+    let mut writer = Writer::new(limits)?;
+    if document.definitions() != &Definitions::default() {
+        writer
+            .reporter
+            .record("odt.export.definitions", ModelOutcome::Omitted);
+    }
+    if document.properties().is_some() {
+        writer
+            .reporter
+            .record("odt.export.document_properties", ModelOutcome::Omitted);
+    }
+    if document.background().is_some() {
+        writer
+            .reporter
+            .record("odt.export.background", ModelOutcome::Omitted);
+    }
+    writer.write_blocks(document.body(), 0)?;
+    if writer.paragraphs_written == 0 {
+        writer.push("<text:p/>")?;
+    }
+    writer.push(CONTENT_SUFFIX)?;
+    let content = writer.xml.into_bytes();
+    let report = writer.reporter.finish();
+    let bytes = package(&content, limits)?;
+    Ok(OdtExport { bytes, report })
+}
+
+fn package(content: &[u8], limits: OdfExportLimits) -> Result<Vec<u8>, OdfError> {
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    zip.start_file(
+        MIMETYPE_PART,
+        SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
+    )
+    .map_err(|_| OdfError::SerializationFailed)?;
+    zip.write_all(ODT_MIME.as_bytes())
+        .map_err(|_| OdfError::SerializationFailed)?;
+    let deflated = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+    zip.start_file(crate::CONTENT_PART, deflated)
+        .map_err(|_| OdfError::SerializationFailed)?;
+    zip.write_all(content)
+        .map_err(|_| OdfError::SerializationFailed)?;
+    zip.start_file(MANIFEST_PART, deflated)
+        .map_err(|_| OdfError::SerializationFailed)?;
+    zip.write_all(MANIFEST.as_bytes())
+        .map_err(|_| OdfError::SerializationFailed)?;
+    let bytes = zip
+        .finish()
+        .map_err(|_| OdfError::SerializationFailed)?
+        .into_inner();
+    enforce(
+        "odt_export_package_bytes",
+        bytes.len(),
+        limits.max_package_bytes,
+    )?;
+    Ok(bytes)
+}
+
+fn checked_add(
+    value: usize,
+    add: usize,
+    limit: &'static str,
+    allowed: usize,
+) -> Result<usize, OdfError> {
+    let observed = value.checked_add(add).ok_or(OdfError::LimitExceeded {
+        limit,
+        observed: usize::MAX,
+        allowed,
+    })?;
+    enforce(limit, observed, allowed)?;
+    Ok(observed)
+}
+
+fn enforce(limit: &'static str, observed: usize, allowed: usize) -> Result<(), OdfError> {
+    if observed > allowed {
+        Err(OdfError::LimitExceeded {
+            limit,
+            observed,
+            allowed,
+        })
+    } else {
+        Ok(())
+    }
+}
+
+fn is_xml_character(character: char) -> bool {
+    matches!(character as u32, 0x20..=0xd7ff | 0xe000..=0xfffd | 0x10000..=0x10ffff)
+}
+
+#[cfg(test)]
+mod tests {
+    use casual_doc_model::v1::{BlockNode, InlineNode};
+
+    use super::*;
+    use crate::{OdfImportLimits, OdfPackageLimits, OdfVersion, OdtPackage, import_content_xml};
+
+    const CORE: &[u8] = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.4"><office:body><office:text><text:p>one<text:s text:c="2"/>two<text:tab/>three<text:line-break/>four</text:p><text:h text:outline-level="2">Title</text:h></office:text></office:body></office:document-content>"#;
+
+    fn core_document() -> Document {
+        import_content_xml(CORE, OdfVersion::V1_4, OdfImportLimits::default())
+            .unwrap()
+            .document
+    }
+
+    #[test]
+    fn core_subset_is_deterministic_valid_and_semantically_stable() {
+        let document = core_document();
+        let first = write_odt(&document, OdfExportLimits::default()).unwrap();
+        let second = write_odt(&document, OdfExportLimits::default()).unwrap();
+        assert_eq!(first.bytes, second.bytes);
+        assert!(first.report.entries.is_empty());
+        let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+        let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+        assert_eq!(reopened.document, document);
+    }
+
+    #[test]
+    fn unsupported_formatting_is_reported_and_limits_fail_atomically() {
+        let mut document = core_document();
+        let BlockNode::Paragraph(paragraph) = &mut document.body_mut()[0] else {
+            panic!("paragraph")
+        };
+        let InlineNode::Run(run) = &mut paragraph.inlines[0] else {
+            panic!("run")
+        };
+        run.properties.bold = Some(true);
+        let exported = write_odt(&document, OdfExportLimits::default()).unwrap();
+        assert!(
+            exported
+                .report
+                .entries
+                .iter()
+                .any(|entry| entry.feature == "odt.export.run_properties")
+        );
+
+        let error = write_odt(
+            &document,
+            OdfExportLimits {
+                max_content_bytes: 8,
+                ..OdfExportLimits::default()
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            OdfError::LimitExceeded {
+                limit: "odt_export_content_bytes",
+                ..
+            }
+        ));
+        let invalid = write_odt(
+            &document,
+            OdfExportLimits {
+                max_blocks: usize::MAX,
+                ..OdfExportLimits::default()
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            invalid,
+            OdfError::InvalidLimitConfiguration {
+                limit: "odt_export_blocks",
+                ..
+            }
+        ));
+    }
+}

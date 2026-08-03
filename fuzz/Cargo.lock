@@ -30,6 +30,7 @@ dependencies = [
  "casual-doc-model",
  "casual-doc-package",
  "quick-xml",
+ "zip",
 ]
 
 [[package]]

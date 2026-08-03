@@ -57,6 +57,10 @@ pub enum OdfError {
     UnsupportedDocumentKind,
     /// Parsed content could not satisfy normalized-model invariants.
     InvalidModel,
+    /// Normalized text contains a character XML 1.0 cannot represent.
+    InvalidXmlCharacter,
+    /// Deterministic ODT XML or ZIP serialization failed.
+    SerializationFailed,
     /// A requested admitted ODF part does not exist.
     PartNotFound,
     /// A requested admitted ODF part could not be verified.
@@ -111,6 +115,10 @@ impl fmt::Display for OdfError {
             Self::InvalidModel => {
                 formatter.write_str("ODF content does not form a valid normalized document")
             }
+            Self::InvalidXmlCharacter => {
+                formatter.write_str("normalized text contains an invalid XML character")
+            }
+            Self::SerializationFailed => formatter.write_str("ODT serialization failed"),
             Self::PartNotFound => formatter.write_str("ODF package part was not found"),
             Self::PartReadFailed => formatter.write_str("ODF package part could not be verified"),
         }
