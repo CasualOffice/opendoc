@@ -12,8 +12,10 @@ mod artifact;
 mod docx;
 mod error;
 mod format;
+mod normalized_json;
 mod registry;
 mod report;
+mod text;
 
 pub use artifact::{
     DocumentResources, ExportArtifact, ExportMode, ExportRequest, FormatProfile, ImportArtifact,
@@ -22,6 +24,7 @@ pub use artifact::{
 pub use docx::{DocxAdapter, builtin_registry};
 pub use error::{AdapterError, IoError};
 pub use format::{FormatDescriptor, FormatId, FormatIdError, formats};
+pub use normalized_json::NormalizedJsonAdapter;
 pub use registry::{
     DetectionRequest, FormatExporter, FormatImporter, FormatRegistry, FormatSelection,
     ProbeConfidence, ProbeRequest, ProbeResult,
@@ -29,3 +32,4 @@ pub use registry::{
 pub use report::{
     CompatibilityEntry, CompatibilityReport, FeatureLocation, ModelOutcome, RetentionOutcome,
 };
+pub use text::{PlainTextAdapter, PlainTextLimits};

@@ -13,7 +13,8 @@ use crate::{
     AdapterError, CompatibilityEntry, CompatibilityReport, DocumentResources, ExportArtifact,
     ExportMode, ExportRequest, FeatureLocation, FormatDescriptor, FormatExporter, FormatId,
     FormatImporter, FormatProfile, FormatRegistry, ImportArtifact, ImportRequest, ModelOutcome,
-    ProbeRequest, ProbeResult, RetentionOutcome, SourceEnvelope, formats,
+    NormalizedJsonAdapter, PlainTextAdapter, ProbeRequest, ProbeResult, RetentionOutcome,
+    SourceEnvelope, formats,
 };
 
 const DOCX_MIME: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -179,14 +180,28 @@ impl FormatExporter for DocxAdapter {
 
 /// Creates the built-in registry for the currently implemented formats.
 pub fn builtin_registry() -> FormatRegistry {
-    let adapter = Arc::new(DocxAdapter::default());
     let mut registry = FormatRegistry::new();
+    let adapter = Arc::new(DocxAdapter::default());
     registry
         .register_importer(adapter.clone())
         .expect("built-in DOCX importer registration is unique");
     registry
         .register_exporter(adapter)
         .expect("built-in DOCX exporter registration is unique");
+    let adapter = Arc::new(NormalizedJsonAdapter::default());
+    registry
+        .register_importer(adapter.clone())
+        .expect("built-in normalized JSON importer registration is unique");
+    registry
+        .register_exporter(adapter)
+        .expect("built-in normalized JSON exporter registration is unique");
+    let adapter = Arc::new(PlainTextAdapter::default());
+    registry
+        .register_importer(adapter.clone())
+        .expect("built-in text importer registration is unique");
+    registry
+        .register_exporter(adapter)
+        .expect("built-in text exporter registration is unique");
     registry
 }
 
@@ -315,16 +330,29 @@ mod tests {
     }
 
     #[test]
-    fn an_invalid_zip_is_not_selected_by_suffix() {
+    fn an_invalid_zip_is_not_selected_as_docx_by_suffix() {
         let registry = builtin_registry();
-        assert!(matches!(
-            registry.detect(DetectionRequest {
+        let detected = registry
+            .detect(DetectionRequest {
                 bytes: b"PK-not-a-valid-package",
                 selection: FormatSelection::Auto,
                 file_name_hint: Some("document.docx"),
                 mime_hint: Some(DOCX_MIME),
-            }),
-            Err(crate::IoError::UnsupportedFormat { requested: None })
-        ));
+            })
+            .unwrap();
+        assert_eq!(detected.as_str(), formats::TEXT);
+
+        let error = registry
+            .import(
+                DetectionRequest {
+                    bytes: b"PK-not-a-valid-package",
+                    selection: FormatSelection::Explicit(FormatId::new(formats::DOCX).unwrap()),
+                    file_name_hint: Some("document.docx"),
+                    mime_hint: Some(DOCX_MIME),
+                },
+                false,
+            )
+            .unwrap_err();
+        assert!(matches!(error, crate::IoError::ImportFailed { .. }));
     }
 }

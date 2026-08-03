@@ -162,9 +162,10 @@ some footer field-recompute edge cases. Footnote/endnote body placement, inline
 math (OMML), and multi-column layout aren't done. A GPU backend, the Tauri desktop
 shell, worker isolation, and a stable public SDK are not started.
 
-The current focus is deeper DOCX fidelity. A stable public SDK, ODT/plain-text
-and other format adapters, and native PDF export from the engine display list
-are future goals rather than shipped capabilities.
+The current focus is deeper DOCX fidelity. Internal format-neutral registry,
+normalized JSON, and plain-text adapters are implemented; stable public host
+surfaces, ODT and other office adapters, and native PDF export from the engine
+display list remain future goals rather than shipped capabilities.
 
 Details: [fidelity gap analysis](docs/46-RENDERING-FIDELITY-GAP-ANALYSIS.md) ·
 [support matrix](docs/18-SUPPORT-MATRIX.md).

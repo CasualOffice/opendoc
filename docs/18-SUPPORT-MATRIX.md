@@ -1,7 +1,7 @@
 # Support Matrix
 
 **Status:** Accepted for Phase 0
-**Last updated:** 2026-08-02
+**Last updated:** 2026-08-04
 
 This document distinguishes target support from implemented support. A target is
 not considered supported until its required CI and conformance gates pass.
@@ -65,13 +65,13 @@ report.
 
 | Format/capability | v1 target | Current status |
 | --- | --- | --- |
-| Normalized JSON snapshot | Yes | Strict bounded schema v0 load/export implemented. |
+| Normalized JSON snapshot | Yes | Strict bounded schema-v1 import and deterministic compact export are implemented in the internal format registry; stable SDK/WASM host surfaces are pending. |
 | Canonical normalized CBOR | Yes | Designed, not implemented. |
 | DOCX import/export | Yes | Bounded ZIP inspection implemented; semantic import complete (every construct family modeled); the semantic writer (Phase 1B) is complete and round-trips the modeled surface (import → write → reopen = identical model). |
-| TXT import/export | Yes | Planned as a simple conformance path. |
+| TXT import/export | Yes | Bounded strict UTF-8 import, deterministic semantic LF export, exact retained unchanged bytes, and compatibility-loss reporting are implemented in the internal format registry; stable SDK/WASM host surfaces are pending. |
 | Page render to raster (PNG) | Yes | CPU backend implemented: real pages, tables, images, and VML render via `tiny-skia`/`skrifa`; structurally strong, not yet pixel-perfect Word-grade (see doc 46). |
 | PDF render/export | Yes | Backend decision pending. |
-| ODT import/export | Later | Architecture accepted in doc 94 and the format-neutral Slice A foundation is implemented; no ODT implementation or support claim yet. Not a v1 release gate. |
+| ODT import/export | Later | Architecture accepted in doc 94; the format-neutral registry and bounded ZIP substrate are implemented, but no ODF/ODT adapter or support claim exists yet. Not a v1 release gate. |
 | HTML/Markdown interchange | Later | Not an editing source of truth. |
 | Macros/VBA execution | No | Blocked by policy. |
 

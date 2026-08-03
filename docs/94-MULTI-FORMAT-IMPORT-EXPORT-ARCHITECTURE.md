@@ -301,8 +301,8 @@ unchanged original byte stream.
 | Format | Import | Export | Preservation target |
 | --- | --- | --- | --- |
 | DOCX | Existing semantic importer | Existing semantic writer | Preserve current behavior, then wire the retained-parts sidecar into sessions |
-| Normalized JSON | Existing bounded v0 loader | Existing deterministic v0 exporter | Not applicable |
-| Plain text | UTF-8 plus explicit encoding policy | UTF-8 with deterministic newline policy | Semantic only |
+| Normalized JSON | Existing strict, bounded schema-v1 loader | Existing deterministic compact schema-v1 exporter | Exact unchanged bytes when explicitly retained; no opaque semantic sidecar |
+| Plain text | Strict, bounded UTF-8 | UTF-8 with deterministic LF newline policy | Exact unchanged bytes when explicitly retained; otherwise semantic only |
 | ODT | New ODF 1.2–1.4 text-document importer | New writer; emitted version finalized from interoperability evidence | Unchanged package plus safe edit-tolerant foreign-part preservation |
 
 The ODT first supported surface is paragraphs/spans, named and automatic styles,
@@ -310,6 +310,22 @@ lists, tables, page/master-page geometry, headers/footers, notes, hyperlinks,
 bookmarks, images/frames, metadata, and common tracked changes. Unsupported ODF
 features must be retained or reported under doc 35; they are not silently
 flattened.
+
+The normalized JSON probe is definite only when the bytes parse and validate as
+a schema-v1 snapshot under the configured snapshot limits. The text probe is
+only possible because every normalized JSON snapshot is also UTF-8; therefore a
+valid JSON snapshot wins without relying on a filename hint. Explicit selection
+still runs the selected adapter's complete validation.
+
+Plain-text import accepts an optional leading UTF-8 BOM, maps CRLF, CR, and LF
+to paragraph boundaries, preserves empty and trailing paragraphs, and maps tabs
+to explicit tab nodes. Other C0 controls are rejected. IDs are derived
+deterministically from canonicalized text and document order. Semantic text
+export uses UTF-8 without a BOM and LF line endings. It emits the final revision
+projection, cached field text, math fallback text, table cells separated by tabs,
+and recursive blocks separated by newlines. Formatting, targets, non-text
+objects, definitions, resources, and opaque structures receive bounded,
+deterministically ordered compatibility findings when they cannot survive.
 
 ## 12. SDK and WASM migration
 
@@ -446,6 +462,19 @@ Slice B is complete on `feature/multi-format-io`:
 - public DOCX package types and typed error behavior remain compatible;
 - independent generic-package regression tests and a dedicated fuzz target cover
   arbitrary ZIP profiles without requiring DOCX structure.
+
+Slice C is complete on `feature/multi-format-io`:
+
+- the built-in registry now exposes DOCX, normalized JSON, and plain-text import
+  and export capabilities in stable format-ID order;
+- normalized JSON reuses the strict bounded schema-v1 parser and deterministic
+  compact serializer, including explicit output-limit validation;
+- plain text has bounded UTF-8 admission, deterministic semantic IDs, explicit
+  tab and paragraph mapping, canonical LF export, final revision projection,
+  exact retained unchanged bytes, and bounded loss reporting;
+- JSON's validated definite probe outranks text's possible probe, while explicit
+  format selection still performs complete adapter validation;
+- stable SDK, WASM, and web generic-format surfaces remain deferred to Slice E.
 
 ## 18. Normative references
 
