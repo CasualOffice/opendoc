@@ -54,7 +54,9 @@ use crate::flow::{
 };
 use crate::incremental::{DirtySet, GalleyCache};
 use crate::notes::{paginate_section_footnotes, run_has_body_footnotes};
-use crate::paginate::{PageConfig, resolve_anchored_fields, resolve_fields};
+use crate::paginate::{
+    PageConfig, page_number_labels, resolve_anchored_fields_labeled, resolve_fields_labeled,
+};
 use crate::running::{HeaderFooter, RunningContent, place_running_content_on_page};
 use crate::text::InlineFloatSide;
 use crate::units::{Point, Rect, Size, Twip};
@@ -562,7 +564,8 @@ fn build_body_galley(
 /// 3. Partition the body into per-section runs (`build_section_runs`), each flowed
 ///    at its own column width.
 /// 4. [`paginate_columns`] the runs, then run the post-pagination passes **in
-///    order** — section-scoped running-content placement, [`resolve_fields`],
+///    order** — section-scoped running-content placement, `resolve_fields`
+///    (with section-`pgNumType`-aware page-number labels),
 ///    [`place_floats`] —
 ///    the order the incremental-golden post-passes require (running content before
 ///    fields so a `Page X of Y` footer resolves; anchors last, off the pagination
@@ -706,7 +709,11 @@ fn finish_pagination_pass(
             page.content_area,
         );
     }
-    resolve_fields(&mut layout, shaper);
+    // Per-page `PAGE` labels honoring each section's `w:pgNumType` (@fmt format +
+    // @start restart); the same labels feed the anchored-field pass below so a
+    // floating page-number box matches the body/footer.
+    let page_labels = page_number_labels(&layout, &document.definitions().sections);
+    resolve_fields_labeled(&mut layout, &page_labels, shaper);
     // Floating objects last: anchored pictures, floating text boxes, and DrawingML
     // groups, over body AND header/footer bands, each resolved to a rect + z-key
     // for the float layer to paint in order.
@@ -714,7 +721,7 @@ fn finish_pagination_pass(
     // A floating text box (e.g. the SDS footer's positioned `v:textbox` page-number
     // box) can itself hold `PAGE`/`NUMPAGES` fields; resolve them now that the
     // floats — and their flowed block content — exist on each page.
-    resolve_anchored_fields(&mut layout, shaper);
+    resolve_anchored_fields_labeled(&mut layout, &page_labels, shaper);
 
     layout
 }
