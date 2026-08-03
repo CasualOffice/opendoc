@@ -21,14 +21,15 @@ use std::path::PathBuf;
 
 use casual_doc_layout::block::BlockFragment;
 use casual_doc_layout::document_layout::paginate_document;
-use casual_doc_layout::page::PaginatedLayout;
+use casual_doc_layout::page::{PaginatedLayout, PlacedFragment};
 use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_layout::units::Twip;
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
-    BlockNode, Definitions, Document, InlineNode, PageMargins, PageSize, PageVerticalAlignment,
-    Paragraph, ParagraphProperties, Run, RunProperties, SectionBoundary, SectionColumns, SectionId,
-    Spacing,
+    AbstractNumbering, AbstractNumberingId, BlockNode, Definitions, Document, Indentation,
+    InlineNode, LevelSuffix, NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel,
+    NumberingRef, PageMargins, PageSize, PageVerticalAlignment, Paragraph, ParagraphProperties,
+    Run, RunProperties, SectionBoundary, SectionColumns, SectionId, Spacing, TabAlignment, TabStop,
 };
 
 fn node(id: u64) -> NodeId {
@@ -212,7 +213,84 @@ fn fixtures() -> Vec<(&'static str, Document)> {
         ("valign-bottom", valign_bottom),
         ("valign-center", valign_center),
         ("paginated", paginated),
+        // 6. A hanging decimal list with a level tab stop: locks the marker span,
+        //    the number-suffix-tab advance, and the body start column.
+        (
+            "decimal-list-hanging",
+            numbered_list("%1.", NumberFormat::Decimal),
+        ),
+        // 7. A bullet list: the marker is the level glyph, same geometry surface.
+        (
+            "bullet-list",
+            numbered_list("\u{2022}", NumberFormat::Bullet),
+        ),
     ]
+}
+
+/// A two-item single-level list at a 720-twip hanging indent (marker protrudes
+/// into the hanging space) with a level tab stop at 720 twips — the placement
+/// surface for the marker and the number-suffix tab.
+fn numbered_list(lvl_text: &str, num_fmt: NumberFormat) -> Document {
+    let abs_id = AbstractNumberingId::new(node(900));
+    let inst_id = NumberingInstanceId::new(node(901));
+    let level_props = ParagraphProperties {
+        indentation: Some(Indentation {
+            start_twips: Some(720),
+            hanging_twips: Some(360),
+            ..Indentation::default()
+        }),
+        tabs: vec![TabStop {
+            position_twips: 720,
+            alignment: TabAlignment::Start,
+            leader: None,
+        }],
+        ..ParagraphProperties::default()
+    };
+    let mut definitions = Definitions::default();
+    definitions.abstract_numbering.insert(
+        abs_id,
+        AbstractNumbering {
+            levels: vec![NumberingLevel {
+                level: 0,
+                start: 1,
+                num_fmt: Some(num_fmt),
+                lvl_text: Some(lvl_text.to_owned()),
+                lvl_jc: None,
+                suff: Some(LevelSuffix::Tab),
+                is_lgl: false,
+                paragraph_properties: Some(level_props),
+                run_properties: None,
+                style_ref: None,
+            }],
+        },
+    );
+    definitions.numbering.insert(
+        inst_id,
+        NumberingInstance {
+            abstract_ref: abs_id,
+            overrides: Vec::new(),
+        },
+    );
+    definitions.sections = vec![section(9, None)];
+    let item = |id: u64, text: &str| {
+        BlockNode::Paragraph(Paragraph {
+            id: node(id),
+            properties: ParagraphProperties {
+                numbering: Some(NumberingRef {
+                    instance: inst_id,
+                    level: 0,
+                }),
+                ..ParagraphProperties::default()
+            },
+            inlines: vec![run(id + 1, text)],
+        })
+    };
+    Document::new(
+        node(1),
+        vec![item(600, "First"), item(610, "Second")],
+        definitions,
+    )
+    .unwrap()
 }
 
 fn dump_layout(name: &str, layout: &PaginatedLayout, out: &mut String) {
@@ -244,8 +322,50 @@ fn dump_layout(name: &str, layout: &PaginatedLayout, out: &mut String) {
                 pt(placed.rect.size.height),
             )
             .unwrap();
+            // A list marker and the body's start column: the intra-line x that the
+            // number-suffix-tab / hanging-indent logic places. Absolute page-local
+            // x = placed.rect.origin.x + run.origin.x (the paint anchor).
+            if let Some((marker_left, marker_right, body_left)) = marker_and_body_x(placed) {
+                writeln!(
+                    out,
+                    "      marker=({}..{}) body={}",
+                    pt(marker_left),
+                    pt(marker_right),
+                    pt(body_left),
+                )
+                .unwrap();
+            }
         }
     }
+}
+
+/// The first line's marker span and body start column (absolute page-local x),
+/// or `None` for a paragraph with no list marker. Locks the number-suffix-tab
+/// and hanging-indent placement the geometry rect alone can't see.
+fn marker_and_body_x(placed: &PlacedFragment) -> Option<(Twip, Twip, Twip)> {
+    let BlockFragment::Paragraph {
+        lines, box_metrics, ..
+    } = &placed.fragment
+    else {
+        return None;
+    };
+    let line = lines.lines.first()?;
+    // Line content is positioned relative to the content origin, which is the
+    // fragment's left edge plus the paragraph start indent (matches the painter:
+    // content_x = placed.rect.origin.x + box_metrics.indent_start).
+    let origin_x = placed.rect.origin.x + box_metrics.indent_start;
+    let marker = line.runs.iter().find(|run| run.is_marker)?;
+    let marker_left = origin_x + marker.origin.x;
+    let marker_right = marker
+        .glyphs
+        .iter()
+        .fold(marker_left, |x, glyph| x + glyph.advance);
+    let body_left = line
+        .runs
+        .iter()
+        .find(|run| !run.is_marker)
+        .map_or(marker_right, |run| origin_x + run.origin.x);
+    Some((marker_left, marker_right, body_left))
 }
 
 fn golden_path() -> PathBuf {

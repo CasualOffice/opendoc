@@ -20,3 +20,15 @@
     para rect=(72.00,72.00 468.00x14.50)
   page 3 size=(612.00x792.00) content=(72.00,72.00 468.00x648.00)
     para rect=(72.00,72.00 468.00x14.50)
+== fixture: decimal-list-hanging ==
+  page 1 size=(612.00x792.00) content=(72.00,72.00 468.00x648.00)
+    para rect=(72.00,72.00 468.00x14.50)
+      marker=(90.00..99.10) body=108.00
+    para rect=(72.00,86.50 468.00x14.50)
+      marker=(90.00..99.10) body=108.00
+== fixture: bullet-list ==
+  page 1 size=(612.00x792.00) content=(72.00,72.00 468.00x648.00)
+    para rect=(72.00,72.00 468.00x14.50)
+      marker=(90.00..93.70) body=108.00
+    para rect=(72.00,86.50 468.00x14.50)
+      marker=(90.00..93.70) body=108.00
