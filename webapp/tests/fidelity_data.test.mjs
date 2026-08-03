@@ -73,6 +73,13 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
   assert.equal(by["Math (OMML)"].modeled, "partial");
   assert.equal(by["Math (OMML)"].rendered, "partial");
   assert.equal(by["Math (OMML)"].editable, "none");
+  // Rendering is not "full" where the fidelity audit confirmed unpainted
+  // constructs: run effects/typed underlines (character), docGrid/autospacing
+  // (paragraphs), and level/start overrides + spelled-out formats (lists).
+  assert.equal(by["Paragraphs & text"].rendered, "partial");
+  assert.equal(by["Character / run formatting"].rendered, "partial");
+  assert.equal(by["Lists & numbering"].rendered, "partial");
+  assert.equal(by["Lists & numbering"].modeled, "partial");
   // Charts / SmartArt are preserved, not rendered as charts/diagrams.
   assert.equal(by["Charts"].rendered, "preserved");
   assert.equal(by["SmartArt"].rendered, "preserved");
