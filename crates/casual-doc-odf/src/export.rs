@@ -1432,12 +1432,14 @@ pub fn write_odt(document: &Document, limits: OdfExportLimits) -> Result<OdtExpo
             .record("odt.export.background", ModelOutcome::Omitted);
     }
     if let Some(properties) = document.properties() {
-        if !properties.custom.is_empty()
-            || properties.app.company.is_some()
+        if properties.custom.iter().any(|property| {
+            !matches!(
+                property.value,
+                casual_doc_model::v1::CustomValue::Text { .. }
+            )
+        }) || properties.app.company.is_some()
             || properties.app.manager.is_some()
             || properties.app.template.is_some()
-            || properties.app.pages.is_some()
-            || properties.app.words.is_some()
             || properties.app.characters.is_some()
             || properties.app.paragraphs.is_some()
         {
@@ -1575,6 +1577,25 @@ fn metadata_xml(
     }
     if let Some(value) = &properties.app.application {
         field("meta:generator", &Some(value.clone()));
+    }
+    if let Some(value) = properties.app.pages {
+        xml.push_str(&format!(
+            "<meta:document-statistic meta:page-count=\"{value}\"/>"
+        ));
+    }
+    if let Some(value) = properties.app.words {
+        xml.push_str(&format!(
+            "<meta:document-statistic meta:word-count=\"{value}\"/>"
+        ));
+    }
+    for property in &properties.custom {
+        if let casual_doc_model::v1::CustomValue::Text { value } = &property.value {
+            xml.push_str("<meta:user-defined meta:name=\"");
+            xml.push_str(&escape(&property.name));
+            xml.push_str("\">");
+            xml.push_str(&escape(value));
+            xml.push_str("</meta:user-defined>");
+        }
     }
     xml.push_str("</office:meta></office:document-meta>");
     Ok(xml.into_bytes())

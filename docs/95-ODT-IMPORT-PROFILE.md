@@ -126,6 +126,8 @@ The initial mapping is intentionally layered:
 | `draw:frame` + package image                | media definition and drawing                       | Mapped for embedded package images; linked images blocked/not fetched                                          |
 | `meta.xml` core metadata                    | `DocumentProperties.core`                          | Title, subject, creator, description, language, dates, keywords mapped; duplicate/unsupported fields reported |
 | `meta:generator`                             | `DocumentProperties.app.application`              | Mapped; remaining ODT statistics/user-defined metadata reported                                               |
+| `meta:document-statistic`                    | `DocumentProperties.app`                           | Page, word, character, and paragraph counts map when numeric; unknown/malformed counters reported             |
+| `meta:user-defined`                           | `DocumentProperties.custom`                       | Text-valued named properties map; duplicate/invalid names reported                                            |
 | change tracking                             | revision nodes                                     | Deferred within Slice D until pairing/order evidence is complete; preserved/reported, never silently flattened |
 | formulas, scripts, events, OLE, foreign XML | none in first profile                              | Blocked or preserved/reported according to safety                                                              |
 
