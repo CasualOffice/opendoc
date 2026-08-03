@@ -1865,6 +1865,12 @@ fn settings_xml(settings: &DocumentSettings) -> Result<Vec<u8>, ExportError> {
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
     write_zoom(&mut w, &settings.zoom)?;
+    // `w:displayBackgroundShape` (CT_Settings §17.15.1.29) precedes the embed-font
+    // flags in schema order.
+    if settings.display_background_shape {
+        w.write_event(Event::Empty(start("w:displayBackgroundShape")))
+            .map_err(pkg)?;
+    }
     for (name, on) in [
         ("w:embedTrueTypeFonts", settings.embed_true_type_fonts),
         ("w:embedSystemFonts", settings.embed_system_fonts),
@@ -1907,6 +1913,26 @@ fn settings_xml(settings: &DocumentSettings) -> Result<Vec<u8>, ExportError> {
         let mut el = start("w:defaultTabStop");
         el.push_attribute(("w:val", value.to_string().as_str()));
         w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    // Hyphenation group (CT_Settings §17.15.1.10/22/48/32), in schema order:
+    // autoHyphenation, consecutiveHyphenLimit, hyphenationZone, doNotHyphenateCaps.
+    if settings.auto_hyphenation {
+        w.write_event(Event::Empty(start("w:autoHyphenation")))
+            .map_err(pkg)?;
+    }
+    if let Some(value) = settings.consecutive_hyphen_limit {
+        let mut el = start("w:consecutiveHyphenLimit");
+        el.push_attribute(("w:val", value.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(value) = settings.hyphenation_zone {
+        let mut el = start("w:hyphenationZone");
+        el.push_attribute(("w:val", value.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if settings.do_not_hyphenate_caps {
+        w.write_event(Event::Empty(start("w:doNotHyphenateCaps")))
+            .map_err(pkg)?;
     }
     if settings.even_and_odd_headers {
         w.write_event(Event::Empty(start("w:evenAndOddHeaders")))

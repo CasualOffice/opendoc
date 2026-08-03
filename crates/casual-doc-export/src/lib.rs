@@ -3039,23 +3039,29 @@ mod semantic_tests {
 
     #[test]
     fn expanded_settings_survive_the_semantic_round_trip() {
-        // settings.xml carrying the newly modeled settings (evenAndOddHeaders,
+        // settings.xml carrying the modeled settings (evenAndOddHeaders,
         // defaultTabStop, trackChanges, documentProtection, a proofState, a zoom,
-        // and a compatSetting) plus an UNMODELED setting (`w:autoHyphenation`). The
-        // modeled settings survive write -> reopen as a fixed point; the unmodeled
-        // one produces a compat-report entry (omitted, not-retained in Semantic).
+        // a compatSetting, the hyphenation group, and displayBackgroundShape) plus
+        // an UNMODELED setting (`w:hideSpellingErrors`). The modeled settings
+        // survive write -> reopen as a fixed point; the unmodeled one produces a
+        // compat-report entry (omitted, not-retained in Semantic).
         let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/></Types>"#;
         let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
         let document = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
         let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/></Relationships>"#;
         let settings = br#"<w:settings xmlns:w="urn:w">
             <w:zoom w:percent="120"/>
+            <w:displayBackgroundShape/>
+            <w:hideSpellingErrors/>
             <w:proofState w:spelling="clean" w:grammar="dirty"/>
             <w:trackChanges/>
             <w:updateFields/>
             <w:documentProtection w:edit="comments" w:enforcement="1"/>
             <w:defaultTabStop w:val="708"/>
             <w:autoHyphenation/>
+            <w:consecutiveHyphenLimit w:val="2"/>
+            <w:hyphenationZone w:val="425"/>
+            <w:doNotHyphenateCaps/>
             <w:evenAndOddHeaders/>
             <w:compat><w:compatSetting w:name="compatibilityMode" w:uri="urn:x" w:val="15"/></w:compat>
         </w:settings>"#;
@@ -3082,13 +3088,19 @@ mod semantic_tests {
         assert!(s.update_fields);
         assert_eq!(s.default_tab_stop, Some(708));
         assert_eq!(s.compat.len(), 1);
+        // The hyphenation group and the background-shape flag are modeled.
+        assert!(s.auto_hyphenation);
+        assert_eq!(s.consecutive_hyphen_limit, Some(2));
+        assert_eq!(s.hyphenation_zone, Some(425));
+        assert!(s.do_not_hyphenate_caps);
+        assert!(s.display_background_shape);
         // The unmodeled setting is reported, not silently dropped.
         assert!(
             import
                 .report
                 .entries
                 .iter()
-                .any(|entry| entry.feature == "autoHyphenation"),
+                .any(|entry| entry.feature == "hideSpellingErrors"),
             "the unmodeled setting produces a compat-report entry"
         );
 

@@ -2068,7 +2068,7 @@ fn numbering_level_detail_is_modeled_not_reported() {
 fn modeled_settings_are_captured_and_unmodeled_settings_are_reported() {
     // A settings part mixing modeled settings (header parity, default tab stop,
     // track changes, document protection, proof state, zoom, a compatSetting) with
-    // an unmodeled one (`w:autoHyphenation`) plus an unmodeled `w:compat` child
+    // an unmodeled one (`w:hideSpellingErrors`) plus an unmodeled `w:compat` child
     // (`w:doNotExpandShiftReturn`). The modeled ones land in the model; the two
     // unmodeled ones are reported (no silent loss).
     let settings = br#"<w:settings xmlns:w="urn:w">
@@ -2079,7 +2079,7 @@ fn modeled_settings_are_captured_and_unmodeled_settings_are_reported() {
         <w:trackChanges/>
         <w:documentProtection w:edit="readOnly" w:enforcement="1"/>
         <w:defaultTabStop w:val="720"/>
-        <w:autoHyphenation/>
+        <w:hideSpellingErrors/>
         <w:compat>
             <w:compatSetting w:name="compatibilityMode" w:uri="urn:x" w:val="15"/>
             <w:doNotExpandShiftReturn/>
@@ -2105,7 +2105,7 @@ fn modeled_settings_are_captured_and_unmodeled_settings_are_reported() {
     assert_eq!(s.compat.len(), 1);
     assert_eq!(s.compat[0].name, "compatibilityMode");
     // The unmodeled top-level setting and the unmodeled compat child are reported.
-    assert!(features(&import).contains(&"autoHyphenation"));
+    assert!(features(&import).contains(&"hideSpellingErrors"));
     assert!(features(&import).contains(&"doNotExpandShiftReturn"));
     // The modeled compatSetting is NOT reported (it is retained as a triple).
     assert!(!features(&import).contains(&"compatSetting"));
