@@ -1,0 +1,22 @@
+== fixture: contextual-spacing ==
+  page 1 size=(612.00x792.00) content=(72.00,72.00 468.00x648.00)
+    para rect=(72.00,72.00 468.00x26.50)
+    para rect=(72.00,98.50 468.00x14.50)
+    para rect=(72.00,113.00 468.00x26.50)
+== fixture: spaced-no-contextual ==
+  page 1 size=(612.00x792.00) content=(72.00,72.00 468.00x648.00)
+    para rect=(72.00,72.00 468.00x38.50)
+    para rect=(72.00,110.50 468.00x38.50)
+== fixture: valign-bottom ==
+  page 1 size=(612.00x792.00) content=(72.00,72.00 468.00x648.00)
+    para rect=(72.00,705.50 468.00x14.50)
+== fixture: valign-center ==
+  page 1 size=(612.00x792.00) content=(72.00,72.00 468.00x648.00)
+    para rect=(72.00,388.75 468.00x14.50)
+== fixture: paginated ==
+  page 1 size=(612.00x792.00) content=(72.00,72.00 468.00x648.00)
+    para rect=(72.00,72.00 468.00x14.50)
+  page 2 size=(612.00x792.00) content=(72.00,72.00 468.00x648.00)
+    para rect=(72.00,72.00 468.00x14.50)
+  page 3 size=(612.00x792.00) content=(72.00,72.00 468.00x648.00)
+    para rect=(72.00,72.00 468.00x14.50)
