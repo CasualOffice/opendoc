@@ -4482,6 +4482,7 @@ fn styled_owned_run(
         decoration: Decoration {
             underline: effective.underline.unwrap_or(false),
             strikethrough: effective.strike.unwrap_or(false),
+            double_strike: effective.double_strike.unwrap_or(false),
         },
         highlight: effective.highlight.and_then(highlight_rgba),
         shading: shading_rgba(&effective.shading),
@@ -4522,6 +4523,7 @@ fn build_styled_run<'a>(
         decoration: Decoration {
             underline: properties.underline.unwrap_or(false),
             strikethrough: properties.strike.unwrap_or(false),
+            double_strike: properties.double_strike.unwrap_or(false),
         },
         highlight: properties.highlight.and_then(highlight_rgba),
         shading: shading_rgba(&properties.shading),
@@ -4600,6 +4602,7 @@ fn symbol_glyph_run(symbol: &Symbol, ctx: &mut FlowCtx) -> StyledRun<'static> {
         decoration: Decoration {
             underline: effective.underline.unwrap_or(false),
             strikethrough: effective.strike.unwrap_or(false),
+            double_strike: effective.double_strike.unwrap_or(false),
         },
         highlight: effective.highlight.and_then(highlight_rgba),
         shading: shading_rgba(&effective.shading),
@@ -4823,6 +4826,7 @@ fn build_script_run<'a>(
         decoration: Decoration {
             underline: properties.underline.unwrap_or(false),
             strikethrough: properties.strike.unwrap_or(false),
+            double_strike: properties.double_strike.unwrap_or(false),
         },
         highlight: properties.highlight.and_then(highlight_rgba),
         shading: shading_rgba(&properties.shading),
@@ -4850,6 +4854,7 @@ fn push_small_caps_runs<'a>(
     let decoration = Decoration {
         underline: properties.underline.unwrap_or(false),
         strikethrough: properties.strike.unwrap_or(false),
+        double_strike: properties.double_strike.unwrap_or(false),
     };
     let highlight = properties.highlight.and_then(highlight_rgba);
     let shading = shading_rgba(&properties.shading);
@@ -6712,10 +6717,7 @@ mod tests {
             panic!();
         };
         // The w:shd fill resolves to opaque RGBA and rides the shaped run.
-        assert_eq!(
-            lines.lines[0].runs[0].shading,
-            Some([0xCC, 0xEE, 0xFF, 255])
-        );
+        assert_eq!(lines.lines[0].runs[0].shading, Some([0xCC, 0xEE, 0xFF, 255]));
         // ...and composition paints it as a background rect before the glyphs.
         let list = compose_paragraph(lines, Point::new(Twip::ZERO, Twip::ZERO));
         let rect_before_glyphs = list.items.iter().position(|item| {
@@ -6730,6 +6732,28 @@ mod tests {
         assert!(
             rect_before_glyphs < first_glyphs,
             "the shading rect paints behind (before) the glyphs"
+        );
+    }
+
+    #[test]
+    fn double_strike_rides_through_shaping_into_the_glyph_run_decoration() {
+        // `w:dstrike` is not a parley decoration, so it must survive the shaping
+        // boundary via the run brush and reappear on the shaped run's decoration.
+        let props = RunProperties {
+            double_strike: Some(true),
+            ..RunProperties::default()
+        };
+        let doc = document(vec![paragraph(10, vec![run_node(11, "struck", props)])]);
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&doc, &shaper, Twip::from_points(400));
+        let BlockFragment::Paragraph { lines, .. } = &galley[0] else {
+            panic!();
+        };
+        let decoration = lines.lines[0].runs[0].decoration;
+        assert!(decoration.double_strike, "double strike survives shaping");
+        assert!(
+            !decoration.strikethrough,
+            "double strike is independent of the single strike"
         );
     }
 
