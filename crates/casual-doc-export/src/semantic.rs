@@ -1919,6 +1919,8 @@ fn settings_xml(settings: &DocumentSettings) -> Result<Vec<u8>, ExportError> {
         el.push_attribute(("w:val", style.as_str()));
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
+    write_section_note_props(&mut w, "w:footnotePr", &settings.footnote_props)?;
+    write_section_note_props(&mut w, "w:endnotePr", &settings.endnote_props)?;
     if !settings.compat.is_empty() {
         w.write_event(Event::Start(start("w:compat")))
             .map_err(pkg)?;
@@ -2503,7 +2505,7 @@ fn write_section_note_props(
     }
     if let Some(format) = &props.number_format {
         let mut el = start("w:numFmt");
-        el.push_attribute(("w:val", format.as_str()));
+        el.push_attribute(("w:val", number_format_token(format)));
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
     if let Some(start_num) = props.number_start {

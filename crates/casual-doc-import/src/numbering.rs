@@ -544,7 +544,7 @@ fn multi_level_type_from(value: &str) -> Option<MultiLevelType> {
     })
 }
 
-fn number_format(element: &BytesStart<'_>) -> Option<NumberFormat> {
+pub(crate) fn number_format(element: &BytesStart<'_>) -> Option<NumberFormat> {
     let value = attribute_value(element, b"val").filter(|value| !value.is_empty())?;
     Some(match value.as_str() {
         "decimal" => NumberFormat::Decimal,

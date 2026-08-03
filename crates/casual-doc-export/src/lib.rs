@@ -2478,6 +2478,76 @@ mod semantic_tests {
     }
 
     #[test]
+    fn document_default_note_props_survive_the_semantic_round_trip() {
+        // settings.xml carrying the document-default footnote/endnote property
+        // containers (`w:footnotePr`/`w:endnotePr`), each with a placement, a typed
+        // numFmt, a numStart, and a numRestart. They survive write -> reopen as a
+        // fixed point; the endnote's `lowerLetter` exercises a second typed token.
+        use casual_doc_model::v1::{NoteNumberRestart, NotePosition, NumberFormat};
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/></Relationships>"#;
+        let settings = br#"<w:settings xmlns:w="urn:w">
+            <w:footnotePr>
+                <w:pos w:val="beneathText"/>
+                <w:numFmt w:val="lowerRoman"/>
+                <w:numStart w:val="2"/>
+                <w:numRestart w:val="eachPage"/>
+            </w:footnotePr>
+            <w:endnotePr>
+                <w:pos w:val="docEnd"/>
+                <w:numFmt w:val="lowerLetter"/>
+                <w:numRestart w:val="continuous"/>
+            </w:endnotePr>
+        </w:settings>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/settings.xml", settings),
+        ]);
+        let mut src_package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let import = import_package(
+            &mut src_package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap();
+        let m1 = import.document;
+        let s = m1.definitions().settings.clone();
+        assert_eq!(s.footnote_props.position, Some(NotePosition::BeneathText));
+        assert_eq!(
+            s.footnote_props.number_format,
+            Some(NumberFormat::LowerRoman)
+        );
+        assert_eq!(s.footnote_props.number_start, Some(2));
+        assert_eq!(
+            s.footnote_props.number_restart,
+            Some(NoteNumberRestart::EachPage)
+        );
+        assert_eq!(s.endnote_props.position, Some(NotePosition::DocumentEnd));
+        assert_eq!(
+            s.endnote_props.number_format,
+            Some(NumberFormat::LowerLetter)
+        );
+        assert_eq!(
+            s.endnote_props.number_restart,
+            Some(NoteNumberRestart::Continuous)
+        );
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(
+            m1, m2,
+            "document-default note props survive write -> reopen"
+        );
+    }
+
+    #[test]
     fn multi_level_numbering_detail_survives_the_semantic_round_trip() {
         // A multi-level list: level 0 decimal "%1." with an indent pPr, level 1 a
         // bullet whose lvlText is a symbol glyph and whose rPr selects the symbol
@@ -2900,7 +2970,7 @@ mod semantic_tests {
         // landscape page orientation. The writer must emit each in CT_SectPr order
         // so the reopened model is a fixed point.
         use casual_doc_model::v1::{
-            LineNumberRestart, NoteNumberRestart, NotePosition, PageBorderDisplay,
+            LineNumberRestart, NoteNumberRestart, NotePosition, NumberFormat, PageBorderDisplay,
             PageBorderOffset, PageOrientation, TextDirection,
         };
         let xml = br#"<w:document xmlns:w="urn:w"><w:body>
@@ -2954,6 +3024,10 @@ mod semantic_tests {
         assert_eq!(
             section.footnote_props.number_restart,
             Some(NoteNumberRestart::EachSection)
+        );
+        assert_eq!(
+            section.footnote_props.number_format,
+            Some(NumberFormat::LowerRoman)
         );
         assert_eq!(section.footnote_props.number_start, Some(2));
         assert_eq!(section.text_direction, Some(TextDirection::TbRl));
