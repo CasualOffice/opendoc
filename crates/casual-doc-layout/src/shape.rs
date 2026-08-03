@@ -51,6 +51,8 @@ struct RunBrush {
     double_strike: bool,
     /// The run's underline color (RGBA); alpha `0` means take the run color.
     underline_color: [u8; 4],
+    /// The run's underline line style (`w:u@val`).
+    underline_style: casual_doc_model::v1::UnderlineStyle,
     /// Baseline shift in twips (positive = raised); subtracted from the run's
     /// glyph-run origin so super/subscript and `w:position` offsets survive shaping.
     baseline_shift: i32,
@@ -807,6 +809,7 @@ impl ParleyShaper {
                     shading: run.shading.unwrap_or([0, 0, 0, 0]),
                     double_strike: run.decoration.double_strike,
                     underline_color: run.decoration.underline_color.unwrap_or([0, 0, 0, 0]),
+                    underline_style: run.decoration.underline_style,
                     baseline_shift: run.baseline_shift.raw(),
                 }),
                 *start..*end,
@@ -1115,6 +1118,7 @@ impl ParleyShaper {
                         double_strike: style.brush.double_strike,
                         underline_color: (style.brush.underline_color[3] != 0)
                             .then_some(style.brush.underline_color),
+                        underline_style: style.brush.underline_style,
                     },
                     highlight,
                     shading,
@@ -1696,6 +1700,7 @@ mod tests {
                 strikethrough: false,
                 double_strike: false,
                 underline_color: None,
+                underline_style: casual_doc_model::v1::UnderlineStyle::Single,
             },
             highlight: None,
             shading: None,

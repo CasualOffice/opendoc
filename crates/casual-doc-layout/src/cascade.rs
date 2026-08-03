@@ -448,6 +448,7 @@ fn overlay_run(base: &mut RunProperties, over: &RunProperties) {
     set!(italic_complex);
     set!(underline);
     set!(underline_color);
+    set!(underline_style);
     set!(strike);
     set!(color);
     set!(size_half_points);
