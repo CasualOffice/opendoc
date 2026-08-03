@@ -27,7 +27,14 @@ pub(crate) fn apply_run_property(
         b"i" => properties.italic = Some(is_true(value.as_deref())),
         // Complex-script italic (`w:iCs`), same `CT_OnOff` parse as `w:i`.
         b"iCs" => properties.italic_complex = Some(is_true(value.as_deref())),
-        b"u" => properties.underline = Some(value.as_deref() != Some("none")),
+        b"u" => {
+            properties.underline = Some(value.as_deref() != Some("none"));
+            // `w:u@color` (sRGB; `auto`/theme yields none) colors the underline
+            // independently of the run's text color.
+            properties.underline_color = attribute_value(element, b"color")
+                .as_deref()
+                .and_then(parse_rgb);
+        }
         b"strike" => properties.strike = Some(is_true(value.as_deref())),
         b"sz" => {
             match value

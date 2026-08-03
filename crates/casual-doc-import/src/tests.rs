@@ -223,6 +223,29 @@ fn paragraphs_runs_and_run_properties_are_mapped() {
 }
 
 #[test]
+fn underline_color_is_imported_from_w_u_color() {
+    use casual_doc_model::v1::RgbColor;
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:r><w:rPr><w:u w:val="single" w:color="FF0000"/></w:rPr>
+                <w:t>link</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+    let import = import(xml);
+    let InlineNode::Run(run) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected run");
+    };
+    assert_eq!(run.properties.underline, Some(true));
+    assert_eq!(
+        run.properties.underline_color,
+        Some(RgbColor {
+            r: 0xFF,
+            g: 0x00,
+            b: 0x00
+        }),
+        "w:u@color imports as the underline color"
+    );
+}
+
+#[test]
 fn adjacent_equal_property_runs_are_merged() {
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
             <w:p><w:r><w:t>a</w:t></w:r><w:r><w:t>b</w:t></w:r></w:p>
