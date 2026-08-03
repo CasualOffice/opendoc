@@ -30,18 +30,18 @@ use casual_doc_model::v1::{
     GroupTransform, HeaderFooterId, HeaderFooterKind, HeightRule, HighlightColor, HorizontalAlign,
     HorizontalAnchor, HorizontalPosition, HorizontalRuleAlign, HyperlinkTarget, InlineNode,
     LevelJustification, LevelSuffix, LineEnd, LineEndKind, LineEndSize, LineNumberRestart,
-    LineRule, MediaId, MediaReference, MoveKind, Note, NoteId, NoteKind, NoteNumberRestart,
-    NotePosition, NoteProperties, NumberFormat, NumberingInstance, NumberingInstanceId,
-    NumberingLevel, PageBorderDisplay, PageBorderOffset, PageOrientation, PageVerticalAlignment,
-    ParagraphProperties, Person, PointEmu, PositionalTabAlignment, PositionalTabLeader,
-    PositionalTabRelativeTo, ProofState, PropChange, RevisionKind, RgbColor, Rgba, RunFontHint,
-    RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind,
-    SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionType, ShapeAdjustment,
-    ShapeGeometry, ShapeStroke, Style, StyleId, StyleKind, TabAlignment, TabLeader, Table,
-    TableAnchor, TableBorders, TableCell, TableCellProperties, TableFloatPosition, TableLayout,
-    TableOverlap, TableProperties, TableRow, TableRowProperties, TableStyleOverride,
-    TableStyleRegion, TableWidth, TableXAlign, TableYAlign, TextBox, TextBoxAutoFit,
-    TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxVerticalAnchor,
+    LineRule, MarkRevisionKind, MediaId, MediaReference, MoveKind, Note, NoteId, NoteKind,
+    NoteNumberRestart, NotePosition, NoteProperties, NumberFormat, NumberingInstance,
+    NumberingInstanceId, NumberingLevel, PageBorderDisplay, PageBorderOffset, PageOrientation,
+    PageVerticalAlignment, ParagraphProperties, Person, PointEmu, PositionalTabAlignment,
+    PositionalTabLeader, PositionalTabRelativeTo, ProofState, PropChange, RevisionKind, RgbColor,
+    Rgba, RunFontHint, RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData,
+    SdtControlKind, SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionType,
+    ShapeAdjustment, ShapeGeometry, ShapeStroke, Style, StyleId, StyleKind, TabAlignment,
+    TabLeader, Table, TableAnchor, TableBorders, TableCell, TableCellProperties,
+    TableFloatPosition, TableLayout, TableOverlap, TableProperties, TableRow, TableRowProperties,
+    TableStyleOverride, TableStyleRegion, TableWidth, TableXAlign, TableYAlign, TextBox,
+    TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxVerticalAnchor,
     TextBoxVerticalOverflow, TextDirection, ThemeFontRef, VerticalAlign, VerticalAlignment,
     VerticalAnchor, VerticalMerge, VerticalPosition, VerticalTextAlignment, WidthType,
     WordprocessingGroup, WrapMode, Zoom, ZoomMode,
@@ -3475,7 +3475,35 @@ fn write_paragraph_properties(
     // The paragraph-mark run properties (`w:pPr > w:rPr`) precede `w:sectPr` in
     // CT_PPr. A `Some(default)` still emits a bare `<w:rPr/>` so the mark's
     // presence round-trips (the property writer elides an all-default value).
-    if let Some(mark_run) = &properties.mark_run {
+    // A tracked paragraph-mark insertion/deletion (`w:ins`/`w:del`) is the FIRST
+    // child of the mark's `w:rPr` (CT_ParaRPr order), so when it is present the
+    // mark rPr is written explicitly: the change element, then the mark's own run
+    // property children (if any). Otherwise the existing path is preserved
+    // exactly: `Some(default)` emits a bare `<w:rPr/>`, `Some(non-default)` its
+    // full rPr, `None` nothing.
+    if let Some(revision) = &properties.mark_revision {
+        w.write_event(Event::Start(start("w:rPr"))).map_err(pkg)?;
+        let element = match revision.kind {
+            MarkRevisionKind::Insertion => "w:ins",
+            MarkRevisionKind::Deletion => "w:del",
+        };
+        let mut el = start(element);
+        if let Some(author) = &revision.author {
+            el.push_attribute(("w:author", author.as_str()));
+        }
+        if let Some(date) = &revision.date {
+            el.push_attribute(("w:date", date.as_str()));
+        }
+        if let Some(id) = &revision.revision_id {
+            el.push_attribute(("w:id", id.as_str()));
+        }
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+        if let Some(mark_run) = &properties.mark_run {
+            write_run_property_children(w, mark_run)?;
+        }
+        w.write_event(Event::End(BytesEnd::new("w:rPr")))
+            .map_err(pkg)?;
+    } else if let Some(mark_run) = &properties.mark_run {
         if **mark_run == RunProperties::default() {
             w.write_event(Event::Empty(start("w:rPr"))).map_err(pkg)?;
         } else {
@@ -3918,6 +3946,20 @@ fn write_inline(
             let mut el = start(element);
             el.push_attribute(("w:id", note_id_token(note_ref.note).as_str()));
             w.write_event(Event::Empty(el)).map_err(pkg)?;
+            w.write_event(Event::End(BytesEnd::new("w:r")))
+                .map_err(pkg)?;
+        }
+        // A note's own auto-number mark (`w:footnoteRef`/`w:endnoteRef`), inside a
+        // footnote/endnote body. It carries no id (the number is the enclosing
+        // note's), and re-emits its enclosing run's formatting.
+        InlineNode::NoteNumberMark(mark) => {
+            let element = match mark.kind {
+                NoteKind::Footnote => "w:footnoteRef",
+                NoteKind::Endnote => "w:endnoteRef",
+            };
+            w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
+            write_run_properties(w, &mark.properties)?;
+            w.write_event(Event::Empty(start(element))).map_err(pkg)?;
             w.write_event(Event::End(BytesEnd::new("w:r")))
                 .map_err(pkg)?;
         }
@@ -5613,6 +5655,20 @@ fn write_run_properties(
         return Ok(());
     }
     w.write_event(Event::Start(start("w:rPr"))).map_err(pkg)?;
+    write_run_property_children(w, properties)?;
+    w.write_event(Event::End(BytesEnd::new("w:rPr")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+/// Writes the CHILDREN of a run's `w:rPr` (every property element, in CT_RPr
+/// schema order) without the enclosing `w:rPr` start/end. Shared by
+/// [`write_run_properties`] and the paragraph-mark rPr writer, which must
+/// prepend the mark's tracked change (`w:ins`/`w:del`) before these children.
+fn write_run_property_children(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    properties: &RunProperties,
+) -> Result<(), ExportError> {
     if let Some(style_ref) = properties.style_ref {
         let mut el = start("w:rStyle");
         el.push_attribute(("w:val", style_id_token(style_ref).as_str()));
@@ -5808,8 +5864,6 @@ fn write_run_properties(
         w.write_event(Event::End(BytesEnd::new("w:rPrChange")))
             .map_err(pkg)?;
     }
-    w.write_event(Event::End(BytesEnd::new("w:rPr")))
-        .map_err(pkg)?;
     Ok(())
 }
 

@@ -441,7 +441,8 @@ fn collect_inline_endnotes(inlines: &[InlineNode], out: &mut Vec<NoteId>) {
             | InlineNode::NoBreakHyphen(_)
             | InlineNode::SoftHyphen(_)
             | InlineNode::PositionalTab(_)
-            | InlineNode::NoteReference(_) => {}
+            | InlineNode::NoteReference(_)
+            | InlineNode::NoteNumberMark(_) => {}
         }
     }
 }

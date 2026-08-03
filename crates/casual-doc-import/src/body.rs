@@ -17,21 +17,21 @@ use casual_doc_model::v1::{
     MAX_DESCR_BYTES, MAX_EMU, MAX_FIELD_INSTRUCTION_BYTES, MAX_FORM_FIELD_ENTRIES,
     MAX_FORM_FIELD_STRING_BYTES, MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH,
     MAX_SHAPE_ADJUSTMENTS, MAX_SHAPE_FORMULA_BYTES, MAX_SHAPE_GUIDE_NAME_BYTES,
-    MAX_SHAPE_PRESET_BYTES, MAX_TEXTBOX_DEPTH, Math, MathExpression, MediaId, MoveKind,
-    MoveRangeEnd, MoveRangeStart, NoBreakHyphen, NoteId, NoteKind, NoteNumberRestart, NotePosition,
-    NoteProperties, NoteReference, PageBorderDisplay, PageBorderOffset, PageBorders, PageMargins,
-    PageNumbering, PageOrientation, PageSize, PageVerticalAlignment, PaperSource, Paragraph,
-    ParagraphProperties, PointEmu, PositionalTab, PositionalTabAlignment, PositionalTabLeader,
-    PositionalTabRelativeTo, PropChange, Revision, RevisionKind, RgbColor, Rgba, Run,
-    RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind,
-    SdtDataBinding, SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionColumns,
-    SectionId, SectionType, ShapeAdjustment, ShapeGeometry, ShapeStroke, SoftHyphen, StyleKind,
-    Symbol, Tab, TabAlignment, TabLeader, TabStop, TableAnchor, TableCellProperties,
-    TableFloatPosition, TableLayout, TableOverlap, TableProperties, TableRowProperties,
-    TableXAlign, TableYAlign, TextBox, TextBoxAutoFit, TextBoxBodyProperties,
-    TextBoxHorizontalOverflow, TextBoxInsets, TextBoxVerticalAnchor, TextBoxVerticalOverflow,
-    TextDirection, VerticalAlign, VerticalAnchor, VerticalMerge, VerticalPosition,
-    WordprocessingGroup, WrapDistances, WrapMode,
+    MAX_SHAPE_PRESET_BYTES, MAX_TEXTBOX_DEPTH, MarkRevision, MarkRevisionKind, Math,
+    MathExpression, MediaId, MoveKind, MoveRangeEnd, MoveRangeStart, NoBreakHyphen, NoteId,
+    NoteKind, NoteNumberMark, NoteNumberRestart, NotePosition, NoteProperties, NoteReference,
+    PageBorderDisplay, PageBorderOffset, PageBorders, PageMargins, PageNumbering, PageOrientation,
+    PageSize, PageVerticalAlignment, PaperSource, Paragraph, ParagraphProperties, PointEmu,
+    PositionalTab, PositionalTabAlignment, PositionalTabLeader, PositionalTabRelativeTo,
+    PropChange, Revision, RevisionKind, RgbColor, Rgba, Run, RunProperties, SchemeColor,
+    SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind, SdtDataBinding, SdtDate,
+    SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionColumns, SectionId, SectionType,
+    ShapeAdjustment, ShapeGeometry, ShapeStroke, SoftHyphen, StyleKind, Symbol, Tab, TabAlignment,
+    TabLeader, TabStop, TableAnchor, TableCellProperties, TableFloatPosition, TableLayout,
+    TableOverlap, TableProperties, TableRowProperties, TableXAlign, TableYAlign, TextBox,
+    TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxInsets,
+    TextBoxVerticalAnchor, TextBoxVerticalOverflow, TextDirection, VerticalAlign, VerticalAnchor,
+    VerticalMerge, VerticalPosition, WordprocessingGroup, WrapDistances, WrapMode,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::events::{BytesStart, Event};
@@ -102,6 +102,12 @@ enum Segment {
     NoteReference {
         kind: NoteKind,
         note: NoteId,
+    },
+    /// The auto-number mark inside a note's own body (`w:footnoteRef` /
+    /// `w:endnoteRef`), printing that note's own number.
+    NoteNumberMark {
+        kind: NoteKind,
+        properties: RunProperties,
     },
     /// A reference to a comment definition.
     CommentReference {
@@ -1815,6 +1821,18 @@ impl BodyParser<'_> {
                     None => self.reporter.report(b"endnoteReference"),
                 }
             }
+            // The note's own auto-number mark (`w:footnoteRef`/`w:endnoteRef`),
+            // which appears INSIDE a footnote/endnote body and prints that note's
+            // number. It carries the enclosing run's formatting; the element name
+            // alone fixes its kind.
+            b"footnoteRef" if self.run_open => self.push_segment(Segment::NoteNumberMark {
+                kind: NoteKind::Footnote,
+                properties: self.run_properties.clone(),
+            }),
+            b"endnoteRef" if self.run_open => self.push_segment(Segment::NoteNumberMark {
+                kind: NoteKind::Endnote,
+                properties: self.run_properties.clone(),
+            }),
             // A comment reference (inside a run) resolves to a comment id.
             b"commentReference" if self.run_open => {
                 match attribute_value(element, b"id")
@@ -2054,6 +2072,30 @@ impl BodyParser<'_> {
             // and never commits an enclosing real revision. The arm is
             // UNCONDITIONAL (both branches handle every wrapper name) so start and
             // end stay balanced, exactly like tables' `suppressed_tbl_depth`.
+            // A tracked paragraph-mark insertion/deletion (`w:pPr>w:rPr>w:ins` or
+            // `w:del`): the pilcrow itself is a tracked change. Captured onto the
+            // paragraph's `mark_revision`. The empty element balances via the
+            // `suppressed_revision_depth` close arm (it is not incremented here, so
+            // this must NOT fall through to the generic arm below). `moveFrom`/
+            // `moveTo` on the mark are not modeled and stay suppressed there.
+            b"ins" | b"del" if self.mark_rpr_depth > 0 && self.ppr_depth > 0 && !self.run_open => {
+                let kind = if local == b"ins" {
+                    MarkRevisionKind::Insertion
+                } else {
+                    MarkRevisionKind::Deletion
+                };
+                self.paragraph_properties.mark_revision = Some(MarkRevision {
+                    kind,
+                    author: attribute_value(element, b"author")
+                        .filter(|value| !value.is_empty() && value.len() <= 255),
+                    date: attribute_value(element, b"date")
+                        .filter(|value| !value.is_empty() && value.len() <= 64),
+                    revision_id: attribute_value(element, b"id")
+                        .filter(|value| !value.is_empty() && value.len() <= 64),
+                });
+                // Balance the matching close (Empty events call on_end too).
+                self.suppressed_revision_depth += 1;
+            }
             b"ins" | b"del" | b"moveFrom" | b"moveTo" => {
                 if self.paragraph_open
                     && !self.run_open
@@ -6101,6 +6143,14 @@ impl BodyParser<'_> {
             Segment::NoteReference { kind, note } => {
                 let id = self.next_id()?;
                 Ok(InlineNode::NoteReference(NoteReference { id, kind, note }))
+            }
+            Segment::NoteNumberMark { kind, properties } => {
+                let id = self.next_id()?;
+                Ok(InlineNode::NoteNumberMark(NoteNumberMark {
+                    id,
+                    kind,
+                    properties,
+                }))
             }
             Segment::CommentReference { comment } => {
                 let id = self.next_id()?;
