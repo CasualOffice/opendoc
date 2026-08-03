@@ -555,7 +555,8 @@ pub struct PointEmu {
     pub y_emu: i64,
 }
 
-/// The outline (`a:ln`) of a floating shape: a resolved color and a width in EMU.
+/// The outline (`a:ln`) of a floating shape: a resolved color and a width in EMU,
+/// plus an optional preset dash pattern and head/tail line-end decorations.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ShapeStroke {
@@ -563,6 +564,97 @@ pub struct ShapeStroke {
     pub color: Rgba,
     /// The outline width in EMU (`a:ln@w`; `0..=MAX_EMU`).
     pub width_emu: i64,
+    /// The preset dash pattern (`a:ln > a:prstDash@val`), if authored. `None`
+    /// leaves the outline solid (the DrawingML default).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dash: Option<DashStyle>,
+    /// The line's start decoration (`a:ln > a:headEnd`), e.g. an arrowhead on a
+    /// connector or callout leader, if authored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_end: Option<LineEnd>,
+    /// The line's end decoration (`a:ln > a:tailEnd`), if authored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tail_end: Option<LineEnd>,
+}
+
+/// A preset line dash pattern (`a:prstDash@val`, `ST_PresetLineDashVal`). An
+/// unrecognized token is not captured (the outline stays solid); only the common
+/// preset patterns are modeled. This carries the dash choice through round-trips;
+/// rendering the pattern is a follow-up.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DashStyle {
+    /// An unbroken line (`solid`).
+    Solid,
+    /// A dotted line (`dot`).
+    Dot,
+    /// A dashed line (`dash`).
+    Dash,
+    /// A large-dash line (`lgDash`).
+    LargeDash,
+    /// A dash-dot line (`dashDot`).
+    DashDot,
+    /// A large-dash-dot line (`lgDashDot`).
+    LargeDashDot,
+    /// A large-dash-dot-dot line (`lgDashDotDot`).
+    LargeDashDotDot,
+    /// A system dashed line (`sysDash`).
+    SystemDash,
+    /// A system dotted line (`sysDot`).
+    SystemDot,
+    /// A system dash-dot line (`sysDashDot`).
+    SystemDashDot,
+    /// A system dash-dot-dot line (`sysDashDotDot`).
+    SystemDashDotDot,
+}
+
+/// A line-end decoration (`a:headEnd`/`a:tailEnd`): the arrowhead type plus the
+/// optional relative width/length size tokens. Carried through round-trips;
+/// drawing the arrowhead is a follow-up.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LineEnd {
+    /// The arrowhead type (`@type`, `ST_LineEndType`).
+    pub kind: LineEndKind,
+    /// The arrowhead width relative to the line (`@w`, `ST_LineEndWidth`), if set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<LineEndSize>,
+    /// The arrowhead length relative to the line (`@len`, `ST_LineEndLength`), if
+    /// set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub length: Option<LineEndSize>,
+}
+
+/// A line-end arrowhead type (`a:headEnd`/`a:tailEnd` `@type`, `ST_LineEndType`).
+/// An unrecognized token is treated as [`LineEndKind::None`].
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LineEndKind {
+    /// No decoration (`none`).
+    None,
+    /// A triangle arrowhead (`triangle`).
+    Triangle,
+    /// A stealth (concave) arrowhead (`stealth`).
+    Stealth,
+    /// A diamond terminator (`diamond`).
+    Diamond,
+    /// An oval terminator (`oval`).
+    Oval,
+    /// An open arrow (`arrow`).
+    Arrow,
+}
+
+/// A line-end size token (`@w`, `ST_LineEndWidth`; `@len`, `ST_LineEndLength`):
+/// the arrowhead's width/length relative to the line weight.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LineEndSize {
+    /// Small (`sm`).
+    Small,
+    /// Medium (`med`).
+    Medium,
+    /// Large (`lg`).
+    Large,
 }
 
 /// The preset geometry of a simple DrawingML shape (`a:prstGeom@prst`). Only the

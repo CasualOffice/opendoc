@@ -1303,6 +1303,9 @@ fn a_floating_text_box_places_at_its_anchor_not_inline() {
                 a: 255,
             },
             width_emu: 19_050,
+            dash: None,
+            head_end: None,
+            tail_end: None,
         }),
         body_properties: Default::default(),
         blocks: vec![BlockNode::Paragraph(Paragraph {

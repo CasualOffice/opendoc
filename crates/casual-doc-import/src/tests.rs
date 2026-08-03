@@ -3572,6 +3572,9 @@ fn drawingml_text_box_is_modeled_and_does_not_corrupt_the_paragraph() {
                 a: 255,
             },
             width_emu: 19_050,
+            dash: None,
+            head_end: None,
+            tail_end: None,
         })
     );
     assert_eq!(
