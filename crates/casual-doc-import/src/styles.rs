@@ -13,9 +13,9 @@ use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
     Alignment, BorderEdge, CellMargins, CellVerticalAlignment, DefinitionMap, DocumentDefaults,
     HeightRule, ParagraphBorders, ParagraphProperties, RgbColor, RowHeight, RunProperties, Shading,
-    Style, StyleId, StyleKind, TableBorders, TableCellProperties, TableLayout, TableLook,
-    TableOverlap, TableProperties, TableRowProperties, TableStyleOverride, TableStyleRegion,
-    TextDirection, VerticalMerge,
+    Style, StyleId, StyleKind, TabAlignment, TabLeader, TabStop, TableBorders, TableCellProperties,
+    TableLayout, TableLook, TableOverlap, TableProperties, TableRowProperties, TableStyleOverride,
+    TableStyleRegion, TextDirection, VerticalMerge,
 };
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
@@ -757,6 +757,17 @@ fn read_paragraph_container(
                     consumed = true;
                 }
             }
+            // `w:tabs` is a container of `w:tab` leaves, so the flat
+            // `apply_paragraph_property` cannot read it. A style that declares its
+            // own tab stops (e.g. a TOC/index style's dot-leader stops) must not
+            // lose them, so read the nested `w:tab` children here. Mirrors the
+            // body parser's `apply_tab_stop`.
+            b"tabs" => {
+                if open {
+                    read_style_tab_stops(reader, buffer, ctx, depth + 1, &mut acc.paragraph)?;
+                    consumed = true;
+                }
+            }
             other => {
                 if !apply_paragraph_property(&mut acc.paragraph, other, &child) {
                     ctx.report(other);
@@ -1096,6 +1107,70 @@ fn read_style_num_pr(
         }
     }
     Ok(())
+}
+
+/// Reads a style's `w:pPr/w:tabs` container, mapping each `w:tab` child into
+/// `paragraph.tabs`. A `clear`/unknown alignment, a missing/out-of-range `w:pos`,
+/// or overflow past the 128-stop bound drops that stop and is reported — matching
+/// the body parser's `apply_tab_stop`.
+fn read_style_tab_stops(
+    reader: &mut Reader<&[u8]>,
+    buffer: &mut Vec<u8>,
+    ctx: &mut Ctx,
+    depth: u64,
+    paragraph: &mut ParagraphProperties,
+) -> Result<(), ImportError> {
+    ctx.check_depth(depth)?;
+    loop {
+        let (child, open) = match read_node(reader, buffer, ctx)? {
+            Node::Open(child) => (child, true),
+            Node::Empty(child) => (child, false),
+            Node::Close | Node::Eof => break,
+        };
+        if child.local_name().as_ref() == b"tab" {
+            match tab_stop(&child) {
+                Some(tab) if paragraph.tabs.len() < 128 => paragraph.tabs.push(tab),
+                _ => ctx.report(b"tab"),
+            }
+        } else {
+            ctx.report(child.local_name().as_ref());
+        }
+        if open {
+            skip_subtree(reader, buffer, ctx)?;
+        }
+    }
+    Ok(())
+}
+
+/// Builds a `TabStop` from a `w:tab` element. Returns `None` (caller reports) for
+/// a `clear`/unknown alignment or a missing/out-of-range `w:pos`.
+fn tab_stop(element: &BytesStart<'_>) -> Option<TabStop> {
+    let alignment = match attribute_value(element, b"val").as_deref() {
+        Some("start" | "left") => TabAlignment::Start,
+        Some("center") => TabAlignment::Center,
+        Some("end" | "right") => TabAlignment::End,
+        Some("decimal") => TabAlignment::Decimal,
+        Some("bar") => TabAlignment::Bar,
+        _ => return None,
+    };
+    let position_twips = match attribute_value(element, b"pos").and_then(|v| v.parse::<i32>().ok())
+    {
+        Some(pos) if (-31_680..=31_680).contains(&pos) => pos,
+        _ => return None,
+    };
+    let leader = match attribute_value(element, b"leader").as_deref() {
+        Some("dot") => Some(TabLeader::Dot),
+        Some("hyphen") => Some(TabLeader::Hyphen),
+        Some("underscore") => Some(TabLeader::Underscore),
+        Some("middleDot") => Some(TabLeader::MiddleDot),
+        Some("heavy") => Some(TabLeader::Heavy),
+        _ => None,
+    };
+    Some(TabStop {
+        position_twips,
+        alignment,
+        leader,
+    })
 }
 
 fn read_paragraph_borders(
