@@ -5496,6 +5496,12 @@ fn write_run_properties(
         if !on {
             el.push_attribute(("w:val", "none"));
         }
+        // `w:u@color` round-trips the explicit underline color when present.
+        let color;
+        if let Some(rgb) = &properties.underline_color {
+            color = format!("{:02X}{:02X}{:02X}", rgb.r, rgb.g, rgb.b);
+            el.push_attribute(("w:color", color.as_str()));
+        }
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
     if let Some(Color::Rgb(rgb)) = &properties.color {

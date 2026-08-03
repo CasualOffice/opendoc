@@ -41,6 +41,10 @@ pub struct Glyph {
 pub struct Decoration {
     /// Underline.
     pub underline: bool,
+    /// Explicit underline color (`w:u@color`) resolved to RGBA; `None` means the
+    /// underline takes the run's text color.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub underline_color: Option<[u8; 4]>,
     /// Strike-through.
     pub strikethrough: bool,
     /// Double strike-through (`w:dstrike`): two parallel lines through the run.

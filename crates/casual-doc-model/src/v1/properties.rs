@@ -1007,6 +1007,10 @@ pub struct RunProperties {
     /// Underline.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub underline: Option<bool>,
+    /// Explicit underline color (`w:u@color`), sRGB. `None` (the common case, or
+    /// `auto`) means the underline takes the run's text color.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub underline_color: Option<RgbColor>,
     /// Strike-through.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub strike: Option<bool>,

@@ -4483,6 +4483,7 @@ fn styled_owned_run(
             underline: effective.underline.unwrap_or(false),
             strikethrough: effective.strike.unwrap_or(false),
             double_strike: effective.double_strike.unwrap_or(false),
+            underline_color: effective.underline_color.map(|c| [c.r, c.g, c.b, 255]),
         },
         highlight: effective.highlight.and_then(highlight_rgba),
         shading: shading_rgba(&effective.shading),
@@ -4524,6 +4525,7 @@ fn build_styled_run<'a>(
             underline: properties.underline.unwrap_or(false),
             strikethrough: properties.strike.unwrap_or(false),
             double_strike: properties.double_strike.unwrap_or(false),
+            underline_color: properties.underline_color.map(|c| [c.r, c.g, c.b, 255]),
         },
         highlight: properties.highlight.and_then(highlight_rgba),
         shading: shading_rgba(&properties.shading),
@@ -4603,6 +4605,7 @@ fn symbol_glyph_run(symbol: &Symbol, ctx: &mut FlowCtx) -> StyledRun<'static> {
             underline: effective.underline.unwrap_or(false),
             strikethrough: effective.strike.unwrap_or(false),
             double_strike: effective.double_strike.unwrap_or(false),
+            underline_color: effective.underline_color.map(|c| [c.r, c.g, c.b, 255]),
         },
         highlight: effective.highlight.and_then(highlight_rgba),
         shading: shading_rgba(&effective.shading),
@@ -4827,6 +4830,7 @@ fn build_script_run<'a>(
             underline: properties.underline.unwrap_or(false),
             strikethrough: properties.strike.unwrap_or(false),
             double_strike: properties.double_strike.unwrap_or(false),
+            underline_color: properties.underline_color.map(|c| [c.r, c.g, c.b, 255]),
         },
         highlight: properties.highlight.and_then(highlight_rgba),
         shading: shading_rgba(&properties.shading),
@@ -4855,6 +4859,7 @@ fn push_small_caps_runs<'a>(
         underline: properties.underline.unwrap_or(false),
         strikethrough: properties.strike.unwrap_or(false),
         double_strike: properties.double_strike.unwrap_or(false),
+        underline_color: properties.underline_color.map(|c| [c.r, c.g, c.b, 255]),
     };
     let highlight = properties.highlight.and_then(highlight_rgba);
     let shading = shading_rgba(&properties.shading);
@@ -6717,7 +6722,10 @@ mod tests {
             panic!();
         };
         // The w:shd fill resolves to opaque RGBA and rides the shaped run.
-        assert_eq!(lines.lines[0].runs[0].shading, Some([0xCC, 0xEE, 0xFF, 255]));
+        assert_eq!(
+            lines.lines[0].runs[0].shading,
+            Some([0xCC, 0xEE, 0xFF, 255])
+        );
         // ...and composition paints it as a background rect before the glyphs.
         let list = compose_paragraph(lines, Point::new(Twip::ZERO, Twip::ZERO));
         let rect_before_glyphs = list.items.iter().position(|item| {
@@ -6755,6 +6763,31 @@ mod tests {
             !decoration.strikethrough,
             "double strike is independent of the single strike"
         );
+    }
+
+    #[test]
+    fn a_colored_underline_carries_its_color_through_shaping() {
+        use casual_doc_model::v1::RgbColor;
+        // `w:u@color` is not a parley decoration attribute, so the color rides the
+        // run brush across shaping and reappears on the shaped run's decoration.
+        let props = RunProperties {
+            underline: Some(true),
+            underline_color: Some(RgbColor {
+                r: 0xFF,
+                g: 0x00,
+                b: 0x00,
+            }),
+            ..RunProperties::default()
+        };
+        let doc = document(vec![paragraph(10, vec![run_node(11, "link", props)])]);
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&doc, &shaper, Twip::from_points(400));
+        let BlockFragment::Paragraph { lines, .. } = &galley[0] else {
+            panic!();
+        };
+        let decoration = lines.lines[0].runs[0].decoration;
+        assert!(decoration.underline);
+        assert_eq!(decoration.underline_color, Some([0xFF, 0x00, 0x00, 255]));
     }
 
     #[test]

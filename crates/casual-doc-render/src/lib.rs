@@ -531,6 +531,9 @@ fn render_glyph_run(
                     .underline
                     .map(|d| (d.offset, d.thickness))
                     .unwrap_or((-size_px * 0.12, size_px * 0.06));
+                // `w:u@color` colors the underline independently of the text; it
+                // falls back to the run color when unset (`auto`).
+                let underline_color = run.decoration.underline_color.unwrap_or(run.color);
                 draw_decoration(
                     surface,
                     clip,
@@ -538,7 +541,7 @@ fn render_glyph_run(
                     baseline_y - offset,
                     advance,
                     thickness,
-                    run.color,
+                    underline_color,
                 );
             }
             if run.decoration.strikethrough || run.decoration.double_strike {
@@ -1229,6 +1232,7 @@ mod tests {
             underline: true,
             strikethrough: false,
             double_strike: false,
+            underline_color: None,
         });
         let plain_below = band_dark(&plain, baseline + 2, baseline + 10);
         let under_below = band_dark(&underlined, baseline + 2, baseline + 10);
@@ -1251,6 +1255,7 @@ mod tests {
             underline: false,
             strikethrough: true,
             double_strike: false,
+            underline_color: None,
         });
         // Search the mid-band between the baseline and ~cap height above it.
         let (y0, y1) = (baseline.saturating_sub(20), baseline);
@@ -1274,11 +1279,13 @@ mod tests {
             underline: false,
             strikethrough: true,
             double_strike: false,
+            underline_color: None,
         });
         let (double, _) = render_decorated(Decoration {
             underline: false,
             strikethrough: false,
             double_strike: true,
+            underline_color: None,
         });
         assert!(
             dark_pixel_count(&double) > dark_pixel_count(&single),

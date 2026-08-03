@@ -49,6 +49,8 @@ struct RunBrush {
     shading: [u8; 4],
     /// Whether the run has double strike-through (`w:dstrike`).
     double_strike: bool,
+    /// The run's underline color (RGBA); alpha `0` means take the run color.
+    underline_color: [u8; 4],
     /// Baseline shift in twips (positive = raised); subtracted from the run's
     /// glyph-run origin so super/subscript and `w:position` offsets survive shaping.
     baseline_shift: i32,
@@ -804,6 +806,7 @@ impl ParleyShaper {
                     highlight: run.highlight.unwrap_or([0, 0, 0, 0]),
                     shading: run.shading.unwrap_or([0, 0, 0, 0]),
                     double_strike: run.decoration.double_strike,
+                    underline_color: run.decoration.underline_color.unwrap_or([0, 0, 0, 0]),
                     baseline_shift: run.baseline_shift.raw(),
                 }),
                 *start..*end,
@@ -1110,6 +1113,8 @@ impl ParleyShaper {
                         underline: style.underline.is_some(),
                         strikethrough: style.strikethrough.is_some(),
                         double_strike: style.brush.double_strike,
+                        underline_color: (style.brush.underline_color[3] != 0)
+                            .then_some(style.brush.underline_color),
                     },
                     highlight,
                     shading,
@@ -1690,6 +1695,7 @@ mod tests {
                 underline: true,
                 strikethrough: false,
                 double_strike: false,
+                underline_color: None,
             },
             highlight: None,
             shading: None,
