@@ -837,7 +837,7 @@ mod tests {
     }
 
     #[test]
-    fn builtins_are_capability_sorted_for_all_three_formats() {
+    fn builtin_export_formats_are_capability_sorted() {
         let registry: FormatRegistry = builtin_registry();
         assert_eq!(
             registry

@@ -36,6 +36,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "odt_content"
+path = "fuzz_targets/odt_content.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 members = ["."]
 resolver = "3"

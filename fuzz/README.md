@@ -2,7 +2,8 @@
 
 The independent fuzz workspace exercises the format-neutral ZIP, DOCX package,
 and ODT package/profile boundaries without adding nightly-only dependencies to
-the product workspace.
+the product workspace. The ODT content target additionally exercises bounded
+semantic XML import into the normalized model.
 
 ## Prerequisites
 
@@ -16,6 +17,7 @@ the product workspace.
 cargo +nightly-2026-07-20 fuzz build bounded_package
 cargo +nightly-2026-07-20 fuzz build docx_package
 cargo +nightly-2026-07-20 fuzz build odt_package
+cargo +nightly-2026-07-20 fuzz build odt_content
 ```
 
 ## Seeded Run

@@ -30,6 +30,12 @@ The work lands as reviewable commits:
   XML reference handling; semantic-fact-derived deterministic IDs; typed
   redacted failures; cancellation; and explicit compatibility findings for
   deferred constructs.
+- Checkpoint 3 registers that bounded subset as an import-only ODT adapter with
+  definitive package-based detection, deterministic report translation,
+  optional original-byte retention, explicit no-export capabilities, and a
+  dedicated `content.xml` fuzz target. Stable SDK/WASM host methods are still
+  absent, so this is internal registry availability rather than a public host
+  support claim.
 - Named/automatic style resolution and all complex structures in sections 4 and
   6 remain in progress. ODT export and public host surfaces remain Slice E.
 

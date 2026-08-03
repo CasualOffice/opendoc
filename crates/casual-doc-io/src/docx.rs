@@ -13,8 +13,8 @@ use crate::{
     AdapterError, CompatibilityEntry, CompatibilityReport, DocumentResources, ExportArtifact,
     ExportMode, ExportRequest, FeatureLocation, FormatDescriptor, FormatExporter, FormatId,
     FormatImporter, FormatProfile, FormatRegistry, ImportArtifact, ImportRequest, ModelOutcome,
-    NormalizedJsonAdapter, PlainTextAdapter, ProbeRequest, ProbeResult, RetentionOutcome,
-    SourceEnvelope, formats,
+    NormalizedJsonAdapter, OdtAdapter, PlainTextAdapter, ProbeRequest, ProbeResult,
+    RetentionOutcome, SourceEnvelope, formats,
 };
 
 const DOCX_MIME: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -202,6 +202,9 @@ pub fn builtin_registry() -> FormatRegistry {
     registry
         .register_exporter(adapter)
         .expect("built-in text exporter registration is unique");
+    registry
+        .register_importer(Arc::new(OdtAdapter::default()))
+        .expect("built-in ODT importer registration is unique");
     registry
 }
 

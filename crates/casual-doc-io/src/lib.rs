@@ -13,6 +13,7 @@ mod docx;
 mod error;
 mod format;
 mod normalized_json;
+mod odt;
 mod registry;
 mod report;
 mod text;
@@ -25,6 +26,7 @@ pub use docx::{DocxAdapter, builtin_registry};
 pub use error::{AdapterError, IoError};
 pub use format::{FormatDescriptor, FormatId, FormatIdError, formats};
 pub use normalized_json::NormalizedJsonAdapter;
+pub use odt::OdtAdapter;
 pub use registry::{
     DetectionRequest, FormatExporter, FormatImporter, FormatRegistry, FormatSelection,
     ProbeConfidence, ProbeRequest, ProbeResult,

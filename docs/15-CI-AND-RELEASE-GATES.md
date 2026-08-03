@@ -51,8 +51,9 @@ attribute-order invariance, strict version/document-kind checks, DTD and active
 content refusal, bounded XML/text/paragraph/inline/report resources,
 cooperative cancellation, normalized-model validation, and explicit findings
 for every deferred construct family. The initial core-text checkpoint exercises
-these properties with synthetic fixtures; rights-reviewed ODF fixtures and a
-dedicated `content.xml` fuzz target remain Slice D completion requirements.
+these properties with synthetic fixtures, and the independently locked
+`odt_content` fuzz target compiles in pull-request CI. Rights-reviewed ODF
+fixtures remain a Slice D completion requirement.
 
 Release workflows are separate and receive no write permission during pull
 request validation.

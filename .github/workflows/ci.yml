@@ -119,11 +119,12 @@ jobs:
           cargo +nightly-2026-07-20 install cargo-fuzz
           --version 0.13.2
           --locked
-      - name: Build package fuzz targets
+      - name: Build package and content fuzz targets
         run: |
           cargo +nightly-2026-07-20 fuzz build bounded_package
           cargo +nightly-2026-07-20 fuzz build docx_package
           cargo +nightly-2026-07-20 fuzz build odt_package
+          cargo +nightly-2026-07-20 fuzz build odt_content
       - name: Verify fuzz lockfile remains unchanged
         run: git diff --exit-code -- fuzz/Cargo.lock
 

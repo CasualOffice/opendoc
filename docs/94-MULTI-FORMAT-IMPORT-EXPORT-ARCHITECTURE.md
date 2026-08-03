@@ -22,7 +22,9 @@ checkpoint of Slice D are complete. Slice D's core `content.xml` importer now
 maps paragraphs, headings, spans, explicit spaces, tabs, and line breaks into a
 validated schema-v1 document with semantic-fact-derived identities and bounded
 compatibility findings. The remaining Slice D surface and all ODT export/host
-work remain incomplete; see docs 14, 18, and 95 for the exact status.
+work remain incomplete. The core subset is registered as an import-only adapter
+with definitive package evidence and optional exact-source retention; see docs
+14, 18, and 95 for the exact status.
 
 ## 2. Scope
 
