@@ -1273,6 +1273,102 @@ mod semantic_tests {
     }
 
     #[test]
+    fn tracked_table_row_revisions_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, MarkRevisionKind};
+        // A tracked row insertion (`w:trPr>w:ins`, with author/date/id) and a
+        // tracked row deletion (`w:trPr>w:del`). Both were dropped at import;
+        // now they are modeled on `row_revision` and must round-trip.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:tbl>
+                <w:tblGrid><w:gridCol w:w="5000"/></w:tblGrid>
+                <w:tr>
+                    <w:trPr><w:ins w:id="11" w:author="Ada" w:date="2021-01-02T03:04:05Z"/></w:trPr>
+                    <w:tc><w:p><w:r><w:t>a</w:t></w:r></w:p></w:tc>
+                </w:tr>
+                <w:tr>
+                    <w:trPr><w:del w:id="12" w:author="Bo"/></w:trPr>
+                    <w:tc><w:p><w:r><w:t>b</w:t></w:r></w:p></w:tc>
+                </w:tr>
+            </w:tbl>
+        </w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(m1, m2, "row revisions are a write -> reopen fixed point");
+
+        let BlockNode::Table(table) = &m2.body()[0] else {
+            panic!("expected a table");
+        };
+        let ins = table.rows[0]
+            .properties
+            .row_revision
+            .as_ref()
+            .expect("row insertion modeled");
+        assert_eq!(ins.kind, MarkRevisionKind::Insertion);
+        assert_eq!(ins.author.as_deref(), Some("Ada"));
+        assert_eq!(ins.date.as_deref(), Some("2021-01-02T03:04:05Z"));
+        assert_eq!(ins.revision_id.as_deref(), Some("11"));
+        let del = table.rows[1]
+            .properties
+            .row_revision
+            .as_ref()
+            .expect("row deletion modeled");
+        assert_eq!(del.kind, MarkRevisionKind::Deletion);
+        assert_eq!(del.author.as_deref(), Some("Bo"));
+    }
+
+    #[test]
+    fn tracked_table_cell_revisions_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, CellMergeAnnotation, MarkRevisionKind};
+        // Tracked cell insertion (`w:cellIns`), deletion (`w:cellDel`), and merge
+        // (`w:cellMerge` with vMerge/vMergeOrig annotations). Each was dropped at
+        // import; now modeled on `cell_revision`/`cell_merge` and must round-trip.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:tbl>
+                <w:tblGrid><w:gridCol w:w="5000"/></w:tblGrid>
+                <w:tr><w:tc>
+                    <w:tcPr><w:cellIns w:id="21" w:author="Ada"/></w:tcPr>
+                    <w:p><w:r><w:t>a</w:t></w:r></w:p>
+                </w:tc></w:tr>
+                <w:tr><w:tc>
+                    <w:tcPr><w:cellDel w:id="22" w:author="Bo" w:date="2022-02-02T00:00:00Z"/></w:tcPr>
+                    <w:p><w:r><w:t>b</w:t></w:r></w:p>
+                </w:tc></w:tr>
+                <w:tr><w:tc>
+                    <w:tcPr><w:cellMerge w:id="23" w:author="Cy" w:vMerge="cont" w:vMergeOrig="rest"/></w:tcPr>
+                    <w:p><w:r><w:t>c</w:t></w:r></w:p>
+                </w:tc></w:tr>
+            </w:tbl>
+        </w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(m1, m2, "cell revisions are a write -> reopen fixed point");
+
+        let BlockNode::Table(table) = &m2.body()[0] else {
+            panic!("expected a table");
+        };
+        let ins = table.rows[0].cells[0]
+            .properties
+            .cell_revision
+            .as_ref()
+            .expect("cell insertion modeled");
+        assert_eq!(ins.kind, MarkRevisionKind::Insertion);
+        assert_eq!(ins.author.as_deref(), Some("Ada"));
+        let del = table.rows[1].cells[0]
+            .properties
+            .cell_revision
+            .as_ref()
+            .expect("cell deletion modeled");
+        assert_eq!(del.kind, MarkRevisionKind::Deletion);
+        assert_eq!(del.date.as_deref(), Some("2022-02-02T00:00:00Z"));
+        let merge = table.rows[2].cells[0]
+            .properties
+            .cell_merge
+            .as_ref()
+            .expect("cell merge modeled");
+        assert_eq!(merge.author.as_deref(), Some("Cy"));
+        assert_eq!(merge.vmerge, Some(CellMergeAnnotation::Cont));
+        assert_eq!(merge.vmerge_orig, Some(CellMergeAnnotation::Rest));
+    }
+
+    #[test]
     fn expanded_table_properties_survive_the_semantic_round_trip() {
         // The additive table/row/cell properties: tblOverlap, tblCellSpacing,
         // tblInd, tblCaption/tblDescription; a per-row jc + tblCellSpacing; and

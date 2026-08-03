@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{Alignment, BlockNode, PropChange, RgbColor, StyleId, ThemeColor};
+use super::{Alignment, BlockNode, MarkRevision, PropChange, RgbColor, StyleId, ThemeColor};
 use crate::NodeId;
 
 /// Maximum table nesting depth enforced by validation. A root-level table is
@@ -538,6 +538,11 @@ pub struct TableRowProperties {
     /// Per-row default cell spacing in twips, `dxa` only (`w:tblCellSpacing`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cell_spacing_twips: Option<i32>,
+    /// Tracked insertion/deletion of the whole row (`w:trPr > w:ins` / `w:del`).
+    /// Additive, omitted when absent; re-emitted inside `w:trPr` before
+    /// `w:trPrChange`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row_revision: Option<MarkRevision>,
     /// Row-properties format-change revision (`w:trPrChange`): the prior row
     /// properties plus author/date/id. Additive, omitted when absent; re-emitted
     /// as the last child of `w:trPr`.
@@ -575,6 +580,45 @@ pub enum TextDirection {
     TbRl,
     /// Bottom-to-top, left-to-right (vertical).
     BtLr,
+}
+
+/// A tracked cell merge's vertical-merge annotation (`ST_AnnotationVMerge`):
+/// whether the cell is the continuation of, or the start (rest) of, a merged
+/// vertical span under the tracked merge.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CellMergeAnnotation {
+    /// A continued cell in the merged span (`cont`).
+    Cont,
+    /// The starting cell of the merged span (`rest`).
+    Rest,
+}
+
+/// A tracked cell merge (`w:tcPr > w:cellMerge`, `CT_CellMergeTrackChange`): the
+/// cell's vertical-merge role changed under tracked changes. Unlike a cell
+/// insertion/deletion (a plain [`MarkRevision`]), a merge also records the
+/// current and original vertical-merge annotations.
+///
+/// Author/date/id are retained as the producer wrote them (opaque, bounded),
+/// mirroring [`MarkRevision`] and [`super::Revision`] metadata.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CellMergeRevision {
+    /// The revision author, if declared (non-empty, at most 255 bytes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    /// The revision date as written (ISO-8601 string), if declared (<= 64 bytes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date: Option<String>,
+    /// The producer's revision id (`w:id`) as written, if declared (<= 64 bytes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision_id: Option<String>,
+    /// The cell's vertical-merge annotation after the merge (`w:vMerge`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vmerge: Option<CellMergeAnnotation>,
+    /// The cell's original vertical-merge annotation (`w:vMergeOrig`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vmerge_orig: Option<CellMergeAnnotation>,
 }
 
 /// Typed table-cell properties. An empty value serializes to `{}`.
@@ -620,6 +664,15 @@ pub struct TableCellProperties {
     /// Hide the end-of-cell mark; affects auto-fit height (`w:hideMark`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hide_mark: bool,
+    /// Tracked insertion/deletion of the cell (`w:tcPr > w:cellIns` / `w:cellDel`).
+    /// Additive, omitted when absent; re-emitted inside `w:tcPr` before
+    /// `w:tcPrChange`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cell_revision: Option<MarkRevision>,
+    /// Tracked cell merge (`w:tcPr > w:cellMerge`). Additive, omitted when absent;
+    /// re-emitted inside `w:tcPr` before `w:tcPrChange`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cell_merge: Option<CellMergeRevision>,
     /// Cell-properties format-change revision (`w:tcPrChange`): the prior cell
     /// properties plus author/date/id. Additive, omitted when absent; re-emitted
     /// as the last child of `w:tcPr`.

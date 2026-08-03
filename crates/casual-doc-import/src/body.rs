@@ -5,33 +5,34 @@ use std::collections::{BTreeMap, BTreeSet};
 use casual_doc_model::v1::{
     Alignment, AltChunk, AltChunkProperties, AnchorHorizontal, AnchorVertical, AnchoredDrawing,
     BlockNode, BlockSdt, Bookmark, BookmarkEnd, BookmarkId, BookmarkStart, BorderEdge, Break,
-    BreakKind, CellVerticalAlignment, CnfStyle, ColorScheme, ColumnDef, Comment, CommentId,
-    CommentRangeEnd, CommentRangeStart, CommentReference, CropRect, DashStyle, DefinitionMap,
-    DocGrid, DocGridType, Drawing, DrawingAnchor, EmbeddedKind, EmbeddedObject, EmbeddedPart,
-    Extent, ExternalTarget, Field, FieldKind, FormCheckBox, FormCheckBoxSize, FormDropDown,
-    FormFieldData, FormFieldKind, FormTextInput, FormTextType, GridColumn, GroupChild,
-    GroupPicture, GroupShape, GroupTextBox, GroupTransform, HR_FULL_WIDTH_PERMILLE, HeaderFooterId,
-    HeaderFooterKind, HeaderFooterRef, HeightRule, HorizontalAlign, HorizontalAnchor,
-    HorizontalPosition, HorizontalRule, HorizontalRuleAlign, Hyperlink, HyperlinkTarget,
-    InlineNode, InlineSdt, InternalTarget, LineEnd, LineEndKind, LineEndSize, LineNumberRestart,
-    LineNumbering, MAX_DESCR_BYTES, MAX_EMU, MAX_FIELD_INSTRUCTION_BYTES, MAX_FORM_FIELD_ENTRIES,
-    MAX_FORM_FIELD_STRING_BYTES, MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH,
-    MAX_SHAPE_ADJUSTMENTS, MAX_SHAPE_FORMULA_BYTES, MAX_SHAPE_GUIDE_NAME_BYTES,
-    MAX_SHAPE_PRESET_BYTES, MAX_TEXTBOX_DEPTH, MarkRevision, MarkRevisionKind, Math,
-    MathExpression, MediaId, MoveKind, MoveRangeEnd, MoveRangeStart, NoBreakHyphen, NoteId,
-    NoteKind, NoteNumberMark, NoteNumberRestart, NotePosition, NoteProperties, NoteReference,
-    PageBorderDisplay, PageBorderOffset, PageBorders, PageMargins, PageNumbering, PageOrientation,
-    PageSize, PageVerticalAlignment, PaperSource, Paragraph, ParagraphProperties, PointEmu,
-    PositionalTab, PositionalTabAlignment, PositionalTabLeader, PositionalTabRelativeTo,
-    PropChange, Revision, RevisionKind, RgbColor, Rgba, Run, RunProperties, SchemeColor,
-    SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind, SdtDataBinding, SdtDate,
-    SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionColumns, SectionId, SectionType,
-    Shading, ShapeAdjustment, ShapeGeometry, ShapeStroke, SoftHyphen, StyleKind, Symbol, Tab,
-    TabAlignment, TabLeader, TabStop, TableAnchor, TableCellProperties, TableFloatPosition,
-    TableLayout, TableOverlap, TableProperties, TableRowProperties, TableXAlign, TableYAlign,
-    TextBox, TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxInsets,
-    TextBoxVerticalAnchor, TextBoxVerticalOverflow, TextDirection, VerticalAlign, VerticalAnchor,
-    VerticalMerge, VerticalPosition, WordprocessingGroup, WrapDistances, WrapMode,
+    BreakKind, CellMergeAnnotation, CellMergeRevision, CellVerticalAlignment, CnfStyle,
+    ColorScheme, ColumnDef, Comment, CommentId, CommentRangeEnd, CommentRangeStart,
+    CommentReference, CropRect, DashStyle, DefinitionMap, DocGrid, DocGridType, Drawing,
+    DrawingAnchor, EmbeddedKind, EmbeddedObject, EmbeddedPart, Extent, ExternalTarget, Field,
+    FieldKind, FormCheckBox, FormCheckBoxSize, FormDropDown, FormFieldData, FormFieldKind,
+    FormTextInput, FormTextType, GridColumn, GroupChild, GroupPicture, GroupShape, GroupTextBox,
+    GroupTransform, HR_FULL_WIDTH_PERMILLE, HeaderFooterId, HeaderFooterKind, HeaderFooterRef,
+    HeightRule, HorizontalAlign, HorizontalAnchor, HorizontalPosition, HorizontalRule,
+    HorizontalRuleAlign, Hyperlink, HyperlinkTarget, InlineNode, InlineSdt, InternalTarget,
+    LineEnd, LineEndKind, LineEndSize, LineNumberRestart, LineNumbering, MAX_DESCR_BYTES, MAX_EMU,
+    MAX_FIELD_INSTRUCTION_BYTES, MAX_FORM_FIELD_ENTRIES, MAX_FORM_FIELD_STRING_BYTES,
+    MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH, MAX_SHAPE_ADJUSTMENTS,
+    MAX_SHAPE_FORMULA_BYTES, MAX_SHAPE_GUIDE_NAME_BYTES, MAX_SHAPE_PRESET_BYTES, MAX_TEXTBOX_DEPTH,
+    MarkRevision, MarkRevisionKind, Math, MathExpression, MediaId, MoveKind, MoveRangeEnd,
+    MoveRangeStart, NoBreakHyphen, NoteId, NoteKind, NoteNumberMark, NoteNumberRestart,
+    NotePosition, NoteProperties, NoteReference, PageBorderDisplay, PageBorderOffset, PageBorders,
+    PageMargins, PageNumbering, PageOrientation, PageSize, PageVerticalAlignment, PaperSource,
+    Paragraph, ParagraphProperties, PointEmu, PositionalTab, PositionalTabAlignment,
+    PositionalTabLeader, PositionalTabRelativeTo, PropChange, Revision, RevisionKind, RgbColor,
+    Rgba, Run, RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData,
+    SdtControlKind, SdtDataBinding, SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary,
+    SectionColumns, SectionId, SectionType, Shading, ShapeAdjustment, ShapeGeometry, ShapeStroke,
+    SoftHyphen, StyleKind, Symbol, Tab, TabAlignment, TabLeader, TabStop, TableAnchor,
+    TableCellProperties, TableFloatPosition, TableLayout, TableOverlap, TableProperties,
+    TableRowProperties, TableXAlign, TableYAlign, TextBox, TextBoxAutoFit, TextBoxBodyProperties,
+    TextBoxHorizontalOverflow, TextBoxInsets, TextBoxVerticalAnchor, TextBoxVerticalOverflow,
+    TextDirection, VerticalAlign, VerticalAnchor, VerticalMerge, VerticalPosition,
+    WordprocessingGroup, WrapDistances, WrapMode,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::events::{BytesStart, Event};
@@ -2096,6 +2097,28 @@ impl BodyParser<'_> {
                 // Balance the matching close (Empty events call on_end too).
                 self.suppressed_revision_depth += 1;
             }
+            // A tracked table-row insertion/deletion (`w:trPr > w:ins` / `w:del`):
+            // the whole row is a tracked change. Captured onto the row's
+            // `row_revision`; balanced via `suppressed_revision_depth` like the
+            // paragraph-mark case, and placed before the generic revision arm so
+            // it is not suppressed-and-dropped.
+            b"ins" | b"del" if self.trpr_depth > 0 => {
+                let kind = if local == b"ins" {
+                    MarkRevisionKind::Insertion
+                } else {
+                    MarkRevisionKind::Deletion
+                };
+                self.tables.set_row_revision(MarkRevision {
+                    kind,
+                    author: attribute_value(element, b"author")
+                        .filter(|value| !value.is_empty() && value.len() <= 255),
+                    date: attribute_value(element, b"date")
+                        .filter(|value| !value.is_empty() && value.len() <= 64),
+                    revision_id: attribute_value(element, b"id")
+                        .filter(|value| !value.is_empty() && value.len() <= 64),
+                });
+                self.suppressed_revision_depth += 1;
+            }
             b"ins" | b"del" | b"moveFrom" | b"moveTo" => {
                 if self.paragraph_open
                     && !self.run_open
@@ -3316,6 +3339,43 @@ impl BodyParser<'_> {
             b"hideMark" if self.tcpr_depth > 0 => self
                 .tables
                 .set_cell_hide_mark(is_true(attribute_value(element, b"val").as_deref())),
+            // Tracked cell insertion/deletion (`w:tcPr > w:cellIns` / `w:cellDel`):
+            // the cell itself is a tracked change. Each is an empty element whose
+            // close falls to the on_end catch-all, so no counter balancing is
+            // needed (unlike the shared `w:ins`/`w:del` names).
+            b"cellIns" | b"cellDel" if self.tcpr_depth > 0 => {
+                let kind = if local == b"cellIns" {
+                    MarkRevisionKind::Insertion
+                } else {
+                    MarkRevisionKind::Deletion
+                };
+                self.tables.set_cell_revision(MarkRevision {
+                    kind,
+                    author: attribute_value(element, b"author")
+                        .filter(|value| !value.is_empty() && value.len() <= 255),
+                    date: attribute_value(element, b"date")
+                        .filter(|value| !value.is_empty() && value.len() <= 64),
+                    revision_id: attribute_value(element, b"id")
+                        .filter(|value| !value.is_empty() && value.len() <= 64),
+                });
+            }
+            // Tracked cell merge (`w:tcPr > w:cellMerge`): the cell's vertical-merge
+            // role changed under tracked changes; the current/original annotations
+            // are retained alongside the author/date/id.
+            b"cellMerge" if self.tcpr_depth > 0 => {
+                self.tables.set_cell_merge(CellMergeRevision {
+                    author: attribute_value(element, b"author")
+                        .filter(|value| !value.is_empty() && value.len() <= 255),
+                    date: attribute_value(element, b"date")
+                        .filter(|value| !value.is_empty() && value.len() <= 64),
+                    revision_id: attribute_value(element, b"id")
+                        .filter(|value| !value.is_empty() && value.len() <= 64),
+                    vmerge: cell_merge_annotation(attribute_value(element, b"vMerge").as_deref()),
+                    vmerge_orig: cell_merge_annotation(
+                        attribute_value(element, b"vMergeOrig").as_deref(),
+                    ),
+                });
+            }
             // ---- content controls (`w:sdt`) ----------------------------------
             // A content control wraps flow content. Its scope (inline around runs,
             // block around paragraphs/tables, or a deferred passthrough) is decided
@@ -6321,6 +6381,16 @@ fn table_alignment(element: &BytesStart<'_>) -> Option<Alignment> {
 
 fn attr_i64(element: &BytesStart<'_>, name: &[u8]) -> Option<i64> {
     attribute_value(element, name).and_then(|value| value.parse().ok())
+}
+
+/// Maps a tracked cell-merge annotation token (`ST_AnnotationVMerge`) to
+/// [`CellMergeAnnotation`]; an absent or unrecognized value yields `None`.
+fn cell_merge_annotation(value: Option<&str>) -> Option<CellMergeAnnotation> {
+    match value {
+        Some("cont") => Some(CellMergeAnnotation::Cont),
+        Some("rest") => Some(CellMergeAnnotation::Rest),
+        _ => None,
+    }
 }
 
 /// Maps an `a:prstDash@val` (`ST_PresetLineDashVal`) token to a [`DashStyle`].

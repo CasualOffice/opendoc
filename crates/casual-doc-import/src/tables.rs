@@ -8,10 +8,11 @@
 
 use casual_doc_model::v1::{Alignment, Shading};
 use casual_doc_model::v1::{
-    BlockNode, BorderEdge, CellMargins, CellVerticalAlignment, CnfStyle, GridColumn, HeightRule,
-    MAX_TABLE_DEPTH, Paragraph, ParagraphProperties, PropChange, StyleId, Table, TableBorders,
-    TableCell, TableCellProperties, TableFloatPosition, TableLayout, TableOverlap, TableProperties,
-    TableRow, TableRowProperties, TableWidth, TextDirection, VerticalMerge,
+    BlockNode, BorderEdge, CellMargins, CellMergeRevision, CellVerticalAlignment, CnfStyle,
+    GridColumn, HeightRule, MAX_TABLE_DEPTH, MarkRevision, Paragraph, ParagraphProperties,
+    PropChange, StyleId, Table, TableBorders, TableCell, TableCellProperties, TableFloatPosition,
+    TableLayout, TableOverlap, TableProperties, TableRow, TableRowProperties, TableWidth,
+    TextDirection, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 
@@ -210,6 +211,27 @@ impl TableStack {
     pub(crate) fn set_cell_text_direction(&mut self, direction: TextDirection) {
         if let Some(cell) = self.current_cell() {
             cell.properties.text_direction = Some(direction);
+        }
+    }
+
+    /// Records a tracked row insertion/deletion on the current open row.
+    pub(crate) fn set_row_revision(&mut self, revision: MarkRevision) {
+        if let Some(properties) = self.row_properties() {
+            properties.row_revision = Some(revision);
+        }
+    }
+
+    /// Records a tracked cell insertion/deletion on the current cell.
+    pub(crate) fn set_cell_revision(&mut self, revision: MarkRevision) {
+        if let Some(cell) = self.current_cell() {
+            cell.properties.cell_revision = Some(revision);
+        }
+    }
+
+    /// Records a tracked cell merge on the current cell.
+    pub(crate) fn set_cell_merge(&mut self, merge: CellMergeRevision) {
+        if let Some(cell) = self.current_cell() {
+            cell.properties.cell_merge = Some(merge);
         }
     }
 
