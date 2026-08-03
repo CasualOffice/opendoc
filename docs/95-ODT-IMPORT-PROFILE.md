@@ -53,8 +53,15 @@ The work lands as reviewable commits:
   definitions. Implementation-dependent defaults, missing/conflicting levels,
   continuation, per-item overrides, and unsupported label details are reported;
   list count and depth are independently bounded.
+- Checkpoint 8 maps tables in body order, including declared or inferred grids,
+  header rows, bounded row/cell repetition, empty cells, nested tables and other
+  implemented cell blocks, horizontal spans, and vertical spans. Covered cells
+  must form the exact declared rectangle; orphaned, missing, overlapping, or
+  out-of-range merge topology fails atomically. Table, expanded row/cell, and
+  nesting limits are independent, and repeated nested content is also charged
+  to the expanded paragraph/inline/text/table budgets before model construction.
 - Style defaults and broader properties, advanced list counters/label layout,
-  tables, notes, media, metadata,
+  table formatting and table export, notes, media, metadata,
   and the remaining structures in sections 4 and 6 remain in progress. Generic
   WASM open/export methods and capability-driven browser Open/Save controls are
   implemented, while the native SDK and production ODT gates remain incomplete;

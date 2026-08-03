@@ -6,9 +6,11 @@ use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, Bookmark, BookmarkEnd,
     BookmarkId, BookmarkStart, Break, BreakKind, Color, Definitions, Document, ExternalTarget,
-    Hyperlink, HyperlinkTarget, InlineNode, InternalTarget, LevelJustification, LevelSuffix,
-    NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel, NumberingRef, Paragraph,
-    ParagraphProperties, RgbColor, Run, RunProperties, Tab,
+    GridColumn, Hyperlink, HyperlinkTarget, InlineNode, InternalTarget, LevelJustification,
+    LevelSuffix, MAX_TABLE_DEPTH, NumberFormat, NumberingInstance, NumberingInstanceId,
+    NumberingLevel, NumberingRef, Paragraph, ParagraphProperties, RgbColor, Run, RunProperties,
+    Tab, Table, TableCell, TableCellProperties, TableProperties, TableRow, TableRowProperties,
+    VerticalMerge,
 };
 use casual_doc_package::CancellationToken;
 use quick_xml::NsReader;
@@ -23,6 +25,7 @@ const SCRIPT_NS: &[u8] = b"urn:oasis:names:tc:opendocument:xmlns:script:1.0";
 const XLINK_NS: &[u8] = b"http://www.w3.org/1999/xlink";
 const STYLE_NS: &[u8] = b"urn:oasis:names:tc:opendocument:xmlns:style:1.0";
 const FO_NS: &[u8] = b"urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0";
+const TABLE_NS: &[u8] = b"urn:oasis:names:tc:opendocument:xmlns:table:1.0";
 const MAX_NAMESPACE_DECLARATIONS_PER_ELEMENT: usize = 4_096;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -33,6 +36,7 @@ enum NamespaceKind {
     Xlink,
     Style,
     Fo,
+    Table,
     Foreign,
 }
 
@@ -122,6 +126,14 @@ pub struct OdfImportLimits {
     pub max_lists: usize,
     /// Maximum nested source list depth.
     pub max_list_depth: usize,
+    /// Maximum normalized tables, including nested tables.
+    pub max_tables: usize,
+    /// Maximum expanded table rows across all tables.
+    pub max_table_rows: usize,
+    /// Maximum expanded table cells, including covered cells.
+    pub max_table_cells: usize,
+    /// Maximum nested table depth.
+    pub max_table_depth: usize,
     /// Maximum aggregate normalized text bytes.
     pub max_text_bytes: usize,
     /// Maximum spaces emitted by one `text:s` element.
@@ -153,6 +165,14 @@ impl OdfImportLimits {
     pub const HARD_MAX_LISTS: usize = 2_000_000;
     /// Compiled maximum nested source list depth.
     pub const HARD_MAX_LIST_DEPTH: usize = 256;
+    /// Compiled maximum table count.
+    pub const HARD_MAX_TABLES: usize = 1_000_000;
+    /// Compiled maximum expanded table-row count.
+    pub const HARD_MAX_TABLE_ROWS: usize = 2_000_000;
+    /// Compiled maximum expanded table-cell count.
+    pub const HARD_MAX_TABLE_CELLS: usize = 16_000_000;
+    /// Compiled maximum nested table depth, aligned with the normalized model.
+    pub const HARD_MAX_TABLE_DEPTH: usize = MAX_TABLE_DEPTH as usize;
     /// Compiled maximum aggregate normalized text bytes.
     pub const HARD_MAX_TEXT_BYTES: usize = 512 * 1024 * 1024;
     /// Compiled maximum one-element space expansion.
@@ -213,6 +233,22 @@ impl OdfImportLimits {
                 self.max_list_depth,
                 Self::HARD_MAX_LIST_DEPTH,
             ),
+            ("odf_content_tables", self.max_tables, Self::HARD_MAX_TABLES),
+            (
+                "odf_content_table_rows",
+                self.max_table_rows,
+                Self::HARD_MAX_TABLE_ROWS,
+            ),
+            (
+                "odf_content_table_cells",
+                self.max_table_cells,
+                Self::HARD_MAX_TABLE_CELLS,
+            ),
+            (
+                "odf_content_table_depth",
+                self.max_table_depth,
+                Self::HARD_MAX_TABLE_DEPTH,
+            ),
             (
                 "odf_content_text_bytes",
                 self.max_text_bytes,
@@ -255,6 +291,10 @@ impl Default for OdfImportLimits {
             max_inline_nodes: 2_000_000,
             max_lists: 250_000,
             max_list_depth: 64,
+            max_tables: 100_000,
+            max_table_rows: 1_000_000,
+            max_table_cells: 4_000_000,
+            max_table_depth: 16,
             max_text_bytes: 128 * 1024 * 1024,
             max_space_repeat: 65_536,
             max_report_features: 4_096,
@@ -299,6 +339,68 @@ struct ParagraphDraft {
     numbering: Option<ListParagraphDraft>,
     inlines: Vec<InlineDraft>,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum BlockDraft {
+    Paragraph(usize),
+    Table(TableDraft),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TableDraft {
+    columns: usize,
+    rows: Vec<TableRowDraft>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TableRowDraft {
+    header: bool,
+    slots: Vec<TableSlotDraft>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum TableSlotDraft {
+    Cell(TableCellDraft),
+    Covered,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TableCellDraft {
+    column_span: u32,
+    row_span: u32,
+    blocks: Vec<BlockDraft>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OpenTable {
+    depth: usize,
+    columns: usize,
+    rows: Vec<TableRowDraft>,
+    row_container_depth: Option<usize>,
+    row_container_header: bool,
+    current_row: Option<OpenTableRow>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OpenTableRow {
+    depth: usize,
+    repeat: usize,
+    header: bool,
+    slots: Vec<TableSlotDraft>,
+    current_cell: Option<OpenTableCell>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OpenTableCell {
+    depth: usize,
+    repeat: usize,
+    column_span: u32,
+    row_span: u32,
+    blocks: Vec<BlockDraft>,
+}
+
+type TableCoordinate = (usize, usize);
+type TableOwners = BTreeMap<TableCoordinate, TableCoordinate>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ListParagraphDraft {
@@ -1396,6 +1498,8 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
     let mut current = None;
     let mut active_link = None;
     let mut paragraphs = Vec::new();
+    let mut blocks = Vec::new();
+    let mut open_tables = Vec::new();
     let mut bookmarks = Vec::new();
     let mut open_bookmarks = BTreeMap::new();
     let mut active_run_properties = RunProperties::default();
@@ -1404,6 +1508,9 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
     let mut open_list_items = Vec::new();
     let mut list_count = 0_usize;
     let mut list_instances = 0_usize;
+    let mut table_count = 0_usize;
+    let mut table_row_count = 0_usize;
+    let mut table_cell_count = 0_usize;
 
     loop {
         check_cancelled(cancellation)?;
@@ -1488,6 +1595,23 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                             &mut open_list_items,
                             &mut reporter,
                         )?;
+                    } else if text_body_depth.is_some()
+                        && current.is_none()
+                        && name.namespace == NamespaceKind::Table
+                    {
+                        process_table_start(
+                            &reader,
+                            &element,
+                            &name,
+                            depth,
+                            limits,
+                            &mut attributes,
+                            &mut attribute_bytes,
+                            &mut open_tables,
+                            &mut table_count,
+                            &mut leaf_depth,
+                            &mut reporter,
+                        )?;
                     } else {
                         process_start(
                             &reader,
@@ -1537,6 +1661,23 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                     || automatic_styles_depth.is_some()
                 {
                     count_attributes_only(&element, &mut attributes, &mut attribute_bytes, limits)?;
+                } else if text_body_depth.is_some()
+                    && current.is_none()
+                    && name.namespace == NamespaceKind::Table
+                {
+                    process_table_empty(
+                        &reader,
+                        &element,
+                        &name,
+                        depth + 1,
+                        limits,
+                        &mut attributes,
+                        &mut attribute_bytes,
+                        &mut open_tables,
+                        &mut table_row_count,
+                        &mut table_cell_count,
+                        &mut reporter,
+                    )?;
                 } else {
                     process_empty(
                         &reader,
@@ -1555,6 +1696,8 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                         &mut bookmarks,
                         &mut open_bookmarks,
                         &mut paragraphs,
+                        &mut blocks,
+                        &mut open_tables,
                         &mut inline_nodes,
                         &mut text_bytes,
                         &style_catalog.automatic,
@@ -1588,7 +1731,13 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                     .is_some_and(|paragraph: &ParagraphDraft| paragraph.depth == depth)
                 {
                     let paragraph = current.take().ok_or(OdfError::MalformedContent)?;
-                    push_paragraph(&mut paragraphs, paragraph, limits)?;
+                    push_paragraph_block(
+                        &mut paragraphs,
+                        &mut blocks,
+                        &mut open_tables,
+                        paragraph,
+                        limits,
+                    )?;
                     active_run_properties = RunProperties::default();
                 }
                 if open_list_items
@@ -1602,6 +1751,39 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                     .is_some_and(|list: &OpenList| list.depth == depth)
                 {
                     open_lists.pop();
+                }
+                if open_tables.last().is_some_and(|table| {
+                    table
+                        .current_row
+                        .as_ref()
+                        .and_then(|row| row.current_cell.as_ref())
+                        .is_some_and(|cell| cell.depth == depth)
+                }) {
+                    finish_table_cell(&mut open_tables, limits)?;
+                }
+                if open_tables.last().is_some_and(|table| {
+                    table
+                        .current_row
+                        .as_ref()
+                        .is_some_and(|row| row.depth == depth)
+                }) {
+                    finish_table_row(
+                        &mut open_tables,
+                        limits,
+                        &mut table_row_count,
+                        &mut table_cell_count,
+                    )?;
+                }
+                if open_tables
+                    .last()
+                    .is_some_and(|table| table.row_container_depth == Some(depth))
+                {
+                    let table = open_tables.last_mut().ok_or(OdfError::MalformedContent)?;
+                    table.row_container_depth = None;
+                    table.row_container_header = false;
+                }
+                if open_tables.last().is_some_and(|table| table.depth == depth) {
+                    finish_table(&mut open_tables, &mut blocks)?;
                 }
                 if automatic_styles_depth == Some(depth) {
                     automatic_styles_depth = None;
@@ -1693,15 +1875,18 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
         || !open_spans.is_empty()
         || !open_lists.is_empty()
         || !open_list_items.is_empty()
+        || !open_tables.is_empty()
     {
         return Err(OdfError::MalformedContent);
     }
     if !body_kind_seen {
         return Err(OdfError::UnsupportedDocumentKind);
     }
-    if paragraphs.is_empty() {
-        push_paragraph(
+    if blocks.is_empty() {
+        push_paragraph_block(
             &mut paragraphs,
+            &mut blocks,
+            &mut open_tables,
             ParagraphDraft {
                 depth: 0,
                 outline_level: None,
@@ -1724,17 +1909,11 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
     for paragraph in &mut paragraphs {
         normalize_inline_drafts(&mut paragraph.inlines, &bookmarks, &mut reporter);
     }
-    let normalized_inline_nodes = paragraphs.iter().try_fold(0_usize, |total, paragraph| {
-        count_inline_drafts(&paragraph.inlines, total)
-    })?;
-    enforce(
-        "odf_content_inline_nodes",
-        normalized_inline_nodes,
-        limits.max_inline_nodes,
-    )?;
+    enforce_expanded_block_limits(&blocks, &paragraphs, limits)?;
     let document = build_document(
         expected_version,
         &paragraphs,
+        &blocks,
         &bookmarks,
         &style_catalog.lists,
         &mut reporter,
@@ -1887,6 +2066,646 @@ fn list_numbering(
         level: list.level,
         style_name: list.style_name.clone(),
     }))
+}
+
+const MAX_TABLE_COLUMNS: usize = 16_384;
+
+#[allow(clippy::too_many_arguments)]
+fn process_table_start(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    name: &ResolvedName,
+    depth: usize,
+    limits: OdfImportLimits,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    open_tables: &mut Vec<OpenTable>,
+    table_count: &mut usize,
+    leaf_depth: &mut Option<usize>,
+    reporter: &mut Reporter,
+) -> Result<(), OdfError> {
+    match name.local.as_slice() {
+        b"table" => start_table(
+            reader,
+            element,
+            depth,
+            limits,
+            attributes,
+            attribute_bytes,
+            open_tables,
+            table_count,
+            reporter,
+        ),
+        b"table-header-rows" | b"table-rows" => start_table_row_container(
+            reader,
+            element,
+            name.local.as_slice() == b"table-header-rows",
+            depth,
+            limits,
+            attributes,
+            attribute_bytes,
+            open_tables,
+            reporter,
+        ),
+        b"table-column" => {
+            add_table_columns(
+                reader,
+                element,
+                depth,
+                limits,
+                attributes,
+                attribute_bytes,
+                open_tables,
+                reporter,
+            )?;
+            *leaf_depth = Some(depth);
+            Ok(())
+        }
+        b"table-row" => start_table_row(
+            reader,
+            element,
+            depth,
+            limits,
+            attributes,
+            attribute_bytes,
+            open_tables,
+            reporter,
+        ),
+        b"table-cell" => start_table_cell(
+            reader,
+            element,
+            depth,
+            limits,
+            attributes,
+            attribute_bytes,
+            open_tables,
+            reporter,
+        ),
+        b"covered-table-cell" => {
+            add_covered_table_cells(
+                reader,
+                element,
+                depth,
+                limits,
+                attributes,
+                attribute_bytes,
+                open_tables,
+                reporter,
+            )?;
+            *leaf_depth = Some(depth);
+            Ok(())
+        }
+        _ => Err(OdfError::MalformedContent),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn process_table_empty(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    name: &ResolvedName,
+    depth: usize,
+    limits: OdfImportLimits,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    open_tables: &mut [OpenTable],
+    table_row_count: &mut usize,
+    table_cell_count: &mut usize,
+    reporter: &mut Reporter,
+) -> Result<(), OdfError> {
+    match name.local.as_slice() {
+        b"table-column" => add_table_columns(
+            reader,
+            element,
+            depth,
+            limits,
+            attributes,
+            attribute_bytes,
+            open_tables,
+            reporter,
+        ),
+        b"covered-table-cell" => add_covered_table_cells(
+            reader,
+            element,
+            depth,
+            limits,
+            attributes,
+            attribute_bytes,
+            open_tables,
+            reporter,
+        ),
+        b"table-cell" => {
+            start_table_cell(
+                reader,
+                element,
+                depth,
+                limits,
+                attributes,
+                attribute_bytes,
+                open_tables,
+                reporter,
+            )?;
+            finish_table_cell(open_tables, limits)
+        }
+        b"table-header-rows" | b"table-rows" => {
+            start_table_row_container(
+                reader,
+                element,
+                name.local.as_slice() == b"table-header-rows",
+                depth,
+                limits,
+                attributes,
+                attribute_bytes,
+                open_tables,
+                reporter,
+            )?;
+            let table = open_tables.last_mut().ok_or(OdfError::MalformedContent)?;
+            table.row_container_depth = None;
+            table.row_container_header = false;
+            Ok(())
+        }
+        b"table-row" => {
+            start_table_row(
+                reader,
+                element,
+                depth,
+                limits,
+                attributes,
+                attribute_bytes,
+                open_tables,
+                reporter,
+            )?;
+            finish_table_row(open_tables, limits, table_row_count, table_cell_count)
+        }
+        // Empty tables cannot satisfy the normalized model's non-empty invariant.
+        b"table" => Err(OdfError::MalformedContent),
+        _ => Err(OdfError::MalformedContent),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn start_table(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    depth: usize,
+    limits: OdfImportLimits,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    open_tables: &mut Vec<OpenTable>,
+    table_count: &mut usize,
+    reporter: &mut Reporter,
+) -> Result<(), OdfError> {
+    if let Some(parent) = open_tables.last()
+        && parent
+            .current_row
+            .as_ref()
+            .and_then(|row| row.current_cell.as_ref())
+            .is_none()
+    {
+        return Err(OdfError::MalformedContent);
+    }
+    *table_count = checked_increment(*table_count)?;
+    enforce("odf_content_tables", *table_count, limits.max_tables)?;
+    let nesting = open_tables
+        .len()
+        .checked_add(1)
+        .ok_or(OdfError::MalformedContent)?;
+    enforce("odf_content_table_depth", nesting, limits.max_table_depth)?;
+    count_and_report_attributes(
+        reader,
+        element,
+        attributes,
+        attribute_bytes,
+        limits,
+        reporter,
+    )?;
+    open_tables.push(OpenTable {
+        depth,
+        columns: 0,
+        rows: Vec::new(),
+        row_container_depth: None,
+        row_container_header: false,
+        current_row: None,
+    });
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn start_table_row_container(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    header: bool,
+    depth: usize,
+    limits: OdfImportLimits,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    open_tables: &mut [OpenTable],
+    reporter: &mut Reporter,
+) -> Result<(), OdfError> {
+    let table = open_tables.last_mut().ok_or(OdfError::MalformedContent)?;
+    if table.current_row.is_some()
+        || table.row_container_depth.is_some()
+        || depth != table.depth + 1
+    {
+        return Err(OdfError::MalformedContent);
+    }
+    count_and_report_attributes(
+        reader,
+        element,
+        attributes,
+        attribute_bytes,
+        limits,
+        reporter,
+    )?;
+    table.row_container_depth = Some(depth);
+    table.row_container_header = header;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_table_columns(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    depth: usize,
+    limits: OdfImportLimits,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    open_tables: &mut [OpenTable],
+    reporter: &mut Reporter,
+) -> Result<(), OdfError> {
+    let table = open_tables.last_mut().ok_or(OdfError::MalformedContent)?;
+    if table.current_row.is_some()
+        || table.row_container_depth.is_some()
+        || depth != table.depth + 1
+    {
+        return Err(OdfError::MalformedContent);
+    }
+    let repeat = read_table_repeat(
+        reader,
+        element,
+        b"number-columns-repeated",
+        limits,
+        attributes,
+        attribute_bytes,
+        reporter,
+    )?;
+    let observed = table
+        .columns
+        .checked_add(repeat)
+        .ok_or(OdfError::MalformedContent)?;
+    enforce("odf_content_table_columns", observed, MAX_TABLE_COLUMNS)?;
+    table.columns = observed;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn start_table_row(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    depth: usize,
+    limits: OdfImportLimits,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    open_tables: &mut [OpenTable],
+    reporter: &mut Reporter,
+) -> Result<(), OdfError> {
+    let table = open_tables.last_mut().ok_or(OdfError::MalformedContent)?;
+    let expected_depth = table.row_container_depth.unwrap_or(table.depth) + 1;
+    if table.current_row.is_some() || depth != expected_depth {
+        return Err(OdfError::MalformedContent);
+    }
+    let repeat = read_table_repeat(
+        reader,
+        element,
+        b"number-rows-repeated",
+        limits,
+        attributes,
+        attribute_bytes,
+        reporter,
+    )?;
+    table.current_row = Some(OpenTableRow {
+        depth,
+        repeat,
+        header: table.row_container_header,
+        slots: Vec::new(),
+        current_cell: None,
+    });
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn start_table_cell(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    depth: usize,
+    limits: OdfImportLimits,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    open_tables: &mut [OpenTable],
+    reporter: &mut Reporter,
+) -> Result<(), OdfError> {
+    let row = open_tables
+        .last_mut()
+        .and_then(|table| table.current_row.as_mut())
+        .ok_or(OdfError::MalformedContent)?;
+    if row.current_cell.is_some() || depth != row.depth + 1 {
+        return Err(OdfError::MalformedContent);
+    }
+    let mut repeat = None;
+    let mut column_span = None;
+    let mut row_span = None;
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        if namespace_kind(&namespace) == NamespaceKind::Table {
+            let target = match local.as_ref() {
+                b"number-columns-repeated" => &mut repeat,
+                b"number-columns-spanned" => &mut column_span,
+                b"number-rows-spanned" => &mut row_span,
+                _ => {
+                    reporter.report(
+                        attribute_feature(reader, &attribute),
+                        ModelOutcome::Degraded,
+                    );
+                    continue;
+                }
+            };
+            if target.is_some() {
+                return Err(OdfError::MalformedContent);
+            }
+            *target = Some(parse_positive_usize(&decode_attribute(&attribute)?)?);
+        } else if !is_namespace_declaration(&attribute) {
+            reporter.report(
+                attribute_feature(reader, &attribute),
+                ModelOutcome::Degraded,
+            );
+        }
+    }
+    let repeat = repeat.unwrap_or(1);
+    let column_span = column_span.unwrap_or(1);
+    let row_span = row_span.unwrap_or(1);
+    enforce("odf_content_table_columns", column_span, MAX_TABLE_COLUMNS)?;
+    let column_span = u32::try_from(column_span).map_err(|_| OdfError::MalformedContent)?;
+    let row_span = u32::try_from(row_span).map_err(|_| OdfError::MalformedContent)?;
+    row.current_cell = Some(OpenTableCell {
+        depth,
+        repeat,
+        column_span,
+        row_span,
+        blocks: Vec::new(),
+    });
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_covered_table_cells(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    depth: usize,
+    limits: OdfImportLimits,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    open_tables: &mut [OpenTable],
+    reporter: &mut Reporter,
+) -> Result<(), OdfError> {
+    let row = open_tables
+        .last_mut()
+        .and_then(|table| table.current_row.as_mut())
+        .ok_or(OdfError::MalformedContent)?;
+    if row.current_cell.is_some() || depth != row.depth + 1 {
+        return Err(OdfError::MalformedContent);
+    }
+    let repeat = read_table_repeat(
+        reader,
+        element,
+        b"number-columns-repeated",
+        limits,
+        attributes,
+        attribute_bytes,
+        reporter,
+    )?;
+    let observed = row
+        .slots
+        .len()
+        .checked_add(repeat)
+        .ok_or(OdfError::MalformedContent)?;
+    enforce("odf_content_table_columns", observed, MAX_TABLE_COLUMNS)?;
+    enforce("odf_content_table_cells", observed, limits.max_table_cells)?;
+    row.slots
+        .extend(std::iter::repeat_n(TableSlotDraft::Covered, repeat));
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn read_table_repeat(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    expected_local: &[u8],
+    limits: OdfImportLimits,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    reporter: &mut Reporter,
+) -> Result<usize, OdfError> {
+    let mut repeat = None;
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        if namespace_kind(&namespace) == NamespaceKind::Table && local.as_ref() == expected_local {
+            if repeat.is_some() {
+                return Err(OdfError::MalformedContent);
+            }
+            repeat = Some(parse_positive_usize(&decode_attribute(&attribute)?)?);
+        } else if !is_namespace_declaration(&attribute) {
+            reporter.report(
+                attribute_feature(reader, &attribute),
+                ModelOutcome::Degraded,
+            );
+        }
+    }
+    Ok(repeat.unwrap_or(1))
+}
+
+fn parse_positive_usize(raw: &str) -> Result<usize, OdfError> {
+    let value = raw
+        .parse::<usize>()
+        .map_err(|_| OdfError::MalformedContent)?;
+    if value == 0 {
+        return Err(OdfError::MalformedContent);
+    }
+    Ok(value)
+}
+
+fn finish_table_cell(
+    open_tables: &mut [OpenTable],
+    limits: OdfImportLimits,
+) -> Result<(), OdfError> {
+    let row = open_tables
+        .last_mut()
+        .and_then(|table| table.current_row.as_mut())
+        .ok_or(OdfError::MalformedContent)?;
+    let cell = row.current_cell.take().ok_or(OdfError::MalformedContent)?;
+    let observed = row
+        .slots
+        .len()
+        .checked_add(cell.repeat)
+        .ok_or(OdfError::MalformedContent)?;
+    enforce("odf_content_table_columns", observed, MAX_TABLE_COLUMNS)?;
+    enforce("odf_content_table_cells", observed, limits.max_table_cells)?;
+    let draft = TableCellDraft {
+        column_span: cell.column_span,
+        row_span: cell.row_span,
+        blocks: cell.blocks,
+    };
+    row.slots.extend(std::iter::repeat_n(
+        TableSlotDraft::Cell(draft),
+        cell.repeat,
+    ));
+    Ok(())
+}
+
+fn finish_table_row(
+    open_tables: &mut [OpenTable],
+    limits: OdfImportLimits,
+    table_row_count: &mut usize,
+    table_cell_count: &mut usize,
+) -> Result<(), OdfError> {
+    let table = open_tables.last_mut().ok_or(OdfError::MalformedContent)?;
+    let row = table.current_row.take().ok_or(OdfError::MalformedContent)?;
+    if row.current_cell.is_some() || row.slots.is_empty() {
+        return Err(OdfError::MalformedContent);
+    }
+    let rows_observed = table_row_count
+        .checked_add(row.repeat)
+        .ok_or(OdfError::MalformedContent)?;
+    enforce(
+        "odf_content_table_rows",
+        rows_observed,
+        limits.max_table_rows,
+    )?;
+    let added_cells = row
+        .slots
+        .len()
+        .checked_mul(row.repeat)
+        .ok_or(OdfError::MalformedContent)?;
+    let cells_observed = table_cell_count
+        .checked_add(added_cells)
+        .ok_or(OdfError::MalformedContent)?;
+    enforce(
+        "odf_content_table_cells",
+        cells_observed,
+        limits.max_table_cells,
+    )?;
+    *table_row_count = rows_observed;
+    *table_cell_count = cells_observed;
+    let draft = TableRowDraft {
+        header: row.header,
+        slots: row.slots,
+    };
+    table.rows.extend(std::iter::repeat_n(draft, row.repeat));
+    Ok(())
+}
+
+fn finish_table(
+    open_tables: &mut Vec<OpenTable>,
+    blocks: &mut Vec<BlockDraft>,
+) -> Result<(), OdfError> {
+    let table = open_tables.pop().ok_or(OdfError::MalformedContent)?;
+    if table.current_row.is_some() || table.row_container_depth.is_some() || table.rows.is_empty() {
+        return Err(OdfError::MalformedContent);
+    }
+    let columns = table
+        .rows
+        .iter()
+        .map(|row| row.slots.len())
+        .max()
+        .unwrap_or(0)
+        .max(table.columns);
+    enforce("odf_content_table_columns", columns, MAX_TABLE_COLUMNS)?;
+    let draft = TableDraft {
+        columns,
+        rows: table.rows,
+    };
+    validate_table_topology(&draft)?;
+    push_block_draft(blocks, open_tables, BlockDraft::Table(draft))
+}
+
+fn validate_table_topology(table: &TableDraft) -> Result<(), OdfError> {
+    let mut occupied = BTreeMap::<(usize, usize), (usize, usize)>::new();
+    for (row_index, row) in table.rows.iter().enumerate() {
+        for (column_index, slot) in row.slots.iter().enumerate() {
+            let TableSlotDraft::Cell(cell) = slot else {
+                continue;
+            };
+            if occupied.contains_key(&(row_index, column_index)) {
+                return Err(OdfError::MalformedContent);
+            }
+            let row_end = row_index
+                .checked_add(cell.row_span as usize)
+                .ok_or(OdfError::MalformedContent)?;
+            let column_end = column_index
+                .checked_add(cell.column_span as usize)
+                .ok_or(OdfError::MalformedContent)?;
+            if row_end > table.rows.len() || column_end > table.columns {
+                return Err(OdfError::MalformedContent);
+            }
+            for covered_row in row_index..row_end {
+                let target_row = table
+                    .rows
+                    .get(covered_row)
+                    .ok_or(OdfError::MalformedContent)?;
+                if column_end > target_row.slots.len() {
+                    return Err(OdfError::MalformedContent);
+                }
+                for covered_column in column_index..column_end {
+                    let coordinate = (covered_row, covered_column);
+                    if occupied
+                        .insert(coordinate, (row_index, column_index))
+                        .is_some()
+                    {
+                        return Err(OdfError::MalformedContent);
+                    }
+                    if coordinate != (row_index, column_index)
+                        && !matches!(
+                            target_row.slots.get(covered_column),
+                            Some(TableSlotDraft::Covered)
+                        )
+                    {
+                        return Err(OdfError::MalformedContent);
+                    }
+                }
+            }
+        }
+    }
+    for (row_index, row) in table.rows.iter().enumerate() {
+        for (column_index, slot) in row.slots.iter().enumerate() {
+            if matches!(slot, TableSlotDraft::Covered)
+                && !occupied.contains_key(&(row_index, column_index))
+            {
+                return Err(OdfError::MalformedContent);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn push_block_draft(
+    blocks: &mut Vec<BlockDraft>,
+    open_tables: &mut [OpenTable],
+    block: BlockDraft,
+) -> Result<(), OdfError> {
+    if let Some(table) = open_tables.last_mut() {
+        let cell = table
+            .current_row
+            .as_mut()
+            .and_then(|row| row.current_cell.as_mut())
+            .ok_or(OdfError::MalformedContent)?;
+        cell.blocks.push(block);
+    } else {
+        blocks.push(block);
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2043,6 +2862,8 @@ fn process_empty(
     bookmarks: &mut Vec<BookmarkDraft>,
     open_bookmarks: &mut BTreeMap<String, usize>,
     paragraphs: &mut Vec<ParagraphDraft>,
+    blocks: &mut Vec<BlockDraft>,
+    open_tables: &mut [OpenTable],
     inline_nodes: &mut usize,
     text_bytes: &mut usize,
     automatic_styles: &AutomaticStyles,
@@ -2095,8 +2916,10 @@ fn process_empty(
             numbering,
             reporter,
         )?;
-        push_paragraph(
+        push_paragraph_block(
             paragraphs,
+            blocks,
+            open_tables,
             current.take().ok_or(OdfError::MalformedContent)?,
             limits,
         )?;
@@ -2652,6 +3475,145 @@ fn count_inline_drafts(inlines: &[InlineDraft], mut total: usize) -> Result<usiz
     Ok(total)
 }
 
+#[derive(Default)]
+struct ExpandedBlockCounts {
+    paragraphs: usize,
+    inline_nodes: usize,
+    text_bytes: usize,
+    tables: usize,
+    table_rows: usize,
+    table_cells: usize,
+}
+
+fn enforce_expanded_block_limits(
+    blocks: &[BlockDraft],
+    paragraphs: &[ParagraphDraft],
+    limits: OdfImportLimits,
+) -> Result<(), OdfError> {
+    let mut counts = ExpandedBlockCounts::default();
+    count_expanded_blocks(blocks, paragraphs, limits, &mut counts)
+}
+
+fn count_expanded_blocks(
+    blocks: &[BlockDraft],
+    paragraphs: &[ParagraphDraft],
+    limits: OdfImportLimits,
+    counts: &mut ExpandedBlockCounts,
+) -> Result<(), OdfError> {
+    for block in blocks {
+        match block {
+            BlockDraft::Paragraph(index) => {
+                let paragraph = paragraphs.get(*index).ok_or(OdfError::InvalidModel)?;
+                count_expanded_paragraph(paragraph, limits, counts)?;
+            }
+            BlockDraft::Table(table) => {
+                counts.tables = checked_increment(counts.tables)?;
+                enforce("odf_content_tables", counts.tables, limits.max_tables)?;
+                let owners = table_owners(table)?;
+                for (row_index, row) in table.rows.iter().enumerate() {
+                    counts.table_rows = checked_increment(counts.table_rows)?;
+                    enforce(
+                        "odf_content_table_rows",
+                        counts.table_rows,
+                        limits.max_table_rows,
+                    )?;
+                    for (column_index, slot) in row.slots.iter().enumerate() {
+                        counts.table_cells = checked_increment(counts.table_cells)?;
+                        enforce(
+                            "odf_content_table_cells",
+                            counts.table_cells,
+                            limits.max_table_cells,
+                        )?;
+                        match slot {
+                            TableSlotDraft::Cell(cell) => {
+                                if cell.blocks.is_empty() {
+                                    count_empty_paragraph(limits, counts)?;
+                                } else {
+                                    count_expanded_blocks(
+                                        &cell.blocks,
+                                        paragraphs,
+                                        limits,
+                                        counts,
+                                    )?;
+                                }
+                            }
+                            TableSlotDraft::Covered => {
+                                let (anchor_row, anchor_column) = owners
+                                    .get(&(row_index, column_index))
+                                    .copied()
+                                    .ok_or(OdfError::InvalidModel)?;
+                                if row_index > anchor_row && column_index == anchor_column {
+                                    count_empty_paragraph(limits, counts)?;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn count_expanded_paragraph(
+    paragraph: &ParagraphDraft,
+    limits: OdfImportLimits,
+    counts: &mut ExpandedBlockCounts,
+) -> Result<(), OdfError> {
+    count_empty_paragraph(limits, counts)?;
+    counts.inline_nodes = count_inline_drafts(&paragraph.inlines, counts.inline_nodes)?;
+    enforce(
+        "odf_content_inline_nodes",
+        counts.inline_nodes,
+        limits.max_inline_nodes,
+    )?;
+    let added_text = inline_draft_text_bytes(&paragraph.inlines)?;
+    counts.text_bytes = counts
+        .text_bytes
+        .checked_add(added_text)
+        .ok_or(OdfError::MalformedContent)?;
+    enforce(
+        "odf_content_text_bytes",
+        counts.text_bytes,
+        limits.max_text_bytes,
+    )
+}
+
+fn count_empty_paragraph(
+    limits: OdfImportLimits,
+    counts: &mut ExpandedBlockCounts,
+) -> Result<(), OdfError> {
+    counts.paragraphs = checked_increment(counts.paragraphs)?;
+    enforce(
+        "odf_content_paragraphs",
+        counts.paragraphs,
+        limits.max_paragraphs,
+    )
+}
+
+fn inline_draft_text_bytes(inlines: &[InlineDraft]) -> Result<usize, OdfError> {
+    let mut total = 0_usize;
+    for inline in inlines {
+        match inline {
+            InlineDraft::Text { text, .. } => {
+                total = total
+                    .checked_add(text.len())
+                    .ok_or(OdfError::MalformedContent)?;
+            }
+            InlineDraft::Hyperlink { inlines, .. } => {
+                total = total
+                    .checked_add(inline_draft_text_bytes(inlines)?)
+                    .ok_or(OdfError::MalformedContent)?;
+            }
+            InlineDraft::Tab
+            | InlineDraft::LineBreak
+            | InlineDraft::BookmarkStart(_)
+            | InlineDraft::BookmarkEnd(_) => {}
+        }
+    }
+    Ok(total)
+}
+
 fn normalize_inline_drafts(
     inlines: &mut Vec<InlineDraft>,
     bookmarks: &[BookmarkDraft],
@@ -2703,9 +3665,22 @@ fn push_paragraph(
     Ok(())
 }
 
+fn push_paragraph_block(
+    paragraphs: &mut Vec<ParagraphDraft>,
+    blocks: &mut Vec<BlockDraft>,
+    open_tables: &mut [OpenTable],
+    paragraph: ParagraphDraft,
+    limits: OdfImportLimits,
+) -> Result<(), OdfError> {
+    let index = paragraphs.len();
+    push_paragraph(paragraphs, paragraph, limits)?;
+    push_block_draft(blocks, open_tables, BlockDraft::Paragraph(index))
+}
+
 fn build_document(
     version: OdfVersion,
     paragraphs: &[ParagraphDraft],
+    blocks: &[BlockDraft],
     bookmarks: &[BookmarkDraft],
     list_styles: &ListStyles,
     reporter: &mut Reporter,
@@ -2740,6 +3715,7 @@ fn build_document(
             hash_inline_draft(&mut namespace, inline, bookmarks);
         }
     }
+    hash_block_drafts(&mut namespace, blocks);
     if namespace == 0 {
         namespace = 1;
     }
@@ -2831,26 +3807,197 @@ fn build_document(
             bookmark_ids.push(None);
         }
     }
-    let mut body = Vec::with_capacity(paragraphs.len());
-    for draft in paragraphs {
-        let paragraph_id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
-        let properties = ParagraphProperties {
-            outline_level: draft.outline_level,
-            alignment: draft.alignment,
-            numbering: draft.numbering.as_ref().map(|numbering| NumberingRef {
-                instance: numbering_ids[&numbering.instance],
-                level: numbering.level,
-            }),
-            ..ParagraphProperties::default()
-        };
-        let inlines = build_inlines(&draft.inlines, &mut ids, &bookmark_ids)?;
-        body.push(BlockNode::Paragraph(Paragraph {
-            id: paragraph_id,
-            properties,
-            inlines,
-        }));
-    }
+    let body = build_blocks(blocks, paragraphs, &mut ids, &bookmark_ids, &numbering_ids)?;
     Document::new(document_id, body, definitions).map_err(|_| OdfError::InvalidModel)
+}
+
+fn hash_block_drafts(hash: &mut u64, blocks: &[BlockDraft]) {
+    for block in blocks {
+        match block {
+            BlockDraft::Paragraph(index) => {
+                hash_bytes(hash, b"block-paragraph");
+                hash_bytes(hash, &index.to_le_bytes());
+            }
+            BlockDraft::Table(table) => {
+                hash_bytes(hash, b"block-table");
+                hash_bytes(hash, &table.columns.to_le_bytes());
+                for row in &table.rows {
+                    hash_bytes(hash, b"row");
+                    hash_bytes(hash, &[u8::from(row.header)]);
+                    for slot in &row.slots {
+                        match slot {
+                            TableSlotDraft::Covered => hash_bytes(hash, b"covered"),
+                            TableSlotDraft::Cell(cell) => {
+                                hash_bytes(hash, b"cell");
+                                hash_bytes(hash, &cell.column_span.to_le_bytes());
+                                hash_bytes(hash, &cell.row_span.to_le_bytes());
+                                hash_block_drafts(hash, &cell.blocks);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn build_blocks(
+    drafts: &[BlockDraft],
+    paragraphs: &[ParagraphDraft],
+    ids: &mut IdGenerator,
+    bookmark_ids: &[Option<BookmarkId>],
+    numbering_ids: &BTreeMap<usize, NumberingInstanceId>,
+) -> Result<Vec<BlockNode>, OdfError> {
+    let mut blocks = Vec::with_capacity(drafts.len());
+    for draft in drafts {
+        blocks.push(match draft {
+            BlockDraft::Paragraph(index) => BlockNode::Paragraph(build_paragraph(
+                paragraphs.get(*index).ok_or(OdfError::InvalidModel)?,
+                ids,
+                bookmark_ids,
+                numbering_ids,
+            )?),
+            BlockDraft::Table(table) => BlockNode::Table(build_table(
+                table,
+                paragraphs,
+                ids,
+                bookmark_ids,
+                numbering_ids,
+            )?),
+        });
+    }
+    Ok(blocks)
+}
+
+fn build_paragraph(
+    draft: &ParagraphDraft,
+    ids: &mut IdGenerator,
+    bookmark_ids: &[Option<BookmarkId>],
+    numbering_ids: &BTreeMap<usize, NumberingInstanceId>,
+) -> Result<Paragraph, OdfError> {
+    let id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
+    let properties = ParagraphProperties {
+        outline_level: draft.outline_level,
+        alignment: draft.alignment,
+        numbering: draft.numbering.as_ref().map(|numbering| NumberingRef {
+            instance: numbering_ids[&numbering.instance],
+            level: numbering.level,
+        }),
+        ..ParagraphProperties::default()
+    };
+    Ok(Paragraph {
+        id,
+        properties,
+        inlines: build_inlines(&draft.inlines, ids, bookmark_ids)?,
+    })
+}
+
+fn build_empty_paragraph(ids: &mut IdGenerator) -> Result<BlockNode, OdfError> {
+    Ok(BlockNode::Paragraph(Paragraph {
+        id: ids.next_id().map_err(|_| OdfError::InvalidModel)?,
+        properties: ParagraphProperties::default(),
+        inlines: Vec::new(),
+    }))
+}
+
+fn build_table(
+    draft: &TableDraft,
+    paragraphs: &[ParagraphDraft],
+    ids: &mut IdGenerator,
+    bookmark_ids: &[Option<BookmarkId>],
+    numbering_ids: &BTreeMap<usize, NumberingInstanceId>,
+) -> Result<Table, OdfError> {
+    let owners = table_owners(draft)?;
+    let id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
+    let mut rows = Vec::with_capacity(draft.rows.len());
+    for (row_index, row) in draft.rows.iter().enumerate() {
+        let row_id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
+        let mut cells = Vec::new();
+        for (column_index, slot) in row.slots.iter().enumerate() {
+            match slot {
+                TableSlotDraft::Cell(cell) => {
+                    let mut blocks =
+                        build_blocks(&cell.blocks, paragraphs, ids, bookmark_ids, numbering_ids)?;
+                    if blocks.is_empty() {
+                        blocks.push(build_empty_paragraph(ids)?);
+                    }
+                    cells.push(TableCell {
+                        id: ids.next_id().map_err(|_| OdfError::InvalidModel)?,
+                        properties: TableCellProperties {
+                            grid_span: (cell.column_span > 1).then_some(cell.column_span),
+                            vertical_merge: (cell.row_span > 1).then_some(VerticalMerge::Restart),
+                            ..TableCellProperties::default()
+                        },
+                        blocks,
+                    });
+                }
+                TableSlotDraft::Covered => {
+                    let (anchor_row, anchor_column) = owners
+                        .get(&(row_index, column_index))
+                        .copied()
+                        .ok_or(OdfError::InvalidModel)?;
+                    if row_index > anchor_row && column_index == anchor_column {
+                        let anchor = match draft.rows[anchor_row].slots.get(anchor_column) {
+                            Some(TableSlotDraft::Cell(cell)) => cell,
+                            _ => return Err(OdfError::InvalidModel),
+                        };
+                        cells.push(TableCell {
+                            id: ids.next_id().map_err(|_| OdfError::InvalidModel)?,
+                            properties: TableCellProperties {
+                                grid_span: (anchor.column_span > 1).then_some(anchor.column_span),
+                                vertical_merge: Some(VerticalMerge::Continue),
+                                ..TableCellProperties::default()
+                            },
+                            blocks: vec![build_empty_paragraph(ids)?],
+                        });
+                    }
+                }
+            }
+        }
+        if cells.is_empty() {
+            return Err(OdfError::InvalidModel);
+        }
+        rows.push(TableRow {
+            id: row_id,
+            properties: TableRowProperties {
+                header: row.header,
+                ..TableRowProperties::default()
+            },
+            cells,
+        });
+    }
+    Ok(Table {
+        id,
+        grid: (0..draft.columns)
+            .map(|_| GridColumn { width_twips: None })
+            .collect(),
+        grid_change: None,
+        properties: TableProperties::default(),
+        rows,
+    })
+}
+
+fn table_owners(table: &TableDraft) -> Result<TableOwners, OdfError> {
+    let mut owners = BTreeMap::new();
+    for (row_index, row) in table.rows.iter().enumerate() {
+        for (column_index, slot) in row.slots.iter().enumerate() {
+            let TableSlotDraft::Cell(cell) = slot else {
+                continue;
+            };
+            let row_end = row_index
+                .checked_add(cell.row_span as usize)
+                .ok_or(OdfError::InvalidModel)?;
+            let column_end = column_index
+                .checked_add(cell.column_span as usize)
+                .ok_or(OdfError::InvalidModel)?;
+            for covered_row in row_index..row_end {
+                for covered_column in column_index..column_end {
+                    owners.insert((covered_row, covered_column), (row_index, column_index));
+                }
+            }
+        }
+    }
+    Ok(owners)
 }
 
 fn hash_inline_draft(hash: &mut u64, inline: &InlineDraft, bookmarks: &[BookmarkDraft]) {
@@ -3151,6 +4298,7 @@ fn namespace_kind(namespace: &ResolveResult<'_>) -> NamespaceKind {
         ResolveResult::Bound(Namespace(value)) if *value == XLINK_NS => NamespaceKind::Xlink,
         ResolveResult::Bound(Namespace(value)) if *value == STYLE_NS => NamespaceKind::Style,
         ResolveResult::Bound(Namespace(value)) if *value == FO_NS => NamespaceKind::Fo,
+        ResolveResult::Bound(Namespace(value)) if *value == TABLE_NS => NamespaceKind::Table,
         _ => NamespaceKind::Foreign,
     }
 }
@@ -3176,6 +4324,7 @@ const fn namespace_label(namespace: NamespaceKind) -> &'static str {
         NamespaceKind::Xlink => "xlink",
         NamespaceKind::Style => "style",
         NamespaceKind::Fo => "fo",
+        NamespaceKind::Table => "table",
         NamespaceKind::Foreign => "foreign",
     }
 }

@@ -28,6 +28,12 @@ test("the fidelity matrix page renders an accessible, data-grounded table", asyn
   await expect(page.locator(".fidelity-notes")).toContainText(
     "advanced list continuation",
   );
+  await expect(page.locator(".fidelity-notes")).toContainText(
+    "Table import preserves block order",
+  );
+  await expect(page.locator(".fidelity-notes")).toContainText(
+    "table export to ODT is not implemented yet",
+  );
 
   const table = page.locator("#docx-fidelity-table");
   await expect(table).toBeVisible();

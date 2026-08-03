@@ -22,7 +22,9 @@ and the staged `content.xml` importer are in progress. The importer maps
 paragraphs, headings, spans, explicit spaces, tabs, line breaks, safe
 external/internal hyperlinks, bookmark points/ranges, bounded direct/named
 styles, and core nested lists into a validated schema-v1 document with
-semantic-fact-derived identities and bounded findings. Slice E now has a
+semantic-fact-derived identities and bounded findings. Ordered recursive tables,
+bounded repeats, header rows, nested content, and validated rectangular merge
+geometry are also mapped on import. Slice E now has a
 deterministic bounded ODF 1.4 writer for that matching core/style/list subset,
 registered semantic export, and exact unchanged-byte recovery. The remaining
 Slice D semantic surface, edit-tolerant ODF preservation, native SDK, and

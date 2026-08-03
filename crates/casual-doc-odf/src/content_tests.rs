@@ -1,5 +1,6 @@
 use casual_doc_model::v1::{
     Alignment, BlockNode, BreakKind, Color, HyperlinkTarget, InlineNode, NumberFormat, RgbColor,
+    VerticalMerge,
 };
 use casual_doc_package::CancellationToken;
 
@@ -14,6 +15,7 @@ fn content(version: &str, body: &str) -> Vec<u8> {
 <office:document-content
  xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
  xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+ xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
  xmlns:xlink="http://www.w3.org/1999/xlink"
  office:version="{version}">
  <office:body><office:text>{body}</office:text></office:body>
@@ -372,6 +374,210 @@ fn list_limits_and_unsupported_counter_controls_are_explicit() {
     ] {
         assert!(matches!(
             import_content_xml(&xml, OdfVersion::V1_4, limits),
+            Err(OdfError::LimitExceeded { .. })
+        ));
+    }
+}
+
+#[test]
+fn tables_preserve_block_order_repeats_headers_and_nested_content() {
+    let xml = content(
+        "1.4",
+        r#"<text:p>before</text:p>
+<table:table>
+ <table:table-column table:number-columns-repeated="2"/>
+ <table:table-header-rows>
+  <table:table-row><table:table-cell><text:p>head</text:p></table:table-cell><table:table-cell/></table:table-row>
+ </table:table-header-rows>
+ <table:table-row table:number-rows-repeated="2">
+  <table:table-cell table:number-columns-repeated="2"><text:p>body</text:p></table:table-cell>
+ </table:table-row>
+ <table:table-row>
+  <table:table-cell><table:table><table:table-row><table:table-cell><text:p>nested</text:p></table:table-cell></table:table-row></table:table></table:table-cell>
+  <table:table-cell><text:p>tail</text:p></table:table-cell>
+ </table:table-row>
+</table:table>
+<text:p>after</text:p>"#,
+    );
+    let first = import_content_xml(&xml, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
+    let second = import_content_xml(&xml, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
+    assert_eq!(first, second);
+    first.document.validate().unwrap();
+    assert_eq!(first.document.body().len(), 3);
+    let BlockNode::Table(table) = &first.document.body()[1] else {
+        panic!("expected table")
+    };
+    assert_eq!(table.grid.len(), 2);
+    assert_eq!(table.rows.len(), 4);
+    assert!(table.rows[0].properties.header);
+    assert_eq!(table.rows[0].cells.len(), 2);
+    assert_eq!(table.rows[0].cells[1].blocks.len(), 1);
+    assert_eq!(table.rows[1].properties, table.rows[2].properties);
+    assert_eq!(table.rows[1].cells.len(), table.rows[2].cells.len());
+    for row in [&table.rows[1], &table.rows[2]] {
+        for cell in &row.cells {
+            let BlockNode::Paragraph(paragraph) = &cell.blocks[0] else {
+                panic!("expected repeated paragraph")
+            };
+            assert!(matches!(&paragraph.inlines[0], InlineNode::Run(run) if run.text == "body"));
+        }
+    }
+    let BlockNode::Table(nested) = &table.rows[3].cells[0].blocks[0] else {
+        panic!("expected nested table")
+    };
+    assert_eq!(nested.rows.len(), 1);
+    assert_eq!(nested.rows[0].cells.len(), 1);
+}
+
+#[test]
+fn table_spans_and_covered_cells_map_to_normalized_merge_geometry() {
+    let xml = content(
+        "1.4",
+        r#"<table:table>
+ <table:table-column table:number-columns-repeated="3"/>
+ <table:table-row>
+  <table:table-cell table:number-columns-spanned="2" table:number-rows-spanned="2"><text:p>merged</text:p></table:table-cell>
+  <table:covered-table-cell/>
+  <table:table-cell><text:p>right</text:p></table:table-cell>
+ </table:table-row>
+ <table:table-row>
+  <table:covered-table-cell table:number-columns-repeated="2"/>
+  <table:table-cell><text:p>lower</text:p></table:table-cell>
+ </table:table-row>
+</table:table>"#,
+    );
+    let imported = import_content_xml(&xml, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
+    let alternate = content(
+        "1.4",
+        r#"<t:table xmlns:t="urn:oasis:names:tc:opendocument:xmlns:table:1.0">
+ <t:table-column t:number-columns-repeated="3"/>
+ <t:table-row>
+  <t:table-cell t:number-rows-spanned="2" t:number-columns-spanned="2"><text:p>merged</text:p></t:table-cell>
+  <t:covered-table-cell/>
+  <t:table-cell><text:p>right</text:p></t:table-cell>
+ </t:table-row>
+ <t:table-row>
+  <t:covered-table-cell t:number-columns-repeated="2"/>
+  <t:table-cell><text:p>lower</text:p></t:table-cell>
+ </t:table-row>
+</t:table>"#,
+    );
+    assert_eq!(
+        imported,
+        import_content_xml(&alternate, OdfVersion::V1_4, OdfImportLimits::default(),).unwrap()
+    );
+    imported.document.validate().unwrap();
+    let BlockNode::Table(table) = &imported.document.body()[0] else {
+        panic!("expected table")
+    };
+    assert_eq!(table.grid.len(), 3);
+    assert_eq!(table.rows[0].cells.len(), 2);
+    assert_eq!(table.rows[1].cells.len(), 2);
+    assert_eq!(table.rows[0].cells[0].properties.grid_span, Some(2));
+    assert_eq!(
+        table.rows[0].cells[0].properties.vertical_merge,
+        Some(VerticalMerge::Restart)
+    );
+    assert_eq!(table.rows[1].cells[0].properties.grid_span, Some(2));
+    assert_eq!(
+        table.rows[1].cells[0].properties.vertical_merge,
+        Some(VerticalMerge::Continue)
+    );
+}
+
+#[test]
+fn malformed_table_merge_topology_fails_closed() {
+    for body in [
+        r#"<table:table><table:table-row><table:covered-table-cell/></table:table-row></table:table>"#,
+        r#"<table:table><table:table-row><table:table-cell table:number-columns-spanned="2"><text:p>x</text:p></table:table-cell><table:table-cell><text:p>not covered</text:p></table:table-cell></table:table-row></table:table>"#,
+        r#"<table:table><table:table-row><table:table-cell table:number-rows-spanned="2"><text:p>x</text:p></table:table-cell></table:table-row></table:table>"#,
+    ] {
+        assert_eq!(
+            import_content_xml(
+                &content("1.4", body),
+                OdfVersion::V1_4,
+                OdfImportLimits::default(),
+            )
+            .unwrap_err(),
+            OdfError::MalformedContent
+        );
+    }
+}
+
+#[test]
+fn table_limits_bound_repetition_and_nesting() {
+    let repeated = content(
+        "1.4",
+        r#"<table:table><table:table-row table:number-rows-repeated="2"><table:table-cell table:number-columns-repeated="2"/></table:table-row></table:table>"#,
+    );
+    for limits in [
+        OdfImportLimits {
+            max_table_rows: 1,
+            ..OdfImportLimits::default()
+        },
+        OdfImportLimits {
+            max_table_cells: 3,
+            ..OdfImportLimits::default()
+        },
+        OdfImportLimits {
+            max_tables: 0,
+            ..OdfImportLimits::default()
+        },
+        OdfImportLimits {
+            max_table_depth: 0,
+            ..OdfImportLimits::default()
+        },
+        OdfImportLimits {
+            max_paragraphs: 3,
+            ..OdfImportLimits::default()
+        },
+    ] {
+        assert!(matches!(
+            import_content_xml(&repeated, OdfVersion::V1_4, limits),
+            Err(OdfError::LimitExceeded { .. })
+        ));
+    }
+
+    let nested = content(
+        "1.4",
+        r#"<table:table><table:table-row><table:table-cell><table:table><table:table-row><table:table-cell/></table:table-row></table:table></table:table-cell></table:table-row></table:table>"#,
+    );
+    assert!(matches!(
+        import_content_xml(
+            &nested,
+            OdfVersion::V1_4,
+            OdfImportLimits {
+                max_table_depth: 1,
+                ..OdfImportLimits::default()
+            },
+        ),
+        Err(OdfError::LimitExceeded { .. })
+    ));
+
+    let repeated_nested = content(
+        "1.4",
+        r#"<table:table><table:table-row><table:table-cell table:number-columns-repeated="2"><text:p>xx</text:p><table:table><table:table-row><table:table-cell/></table:table-row></table:table></table:table-cell></table:table-row></table:table>"#,
+    );
+    for limits in [
+        OdfImportLimits {
+            max_tables: 2,
+            ..OdfImportLimits::default()
+        },
+        OdfImportLimits {
+            max_table_cells: 3,
+            ..OdfImportLimits::default()
+        },
+        OdfImportLimits {
+            max_inline_nodes: 1,
+            ..OdfImportLimits::default()
+        },
+        OdfImportLimits {
+            max_text_bytes: 3,
+            ..OdfImportLimits::default()
+        },
+    ] {
+        assert!(matches!(
+            import_content_xml(&repeated_nested, OdfVersion::V1_4, limits),
             Err(OdfError::LimitExceeded { .. })
         ));
     }
