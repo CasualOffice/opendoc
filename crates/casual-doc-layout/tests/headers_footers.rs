@@ -536,6 +536,9 @@ fn a_header_can_contain_an_inline_image() {
             }),
             descr: None,
             crop: None,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
         })],
     });
     let header = flow_header_footer(&doc, &[header_block], &shaper, WIDTH);

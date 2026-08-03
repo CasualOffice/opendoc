@@ -102,6 +102,9 @@ fn aligned_float(
         descr: Some(descr.to_owned()),
         relative_height: None,
         crop: None,
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
     })
 }
 
@@ -135,6 +138,9 @@ fn offset_float(
         descr: Some(descr.to_owned()),
         relative_height: None,
         crop: None,
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
     })
 }
 
@@ -635,6 +641,9 @@ fn a_header_image_renders_through_the_full_pipeline() {
                     }),
                     descr: None,
                     crop: None,
+                    flip_h: false,
+                    flip_v: false,
+                    rotation: None,
                 })],
             })],
         },
@@ -886,6 +895,9 @@ fn a_positioned_header_float_reserves_band_so_the_body_clears_it() {
             descr: None,
             relative_height: None,
             crop: None,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
         })
     };
     let build = |header_blocks: Vec<InlineNode>| {

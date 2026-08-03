@@ -683,6 +683,87 @@ mod semantic_tests {
     }
 
     #[test]
+    fn group_flip_and_rotation_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, GroupChild, InlineNode};
+
+        // A `wpg:wgp` whose group transform is rotated + flipped on both axes, a
+        // child shape rotated + flipped horizontally, and a child text box rotated
+        // + flipped vertically. Each `a:xfrm@rot`/`@flipH`/`@flipV` must survive.
+        let xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic" xmlns:wps="urn:wps" xmlns:wpg="urn:wpg"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="0" relativeHeight="251659264" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="2000000" cy="1000000"/><wp:wrapNone/><wp:docPr id="1" name="Group 1"/><a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:grpSpPr><a:xfrm rot="1200000" flipH="1" flipV="1"><a:off x="0" y="0"/><a:ext cx="2000000" cy="1000000"/><a:chOff x="0" y="0"/><a:chExt cx="2000000" cy="1000000"/></a:xfrm></wpg:grpSpPr><wps:wsp><wps:cNvPr id="2" name="Rectangle"/><wps:spPr><a:xfrm rot="600000" flipH="1"><a:off x="0" y="0"/><a:ext cx="2000000" cy="1000000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:bodyPr/></wps:wsp><wps:wsp><wps:cNvPr id="3" name="Text Box"/><wps:spPr><a:xfrm rot="300000" flipV="1"><a:off x="200000" y="100000"/><a:ext cx="800000" cy="300000"/></a:xfrm><a:prstGeom prst="rect"/></wps:spPr><wps:txbx><w:txbxContent><w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Group(group) = &paragraph.inlines[0] else {
+            panic!("expected a group, got {:?}", paragraph.inlines[0]);
+        };
+        assert_eq!(group.transform.rotation, Some(1_200_000));
+        assert!(group.transform.flip_h);
+        assert!(group.transform.flip_v);
+
+        let GroupChild::Shape(shape) = &group.children[0] else {
+            panic!("expected a shape");
+        };
+        assert_eq!(shape.rotation, Some(600_000));
+        assert!(shape.flip_h);
+        assert!(!shape.flip_v);
+
+        let GroupChild::TextBox(text_box) = &group.children[1] else {
+            panic!("expected a text box");
+        };
+        assert_eq!(text_box.rotation, Some(300_000));
+        assert!(!text_box.flip_h);
+        assert!(text_box.flip_v);
+
+        assert_eq!(m1, m2, "group flip + rotation survive write -> reopen");
+    }
+
+    #[test]
+    fn anchored_picture_flip_and_rotation_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, InlineNode};
+
+        // A floating picture whose `pic:spPr/a:xfrm` is rotated and flipped on both
+        // axes (a mirrored, rotated logo). The `@rot`/`@flipH`/`@flipV` must survive
+        // import -> write -> reopen. Imported through a package so `r:embed` resolves.
+        let document_xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="0" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="914400" cy="914400"/><wp:wrapNone/><wp:docPr id="1" name="Pic 1"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm rot="900000" flipH="1" flipV="1"><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:prstGeom prst="rect"/></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+
+        let m1 = reopen(&pack(document_xml, document_rels));
+
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::AnchoredDrawing(drawing) = &paragraph.inlines[0] else {
+            panic!(
+                "expected an anchored drawing, got {:?}",
+                paragraph.inlines[0]
+            );
+        };
+        assert_eq!(drawing.rotation, Some(900_000));
+        assert!(drawing.flip_h);
+        assert!(drawing.flip_v);
+
+        let written = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut written_package =
+            DocxPackage::open(&written, PackageLimits::default()).expect("written package");
+        let written_xml = written_package
+            .read_part("word/document.xml")
+            .expect("written main document");
+        let written_xml = std::str::from_utf8(&written_xml).expect("utf-8 document XML");
+        assert!(
+            written_xml.contains(r#"<a:xfrm rot="900000" flipH="1" flipV="1">"#),
+            "the writer emits @rot/@flipH/@flipV on the picture transform"
+        );
+
+        let m2 = reopen(&written);
+        assert_eq!(
+            m1, m2,
+            "anchored picture flip + rotation survive write -> reopen"
+        );
+    }
+
+    #[test]
     fn angular_shape_presets_survive_the_semantic_round_trip() {
         use casual_doc_model::v1::{BlockNode, GroupChild, InlineNode, ShapeGeometry};
 

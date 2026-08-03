@@ -69,6 +69,9 @@ enum Segment {
         extent: Option<Extent>,
         descr: Option<String>,
         crop: Option<CropRect>,
+        flip_h: bool,
+        flip_v: bool,
+        rotation: Option<i32>,
     },
     /// A first-class embedded object (chart / SmartArt diagram / OLE object).
     EmbeddedObject {
@@ -183,6 +186,9 @@ enum Segment {
         descr: Option<String>,
         relative_height: Option<u32>,
         crop: Option<CropRect>,
+        flip_h: bool,
+        flip_v: bool,
+        rotation: Option<i32>,
     },
 }
 
@@ -294,6 +300,11 @@ struct ShapeBuilder {
     textbox_blocks: Option<Vec<BlockNode>>,
     /// The shape's text-body box model and overflow/autofit policy.
     body_properties: TextBoxBodyProperties,
+    /// The shape's `a:xfrm@flipH`/`@flipV` mirror flags and `@rot` rotation
+    /// (60000ths of a degree), captured on the `a:xfrm` start.
+    flip_h: bool,
+    flip_v: bool,
+    rotation: Option<i32>,
 }
 
 /// Which `a:xfrm` an `a:off`/`a:ext`/`a:chOff`/`a:chExt` currently routes to.
@@ -557,6 +568,11 @@ struct ContentFrame {
     pending_extent: Option<Extent>,
     pending_srcrect: Option<CropRect>,
     pending_inline_descr: Option<String>,
+    /// The `a:xfrm@flipH`/`@flipV`/`@rot` of the open lone/inline or anchored
+    /// picture (no open shape builder), consumed by `commit_drawing`.
+    pending_flip_h: bool,
+    pending_flip_v: bool,
+    pending_rotation: Option<i32>,
     drawing_extra: bool,
     pict_depth: u32,
     pending_graphic: PendingGraphic,
@@ -741,6 +757,11 @@ struct BodyParser<'a> {
     /// consumed by `commit_drawing` for the inline `Drawing` (the anchored path
     /// captures its own `descr` on the `PendingAnchor`).
     pending_inline_descr: Option<String>,
+    /// The `a:xfrm@flipH`/`@flipV`/`@rot` of the open lone/inline or anchored
+    /// picture (no open shape builder), consumed by `commit_drawing`.
+    pending_flip_h: bool,
+    pending_flip_v: bool,
+    pending_rotation: Option<i32>,
     drawing_extra: bool,
     /// Depth of an open `w:pict` (legacy VML picture); `pending_embed` holds its
     /// `v:imagedata@r:id` until the picture closes.
@@ -1016,6 +1037,9 @@ impl<'a> BodyParser<'a> {
             pending_extent: None,
             pending_srcrect: None,
             pending_inline_descr: None,
+            pending_flip_h: false,
+            pending_flip_v: false,
+            pending_rotation: None,
             drawing_extra: false,
             pict_depth: 0,
             vml_capture: None,
@@ -2039,6 +2063,9 @@ impl BodyParser<'_> {
                     self.pending_extent = None;
                     self.pending_srcrect = None;
                     self.pending_inline_descr = None;
+                    self.pending_flip_h = false;
+                    self.pending_flip_v = false;
+                    self.pending_rotation = None;
                     self.drawing_extra = false;
                     self.blipfill_depth = 0;
                     self.pending_graphic = PendingGraphic::default();
@@ -2236,6 +2263,9 @@ impl BodyParser<'_> {
                         extent: ZERO_EXTENT,
                         child_offset: PointEmu { x_emu: 0, y_emu: 0 },
                         child_extent: ZERO_EXTENT,
+                        flip_h: false,
+                        flip_v: false,
+                        rotation: None,
                     },
                     children: Vec::new(),
                 });
@@ -2265,6 +2295,9 @@ impl BodyParser<'_> {
                     srcrect: None,
                     textbox_blocks: None,
                     body_properties: TextBoxBodyProperties::default(),
+                    flip_h: false,
+                    flip_v: false,
+                    rotation: None,
                 });
             }
             // A picture INSIDE a group (`pic:pic`): open a picture shape builder so
@@ -2288,6 +2321,9 @@ impl BodyParser<'_> {
                     srcrect: None,
                     textbox_blocks: None,
                     body_properties: TextBoxBodyProperties::default(),
+                    flip_h: false,
+                    flip_v: false,
+                    rotation: None,
                 });
             }
             // A shape/picture transform container (`wps:spPr` / `pic:spPr`): its
@@ -2314,6 +2350,23 @@ impl BodyParser<'_> {
             }
             b"normAutofit" if self.pending_shape.is_some() => {
                 self.capture_normal_text_box_autofit(element);
+            }
+            // The `a:xfrm` transform wrapper: capture its `@flipH`/`@flipV` mirror
+            // flags and `@rot` rotation (60000ths of a degree), routed to the group
+            // transform or the open shape per `xfrm_target`. A lone/inline or
+            // anchored picture (no open shape) buffers them on the parser until
+            // `commit_drawing`.
+            b"xfrm" if self.drawing_depth > 0 && self.xfrm_target != XfrmTarget::None => {
+                let flip_h = matches!(
+                    attribute_value(element, b"flipH").as_deref(),
+                    Some("1") | Some("true")
+                );
+                let flip_v = matches!(
+                    attribute_value(element, b"flipV").as_deref(),
+                    Some("1") | Some("true")
+                );
+                let rotation = attr_i32(element, b"rot");
+                self.set_xfrm_flip_rot(flip_h, flip_v, rotation);
             }
             // `a:off`/`a:ext`/`a:chOff`/`a:chExt` inside an `a:xfrm`: route to the
             // group transform or the shape geometry per `xfrm_target`. (The
@@ -3826,6 +3879,34 @@ impl BodyParser<'_> {
         }
     }
 
+    /// Routes an `a:xfrm`'s `@flipH`/`@flipV`/`@rot` to the group transform or the
+    /// open shape, per [`Self::xfrm_target`]. A lone/inline or anchored picture has
+    /// no open shape builder, so its flags land on the parser's pending-drawing
+    /// fields for [`Self::commit_drawing`].
+    fn set_xfrm_flip_rot(&mut self, flip_h: bool, flip_v: bool, rotation: Option<i32>) {
+        match self.xfrm_target {
+            XfrmTarget::Group => {
+                if let Some(group) = self.group_stack.last_mut() {
+                    group.transform.flip_h = flip_h;
+                    group.transform.flip_v = flip_v;
+                    group.transform.rotation = rotation;
+                }
+            }
+            XfrmTarget::Shape => {
+                if let Some(shape) = self.pending_shape.as_mut() {
+                    shape.flip_h = flip_h;
+                    shape.flip_v = flip_v;
+                    shape.rotation = rotation;
+                } else {
+                    self.pending_flip_h = flip_h;
+                    self.pending_flip_v = flip_v;
+                    self.pending_rotation = rotation;
+                }
+            }
+            XfrmTarget::None => {}
+        }
+    }
+
     /// Captures the supported `wps:bodyPr` attributes. Invalid authored tokens
     /// leave the schema default in place and are reported, never allowed to
     /// create an unbounded layout value.
@@ -4047,6 +4128,9 @@ impl BodyParser<'_> {
                 extent: shape.extent,
                 descr: shape.descr,
                 crop: shape.srcrect,
+                flip_h: shape.flip_h,
+                flip_v: shape.flip_v,
+                rotation: shape.rotation,
             }));
         }
         if let Some(blocks) = shape.textbox_blocks.take() {
@@ -4062,6 +4146,9 @@ impl BodyParser<'_> {
                 fill: shape.fill,
                 border: shape.stroke,
                 body_properties: shape.body_properties,
+                flip_h: shape.flip_h,
+                flip_v: shape.flip_v,
+                rotation: shape.rotation,
             }));
         }
         Some(GroupChild::Shape(GroupShape {
@@ -4073,6 +4160,9 @@ impl BodyParser<'_> {
             adjustments: shape.adjustments,
             fill: shape.fill,
             stroke: shape.stroke,
+            flip_h: shape.flip_h,
+            flip_v: shape.flip_v,
+            rotation: shape.rotation,
         }))
     }
 
@@ -4174,6 +4264,9 @@ impl BodyParser<'_> {
         let anchor = self.pending_anchor.take();
         let crop = self.pending_srcrect.take();
         let inline_descr = self.pending_inline_descr.take();
+        let flip_h = std::mem::take(&mut self.pending_flip_h);
+        let flip_v = std::mem::take(&mut self.pending_flip_v);
+        let rotation = self.pending_rotation.take();
         match self.pending_embed.take() {
             Some(embed) => match self.media_index.get(&embed) {
                 Some(media) => {
@@ -4185,6 +4278,9 @@ impl BodyParser<'_> {
                             descr: anchor.descr,
                             relative_height: anchor.relative_height,
                             crop,
+                            flip_h,
+                            flip_v,
+                            rotation,
                         });
                         // Any remaining unmodeled detail (e.g. a click-link) is
                         // still surfaced so the anchored drawing is never silently
@@ -4202,6 +4298,9 @@ impl BodyParser<'_> {
                         extent,
                         descr: inline_descr,
                         crop,
+                        flip_h,
+                        flip_v,
+                        rotation,
                     });
                 }
                 None => self.reporter.report(b"drawing"),
@@ -4317,6 +4416,9 @@ impl BodyParser<'_> {
                         extent: None,
                         descr: None,
                         crop: None,
+                        flip_h: false,
+                        flip_v: false,
+                        rotation: None,
                     }),
                     None => self.reporter.report(b"pict"),
                 },
@@ -4357,6 +4459,9 @@ impl BodyParser<'_> {
                     descr: None,
                     relative_height,
                     crop: None,
+                    flip_h: false,
+                    flip_v: false,
+                    rotation: None,
                 }));
             }
             // Inline VML image: not floating (no absolute box/z-order), but the
@@ -4375,6 +4480,9 @@ impl BodyParser<'_> {
                 extent,
                 descr: None,
                 crop: None,
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
             }));
         }
         // A VML text box (`v:textbox`): placement depends on both its container and
@@ -4471,6 +4579,9 @@ impl BodyParser<'_> {
             adjustments: Vec::new(),
             fill,
             stroke,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
         });
         Ok(Some(Segment::Group(self.vml_group_of_one(
             anchor,
@@ -4507,6 +4618,9 @@ impl BodyParser<'_> {
             adjustments: Vec::new(),
             fill: vml_fill(&drawing.fill),
             stroke: vml_stroke(&drawing.stroke),
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
         });
         Ok(Segment::Group(self.vml_group_of_one(
             anchor,
@@ -4536,6 +4650,9 @@ impl BodyParser<'_> {
                 extent,
                 child_offset: PointEmu { x_emu: 0, y_emu: 0 },
                 child_extent: extent,
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
             },
             children: vec![child],
         })
@@ -4885,6 +5002,9 @@ impl BodyParser<'_> {
             pending_extent: self.pending_extent.take(),
             pending_srcrect: self.pending_srcrect.take(),
             pending_inline_descr: self.pending_inline_descr.take(),
+            pending_flip_h: std::mem::take(&mut self.pending_flip_h),
+            pending_flip_v: std::mem::take(&mut self.pending_flip_v),
+            pending_rotation: self.pending_rotation.take(),
             drawing_extra: std::mem::take(&mut self.drawing_extra),
             pict_depth: std::mem::take(&mut self.pict_depth),
             pending_graphic: std::mem::take(&mut self.pending_graphic),
@@ -4956,6 +5076,9 @@ impl BodyParser<'_> {
         self.pending_extent = frame.pending_extent;
         self.pending_srcrect = frame.pending_srcrect;
         self.pending_inline_descr = frame.pending_inline_descr;
+        self.pending_flip_h = frame.pending_flip_h;
+        self.pending_flip_v = frame.pending_flip_v;
+        self.pending_rotation = frame.pending_rotation;
         self.drawing_extra = frame.drawing_extra;
         self.pict_depth = frame.pict_depth;
         self.pending_graphic = frame.pending_graphic;
@@ -5775,6 +5898,9 @@ impl BodyParser<'_> {
                 extent,
                 descr,
                 crop,
+                flip_h,
+                flip_v,
+                rotation,
             } => {
                 let id = self.next_id()?;
                 Ok(InlineNode::Drawing(Drawing {
@@ -5783,6 +5909,9 @@ impl BodyParser<'_> {
                     extent,
                     descr,
                     crop,
+                    flip_h,
+                    flip_v,
+                    rotation,
                 }))
             }
             Segment::AnchoredDrawing {
@@ -5792,6 +5921,9 @@ impl BodyParser<'_> {
                 descr,
                 relative_height,
                 crop,
+                flip_h,
+                flip_v,
+                rotation,
             } => {
                 let id = self.next_id()?;
                 Ok(InlineNode::AnchoredDrawing(AnchoredDrawing {
@@ -5802,6 +5934,9 @@ impl BodyParser<'_> {
                     descr,
                     relative_height,
                     crop,
+                    flip_h,
+                    flip_v,
+                    rotation,
                 }))
             }
             Segment::EmbeddedObject {

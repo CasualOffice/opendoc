@@ -106,6 +106,9 @@ fn anchored(id: u64, media: MediaId, h_offset: i64, v_offset: i64, behind_doc: b
         descr: Some("A floating logo".to_owned()),
         relative_height: None,
         crop: None,
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
     })
 }
 
@@ -286,6 +289,9 @@ fn top_bottom_drawing(id: u64, media: MediaId, height_twips: i64, bottom_twips: 
         descr: None,
         relative_height: None,
         crop: None,
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
     })
 }
 
@@ -301,6 +307,9 @@ fn anchored_at_paragraph(id: u64, media: MediaId) -> InlineNode {
         descr: None,
         relative_height: None,
         crop: None,
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
     })
 }
 
@@ -328,6 +337,9 @@ fn anchored_at_column_right(id: u64, media: MediaId) -> InlineNode {
         descr: None,
         relative_height: None,
         crop: None,
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
     })
 }
 
@@ -355,6 +367,9 @@ fn anchored_at_page_right(id: u64, media: MediaId) -> InlineNode {
         descr: None,
         relative_height: None,
         crop: None,
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
     })
 }
 
@@ -442,6 +457,9 @@ fn top_and_bottom_reflow_coalesces_pictures_text_boxes_and_groups() {
             extent: group_extent,
             child_offset: PointEmu { x_emu: 0, y_emu: 0 },
             child_extent: group_extent,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
         },
         children: vec![GroupChild::Shape(GroupShape {
             id: node(31),
@@ -452,6 +470,9 @@ fn top_and_bottom_reflow_coalesces_pictures_text_boxes_and_groups() {
             adjustments: Vec::new(),
             fill: None,
             stroke: None,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
         })],
     });
     let paragraph = BlockNode::Paragraph(Paragraph {
@@ -1101,6 +1122,9 @@ fn grouped_text_box_uses_body_properties_and_shape_autofit() {
                 width_emu: 2_000 * 635,
                 height_emu: 2_000 * 635,
             },
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
         },
         children: vec![GroupChild::TextBox(GroupTextBox {
             id: node(501),
@@ -1126,6 +1150,9 @@ fn grouped_text_box_uses_body_properties_and_shape_autofit() {
                 auto_fit: TextBoxAutoFit::Shape,
                 ..TextBoxBodyProperties::default()
             },
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
         })],
     });
     let body = vec![BlockNode::Paragraph(Paragraph {
@@ -1368,6 +1395,9 @@ fn a_group_paints_children_in_document_order_with_the_picture_at_its_own_extent(
             width_emu: 1_828_800,
             height_emu: 1_828_800,
         },
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
     };
     let rect = |id: u64, off: i64| {
         GroupChild::Shape(GroupShape {
@@ -1390,6 +1420,9 @@ fn a_group_paints_children_in_document_order_with_the_picture_at_its_own_extent(
                 a: 255,
             }),
             stroke: None,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
         })
     };
     let group = InlineNode::Group(WordprocessingGroup {
@@ -1416,6 +1449,9 @@ fn a_group_paints_children_in_document_order_with_the_picture_at_its_own_extent(
                 },
                 descr: None,
                 crop: None,
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
             }),
             rect(33, 200_000),
         ],
@@ -1505,6 +1541,9 @@ fn ellipse_and_rounded_rectangle_reach_distinct_display_primitives() {
                 a: 255,
             }),
             stroke: None,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
         })
     };
     let group = InlineNode::Group(WordprocessingGroup {
@@ -1517,6 +1556,9 @@ fn ellipse_and_rounded_rectangle_reach_distinct_display_primitives() {
             extent: group_extent,
             child_offset: PointEmu { x_emu: 0, y_emu: 0 },
             child_extent: group_extent,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
         },
         children: vec![
             shape(51, 0, ShapeGeometry::Ellipse, Vec::new()),
@@ -1595,6 +1637,9 @@ fn angular_presets_reach_exact_polygon_display_primitives() {
                 a: 255,
             }),
             stroke: None,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
         })
     };
     let group = InlineNode::Group(WordprocessingGroup {
@@ -1607,6 +1652,9 @@ fn angular_presets_reach_exact_polygon_display_primitives() {
             extent: group_extent,
             child_offset: PointEmu { x_emu: 0, y_emu: 0 },
             child_extent: group_extent,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
         },
         children: vec![
             shape(71, 0, ShapeGeometry::Triangle),
