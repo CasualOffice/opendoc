@@ -15,6 +15,8 @@ pub const MANIFEST_PART: &str = "META-INF/manifest.xml";
 pub const CONTENT_PART: &str = "content.xml";
 /// Optional packaged named-style definitions.
 pub const STYLES_PART: &str = "styles.xml";
+/// Optional packaged document metadata.
+pub const META_PART: &str = "meta.xml";
 /// OpenDocument Text media type.
 pub const ODT_MIME: &str = "application/vnd.oasis.opendocument.text";
 
@@ -278,13 +280,43 @@ impl<'a> OdtPackage<'a> {
         } else {
             None
         };
-        crate::content::import_content_xml_with_styles_and_cancellation(
+        let mut imported = crate::content::import_content_xml_with_styles_and_cancellation(
             &content,
             styles.as_deref(),
             self.version,
             limits,
             cancellation,
-        )
+        )?;
+        if self
+            .package
+            .entries()
+            .iter()
+            .any(|entry| entry.part_name == META_PART)
+        {
+            let metadata = self.read_part_with_cancellation(META_PART, cancellation)?;
+            let (properties, findings) = crate::metadata::parse_metadata(&metadata, limits)?;
+            if !properties.is_empty() {
+                imported.document = imported
+                    .document
+                    .with_properties(properties)
+                    .map_err(|_| OdfError::InvalidModel)?;
+            }
+            imported.report.entries.extend(findings.into_iter().map(
+                |(feature, model_outcome, retention_outcome)| crate::CompatibilityEntry {
+                    feature,
+                    occurrences: 1,
+                    model_outcome,
+                    retention_outcome,
+                },
+            ));
+            imported.report.entries.sort_by(|a, b| {
+                a.feature
+                    .cmp(&b.feature)
+                    .then(a.model_outcome.cmp(&b.model_outcome))
+                    .then(a.retention_outcome.cmp(&b.retention_outcome))
+            });
+        }
+        Ok(imported)
     }
 }
 

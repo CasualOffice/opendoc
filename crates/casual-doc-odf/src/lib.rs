@@ -7,6 +7,7 @@ mod content;
 mod error;
 mod export;
 mod manifest;
+mod metadata;
 mod package;
 
 #[cfg(test)]
@@ -22,6 +23,6 @@ pub use error::OdfError;
 pub use export::{OdfExportLimits, OdtExport, write_odt};
 pub use manifest::ManifestEntry;
 pub use package::{
-    CONTENT_PART, MANIFEST_PART, MIMETYPE_PART, ODT_MIME, OdfPackageLimits, OdfVersion, OdtPackage,
-    STYLES_PART,
+    CONTENT_PART, MANIFEST_PART, META_PART, MIMETYPE_PART, ODT_MIME, OdfPackageLimits, OdfVersion,
+    OdtPackage, STYLES_PART,
 };

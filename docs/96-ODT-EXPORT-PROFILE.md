@@ -99,6 +99,11 @@ visits, inline visits, table-row/cell visits, table columns, note occurrences, r
 bytes, and compatibility feature buckets. Limit, model-validation,
 XML-character, serialization, or ZIP failure returns no partial artifact.
 
+When present, supported `DocumentProperties` core fields are emitted in a
+deterministic `meta.xml` part and registered in the manifest. Application name
+is emitted as `meta:generator`; unsupported application/custom fields are
+reported rather than silently represented as unrelated ODT metadata.
+
 ## 6. Acceptance gates
 
 The first checkpoint requires:

@@ -13,14 +13,14 @@ use zip::CompressionMethod;
 use zip::write::{SimpleFileOptions, ZipWriter};
 
 use crate::{
-    CompatibilityEntry, CompatibilityReport, MANIFEST_PART, MIMETYPE_PART, ModelOutcome, ODT_MIME,
-    OdfError, RetentionOutcome,
+    CompatibilityEntry, CompatibilityReport, MANIFEST_PART, META_PART, MIMETYPE_PART, ModelOutcome,
+    ODT_MIME, OdfError, RetentionOutcome,
 };
 
 const CONTENT_HEADER: &str = r#"<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" office:version="1.4">"#;
 const BODY_PREFIX: &str = "<office:body><office:text>";
 const CONTENT_SUFFIX: &str = "</office:text></office:body></office:document-content>";
-const MANIFEST: &str = r#"<?xml version="1.0" encoding="UTF-8"?><manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.4"><manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.text" manifest:version="1.4"/><manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/></manifest:manifest>"#;
+const MANIFEST: &str = r#"<?xml version="1.0" encoding="UTF-8"?><manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.4"><manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.text" manifest:version="1.4"/><manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/><manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/></manifest:manifest>"#;
 
 /// Resource limits for deterministic ODT semantic export.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1426,15 +1426,38 @@ pub fn write_odt(document: &Document, limits: OdfExportLimits) -> Result<OdtExpo
             .reporter
             .record("odt.export.definitions", ModelOutcome::Omitted);
     }
-    if document.properties().is_some() {
-        writer
-            .reporter
-            .record("odt.export.document_properties", ModelOutcome::Omitted);
-    }
     if document.background().is_some() {
         writer
             .reporter
             .record("odt.export.background", ModelOutcome::Omitted);
+    }
+    if let Some(properties) = document.properties() {
+        if !properties.custom.is_empty()
+            || properties.app.company.is_some()
+            || properties.app.manager.is_some()
+            || properties.app.template.is_some()
+            || properties.app.pages.is_some()
+            || properties.app.words.is_some()
+            || properties.app.characters.is_some()
+            || properties.app.paragraphs.is_some()
+        {
+            writer.reporter.record(
+                "odt.export.document_properties.unsupported",
+                ModelOutcome::Omitted,
+            );
+        }
+        if properties.core.last_modified_by.is_some()
+            || properties.core.revision.is_some()
+            || properties.core.last_printed.is_some()
+            || properties.core.category.is_some()
+            || properties.core.content_status.is_some()
+            || properties.core.version.is_some()
+        {
+            writer.reporter.record(
+                "odt.export.document_properties.core_unsupported",
+                ModelOutcome::Omitted,
+            );
+        }
     }
     writer.write_blocks(document.body(), 0)?;
     writer.report_unreferenced_notes();
@@ -1468,11 +1491,20 @@ pub fn write_odt(document: &Document, limits: OdfExportLimits) -> Result<OdtExpo
     content.push_str(&writer.xml);
     let content = content.into_bytes();
     let report = writer.reporter.finish();
-    let bytes = package(&content, limits)?;
+    let metadata = document
+        .properties()
+        .filter(|properties| !properties.is_empty())
+        .map(metadata_xml)
+        .transpose()?;
+    let bytes = package(&content, metadata.as_deref(), limits)?;
     Ok(OdtExport { bytes, report })
 }
 
-fn package(content: &[u8], limits: OdfExportLimits) -> Result<Vec<u8>, OdfError> {
+fn package(
+    content: &[u8],
+    metadata: Option<&[u8]>,
+    limits: OdfExportLimits,
+) -> Result<Vec<u8>, OdfError> {
     let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
     zip.start_file(
         MIMETYPE_PART,
@@ -1486,9 +1518,20 @@ fn package(content: &[u8], limits: OdfExportLimits) -> Result<Vec<u8>, OdfError>
         .map_err(|_| OdfError::SerializationFailed)?;
     zip.write_all(content)
         .map_err(|_| OdfError::SerializationFailed)?;
+    if let Some(metadata) = metadata {
+        zip.start_file(META_PART, deflated)
+            .map_err(|_| OdfError::SerializationFailed)?;
+        zip.write_all(metadata)
+            .map_err(|_| OdfError::SerializationFailed)?;
+    }
     zip.start_file(MANIFEST_PART, deflated)
         .map_err(|_| OdfError::SerializationFailed)?;
-    zip.write_all(MANIFEST.as_bytes())
+    let manifest = if metadata.is_some() {
+        MANIFEST.to_owned()
+    } else {
+        MANIFEST.replace("<manifest:file-entry manifest:full-path=\"meta.xml\" manifest:media-type=\"text/xml\"/>", "")
+    };
+    zip.write_all(manifest.as_bytes())
         .map_err(|_| OdfError::SerializationFailed)?;
     let bytes = zip
         .finish()
@@ -1500,6 +1543,41 @@ fn package(content: &[u8], limits: OdfExportLimits) -> Result<Vec<u8>, OdfError>
         limits.max_package_bytes,
     )?;
     Ok(bytes)
+}
+
+fn metadata_xml(
+    properties: &casual_doc_model::v1::DocumentProperties,
+) -> Result<Vec<u8>, OdfError> {
+    use quick_xml::escape::escape;
+    let mut xml = String::from(
+        r#"<?xml version="1.0" encoding="UTF-8"?><office:document-meta xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" office:version="1.4"><office:meta>"#,
+    );
+    let mut field = |tag: &str, value: &Option<String>| {
+        if let Some(value) = value {
+            xml.push('<');
+            xml.push_str(tag);
+            xml.push('>');
+            xml.push_str(&escape(value));
+            xml.push_str("</");
+            xml.push_str(tag);
+            xml.push('>');
+        }
+    };
+    field("dc:title", &properties.core.title);
+    field("dc:subject", &properties.core.subject);
+    field("dc:creator", &properties.core.creator);
+    field("dc:description", &properties.core.description);
+    field("dc:language", &properties.core.language);
+    field("dcterms:created", &properties.core.created);
+    field("dcterms:modified", &properties.core.modified);
+    if let Some(value) = &properties.core.keywords {
+        field("meta:keyword", &Some(value.clone()));
+    }
+    if let Some(value) = &properties.app.application {
+        field("meta:generator", &Some(value.clone()));
+    }
+    xml.push_str("</office:meta></office:document-meta>");
+    Ok(xml.into_bytes())
 }
 
 fn checked_add(
@@ -1874,7 +1952,9 @@ mod tests {
                     paragraph_properties: None,
                     run_properties: None,
                     style_ref: None,
+                    lvl_restart: None,
                 }],
+                multi_level_type: None,
             },
         );
         document.definitions_mut().numbering.insert(

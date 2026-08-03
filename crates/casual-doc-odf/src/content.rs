@@ -4202,8 +4202,10 @@ fn build_document(
                         paragraph_properties: None,
                         run_properties: None,
                         style_ref: None,
+                        lvl_restart: None,
                     })
                     .collect(),
+                multi_level_type: None,
             },
         );
         definitions.numbering.insert(
