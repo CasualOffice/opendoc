@@ -329,6 +329,10 @@ pub struct PageMargins {
     /// the attribute is absent (Word defaults to 720 twips); additive in schema v1.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub footer_twips: Option<i32>,
+    /// Binding (gutter) margin added on the inner edge for two-sided printing
+    /// (`w:pgMar/@w:gutter`). `None` when absent (Word defaults to 0); additive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gutter_twips: Option<i32>,
 }
 
 /// One explicit column's geometry inside a `w:cols` (`w:col`). Word writes these
@@ -998,6 +1002,10 @@ pub struct DocumentSettings {
     /// `w:trackChanges` — revision tracking is on.
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
     pub track_changes: bool,
+    /// `w:updateFields` — recalculate all fields (TOC, page numbers, refs) when
+    /// the document is opened. Common on generated/templated documents.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub update_fields: bool,
     /// `w:defaultTabStop` — the default tab-stop interval in twips.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_tab_stop: Option<i32>,

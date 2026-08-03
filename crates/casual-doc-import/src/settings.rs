@@ -117,6 +117,7 @@ fn apply_setting(local: &[u8], element: &BytesStart<'_>, settings: &mut Document
         b"evenAndOddHeaders" => settings.even_and_odd_headers = on_off(element),
         b"mirrorMargins" => settings.mirror_margins = on_off(element),
         b"trackChanges" => settings.track_changes = on_off(element),
+        b"updateFields" => settings.update_fields = on_off(element),
         b"defaultTabStop" => match tab_stop(element) {
             Some(value) => settings.default_tab_stop = Some(value),
             None => return false,

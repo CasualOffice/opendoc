@@ -162,6 +162,7 @@ fn section(
             end_twips: margin,
             header_twips: None,
             footer_twips: None,
+            gutter_twips: None,
         },
         columns: SectionColumns {
             count: 1,
@@ -702,6 +703,7 @@ fn later_section_floats_use_that_sections_page_and_margin_geometry() {
         end_twips: 1_000,
         header_twips: None,
         footer_twips: None,
+        gutter_twips: None,
     };
     second.section_type = Some(SectionType::NextPage);
 

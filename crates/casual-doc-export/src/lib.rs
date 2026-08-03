@@ -2320,6 +2320,7 @@ mod semantic_tests {
             <w:zoom w:percent="120"/>
             <w:proofState w:spelling="clean" w:grammar="dirty"/>
             <w:trackChanges/>
+            <w:updateFields/>
             <w:documentProtection w:edit="comments" w:enforcement="1"/>
             <w:defaultTabStop w:val="708"/>
             <w:autoHyphenation/>
@@ -2346,6 +2347,7 @@ mod semantic_tests {
         let s = m1.definitions().settings.clone();
         assert!(s.even_and_odd_headers);
         assert!(s.track_changes);
+        assert!(s.update_fields);
         assert_eq!(s.default_tab_stop, Some(708));
         assert_eq!(s.compat.len(), 1);
         // The unmodeled setting is reported, not silently dropped.

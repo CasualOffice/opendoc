@@ -1910,6 +1910,10 @@ fn settings_xml(settings: &DocumentSettings) -> Result<Vec<u8>, ExportError> {
         w.write_event(Event::Empty(start("w:evenAndOddHeaders")))
             .map_err(pkg)?;
     }
+    if settings.update_fields {
+        w.write_event(Event::Empty(start("w:updateFields")))
+            .map_err(pkg)?;
+    }
     if let Some(style) = &settings.default_table_style {
         let mut el = start("w:defaultTableStyle");
         el.push_attribute(("w:val", style.as_str()));
@@ -2277,6 +2281,9 @@ fn write_section_properties(
     }
     if let Some(footer) = section.page_margins.footer_twips {
         pg_mar.push_attribute(("w:footer", footer.to_string().as_str()));
+    }
+    if let Some(gutter) = section.page_margins.gutter_twips {
+        pg_mar.push_attribute(("w:gutter", gutter.to_string().as_str()));
     }
     w.write_event(Event::Empty(pg_mar)).map_err(pkg)?;
     if !section.paper_source.is_empty() {
