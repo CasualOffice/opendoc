@@ -1504,6 +1504,9 @@ mod tests {
                 width_emu: w,
                 height_emu: h,
             },
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
         }
     }
 
@@ -1570,6 +1573,9 @@ mod tests {
                 width_emu: 1_917_065,
                 height_emu: 476_885,
             },
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
         };
         let mapper = GroupMapper::root(&parent).compose(&nested);
         let rect = mapper.child_rect(

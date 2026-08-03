@@ -277,6 +277,18 @@ pub struct Drawing {
     /// The source-rectangle crop (`a:srcRect`), if the picture is cropped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub crop: Option<CropRect>,
+    /// Horizontal flip (`a:xfrm@flipH`): mirror the picture across its vertical
+    /// axis.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub flip_h: bool,
+    /// Vertical flip (`a:xfrm@flipV`): mirror the picture across its horizontal
+    /// axis.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub flip_v: bool,
+    /// Clockwise rotation about the box center (`a:xfrm@rot`, in 60000ths of a
+    /// degree), if authored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotation: Option<i32>,
 }
 
 /// Maximum drawing alt-text (`wp:docPr@descr`) length, in UTF-8 bytes.
@@ -498,6 +510,18 @@ pub struct AnchoredDrawing {
     /// The source-rectangle crop (`a:srcRect`), if the picture is cropped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub crop: Option<CropRect>,
+    /// Horizontal flip (`a:xfrm@flipH`): mirror the picture across its vertical
+    /// axis.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub flip_h: bool,
+    /// Vertical flip (`a:xfrm@flipV`): mirror the picture across its horizontal
+    /// axis.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub flip_v: bool,
+    /// Clockwise rotation about the box center (`a:xfrm@rot`, in 60000ths of a
+    /// degree), if authored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotation: Option<i32>,
 }
 
 /// An 8-bit-per-channel RGBA color used by floating-object fills and outlines.
@@ -605,6 +629,18 @@ pub struct GroupTransform {
     pub child_offset: PointEmu,
     /// The child-space size (`a:chExt`).
     pub child_extent: Extent,
+    /// Horizontal flip (`a:xfrm@flipH`): mirror the group across its vertical
+    /// axis.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub flip_h: bool,
+    /// Vertical flip (`a:xfrm@flipV`): mirror the group across its horizontal
+    /// axis.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub flip_v: bool,
+    /// Clockwise rotation about the box center (`a:xfrm@rot`, in 60000ths of a
+    /// degree), if authored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotation: Option<i32>,
 }
 
 /// A picture child of a [`WordprocessingGroup`] (`pic:pic`): an embedded picture
@@ -627,6 +663,18 @@ pub struct GroupPicture {
     /// The source-rectangle crop (`a:srcRect`), if the picture is cropped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub crop: Option<CropRect>,
+    /// Horizontal flip (`a:xfrm@flipH`): mirror the picture across its vertical
+    /// axis.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub flip_h: bool,
+    /// Vertical flip (`a:xfrm@flipV`): mirror the picture across its horizontal
+    /// axis.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub flip_v: bool,
+    /// Clockwise rotation about the box center (`a:xfrm@rot`, in 60000ths of a
+    /// degree), if authored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotation: Option<i32>,
 }
 
 /// DrawingML text-box internal margins (`wps:bodyPr@lIns/tIns/rIns/bIns`), in
@@ -815,6 +863,16 @@ pub struct GroupTextBox {
     /// Internal margins, vertical anchoring, overflow, and autofit (`wps:bodyPr`).
     #[serde(default, skip_serializing_if = "TextBoxBodyProperties::is_default")]
     pub body_properties: TextBoxBodyProperties,
+    /// Horizontal flip (`a:xfrm@flipH`): mirror the box across its vertical axis.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub flip_h: bool,
+    /// Vertical flip (`a:xfrm@flipV`): mirror the box across its horizontal axis.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub flip_v: bool,
+    /// Clockwise rotation about the box center (`a:xfrm@rot`, in 60000ths of a
+    /// degree), if authored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotation: Option<i32>,
 }
 
 /// A shape child of a [`WordprocessingGroup`] (`wps:wsp`/`wps:cxnSp` with no
@@ -844,6 +902,18 @@ pub struct GroupShape {
     /// The outline (`a:ln`), if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stroke: Option<ShapeStroke>,
+    /// Horizontal flip (`a:xfrm@flipH`): mirror the shape across its vertical
+    /// axis.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub flip_h: bool,
+    /// Vertical flip (`a:xfrm@flipV`): mirror the shape across its horizontal
+    /// axis.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub flip_v: bool,
+    /// Clockwise rotation about the box center (`a:xfrm@rot`, in 60000ths of a
+    /// degree), if authored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotation: Option<i32>,
 }
 
 /// A child of a [`WordprocessingGroup`], in the group's child coordinate space.

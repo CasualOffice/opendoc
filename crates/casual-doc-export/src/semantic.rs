@@ -3950,19 +3950,17 @@ fn write_inline(
                 return Ok(());
             };
             let embed = reference.relationship_id.clone();
-            let (cx, cy) = drawing
-                .extent
-                .as_ref()
-                .map(|extent| (extent.width_emu, extent.height_emu))
-                .unwrap_or((0, 0));
             write_drawing(
                 w,
                 &embed,
                 drawing.extent.as_ref(),
-                cx,
-                cy,
                 drawing.descr.as_deref(),
                 drawing.crop.as_ref(),
+                Xfrm2D {
+                    rotation: drawing.rotation,
+                    flip_h: drawing.flip_h,
+                    flip_v: drawing.flip_v,
+                },
             )?;
         }
         // An anchored (floating) drawing: a `w:drawing`/`wp:anchor` carrying the
@@ -4113,11 +4111,11 @@ fn write_drawing(
     w: &mut Writer<Cursor<Vec<u8>>>,
     embed: &str,
     extent: Option<&Extent>,
-    cx: i64,
-    cy: i64,
     descr: Option<&str>,
     crop: Option<&CropRect>,
+    xfrm: Xfrm2D,
 ) -> Result<(), ExportError> {
+    let (cx, cy) = extent.map_or((0, 0), |extent| (extent.width_emu, extent.height_emu));
     w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
     w.write_event(Event::Start(start("w:drawing")))
         .map_err(pkg)?;
@@ -4139,7 +4137,7 @@ fn write_drawing(
         doc_pr.push_attribute(("descr", descr));
     }
     w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
-    write_pic_graphic(w, embed, cx, cy, crop)?;
+    write_pic_graphic(w, embed, cx, cy, crop, xfrm)?;
     w.write_event(Event::End(BytesEnd::new("wp:inline")))
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("w:drawing")))
@@ -4184,6 +4182,7 @@ fn write_pic_graphic(
     cx: i64,
     cy: i64,
     crop: Option<&CropRect>,
+    xfrm: Xfrm2D,
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("a:graphic")))
         .map_err(pkg)?;
@@ -4217,7 +4216,12 @@ fn write_pic_graphic(
         .map_err(pkg)?;
     w.write_event(Event::Start(start("pic:spPr")))
         .map_err(pkg)?;
-    w.write_event(Event::Start(start("a:xfrm"))).map_err(pkg)?;
+    w.write_event(Event::Start(xfrm_start(
+        xfrm.rotation,
+        xfrm.flip_h,
+        xfrm.flip_v,
+    )))
+    .map_err(pkg)?;
     let mut off = start("a:off");
     off.push_attribute(("x", "0"));
     off.push_attribute(("y", "0"));
@@ -4300,7 +4304,18 @@ fn write_anchored_drawing(
         doc_pr.push_attribute(("descr", descr.as_str()));
     }
     w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
-    write_pic_graphic(w, embed, cx, cy, drawing.crop.as_ref())?;
+    write_pic_graphic(
+        w,
+        embed,
+        cx,
+        cy,
+        drawing.crop.as_ref(),
+        Xfrm2D {
+            rotation: drawing.rotation,
+            flip_h: drawing.flip_h,
+            flip_v: drawing.flip_v,
+        },
+    )?;
     w.write_event(Event::End(BytesEnd::new("wp:anchor")))
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("w:drawing")))
@@ -4458,6 +4473,11 @@ fn write_wgp(
                         picture.offset,
                         picture.extent,
                         picture.crop.as_ref(),
+                        Xfrm2D {
+                            rotation: picture.rotation,
+                            flip_h: picture.flip_h,
+                            flip_v: picture.flip_v,
+                        },
                     )?;
                 }
             }
@@ -4475,7 +4495,12 @@ fn write_group_xfrm(
     w: &mut Writer<Cursor<Vec<u8>>>,
     transform: &GroupTransform,
 ) -> Result<(), ExportError> {
-    w.write_event(Event::Start(start("a:xfrm"))).map_err(pkg)?;
+    w.write_event(Event::Start(xfrm_start(
+        transform.rotation,
+        transform.flip_h,
+        transform.flip_v,
+    )))
+    .map_err(pkg)?;
     write_point(w, "a:off", transform.offset)?;
     write_ext(w, "a:ext", transform.extent)?;
     write_point(w, "a:chOff", transform.child_offset)?;
@@ -4512,6 +4537,7 @@ fn write_group_picture(
     offset: PointEmu,
     extent: Extent,
     crop: Option<&CropRect>,
+    xfrm: Xfrm2D,
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("pic:pic"))).map_err(pkg)?;
     w.write_event(Event::Start(start("pic:nvPicPr")))
@@ -4540,7 +4566,7 @@ fn write_group_picture(
         .map_err(pkg)?;
     w.write_event(Event::Start(start("pic:spPr")))
         .map_err(pkg)?;
-    write_shape_xfrm(w, offset, extent)?;
+    write_shape_xfrm(w, offset, extent, xfrm.rotation, xfrm.flip_h, xfrm.flip_v)?;
     write_prst_geom(w, "rect")?;
     w.write_event(Event::End(BytesEnd::new("pic:spPr")))
         .map_err(pkg)?;
@@ -4563,7 +4589,14 @@ fn write_group_shape(
         .map_err(pkg)?;
     w.write_event(Event::Start(start("wps:spPr")))
         .map_err(pkg)?;
-    write_shape_xfrm(w, shape.offset, shape.extent)?;
+    write_shape_xfrm(
+        w,
+        shape.offset,
+        shape.extent,
+        shape.rotation,
+        shape.flip_h,
+        shape.flip_v,
+    )?;
     let preset = shape
         .preset
         .as_deref()
@@ -4597,7 +4630,14 @@ fn write_group_text_box(
         .map_err(pkg)?;
     w.write_event(Event::Start(start("wps:spPr")))
         .map_err(pkg)?;
-    write_shape_xfrm(w, text_box.offset, text_box.extent)?;
+    write_shape_xfrm(
+        w,
+        text_box.offset,
+        text_box.extent,
+        text_box.rotation,
+        text_box.flip_h,
+        text_box.flip_v,
+    )?;
     write_prst_geom(w, "rect")?;
     if let Some(fill) = text_box.fill {
         write_solid_fill(w, fill)?;
@@ -4625,13 +4665,44 @@ fn write_group_text_box(
     Ok(())
 }
 
-/// Emits an `a:xfrm` for a shape/picture (off + ext only).
+/// The rotation + flip orientation of an `a:xfrm` (`@rot`/`@flipH`/`@flipV`),
+/// carried through the picture/drawing writers so their argument lists stay small.
+#[derive(Clone, Copy, Default)]
+struct Xfrm2D {
+    rotation: Option<i32>,
+    flip_h: bool,
+    flip_v: bool,
+}
+
+/// Builds an `a:xfrm` start element carrying the optional `@rot` rotation
+/// (60000ths of a degree) and `@flipH`/`@flipV` mirror flags, in schema order
+/// (`rot`, then `flipH`, then `flipV`). An identity transform adds no attributes.
+fn xfrm_start(rotation: Option<i32>, flip_h: bool, flip_v: bool) -> BytesStart<'static> {
+    let mut el = start("a:xfrm");
+    if let Some(rotation) = rotation {
+        el.push_attribute(("rot", rotation.to_string().as_str()));
+    }
+    if flip_h {
+        el.push_attribute(("flipH", "1"));
+    }
+    if flip_v {
+        el.push_attribute(("flipV", "1"));
+    }
+    el
+}
+
+/// Emits an `a:xfrm` for a shape/picture (off + ext), carrying its rotation and
+/// flip flags on the `a:xfrm` element.
 fn write_shape_xfrm(
     w: &mut Writer<Cursor<Vec<u8>>>,
     offset: PointEmu,
     extent: Extent,
+    rotation: Option<i32>,
+    flip_h: bool,
+    flip_v: bool,
 ) -> Result<(), ExportError> {
-    w.write_event(Event::Start(start("a:xfrm"))).map_err(pkg)?;
+    w.write_event(Event::Start(xfrm_start(rotation, flip_h, flip_v)))
+        .map_err(pkg)?;
     write_point(w, "a:off", offset)?;
     write_ext(w, "a:ext", extent)?;
     w.write_event(Event::End(BytesEnd::new("a:xfrm")))
@@ -5098,6 +5169,9 @@ fn write_text_box(
             width_emu: 0,
             height_emu: 0,
         }),
+        None,
+        false,
+        false,
     )?;
     write_prst_geom(w, "rect")?;
     if let Some(fill) = text_box.fill {

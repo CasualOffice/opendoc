@@ -8460,6 +8460,9 @@ mod tests {
                 }),
                 descr: None,
                 crop: None,
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
             })],
         });
         let preview = InlineNode::EmbeddedObject(EmbeddedObject {
@@ -8592,6 +8595,9 @@ mod tests {
                     }),
                     descr: None,
                     crop: None,
+                    flip_h: false,
+                    flip_v: false,
+                    rotation: None,
                 })],
             )],
         };
@@ -10277,6 +10283,9 @@ mod tests {
                     }),
                     descr: None,
                     crop: None,
+                    flip_h: false,
+                    flip_v: false,
+                    rotation: None,
                 }),
                 run_node(13, " after", RunProperties::default()),
             ],
@@ -10385,6 +10394,9 @@ mod tests {
                     }),
                     descr: None,
                     crop,
+                    flip_h: false,
+                    flip_v: false,
+                    rotation: None,
                 })],
             })
         };
@@ -10652,6 +10664,9 @@ mod tests {
                 }),
                 descr: None,
                 crop: None,
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
             })],
         });
         let para = BlockNode::Paragraph(Paragraph {

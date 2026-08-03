@@ -2042,6 +2042,9 @@ fn group_with_retained_preset_shape_and_text_box_children_validates_and_round_tr
             width_emu: 1_000_000,
             height_emu: 500_000,
         },
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
     };
     let group = WordprocessingGroup {
         id: tid(30),
@@ -2093,6 +2096,9 @@ fn group_with_retained_preset_shape_and_text_box_children_validates_and_round_tr
                     },
                     width_emu: 9525,
                 }),
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
             }),
             GroupChild::TextBox(GroupTextBox {
                 id: tid(32),
@@ -2108,6 +2114,9 @@ fn group_with_retained_preset_shape_and_text_box_children_validates_and_round_tr
                 fill: None,
                 border: None,
                 body_properties: TextBoxBodyProperties::default(),
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
             }),
         ],
     };
@@ -2163,6 +2172,9 @@ fn retained_shape_preset_and_adjustment_bounds_are_validated() {
                     width_emu: 1_000_000,
                     height_emu: 500_000,
                 },
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
             },
             children: vec![GroupChild::Shape(GroupShape {
                 id: tid(31),
@@ -2179,6 +2191,9 @@ fn retained_shape_preset_and_adjustment_bounds_are_validated() {
                 }],
                 fill: None,
                 stroke: None,
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
             })],
         }));
     document.validate().unwrap();
