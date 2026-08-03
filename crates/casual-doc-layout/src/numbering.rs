@@ -36,7 +36,7 @@ use std::collections::HashMap;
 
 use casual_doc_model::v1::{
     AbstractNumbering, Definitions, Indentation, LevelSuffix, NumberFormat, NumberingInstanceId,
-    NumberingLevel, NumberingRef, RunProperties,
+    NumberingLevel, NumberingRef, RunProperties, TabStop,
 };
 
 use crate::text::{GlyphRun, Line, LineLayout};
@@ -73,6 +73,10 @@ pub struct ResolvedMarker {
     /// The level's `w:pPr` indentation (`None` when the level declares none), merged
     /// below the paragraph's direct/style indentation by the caller.
     pub level_indent: Option<Indentation>,
+    /// The level's `w:pPr/w:tabs` (empty when the level declares none). The caller
+    /// unions these with the paragraph's own tab stops so the number's suffix tab
+    /// advances to the list's authored tab stop, not only the default grid.
+    pub level_tabs: Vec<TabStop>,
 }
 
 impl NumberingState {
@@ -128,6 +132,11 @@ impl NumberingState {
                 .paragraph_properties
                 .as_ref()
                 .and_then(|p| p.indentation),
+            level_tabs: level
+                .paragraph_properties
+                .as_ref()
+                .map(|p| p.tabs.clone())
+                .unwrap_or_default(),
         })
     }
 
@@ -462,6 +471,8 @@ pub fn body_indent(
     suffix: LevelSuffix,
     marker_x: Twip,
     marker_width: Twip,
+    indent_start: Twip,
+    tab_stops: &[TabStop],
     default_tab: Twip,
 ) -> Twip {
     match suffix {
@@ -472,10 +483,14 @@ pub fn body_indent(
                 // Marker fits within the hanging area: body at the left indent.
                 Twip(0)
             } else {
-                // Marker overflows the hanging space: advance to the next default
-                // tab stop strictly past the marker (Word's fallback behavior).
-                let step = default_tab.raw().max(1);
-                Twip(((after / step) + 1) * step)
+                // Marker overflows the hanging space: the suffix tab advances to the
+                // paragraph's/level's next explicit tab stop past the marker,
+                // falling back to the default grid — the same resolution ordinary
+                // tabs use. `marker_x`/`after` are indent-local; tab stops are in
+                // margin coordinates, so translate across `indent_start`.
+                let after_margin = after + indent_start.raw();
+                let stop = crate::tabs::resolve_next_stop(after_margin, tab_stops, default_tab);
+                Twip(stop.position - indent_start.raw())
             }
         }
     }
@@ -638,18 +653,90 @@ mod tests {
     fn body_indent_hanging_and_overflow() {
         // Marker fits within the hanging space (marker_x negative) -> body at 0.
         assert_eq!(
-            body_indent(LevelSuffix::Tab, Twip(-360), Twip(200), Twip(720)),
+            body_indent(
+                LevelSuffix::Tab,
+                Twip(-360),
+                Twip(200),
+                Twip::ZERO,
+                &[],
+                Twip(720)
+            ),
             Twip(0)
         );
-        // Marker overflows the hanging space -> next default-tab multiple past it.
+        // Marker overflows the hanging space -> next default-tab multiple past it
+        // (no explicit stops, zero indent: identical to the old default-grid path).
         assert_eq!(
-            body_indent(LevelSuffix::Tab, Twip(-100), Twip(500), Twip(720)),
+            body_indent(
+                LevelSuffix::Tab,
+                Twip(-100),
+                Twip(500),
+                Twip::ZERO,
+                &[],
+                Twip(720)
+            ),
             Twip(720)
         );
         // Space suffix -> body immediately after the marker.
         assert_eq!(
-            body_indent(LevelSuffix::Space, Twip(-360), Twip(200), Twip(720)),
+            body_indent(
+                LevelSuffix::Space,
+                Twip(-360),
+                Twip(200),
+                Twip::ZERO,
+                &[],
+                Twip(720)
+            ),
             Twip(-160)
+        );
+    }
+
+    #[test]
+    fn body_indent_suffix_tab_honors_explicit_tab_stops() {
+        use casual_doc_model::v1::TabAlignment;
+        let stop = |pos| TabStop {
+            position_twips: pos,
+            alignment: TabAlignment::Start,
+            leader: None,
+        };
+        // The paragraph sits at a 720-twip start indent; the marker overflows the
+        // hanging space (after = 400 indent-local = 1120 in margin coords). An
+        // explicit tab stop at margin 1440 wins over the default 720 grid, and the
+        // result is translated back to indent-local (1440 - 720 = 720).
+        assert_eq!(
+            body_indent(
+                LevelSuffix::Tab,
+                Twip(-100),
+                Twip(500),
+                Twip(720),
+                &[stop(1440)],
+                Twip(720),
+            ),
+            Twip(720)
+        );
+        // With no explicit stop past the marker, the default grid is margin-aligned:
+        // next 720 multiple past margin-1120 is 1440 -> indent-local 720.
+        assert_eq!(
+            body_indent(
+                LevelSuffix::Tab,
+                Twip(-100),
+                Twip(500),
+                Twip(720),
+                &[],
+                Twip(720)
+            ),
+            Twip(720)
+        );
+        // A stop before the marker is ignored; the next one past it is taken.
+        assert_eq!(
+            body_indent(
+                LevelSuffix::Tab,
+                Twip(-100),
+                Twip(500),
+                Twip(720),
+                &[stop(200), stop(1600)],
+                Twip(720),
+            ),
+            Twip(880)
         );
     }
 

@@ -5166,6 +5166,14 @@ fn prepare_list_marker(
     if let Some(level_indent) = resolved.level_indent {
         props.indentation = Some(merge_indent_over(level_indent, props.indentation));
     }
+    // The number's suffix tab advances to the first tab stop past the marker among
+    // the paragraph's own tabs unioned with the level's authored tabs (the list's
+    // body tab commonly lives on the level), before the default grid.
+    let marker_tabs = {
+        let mut tabs = props.tabs.clone();
+        tabs.extend(resolved.level_tabs.iter().cloned());
+        tabs
+    };
     let mut constraints = line_constraints(props, width, ctx.line_spacing_reduction);
     // The marker's left edge is the first-line indent: negative for a hanging indent
     // (the marker protrudes left of the body, into the hanging space).
@@ -5194,8 +5202,14 @@ fn prepare_list_marker(
     if marker_text.is_empty() {
         // A `none`-format level renders no glyph, but the counter has advanced and
         // the body sits at the left indent (no hanging protrusion).
-        constraints.first_line_indent =
-            numbering::body_indent(resolved.suffix, marker_x, Twip::ZERO, ctx.default_tab);
+        constraints.first_line_indent = numbering::body_indent(
+            resolved.suffix,
+            marker_x,
+            Twip::ZERO,
+            constraints.indent_start,
+            &marker_tabs,
+            ctx.default_tab,
+        );
         return (constraints, None);
     }
     let mut marker_run = build_styled_run(&marker_text, &effective, ctx);
@@ -5225,8 +5239,14 @@ fn prepare_list_marker(
         }
         None => (Vec::new(), Twip::ZERO, Twip::ZERO, Twip::ZERO),
     };
-    constraints.first_line_indent =
-        numbering::body_indent(resolved.suffix, marker_x, marker_width, ctx.default_tab);
+    constraints.first_line_indent = numbering::body_indent(
+        resolved.suffix,
+        marker_x,
+        marker_width,
+        constraints.indent_start,
+        &marker_tabs,
+        ctx.default_tab,
+    );
     (
         constraints,
         Some(PreparedMarker::new(runs, marker_x, ascent, descent)),
