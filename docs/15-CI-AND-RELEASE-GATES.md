@@ -66,6 +66,11 @@ XML, independent row/cell/column bounds, model → ODT → model equality, byte-
 re-export for the supported geometry, and explicit visible fallback for merge
 topology that cannot be represented safely.
 
+Note export additionally requires canonical footnote/endnote containers,
+independent occurrence bounds, recursive note-body fixed points, unique IDs for
+reused definitions, and explicit findings for shared, nested, or unreferenced
+note shapes that do not map one-for-one to ODT's inline note ownership.
+
 Release workflows are separate and receive no write permission during pull
 request validation.
 

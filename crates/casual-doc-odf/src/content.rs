@@ -383,7 +383,6 @@ struct TableCellDraft {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct NoteDraft {
-    source_id: String,
     kind: NoteKind,
     blocks: Vec<BlockDraft>,
 }
@@ -406,7 +405,6 @@ struct OpenNote {
     body_seen: bool,
     citation_depth: Option<usize>,
     citation_has_text: bool,
-    source_id: String,
     kind: NoteKind,
     blocks: Vec<BlockDraft>,
     table_stack_len: usize,
@@ -2985,7 +2983,6 @@ fn start_note(
         body_seen: false,
         citation_depth: None,
         citation_has_text: false,
-        source_id,
         kind: kind.ok_or(OdfError::MalformedContent)?,
         blocks: Vec::new(),
         table_stack_len: open_tables.len(),
@@ -3088,7 +3085,6 @@ fn finish_note(
     let index = notes.len();
     let kind = note.kind;
     notes.push(NoteDraft {
-        source_id: note.source_id,
         kind,
         blocks: note.blocks,
     });
@@ -4134,7 +4130,6 @@ fn build_document(
     hash_block_drafts(&mut namespace, blocks);
     for note in notes {
         hash_bytes(&mut namespace, b"note");
-        hash_bytes(&mut namespace, note.source_id.as_bytes());
         hash_bytes(
             &mut namespace,
             match note.kind {

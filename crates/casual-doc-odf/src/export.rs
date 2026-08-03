@@ -5,9 +5,9 @@ use std::io::{Cursor, Write};
 
 use casual_doc_model::v1::{
     Alignment, BlockNode, BreakKind, Color, Definitions, Document, GroupChild, InlineNode,
-    LevelJustification, LevelSuffix, NumberFormat, NumberingInstanceId, Paragraph,
-    ParagraphProperties, RevisionKind, RunProperties, Table, TableCell, TableCellProperties,
-    TableRow, TableRowProperties, VerticalMerge,
+    LevelJustification, LevelSuffix, Note, NoteId, NoteKind, NoteReference, NumberFormat,
+    NumberingInstanceId, Paragraph, ParagraphProperties, RevisionKind, RunProperties, Table,
+    TableCell, TableCellProperties, TableRow, TableRowProperties, VerticalMerge,
 };
 use zip::CompressionMethod;
 use zip::write::{SimpleFileOptions, ZipWriter};
@@ -39,6 +39,8 @@ pub struct OdfExportLimits {
     pub max_table_cells: usize,
     /// Maximum table grid columns.
     pub max_table_columns: usize,
+    /// Maximum emitted footnote and endnote occurrences.
+    pub max_notes: usize,
     /// Maximum nested transparent-wrapper depth.
     pub max_recursion_depth: usize,
     /// Maximum aggregate source text bytes projected into XML.
@@ -62,6 +64,8 @@ impl OdfExportLimits {
     pub const HARD_MAX_TABLE_CELLS: usize = 16_000_000;
     /// Compiled maximum table grid columns, aligned with the import profile.
     pub const HARD_MAX_TABLE_COLUMNS: usize = 16_384;
+    /// Compiled maximum emitted footnote and endnote occurrences.
+    pub const HARD_MAX_NOTES: usize = 2_000_000;
     /// Compiled maximum wrapper depth.
     pub const HARD_MAX_RECURSION_DEPTH: usize = 256;
     /// Compiled maximum projected text bytes.
@@ -103,6 +107,7 @@ impl OdfExportLimits {
                 self.max_table_columns,
                 Self::HARD_MAX_TABLE_COLUMNS,
             ),
+            ("odt_export_notes", self.max_notes, Self::HARD_MAX_NOTES),
             (
                 "odt_export_recursion_depth",
                 self.max_recursion_depth,
@@ -141,6 +146,7 @@ impl Default for OdfExportLimits {
             max_table_rows: 1_000_000,
             max_table_cells: 4_000_000,
             max_table_columns: Self::HARD_MAX_TABLE_COLUMNS,
+            max_notes: 250_000,
             max_recursion_depth: 64,
             max_text_bytes: 128 * 1024 * 1024,
             max_report_features: 4_096,
@@ -351,11 +357,19 @@ struct Writer {
     run_styles: BTreeSet<OdtRunStyle>,
     list_styles: BTreeMap<NumberingInstanceId, OdtListStyle>,
     emitted_lists: BTreeSet<NumberingInstanceId>,
+    footnotes: BTreeMap<NoteId, Note>,
+    endnotes: BTreeMap<NoteId, Note>,
+    emitted_footnotes: BTreeSet<NoteId>,
+    emitted_endnotes: BTreeSet<NoteId>,
+    footnote_occurrences: BTreeMap<NoteId, usize>,
+    endnote_occurrences: BTreeMap<NoteId, usize>,
     limits: OdfExportLimits,
     blocks: usize,
     inlines: usize,
     table_rows: usize,
     table_cells: usize,
+    notes: usize,
+    note_depth: usize,
     text_bytes: usize,
     paragraphs_written: usize,
     reporter: Reporter,
@@ -369,11 +383,19 @@ impl Writer {
             run_styles: BTreeSet::new(),
             list_styles: BTreeMap::new(),
             emitted_lists: BTreeSet::new(),
+            footnotes: BTreeMap::new(),
+            endnotes: BTreeMap::new(),
+            emitted_footnotes: BTreeSet::new(),
+            emitted_endnotes: BTreeSet::new(),
+            footnote_occurrences: BTreeMap::new(),
+            endnote_occurrences: BTreeMap::new(),
             limits,
             blocks: 0,
             inlines: 0,
             table_rows: 0,
             table_cells: 0,
+            notes: 0,
+            note_depth: 0,
             text_bytes: 0,
             paragraphs_written: 0,
             reporter: Reporter::new(limits.max_report_features),
@@ -437,6 +459,21 @@ impl Writer {
                     .insert(*instance_id, OdtListStyle { name, levels });
             }
         }
+    }
+
+    fn register_notes(&mut self, definitions: &Definitions) {
+        self.footnotes.extend(
+            definitions
+                .footnotes
+                .iter()
+                .map(|(id, note)| (*id, note.clone())),
+        );
+        self.endnotes.extend(
+            definitions
+                .endnotes
+                .iter()
+                .map(|(id, note)| (*id, note.clone())),
+        );
     }
 
     fn push(&mut self, value: &str) -> Result<(), OdfError> {
@@ -879,9 +916,7 @@ impl Writer {
                             .record("odt.export.group_text", ModelOutcome::Omitted);
                     }
                 }
-                InlineNode::NoteReference(_) => self
-                    .reporter
-                    .record("odt.export.note_reference", ModelOutcome::Omitted),
+                InlineNode::NoteReference(note) => self.write_note(note, depth + 1)?,
                 InlineNode::CommentReference(_)
                 | InlineNode::CommentRangeStart(_)
                 | InlineNode::CommentRangeEnd(_) => self
@@ -899,6 +934,73 @@ impl Writer {
             }
         }
         Ok(())
+    }
+
+    fn write_note(&mut self, reference: &NoteReference, depth: usize) -> Result<(), OdfError> {
+        self.check_depth(depth)?;
+        if self.note_depth != 0 {
+            self.reporter
+                .record("odt.export.nested_note", ModelOutcome::Omitted);
+            return Ok(());
+        }
+        self.notes = checked_add(self.notes, 1, "odt_export_notes", self.limits.max_notes)?;
+        let definition = match reference.kind {
+            NoteKind::Footnote => self.footnotes.get(&reference.note),
+            NoteKind::Endnote => self.endnotes.get(&reference.note),
+        }
+        .cloned()
+        .ok_or(OdfError::InvalidModel)?;
+        let occurrence = match reference.kind {
+            NoteKind::Footnote => self.footnote_occurrences.entry(reference.note).or_default(),
+            NoteKind::Endnote => self.endnote_occurrences.entry(reference.note).or_default(),
+        };
+        let occurrence_index = *occurrence;
+        *occurrence = occurrence.checked_add(1).ok_or(OdfError::InvalidModel)?;
+        match reference.kind {
+            NoteKind::Footnote => {
+                self.emitted_footnotes.insert(reference.note);
+            }
+            NoteKind::Endnote => {
+                self.emitted_endnotes.insert(reference.note);
+            }
+        }
+        if occurrence_index != 0 {
+            self.reporter
+                .record("odt.export.shared_note_reference", ModelOutcome::Degraded);
+        }
+
+        self.push("<text:note text:id=\"note-")?;
+        self.push(&reference.note.node_id().to_string())?;
+        if occurrence_index != 0 {
+            self.push("-")?;
+            self.push(&(occurrence_index + 1).to_string())?;
+        }
+        self.push("\" text:note-class=\"")?;
+        self.push(match reference.kind {
+            NoteKind::Footnote => "footnote",
+            NoteKind::Endnote => "endnote",
+        })?;
+        self.push("\"><text:note-citation/><text:note-body>")?;
+        self.note_depth += 1;
+        let result = self.write_blocks(&definition.blocks, depth + 1);
+        self.note_depth -= 1;
+        result?;
+        self.push("</text:note-body></text:note>")
+    }
+
+    fn report_unreferenced_notes(&mut self) {
+        for id in self.footnotes.keys() {
+            if !self.emitted_footnotes.contains(id) {
+                self.reporter
+                    .record("odt.export.unreferenced_note", ModelOutcome::Omitted);
+            }
+        }
+        for id in self.endnotes.keys() {
+            if !self.emitted_endnotes.contains(id) {
+                self.reporter
+                    .record("odt.export.unreferenced_note", ModelOutcome::Omitted);
+            }
+        }
     }
 
     fn write_alt(
@@ -1313,9 +1415,12 @@ pub fn write_odt(document: &Document, limits: OdfExportLimits) -> Result<OdtExpo
     document.validate().map_err(|_| OdfError::InvalidModel)?;
     let mut writer = Writer::new(limits)?;
     writer.register_numbering(document.definitions());
+    writer.register_notes(document.definitions());
     let mut definition_remainder = document.definitions().clone();
     definition_remainder.abstract_numbering = Default::default();
     definition_remainder.numbering = Default::default();
+    definition_remainder.footnotes = Default::default();
+    definition_remainder.endnotes = Default::default();
     if definition_remainder != Definitions::default() {
         writer
             .reporter
@@ -1332,6 +1437,7 @@ pub fn write_odt(document: &Document, limits: OdfExportLimits) -> Result<OdtExpo
             .record("odt.export.background", ModelOutcome::Omitted);
     }
     writer.write_blocks(document.body(), 0)?;
+    writer.report_unreferenced_notes();
     if writer.paragraphs_written == 0 {
         writer.push("<text:p/>")?;
     }
@@ -1619,6 +1725,94 @@ mod tests {
                 Err(OdfError::LimitExceeded { .. })
             ));
         }
+    }
+
+    #[test]
+    fn notes_are_deterministic_recursive_and_semantically_stable() {
+        let source = r#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" office:version="1.4"><office:body><office:text><text:p>body<text:note text:id="source-footnote" text:note-class="footnote"><text:note-citation/><text:note-body><text:p>foot paragraph</text:p><table:table><table:table-row><table:table-cell><text:p>foot table</text:p></table:table-cell></table:table-row></table:table></text:note-body></text:note>middle<text:note text:id="source-endnote" text:note-class="endnote"><text:note-citation/><text:note-body><text:p>end paragraph</text:p></text:note-body></text:note>end</text:p></office:text></office:body></office:document-content>"#;
+        let imported = import_content_xml(
+            source.as_bytes(),
+            OdfVersion::V1_4,
+            OdfImportLimits::default(),
+        )
+        .unwrap();
+        assert!(imported.report.entries.is_empty(), "{:?}", imported.report);
+        let document = imported.document;
+
+        let first = write_odt(&document, OdfExportLimits::default()).unwrap();
+        let second = write_odt(&document, OdfExportLimits::default()).unwrap();
+        assert_eq!(first.bytes, second.bytes);
+        assert!(first.report.entries.is_empty(), "{:?}", first.report);
+
+        let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+        let content = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+        assert_eq!(content.matches("<text:note ").count(), 2);
+        assert!(content.contains("text:note-class=\"footnote\""));
+        assert!(content.contains("text:note-class=\"endnote\""));
+        assert!(content.contains("<text:note-citation/><text:note-body><text:p>foot"));
+        assert!(content.contains("<table:table>"));
+
+        let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+        assert!(reopened.report.entries.is_empty(), "{:?}", reopened.report);
+        assert_eq!(reopened.document, document);
+        let reexported = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+        assert_eq!(reexported.bytes, first.bytes);
+
+        assert!(matches!(
+            write_odt(
+                &document,
+                OdfExportLimits {
+                    max_notes: 1,
+                    ..OdfExportLimits::default()
+                },
+            ),
+            Err(OdfError::LimitExceeded {
+                limit: "odt_export_notes",
+                observed: 2,
+                allowed: 1,
+            })
+        ));
+    }
+
+    #[test]
+    fn shared_and_unreferenced_notes_have_explicit_export_outcomes() {
+        let source = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.4"><office:body><office:text><text:p>x<text:note text:id="n" text:note-class="footnote"><text:note-citation/><text:note-body><text:p>note</text:p></text:note-body></text:note></text:p></office:text></office:body></office:document-content>"#;
+        let mut document = import_content_xml(source, OdfVersion::V1_4, OdfImportLimits::default())
+            .unwrap()
+            .document;
+        let BlockNode::Paragraph(paragraph) = &mut document.body_mut()[0] else {
+            panic!("paragraph")
+        };
+        let InlineNode::NoteReference(mut repeated) = paragraph.inlines[1].clone() else {
+            panic!("note reference")
+        };
+        repeated.id = casual_doc_model::NodeId::new(u128::MAX).unwrap();
+        paragraph.inlines.push(InlineNode::NoteReference(repeated));
+        document.definitions_mut().footnotes.insert(
+            NoteId::new(casual_doc_model::NodeId::new(u128::MAX - 1).unwrap()),
+            Note { blocks: Vec::new() },
+        );
+        document.validate().unwrap();
+
+        let exported = write_odt(&document, OdfExportLimits::default()).unwrap();
+        assert!(exported.report.entries.iter().any(|entry| {
+            entry.feature == "odt.export.shared_note_reference"
+                && entry.model_outcome == ModelOutcome::Degraded
+        }));
+        assert!(exported.report.entries.iter().any(|entry| {
+            entry.feature == "odt.export.unreferenced_note"
+                && entry.model_outcome == ModelOutcome::Omitted
+        }));
+        let mut package = OdtPackage::open(&exported.bytes, OdfPackageLimits::default()).unwrap();
+        let content = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+        assert_eq!(content.matches("<text:note ").count(), 2);
+        assert!(content.contains("-2\" text:note-class=\"footnote\""));
+        package
+            .import_document(OdfImportLimits::default())
+            .unwrap()
+            .document
+            .validate()
+            .unwrap();
     }
 
     #[test]
