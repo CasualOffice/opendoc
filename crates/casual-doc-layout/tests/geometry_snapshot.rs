@@ -252,6 +252,16 @@ fn golden_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/geometry_snapshot.golden")
 }
 
+// The golden encodes shaped line metrics (line heights, glyph advances), which
+// are byte-identical on the Linux and macOS CI runners but differ on Windows,
+// whose text stack rasterizes/shapes the bundled faces slightly differently.
+// The repo's other visual checks (e.g. `casual-doc-render`'s containment test)
+// use tolerant bounds for the same reason; this exact-value snapshot is pinned
+// to the deterministic platforms and skipped on Windows.
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "shaped line metrics differ on Windows; golden is blessed on Linux/macOS"
+)]
 #[test]
 fn geometry_of_fixtures_matches_the_golden_snapshot() {
     let shaper = ParleyShaper::new();
