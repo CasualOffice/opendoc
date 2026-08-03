@@ -2194,6 +2194,60 @@ mod semantic_tests {
     }
 
     #[test]
+    fn instance_start_override_survives_the_semantic_round_trip() {
+        // A per-instance restart (`w:lvlOverride/w:startOverride`) must be both
+        // imported into instance.overrides and re-emitted, so write -> reopen is a
+        // fixed point (m1 == m2 fails if either half drops it).
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="3"/></w:numPr></w:pPr>
+                <w:r><w:t>item</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/></Relationships>"#;
+        let numbering = br#"<w:numbering xmlns:w="urn:w">
+            <w:abstractNum w:abstractNumId="0">
+                <w:lvl w:ilvl="0"><w:start w:val="1"/></w:lvl></w:abstractNum>
+            <w:num w:numId="3"><w:abstractNumId w:val="0"/>
+                <w:lvlOverride w:ilvl="0"><w:startOverride w:val="7"/></w:lvlOverride>
+            </w:num>
+        </w:numbering>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/numbering.xml", numbering),
+        ]);
+        let mut src_package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let m1 = import_package(
+            &mut src_package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+        let (_, instance) = m1.definitions().numbering.iter().next().unwrap();
+        assert_eq!(instance.overrides.len(), 1);
+        assert_eq!(instance.overrides[0].start, Some(7));
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+        let m2 = import_package(
+            &mut package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+        assert_eq!(m1, m2, "the startOverride survives write -> reopen");
+    }
+
+    #[test]
     fn expanded_settings_survive_the_semantic_round_trip() {
         // settings.xml carrying the newly modeled settings (evenAndOddHeaders,
         // defaultTabStop, trackChanges, documentProtection, a proofState, a zoom,

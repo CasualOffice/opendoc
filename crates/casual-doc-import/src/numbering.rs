@@ -6,8 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, DefinitionMap, LevelJustification, LevelSuffix,
-    NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel, NumberingRef,
-    ParagraphProperties, RunProperties,
+    NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel, NumberingOverride,
+    NumberingRef, ParagraphProperties, RunProperties,
 };
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
@@ -72,6 +72,8 @@ struct RawAbstract {
 struct RawNum {
     num_id: String,
     abstract_id: Option<String>,
+    /// Per-instance `w:lvlOverride/w:startOverride` captures: `(ilvl, start)`.
+    overrides: Vec<(u8, u16)>,
 }
 
 /// Parses the numbering part, allocating ids from `ids`.
@@ -136,11 +138,24 @@ pub(crate) fn parse(
         let id = NumberingInstanceId::new(next_id(ids)?);
         by_num_id.insert(raw.num_id, id);
         valid_levels.insert(id, levels.clone());
+        // Keep only the last override per level (a later `w:lvlOverride` for the
+        // same ilvl wins), preserving level order for deterministic output.
+        let mut overrides: Vec<NumberingOverride> = Vec::new();
+        for (level, start) in raw.overrides {
+            match overrides.iter_mut().find(|o| o.level == level) {
+                Some(existing) => existing.start = Some(start),
+                None => overrides.push(NumberingOverride {
+                    level,
+                    start: Some(start),
+                }),
+            }
+        }
+        overrides.sort_by_key(|o| o.level);
         instances.insert(
             id,
             NumberingInstance {
                 abstract_ref: *abstract_ref,
-                overrides: Vec::new(),
+                overrides,
             },
         );
     }
@@ -163,6 +178,9 @@ struct NumberingState {
     current_abstract: Option<RawAbstract>,
     current_level: Option<RawLevel>,
     current_num: Option<RawNum>,
+    /// The `w:ilvl` of the `w:lvlOverride` currently open inside a `w:num`, so a
+    /// nested `w:startOverride` knows which level it restarts.
+    current_override_ilvl: Option<u8>,
     /// Depth inside the current level's `w:pPr` / `w:rPr` (so their children route
     /// to the shared paragraph/run property parsers, mirroring the styles parser).
     ppr_depth: u32,
@@ -317,6 +335,7 @@ fn on_start(
             state.current_num = Some(RawNum {
                 num_id: attribute_value(element, b"numId").unwrap_or_default(),
                 abstract_id: None,
+                overrides: Vec::new(),
             });
         }
         b"abstractNumId" if state.current_num.is_some() => {
@@ -324,8 +343,30 @@ fn on_start(
                 num.abstract_id = attribute_value(element, b"val");
             }
         }
-        // Unmapped numbering detail (lvlRestart, pStyle, lvlOverride, ...) is
-        // reported.
+        b"lvlOverride" if state.current_num.is_some() => {
+            // Track the level this override targets; a nested `w:startOverride`
+            // (below) reads it. `w:ilvl` defaults to 0 when absent.
+            state.current_override_ilvl = Some(
+                attribute_value(element, b"ilvl")
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or(0),
+            );
+        }
+        b"startOverride" if state.current_num.is_some() => {
+            // A per-instance restart (`<w:lvlOverride><w:startOverride w:val="N"/>`):
+            // the ubiquitous "this list restarts at N" case. A `w:startOverride`
+            // outside a `w:lvlOverride` defaults its level to 0, matching Word.
+            if let (Some(num), Some(start)) = (
+                state.current_num.as_mut(),
+                attribute_value(element, b"val").and_then(|value| value.parse::<u16>().ok()),
+            ) {
+                let ilvl = state.current_override_ilvl.unwrap_or(0);
+                num.overrides.push((ilvl, start.min(32_767)));
+            }
+        }
+        // A `w:lvlOverride/w:lvl` full-format override is not representable in the
+        // per-instance model (only start is); its children fall through and are
+        // reported. Unmapped numbering detail (lvlRestart, pStyle, ...) is too.
         _ if state.current_abstract.is_some() || state.current_num.is_some() => {
             reporter.report(local);
         }
@@ -361,6 +402,7 @@ fn on_end(
                 abstracts.push(abstract_num);
             }
         }
+        b"lvlOverride" => state.current_override_ilvl = None,
         b"num" => {
             if let Some(num) = state.current_num.take() {
                 nums.push(num);
