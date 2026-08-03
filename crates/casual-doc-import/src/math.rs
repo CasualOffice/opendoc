@@ -1,7 +1,8 @@
 //! Bounded semantic projection of retained Office Math Markup Language.
 
 use casual_doc_model::v1::{
-    LimitPosition, MAX_MATH_BYTES, MAX_MATH_DEPTH, MAX_MATH_NODES, MathExpression, MathMatrixRow,
+    BarPosition, GroupPosition, LimitPosition, MAX_MATH_BYTES, MAX_MATH_DEPTH, MAX_MATH_NODES,
+    MathExpression, MathMatrixRow,
 };
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Reader, XmlVersion};
@@ -264,6 +265,21 @@ fn convert(element: &Element) -> Option<Option<MathExpression>> {
             }
             MathExpression::EqArray { rows }
         }
+        b"bar" => MathExpression::Bar {
+            position: match position_character(element, b"barPr") {
+                Some("bot") => BarPosition::Bottom,
+                _ => BarPosition::Top,
+            },
+            base: Box::new(wrapper_expression(element, b"e")?),
+        },
+        b"groupChr" => MathExpression::GroupChar {
+            character: property_character(element, b"groupChrPr", "\u{23DE}"),
+            position: match position_character(element, b"groupChrPr") {
+                Some("bot") => GroupPosition::Bottom,
+                _ => GroupPosition::Top,
+            },
+            base: Box::new(wrapper_expression(element, b"e")?),
+        },
         // Property containers affect advanced typography and are intentionally
         // ignored for this first common-construct projection.
         name if name.ends_with(b"Pr") || name == b"ctrlPr" => return Some(None),
@@ -313,6 +329,13 @@ fn property_character(element: &Element, container: &[u8], default: &str) -> Str
         .and_then(|character| attribute(character, b"val"))
         .unwrap_or(default)
         .to_owned()
+}
+
+/// Reads a property container's `m:pos@m:val` (`top`/`bot`), if present.
+fn position_character<'a>(element: &'a Element, container: &[u8]) -> Option<&'a str> {
+    child(element, container)
+        .and_then(|properties| child(properties, b"pos"))
+        .and_then(|position| attribute(position, b"val"))
 }
 
 fn child<'a>(element: &'a Element, name: &[u8]) -> Option<&'a Element> {
@@ -374,6 +397,8 @@ fn expression_within_bounds(expression: &MathExpression, depth: usize, nodes: &m
                     .all(|row| !row.cells.is_empty() && row.cells.iter().all(&mut check))
         }
         MathExpression::EqArray { rows } => !rows.is_empty() && rows.iter().all(&mut check),
+        MathExpression::Bar { base, .. } => check(base),
+        MathExpression::GroupChar { base, .. } => check(base),
     }
 }
 
@@ -403,10 +428,11 @@ mod tests {
 
     #[test]
     fn unsupported_structure_has_no_projection() {
-        // `m:bar` (an overbar/underbar) is not yet part of the projected subset.
+        // `m:box` (a logical grouping box) is not yet part of the projected
+        // subset.
         assert!(
             parse_math_expression(
-                "<m:oMath><m:bar><m:e><m:r><m:t>x</m:t></m:r></m:e></m:bar></m:oMath>"
+                "<m:oMath><m:box><m:e><m:r><m:t>x</m:t></m:r></m:e></m:box></m:oMath>"
             )
             .is_none()
         );
@@ -468,6 +494,67 @@ mod tests {
         assert!(matches!(
             eq_array,
             Some(MathExpression::EqArray { rows }) if rows.len() == 2
+        ));
+    }
+
+    #[test]
+    fn projects_bar_and_group_character() {
+        let overbar = parse_math_expression(concat!(
+            "<m:oMath><m:bar><m:barPr><m:pos m:val=\"top\"/></m:barPr>",
+            "<m:e><m:r><m:t>x</m:t></m:r></m:e></m:bar></m:oMath>"
+        ));
+        assert!(matches!(
+            overbar,
+            Some(MathExpression::Bar {
+                position: BarPosition::Top,
+                ..
+            })
+        ));
+
+        let underbar = parse_math_expression(concat!(
+            "<m:oMath><m:bar><m:barPr><m:pos m:val=\"bot\"/></m:barPr>",
+            "<m:e><m:r><m:t>y</m:t></m:r></m:e></m:bar></m:oMath>"
+        ));
+        assert!(matches!(
+            underbar,
+            Some(MathExpression::Bar {
+                position: BarPosition::Bottom,
+                ..
+            })
+        ));
+
+        // An absent `m:pos` defaults to `Top` (overline).
+        let default_bar = parse_math_expression(
+            "<m:oMath><m:bar><m:e><m:r><m:t>z</m:t></m:r></m:e></m:bar></m:oMath>",
+        );
+        assert!(matches!(
+            default_bar,
+            Some(MathExpression::Bar {
+                position: BarPosition::Top,
+                ..
+            })
+        ));
+
+        let overbrace = parse_math_expression(concat!(
+            "<m:oMath><m:groupChr><m:groupChrPr><m:chr m:val=\"\u{23DE}\"/>",
+            "<m:pos m:val=\"top\"/></m:groupChrPr>",
+            "<m:e><m:r><m:t>x</m:t></m:r></m:e></m:groupChr></m:oMath>"
+        ));
+        assert!(matches!(
+            overbrace,
+            Some(MathExpression::GroupChar { character, position: GroupPosition::Top, .. })
+                if character == "\u{23DE}"
+        ));
+
+        let underbrace = parse_math_expression(concat!(
+            "<m:oMath><m:groupChr><m:groupChrPr><m:chr m:val=\"\u{23DF}\"/>",
+            "<m:pos m:val=\"bot\"/></m:groupChrPr>",
+            "<m:e><m:r><m:t>x</m:t></m:r></m:e></m:groupChr></m:oMath>"
+        ));
+        assert!(matches!(
+            underbrace,
+            Some(MathExpression::GroupChar { character, position: GroupPosition::Bottom, .. })
+                if character == "\u{23DF}"
         ));
     }
 }

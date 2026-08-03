@@ -903,6 +903,62 @@ mod semantic_tests {
     }
 
     #[test]
+    fn typed_bar_and_group_char_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{
+            BarPosition, BlockNode, GroupPosition, InlineNode, MathExpression,
+        };
+
+        // One paragraph carrying three equations: an overbar (`m:bar` top), an
+        // underbar (`m:bar` bot), and an over-brace grouping character
+        // (`m:groupChr`). The retained OMML stays authoritative for export, so
+        // each must survive write -> reopen verbatim, and its typed projection
+        // must match the expected variant on both sides of the round trip.
+        let xml = br#"<w:document xmlns:w="urn:w" xmlns:m="urn:m"><w:body><w:p>
+            <m:oMath><m:bar><m:barPr><m:pos m:val="top"/></m:barPr><m:e><m:r><m:t>x</m:t></m:r></m:e></m:bar></m:oMath>
+            <m:oMath><m:bar><m:barPr><m:pos m:val="bot"/></m:barPr><m:e><m:r><m:t>y</m:t></m:r></m:e></m:bar></m:oMath>
+            <m:oMath><m:groupChr><m:groupChrPr><m:chr m:val="&#9182;"/><m:pos m:val="top"/></m:groupChrPr><m:e><m:r><m:t>z</m:t></m:r></m:e></m:groupChr></m:oMath>
+        </w:p></w:body></w:document>"#;
+
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(
+            m1, m2,
+            "the typed bar/groupChr equations survive round trip"
+        );
+
+        let BlockNode::Paragraph(paragraph) = &m2.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let expressions: Vec<&MathExpression> = paragraph
+            .inlines
+            .iter()
+            .filter_map(|inline| match inline {
+                InlineNode::Math(math) => math.expression.as_ref(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(expressions.len(), 3, "one projection per equation");
+        assert!(matches!(
+            expressions[0],
+            MathExpression::Bar {
+                position: BarPosition::Top,
+                ..
+            }
+        ));
+        assert!(matches!(
+            expressions[1],
+            MathExpression::Bar {
+                position: BarPosition::Bottom,
+                ..
+            }
+        ));
+        assert!(matches!(
+            expressions[2],
+            MathExpression::GroupChar { character, position: GroupPosition::Top, .. }
+                if character == "\u{23DE}"
+        ));
+    }
+
+    #[test]
     fn symbol_survives_the_semantic_round_trip() {
         // A run carrying a `w:sym` (a Wingdings glyph in the Private Use Area).
         // The symbol must import to a first-class `Symbol` node — not vanish into
