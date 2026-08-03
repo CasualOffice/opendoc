@@ -37,12 +37,20 @@ The first writer maps body paragraphs and headings, run text, spaces, tabs, and
 line/page/column breaks. Space runs use `text:s` so XML whitespace handling
 cannot change text. XML-illegal control characters fail closed.
 
+The automatic-style checkpoint additionally maps direct paragraph alignment
+and the normalized run subset for bold, italic, underline, strike-through,
+explicit RGB color, and half-point font size. Stable style names are derived
+from canonical property values, definitions are emitted in sorted order, and
+explicit `false` toggles remain distinct from absent properties. Theme colors
+and every property outside this bounded subset remain compatibility findings.
+
 Until their dedicated import/export mappings land, wrappers and complex blocks
 may emit a bounded visible-text projection only when that projection is safe.
 Every such case is reported as degraded; content with no safe projection is
-reported as omitted. Run/paragraph properties, definitions, resources, tables,
-lists, links, notes, bookmarks, media, tracked changes, fields, controls, math,
-drawings, and embedded objects may not silently disappear from the report.
+reported as omitted. Unsupported run/paragraph properties, definitions,
+resources, tables, lists, links, notes, bookmarks, media, tracked changes,
+fields, controls, math, drawings, and embedded objects may not silently
+disappear from the report.
 
 ## 4. Export modes
 
@@ -87,6 +95,9 @@ The first internal checkpoint is implemented on `feature/multi-format-io`:
 
 - `casual-doc-odf::write_odt` writes deterministic bounded ODF 1.4 packages for
   the core paragraph/heading/text/space/tab/line-break subset;
+- deterministic `office:automatic-styles` preserve direct paragraph alignment
+  and the supported run formatting subset; unsupported property remainder is
+  still reported instead of being silently discarded;
 - output is reopened through the independent bounded package/import path and the
   supported subset is tested as a semantic fixed point;
 - unsupported normalized constructs and resources receive deterministic loss
@@ -101,6 +112,6 @@ The first internal checkpoint is implemented on `feature/multi-format-io`:
   attempts exact unchanged same-format recovery before preservation export,
   uses semantic export cross-format, and shows report occurrence counts.
 
-Edit-tolerant source preservation, broader semantic writing, stable native SDK
-surfaces, Relax NG validation, interoperability fixtures, and production claims
-remain pending.
+Automatic/named style import and inheritance, edit-tolerant source preservation,
+broader semantic writing, stable native SDK surfaces, Relax NG validation,
+interoperability fixtures, and production claims remain pending.

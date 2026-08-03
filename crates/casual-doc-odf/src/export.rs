@@ -1,11 +1,11 @@
 //! Deterministic bounded ODF 1.4 writing for the implemented ODT subset.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Write};
 
 use casual_doc_model::v1::{
-    BlockNode, BreakKind, Definitions, Document, GroupChild, InlineNode, ParagraphProperties,
-    RevisionKind, RunProperties,
+    Alignment, BlockNode, BreakKind, Color, Definitions, Document, GroupChild, InlineNode,
+    ParagraphProperties, RevisionKind, RunProperties,
 };
 use zip::CompressionMethod;
 use zip::write::{SimpleFileOptions, ZipWriter};
@@ -15,7 +15,8 @@ use crate::{
     OdfError, RetentionOutcome,
 };
 
-const CONTENT_PREFIX: &str = r#"<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.4"><office:body><office:text>"#;
+const CONTENT_HEADER: &str = r#"<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.4">"#;
+const BODY_PREFIX: &str = "<office:body><office:text>";
 const CONTENT_SUFFIX: &str = "</office:text></office:body></office:document-content>";
 const MANIFEST: &str = r#"<?xml version="1.0" encoding="UTF-8"?><manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.4"><manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.text" manifest:version="1.4"/><manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/></manifest:manifest>"#;
 
@@ -181,8 +182,106 @@ impl Reporter {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum OdtParagraphAlignment {
+    Start,
+    End,
+    Center,
+    Justify,
+}
+
+impl OdtParagraphAlignment {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Start => "P_start",
+            Self::End => "P_end",
+            Self::Center => "P_center",
+            Self::Justify => "P_justify",
+        }
+    }
+
+    const fn value(self) -> &'static str {
+        match self {
+            Self::Start => "start",
+            Self::End => "end",
+            Self::Center => "center",
+            Self::Justify => "justify",
+        }
+    }
+}
+
+impl From<Alignment> for OdtParagraphAlignment {
+    fn from(value: Alignment) -> Self {
+        match value {
+            Alignment::Start => Self::Start,
+            Alignment::End => Self::End,
+            Alignment::Center => Self::Center,
+            Alignment::Justify => Self::Justify,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+struct OdtRunStyle {
+    bold: Option<bool>,
+    italic: Option<bool>,
+    underline: Option<bool>,
+    strike: Option<bool>,
+    color: Option<(u8, u8, u8)>,
+    size_half_points: Option<u32>,
+}
+
+impl OdtRunStyle {
+    fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
+
+    fn name(&self) -> String {
+        format!(
+            "T_b{}_i{}_u{}_s{}_c{}_z{}",
+            tri_state(self.bold),
+            tri_state(self.italic),
+            tri_state(self.underline),
+            tri_state(self.strike),
+            self.color
+                .map(|(red, green, blue)| format!("{red:02x}{green:02x}{blue:02x}"))
+                .unwrap_or_else(|| "n".to_owned()),
+            self.size_half_points
+                .map(|size| size.to_string())
+                .unwrap_or_else(|| "n".to_owned()),
+        )
+    }
+}
+
+const fn tri_state(value: Option<bool>) -> &'static str {
+    match value {
+        None => "n",
+        Some(false) => "0",
+        Some(true) => "1",
+    }
+}
+
+fn split_run_properties(properties: &RunProperties) -> (OdtRunStyle, RunProperties) {
+    let mut remainder = properties.clone();
+    let mut style = OdtRunStyle {
+        bold: remainder.bold.take(),
+        italic: remainder.italic.take(),
+        underline: remainder.underline.take(),
+        strike: remainder.strike.take(),
+        size_half_points: remainder.size_half_points.take(),
+        ..OdtRunStyle::default()
+    };
+    if let Some(Color::Rgb(color)) = remainder.color {
+        style.color = Some((color.r, color.g, color.b));
+        remainder.color = None;
+    }
+    (style, remainder)
+}
+
 struct Writer {
     xml: String,
+    paragraph_styles: BTreeSet<OdtParagraphAlignment>,
+    run_styles: BTreeSet<OdtRunStyle>,
     limits: OdfExportLimits,
     blocks: usize,
     inlines: usize,
@@ -195,6 +294,8 @@ impl Writer {
     fn new(limits: OdfExportLimits) -> Result<Self, OdfError> {
         let mut writer = Self {
             xml: String::new(),
+            paragraph_styles: BTreeSet::new(),
+            run_styles: BTreeSet::new(),
             limits,
             blocks: 0,
             inlines: 0,
@@ -202,7 +303,7 @@ impl Writer {
             paragraphs_written: 0,
             reporter: Reporter::new(limits.max_report_features),
         };
-        writer.push(CONTENT_PREFIX)?;
+        writer.push(BODY_PREFIX)?;
         Ok(writer)
     }
 
@@ -257,6 +358,7 @@ impl Writer {
                     self.paragraphs_written = self.paragraphs_written.saturating_add(1);
                     let mut remainder = paragraph.properties.clone();
                     let outline = remainder.outline_level.take();
+                    let alignment = remainder.alignment.take().map(OdtParagraphAlignment::from);
                     if remainder != ParagraphProperties::default() {
                         self.reporter
                             .record("odt.export.paragraph_properties", ModelOutcome::Omitted);
@@ -264,9 +366,21 @@ impl Writer {
                     if let Some(level) = outline {
                         self.push("<text:h text:outline-level=\"")?;
                         self.push(&(u16::from(level) + 1).to_string())?;
+                        if let Some(alignment) = alignment {
+                            self.paragraph_styles.insert(alignment);
+                            self.push("\" text:style-name=\"")?;
+                            self.push(alignment.name())?;
+                        }
                         self.push("\">")?;
                     } else {
-                        self.push("<text:p>")?;
+                        self.push("<text:p")?;
+                        if let Some(alignment) = alignment {
+                            self.paragraph_styles.insert(alignment);
+                            self.push(" text:style-name=\"")?;
+                            self.push(alignment.name())?;
+                            self.push("\"")?;
+                        }
+                        self.push(">")?;
                     }
                     self.write_inlines(&paragraph.inlines, depth + 1)?;
                     self.push(if outline.is_some() {
@@ -297,11 +411,23 @@ impl Writer {
             self.visit_inline()?;
             match inline {
                 InlineNode::Run(run) => {
-                    if run.properties != RunProperties::default() {
+                    let (style, remainder) = split_run_properties(&run.properties);
+                    if remainder != RunProperties::default() {
                         self.reporter
                             .record("odt.export.run_properties", ModelOutcome::Omitted);
                     }
+                    let styled = !style.is_empty();
+                    if styled {
+                        let name = style.name();
+                        self.run_styles.insert(style);
+                        self.push("<text:span text:style-name=\"")?;
+                        self.push(&name)?;
+                        self.push("\">")?;
+                    }
                     self.write_text(&run.text)?;
+                    if styled {
+                        self.push("</text:span>")?;
+                    }
                 }
                 InlineNode::Tab(_) => self.push("<text:tab/>")?,
                 InlineNode::Break(node) => {
@@ -473,6 +599,116 @@ impl Writer {
     }
 }
 
+fn automatic_styles_xml(
+    paragraph_styles: &BTreeSet<OdtParagraphAlignment>,
+    run_styles: &BTreeSet<OdtRunStyle>,
+    max_content_bytes: usize,
+) -> Result<String, OdfError> {
+    if paragraph_styles.is_empty() && run_styles.is_empty() {
+        return Ok(String::new());
+    }
+    let mut xml = String::new();
+    push_bounded(&mut xml, "<office:automatic-styles>", max_content_bytes)?;
+    for alignment in paragraph_styles {
+        push_bounded(&mut xml, "<style:style style:name=\"", max_content_bytes)?;
+        push_bounded(&mut xml, alignment.name(), max_content_bytes)?;
+        push_bounded(
+            &mut xml,
+            "\" style:family=\"paragraph\"><style:paragraph-properties fo:text-align=\"",
+            max_content_bytes,
+        )?;
+        push_bounded(&mut xml, alignment.value(), max_content_bytes)?;
+        push_bounded(&mut xml, "\"/></style:style>", max_content_bytes)?;
+    }
+    for style in run_styles {
+        push_bounded(&mut xml, "<style:style style:name=\"", max_content_bytes)?;
+        push_bounded(&mut xml, &style.name(), max_content_bytes)?;
+        push_bounded(
+            &mut xml,
+            "\" style:family=\"text\"><style:text-properties",
+            max_content_bytes,
+        )?;
+        if let Some(bold) = style.bold {
+            push_bounded(
+                &mut xml,
+                if bold {
+                    " fo:font-weight=\"bold\""
+                } else {
+                    " fo:font-weight=\"normal\""
+                },
+                max_content_bytes,
+            )?;
+        }
+        if let Some(italic) = style.italic {
+            push_bounded(
+                &mut xml,
+                if italic {
+                    " fo:font-style=\"italic\""
+                } else {
+                    " fo:font-style=\"normal\""
+                },
+                max_content_bytes,
+            )?;
+        }
+        if let Some(underline) = style.underline {
+            push_bounded(
+                &mut xml,
+                if underline {
+                    " style:text-underline-style=\"solid\""
+                } else {
+                    " style:text-underline-style=\"none\""
+                },
+                max_content_bytes,
+            )?;
+        }
+        if let Some(strike) = style.strike {
+            push_bounded(
+                &mut xml,
+                if strike {
+                    " style:text-line-through-style=\"solid\""
+                } else {
+                    " style:text-line-through-style=\"none\""
+                },
+                max_content_bytes,
+            )?;
+        }
+        if let Some((red, green, blue)) = style.color {
+            push_bounded(&mut xml, " fo:color=\"#", max_content_bytes)?;
+            push_bounded(
+                &mut xml,
+                &format!("{red:02x}{green:02x}{blue:02x}"),
+                max_content_bytes,
+            )?;
+            push_bounded(&mut xml, "\"", max_content_bytes)?;
+        }
+        if let Some(size) = style.size_half_points {
+            push_bounded(&mut xml, " fo:font-size=\"", max_content_bytes)?;
+            push_bounded(&mut xml, &(size / 2).to_string(), max_content_bytes)?;
+            if size % 2 != 0 {
+                push_bounded(&mut xml, ".5", max_content_bytes)?;
+            }
+            push_bounded(&mut xml, "pt\"", max_content_bytes)?;
+        }
+        push_bounded(&mut xml, "/></style:style>", max_content_bytes)?;
+    }
+    push_bounded(&mut xml, "</office:automatic-styles>", max_content_bytes)?;
+    Ok(xml)
+}
+
+fn push_bounded(output: &mut String, value: &str, allowed: usize) -> Result<(), OdfError> {
+    let observed = output
+        .len()
+        .checked_add(value.len())
+        .ok_or(OdfError::LimitExceeded {
+            limit: "odt_export_content_bytes",
+            observed: usize::MAX,
+            allowed,
+        })?;
+    enforce("odt_export_content_bytes", observed, allowed)?;
+    output.push_str(value);
+    Ok(())
+}
+
 /// Writes a validated normalized document as a deterministic ODF 1.4 package.
 pub fn write_odt(document: &Document, limits: OdfExportLimits) -> Result<OdtExport, OdfError> {
     limits.validate()?;
@@ -498,7 +734,30 @@ pub fn write_odt(document: &Document, limits: OdfExportLimits) -> Result<OdtExpo
         writer.push("<text:p/>")?;
     }
     writer.push(CONTENT_SUFFIX)?;
-    let content = writer.xml.into_bytes();
+    let styles = automatic_styles_xml(
+        &writer.paragraph_styles,
+        &writer.run_styles,
+        limits.max_content_bytes,
+    )?;
+    let content_len = CONTENT_HEADER
+        .len()
+        .checked_add(styles.len())
+        .and_then(|value| value.checked_add(writer.xml.len()))
+        .ok_or(OdfError::LimitExceeded {
+            limit: "odt_export_content_bytes",
+            observed: usize::MAX,
+            allowed: limits.max_content_bytes,
+        })?;
+    enforce(
+        "odt_export_content_bytes",
+        content_len,
+        limits.max_content_bytes,
+    )?;
+    let mut content = String::with_capacity(content_len);
+    content.push_str(CONTENT_HEADER);
+    content.push_str(&styles);
+    content.push_str(&writer.xml);
+    let content = content.into_bytes();
     let report = writer.reporter.finish();
     let bytes = package(&content, limits)?;
     Ok(OdtExport { bytes, report })
@@ -567,7 +826,7 @@ fn is_xml_character(character: char) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use casual_doc_model::v1::{BlockNode, InlineNode};
+    use casual_doc_model::v1::{BlockNode, InlineNode, RgbColor};
 
     use super::*;
     use crate::{OdfImportLimits, OdfPackageLimits, OdfVersion, OdtPackage, import_content_xml};
@@ -593,6 +852,45 @@ mod tests {
     }
 
     #[test]
+    fn supported_direct_formatting_uses_deterministic_automatic_styles() {
+        let mut document = core_document();
+        let BlockNode::Paragraph(paragraph) = &mut document.body_mut()[0] else {
+            panic!("paragraph")
+        };
+        paragraph.properties.alignment = Some(Alignment::Center);
+        let InlineNode::Run(run) = &mut paragraph.inlines[0] else {
+            panic!("run")
+        };
+        run.properties.bold = Some(true);
+        run.properties.italic = Some(false);
+        run.properties.underline = Some(true);
+        run.properties.strike = Some(false);
+        run.properties.color = Some(Color::Rgb(RgbColor {
+            r: 0x1a,
+            g: 0x2b,
+            b: 0x3c,
+        }));
+        run.properties.size_half_points = Some(21);
+
+        let first = write_odt(&document, OdfExportLimits::default()).unwrap();
+        let second = write_odt(&document, OdfExportLimits::default()).unwrap();
+        assert_eq!(first.bytes, second.bytes);
+        assert!(first.report.entries.is_empty());
+
+        let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+        let content = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+        assert!(content.contains(
+            "<style:style style:name=\"P_center\" style:family=\"paragraph\"><style:paragraph-properties fo:text-align=\"center\"/></style:style>"
+        ));
+        assert!(content.contains(
+            "<style:style style:name=\"T_b1_i0_u1_s0_c1a2b3c_z21\" style:family=\"text\"><style:text-properties fo:font-weight=\"bold\" fo:font-style=\"normal\" style:text-underline-style=\"solid\" style:text-line-through-style=\"none\" fo:color=\"#1a2b3c\" fo:font-size=\"10.5pt\"/></style:style>"
+        ));
+        assert!(content.contains("<text:p text:style-name=\"P_center\">"));
+        assert!(content.contains("<text:span text:style-name=\"T_b1_i0_u1_s0_c1a2b3c_z21\">"));
+        assert!(content.contains("</text:span>"));
+    }
+
+    #[test]
     fn unsupported_formatting_is_reported_and_limits_fail_atomically() {
         let mut document = core_document();
         let BlockNode::Paragraph(paragraph) = &mut document.body_mut()[0] else {
@@ -602,6 +900,7 @@ mod tests {
             panic!("run")
         };
         run.properties.bold = Some(true);
+        run.properties.all_caps = Some(true);
         let exported = write_odt(&document, OdfExportLimits::default()).unwrap();
         assert!(
             exported
