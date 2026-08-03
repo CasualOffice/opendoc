@@ -462,6 +462,7 @@ fn overlay_run(base: &mut RunProperties, over: &RunProperties) {
     set!(small_caps);
     set!(hidden);
     set!(web_hidden);
+    set!(no_proof);
     set!(double_strike);
     set!(vertical_alignment);
     set!(highlight);

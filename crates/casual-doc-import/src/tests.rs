@@ -253,6 +253,29 @@ fn underline_style_and_color_are_imported_from_w_u() {
 }
 
 #[test]
+fn automatic_color_and_no_proof_are_typed_not_dropped() {
+    use casual_doc_model::v1::Color;
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:r><w:rPr><w:color w:val="auto"/><w:noProof/></w:rPr>
+                <w:t>x</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+    let import = import(xml);
+    let InlineNode::Run(run) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected run");
+    };
+    assert_eq!(
+        run.properties.color,
+        Some(Color::Auto),
+        "w:color=auto is typed as Color::Auto (overrides an inherited color) not dropped"
+    );
+    assert_eq!(run.properties.no_proof, Some(true));
+    assert!(
+        !features(&import).contains(&"color") && !features(&import).contains(&"noProof"),
+        "both are mapped, not reported unsupported"
+    );
+}
+
+#[test]
 fn adjacent_equal_property_runs_are_merged() {
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
             <w:p><w:r><w:t>a</w:t></w:r><w:r><w:t>b</w:t></w:r></w:p>

@@ -5490,6 +5490,7 @@ fn write_run_properties(
         (properties.small_caps, "w:smallCaps"),
         (properties.hidden, "w:vanish"),
         (properties.web_hidden, "w:webHidden"),
+        (properties.no_proof, "w:noProof"),
         (properties.outline, "w:outline"),
         (properties.shadow, "w:shadow"),
         (properties.emboss, "w:emboss"),
@@ -5539,13 +5540,23 @@ fn write_run_properties(
         }
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
-    if let Some(Color::Rgb(rgb)) = &properties.color {
-        let mut el = start("w:color");
-        el.push_attribute((
-            "w:val",
-            format!("{:02X}{:02X}{:02X}", rgb.r, rgb.g, rgb.b).as_str(),
-        ));
-        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    match &properties.color {
+        Some(Color::Rgb(rgb)) => {
+            let mut el = start("w:color");
+            el.push_attribute((
+                "w:val",
+                format!("{:02X}{:02X}{:02X}", rgb.r, rgb.g, rgb.b).as_str(),
+            ));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+        Some(Color::Auto) => {
+            let mut el = start("w:color");
+            el.push_attribute(("w:val", "auto"));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+        // Color::Theme is not yet emitted by import (a later Layer-1 item); it
+        // round-trips through the opaque retention path until then.
+        Some(Color::Theme(_)) | None => {}
     }
     if let Some(size) = properties.size_half_points {
         let mut el = start("w:sz");

@@ -25,10 +25,10 @@ Derived from a 14-agent, evidence-cited model-completeness sweep, prevalence-ran
 |---|---|---|---|---|
 | ✅ | Abstract `multiLevelType` | `w:multiLevelType` | ubiquitous | S |
 | ✅ | Level restart trigger | `w:lvlRestart` | common | S |
-| | Run text color "auto" | `w:color@val=auto` | ubiquitous | S |
+| ✅ | Run text color "auto" | `w:color@val=auto` | ubiquitous | S |
 | | Numbering level → paragraph-style link | `w:lvl/w:pStyle` | ubiquitous | S |
 | | Note-number mark in note body | `w:footnoteRef`/`w:endnoteRef` | ubiquitous | S |
-| | do-not-proof | `w:noProof` | common | S |
+| ✅ | do-not-proof | `w:noProof` | common | S |
 | | Style tab stops *(partial)* | `w:pPr/w:tabs` in styles.xml | common | S |
 | | Page gutter margin | `w:pgMar@gutter` | common | S |
 | | Update-fields-on-open | `w:updateFields` | common | S |

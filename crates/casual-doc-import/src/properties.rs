@@ -66,15 +66,21 @@ pub(crate) fn apply_run_property(
                 None => return false,
             }
         }
-        b"color" => match value.as_deref().and_then(parse_rgb) {
-            Some(rgb) => properties.color = Some(Color::Rgb(rgb)),
-            None => return false,
+        b"color" => match value.as_deref() {
+            // `w:val="auto"` is the automatic color; keep it typed so it overrides
+            // an inherited style color instead of being dropped.
+            Some("auto") => properties.color = Some(Color::Auto),
+            other => match other.and_then(parse_rgb) {
+                Some(rgb) => properties.color = Some(Color::Rgb(rgb)),
+                None => return false,
+            },
         },
         // Toggle marks (`CT_OnOff`): present means on unless `val` is 0/false/off.
         b"caps" => properties.all_caps = Some(is_true(value.as_deref())),
         b"smallCaps" => properties.small_caps = Some(is_true(value.as_deref())),
         b"vanish" => properties.hidden = Some(is_true(value.as_deref())),
         b"webHidden" => properties.web_hidden = Some(is_true(value.as_deref())),
+        b"noProof" => properties.no_proof = Some(is_true(value.as_deref())),
         b"dstrike" => properties.double_strike = Some(is_true(value.as_deref())),
         b"outline" => properties.outline = Some(is_true(value.as_deref())),
         b"shadow" => properties.shadow = Some(is_true(value.as_deref())),
