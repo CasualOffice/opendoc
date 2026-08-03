@@ -2018,6 +2018,19 @@ fn numbering_xml(
             ));
             w.write_event(Event::Empty(mlt)).map_err(pkg)?;
         }
+        // `w:styleLink` then `w:numStyleLink` in CT_AbstractNum schema order,
+        // after multiLevelType and before the levels. Each emits the linked
+        // paragraph style's id token so it re-imports to the same StyleId.
+        if let Some(style_link) = abstract_num.style_link {
+            let mut el = start("w:styleLink");
+            el.push_attribute(("w:val", style_id_token(style_link).as_str()));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+        if let Some(num_style_link) = abstract_num.num_style_link {
+            let mut el = start("w:numStyleLink");
+            el.push_attribute(("w:val", style_id_token(num_style_link).as_str()));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
         for level in &abstract_num.levels {
             write_level(&mut w, level)?;
         }
@@ -2073,6 +2086,14 @@ fn write_level(w: &mut Writer<Cursor<Vec<u8>>>, level: &NumberingLevel) -> Resul
     if let Some(restart) = level.lvl_restart {
         let mut el = start("w:lvlRestart");
         el.push_attribute(("w:val", restart.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    // `w:pStyle` (the level's paragraph-style binding) follows lvlRestart, before
+    // isLgl. Emitted with the referenced style's id token so it re-imports to the
+    // same StyleId.
+    if let Some(pstyle) = level.pstyle {
+        let mut el = start("w:pStyle");
+        el.push_attribute(("w:val", style_id_token(pstyle).as_str()));
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
     if level.is_lgl {

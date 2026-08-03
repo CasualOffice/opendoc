@@ -2343,6 +2343,81 @@ mod semantic_tests {
     }
 
     #[test]
+    fn numbering_style_links_survive_the_semantic_round_trip() {
+        // A level's `w:pStyle` (the heading-style binding) and an abstract's
+        // `w:styleLink` / `w:numStyleLink` (the reusable List-Style bindings)
+        // reference paragraph styles by id; styles.xml is parsed first so the
+        // numbering part can resolve them to StyleIds. All three must survive
+        // import -> write -> reopen as a fixed point.
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="3"/></w:numPr></w:pPr>
+                <w:r><w:t>item</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/></Relationships>"#;
+        let styles = br#"<w:styles xmlns:w="urn:w">
+            <w:style w:type="paragraph" w:styleId="MyHeading"><w:name w:val="My Heading"/></w:style>
+            <w:style w:type="paragraph" w:styleId="MyList"><w:name w:val="My List"/></w:style>
+        </w:styles>"#;
+        let numbering = br#"<w:numbering xmlns:w="urn:w">
+            <w:abstractNum w:abstractNumId="0">
+                <w:styleLink w:val="MyList"/>
+                <w:numStyleLink w:val="MyHeading"/>
+                <w:lvl w:ilvl="0"><w:start w:val="1"/><w:pStyle w:val="MyHeading"/></w:lvl></w:abstractNum>
+            <w:num w:numId="3"><w:abstractNumId w:val="0"/></w:num>
+        </w:numbering>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/styles.xml", styles),
+            ("word/numbering.xml", numbering),
+        ]);
+        let mut src_package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let m1 = import_package(
+            &mut src_package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+        let (_, abstract_num) = m1.definitions().abstract_numbering.iter().next().unwrap();
+        // The three links resolved to real (Some) paragraph-style ids.
+        assert!(
+            abstract_num.style_link.is_some(),
+            "styleLink resolved to a StyleId"
+        );
+        assert!(
+            abstract_num.num_style_link.is_some(),
+            "numStyleLink resolved to a StyleId"
+        );
+        assert!(
+            abstract_num.levels[0].pstyle.is_some(),
+            "level pStyle resolved to a StyleId"
+        );
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+        let m2 = import_package(
+            &mut package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+        assert_eq!(
+            m1, m2,
+            "level pStyle + abstract styleLink/numStyleLink survive write -> reopen"
+        );
+    }
+
+    #[test]
     fn expanded_settings_survive_the_semantic_round_trip() {
         // settings.xml carrying the newly modeled settings (evenAndOddHeaders,
         // defaultTabStop, trackChanges, documentProtection, a proofState, a zoom,

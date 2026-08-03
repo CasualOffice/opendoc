@@ -1058,7 +1058,7 @@ pub(crate) fn import_with_sources(
         None => Styles::default(),
     };
     let numbering = match numbering_xml {
-        Some(xml) => numbering::parse(xml, &mut ids, &mut reporter, config)?,
+        Some(xml) => numbering::parse(xml, &mut ids, &mut reporter, config, &styles)?,
         None => Numbering::default(),
     };
     // Resolve style-level `w:numPr` now that both parts are parsed: a paragraph

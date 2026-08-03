@@ -761,6 +761,7 @@ mod tests {
             run_properties: None,
             style_ref: None,
             lvl_restart: None,
+            pstyle: None,
         }
     }
 
@@ -775,6 +776,8 @@ mod tests {
             AbstractNumbering {
                 levels,
                 multi_level_type: None,
+                num_style_link: None,
+                style_link: None,
             },
         );
         let mut ids = Vec::new();

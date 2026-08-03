@@ -11028,8 +11028,11 @@ mod tests {
                     run_properties: level_rpr,
                     style_ref: None,
                     lvl_restart: None,
+                    pstyle: None,
                 }],
                 multi_level_type: None,
+                num_style_link: None,
+                style_link: None,
             },
         );
         definitions.numbering.insert(
