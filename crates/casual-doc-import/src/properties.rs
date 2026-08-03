@@ -299,7 +299,7 @@ pub(crate) fn apply_paragraph_property(
             properties.page_break_before = is_true(attribute_value(element, b"val").as_deref())
         }
         b"widowControl" => {
-            properties.widow_control = is_true(attribute_value(element, b"val").as_deref())
+            properties.widow_control = Some(is_true(attribute_value(element, b"val").as_deref()))
         }
         b"contextualSpacing" => {
             properties.contextual_spacing = is_true(attribute_value(element, b"val").as_deref())

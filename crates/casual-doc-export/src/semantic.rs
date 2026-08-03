@@ -3282,7 +3282,6 @@ fn write_paragraph_properties(
         (properties.keep_next, "w:keepNext"),
         (properties.keep_lines, "w:keepLines"),
         (properties.page_break_before, "w:pageBreakBefore"),
-        (properties.widow_control, "w:widowControl"),
         (properties.contextual_spacing, "w:contextualSpacing"),
         (properties.suppress_line_numbers, "w:suppressLineNumbers"),
     ] {
@@ -3296,6 +3295,7 @@ fn write_paragraph_properties(
     // Tri-state paragraph toggles (`CT_OnOff`): bare = on, `w:val="0"` = an
     // explicit off, nothing = absent — so a default-ON toggle turned off survives.
     for (value, name) in [
+        (properties.widow_control, "w:widowControl"),
         (properties.bidi, "w:bidi"),
         (properties.word_wrap, "w:wordWrap"),
         (properties.kinsoku, "w:kinsoku"),
