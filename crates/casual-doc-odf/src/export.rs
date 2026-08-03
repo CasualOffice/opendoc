@@ -20,7 +20,7 @@ use crate::{
 const CONTENT_HEADER: &str = r#"<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" office:version="1.4">"#;
 const BODY_PREFIX: &str = "<office:body><office:text>";
 const CONTENT_SUFFIX: &str = "</office:text></office:body></office:document-content>";
-const MANIFEST: &str = r#"<?xml version="1.0" encoding="UTF-8"?><manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.4"><manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.text" manifest:version="1.4"/><manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/><manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/></manifest:manifest>"#;
+const MANIFEST: &str = r#"<?xml version="1.0" encoding="UTF-8"?><manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.4"><manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.text" manifest:version="1.4"/><manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/><manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/><manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/></manifest:manifest>"#;
 
 /// Resource limits for deterministic ODT semantic export.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1498,12 +1498,19 @@ pub fn write_odt(document: &Document, limits: OdfExportLimits) -> Result<OdtExpo
         .filter(|properties| !properties.is_empty())
         .map(metadata_xml)
         .transpose()?;
-    let bytes = package(&content, metadata.as_deref(), limits)?;
+    let page_styles = page_styles_xml(document);
+    let bytes = package(
+        &content,
+        page_styles.as_deref(),
+        metadata.as_deref(),
+        limits,
+    )?;
     Ok(OdtExport { bytes, report })
 }
 
 fn package(
     content: &[u8],
+    page_styles: Option<&[u8]>,
     metadata: Option<&[u8]>,
     limits: OdfExportLimits,
 ) -> Result<Vec<u8>, OdfError> {
@@ -1520,6 +1527,12 @@ fn package(
         .map_err(|_| OdfError::SerializationFailed)?;
     zip.write_all(content)
         .map_err(|_| OdfError::SerializationFailed)?;
+    if let Some(page_styles) = page_styles {
+        zip.start_file(crate::STYLES_PART, deflated)
+            .map_err(|_| OdfError::SerializationFailed)?;
+        zip.write_all(page_styles)
+            .map_err(|_| OdfError::SerializationFailed)?;
+    }
     if let Some(metadata) = metadata {
         zip.start_file(META_PART, deflated)
             .map_err(|_| OdfError::SerializationFailed)?;
@@ -1528,11 +1541,13 @@ fn package(
     }
     zip.start_file(MANIFEST_PART, deflated)
         .map_err(|_| OdfError::SerializationFailed)?;
-    let manifest = if metadata.is_some() {
-        MANIFEST.to_owned()
-    } else {
-        MANIFEST.replace("<manifest:file-entry manifest:full-path=\"meta.xml\" manifest:media-type=\"text/xml\"/>", "")
-    };
+    let mut manifest = MANIFEST.to_owned();
+    if page_styles.is_none() {
+        manifest = manifest.replace("<manifest:file-entry manifest:full-path=\"styles.xml\" manifest:media-type=\"text/xml\"/>", "");
+    }
+    if metadata.is_none() {
+        manifest = manifest.replace("<manifest:file-entry manifest:full-path=\"meta.xml\" manifest:media-type=\"text/xml\"/>", "");
+    }
     zip.write_all(manifest.as_bytes())
         .map_err(|_| OdfError::SerializationFailed)?;
     let bytes = zip
@@ -1545,6 +1560,18 @@ fn package(
         limits.max_package_bytes,
     )?;
     Ok(bytes)
+}
+
+fn page_styles_xml(document: &Document) -> Option<Vec<u8>> {
+    let section = document.definitions().sections.first()?;
+    let cm = |twips: i32| format!("{:.4}cm", f64::from(twips) * 2.54 / 1440.0);
+    let orientation = matches!(
+        section.orientation,
+        Some(casual_doc_model::v1::PageOrientation::Landscape)
+    )
+    .then_some("landscape")
+    .unwrap_or("portrait");
+    Some(format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document-styles xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" xmlns:style=\"urn:oasis:names:tc:opendocument:xmlns:style:1.0\" xmlns:fo=\"urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0\" office:version=\"1.4\"><office:automatic-styles><style:page-layout style:name=\"pm1\"><style:page-layout-properties fo:page-width=\"{}\" fo:page-height=\"{}\" fo:margin-top=\"{}\" fo:margin-bottom=\"{}\" fo:margin-left=\"{}\" fo:margin-right=\"{}\" style:print-orientation=\"{}\"/></style:page-layout></office:automatic-styles></office:document-styles>", cm(section.page_size.width_twips), cm(section.page_size.height_twips), cm(section.page_margins.top_twips), cm(section.page_margins.bottom_twips), cm(section.page_margins.start_twips), cm(section.page_margins.end_twips), orientation).into_bytes())
 }
 
 fn metadata_xml(

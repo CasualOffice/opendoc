@@ -107,6 +107,9 @@ Numeric page/word statistics and typed custom properties are emitted as their
 corresponding ODT metadata elements.
 Total editing time is emitted as a canonical `PT#H#M` duration.
 
+When schema-v1 sections are present, the writer emits a deterministic
+`styles.xml` page-layout definition and manifest entry for page geometry.
+
 ## 6. Acceptance gates
 
 The first checkpoint requires:
