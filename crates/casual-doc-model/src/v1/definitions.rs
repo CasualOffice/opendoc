@@ -632,9 +632,10 @@ pub struct NoteProperties {
     /// Placement of the notes (`w:pos`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position: Option<NotePosition>,
-    /// Number format token (`w:numFmt/@w:val`), bounded to 32 bytes.
+    /// Number format (`w:numFmt/@w:val`, `ST_NumberFormat`); the common vocabulary
+    /// is typed and any other token is retained verbatim via [`NumberFormat::Other`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub number_format: Option<String>,
+    pub number_format: Option<NumberFormat>,
     /// Starting number (`w:numStart/@w:val`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub number_start: Option<i32>,
@@ -1025,6 +1026,15 @@ pub struct DocumentSettings {
     /// `w:zoom` — the view magnification.
     #[serde(default, skip_serializing_if = "Zoom::is_empty")]
     pub zoom: Zoom,
+    /// `w:footnotePr` — the document-default footnote properties (numbering
+    /// format/origin/restart and placement) that apply where a section does not
+    /// override them. Additive: omitted when empty.
+    #[serde(default, skip_serializing_if = "NoteProperties::is_empty")]
+    pub footnote_props: NoteProperties,
+    /// `w:endnotePr` — the document-default endnote properties. Additive: omitted
+    /// when empty.
+    #[serde(default, skip_serializing_if = "NoteProperties::is_empty")]
+    pub endnote_props: NoteProperties,
     /// `w:compat`/`w:compatSetting` — the modeled compatibility-setting triples,
     /// in document order. Additive: omitted when empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

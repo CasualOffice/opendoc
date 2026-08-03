@@ -9,8 +9,8 @@
 //! is present-means-true unless an explicit `w:val` says otherwise.
 
 use casual_doc_model::v1::{
-    CompatSetting, DocumentProtection, DocumentProtectionEdit, DocumentSettings, ProofState,
-    WriteProtection, Zoom, ZoomMode,
+    CompatSetting, DocumentProtection, DocumentProtectionEdit, DocumentSettings, NoteNumberRestart,
+    NotePosition, NoteProperties, ProofState, WriteProtection, Zoom, ZoomMode,
 };
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
@@ -39,6 +39,10 @@ pub(crate) fn parse(
     // `w:compat`'s children (level 2); deeper markup inside an unmodeled setting is
     // subsumed by that setting's single report entry.
     let mut in_compat = false;
+    // The document-default note-property container (`w:footnotePr`/`w:endnotePr`)
+    // currently open, if any; its `w:pos`/`w:numFmt`/`w:numStart`/`w:numRestart`
+    // children (level 2) route to the matching side of `settings`.
+    let mut note_scope: Option<NoteScope> = None;
 
     loop {
         let event = reader
@@ -54,19 +58,37 @@ pub(crate) fn parse(
                     return Err(ImportError::LimitExceeded { limit: "xml_depth" });
                 }
                 bump(&mut elements, config.max_elements)?;
-                if level == 1 && element.local_name().as_ref() == b"compat" {
-                    in_compat = true;
-                } else {
-                    on_setting(level, in_compat, &element, &mut settings, reporter);
+                let local = element.local_name();
+                match (level, local.as_ref()) {
+                    (1, b"compat") => in_compat = true,
+                    (1, b"footnotePr") => note_scope = Some(NoteScope::Footnote),
+                    (1, b"endnotePr") => note_scope = Some(NoteScope::Endnote),
+                    _ => on_setting(
+                        level,
+                        in_compat,
+                        note_scope,
+                        &element,
+                        &mut settings,
+                        reporter,
+                    ),
                 }
             }
             Event::Empty(element) => {
                 bump(&mut elements, config.max_elements)?;
-                on_setting(depth, in_compat, &element, &mut settings, reporter);
+                on_setting(
+                    depth,
+                    in_compat,
+                    note_scope,
+                    &element,
+                    &mut settings,
+                    reporter,
+                );
             }
             Event::End(element) => {
-                if element.local_name().as_ref() == b"compat" {
-                    in_compat = false;
+                match element.local_name().as_ref() {
+                    b"compat" => in_compat = false,
+                    b"footnotePr" | b"endnotePr" => note_scope = None,
+                    _ => {}
                 }
                 depth = depth.saturating_sub(1);
             }
@@ -77,12 +99,20 @@ pub(crate) fn parse(
     Ok(settings)
 }
 
+/// Which document-default note container is currently open.
+#[derive(Clone, Copy)]
+enum NoteScope {
+    Footnote,
+    Endnote,
+}
+
 /// Handles one element at its nesting `level`. Level 1 is a direct setting;
 /// level 2 while `in_compat` is a `w:compat` child. Recognized settings mutate
 /// `settings`; everything else is reported.
 fn on_setting(
     level: u64,
     in_compat: bool,
+    note_scope: Option<NoteScope>,
     element: &BytesStart<'_>,
     settings: &mut DocumentSettings,
     reporter: &mut Reporter,
@@ -99,12 +129,81 @@ fn on_setting(
         }
         return;
     }
+    if let Some(scope) = note_scope
+        && level == 2
+    {
+        if !apply_note_child(scope, local, element, settings) {
+            reporter.report(local);
+        }
+        return;
+    }
     if level != 1 {
         // The root itself (level 0) and markup subsumed by an unmodeled setting.
         return;
     }
+    // A self-closing `w:footnotePr`/`w:endnotePr` carries no children: recognized
+    // but empty, so there is nothing to apply and nothing to report.
+    if matches!(local, b"footnotePr" | b"endnotePr") {
+        return;
+    }
     if !apply_setting(local, element, settings) {
         reporter.report(local);
+    }
+}
+
+/// Applies one child of an open `w:footnotePr`/`w:endnotePr` (the shared
+/// `w:pos`/`w:numFmt`/`w:numStart`/`w:numRestart` vocabulary), returning whether it
+/// was consumed.
+fn apply_note_child(
+    scope: NoteScope,
+    local: &[u8],
+    element: &BytesStart<'_>,
+    settings: &mut DocumentSettings,
+) -> bool {
+    let props: &mut NoteProperties = match scope {
+        NoteScope::Footnote => &mut settings.footnote_props,
+        NoteScope::Endnote => &mut settings.endnote_props,
+    };
+    match local {
+        b"pos" => match note_position(element) {
+            Some(value) => props.position = Some(value),
+            None => return false,
+        },
+        b"numFmt" => match crate::numbering::number_format(element) {
+            Some(value) => props.number_format = Some(value),
+            None => return false,
+        },
+        b"numStart" => match attribute_value(element, b"val").and_then(|v| v.parse::<i32>().ok()) {
+            Some(value) => props.number_start = Some(value),
+            None => return false,
+        },
+        b"numRestart" => match note_number_restart(element) {
+            Some(value) => props.number_restart = Some(value),
+            None => return false,
+        },
+        _ => return false,
+    }
+    true
+}
+
+/// Maps `w:footnotePr`/`w:endnotePr` `w:pos/@w:val` to a placement.
+fn note_position(element: &BytesStart<'_>) -> Option<NotePosition> {
+    match attribute_value(element, b"val").as_deref() {
+        Some("pageBottom") => Some(NotePosition::PageBottom),
+        Some("beneathText") => Some(NotePosition::BeneathText),
+        Some("sectEnd") => Some(NotePosition::SectionEnd),
+        Some("docEnd") => Some(NotePosition::DocumentEnd),
+        _ => None,
+    }
+}
+
+/// Maps `w:numRestart/@w:val` to a restart policy.
+fn note_number_restart(element: &BytesStart<'_>) -> Option<NoteNumberRestart> {
+    match attribute_value(element, b"val").as_deref() {
+        Some("continuous") => Some(NoteNumberRestart::Continuous),
+        Some("eachSect") => Some(NoteNumberRestart::EachSection),
+        Some("eachPage") => Some(NoteNumberRestart::EachPage),
+        _ => None,
     }
 }
 

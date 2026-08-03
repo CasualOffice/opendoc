@@ -2788,10 +2788,13 @@ impl BodyParser<'_> {
                 }
             }
             b"numFmt" if self.section_note_scope.is_some() => {
-                let format =
-                    attribute_value(element, b"val").filter(|v| !v.is_empty() && v.len() <= 32);
-                if let Some(props) = self.section_note_props() {
-                    props.number_format = format;
+                match (
+                    crate::numbering::number_format(element),
+                    self.section_note_props(),
+                ) {
+                    (Some(value), Some(props)) => props.number_format = Some(value),
+                    (None, _) => self.reporter.report(b"numFmt"),
+                    _ => {}
                 }
             }
             b"numStart" if self.section_note_scope.is_some() => {

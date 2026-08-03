@@ -202,6 +202,9 @@ impl Document {
             )?;
             check_domain(setting.val.len() <= 255, "settings.compatSetting.val")?;
         }
+        for props in [&settings.footnote_props, &settings.endnote_props] {
+            check_note_props(props)?;
+        }
         Ok(())
     }
 
@@ -393,18 +396,7 @@ impl Document {
                 check_domain((0..=32_767).contains(&value), "section.paper_source")?;
             }
             for props in [&section.footnote_props, &section.endnote_props] {
-                if let Some(format) = &props.number_format {
-                    check_domain(
-                        !format.is_empty() && format.len() <= 32,
-                        "section.note_props.number_format",
-                    )?;
-                }
-                if let Some(start) = props.number_start {
-                    check_domain(
-                        (0..=1_000_000).contains(&start),
-                        "section.note_props.number_start",
-                    )?;
-                }
+                check_note_props(props)?;
             }
             for header in &section.headers {
                 if !self.definitions.headers.contains_key(&header.reference) {
@@ -2144,6 +2136,21 @@ fn check_form_field(field: &Field) -> Result<(), ModelError> {
                 )?;
             }
         }
+    }
+    Ok(())
+}
+
+/// Validates a footnote/endnote property container's numbering bounds (shared by
+/// per-section `w:footnotePr`/`w:endnotePr` and the document-default settings pair).
+fn check_note_props(props: &NoteProperties) -> Result<(), ModelError> {
+    if let Some(NumberFormat::Other(token)) = &props.number_format {
+        check_domain(
+            !token.is_empty() && token.len() <= 64,
+            "note_props.number_format",
+        )?;
+    }
+    if let Some(start) = props.number_start {
+        check_domain((0..=1_000_000).contains(&start), "note_props.number_start")?;
     }
     Ok(())
 }
