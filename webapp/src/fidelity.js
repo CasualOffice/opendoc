@@ -21,11 +21,8 @@ const FIDELITY = [
   },
   {
     family: "Character / run formatting",
-    note: "Bold, italic, underline, strike, color, highlight, size, font, super/subscript render and edit. Typed underline styles (double/wavy/dotted/thick) and colored underlines paint as a plain single line, and rare effects (double-strike, emphasis marks, outline/shadow, run border) are preserved for export but not painted.",
-    modeled: "full",
-    rendered: "partial",
-    editable: "full",
-    roundtrips: "full",
+    note: "Bold, italic, underline, strike, color, highlight, size, font, super/subscript render and edit. Colored underlines and typed underline styles (double/thick/dotted/dashed/dot-dash) render; wavy and words-only underlines are approximated as a single line. Rare effects (emphasis marks, outline/shadow, run border) are preserved for export but not painted.",
+    modeled: "full", rendered: "partial", editable: "full", roundtrips: "full",
   },
   {
     family: "Paragraph & named styles",

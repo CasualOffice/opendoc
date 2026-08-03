@@ -68,6 +68,7 @@ fn section(id: u64, valign: Option<PageVerticalAlignment>) -> SectionBoundary {
             end_twips: 1_440,
             header_twips: None,
             footer_twips: None,
+            gutter_twips: None,
         },
         columns: SectionColumns {
             count: 1,
@@ -263,6 +264,7 @@ fn multilevel_list() -> Document {
             }),
             run_properties: None,
             style_ref: None,
+            lvl_restart: None,
         }
     };
     let mut definitions = Definitions::default();
@@ -274,6 +276,7 @@ fn multilevel_list() -> Document {
                 level(1, NumberFormat::LowerLetter, "%2."),
                 level(2, NumberFormat::LowerRoman, "%3."),
             ],
+            multi_level_type: None,
         },
     );
     definitions.numbering.insert(
@@ -345,7 +348,9 @@ fn numbered_list(lvl_text: &str, num_fmt: NumberFormat) -> Document {
                 paragraph_properties: Some(level_props),
                 run_properties: None,
                 style_ref: None,
+                lvl_restart: None,
             }],
+            multi_level_type: None,
         },
     );
     definitions.numbering.insert(

@@ -9,7 +9,7 @@ use casual_doc_model::v1::{
     FrameHorizontalAlignment, FrameHorizontalAnchor, FrameVerticalAlignment, FrameVerticalAnchor,
     FrameWrap, HighlightColor, Indentation, Language, LineRule, MAX_SYMBOL_FONT_LEN,
     ParagraphProperties, RgbColor, RunFontHint, RunProperties, Spacing, StyleKind, ThemeFont,
-    ThemeFontRef, VerticalAlignment, VerticalTextAlignment,
+    ThemeFontRef, UnderlineStyle, VerticalAlignment, VerticalTextAlignment,
 };
 use quick_xml::events::BytesStart;
 
@@ -27,7 +27,23 @@ pub(crate) fn apply_run_property(
         b"i" => properties.italic = Some(is_true(value.as_deref())),
         // Complex-script italic (`w:iCs`), same `CT_OnOff` parse as `w:i`.
         b"iCs" => properties.italic_complex = Some(is_true(value.as_deref())),
-        b"u" => properties.underline = Some(value.as_deref() != Some("none")),
+        b"u" => {
+            let val = value.as_deref();
+            properties.underline = Some(val != Some("none"));
+            // `w:u@val` line style. `single` and any unrecognized token are the
+            // default line, represented as `None` (one canonical form, so an
+            // explicit `single` and a bare `w:u` round-trip identically); only a
+            // distinct non-single style is stored.
+            properties.underline_style = val
+                .filter(|v| *v != "none")
+                .and_then(underline_style_from)
+                .filter(|style| *style != UnderlineStyle::Single);
+            // `w:u@color` (sRGB; `auto`/theme yields none) colors the underline
+            // independently of the run's text color.
+            properties.underline_color = attribute_value(element, b"color")
+                .as_deref()
+                .and_then(parse_rgb);
+        }
         b"strike" => properties.strike = Some(is_true(value.as_deref())),
         b"sz" => {
             match value
@@ -50,15 +66,21 @@ pub(crate) fn apply_run_property(
                 None => return false,
             }
         }
-        b"color" => match value.as_deref().and_then(parse_rgb) {
-            Some(rgb) => properties.color = Some(Color::Rgb(rgb)),
-            None => return false,
+        b"color" => match value.as_deref() {
+            // `w:val="auto"` is the automatic color; keep it typed so it overrides
+            // an inherited style color instead of being dropped.
+            Some("auto") => properties.color = Some(Color::Auto),
+            other => match other.and_then(parse_rgb) {
+                Some(rgb) => properties.color = Some(Color::Rgb(rgb)),
+                None => return false,
+            },
         },
         // Toggle marks (`CT_OnOff`): present means on unless `val` is 0/false/off.
         b"caps" => properties.all_caps = Some(is_true(value.as_deref())),
         b"smallCaps" => properties.small_caps = Some(is_true(value.as_deref())),
         b"vanish" => properties.hidden = Some(is_true(value.as_deref())),
         b"webHidden" => properties.web_hidden = Some(is_true(value.as_deref())),
+        b"noProof" => properties.no_proof = Some(is_true(value.as_deref())),
         b"dstrike" => properties.double_strike = Some(is_true(value.as_deref())),
         b"outline" => properties.outline = Some(is_true(value.as_deref())),
         b"shadow" => properties.shadow = Some(is_true(value.as_deref())),
@@ -242,6 +264,23 @@ fn emphasis_from(value: &str) -> Option<EmphasisMark> {
         "underDot" => Some(EmphasisMark::UnderDot),
         _ => None,
     }
+}
+
+/// Maps a `w:u@val` `ST_Underline` token to the modeled line style. Heavy/long
+/// variants fold into their base style (the engine draws one weight); an unknown
+/// token yields `None` (the caller substitutes a single line).
+fn underline_style_from(value: &str) -> Option<UnderlineStyle> {
+    Some(match value {
+        "single" => UnderlineStyle::Single,
+        "double" => UnderlineStyle::Double,
+        "thick" => UnderlineStyle::Thick,
+        "dotted" | "dottedHeavy" => UnderlineStyle::Dotted,
+        "dash" | "dashedHeavy" | "dashLong" | "dashLongHeavy" => UnderlineStyle::Dashed,
+        "dotDash" | "dashDotHeavy" | "dotDotDash" | "dashDotDotHeavy" => UnderlineStyle::DotDash,
+        "wave" | "wavyHeavy" | "wavyDouble" => UnderlineStyle::Wavy,
+        "words" => UnderlineStyle::Words,
+        _ => return None,
+    })
 }
 
 /// Applies a paragraph-property element, returning whether it was fully mapped.

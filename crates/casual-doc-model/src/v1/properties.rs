@@ -266,6 +266,10 @@ pub struct ThemeColor {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Color {
+    /// The automatic color (`w:val="auto"`) — resolved by the consumer (black on
+    /// a light background). Distinct from absent: an explicit `auto` *overrides*
+    /// an inherited style color back to automatic instead of being dropped.
+    Auto,
     /// A theme color slot.
     Theme(ThemeColor),
     /// An explicit RGB color.
@@ -982,6 +986,33 @@ pub enum EmphasisMark {
     UnderDot,
 }
 
+/// The line style of an underline (`w:u@val`, `ST_Underline`). A closed
+/// vocabulary; an unrecognized producer token maps to [`Single`](Self::Single)
+/// and is reported (it still underlines, just not with the exact art style). The
+/// on/off state lives in [`RunProperties::underline`]; this only describes *how*
+/// the line is drawn when on.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UnderlineStyle {
+    /// A single line (`single`) — the default.
+    #[default]
+    Single,
+    /// Two parallel lines (`double`).
+    Double,
+    /// A single thick line (`thick`).
+    Thick,
+    /// A dotted line (`dotted`, `dottedHeavy`).
+    Dotted,
+    /// A dashed line (`dash`, `dashedHeavy`, `dashLong`, `dashLongHeavy`).
+    Dashed,
+    /// A dot-dash line (`dotDash`, `dashDotHeavy`, `dotDotDash`, `dashDotDotHeavy`).
+    DotDash,
+    /// A wavy line (`wave`, `wavyHeavy`, `wavyDouble`).
+    Wavy,
+    /// Underline words only, not the spaces between them (`words`).
+    Words,
+}
+
 /// Typed run properties. An empty value serializes to `{}`.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1007,6 +1038,14 @@ pub struct RunProperties {
     /// Underline.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub underline: Option<bool>,
+    /// Explicit underline color (`w:u@color`), sRGB. `None` (the common case, or
+    /// `auto`) means the underline takes the run's text color.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub underline_color: Option<RgbColor>,
+    /// Underline line style (`w:u@val`, e.g. `double`/`wave`). `None` means the
+    /// default single line; only meaningful when `underline` is on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub underline_style: Option<UnderlineStyle>,
     /// Strike-through.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub strike: Option<bool>,
@@ -1048,6 +1087,10 @@ pub struct RunProperties {
     /// Hidden in web view (`w:webHidden`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub web_hidden: Option<bool>,
+    /// Do not check spelling/grammar for this run (`w:noProof`). Common on code,
+    /// URLs, product names, and generated fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub no_proof: Option<bool>,
     /// Double strike-through (`w:dstrike`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub double_strike: Option<bool>,

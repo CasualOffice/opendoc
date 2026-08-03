@@ -2005,6 +2005,43 @@ mod semantic_tests {
     }
 
     #[test]
+    fn style_level_tab_stops_are_captured_and_survive_the_round_trip() {
+        // A paragraph style declaring its own `w:pPr/w:tabs` (a TOC-style dot-leader
+        // stop plus a plain right stop). The styles parser routes pPr children to
+        // the leaf-only `apply_paragraph_property`, which cannot read the `w:tabs`
+        // CONTAINER, so these stops used to be dropped; they must now be captured on
+        // the style's paragraph props and survive write -> reopen.
+        use casual_doc_model::v1::{TabAlignment, TabLeader};
+        let styles = br#"<w:styles xmlns:w="urn:w">
+            <w:style w:type="paragraph" w:styleId="TOC1"><w:name w:val="toc 1"/>
+                <w:pPr><w:tabs>
+                    <w:tab w:val="right" w:leader="dot" w:pos="9350"/>
+                    <w:tab w:val="left" w:pos="720"/>
+                </w:tabs></w:pPr></w:style>
+        </w:styles>"#;
+        let m1 = reopen(&package_with_styles(MINIMAL_BODY, styles));
+
+        let (_, style) = m1
+            .definitions()
+            .styles
+            .iter()
+            .find(|(_, style)| style.name.as_deref() == Some("toc 1"))
+            .expect("the toc style");
+        let paragraph = style.paragraph.as_ref().expect("style paragraph props");
+        assert_eq!(paragraph.tabs.len(), 2, "both tab stops are captured");
+        assert_eq!(paragraph.tabs[0].position_twips, 9350);
+        assert_eq!(paragraph.tabs[0].alignment, TabAlignment::End);
+        assert_eq!(paragraph.tabs[0].leader, Some(TabLeader::Dot));
+        assert_eq!(paragraph.tabs[1].position_twips, 720);
+        assert_eq!(paragraph.tabs[1].alignment, TabAlignment::Start);
+        assert_eq!(paragraph.tabs[1].leader, None);
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(m1, m2, "style-level tab stops are a fixed point");
+    }
+
+    #[test]
     fn theme_color_and_format_schemes_survive_the_semantic_round_trip() {
         // A full theme: a 12-slot clrScheme (sysClr with lastClr for dk1/lt1,
         // srgbClr for the rest), a fontScheme, and an fmtScheme. The clrScheme is
@@ -2248,6 +2285,64 @@ mod semantic_tests {
     }
 
     #[test]
+    fn multi_level_type_and_lvl_restart_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::MultiLevelType;
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:pPr><w:numPr><w:ilvl w:val="1"/><w:numId w:val="3"/></w:numPr></w:pPr>
+                <w:r><w:t>item</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/></Relationships>"#;
+        let numbering = br#"<w:numbering xmlns:w="urn:w">
+            <w:abstractNum w:abstractNumId="0">
+                <w:multiLevelType w:val="hybridMultilevel"/>
+                <w:lvl w:ilvl="0"><w:start w:val="1"/></w:lvl>
+                <w:lvl w:ilvl="1"><w:start w:val="1"/><w:lvlRestart w:val="0"/></w:lvl></w:abstractNum>
+            <w:num w:numId="3"><w:abstractNumId w:val="0"/></w:num>
+        </w:numbering>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/numbering.xml", numbering),
+        ]);
+        let mut src_package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let m1 = import_package(
+            &mut src_package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+        let (_, abstract_num) = m1.definitions().abstract_numbering.iter().next().unwrap();
+        assert_eq!(
+            abstract_num.multi_level_type,
+            Some(MultiLevelType::HybridMultilevel)
+        );
+        assert_eq!(abstract_num.levels[1].lvl_restart, Some(0));
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+        let m2 = import_package(
+            &mut package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+        assert_eq!(
+            m1, m2,
+            "multiLevelType + lvlRestart survive write -> reopen"
+        );
+    }
+
+    #[test]
     fn expanded_settings_survive_the_semantic_round_trip() {
         // settings.xml carrying the newly modeled settings (evenAndOddHeaders,
         // defaultTabStop, trackChanges, documentProtection, a proofState, a zoom,
@@ -2262,6 +2357,7 @@ mod semantic_tests {
             <w:zoom w:percent="120"/>
             <w:proofState w:spelling="clean" w:grammar="dirty"/>
             <w:trackChanges/>
+            <w:updateFields/>
             <w:documentProtection w:edit="comments" w:enforcement="1"/>
             <w:defaultTabStop w:val="708"/>
             <w:autoHyphenation/>
@@ -2288,6 +2384,7 @@ mod semantic_tests {
         let s = m1.definitions().settings.clone();
         assert!(s.even_and_odd_headers);
         assert!(s.track_changes);
+        assert!(s.update_fields);
         assert_eq!(s.default_tab_stop, Some(708));
         assert_eq!(s.compat.len(), 1);
         // The unmodeled setting is reported, not silently dropped.

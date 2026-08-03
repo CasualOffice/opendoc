@@ -1169,6 +1169,7 @@ fn a_header_float_uses_the_section_recorded_on_its_page() {
             end_twips: 1_000,
             header_twips: None,
             footer_twips: None,
+            gutter_twips: None,
         },
         columns: SectionColumns {
             count: 1,

@@ -7522,6 +7522,7 @@ impl WasmDocument {
             abs_id,
             AbstractNumbering {
                 levels: (0..=8).map(|level| list_level(numbered, level)).collect(),
+                multi_level_type: None,
             },
         );
         defs.numbering.insert(
@@ -7572,6 +7573,7 @@ impl WasmDocument {
                 levels: (0..=8)
                     .map(|level| checklist_level(checked, level))
                     .collect(),
+                multi_level_type: None,
             },
         );
         defs.numbering.insert(
@@ -11271,7 +11273,9 @@ fn run_style_from_effective_runs(document: &Document, properties: &[RunPropertie
             .flatten()
             .map_or_else(String::new, |color| match color {
                 Color::Rgb(c) => format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b),
-                Color::Theme(_) => String::new(),
+                // Automatic and theme colors surface as no explicit swatch (the
+                // toolbar shows the default/automatic state).
+                Color::Auto | Color::Theme(_) => String::new(),
             }),
         color_mixed,
         font: font.unwrap_or_default(),
@@ -13098,6 +13102,7 @@ fn list_level(numbered: bool, level: u8) -> NumberingLevel {
         }),
         run_properties: None,
         style_ref: None,
+        lvl_restart: None,
     }
 }
 

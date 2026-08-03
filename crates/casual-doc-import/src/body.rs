@@ -650,6 +650,7 @@ struct SectionAccumulator {
     margin_end: Option<i32>,
     margin_header: Option<i32>,
     margin_footer: Option<i32>,
+    margin_gutter: Option<i32>,
     columns: Option<u16>,
     column_space: Option<i32>,
     column_separator: Option<bool>,
@@ -2619,6 +2620,7 @@ impl BodyParser<'_> {
                     // `PageConfig::content_area`); absent means Word's 720-twip default.
                     section.margin_header = attr_i32(element, b"header");
                     section.margin_footer = attr_i32(element, b"footer");
+                    section.margin_gutter = attr_i32(element, b"gutter");
                 }
             }
             b"cols" if self.section.is_some() => {
@@ -4763,6 +4765,7 @@ impl BodyParser<'_> {
             end_twips: accumulator.margin_end.unwrap_or(1_440).clamp(0, 31_680),
             header_twips: accumulator.margin_header.map(|v| v.clamp(0, 31_680)),
             footer_twips: accumulator.margin_footer.map(|v| v.clamp(0, 31_680)),
+            gutter_twips: accumulator.margin_gutter.map(|v| v.clamp(0, 31_680)),
         };
         let columns = SectionColumns {
             count: accumulator.columns.unwrap_or(1).clamp(1, 64),

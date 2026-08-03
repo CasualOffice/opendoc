@@ -4482,6 +4482,9 @@ fn styled_owned_run(
         decoration: Decoration {
             underline: effective.underline.unwrap_or(false),
             strikethrough: effective.strike.unwrap_or(false),
+            double_strike: effective.double_strike.unwrap_or(false),
+            underline_color: effective.underline_color.map(|c| [c.r, c.g, c.b, 255]),
+            underline_style: effective.underline_style.unwrap_or_default(),
         },
         highlight: effective.highlight.and_then(highlight_rgba),
         shading: shading_rgba(&effective.shading),
@@ -4522,6 +4525,9 @@ fn build_styled_run<'a>(
         decoration: Decoration {
             underline: properties.underline.unwrap_or(false),
             strikethrough: properties.strike.unwrap_or(false),
+            double_strike: properties.double_strike.unwrap_or(false),
+            underline_color: properties.underline_color.map(|c| [c.r, c.g, c.b, 255]),
+            underline_style: properties.underline_style.unwrap_or_default(),
         },
         highlight: properties.highlight.and_then(highlight_rgba),
         shading: shading_rgba(&properties.shading),
@@ -4600,6 +4606,9 @@ fn symbol_glyph_run(symbol: &Symbol, ctx: &mut FlowCtx) -> StyledRun<'static> {
         decoration: Decoration {
             underline: effective.underline.unwrap_or(false),
             strikethrough: effective.strike.unwrap_or(false),
+            double_strike: effective.double_strike.unwrap_or(false),
+            underline_color: effective.underline_color.map(|c| [c.r, c.g, c.b, 255]),
+            underline_style: effective.underline_style.unwrap_or_default(),
         },
         highlight: effective.highlight.and_then(highlight_rgba),
         shading: shading_rgba(&effective.shading),
@@ -4823,6 +4832,9 @@ fn build_script_run<'a>(
         decoration: Decoration {
             underline: properties.underline.unwrap_or(false),
             strikethrough: properties.strike.unwrap_or(false),
+            double_strike: properties.double_strike.unwrap_or(false),
+            underline_color: properties.underline_color.map(|c| [c.r, c.g, c.b, 255]),
+            underline_style: properties.underline_style.unwrap_or_default(),
         },
         highlight: properties.highlight.and_then(highlight_rgba),
         shading: shading_rgba(&properties.shading),
@@ -4850,6 +4862,9 @@ fn push_small_caps_runs<'a>(
     let decoration = Decoration {
         underline: properties.underline.unwrap_or(false),
         strikethrough: properties.strike.unwrap_or(false),
+        double_strike: properties.double_strike.unwrap_or(false),
+        underline_color: properties.underline_color.map(|c| [c.r, c.g, c.b, 255]),
+        underline_style: properties.underline_style.unwrap_or_default(),
     };
     let highlight = properties.highlight.and_then(highlight_rgba);
     let shading = shading_rgba(&properties.shading);
@@ -4911,6 +4926,9 @@ fn small_caps_spans(text: &str) -> Vec<(&str, bool)> {
 fn run_color(color: Option<Color>, palette: Option<&ResolvedPalette>) -> [u8; 4] {
     match color {
         Some(Color::Rgb(rgb)) => [rgb.r, rgb.g, rgb.b, 255],
+        // Automatic color resolves to black on the (light) page background — the
+        // same as an unset color, but it explicitly overrides an inherited color.
+        Some(Color::Auto) => [0, 0, 0, 255],
         Some(Color::Theme(theme)) => match palette {
             // The model carries no tint/shade on a theme color yet, so the factors
             // are `None` today; routing every theme color through `apply_tint_shade`
@@ -6731,6 +6749,53 @@ mod tests {
             rect_before_glyphs < first_glyphs,
             "the shading rect paints behind (before) the glyphs"
         );
+    }
+
+    #[test]
+    fn double_strike_rides_through_shaping_into_the_glyph_run_decoration() {
+        // `w:dstrike` is not a parley decoration, so it must survive the shaping
+        // boundary via the run brush and reappear on the shaped run's decoration.
+        let props = RunProperties {
+            double_strike: Some(true),
+            ..RunProperties::default()
+        };
+        let doc = document(vec![paragraph(10, vec![run_node(11, "struck", props)])]);
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&doc, &shaper, Twip::from_points(400));
+        let BlockFragment::Paragraph { lines, .. } = &galley[0] else {
+            panic!();
+        };
+        let decoration = lines.lines[0].runs[0].decoration;
+        assert!(decoration.double_strike, "double strike survives shaping");
+        assert!(
+            !decoration.strikethrough,
+            "double strike is independent of the single strike"
+        );
+    }
+
+    #[test]
+    fn a_colored_underline_carries_its_color_through_shaping() {
+        use casual_doc_model::v1::RgbColor;
+        // `w:u@color` is not a parley decoration attribute, so the color rides the
+        // run brush across shaping and reappears on the shaped run's decoration.
+        let props = RunProperties {
+            underline: Some(true),
+            underline_color: Some(RgbColor {
+                r: 0xFF,
+                g: 0x00,
+                b: 0x00,
+            }),
+            ..RunProperties::default()
+        };
+        let doc = document(vec![paragraph(10, vec![run_node(11, "link", props)])]);
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&doc, &shaper, Twip::from_points(400));
+        let BlockFragment::Paragraph { lines, .. } = &galley[0] else {
+            panic!();
+        };
+        let decoration = lines.lines[0].runs[0].decoration;
+        assert!(decoration.underline);
+        assert_eq!(decoration.underline_color, Some([0xFF, 0x00, 0x00, 255]));
     }
 
     #[test]
@@ -10962,7 +11027,9 @@ mod tests {
                     paragraph_properties: None,
                     run_properties: level_rpr,
                     style_ref: None,
+                    lvl_restart: None,
                 }],
+                multi_level_type: None,
             },
         );
         definitions.numbering.insert(

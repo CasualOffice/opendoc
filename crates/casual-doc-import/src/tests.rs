@@ -223,6 +223,59 @@ fn paragraphs_runs_and_run_properties_are_mapped() {
 }
 
 #[test]
+fn underline_style_and_color_are_imported_from_w_u() {
+    use casual_doc_model::v1::{RgbColor, UnderlineStyle};
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:r><w:rPr><w:u w:val="double" w:color="FF0000"/></w:rPr>
+                <w:t>link</w:t></w:r></w:p>
+            <w:p><w:r><w:rPr><w:u w:val="wavyHeavy"/></w:rPr><w:t>x</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+    let import = import(xml);
+    let InlineNode::Run(run) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected run");
+    };
+    assert_eq!(run.properties.underline, Some(true));
+    assert_eq!(run.properties.underline_style, Some(UnderlineStyle::Double));
+    assert_eq!(
+        run.properties.underline_color,
+        Some(RgbColor {
+            r: 0xFF,
+            g: 0x00,
+            b: 0x00
+        }),
+        "w:u@color imports as the underline color"
+    );
+    // A heavy variant folds into its base line style.
+    let InlineNode::Run(wavy) = &paragraph(&import, 1).inlines[0] else {
+        panic!("expected run");
+    };
+    assert_eq!(wavy.properties.underline_style, Some(UnderlineStyle::Wavy));
+}
+
+#[test]
+fn automatic_color_and_no_proof_are_typed_not_dropped() {
+    use casual_doc_model::v1::Color;
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:r><w:rPr><w:color w:val="auto"/><w:noProof/></w:rPr>
+                <w:t>x</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+    let import = import(xml);
+    let InlineNode::Run(run) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected run");
+    };
+    assert_eq!(
+        run.properties.color,
+        Some(Color::Auto),
+        "w:color=auto is typed as Color::Auto (overrides an inherited color) not dropped"
+    );
+    assert_eq!(run.properties.no_proof, Some(true));
+    assert!(
+        !features(&import).contains(&"color") && !features(&import).contains(&"noProof"),
+        "both are mapped, not reported unsupported"
+    );
+}
+
+#[test]
 fn adjacent_equal_property_runs_are_merged() {
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
             <w:p><w:r><w:t>a</w:t></w:r><w:r><w:t>b</w:t></w:r></w:p>
@@ -2049,7 +2102,7 @@ fn body_level_section_geometry_is_mapped() {
         <w:p><w:r><w:t>x</w:t></w:r></w:p>
         <w:sectPr>
             <w:pgSz w:w="12240" w:h="15840"/>
-            <w:pgMar w:top="1440" w:bottom="1440" w:left="1800" w:right="1800" w:header="708" w:footer="709"/>
+            <w:pgMar w:top="1440" w:bottom="1440" w:left="1800" w:right="1800" w:header="708" w:footer="709" w:gutter="360"/>
             <w:cols w:num="2"/>
         </w:sectPr>
     </w:body></w:document>"#;
@@ -2064,6 +2117,7 @@ fn body_level_section_geometry_is_mapped() {
     // w:header/w:footer band distances are captured (nested inside the margins).
     assert_eq!(section.page_margins.header_twips, Some(708));
     assert_eq!(section.page_margins.footer_twips, Some(709));
+    assert_eq!(section.page_margins.gutter_twips, Some(360));
     assert_eq!(section.columns.count, 2);
     // sectPr is now mapped, so it is no longer reported.
     assert!(!features(&import).contains(&"sectPr"));

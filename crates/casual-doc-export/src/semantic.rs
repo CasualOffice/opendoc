@@ -1910,6 +1910,10 @@ fn settings_xml(settings: &DocumentSettings) -> Result<Vec<u8>, ExportError> {
         w.write_event(Event::Empty(start("w:evenAndOddHeaders")))
             .map_err(pkg)?;
     }
+    if settings.update_fields {
+        w.write_event(Event::Empty(start("w:updateFields")))
+            .map_err(pkg)?;
+    }
     if let Some(style) = &settings.default_table_style {
         let mut el = start("w:defaultTableStyle");
         el.push_attribute(("w:val", style.as_str()));
@@ -2001,6 +2005,19 @@ fn numbering_xml(
         let mut el = start("w:abstractNum");
         el.push_attribute(("w:abstractNumId", abstract_id_token(*id).as_str()));
         w.write_event(Event::Start(el)).map_err(pkg)?;
+        if let Some(kind) = abstract_num.multi_level_type {
+            use casual_doc_model::v1::MultiLevelType;
+            let mut mlt = start("w:multiLevelType");
+            mlt.push_attribute((
+                "w:val",
+                match kind {
+                    MultiLevelType::SingleLevel => "singleLevel",
+                    MultiLevelType::Multilevel => "multilevel",
+                    MultiLevelType::HybridMultilevel => "hybridMultilevel",
+                },
+            ));
+            w.write_event(Event::Empty(mlt)).map_err(pkg)?;
+        }
         for level in &abstract_num.levels {
             write_level(&mut w, level)?;
         }
@@ -2050,6 +2067,12 @@ fn write_level(w: &mut Writer<Cursor<Vec<u8>>>, level: &NumberingLevel) -> Resul
     if let Some(format) = &level.num_fmt {
         let mut el = start("w:numFmt");
         el.push_attribute(("w:val", number_format_token(format)));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    // `w:lvlRestart` follows numFmt in CT_Lvl schema order, before isLgl.
+    if let Some(restart) = level.lvl_restart {
+        let mut el = start("w:lvlRestart");
+        el.push_attribute(("w:val", restart.to_string().as_str()));
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
     if level.is_lgl {
@@ -2258,6 +2281,9 @@ fn write_section_properties(
     }
     if let Some(footer) = section.page_margins.footer_twips {
         pg_mar.push_attribute(("w:footer", footer.to_string().as_str()));
+    }
+    if let Some(gutter) = section.page_margins.gutter_twips {
+        pg_mar.push_attribute(("w:gutter", gutter.to_string().as_str()));
     }
     w.write_event(Event::Empty(pg_mar)).map_err(pkg)?;
     if !section.paper_source.is_empty() {
@@ -5471,6 +5497,7 @@ fn write_run_properties(
         (properties.small_caps, "w:smallCaps"),
         (properties.hidden, "w:vanish"),
         (properties.web_hidden, "w:webHidden"),
+        (properties.no_proof, "w:noProof"),
         (properties.outline, "w:outline"),
         (properties.shadow, "w:shadow"),
         (properties.emboss, "w:emboss"),
@@ -5495,16 +5522,48 @@ fn write_run_properties(
         let mut el = start("w:u");
         if !on {
             el.push_attribute(("w:val", "none"));
+        } else if let Some(style) = properties.underline_style {
+            // `w:u@val` line style; `single` is the default and stays implicit.
+            use casual_doc_model::v1::UnderlineStyle;
+            let token = match style {
+                UnderlineStyle::Single => "single",
+                UnderlineStyle::Double => "double",
+                UnderlineStyle::Thick => "thick",
+                UnderlineStyle::Dotted => "dotted",
+                UnderlineStyle::Dashed => "dash",
+                UnderlineStyle::DotDash => "dotDash",
+                UnderlineStyle::Wavy => "wave",
+                UnderlineStyle::Words => "words",
+            };
+            if !matches!(style, UnderlineStyle::Single) {
+                el.push_attribute(("w:val", token));
+            }
+        }
+        // `w:u@color` round-trips the explicit underline color when present.
+        let color;
+        if let Some(rgb) = &properties.underline_color {
+            color = format!("{:02X}{:02X}{:02X}", rgb.r, rgb.g, rgb.b);
+            el.push_attribute(("w:color", color.as_str()));
         }
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
-    if let Some(Color::Rgb(rgb)) = &properties.color {
-        let mut el = start("w:color");
-        el.push_attribute((
-            "w:val",
-            format!("{:02X}{:02X}{:02X}", rgb.r, rgb.g, rgb.b).as_str(),
-        ));
-        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    match &properties.color {
+        Some(Color::Rgb(rgb)) => {
+            let mut el = start("w:color");
+            el.push_attribute((
+                "w:val",
+                format!("{:02X}{:02X}{:02X}", rgb.r, rgb.g, rgb.b).as_str(),
+            ));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+        Some(Color::Auto) => {
+            let mut el = start("w:color");
+            el.push_attribute(("w:val", "auto"));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+        // Color::Theme is not yet emitted by import (a later Layer-1 item); it
+        // round-trips through the opaque retention path until then.
+        Some(Color::Theme(_)) | None => {}
     }
     if let Some(size) = properties.size_half_points {
         let mut el = start("w:sz");

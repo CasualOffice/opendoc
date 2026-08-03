@@ -6,8 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, DefinitionMap, LevelJustification, LevelSuffix,
-    NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel, NumberingOverride,
-    NumberingRef, ParagraphProperties, RunProperties,
+    MultiLevelType, NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel,
+    NumberingOverride, NumberingRef, ParagraphProperties, RunProperties,
 };
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
@@ -57,6 +57,7 @@ struct RawLevel {
     lvl_jc: Option<LevelJustification>,
     suff: Option<LevelSuffix>,
     is_lgl: bool,
+    lvl_restart: Option<u8>,
     paragraph: ParagraphProperties,
     has_paragraph: bool,
     run: RunProperties,
@@ -67,6 +68,7 @@ struct RawLevel {
 struct RawAbstract {
     id: String,
     levels: Vec<RawLevel>,
+    multi_level_type: Option<MultiLevelType>,
 }
 
 struct RawNum {
@@ -111,11 +113,18 @@ pub(crate) fn parse(
                     paragraph_properties: level.has_paragraph.then_some(level.paragraph),
                     run_properties: level.has_run.then_some(level.run),
                     style_ref: None,
+                    lvl_restart: level.lvl_restart,
                 });
             }
         }
         abstract_by_key.insert(raw.id.clone(), (id, defined));
-        abstract_numbering.insert(id, AbstractNumbering { levels });
+        abstract_numbering.insert(
+            id,
+            AbstractNumbering {
+                levels,
+                multi_level_type: raw.multi_level_type,
+            },
+        );
     }
 
     // Assign ids to instances; resolve their abstract reference.
@@ -281,7 +290,7 @@ fn on_start(
         b"abstractNum" => {
             state.current_abstract = Some(RawAbstract {
                 id: attribute_value(element, b"abstractNumId").unwrap_or_default(),
-                levels: Vec::new(),
+                ..RawAbstract::default()
             });
         }
         b"lvl" if state.current_abstract.is_some() => {
@@ -322,6 +331,27 @@ fn on_start(
         b"isLgl" if state.current_level.is_some() => {
             let on = on_off(element);
             set_level(state, |level| level.is_lgl = on);
+        }
+        // `w:lvlRestart@val`: the higher level whose advance restarts this one.
+        b"lvlRestart" if state.current_level.is_some() => {
+            match attribute_value(element, b"val").and_then(|v| v.parse::<u8>().ok()) {
+                Some(restart) => set_level(state, |level| level.lvl_restart = Some(restart)),
+                None => reporter.report(local),
+            }
+        }
+        // `w:multiLevelType@val` on the abstract definition.
+        b"multiLevelType" if state.current_abstract.is_some() => {
+            match attribute_value(element, b"val")
+                .as_deref()
+                .and_then(multi_level_type_from)
+            {
+                Some(kind) => {
+                    if let Some(abstract_num) = state.current_abstract.as_mut() {
+                        abstract_num.multi_level_type = Some(kind);
+                    }
+                }
+                None => reporter.report(local),
+            }
         }
         b"pPr" if state.current_level.is_some() => {
             state.ppr_depth += 1;
@@ -422,6 +452,17 @@ fn on_off(element: &BytesStart<'_>) -> bool {
 
 /// Maps `w:numFmt/@w:val` (`ST_NumberFormat`); an unknown-but-present token is
 /// retained via `Other`, so nothing is lost. Absent/empty is unmapped.
+/// Maps `w:multiLevelType@val` to the modeled list shape; an unknown token is
+/// reported by the caller (returns `None`).
+fn multi_level_type_from(value: &str) -> Option<MultiLevelType> {
+    Some(match value {
+        "singleLevel" => MultiLevelType::SingleLevel,
+        "multilevel" => MultiLevelType::Multilevel,
+        "hybridMultilevel" => MultiLevelType::HybridMultilevel,
+        _ => return None,
+    })
+}
+
 fn number_format(element: &BytesStart<'_>) -> Option<NumberFormat> {
     let value = attribute_value(element, b"val").filter(|value| !value.is_empty())?;
     Some(match value.as_str() {
