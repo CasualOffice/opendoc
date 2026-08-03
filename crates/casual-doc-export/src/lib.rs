@@ -2005,6 +2005,43 @@ mod semantic_tests {
     }
 
     #[test]
+    fn style_level_tab_stops_are_captured_and_survive_the_round_trip() {
+        // A paragraph style declaring its own `w:pPr/w:tabs` (a TOC-style dot-leader
+        // stop plus a plain right stop). The styles parser routes pPr children to
+        // the leaf-only `apply_paragraph_property`, which cannot read the `w:tabs`
+        // CONTAINER, so these stops used to be dropped; they must now be captured on
+        // the style's paragraph props and survive write -> reopen.
+        use casual_doc_model::v1::{TabAlignment, TabLeader};
+        let styles = br#"<w:styles xmlns:w="urn:w">
+            <w:style w:type="paragraph" w:styleId="TOC1"><w:name w:val="toc 1"/>
+                <w:pPr><w:tabs>
+                    <w:tab w:val="right" w:leader="dot" w:pos="9350"/>
+                    <w:tab w:val="left" w:pos="720"/>
+                </w:tabs></w:pPr></w:style>
+        </w:styles>"#;
+        let m1 = reopen(&package_with_styles(MINIMAL_BODY, styles));
+
+        let (_, style) = m1
+            .definitions()
+            .styles
+            .iter()
+            .find(|(_, style)| style.name.as_deref() == Some("toc 1"))
+            .expect("the toc style");
+        let paragraph = style.paragraph.as_ref().expect("style paragraph props");
+        assert_eq!(paragraph.tabs.len(), 2, "both tab stops are captured");
+        assert_eq!(paragraph.tabs[0].position_twips, 9350);
+        assert_eq!(paragraph.tabs[0].alignment, TabAlignment::End);
+        assert_eq!(paragraph.tabs[0].leader, Some(TabLeader::Dot));
+        assert_eq!(paragraph.tabs[1].position_twips, 720);
+        assert_eq!(paragraph.tabs[1].alignment, TabAlignment::Start);
+        assert_eq!(paragraph.tabs[1].leader, None);
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(m1, m2, "style-level tab stops are a fixed point");
+    }
+
+    #[test]
     fn theme_color_and_format_schemes_survive_the_semantic_round_trip() {
         // A full theme: a 12-slot clrScheme (sysClr with lastClr for dk1/lt1,
         // srgbClr for the rest), a fontScheme, and an fmtScheme. The clrScheme is
