@@ -1366,6 +1366,64 @@ mod semantic_tests {
         );
     }
 
+    #[test]
+    fn typed_field_kinds_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, FieldKind, InlineNode};
+
+        // One paragraph carrying five `w:fldSimple` fields whose instructions
+        // exercise distinct typed kinds. The raw instruction stays authoritative
+        // for export, so each must survive write -> reopen verbatim, and its
+        // typed `kind` projection must match on both sides of the round trip.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body><w:p>
+            <w:fldSimple w:instr=" PAGE \* MERGEFORMAT "><w:r><w:t>1</w:t></w:r></w:fldSimple>
+            <w:fldSimple w:instr=" DATE \@ &quot;M/d/yyyy&quot; "><w:r><w:t>1/2/2020</w:t></w:r></w:fldSimple>
+            <w:fldSimple w:instr=" REF _Ref1 \h "><w:r><w:t>x</w:t></w:r></w:fldSimple>
+            <w:fldSimple w:instr=" HYPERLINK &quot;http://example.com/a?b=1&amp;c=2&quot; "><w:r><w:t>link</w:t></w:r></w:fldSimple>
+            <w:fldSimple w:instr=" MERGEFIELD Name "><w:r><w:t>n</w:t></w:r></w:fldSimple>
+        </w:p></w:body></w:document>"#;
+
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(m1, m2, "the typed fields survive write -> reopen");
+
+        let BlockNode::Paragraph(paragraph) = &m2.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let kinds: Vec<&FieldKind> = paragraph
+            .inlines
+            .iter()
+            .filter_map(|inline| match inline {
+                InlineNode::Field(field) => Some(&field.kind),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(kinds.len(), 5, "one typed kind per field");
+        assert_eq!(kinds[0], &FieldKind::Page);
+        assert_eq!(
+            kinds[1],
+            &FieldKind::Date {
+                format: Some("M/d/yyyy".to_owned()),
+            }
+        );
+        assert_eq!(
+            kinds[2],
+            &FieldKind::Ref {
+                bookmark: "_Ref1".to_owned(),
+            }
+        );
+        assert_eq!(
+            kinds[3],
+            &FieldKind::Hyperlink {
+                target: Some("http://example.com/a?b=1&c=2".to_owned()),
+            }
+        );
+        assert_eq!(
+            kinds[4],
+            &FieldKind::Other {
+                keyword: "MERGEFIELD".to_owned(),
+            }
+        );
+    }
+
     /// Imports a raw main-document body, writes it, reopens the package, and
     /// returns both models plus the legacy form field found on the first
     /// paragraph's first inline. Asserts the write -> reopen fixed point and that

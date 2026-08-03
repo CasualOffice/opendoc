@@ -1226,6 +1226,15 @@ pub struct Field {
     pub id: NodeId,
     /// The field instruction (non-empty, at most `MAX_FIELD_INSTRUCTION_BYTES`).
     pub instruction: String,
+    /// The typed field-kind projection derived from `instruction`.
+    ///
+    /// This is an additive, best-effort classification of the leading field
+    /// keyword and its common switch/argument (see [`FieldKind::parse`]); the
+    /// raw `instruction` string remains authoritative for export and exact
+    /// round-trip. Defaults to [`FieldKind::Other`] for legacy payloads that
+    /// predate this field.
+    #[serde(default)]
+    pub kind: FieldKind,
     /// The cached-result inline content (possibly empty; leaf inlines only).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inlines: Vec<InlineNode>,
@@ -1233,6 +1242,177 @@ pub struct Field {
     /// form field. `None` for an ordinary field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub form: Option<FormFieldData>,
+}
+
+/// A typed projection of a Word field's leading instruction keyword and its
+/// common switch/argument.
+///
+/// This is an additive, best-effort classification: [`Field::instruction`]
+/// stays authoritative for export, and any unrecognized instruction projects to
+/// [`FieldKind::Other`] carrying the (upper-cased) leading keyword.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum FieldKind {
+    /// `PAGE` — the current page number.
+    Page,
+    /// `NUMPAGES` — the total number of pages.
+    NumPages,
+    /// `DATE` — the current date, with the optional `\@` picture switch.
+    Date {
+        /// The date format picture (`\@ "…"`), if present.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        format: Option<String>,
+    },
+    /// `TIME` — the current time, with the optional `\@` picture switch.
+    Time {
+        /// The time format picture (`\@ "…"`), if present.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        format: Option<String>,
+    },
+    /// `REF` — a cross-reference to a bookmark.
+    Ref {
+        /// The referenced bookmark name.
+        bookmark: String,
+    },
+    /// `PAGEREF` — the page number of a bookmark.
+    PageRef {
+        /// The referenced bookmark name.
+        bookmark: String,
+    },
+    /// `TOC` — a table of contents.
+    Toc,
+    /// `SEQ` — a sequence counter.
+    Seq {
+        /// The sequence name.
+        name: String,
+    },
+    /// `STYLEREF` — text from the nearest paragraph of a named style.
+    StyleRef {
+        /// The referenced style name or id.
+        style: String,
+    },
+    /// `HYPERLINK` — a hyperlink to a target URL or internal anchor.
+    Hyperlink {
+        /// The hyperlink target (URL, or the `\l` anchor), if present.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target: Option<String>,
+    },
+    /// Any other field: the upper-cased leading keyword is retained for
+    /// classification (the full instruction stays on [`Field::instruction`]).
+    Other {
+        /// The upper-cased leading keyword (may be empty for a blank
+        /// instruction).
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        keyword: String,
+    },
+}
+
+impl Default for FieldKind {
+    fn default() -> Self {
+        FieldKind::Other {
+            keyword: String::new(),
+        }
+    }
+}
+
+impl FieldKind {
+    /// Classifies a field `instruction` by its leading keyword (case-insensitive)
+    /// and its common switch/argument.
+    ///
+    /// This never fails: an unrecognized or malformed instruction yields
+    /// [`FieldKind::Other`]. The result is a projection only — the raw
+    /// instruction remains authoritative for export.
+    pub fn parse(instruction: &str) -> FieldKind {
+        let tokens = tokenize_field_instruction(instruction);
+        let Some(keyword) = tokens.first() else {
+            return FieldKind::Other {
+                keyword: String::new(),
+            };
+        };
+        let keyword = keyword.to_ascii_uppercase();
+        let arguments = &tokens[1..];
+        // The first token that is not a `\`-switch: the primary identifier a
+        // producer always writes immediately after the keyword.
+        let first_argument = || {
+            arguments
+                .iter()
+                .find(|token| !token.starts_with('\\'))
+                .cloned()
+        };
+        // The token immediately following a named `\`-switch (e.g. `\@`).
+        let switch_argument = |name: &str| {
+            arguments
+                .iter()
+                .position(|token| token.eq_ignore_ascii_case(name))
+                .and_then(|index| arguments.get(index + 1))
+                .cloned()
+        };
+        match keyword.as_str() {
+            "PAGE" => FieldKind::Page,
+            "NUMPAGES" => FieldKind::NumPages,
+            "DATE" => FieldKind::Date {
+                format: switch_argument("\\@"),
+            },
+            "TIME" => FieldKind::Time {
+                format: switch_argument("\\@"),
+            },
+            "TOC" => FieldKind::Toc,
+            "REF" => match first_argument() {
+                Some(bookmark) => FieldKind::Ref { bookmark },
+                None => FieldKind::Other { keyword },
+            },
+            "PAGEREF" => match first_argument() {
+                Some(bookmark) => FieldKind::PageRef { bookmark },
+                None => FieldKind::Other { keyword },
+            },
+            "SEQ" => match first_argument() {
+                Some(name) => FieldKind::Seq { name },
+                None => FieldKind::Other { keyword },
+            },
+            "STYLEREF" => match first_argument() {
+                Some(style) => FieldKind::StyleRef { style },
+                None => FieldKind::Other { keyword },
+            },
+            "HYPERLINK" => FieldKind::Hyperlink {
+                target: first_argument(),
+            },
+            _ => FieldKind::Other { keyword },
+        }
+    }
+}
+
+/// Splits a field instruction into whitespace-separated tokens, treating a
+/// double-quoted span as a single token (quotes stripped) and a `\`-switch as
+/// its own token. Best-effort: unterminated quotes run to the end.
+fn tokenize_field_instruction(instruction: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut characters = instruction.chars().peekable();
+    while let Some(&character) = characters.peek() {
+        if character.is_whitespace() {
+            characters.next();
+        } else if character == '"' {
+            characters.next();
+            let mut token = String::new();
+            for character in characters.by_ref() {
+                if character == '"' {
+                    break;
+                }
+                token.push(character);
+            }
+            tokens.push(token);
+        } else {
+            let mut token = String::new();
+            while let Some(&character) = characters.peek() {
+                if character.is_whitespace() || character == '"' {
+                    break;
+                }
+                token.push(character);
+                characters.next();
+            }
+            tokens.push(token);
+        }
+    }
+    tokens
 }
 
 /// Maximum length, in UTF-8 bytes, of a form-field string (name, default text,

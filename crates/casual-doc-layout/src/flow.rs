@@ -8634,6 +8634,7 @@ mod tests {
         let field = InlineNode::Field(Field {
             id: node(705),
             instruction: "DOCPROPERTY Title".to_owned(),
+            kind: casual_doc_model::v1::FieldKind::parse("DOCPROPERTY Title"),
             inlines: vec![run_node(
                 706,
                 "cached-field-result",

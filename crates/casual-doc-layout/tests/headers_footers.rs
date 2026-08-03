@@ -52,6 +52,7 @@ fn field(id: u64, instruction: &str, cached: &str) -> InlineNode {
     InlineNode::Field(Field {
         id: node(id),
         instruction: instruction.to_owned(),
+        kind: casual_doc_model::v1::FieldKind::parse(instruction),
         inlines: vec![run(id + 1, cached)],
         form: None,
     })
