@@ -38,12 +38,17 @@ The work lands as reviewable commits:
   points and paired ranges into definitions plus position-preserving markers.
   Missing/oversized targets, empty links, invalid names, and unpaired markers
   degrade explicitly without producing an invalid normalized document.
-- Named/automatic style resolution, lists, tables, notes, media, metadata, and
-  the remaining structures in sections 4 and 6 remain in progress. Partial ODT
-  export is tracked separately under doc 96. Generic WASM open/export methods
-  and capability-driven browser Open/Save controls are implemented, while the
-  native SDK and production ODT gates remain incomplete; this is still not a
-  general support claim.
+- Checkpoint 5 resolves bounded automatic paragraph/text styles from
+  `content.xml` for paragraph alignment and direct bold, italic, underline,
+  strike, RGB color, and half-point size. Nested spans cascade deterministically,
+  explicit-off values override their parents, and unsupported style attributes
+  remain findings. The matching doc 96 writer now forms a semantic fixed point
+  for this subset.
+- Named styles from `styles.xml`, inheritance, lists, tables, notes, media,
+  metadata, and the remaining structures in sections 4 and 6 remain in progress.
+  Generic WASM open/export methods and capability-driven browser Open/Save
+  controls are implemented, while the native SDK and production ODT gates remain
+  incomplete; this is still not a general support claim.
 
 ## 2. Normative package profile
 

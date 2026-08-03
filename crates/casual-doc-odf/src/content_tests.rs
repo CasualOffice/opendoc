@@ -1,4 +1,6 @@
-use casual_doc_model::v1::{BlockNode, BreakKind, HyperlinkTarget, InlineNode};
+use casual_doc_model::v1::{
+    Alignment, BlockNode, BreakKind, Color, HyperlinkTarget, InlineNode, RgbColor,
+};
 use casual_doc_package::CancellationToken;
 
 use crate::{
@@ -14,6 +16,22 @@ fn content(version: &str, body: &str) -> Vec<u8> {
  xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
  xmlns:xlink="http://www.w3.org/1999/xlink"
  office:version="{version}">
+ <office:body><office:text>{body}</office:text></office:body>
+</office:document-content>"#
+    )
+    .into_bytes()
+}
+
+fn styled_content(styles: &str, body: &str) -> Vec<u8> {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<office:document-content
+ xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+ xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+ xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"
+ xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"
+ office:version="1.4">
+ <office:automatic-styles>{styles}</office:automatic-styles>
  <office:body><office:text>{body}</office:text></office:body>
 </office:document-content>"#
     )
@@ -55,10 +73,86 @@ fn core_text_constructs_map_to_valid_normalized_nodes() {
     assert_eq!(paragraph(&import, 1).inlines.len(), 1);
 
     assert!(import.report.entries.iter().any(|entry| {
-        entry.feature == "odf.attribute.text.style-name"
+        entry.feature == "odf.style.unresolved"
             && entry.occurrences == 1
             && entry.model_outcome == ModelOutcome::Degraded
     }));
+}
+
+#[test]
+fn automatic_styles_map_and_nested_spans_cascade_deterministically() {
+    let xml = styled_content(
+        r##"<style:style style:name="P" style:family="paragraph"><style:paragraph-properties fo:text-align="center"/></style:style>
+<style:style style:name="T" style:family="text"><style:text-properties fo:font-weight="bold" fo:font-style="italic" style:text-underline-style="solid" style:text-line-through-style="solid" fo:color="#1A2b3C" fo:font-size="10.5pt"/></style:style>
+<style:style style:name="Off" style:family="text"><style:text-properties fo:font-weight="normal" style:text-underline-style="none"/></style:style>"##,
+        r#"<text:p text:style-name="P">plain <text:span text:style-name="T">styled <text:span text:style-name="Off">off</text:span> after</text:span> end</text:p>"#,
+    );
+    let first = import_content_xml(&xml, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
+    let second = import_content_xml(&xml, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
+    assert_eq!(first, second);
+    assert!(first.report.entries.is_empty());
+
+    let paragraph = paragraph(&first, 0);
+    assert_eq!(paragraph.properties.alignment, Some(Alignment::Center));
+    assert_eq!(paragraph.inlines.len(), 5);
+    let InlineNode::Run(styled) = &paragraph.inlines[1] else {
+        panic!("styled run")
+    };
+    assert_eq!(styled.properties.bold, Some(true));
+    assert_eq!(styled.properties.italic, Some(true));
+    assert_eq!(styled.properties.underline, Some(true));
+    assert_eq!(styled.properties.strike, Some(true));
+    assert_eq!(
+        styled.properties.color,
+        Some(Color::Rgb(RgbColor {
+            r: 0x1a,
+            g: 0x2b,
+            b: 0x3c,
+        }))
+    );
+    assert_eq!(styled.properties.size_half_points, Some(21));
+
+    let InlineNode::Run(off) = &paragraph.inlines[2] else {
+        panic!("explicit-off run")
+    };
+    assert_eq!(off.properties.bold, Some(false));
+    assert_eq!(off.properties.underline, Some(false));
+    assert_eq!(off.properties.italic, Some(true));
+    assert_eq!(off.properties.strike, Some(true));
+    assert_eq!(off.properties.color, styled.properties.color);
+    assert_eq!(off.properties.size_half_points, Some(21));
+    let InlineNode::Run(after) = &paragraph.inlines[3] else {
+        panic!("outer style after nested span")
+    };
+    assert_eq!(after.properties, styled.properties);
+}
+
+#[test]
+fn unsupported_automatic_style_values_are_reported_without_partial_mapping() {
+    let xml = styled_content(
+        r##"<style:style style:name="T" style:family="text"><style:text-properties fo:color="#ééé" fo:font-size="10.25pt" fo:letter-spacing="1pt"/></style:style>"##,
+        r#"<text:p><text:span text:style-name="T">safe</text:span></text:p>"#,
+    );
+    let imported = import_content_xml(&xml, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
+    let InlineNode::Run(run) = &paragraph(&imported, 0).inlines[0] else {
+        panic!("run")
+    };
+    assert_eq!(run.properties, Default::default());
+    for feature in [
+        "odf.attribute.fo.color",
+        "odf.attribute.fo.font-size",
+        "odf.attribute.fo.letter-spacing",
+    ] {
+        assert!(
+            imported
+                .report
+                .entries
+                .iter()
+                .any(|entry| entry.feature == feature
+                    && entry.model_outcome == ModelOutcome::Degraded),
+            "missing {feature}"
+        );
+    }
 }
 
 #[test]

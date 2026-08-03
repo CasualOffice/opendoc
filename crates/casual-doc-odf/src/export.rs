@@ -888,6 +888,33 @@ mod tests {
         assert!(content.contains("<text:p text:style-name=\"P_center\">"));
         assert!(content.contains("<text:span text:style-name=\"T_b1_i0_u1_s0_c1a2b3c_z21\">"));
         assert!(content.contains("</text:span>"));
+
+        let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+        assert!(reopened.report.entries.is_empty());
+        let BlockNode::Paragraph(reopened_paragraph) = &reopened.document.body()[0] else {
+            panic!("reopened paragraph")
+        };
+        assert_eq!(
+            reopened_paragraph.properties.alignment,
+            Some(Alignment::Center)
+        );
+        assert!(reopened_paragraph.inlines.iter().any(|inline| {
+            matches!(inline, InlineNode::Run(run)
+                if run.properties.bold == Some(true)
+                    && run.properties.italic == Some(false)
+                    && run.properties.underline == Some(true)
+                    && run.properties.strike == Some(false)
+                    && run.properties.color == Some(Color::Rgb(RgbColor {
+                        r: 0x1a,
+                        g: 0x2b,
+                        b: 0x3c,
+                    }))
+                    && run.properties.size_half_points == Some(21))
+        }));
+        let reexported = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+        let mut package = OdtPackage::open(&reexported.bytes, OdfPackageLimits::default()).unwrap();
+        let reopened_again = package.import_document(OdfImportLimits::default()).unwrap();
+        assert_eq!(reopened_again.document, reopened.document);
     }
 
     #[test]

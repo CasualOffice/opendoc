@@ -4,9 +4,9 @@ use std::collections::BTreeMap;
 
 use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
-    BlockNode, Bookmark, BookmarkEnd, BookmarkId, BookmarkStart, Break, BreakKind, Definitions,
-    Document, ExternalTarget, Hyperlink, HyperlinkTarget, InlineNode, InternalTarget, Paragraph,
-    ParagraphProperties, Run, RunProperties, Tab,
+    Alignment, BlockNode, Bookmark, BookmarkEnd, BookmarkId, BookmarkStart, Break, BreakKind,
+    Color, Definitions, Document, ExternalTarget, Hyperlink, HyperlinkTarget, InlineNode,
+    InternalTarget, Paragraph, ParagraphProperties, RgbColor, Run, RunProperties, Tab,
 };
 use casual_doc_package::CancellationToken;
 use quick_xml::NsReader;
@@ -19,6 +19,8 @@ const OFFICE_NS: &[u8] = b"urn:oasis:names:tc:opendocument:xmlns:office:1.0";
 const TEXT_NS: &[u8] = b"urn:oasis:names:tc:opendocument:xmlns:text:1.0";
 const SCRIPT_NS: &[u8] = b"urn:oasis:names:tc:opendocument:xmlns:script:1.0";
 const XLINK_NS: &[u8] = b"http://www.w3.org/1999/xlink";
+const STYLE_NS: &[u8] = b"urn:oasis:names:tc:opendocument:xmlns:style:1.0";
+const FO_NS: &[u8] = b"urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0";
 const MAX_NAMESPACE_DECLARATIONS_PER_ELEMENT: usize = 4_096;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -27,6 +29,8 @@ enum NamespaceKind {
     Text,
     Script,
     Xlink,
+    Style,
+    Fo,
     Foreign,
 }
 
@@ -232,7 +236,10 @@ impl Default for OdfImportLimits {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum InlineDraft {
-    Text(String),
+    Text {
+        text: String,
+        properties: Box<RunProperties>,
+    },
     Tab,
     LineBreak,
     Hyperlink {
@@ -260,24 +267,59 @@ struct BookmarkDraft {
 struct ParagraphDraft {
     depth: usize,
     outline_level: Option<u8>,
+    alignment: Option<Alignment>,
     inlines: Vec<InlineDraft>,
 }
 
 impl ParagraphDraft {
-    fn push_text(&mut self, value: &str) {
-        push_text_draft(&mut self.inlines, value);
+    fn push_text(&mut self, value: &str, properties: &RunProperties) {
+        push_text_draft(&mut self.inlines, value, properties);
     }
 }
 
-fn push_text_draft(inlines: &mut Vec<InlineDraft>, value: &str) {
+fn push_text_draft(inlines: &mut Vec<InlineDraft>, value: &str, properties: &RunProperties) {
     if value.is_empty() {
         return;
     }
-    if let Some(InlineDraft::Text(previous)) = inlines.last_mut() {
+    if let Some(InlineDraft::Text {
+        text: previous,
+        properties: previous_properties,
+    }) = inlines.last_mut()
+        && previous_properties.as_ref() == properties
+    {
         previous.push_str(value);
     } else {
-        inlines.push(InlineDraft::Text(value.to_owned()));
+        inlines.push(InlineDraft::Text {
+            text: value.to_owned(),
+            properties: Box::new(properties.clone()),
+        });
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum StyleFamily {
+    Paragraph,
+    Text,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct OdfStyle {
+    family: Option<StyleFamily>,
+    alignment: Option<Alignment>,
+    run_properties: RunProperties,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OpenStyle {
+    depth: usize,
+    name: String,
+    style: OdfStyle,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OpenSpan {
+    depth: usize,
+    previous_properties: RunProperties,
 }
 
 #[derive(Debug)]
@@ -347,6 +389,468 @@ impl Reporter {
     }
 }
 
+type AutomaticStyles = BTreeMap<(StyleFamily, String), OdfStyle>;
+
+fn parse_automatic_styles(
+    bytes: &[u8],
+    limits: OdfImportLimits,
+    cancellation: &CancellationToken,
+    reporter: &mut Reporter,
+) -> Result<AutomaticStyles, OdfError> {
+    let mut reader = NsReader::from_reader(bytes);
+    reader
+        .resolver_mut()
+        .set_max_declarations_per_element(MAX_NAMESPACE_DECLARATIONS_PER_ELEMENT);
+    let mut buffer = Vec::new();
+    let mut depth = 0_usize;
+    let mut elements = 0_usize;
+    let mut attributes = 0_usize;
+    let mut attribute_bytes = 0_usize;
+    let mut automatic_depth = None;
+    let mut automatic_seen = false;
+    let mut open_style: Option<OpenStyle> = None;
+    let mut styles = AutomaticStyles::new();
+
+    loop {
+        check_cancelled(cancellation)?;
+        let event = reader
+            .read_event_into(&mut buffer)
+            .map_err(|_| OdfError::MalformedContent)?;
+        match event {
+            Event::Eof => break,
+            Event::DocType(_) => return Err(OdfError::MalformedContent),
+            Event::Start(element) => {
+                depth = depth.checked_add(1).ok_or(OdfError::MalformedContent)?;
+                enforce("odf_content_xml_depth", depth, limits.max_xml_depth)?;
+                elements = checked_increment(elements)?;
+                enforce(
+                    "odf_content_xml_elements",
+                    elements,
+                    limits.max_xml_elements,
+                )?;
+                validate_name(&element, limits)?;
+                let name = resolved_name(&reader, &element);
+                if is_active(&name) {
+                    return Err(OdfError::ActiveContent);
+                }
+                if depth == 2 && is_name(&name, NamespaceKind::Office, b"automatic-styles") {
+                    if automatic_seen {
+                        return Err(OdfError::MalformedContent);
+                    }
+                    automatic_seen = true;
+                    automatic_depth = Some(depth);
+                    count_attributes_only(&element, &mut attributes, &mut attribute_bytes, limits)?;
+                } else if automatic_depth.is_some() {
+                    process_style_element(
+                        &reader,
+                        &element,
+                        &name,
+                        depth,
+                        limits,
+                        &mut attributes,
+                        &mut attribute_bytes,
+                        &mut open_style,
+                        &mut styles,
+                        false,
+                        reporter,
+                    )?;
+                } else {
+                    count_attributes_only(&element, &mut attributes, &mut attribute_bytes, limits)?;
+                }
+            }
+            Event::Empty(element) => {
+                elements = checked_increment(elements)?;
+                enforce(
+                    "odf_content_xml_elements",
+                    elements,
+                    limits.max_xml_elements,
+                )?;
+                validate_name(&element, limits)?;
+                let name = resolved_name(&reader, &element);
+                if is_active(&name) {
+                    return Err(OdfError::ActiveContent);
+                }
+                let event_depth = depth.checked_add(1).ok_or(OdfError::MalformedContent)?;
+                if event_depth == 2 && is_name(&name, NamespaceKind::Office, b"automatic-styles") {
+                    if automatic_seen {
+                        return Err(OdfError::MalformedContent);
+                    }
+                    automatic_seen = true;
+                    count_attributes_only(&element, &mut attributes, &mut attribute_bytes, limits)?;
+                } else if automatic_depth.is_some() {
+                    process_style_element(
+                        &reader,
+                        &element,
+                        &name,
+                        event_depth,
+                        limits,
+                        &mut attributes,
+                        &mut attribute_bytes,
+                        &mut open_style,
+                        &mut styles,
+                        true,
+                        reporter,
+                    )?;
+                } else {
+                    count_attributes_only(&element, &mut attributes, &mut attribute_bytes, limits)?;
+                }
+            }
+            Event::End(_) => {
+                if open_style
+                    .as_ref()
+                    .is_some_and(|style: &OpenStyle| style.depth == depth)
+                {
+                    finish_style(&mut open_style, &mut styles)?;
+                }
+                if automatic_depth == Some(depth) {
+                    automatic_depth = None;
+                }
+                depth = depth.checked_sub(1).ok_or(OdfError::MalformedContent)?;
+            }
+            Event::Text(text) if automatic_depth.is_some() => {
+                let decoded = text.decode().map_err(|_| OdfError::MalformedContent)?;
+                let value = quick_xml::escape::unescape(&decoded)
+                    .map_err(|_| OdfError::MalformedContent)?;
+                if !value.trim().is_empty() {
+                    return Err(OdfError::MalformedContent);
+                }
+            }
+            Event::CData(text) => {
+                let non_whitespace = !text
+                    .decode()
+                    .map_err(|_| OdfError::MalformedContent)?
+                    .trim()
+                    .is_empty();
+                if automatic_depth.is_some() && non_whitespace {
+                    return Err(OdfError::MalformedContent);
+                }
+            }
+            _ => {}
+        }
+        buffer.clear();
+    }
+    if depth != 0 || automatic_depth.is_some() || open_style.is_some() {
+        return Err(OdfError::MalformedContent);
+    }
+    Ok(styles)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn process_style_element(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    name: &ResolvedName,
+    depth: usize,
+    limits: OdfImportLimits,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    open_style: &mut Option<OpenStyle>,
+    styles: &mut AutomaticStyles,
+    empty: bool,
+    reporter: &mut Reporter,
+) -> Result<(), OdfError> {
+    if depth == 3 && is_name(name, NamespaceKind::Style, b"style") {
+        if open_style.is_some() {
+            return Err(OdfError::MalformedContent);
+        }
+        *open_style = Some(read_style_header(
+            reader,
+            element,
+            depth,
+            limits,
+            attributes,
+            attribute_bytes,
+            reporter,
+        )?);
+        if empty {
+            finish_style(open_style, styles)?;
+        }
+    } else if let Some(style) = open_style {
+        if depth != style.depth + 1 {
+            return Err(OdfError::MalformedContent);
+        }
+        if is_name(name, NamespaceKind::Style, b"text-properties") {
+            read_text_style_properties(
+                reader,
+                element,
+                limits,
+                attributes,
+                attribute_bytes,
+                style,
+                reporter,
+            )?;
+        } else if is_name(name, NamespaceKind::Style, b"paragraph-properties") {
+            read_paragraph_style_properties(
+                reader,
+                element,
+                limits,
+                attributes,
+                attribute_bytes,
+                style,
+                reporter,
+            )?;
+        } else {
+            count_and_report_attributes(
+                reader,
+                element,
+                attributes,
+                attribute_bytes,
+                limits,
+                reporter,
+            )?;
+            reporter.report(feature("element", name), ModelOutcome::Degraded);
+        }
+    } else {
+        count_and_report_attributes(
+            reader,
+            element,
+            attributes,
+            attribute_bytes,
+            limits,
+            reporter,
+        )?;
+        reporter.report(feature("element", name), ModelOutcome::Degraded);
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn read_style_header(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    depth: usize,
+    limits: OdfImportLimits,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    reporter: &mut Reporter,
+) -> Result<OpenStyle, OdfError> {
+    let mut name = None;
+    let mut family = None;
+    let mut family_seen = false;
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        if namespace_kind(&namespace) == NamespaceKind::Style && local.as_ref() == b"name" {
+            if name.is_some() {
+                return Err(OdfError::MalformedContent);
+            }
+            name = Some(decode_attribute(&attribute)?);
+        } else if namespace_kind(&namespace) == NamespaceKind::Style && local.as_ref() == b"family"
+        {
+            if family_seen {
+                return Err(OdfError::MalformedContent);
+            }
+            family_seen = true;
+            family = match decode_attribute(&attribute)?.as_str() {
+                "paragraph" => Some(StyleFamily::Paragraph),
+                "text" => Some(StyleFamily::Text),
+                _ => {
+                    reporter.report(
+                        "odf.style.unsupported-family".to_owned(),
+                        ModelOutcome::Omitted,
+                    );
+                    None
+                }
+            };
+        } else if !is_namespace_declaration(&attribute) {
+            reporter.report(
+                attribute_feature(reader, &attribute),
+                ModelOutcome::Degraded,
+            );
+        }
+    }
+    let name = name.ok_or(OdfError::MalformedContent)?;
+    if name.is_empty() {
+        return Err(OdfError::MalformedContent);
+    }
+    if !family_seen {
+        return Err(OdfError::MalformedContent);
+    }
+    Ok(OpenStyle {
+        depth,
+        name,
+        style: OdfStyle {
+            family,
+            ..OdfStyle::default()
+        },
+    })
+}
+
+fn finish_style(
+    open_style: &mut Option<OpenStyle>,
+    styles: &mut AutomaticStyles,
+) -> Result<(), OdfError> {
+    let style = open_style.take().ok_or(OdfError::MalformedContent)?;
+    let Some(family) = style.style.family else {
+        return Ok(());
+    };
+    if styles.insert((family, style.name), style.style).is_some() {
+        return Err(OdfError::MalformedContent);
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn read_text_style_properties(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    limits: OdfImportLimits,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    style: &mut OpenStyle,
+    reporter: &mut Reporter,
+) -> Result<(), OdfError> {
+    if style.style.family != Some(StyleFamily::Text) {
+        count_and_report_attributes(
+            reader,
+            element,
+            attributes,
+            attribute_bytes,
+            limits,
+            reporter,
+        )?;
+        reporter.report(
+            "odf.style.text-properties.family".to_owned(),
+            ModelOutcome::Degraded,
+        );
+        return Ok(());
+    }
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let value = decode_attribute(&attribute)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        let mapped = match (namespace_kind(&namespace), local.as_ref()) {
+            (NamespaceKind::Fo, b"font-weight") => {
+                style.style.run_properties.bold = parse_toggle(&value, "bold", "normal");
+                style.style.run_properties.bold.is_some()
+            }
+            (NamespaceKind::Fo, b"font-style") => {
+                style.style.run_properties.italic = parse_toggle(&value, "italic", "normal");
+                style.style.run_properties.italic.is_some()
+            }
+            (NamespaceKind::Style, b"text-underline-style") => {
+                style.style.run_properties.underline = parse_toggle(&value, "solid", "none");
+                style.style.run_properties.underline.is_some()
+            }
+            (NamespaceKind::Style, b"text-line-through-style") => {
+                style.style.run_properties.strike = parse_toggle(&value, "solid", "none");
+                style.style.run_properties.strike.is_some()
+            }
+            (NamespaceKind::Fo, b"color") => {
+                style.style.run_properties.color = parse_rgb_color(&value).map(Color::Rgb);
+                style.style.run_properties.color.is_some()
+            }
+            (NamespaceKind::Fo, b"font-size") => {
+                style.style.run_properties.size_half_points = parse_half_points(&value);
+                style.style.run_properties.size_half_points.is_some()
+            }
+            _ => false,
+        };
+        if !mapped && !is_namespace_declaration(&attribute) {
+            reporter.report(
+                attribute_feature(reader, &attribute),
+                ModelOutcome::Degraded,
+            );
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn read_paragraph_style_properties(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    limits: OdfImportLimits,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    style: &mut OpenStyle,
+    reporter: &mut Reporter,
+) -> Result<(), OdfError> {
+    if style.style.family != Some(StyleFamily::Paragraph) {
+        count_and_report_attributes(
+            reader,
+            element,
+            attributes,
+            attribute_bytes,
+            limits,
+            reporter,
+        )?;
+        reporter.report(
+            "odf.style.paragraph-properties.family".to_owned(),
+            ModelOutcome::Degraded,
+        );
+        return Ok(());
+    }
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let value = decode_attribute(&attribute)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        let mapped =
+            if namespace_kind(&namespace) == NamespaceKind::Fo && local.as_ref() == b"text-align" {
+                style.style.alignment = match value.as_str() {
+                    "start" => Some(Alignment::Start),
+                    "end" => Some(Alignment::End),
+                    "center" => Some(Alignment::Center),
+                    "justify" => Some(Alignment::Justify),
+                    _ => None,
+                };
+                style.style.alignment.is_some()
+            } else {
+                false
+            };
+        if !mapped && !is_namespace_declaration(&attribute) {
+            reporter.report(
+                attribute_feature(reader, &attribute),
+                ModelOutcome::Degraded,
+            );
+        }
+    }
+    Ok(())
+}
+
+fn parse_toggle(value: &str, enabled: &str, disabled: &str) -> Option<bool> {
+    match value {
+        value if value == enabled => Some(true),
+        value if value == disabled => Some(false),
+        _ => None,
+    }
+}
+
+fn parse_rgb_color(value: &str) -> Option<RgbColor> {
+    let value = value.strip_prefix('#')?;
+    if value.len() != 6 || !value.is_ascii() {
+        return None;
+    }
+    Some(RgbColor {
+        r: u8::from_str_radix(&value[0..2], 16).ok()?,
+        g: u8::from_str_radix(&value[2..4], 16).ok()?,
+        b: u8::from_str_radix(&value[4..6], 16).ok()?,
+    })
+}
+
+fn parse_half_points(value: &str) -> Option<u32> {
+    let value = value.strip_suffix("pt")?;
+    let (whole, fraction) = value.split_once('.').unwrap_or((value, ""));
+    let whole = whole.parse::<u32>().ok()?;
+    let scale = 10_u32.checked_pow(u32::try_from(fraction.len()).ok()?)?;
+    let fraction = if fraction.is_empty() {
+        0
+    } else {
+        fraction.parse::<u32>().ok()?
+    };
+    let doubled_fraction = fraction.checked_mul(2)?;
+    if doubled_fraction % scale != 0 {
+        return None;
+    }
+    let result = whole
+        .checked_mul(2)?
+        .checked_add(doubled_fraction / scale)?;
+    (1..=65_534).contains(&result).then_some(result)
+}
+
 /// Imports standalone ODT `content.xml` bytes under explicit bounds.
 pub fn import_content_xml(
     bytes: &[u8],
@@ -372,6 +876,9 @@ pub fn import_content_xml_with_cancellation(
     enforce("odf_content_bytes", bytes.len(), limits.max_content_bytes)?;
     check_cancelled(cancellation)?;
 
+    let mut reporter = Reporter::new(limits.max_report_features);
+    let automatic_styles = parse_automatic_styles(bytes, limits, cancellation, &mut reporter)?;
+
     let mut reader = NsReader::from_reader(bytes);
     reader
         .resolver_mut()
@@ -388,6 +895,7 @@ pub fn import_content_xml_with_cancellation(
     let mut body_seen = false;
     let mut body_depth = None;
     let mut text_body_depth = None;
+    let mut automatic_styles_depth = None;
     let mut leaf_depth = None;
     let mut body_kind_seen = false;
     let mut current = None;
@@ -395,7 +903,8 @@ pub fn import_content_xml_with_cancellation(
     let mut paragraphs = Vec::new();
     let mut bookmarks = Vec::new();
     let mut open_bookmarks = BTreeMap::new();
-    let mut reporter = Reporter::new(limits.max_report_features);
+    let mut active_run_properties = RunProperties::default();
+    let mut open_spans = Vec::new();
 
     loop {
         check_cancelled(cancellation)?;
@@ -438,6 +947,11 @@ pub fn import_content_xml_with_cancellation(
                     if version != expected_version {
                         return Err(OdfError::ManifestMismatch);
                     }
+                } else if depth == 2 && is_name(&name, NamespaceKind::Office, b"automatic-styles") {
+                    automatic_styles_depth = Some(depth);
+                    count_attributes_only(&element, &mut attributes, &mut attribute_bytes, limits)?;
+                } else if automatic_styles_depth.is_some() {
+                    count_attributes_only(&element, &mut attributes, &mut attribute_bytes, limits)?;
                 } else {
                     if root_closed {
                         return Err(OdfError::MalformedContent);
@@ -461,6 +975,9 @@ pub fn import_content_xml_with_cancellation(
                         &mut open_bookmarks,
                         &mut inline_nodes,
                         &mut text_bytes,
+                        &automatic_styles,
+                        &mut active_run_properties,
+                        &mut open_spans,
                         &mut reporter,
                     )?;
                 }
@@ -480,27 +997,36 @@ pub fn import_content_xml_with_cancellation(
                 if is_active(&name) {
                     return Err(OdfError::ActiveContent);
                 }
-                process_empty(
-                    &reader,
-                    &element,
-                    &name,
-                    depth + 1,
-                    limits,
-                    &mut attributes,
-                    &mut attribute_bytes,
-                    &mut body_seen,
-                    body_depth,
-                    text_body_depth,
-                    &mut body_kind_seen,
-                    &mut current,
-                    &mut active_link,
-                    &mut bookmarks,
-                    &mut open_bookmarks,
-                    &mut paragraphs,
-                    &mut inline_nodes,
-                    &mut text_bytes,
-                    &mut reporter,
-                )?;
+                if (depth + 1 == 2 && is_name(&name, NamespaceKind::Office, b"automatic-styles"))
+                    || automatic_styles_depth.is_some()
+                {
+                    count_attributes_only(&element, &mut attributes, &mut attribute_bytes, limits)?;
+                } else {
+                    process_empty(
+                        &reader,
+                        &element,
+                        &name,
+                        depth + 1,
+                        limits,
+                        &mut attributes,
+                        &mut attribute_bytes,
+                        &mut body_seen,
+                        body_depth,
+                        text_body_depth,
+                        &mut body_kind_seen,
+                        &mut current,
+                        &mut active_link,
+                        &mut bookmarks,
+                        &mut open_bookmarks,
+                        &mut paragraphs,
+                        &mut inline_nodes,
+                        &mut text_bytes,
+                        &automatic_styles,
+                        &mut active_run_properties,
+                        &mut open_spans,
+                        &mut reporter,
+                    )?;
+                }
             }
             Event::End(element) => {
                 if leaf_depth == Some(depth) {
@@ -512,12 +1038,23 @@ pub fn import_content_xml_with_cancellation(
                 {
                     finish_link(&mut current, &mut active_link, &mut reporter)?;
                 }
+                if open_spans
+                    .last()
+                    .is_some_and(|span: &OpenSpan| span.depth == depth)
+                {
+                    let span = open_spans.pop().ok_or(OdfError::MalformedContent)?;
+                    active_run_properties = span.previous_properties;
+                }
                 if current
                     .as_ref()
                     .is_some_and(|paragraph: &ParagraphDraft| paragraph.depth == depth)
                 {
                     let paragraph = current.take().ok_or(OdfError::MalformedContent)?;
                     push_paragraph(&mut paragraphs, paragraph, limits)?;
+                    active_run_properties = RunProperties::default();
+                }
+                if automatic_styles_depth == Some(depth) {
+                    automatic_styles_depth = None;
                 }
                 if text_body_depth == Some(depth) {
                     text_body_depth = None;
@@ -541,7 +1078,14 @@ pub fn import_content_xml_with_cancellation(
                 let value = quick_xml::escape::unescape(&decoded)
                     .map_err(|_| OdfError::MalformedContent)?;
                 if let Some(paragraph) = &mut current {
-                    append_text(paragraph, &mut active_link, &value, &mut text_bytes, limits)?;
+                    append_text(
+                        paragraph,
+                        &mut active_link,
+                        &value,
+                        &active_run_properties,
+                        &mut text_bytes,
+                        limits,
+                    )?;
                 } else if !value.trim().is_empty() {
                     return Err(OdfError::MalformedContent);
                 }
@@ -552,7 +1096,14 @@ pub fn import_content_xml_with_cancellation(
                 }
                 let value = text.decode().map_err(|_| OdfError::MalformedContent)?;
                 if let Some(paragraph) = &mut current {
-                    append_text(paragraph, &mut active_link, &value, &mut text_bytes, limits)?;
+                    append_text(
+                        paragraph,
+                        &mut active_link,
+                        &value,
+                        &active_run_properties,
+                        &mut text_bytes,
+                        limits,
+                    )?;
                 } else if !value.trim().is_empty() {
                     return Err(OdfError::MalformedContent);
                 }
@@ -563,7 +1114,14 @@ pub fn import_content_xml_with_cancellation(
                 }
                 let value = decode_reference(&reference)?;
                 if let Some(paragraph) = &mut current {
-                    append_text(paragraph, &mut active_link, &value, &mut text_bytes, limits)?;
+                    append_text(
+                        paragraph,
+                        &mut active_link,
+                        &value,
+                        &active_run_properties,
+                        &mut text_bytes,
+                        limits,
+                    )?;
                 } else if !value.trim().is_empty() {
                     return Err(OdfError::MalformedContent);
                 }
@@ -578,9 +1136,11 @@ pub fn import_content_xml_with_cancellation(
         || depth != 0
         || body_depth.is_some()
         || text_body_depth.is_some()
+        || automatic_styles_depth.is_some()
         || leaf_depth.is_some()
         || current.is_some()
         || active_link.is_some()
+        || !open_spans.is_empty()
     {
         return Err(OdfError::MalformedContent);
     }
@@ -593,6 +1153,7 @@ pub fn import_content_xml_with_cancellation(
             ParagraphDraft {
                 depth: 0,
                 outline_level: None,
+                alignment: None,
                 inlines: Vec::new(),
             },
             limits,
@@ -645,6 +1206,9 @@ fn process_start(
     open_bookmarks: &mut BTreeMap<String, usize>,
     inline_nodes: &mut usize,
     text_bytes: &mut usize,
+    automatic_styles: &AutomaticStyles,
+    active_run_properties: &mut RunProperties,
+    open_spans: &mut Vec<OpenSpan>,
     reporter: &mut Reporter,
 ) -> Result<(), OdfError> {
     if is_name(name, NamespaceKind::Office, b"body") {
@@ -691,6 +1255,7 @@ fn process_start(
             attributes,
             attribute_bytes,
             current,
+            automatic_styles,
             reporter,
         )?;
     } else if text_body_depth.is_some() && is_name(name, NamespaceKind::Text, b"h") {
@@ -703,6 +1268,7 @@ fn process_start(
             attributes,
             attribute_bytes,
             current,
+            automatic_styles,
             reporter,
         )?;
     } else if current.is_some() {
@@ -724,6 +1290,9 @@ fn process_start(
             depth,
             inline_nodes,
             text_bytes,
+            automatic_styles,
+            active_run_properties,
+            open_spans,
             reporter,
         )?;
         if is_leaf {
@@ -767,6 +1336,9 @@ fn process_empty(
     paragraphs: &mut Vec<ParagraphDraft>,
     inline_nodes: &mut usize,
     text_bytes: &mut usize,
+    automatic_styles: &AutomaticStyles,
+    active_run_properties: &mut RunProperties,
+    open_spans: &mut Vec<OpenSpan>,
     reporter: &mut Reporter,
 ) -> Result<(), OdfError> {
     if is_name(name, NamespaceKind::Office, b"body") && depth == 2 {
@@ -807,6 +1379,7 @@ fn process_empty(
             attributes,
             attribute_bytes,
             current,
+            automatic_styles,
             reporter,
         )?;
         push_paragraph(
@@ -829,10 +1402,19 @@ fn process_empty(
             depth,
             inline_nodes,
             text_bytes,
+            automatic_styles,
+            active_run_properties,
+            open_spans,
             reporter,
         )?;
         if is_name(name, NamespaceKind::Text, b"a") {
             finish_link(current, active_link, reporter)?;
+        } else if is_name(name, NamespaceKind::Text, b"span") {
+            let span = open_spans.pop().ok_or(OdfError::MalformedContent)?;
+            if span.depth != depth {
+                return Err(OdfError::MalformedContent);
+            }
+            *active_run_properties = span.previous_properties;
         }
     } else {
         count_and_report_attributes(
@@ -860,12 +1442,14 @@ fn start_paragraph(
     attributes: &mut usize,
     attribute_bytes: &mut usize,
     current: &mut Option<ParagraphDraft>,
+    automatic_styles: &AutomaticStyles,
     reporter: &mut Reporter,
 ) -> Result<(), OdfError> {
     if current.is_some() {
         return Err(OdfError::MalformedContent);
     }
     let mut outline_level = None;
+    let mut alignment = None;
     for attribute in element.attributes() {
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
@@ -889,6 +1473,15 @@ fn start_paragraph(
                     ModelOutcome::Degraded,
                 );
             }
+        } else if namespace_kind(&namespace) == NamespaceKind::Text
+            && local.as_ref() == b"style-name"
+        {
+            let style_name = decode_attribute(&attribute)?;
+            if let Some(style) = automatic_styles.get(&(StyleFamily::Paragraph, style_name)) {
+                alignment = style.alignment;
+            } else {
+                reporter.report("odf.style.unresolved".to_owned(), ModelOutcome::Degraded);
+            }
         } else if !is_namespace_declaration(&attribute) {
             reporter.report(
                 attribute_feature(reader, &attribute),
@@ -902,6 +1495,7 @@ fn start_paragraph(
     *current = Some(ParagraphDraft {
         depth,
         outline_level,
+        alignment,
         inlines: Vec::new(),
     });
     Ok(())
@@ -922,6 +1516,9 @@ fn process_inline(
     depth: usize,
     inline_nodes: &mut usize,
     text_bytes: &mut usize,
+    automatic_styles: &AutomaticStyles,
+    active_run_properties: &mut RunProperties,
+    open_spans: &mut Vec<OpenSpan>,
     reporter: &mut Reporter,
 ) -> Result<(), OdfError> {
     if is_name(name, NamespaceKind::Text, b"s") {
@@ -950,6 +1547,7 @@ fn process_inline(
             current.as_mut().ok_or(OdfError::MalformedContent)?,
             active_link,
             &spaces,
+            active_run_properties,
             text_bytes,
             limits,
         )?;
@@ -1014,14 +1612,21 @@ fn process_inline(
             reporter,
         )?;
     } else if is_name(name, NamespaceKind::Text, b"span") {
-        count_and_report_attributes(
+        let properties = read_span_properties(
             reader,
             element,
             attributes,
             attribute_bytes,
             limits,
+            automatic_styles,
             reporter,
         )?;
+        let previous_properties = active_run_properties.clone();
+        merge_run_properties(active_run_properties, &properties);
+        open_spans.push(OpenSpan {
+            depth,
+            previous_properties,
+        });
     } else {
         count_and_report_attributes(
             reader,
@@ -1036,10 +1641,70 @@ fn process_inline(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+fn read_span_properties(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    limits: OdfImportLimits,
+    automatic_styles: &AutomaticStyles,
+    reporter: &mut Reporter,
+) -> Result<RunProperties, OdfError> {
+    let mut properties = RunProperties::default();
+    let mut style_name = None;
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        if namespace_kind(&namespace) == NamespaceKind::Text && local.as_ref() == b"style-name" {
+            if style_name.is_some() {
+                return Err(OdfError::MalformedContent);
+            }
+            style_name = Some(decode_attribute(&attribute)?);
+        } else if !is_namespace_declaration(&attribute) {
+            reporter.report(
+                attribute_feature(reader, &attribute),
+                ModelOutcome::Degraded,
+            );
+        }
+    }
+    if let Some(style_name) = style_name {
+        if let Some(style) = automatic_styles.get(&(StyleFamily::Text, style_name)) {
+            properties = style.run_properties.clone();
+        } else {
+            reporter.report("odf.style.unresolved".to_owned(), ModelOutcome::Degraded);
+        }
+    }
+    Ok(properties)
+}
+
+fn merge_run_properties(target: &mut RunProperties, overlay: &RunProperties) {
+    if overlay.bold.is_some() {
+        target.bold = overlay.bold;
+    }
+    if overlay.italic.is_some() {
+        target.italic = overlay.italic;
+    }
+    if overlay.underline.is_some() {
+        target.underline = overlay.underline;
+    }
+    if overlay.strike.is_some() {
+        target.strike = overlay.strike;
+    }
+    if overlay.color.is_some() {
+        target.color = overlay.color;
+    }
+    if overlay.size_half_points.is_some() {
+        target.size_half_points = overlay.size_half_points;
+    }
+}
+
 fn append_text(
     paragraph: &mut ParagraphDraft,
     active_link: &mut Option<LinkDraft>,
     value: &str,
+    properties: &RunProperties,
     text_bytes: &mut usize,
     limits: OdfImportLimits,
 ) -> Result<(), OdfError> {
@@ -1052,9 +1717,9 @@ fn append_text(
         })?;
     enforce("odf_content_text_bytes", *text_bytes, limits.max_text_bytes)?;
     if let Some(link) = active_link {
-        push_text_draft(&mut link.inlines, value);
+        push_text_draft(&mut link.inlines, value, properties);
     } else {
-        paragraph.push_text(value);
+        paragraph.push_text(value, properties);
     }
     Ok(())
 }
@@ -1091,7 +1756,9 @@ fn finish_link(
         }
         for inline in link.inlines {
             match inline {
-                InlineDraft::Text(text) => paragraph.push_text(&text),
+                InlineDraft::Text { text, properties } => {
+                    paragraph.push_text(&text, properties.as_ref());
+                }
                 inline => paragraph.inlines.push(inline),
             }
         }
@@ -1294,8 +1961,8 @@ fn normalize_inline_drafts(
         {
             continue;
         }
-        if let InlineDraft::Text(text) = inline {
-            push_text_draft(&mut normalized, &text);
+        if let InlineDraft::Text { text, properties } = inline {
+            push_text_draft(&mut normalized, &text, properties.as_ref());
         } else {
             normalized.push(inline);
         }
@@ -1334,6 +2001,16 @@ fn build_document(
             &mut namespace,
             &[paragraph.outline_level.unwrap_or(u8::MAX)],
         );
+        hash_bytes(
+            &mut namespace,
+            &[match paragraph.alignment {
+                None => u8::MAX,
+                Some(Alignment::Start) => 0,
+                Some(Alignment::End) => 1,
+                Some(Alignment::Center) => 2,
+                Some(Alignment::Justify) => 3,
+            }],
+        );
         for inline in &paragraph.inlines {
             hash_inline_draft(&mut namespace, inline, bookmarks);
         }
@@ -1364,6 +2041,7 @@ fn build_document(
         let paragraph_id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
         let properties = ParagraphProperties {
             outline_level: draft.outline_level,
+            alignment: draft.alignment,
             ..ParagraphProperties::default()
         };
         let inlines = build_inlines(&draft.inlines, &mut ids, &bookmark_ids)?;
@@ -1378,9 +2056,10 @@ fn build_document(
 
 fn hash_inline_draft(hash: &mut u64, inline: &InlineDraft, bookmarks: &[BookmarkDraft]) {
     match inline {
-        InlineDraft::Text(value) => {
+        InlineDraft::Text { text, properties } => {
             hash_bytes(hash, b"t");
-            hash_bytes(hash, value.as_bytes());
+            hash_bytes(hash, text.as_bytes());
+            hash_run_properties(hash, properties.as_ref());
         }
         InlineDraft::Tab => hash_bytes(hash, b"tab"),
         InlineDraft::LineBreak => hash_bytes(hash, b"br"),
@@ -1419,6 +2098,35 @@ fn hash_inline_draft(hash: &mut u64, inline: &InlineDraft, bookmarks: &[Bookmark
     }
 }
 
+fn hash_run_properties(hash: &mut u64, properties: &RunProperties) {
+    for value in [
+        properties.bold,
+        properties.italic,
+        properties.underline,
+        properties.strike,
+    ] {
+        hash_bytes(
+            hash,
+            &[match value {
+                None => u8::MAX,
+                Some(false) => 0,
+                Some(true) => 1,
+            }],
+        );
+    }
+    match properties.color {
+        Some(Color::Rgb(color)) => hash_bytes(hash, &[color.r, color.g, color.b]),
+        _ => hash_bytes(hash, b"no-rgb"),
+    }
+    hash_bytes(
+        hash,
+        &properties
+            .size_half_points
+            .unwrap_or(u32::MAX)
+            .to_le_bytes(),
+    );
+}
+
 fn build_inlines(
     drafts: &[InlineDraft],
     ids: &mut IdGenerator,
@@ -1441,9 +2149,9 @@ fn build_inlines(
         }
         let id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
         inlines.push(match draft {
-            InlineDraft::Text(text) => InlineNode::Run(Run {
+            InlineDraft::Text { text, properties } => InlineNode::Run(Run {
                 id,
-                properties: RunProperties::default(),
+                properties: properties.as_ref().clone(),
                 text: text.clone(),
             }),
             InlineDraft::Tab => InlineNode::Tab(Tab { id }),
@@ -1525,6 +2233,19 @@ fn count_and_report_attributes(
             attribute_feature(reader, &attribute),
             ModelOutcome::Degraded,
         );
+    }
+    Ok(())
+}
+
+fn count_attributes_only(
+    element: &BytesStart<'_>,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    limits: OdfImportLimits,
+) -> Result<(), OdfError> {
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
     }
     Ok(())
 }
@@ -1629,6 +2350,8 @@ fn namespace_kind(namespace: &ResolveResult<'_>) -> NamespaceKind {
         ResolveResult::Bound(Namespace(value)) if *value == TEXT_NS => NamespaceKind::Text,
         ResolveResult::Bound(Namespace(value)) if *value == SCRIPT_NS => NamespaceKind::Script,
         ResolveResult::Bound(Namespace(value)) if *value == XLINK_NS => NamespaceKind::Xlink,
+        ResolveResult::Bound(Namespace(value)) if *value == STYLE_NS => NamespaceKind::Style,
+        ResolveResult::Bound(Namespace(value)) if *value == FO_NS => NamespaceKind::Fo,
         _ => NamespaceKind::Foreign,
     }
 }
@@ -1652,6 +2375,8 @@ const fn namespace_label(namespace: NamespaceKind) -> &'static str {
         NamespaceKind::Text => "text",
         NamespaceKind::Script => "script",
         NamespaceKind::Xlink => "xlink",
+        NamespaceKind::Style => "style",
+        NamespaceKind::Fo => "fo",
         NamespaceKind::Foreign => "foreign",
     }
 }

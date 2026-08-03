@@ -309,10 +309,9 @@ mod tests {
             Some(bytes.as_slice())
         );
         assert!(imported.report.entries.iter().any(|entry| {
-            entry.feature == "odf.attribute.text.style-name"
+            entry.feature == "odf.style.unresolved"
                 && entry.location.part_name.as_deref() == Some("content.xml")
-                && entry.location.namespace.as_deref()
-                    == Some("urn:oasis:names:tc:opendocument:xmlns:text:1.0")
+                && entry.location.namespace.is_none()
                 && entry.retention_outcome == RetentionOutcome::Preserved
         }));
     }

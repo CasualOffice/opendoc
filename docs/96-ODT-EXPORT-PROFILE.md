@@ -112,6 +112,8 @@ The first internal checkpoint is implemented on `feature/multi-format-io`:
   attempts exact unchanged same-format recovery before preservation export,
   uses semantic export cross-format, and shows report occurrence counts.
 
-Automatic/named style import and inheritance, edit-tolerant source preservation,
-broader semantic writing, stable native SDK surfaces, Relax NG validation,
-interoperability fixtures, and production claims remain pending.
+The matching automatic-style import subset is implemented and tested as a
+semantic fixed point. Named `styles.xml` resolution and inheritance,
+edit-tolerant source preservation, broader semantic writing, stable native SDK
+surfaces, Relax NG validation, interoperability fixtures, and production claims
+remain pending.
