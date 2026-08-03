@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::error::PackageError;
+use crate::PackageError;
 use crate::limits::{PackageLimits, enforce_limit, usize_to_u64};
 use crate::package::CancellationToken;
 use crate::path::normalize_package_path;
@@ -113,7 +113,7 @@ impl CentralDirectory {
     }
 }
 
-pub(crate) fn find_eocd(bytes: &[u8]) -> Result<usize, PackageError> {
+fn find_eocd(bytes: &[u8]) -> Result<usize, PackageError> {
     if bytes.len() < 22 {
         return Err(PackageError::MalformedArchive);
     }
@@ -144,10 +144,9 @@ fn read_zip64_directory(bytes: &[u8], eocd: usize) -> Result<(u64, u64, u64, usi
     }
     let zip64_position = usize::try_from(read_u64(bytes, locator + 8)?)
         .map_err(|_| PackageError::MalformedArchive)?;
-    if zip64_position > bytes.len().saturating_sub(56) {
-        return Err(PackageError::MalformedArchive);
-    }
-    if bytes.get(zip64_position..zip64_position + 4) != Some(ZIP64_EOCD_SIGNATURE) {
+    if zip64_position > bytes.len().saturating_sub(56)
+        || bytes.get(zip64_position..zip64_position + 4) != Some(ZIP64_EOCD_SIGNATURE)
+    {
         return Err(PackageError::MalformedArchive);
     }
     let record_size = usize::try_from(read_u64(bytes, zip64_position + 4)?)
@@ -175,7 +174,7 @@ fn read_zip64_directory(bytes: &[u8], eocd: usize) -> Result<(u64, u64, u64, usi
     ))
 }
 
-pub(crate) fn read_u16(bytes: &[u8], offset: usize) -> Result<u16, PackageError> {
+fn read_u16(bytes: &[u8], offset: usize) -> Result<u16, PackageError> {
     let end = offset
         .checked_add(2)
         .ok_or(PackageError::MalformedArchive)?;
@@ -185,7 +184,7 @@ pub(crate) fn read_u16(bytes: &[u8], offset: usize) -> Result<u16, PackageError>
     Ok(u16::from_le_bytes([value[0], value[1]]))
 }
 
-pub(crate) fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, PackageError> {
+fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, PackageError> {
     let end = offset
         .checked_add(4)
         .ok_or(PackageError::MalformedArchive)?;
@@ -195,7 +194,7 @@ pub(crate) fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, PackageError>
     Ok(u32::from_le_bytes([value[0], value[1], value[2], value[3]]))
 }
 
-pub(crate) fn read_u64(bytes: &[u8], offset: usize) -> Result<u64, PackageError> {
+fn read_u64(bytes: &[u8], offset: usize) -> Result<u64, PackageError> {
     let end = offset
         .checked_add(8)
         .ok_or(PackageError::MalformedArchive)?;

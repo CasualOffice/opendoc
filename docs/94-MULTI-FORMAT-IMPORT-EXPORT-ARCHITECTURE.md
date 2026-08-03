@@ -436,6 +436,17 @@ Slice A is complete on `feature/multi-format-io`:
 - focused detection/registry/DOCX reopen tests plus workspace format, test,
   strict Clippy, rustdoc, MSRV, and WASM checks.
 
+Slice B is complete on `feature/multi-format-io`:
+
+- `casual-doc-package` owns format-neutral bounded ZIP central-directory
+  validation, safe path normalization, deterministic entry metadata, cooperative
+  cancellation, and verified on-demand part reads;
+- `casual-doc-ooxml` delegates ZIP admission to that substrate while retaining
+  OPC discovery, content-type and relationship validation, and macro rejection;
+- public DOCX package types and typed error behavior remain compatible;
+- independent generic-package regression tests and a dedicated fuzz target cover
+  arbitrary ZIP profiles without requiring DOCX structure.
+
 ## 18. Normative references
 
 - OASIS, *OpenDocument Version 1.4, Part 1: Introduction*, OASIS Standard,

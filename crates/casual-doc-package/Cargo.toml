@@ -1,6 +1,6 @@
 [package]
-name = "casual-doc-ooxml"
-description = "Internal security-bounded OOXML package reader for OpenDoc"
+name = "casual-doc-package"
+description = "Format-neutral security-bounded ZIP package substrate for OpenDoc"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,10 +10,6 @@ authors.workspace = true
 publish = false
 
 [dependencies]
-casual-doc-package.workspace = true
-quick-xml.workspace = true
-
-[dev-dependencies]
 zip.workspace = true
 
 [lints]

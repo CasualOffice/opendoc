@@ -177,6 +177,7 @@ Details: [fidelity gap analysis](docs/46-RENDERING-FIDELITY-GAP-ANALYSIS.md) ·
 | `casual-doc-model` | Normalized document values, IDs, invariants, and snapshot I/O |
 | `casual-doc-transaction` | Atomic operations, inverses, and position mapping |
 | `casual-doc-selection` | Logical caret/range validation and mapping |
+| `casual-doc-package` | Format-neutral, security-bounded ZIP admission and part reads |
 | `casual-doc-ooxml` | Security-bounded OOXML package inspection |
 | `casual-doc-import` | WordprocessingML semantic import into the normalized model |
 | `casual-doc-export` | DOCX writers: byte-identical reconstruction and the semantic model → WordprocessingML writer |

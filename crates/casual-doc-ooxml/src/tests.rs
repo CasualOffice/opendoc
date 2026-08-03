@@ -3,8 +3,6 @@ use std::io::{Cursor, Write};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
-use crate::archive::{find_eocd, read_u16, read_u32};
-use crate::limits::usize_to_u64;
 use crate::package::{CONTENT_TYPES_PART, ROOT_RELATIONSHIPS_PART};
 use crate::relationships::{OFFICE_DOCUMENT_REL_STRICT, OFFICE_DOCUMENT_REL_TRANSITIONAL};
 use crate::{CancellationToken, DocxPackage, PackageError, PackageLimits, TargetMode};
@@ -24,6 +22,34 @@ const MIXED_UNICODE_DOCUMENT: &str = concat!(
 );
 const UNKNOWN_SAFE_PART: &[u8] =
     br#"<custom xmlns="urn:opendoc:fixture"><value>preserve-me</value></custom>"#;
+
+fn usize_to_u64(value: usize) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
+
+fn read_u16(bytes: &[u8], offset: usize) -> Option<u16> {
+    let value: [u8; 2] = bytes.get(offset..offset.checked_add(2)?)?.try_into().ok()?;
+    Some(u16::from_le_bytes(value))
+}
+
+fn read_u32(bytes: &[u8], offset: usize) -> Option<u32> {
+    let value: [u8; 4] = bytes.get(offset..offset.checked_add(4)?)?.try_into().ok()?;
+    Some(u32::from_le_bytes(value))
+}
+
+fn find_eocd(bytes: &[u8]) -> Option<usize> {
+    let minimum = bytes.len().saturating_sub(22 + usize::from(u16::MAX));
+    for position in (minimum..=bytes.len().checked_sub(22)?).rev() {
+        if bytes.get(position..position + 4) != Some(b"PK\x05\x06") {
+            continue;
+        }
+        let comment = usize::from(read_u16(bytes, position + 20)?);
+        if position.checked_add(22)?.checked_add(comment)? == bytes.len() {
+            return Some(position);
+        }
+    }
+    None
+}
 
 fn package(entries: &[(&str, &[u8], CompressionMethod)]) -> Vec<u8> {
     let mut writer = ZipWriter::new(Cursor::new(Vec::new()));

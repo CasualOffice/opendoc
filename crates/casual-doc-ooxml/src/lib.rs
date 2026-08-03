@@ -3,11 +3,9 @@
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]
 
-mod archive;
 mod contenttypes;
 mod discovery;
 mod error;
-mod limits;
 mod package;
 mod path;
 mod relationships;
@@ -15,10 +13,7 @@ mod relationships;
 #[cfg(test)]
 mod tests;
 
+pub use casual_doc_package::{CancellationToken, PackageEntry, PackageLimits, PartCompression};
 pub use error::PackageError;
-pub use limits::PackageLimits;
-pub use package::{
-    CancellationToken, DocxPackage, PackageEntry, PartCompression, PartManifestEntry,
-    SourcePackageSnapshot,
-};
+pub use package::{DocxPackage, PartManifestEntry, SourcePackageSnapshot};
 pub use relationships::{DocumentRelationship, TargetMode};

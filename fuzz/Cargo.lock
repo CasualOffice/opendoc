@@ -18,7 +18,14 @@ checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
 name = "casual-doc-ooxml"
 version = "0.0.1"
 dependencies = [
+ "casual-doc-package",
  "quick-xml",
+]
+
+[[package]]
+name = "casual-doc-package"
+version = "0.0.1"
+dependencies = [
  "zip",
 ]
 
@@ -145,6 +152,7 @@ name = "opendoc-fuzz"
 version = "0.0.0"
 dependencies = [
  "casual-doc-ooxml",
+ "casual-doc-package",
  "libfuzzer-sys",
 ]
 
