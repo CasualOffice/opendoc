@@ -10,9 +10,9 @@
 Define a deterministic, bounded OpenDocument Text export profile without
 claiming full ODT fidelity. The first checkpoint makes ODT a real internal
 export target for the normalized model and retains exact unchanged ODT bytes
-when explicitly requested. Generic WASM dispatch is now implemented, but this
-profile does not imply native SDK/browser UI availability or edit-tolerant
-preservation of opaque ODF data.
+when explicitly requested. Generic WASM dispatch and capability-driven browser
+Save are implemented, but this profile does not imply native SDK availability
+or edit-tolerant preservation of opaque ODF data.
 
 ## 2. Package contract
 
@@ -96,8 +96,11 @@ The first internal checkpoint is implemented on `feature/multi-format-io`:
   unchanged bytes through the format registry;
 - `casual-doc-wasm` routes auto/explicit open and explicit export through that
   registry, applies the viewer package limits consistently to DOCX and ODT, and
-  exposes deterministic import/export compatibility reports as JSON.
+  exposes deterministic import/export compatibility reports as JSON;
+- the browser populates its export target control from the WASM capabilities,
+  attempts exact unchanged same-format recovery before preservation export,
+  uses semantic export cross-format, and shows report occurrence counts.
 
 Edit-tolerant source preservation, broader semantic writing, stable native SDK
-and capability-driven browser UI surfaces, Relax NG validation, interoperability
-fixtures, and production claims remain pending.
+surfaces, Relax NG validation, interoperability fixtures, and production claims
+remain pending.

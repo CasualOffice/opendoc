@@ -176,27 +176,27 @@ const FORMAT_SUPPORT = [
   },
   {
     format: "Normalized JSON",
-    note: "Strict bounded schema-v1 validation and deterministic compact export are implemented in the internal registry; stable generic SDK/WASM entry points are pending.",
+    note: "Strict bounded schema-v1 validation and deterministic compact export are available through the generic WASM API and browser Open/Save controls. The native SDK surface remains pending.",
     validation: "full",
     import: "full",
     export: "full",
-    host: "none",
+    host: "full",
   },
   {
     format: "Plain text",
-    note: "Bounded UTF-8 import, canonical LF export, exact retained unchanged bytes, and loss reporting are implemented internally; stable generic SDK/WASM entry points are pending.",
+    note: "Bounded UTF-8 import, canonical LF export, exact retained unchanged bytes, and loss reporting are available through the generic WASM API and browser Open/Save controls. The native SDK surface remains pending.",
     validation: "full",
     import: "full",
     export: "full",
-    host: "none",
+    host: "full",
   },
   {
     format: "ODT",
-    note: "ODF 1.2–1.4 package admission and internal registry dispatch are complete. The bounded importer covers core text, safe links, and bookmarks; the deterministic ODF 1.4 writer covers core text. Styles, lists, tables, notes, media, metadata, edit-tolerant preservation, stable host APIs, and browser support remain in progress.",
+    note: "ODF 1.2–1.4 admission plus generic WASM/browser Open and Save are implemented. Import/export and therefore host support remain partial: core text, safe links, and bookmarks import; core text exports with visible compatibility findings. Styles, lists, tables, notes, media, metadata, edit-tolerant preservation, and conformance remain in progress.",
     validation: "full",
     import: "partial",
     export: "partial",
-    host: "none",
+    host: "partial",
   },
 ];
 

@@ -41,8 +41,9 @@ The work lands as reviewable commits:
 - Named/automatic style resolution, lists, tables, notes, media, metadata, and
   the remaining structures in sections 4 and 6 remain in progress. Partial ODT
   export is tracked separately under doc 96. Generic WASM open/export methods
-  are implemented, while the native SDK, browser UI, and production ODT gates
-  remain incomplete; this is still not a general support claim.
+  and capability-driven browser Open/Save controls are implemented, while the
+  native SDK and production ODT gates remain incomplete; this is still not a
+  general support claim.
 
 ## 2. Normative package profile
 

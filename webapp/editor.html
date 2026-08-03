@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>OpenDoc Editor — local DOCX editing in WebAssembly</title>
+    <title>OpenDoc Editor — local document editing in WebAssembly</title>
     <meta
       name="description"
-      content="Open and edit DOCX files locally in your browser with the OpenDoc Rust and WebAssembly document engine."
+      content="Open and edit DOCX, ODT, normalized JSON, and plain-text files locally in your browser with the OpenDoc Rust and WebAssembly document engine."
     />
     <link rel="icon" href="./opendoc-mark.svg" type="image/svg+xml" />
     <link rel="canonical" href="https://opendoc.casualoffice.org/editor.html" />
@@ -60,10 +60,12 @@
       </button>
       <div class="controls">
         <label class="btn btn-primary file">
-          <input id="file" type="file" accept=".docx" hidden />
+          <input id="file" type="file" accept=".docx,.odt,.json,.txt,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text,application/json,text/plain" hidden />
           <span class="ms" aria-hidden="true">upload_file</span>
           <span class="btn-label">Open</span>
         </label>
+        <select id="saveFormat" class="save-format" aria-label="Save format" title="Save format" disabled></select>
+        <span id="compatibilityStatus" class="compatibility-status" role="status" hidden></span>
         <button id="save" type="button" class="btn" disabled title="Download the edited document">
           <span class="ms" aria-hidden="true">save</span>
           <span class="btn-label">Save</span>
@@ -86,7 +88,7 @@
             <span class="ms dialog-heading-icon" aria-hidden="true">info</span>
             <div>
               <h2 id="propertiesTitle">Document properties</h2>
-              <p id="propertiesDescription">Metadata saved inside this DOCX file.</p>
+              <p id="propertiesDescription">Document metadata; unsupported export fields are reported when saved.</p>
             </div>
           </div>
           <button id="propertiesClose" type="button" class="dialog-close" title="Close" aria-label="Close document properties">
@@ -666,7 +668,7 @@
         <div id="drop" class="drop">
           <div class="drop-card">
             <span class="ms drop-icon" aria-hidden="true">upload_file</span>
-            <p class="drop-title">Drop a <strong>.docx</strong> here</p>
+            <p class="drop-title">Drop a <strong>DOCX, ODT, JSON, or TXT</strong> file here</p>
             <p class="muted">or use <em>Open</em> above — rendered entirely in your browser by the OpenDoc engine (WASM). Nothing is uploaded.</p>
           </div>
         </div>

@@ -43,7 +43,15 @@ test("format pipeline rows are complete and do not overstate ODT", () => {
   assert.equal(odt.validation, "full");
   assert.equal(odt.import, "partial");
   assert.equal(odt.export, "partial");
-  assert.equal(odt.host, "none");
+  assert.equal(odt.host, "partial");
+  assert.equal(
+    FORMAT_SUPPORT.find((row) => row.format === "Normalized JSON").host,
+    "full",
+  );
+  assert.equal(
+    FORMAT_SUPPORT.find((row) => row.format === "Plain text").host,
+    "full",
+  );
 });
 
 test("every construct family in the expected set is present exactly once", () => {

@@ -1,7 +1,7 @@
 // OpenDoc WASM viewer — P1G-001 harness.
 //
-// Loads the `casual-doc-wasm` module, opens a user-selected `.docx` fully
-// client-side, and blits each rendered page onto a canvas. This is the
+// Loads the `casual-doc-wasm` module, imports a user-selected registered format
+// fully client-side, and blits each rendered page onto a canvas. This is the
 // browser-first surface the viewer→editor is built and fine-tuned on (docs 56/57);
 // no server, deployable as static files (e.g. GitHub Pages).
 
@@ -24,6 +24,12 @@ import {
   moveMenuIndex,
   normalizeMenuEntries,
 } from "./context_menu.mjs";
+import {
+  compatibilityOccurrenceCount,
+  downloadNameForFormat,
+  ensureDocumentExtension,
+  formatInfo,
+} from "./format_io.mjs";
 
 function escapeHtml(text) {
   return String(text)
@@ -1654,6 +1660,8 @@ const paraControls = [
   paragraphStyleSel,
 ];
 const saveBtn = document.getElementById("save");
+const saveFormatEl = document.getElementById("saveFormat");
+const compatibilityStatusEl = document.getElementById("compatibilityStatus");
 const zoomInBtn = document.getElementById("zoomIn");
 const zoomOutBtn = document.getElementById("zoomOut");
 const documentChrome = document.getElementById("documentChrome");
@@ -1715,6 +1723,8 @@ let pendingLinkHover = null;
 let pendingFormat = null;
 /** The open document's filename, for the Save download. */
 let currentName = "document.docx";
+/** Stable format identity detected by the engine from source bytes. */
+let currentSourceFormat = "org.openxmlformats.wordprocessingml.document";
 /** Honest local-file lifecycle shown beside the title. OpenDoc does not claim
  * cloud persistence: a mutation is Edited until the user downloads a copy. */
 let documentState = "opened";
@@ -1854,7 +1864,7 @@ function updatePageNumber() {
 async function boot() {
   try {
     await init();
-    setStatus("Ready — open a .docx");
+    setStatus("Ready — open DOCX, ODT, normalized JSON, or plain text");
     fileEl.disabled = false;
   } catch (err) {
     console.error(err);
@@ -1887,8 +1897,34 @@ async function loadStartupDocument(url, name) {
     await openBytes(new Uint8Array(await response.arrayBuffer()), name);
   } catch (err) {
     console.error(err);
-    setStatus("The sample could not be loaded — you can still open a local DOCX", "error");
+    setStatus("The sample could not be loaded — you can still open a local document", "error");
   }
+}
+
+function populateSaveFormats() {
+  saveFormatEl.replaceChildren();
+  for (const formatId of doc.availableExportFormats()) {
+    const info = formatInfo(formatId);
+    const option = document.createElement("option");
+    option.value = formatId;
+    option.textContent = info.label;
+    saveFormatEl.append(option);
+  }
+  saveFormatEl.value = currentSourceFormat;
+  if (!saveFormatEl.value && saveFormatEl.options.length > 0) {
+    saveFormatEl.selectedIndex = 0;
+  }
+  saveFormatEl.disabled = saveFormatEl.options.length === 0;
+}
+
+function showCompatibilityFindings(count, phase) {
+  compatibilityStatusEl.hidden = count === 0;
+  compatibilityStatusEl.textContent = count === 0
+    ? ""
+    : `${count.toLocaleString()} ${phase} finding${count === 1 ? "" : "s"}`;
+  compatibilityStatusEl.title = count === 0
+    ? ""
+    : `${count.toLocaleString()} compatibility finding${count === 1 ? "" : "s"} reported during ${phase}`;
 }
 
 async function openBytes(bytes, name) {
@@ -1897,8 +1933,13 @@ async function openBytes(bytes, name) {
     hideLinkChip();
     clearLinkHover();
     // A previous document's memory is freed when it is dropped; replace it.
-    if (doc) doc.free();
+    if (doc) {
+      doc.free();
+      doc = null;
+    }
     doc = open(bytes);
+    currentSourceFormat = doc.sourceFormat;
+    const importFindings = compatibilityOccurrenceCount(doc.importReportJson);
     applyActiveAuthorToDocument();
     selection = null;
     tableSelection = null;
@@ -1922,6 +1963,8 @@ async function openBytes(bytes, name) {
     documentChrome.hidden = false;
     setDocumentState("opened");
     saveBtn.disabled = false;
+    populateSaveFormats();
+    showCompatibilityFindings(importFindings, "import");
     railOutline.disabled = false;
     populateStyles();
     populateTableStyles();
@@ -1955,7 +1998,7 @@ function commitRename() {
     docTitleEl.value = currentName;
     return;
   }
-  const named = /\.docx$/i.test(trimmed) ? trimmed : `${trimmed}.docx`;
+  const named = ensureDocumentExtension(trimmed, formatInfo(currentSourceFormat).extension);
   const changed = named !== currentName;
   currentName = named;
   docTitleEl.value = named;
@@ -6117,8 +6160,8 @@ function editorCommands(context = { surface: "palette" }) {
   const fmt = (k) => () => toggleFormat(k);
   const align = (a) => () => runToolbarEdit((s, o, e, f) => doc.setAlignment(s, o, e, f, a));
   const cmds = [
-    { id: "file.open", label: "Open…", group: "File", kw: "load docx", noDoc: true, run: () => fileEl.click() },
-    { id: "file.save", label: "Save (download .docx)", group: "File", kw: "export download", shortcut: "⌘S", run: () => saveDocx() },
+    { id: "file.open", label: "Open…", group: "File", kw: "load docx odt json text", noDoc: true, run: () => fileEl.click() },
+    { id: "file.save", label: "Save (download)", group: "File", kw: "export download docx odt json text", shortcut: "⌘S", run: () => saveDocument() },
     { id: "file.properties", label: "Document properties", group: "File", kw: "metadata title author", run: () => toggleProperties(true) },
     {
       id: "edit.undo",
@@ -6575,7 +6618,7 @@ document.addEventListener("keydown", (e) => {
   }
   if (lower === "s" && doc) {
     e.preventDefault();
-    saveDocx();
+    saveDocument();
   }
 });
 // Visible entry point for the palette (doc 69 §1.4.1): the shortcut already
@@ -7020,28 +7063,54 @@ paragraphStyleSel.addEventListener("change", () => {
   runToolbarEdit((a, b, c, d) => doc.setParagraphStyle(a, b, c, d, name));
 });
 
-/** Serializes the edited document and downloads it as a .docx (user-initiated). */
-function saveDocx() {
+/** Serializes through the selected registered exporter and downloads the result. */
+function saveDocument() {
   if (!doc) return;
+  const targetFormat = saveFormatEl.value;
+  if (!targetFormat) {
+    setStatus("No export format is available", "error");
+    return;
+  }
   try {
-    const bytes = doc.exportDocx();
-    const blob = new Blob([bytes], {
-      type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    });
+    let artifact = null;
+    if (targetFormat === currentSourceFormat) {
+      try {
+        artifact = doc.exportAs(targetFormat, "exact_if_unchanged");
+      } catch {
+        artifact = doc.exportAs(targetFormat, "preserve_when_safe");
+      }
+    } else {
+      artifact = doc.exportAs(targetFormat, "semantic");
+    }
+    const bytes = artifact.bytes;
+    const mimeType = artifact.mimeType;
+    const extension = artifact.suggestedExtension;
+    const findings = compatibilityOccurrenceCount(artifact.reportJson);
+    artifact.free();
+    const blob = new Blob([bytes], { type: mimeType });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = currentName.toLowerCase().endsWith(".docx") ? currentName : `${currentName}.docx`;
+    a.download = downloadNameForFormat(currentName, extension);
     a.click();
     URL.revokeObjectURL(url);
     setDocumentState("downloaded");
-    setStatus(`Saved ${a.download}`);
+    showCompatibilityFindings(findings, "export");
+    setStatus(
+      findings === 0
+        ? `Saved ${a.download}`
+        : `Saved ${a.download} with ${findings.toLocaleString()} compatibility finding${findings === 1 ? "" : "s"}`,
+    );
   } catch (err) {
     console.error(err);
     setStatus(`Save failed: ${err?.message ?? err}`, "error");
   }
 }
-saveBtn.addEventListener("click", saveDocx);
+saveBtn.addEventListener("click", saveDocument);
+saveFormatEl.addEventListener("change", () => {
+  const info = formatInfo(saveFormatEl.value);
+  setStatus(`Save target: ${info.label}`);
+});
 
 /** Moves the caret to an engine Caret result (document bounds). Shift extends. */
 function navToPosition(caret, extend) {
@@ -7736,10 +7805,6 @@ document.addEventListener("keydown", async (e) => {
 
 async function handleFile(file) {
   if (!file) return;
-  if (!file.name.toLowerCase().endsWith(".docx")) {
-    setStatus("Please choose a .docx file", "error");
-    return;
-  }
   const buf = await file.arrayBuffer();
   await openBytes(new Uint8Array(buf), file.name);
 }

@@ -24,11 +24,12 @@ external/internal hyperlinks, and bookmark points/ranges into a validated
 schema-v1 document with semantic-fact-derived identities and bounded findings.
 Slice E now has a deterministic bounded ODF 1.4 writer for that same core subset,
 registered semantic export, and exact unchanged-byte recovery. The remaining
-Slice D semantic surface, edit-tolerant ODF preservation, native SDK and browser
-UI integration, and production conformance work remain incomplete. The WASM
+Slice D semantic surface, edit-tolerant ODF preservation, native SDK, and
+production conformance work remain incomplete. The WASM
 host boundary now provides generic auto/explicit open, capability discovery,
-explicit export, and structured compatibility reports; see docs 14, 18, 95,
-and 96.
+explicit export, and structured compatibility reports. The browser picker and
+target-selectable Save UI consume those capabilities and surface import/export
+findings; see docs 14, 18, 95, and 96.
 
 ## 2. Scope
 
@@ -514,8 +515,10 @@ Slice E is in progress on `feature/multi-format-io`:
   `exportAs(formatId, mode)`;
 - the existing `exportDocx()` method remains as a compatibility wrapper;
 - one host-selected package policy is applied to both DOCX and ODT admission;
-- stable native SDK and capability-driven browser Save/Save As surfaces remain
-  pending.
+- the browser accepts registered input formats, populates its Save target from
+  engine capabilities, preserves exact unchanged same-format bytes where
+  possible, and visibly reports compatibility findings;
+- the stable native SDK surface remains pending.
 
 ## 18. Normative references
 
