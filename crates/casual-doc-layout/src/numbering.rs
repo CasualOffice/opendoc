@@ -29,10 +29,8 @@
 //! ## Deferrals
 //!
 //! - `w:lvlRestart` / non-default restart anchoring (model does not carry it).
-//! - `w:numFmt` `cardinalText`/`ordinalText` and unknown tokens fall back to
-//!   decimal (English word spelling is a follow-up).
-//! - `lvlOverride`/`startOverride` are honored here but the importer does not yet
-//!   populate them, so they are inert on imported documents.
+//! - `w:numFmt` unknown/producer-specific tokens fall back to decimal
+//!   (`cardinalText`/`ordinalText` are spelled out in English).
 
 use std::collections::HashMap;
 
@@ -236,11 +234,154 @@ fn format_number(value: u32, format: &NumberFormat) -> String {
         NumberFormat::LowerRoman => roman(value, false),
         NumberFormat::UpperRoman => roman(value, true),
         NumberFormat::Ordinal => ordinal(value),
-        // Word-spelled and unknown formats: decimal fallback (deferred).
-        NumberFormat::CardinalText | NumberFormat::OrdinalText | NumberFormat::Other(_) => {
-            value.to_string()
+        NumberFormat::CardinalText => cardinal_text(value),
+        NumberFormat::OrdinalText => ordinal_text(value),
+        // Unknown tokens: decimal fallback so the value is never lost.
+        NumberFormat::Other(_) => value.to_string(),
+    }
+}
+
+/// English cardinal words, title-cased as Word renders `cardinalText`
+/// (`One`, `Twenty-Three`, `One Hundred Twenty-Three`). Outside `1..=999_999`
+/// (Word's practical list range) it falls back to decimal so the value is kept.
+fn cardinal_text(value: u32) -> String {
+    if value == 0 || value > 999_999 {
+        return value.to_string();
+    }
+    spell_cardinal(value)
+}
+
+/// English ordinal words, as Word renders `ordinalText` (`First`, `Twenty-Third`,
+/// `One Hundredth`): the cardinal spelling with its final word ordinalized.
+fn ordinal_text(value: u32) -> String {
+    if value == 0 || value > 999_999 {
+        return value.to_string();
+    }
+    let cardinal = spell_cardinal(value);
+    // Ordinalize only the last word; a hyphenated compound (`Twenty-One`)
+    // ordinalizes the part after the hyphen (`Twenty-First`).
+    let (head, last) = match cardinal.rsplit_once(' ') {
+        Some((head, last)) => (Some(head), last),
+        None => (None, cardinal.as_str()),
+    };
+    let ordinal_last = match last.rsplit_once('-') {
+        Some((prefix, unit)) => format!("{prefix}-{}", ordinalize_word(unit)),
+        None => ordinalize_word(last),
+    };
+    match head {
+        Some(head) => format!("{head} {ordinal_last}"),
+        None => ordinal_last,
+    }
+}
+
+const CARDINAL_ONES: [&str; 20] = [
+    "",
+    "One",
+    "Two",
+    "Three",
+    "Four",
+    "Five",
+    "Six",
+    "Seven",
+    "Eight",
+    "Nine",
+    "Ten",
+    "Eleven",
+    "Twelve",
+    "Thirteen",
+    "Fourteen",
+    "Fifteen",
+    "Sixteen",
+    "Seventeen",
+    "Eighteen",
+    "Nineteen",
+];
+const CARDINAL_TENS: [&str; 10] = [
+    "", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety",
+];
+
+/// Spells `1..=999_999` in title-cased English cardinal words, American style (no
+/// `and`): `One Hundred Twenty-Three`, `One Thousand Five`.
+fn spell_cardinal(value: u32) -> String {
+    if value >= 1000 {
+        let thousands = value / 1000;
+        let rest = value % 1000;
+        let mut out = format!("{} Thousand", spell_below_thousand(thousands));
+        if rest > 0 {
+            out.push(' ');
+            out.push_str(&spell_below_thousand(rest));
+        }
+        out
+    } else {
+        spell_below_thousand(value)
+    }
+}
+
+/// Spells `1..=999` (`One Hundred`, `Twenty-Three`, `One Hundred Twenty-Three`).
+fn spell_below_thousand(value: u32) -> String {
+    let hundreds = (value / 100) as usize;
+    let rest = value % 100;
+    let mut parts = Vec::new();
+    if hundreds > 0 {
+        parts.push(format!("{} Hundred", CARDINAL_ONES[hundreds]));
+    }
+    if rest > 0 {
+        parts.push(spell_below_hundred(rest));
+    }
+    parts.join(" ")
+}
+
+/// Spells `1..=99` (`Nineteen`, `Twenty`, `Twenty-Three`).
+fn spell_below_hundred(value: u32) -> String {
+    if value < 20 {
+        CARDINAL_ONES[value as usize].to_string()
+    } else {
+        let tens = CARDINAL_TENS[(value / 10) as usize];
+        let ones = (value % 10) as usize;
+        if ones == 0 {
+            tens.to_string()
+        } else {
+            format!("{tens}-{}", CARDINAL_ONES[ones])
         }
     }
+}
+
+/// The ordinal form of a single cardinal word (`One`→`First`, `Twenty`→
+/// `Twentieth`, `Hundred`→`Hundredth`); an unrecognized word takes a `th` suffix.
+fn ordinalize_word(word: &str) -> String {
+    let mapped = match word {
+        "One" => "First",
+        "Two" => "Second",
+        "Three" => "Third",
+        "Four" => "Fourth",
+        "Five" => "Fifth",
+        "Six" => "Sixth",
+        "Seven" => "Seventh",
+        "Eight" => "Eighth",
+        "Nine" => "Ninth",
+        "Ten" => "Tenth",
+        "Eleven" => "Eleventh",
+        "Twelve" => "Twelfth",
+        "Thirteen" => "Thirteenth",
+        "Fourteen" => "Fourteenth",
+        "Fifteen" => "Fifteenth",
+        "Sixteen" => "Sixteenth",
+        "Seventeen" => "Seventeenth",
+        "Eighteen" => "Eighteenth",
+        "Nineteen" => "Nineteenth",
+        "Twenty" => "Twentieth",
+        "Thirty" => "Thirtieth",
+        "Forty" => "Fortieth",
+        "Fifty" => "Fiftieth",
+        "Sixty" => "Sixtieth",
+        "Seventy" => "Seventieth",
+        "Eighty" => "Eightieth",
+        "Ninety" => "Ninetieth",
+        "Hundred" => "Hundredth",
+        "Thousand" => "Thousandth",
+        other => return format!("{other}th"),
+    };
+    mapped.to_string()
 }
 
 /// Bijective base-26 letters: 1→a, 26→z, 27→aa, 28→ab, … (Word's `lowerLetter`).
@@ -450,6 +591,38 @@ mod tests {
         assert_eq!(format_number(4, &NumberFormat::Ordinal), "4th");
         assert_eq!(format_number(11, &NumberFormat::Ordinal), "11th");
         assert_eq!(format_number(21, &NumberFormat::Ordinal), "21st");
+    }
+
+    #[test]
+    fn cardinal_text_spells_the_number() {
+        let c = |n| format_number(n, &NumberFormat::CardinalText);
+        assert_eq!(c(1), "One");
+        assert_eq!(c(15), "Fifteen");
+        assert_eq!(c(21), "Twenty-One");
+        assert_eq!(c(100), "One Hundred");
+        assert_eq!(c(123), "One Hundred Twenty-Three");
+        assert_eq!(c(1000), "One Thousand");
+        assert_eq!(c(2025), "Two Thousand Twenty-Five");
+        // Outside the spelled range: decimal, so the value is never lost.
+        assert_eq!(c(0), "0");
+        assert_eq!(c(1_000_000), "1000000");
+    }
+
+    #[test]
+    fn ordinal_text_spells_the_ordinal() {
+        let o = |n| format_number(n, &NumberFormat::OrdinalText);
+        assert_eq!(o(1), "First");
+        assert_eq!(o(2), "Second");
+        assert_eq!(o(3), "Third");
+        assert_eq!(o(5), "Fifth");
+        assert_eq!(o(12), "Twelfth");
+        assert_eq!(o(20), "Twentieth");
+        assert_eq!(o(21), "Twenty-First");
+        assert_eq!(o(23), "Twenty-Third");
+        assert_eq!(o(100), "One Hundredth");
+        assert_eq!(o(123), "One Hundred Twenty-Third");
+        assert_eq!(o(1000), "One Thousandth");
+        assert_eq!(o(0), "0");
     }
 
     #[test]
