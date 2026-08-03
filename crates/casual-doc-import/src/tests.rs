@@ -2462,7 +2462,13 @@ fn wpg_group_maps_to_a_group_with_children_sized_by_their_own_extent() {
         panic!("expected a shape first, got {:?}", group.children[0]);
     };
     assert_eq!(rect.geometry, ShapeGeometry::Rectangle);
-    assert_eq!(rect.fill.map(|c| [c.r, c.g, c.b]), Some([255, 0, 0]));
+    assert_eq!(
+        rect.fill.as_ref().map(|fill| {
+            let c = fill.flat_color();
+            [c.r, c.g, c.b]
+        }),
+        Some([255, 0, 0])
+    );
     let stroke = rect.stroke.expect("the outline");
     assert_eq!(
         [stroke.color.r, stroke.color.g, stroke.color.b],
@@ -2651,7 +2657,13 @@ fn vml_rect_horizon_rule_maps_to_a_behind_text_shape_float() {
         panic!("expected a single shape child");
     };
     assert_eq!(shape.geometry, ShapeGeometry::Rectangle);
-    assert_eq!(shape.fill.map(|c| [c.r, c.g, c.b]), Some([0, 0, 0]));
+    assert_eq!(
+        shape.fill.as_ref().map(|fill| {
+            let c = fill.flat_color();
+            [c.r, c.g, c.b]
+        }),
+        Some([0, 0, 0])
+    );
     assert!(
         shape.stroke.is_none(),
         "stroked=\"false\" leaves no outline"
@@ -2898,7 +2910,10 @@ fn body_vml_text_box_stays_inline_not_floated() {
         "the safety fallback does not force a potentially undersized absolute box"
     );
     assert_eq!(
-        text_box.fill.map(|color| [color.r, color.g, color.b]),
+        text_box.fill.as_ref().map(|fill| {
+            let color = fill.flat_color();
+            [color.r, color.g, color.b]
+        }),
         Some([0x11, 0x22, 0x33])
     );
     assert_eq!(
@@ -3021,7 +3036,10 @@ fn footer_vml_text_box_preserves_relative_alignment_and_body_properties() {
     );
     assert_eq!(text_box.body_properties.auto_fit, TextBoxAutoFit::Shape);
     assert_eq!(
-        text_box.fill.map(|color| [color.r, color.g, color.b]),
+        text_box.fill.as_ref().map(|fill| {
+            let color = fill.flat_color();
+            [color.r, color.g, color.b]
+        }),
         Some([0xab, 0xcd, 0xef])
     );
     assert_eq!(
@@ -3573,12 +3591,14 @@ fn drawingml_text_box_is_modeled_and_does_not_corrupt_the_paragraph() {
     );
     assert_eq!(
         text_box.fill,
-        Some(casual_doc_model::v1::Rgba {
-            r: 0x11,
-            g: 0x22,
-            b: 0x33,
-            a: 255,
-        })
+        Some(casual_doc_model::v1::Fill::Solid(
+            casual_doc_model::v1::Rgba {
+                r: 0x11,
+                g: 0x22,
+                b: 0x33,
+                a: 255,
+            }
+        ))
     );
     assert_eq!(
         text_box.border,

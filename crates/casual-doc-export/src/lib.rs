@@ -676,7 +676,13 @@ mod semantic_tests {
                 formula: "val 25000".to_owned(),
             }]
         );
-        assert_eq!(shape.fill.map(|c| [c.r, c.g, c.b]), Some([255, 0, 0]));
+        assert_eq!(
+            shape.fill.as_ref().map(|fill| {
+                let c = fill.flat_color();
+                [c.r, c.g, c.b]
+            }),
+            Some([255, 0, 0])
+        );
         assert_eq!(shape.stroke.map(|s| s.width_emu), Some(9525));
 
         assert_eq!(m1, m2, "the group survives write -> reopen");
@@ -783,6 +789,108 @@ mod semantic_tests {
         assert!(text_box.flip_v);
 
         assert_eq!(m1, m2, "group flip + rotation survive write -> reopen");
+    }
+
+    #[test]
+    fn shape_gradient_fill_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::{
+            BlockNode, Fill, GradientKind, GradientStop, GroupChild, InlineNode, Rgba,
+        };
+
+        // A group with a linear-gradient rectangle (two stops, 90° sweep) and a
+        // radial-gradient rectangle (three stops). Each `a:gradFill` — its stops
+        // (`a:gs@pos` + color) and geometry (`a:lin`/`a:path`) — must survive
+        // import -> write -> reopen (dropped/flattened before this change).
+        let xml = br#"<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps" xmlns:wpg="urn:wpg"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="0" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="1000000" cy="1000000"/><wp:wrapNone/><wp:docPr id="1" name="Group 1"/><a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000000" cy="1000000"/><a:chOff x="0" y="0"/><a:chExt cx="1000000" cy="1000000"/></a:xfrm></wpg:grpSpPr><wps:wsp><wps:cNvPr id="2" name="Linear"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000000" cy="500000"/></a:xfrm><a:prstGeom prst="rect"/><a:gradFill><a:gsLst><a:gs pos="0"><a:srgbClr val="FF0000"/></a:gs><a:gs pos="100000"><a:srgbClr val="0000FF"/></a:gs></a:gsLst><a:lin ang="5400000"/></a:gradFill></wps:spPr><wps:bodyPr/></wps:wsp><wps:wsp><wps:cNvPr id="3" name="Radial"/><wps:spPr><a:xfrm><a:off x="0" y="500000"/><a:ext cx="1000000" cy="500000"/></a:xfrm><a:prstGeom prst="rect"/><a:gradFill><a:gsLst><a:gs pos="0"><a:srgbClr val="00FF00"/></a:gs><a:gs pos="50000"><a:srgbClr val="FFFF00"/></a:gs><a:gs pos="100000"><a:srgbClr val="000000"/></a:gs></a:gsLst><a:path path="circle"/></a:gradFill></wps:spPr><wps:bodyPr/></wps:wsp></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Group(group) = &paragraph.inlines[0] else {
+            panic!("expected a group, got {:?}", paragraph.inlines[0]);
+        };
+
+        let GroupChild::Shape(linear) = &group.children[0] else {
+            panic!("expected a shape");
+        };
+        assert_eq!(
+            linear.fill,
+            Some(Fill::Gradient {
+                stops: vec![
+                    GradientStop {
+                        position: 0,
+                        color: Rgba {
+                            r: 255,
+                            g: 0,
+                            b: 0,
+                            a: 255
+                        },
+                    },
+                    GradientStop {
+                        position: 100_000,
+                        color: Rgba {
+                            r: 0,
+                            g: 0,
+                            b: 255,
+                            a: 255
+                        },
+                    },
+                ],
+                kind: GradientKind::Linear { angle: 5_400_000 },
+            })
+        );
+
+        let GroupChild::Shape(radial) = &group.children[1] else {
+            panic!("expected a shape");
+        };
+        let Some(Fill::Gradient { stops, kind }) = &radial.fill else {
+            panic!("expected a radial gradient, got {:?}", radial.fill);
+        };
+        assert_eq!(stops.len(), 3);
+        assert_eq!(stops[1].position, 50_000);
+        assert_eq!(*kind, GradientKind::Radial);
+
+        assert_eq!(m1, m2, "shape gradient fills survive write -> reopen");
+    }
+
+    #[test]
+    fn inline_picture_border_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, InlineNode, Rgba, ShapeStroke};
+
+        // An inline framed photo: `pic:spPr/a:ln` with a solid color + width. The
+        // border must survive import -> write -> reopen (previously dropped, since a
+        // lone picture has no shape builder). Imported through a package so `r:embed`
+        // resolves.
+        let document_xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="Pic 1"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:prstGeom prst="rect"/><a:ln w="12700"><a:solidFill><a:srgbClr val="FF8800"/></a:solidFill></a:ln></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+
+        let m1 = reopen(&pack(document_xml, document_rels));
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Drawing(drawing) = &paragraph.inlines[0] else {
+            panic!("expected an inline drawing, got {:?}", paragraph.inlines[0]);
+        };
+        assert_eq!(
+            drawing.border,
+            Some(ShapeStroke {
+                color: Rgba {
+                    r: 0xFF,
+                    g: 0x88,
+                    b: 0x00,
+                    a: 255,
+                },
+                width_emu: 12_700,
+                dash: None,
+                head_end: None,
+                tail_end: None,
+            })
+        );
+
+        let written = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&written);
+        assert_eq!(m1, m2, "inline picture border survives write -> reopen");
     }
 
     #[test]

@@ -2121,10 +2121,10 @@ fn invalid_text_box_normal_autofit_percentage_is_rejected() {
 #[test]
 fn group_with_retained_preset_shape_and_text_box_children_validates_and_round_trips_json() {
     use crate::v1::{
-        AnchorHorizontal, AnchorVertical, DrawingAnchor, Extent, GroupChild, GroupShape,
-        GroupTextBox, GroupTransform, HorizontalAnchor, HorizontalPosition, PointEmu, Rgba,
-        ShapeAdjustment, ShapeGeometry, ShapeStroke, VerticalAnchor, VerticalPosition,
-        WordprocessingGroup, WrapMode,
+        AnchorHorizontal, AnchorVertical, DrawingAnchor, Extent, Fill, GradientKind, GradientStop,
+        GroupChild, GroupShape, GroupTextBox, GroupTransform, HorizontalAnchor, HorizontalPosition,
+        PointEmu, Rgba, ShapeAdjustment, ShapeGeometry, ShapeStroke, VerticalAnchor,
+        VerticalPosition, WordprocessingGroup, WrapMode,
     };
     let ident = GroupTransform {
         offset: PointEmu { x_emu: 0, y_emu: 0 },
@@ -2176,12 +2176,12 @@ fn group_with_retained_preset_shape_and_text_box_children_validates_and_round_tr
                     name: "adj".to_owned(),
                     formula: "val 25000".to_owned(),
                 }],
-                fill: Some(Rgba {
+                fill: Some(Fill::Solid(Rgba {
                     r: 255,
                     g: 255,
                     b: 255,
                     a: 255,
-                }),
+                })),
                 stroke: Some(ShapeStroke {
                     color: Rgba {
                         r: 217,
@@ -2209,7 +2209,31 @@ fn group_with_retained_preset_shape_and_text_box_children_validates_and_round_tr
                     height_emu: 200_000,
                 },
                 blocks: vec![paragraph_block(tid(33))],
-                fill: None,
+                // A gradient fill so the JSON round trip also exercises
+                // `Fill::Gradient` (stops + geometry), not only `Fill::Solid`.
+                fill: Some(Fill::Gradient {
+                    stops: vec![
+                        GradientStop {
+                            position: 0,
+                            color: Rgba {
+                                r: 255,
+                                g: 0,
+                                b: 0,
+                                a: 255,
+                            },
+                        },
+                        GradientStop {
+                            position: 100_000,
+                            color: Rgba {
+                                r: 0,
+                                g: 0,
+                                b: 255,
+                                a: 255,
+                            },
+                        },
+                    ],
+                    kind: GradientKind::Linear { angle: 2_700_000 },
+                }),
                 border: None,
                 body_properties: TextBoxBodyProperties::default(),
                 flip_h: false,

@@ -24,25 +24,25 @@ use casual_doc_model::v1::{
     CoreProperties, CropRect, CustomProperty, CustomValue, DashStyle, DefinitionMap, Definitions,
     DocGridType, Document, DocumentDefaults, DocumentProtectionEdit, DocumentSettings,
     DropCapFrame, DropCapMode, EmbeddedKind, EmbeddedObject, EmbeddedPart, EmphasisMark, Extent,
-    FontCollection, FontDescriptor, FontFamilyKind, FontPitch, FontRef, FontScheme,
+    Fill, FontCollection, FontDescriptor, FontFamilyKind, FontPitch, FontRef, FontScheme,
     FormCheckBoxSize, FormFieldData, FormFieldKind, FormTextType, FrameHorizontalAlignment,
-    FrameHorizontalAnchor, FrameVerticalAlignment, FrameVerticalAnchor, FrameWrap, GridColumn,
-    GroupChild, GroupShape, GroupTextBox, GroupTransform, HeaderFooterId, HeaderFooterKind,
-    HeightRule, HighlightColor, HorizontalAlign, HorizontalAnchor, HorizontalPosition,
-    HorizontalRuleAlign, HyperlinkTarget, InlineNode, LatentStyles, LevelJustification,
-    LevelSuffix, LineEnd, LineEndKind, LineEndSize, LineNumberRestart, LineRule, MarkRevision,
-    MarkRevisionKind, MediaId, MediaReference, MoveKind, Note, NoteId, NoteKind, NoteNumberRestart,
-    NotePosition, NoteProperties, NumberFormat, NumberingInstance, NumberingInstanceId,
-    NumberingLevel, PageBorderDisplay, PageBorderOffset, PageOrientation, PageVerticalAlignment,
-    ParagraphProperties, Person, PointEmu, PositionalTabAlignment, PositionalTabLeader,
-    PositionalTabRelativeTo, ProofState, PropChange, RevisionKind, RgbColor, Rgba, RunFontHint,
-    RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind,
-    SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionType, ShapeAdjustment,
-    ShapeGeometry, ShapeStroke, Style, StyleId, StyleKind, TabAlignment, TabLeader, Table,
-    TableAnchor, TableBorders, TableCell, TableCellProperties, TableFloatPosition, TableLayout,
-    TableOverlap, TableProperties, TableRow, TableRowProperties, TableStyleOverride,
-    TableStyleRegion, TableWidth, TableXAlign, TableYAlign, TextBox, TextBoxAutoFit,
-    TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxVerticalAnchor,
+    FrameHorizontalAnchor, FrameVerticalAlignment, FrameVerticalAnchor, FrameWrap, GradientKind,
+    GradientStop, GridColumn, GroupChild, GroupShape, GroupTextBox, GroupTransform, HeaderFooterId,
+    HeaderFooterKind, HeightRule, HighlightColor, HorizontalAlign, HorizontalAnchor,
+    HorizontalPosition, HorizontalRuleAlign, HyperlinkTarget, InlineNode, LatentStyles,
+    LevelJustification, LevelSuffix, LineEnd, LineEndKind, LineEndSize, LineNumberRestart,
+    LineRule, MarkRevision, MarkRevisionKind, MediaId, MediaReference, MoveKind, Note, NoteId,
+    NoteKind, NoteNumberRestart, NotePosition, NoteProperties, NumberFormat, NumberingInstance,
+    NumberingInstanceId, NumberingLevel, PageBorderDisplay, PageBorderOffset, PageOrientation,
+    PageVerticalAlignment, ParagraphProperties, Person, PointEmu, PositionalTabAlignment,
+    PositionalTabLeader, PositionalTabRelativeTo, ProofState, PropChange, RevisionKind, RgbColor,
+    Rgba, RunFontHint, RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData,
+    SdtControlKind, SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionType,
+    ShapeAdjustment, ShapeGeometry, ShapeStroke, Style, StyleId, StyleKind, TabAlignment,
+    TabLeader, Table, TableAnchor, TableBorders, TableCell, TableCellProperties,
+    TableFloatPosition, TableLayout, TableOverlap, TableProperties, TableRow, TableRowProperties,
+    TableStyleOverride, TableStyleRegion, TableWidth, TableXAlign, TableYAlign, TextBox,
+    TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxVerticalAnchor,
     TextBoxVerticalOverflow, TextDirection, ThemeColorRef, ThemeFontRef, VerticalAlign,
     VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition, VerticalTextAlignment,
     WidthType, WordprocessingGroup, WrapMode, Zoom, ZoomMode,
@@ -4238,6 +4238,7 @@ fn write_inline(
                 drawing.extent.as_ref(),
                 drawing.descr.as_deref(),
                 drawing.crop.as_ref(),
+                drawing.border,
                 Xfrm2D {
                     rotation: drawing.rotation,
                     flip_h: drawing.flip_h,
@@ -4395,6 +4396,7 @@ fn write_drawing(
     extent: Option<&Extent>,
     descr: Option<&str>,
     crop: Option<&CropRect>,
+    border: Option<ShapeStroke>,
     xfrm: Xfrm2D,
 ) -> Result<(), ExportError> {
     let (cx, cy) = extent.map_or((0, 0), |extent| (extent.width_emu, extent.height_emu));
@@ -4419,7 +4421,7 @@ fn write_drawing(
         doc_pr.push_attribute(("descr", descr));
     }
     w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
-    write_pic_graphic(w, embed, cx, cy, crop, xfrm)?;
+    write_pic_graphic(w, embed, cx, cy, crop, border, xfrm)?;
     w.write_event(Event::End(BytesEnd::new("wp:inline")))
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("w:drawing")))
@@ -4464,6 +4466,7 @@ fn write_pic_graphic(
     cx: i64,
     cy: i64,
     crop: Option<&CropRect>,
+    border: Option<ShapeStroke>,
     xfrm: Xfrm2D,
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("a:graphic")))
@@ -4520,6 +4523,11 @@ fn write_pic_graphic(
     w.write_event(Event::Empty(start("a:avLst"))).map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("a:prstGeom")))
         .map_err(pkg)?;
+    // A framed picture keeps its `a:ln` outline (schema order: after the geometry).
+    // Absent border = no `a:ln` (the default), so it is only written when present.
+    if border.is_some() {
+        write_outline(w, border)?;
+    }
     w.write_event(Event::End(BytesEnd::new("pic:spPr")))
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("pic:pic")))
@@ -4592,6 +4600,7 @@ fn write_anchored_drawing(
         cx,
         cy,
         drawing.crop.as_ref(),
+        drawing.border,
         Xfrm2D {
             rotation: drawing.rotation,
             flip_h: drawing.flip_h,
@@ -4755,6 +4764,7 @@ fn write_wgp(
                         picture.offset,
                         picture.extent,
                         picture.crop.as_ref(),
+                        picture.border,
                         Xfrm2D {
                             rotation: picture.rotation,
                             flip_h: picture.flip_h,
@@ -4819,6 +4829,7 @@ fn write_group_picture(
     offset: PointEmu,
     extent: Extent,
     crop: Option<&CropRect>,
+    border: Option<ShapeStroke>,
     xfrm: Xfrm2D,
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("pic:pic"))).map_err(pkg)?;
@@ -4850,6 +4861,10 @@ fn write_group_picture(
         .map_err(pkg)?;
     write_shape_xfrm(w, offset, extent, xfrm.rotation, xfrm.flip_h, xfrm.flip_v)?;
     write_prst_geom(w, "rect")?;
+    // A framed grouped picture keeps its `a:ln` outline (only when present).
+    if border.is_some() {
+        write_outline(w, border)?;
+    }
     w.write_event(Event::End(BytesEnd::new("pic:spPr")))
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("pic:pic")))
@@ -4884,8 +4899,8 @@ fn write_group_shape(
         .as_deref()
         .unwrap_or_else(|| geometry_prst(shape.geometry));
     write_prst_geom_with_adjustments(w, preset, &shape.adjustments)?;
-    if let Some(fill) = shape.fill {
-        write_solid_fill(w, fill)?;
+    if let Some(fill) = &shape.fill {
+        write_fill(w, fill)?;
     }
     write_outline(w, shape.stroke)?;
     w.write_event(Event::End(BytesEnd::new("wps:spPr")))
@@ -4921,8 +4936,8 @@ fn write_group_text_box(
         text_box.flip_v,
     )?;
     write_prst_geom(w, "rect")?;
-    if let Some(fill) = text_box.fill {
-        write_solid_fill(w, fill)?;
+    if let Some(fill) = &text_box.fill {
+        write_fill(w, fill)?;
     } else {
         w.write_event(Event::Empty(start("a:noFill")))
             .map_err(pkg)?;
@@ -5035,10 +5050,9 @@ fn geometry_prst(geometry: ShapeGeometry) -> &'static str {
     }
 }
 
-/// Emits an `a:solidFill > a:srgbClr` for a resolved color.
-fn write_solid_fill(w: &mut Writer<Cursor<Vec<u8>>>, color: Rgba) -> Result<(), ExportError> {
-    w.write_event(Event::Start(start("a:solidFill")))
-        .map_err(pkg)?;
+/// Emits an `a:srgbClr` element for a resolved color, carrying an `a:alpha` child
+/// when the color is not fully opaque.
+fn write_srgb_color(w: &mut Writer<Cursor<Vec<u8>>>, color: Rgba) -> Result<(), ExportError> {
     let mut srgb = start("a:srgbClr");
     srgb.push_attribute(("val", hex_rgb(color).as_str()));
     if color.a == u8::MAX {
@@ -5052,7 +5066,61 @@ fn write_solid_fill(w: &mut Writer<Cursor<Vec<u8>>>, color: Rgba) -> Result<(), 
         w.write_event(Event::End(BytesEnd::new("a:srgbClr")))
             .map_err(pkg)?;
     }
+    Ok(())
+}
+
+/// Emits an `a:solidFill > a:srgbClr` for a resolved color.
+fn write_solid_fill(w: &mut Writer<Cursor<Vec<u8>>>, color: Rgba) -> Result<(), ExportError> {
+    w.write_event(Event::Start(start("a:solidFill")))
+        .map_err(pkg)?;
+    write_srgb_color(w, color)?;
     w.write_event(Event::End(BytesEnd::new("a:solidFill")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits a shape/text-box background fill: a flat `a:solidFill` or a multi-stop
+/// `a:gradFill`.
+fn write_fill(w: &mut Writer<Cursor<Vec<u8>>>, fill: &Fill) -> Result<(), ExportError> {
+    match fill {
+        Fill::Solid(color) => write_solid_fill(w, *color),
+        Fill::Gradient { stops, kind } => write_grad_fill(w, stops, *kind),
+    }
+}
+
+/// Emits an `a:gradFill` with its stops (`a:gsLst/a:gs`) and geometry (`a:lin` or
+/// `a:path`) in `CT_GradientFillProperties` schema order.
+fn write_grad_fill(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    stops: &[GradientStop],
+    kind: GradientKind,
+) -> Result<(), ExportError> {
+    w.write_event(Event::Start(start("a:gradFill")))
+        .map_err(pkg)?;
+    w.write_event(Event::Start(start("a:gsLst"))).map_err(pkg)?;
+    for stop in stops {
+        let mut gs = start("a:gs");
+        gs.push_attribute(("pos", stop.position.to_string().as_str()));
+        w.write_event(Event::Start(gs)).map_err(pkg)?;
+        write_srgb_color(w, stop.color)?;
+        w.write_event(Event::End(BytesEnd::new("a:gs")))
+            .map_err(pkg)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("a:gsLst")))
+        .map_err(pkg)?;
+    match kind {
+        GradientKind::Linear { angle } => {
+            let mut lin = start("a:lin");
+            lin.push_attribute(("ang", angle.to_string().as_str()));
+            w.write_event(Event::Empty(lin)).map_err(pkg)?;
+        }
+        GradientKind::Radial => {
+            let mut path = start("a:path");
+            path.push_attribute(("path", "circle"));
+            w.write_event(Event::Empty(path)).map_err(pkg)?;
+        }
+    }
+    w.write_event(Event::End(BytesEnd::new("a:gradFill")))
         .map_err(pkg)?;
     Ok(())
 }
@@ -5527,8 +5595,8 @@ fn write_text_box(
         false,
     )?;
     write_prst_geom(w, "rect")?;
-    if let Some(fill) = text_box.fill {
-        write_solid_fill(w, fill)?;
+    if let Some(fill) = &text_box.fill {
+        write_fill(w, fill)?;
     }
     write_outline(w, text_box.border)?;
     w.write_event(Event::End(BytesEnd::new("wps:spPr")))
