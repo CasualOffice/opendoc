@@ -982,6 +982,33 @@ pub enum EmphasisMark {
     UnderDot,
 }
 
+/// The line style of an underline (`w:u@val`, `ST_Underline`). A closed
+/// vocabulary; an unrecognized producer token maps to [`Single`](Self::Single)
+/// and is reported (it still underlines, just not with the exact art style). The
+/// on/off state lives in [`RunProperties::underline`]; this only describes *how*
+/// the line is drawn when on.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UnderlineStyle {
+    /// A single line (`single`) — the default.
+    #[default]
+    Single,
+    /// Two parallel lines (`double`).
+    Double,
+    /// A single thick line (`thick`).
+    Thick,
+    /// A dotted line (`dotted`, `dottedHeavy`).
+    Dotted,
+    /// A dashed line (`dash`, `dashedHeavy`, `dashLong`, `dashLongHeavy`).
+    Dashed,
+    /// A dot-dash line (`dotDash`, `dashDotHeavy`, `dotDotDash`, `dashDotDotHeavy`).
+    DotDash,
+    /// A wavy line (`wave`, `wavyHeavy`, `wavyDouble`).
+    Wavy,
+    /// Underline words only, not the spaces between them (`words`).
+    Words,
+}
+
 /// Typed run properties. An empty value serializes to `{}`.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1011,6 +1038,10 @@ pub struct RunProperties {
     /// `auto`) means the underline takes the run's text color.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub underline_color: Option<RgbColor>,
+    /// Underline line style (`w:u@val`, e.g. `double`/`wave`). `None` means the
+    /// default single line; only meaningful when `underline` is on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub underline_style: Option<UnderlineStyle>,
     /// Strike-through.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub strike: Option<bool>,

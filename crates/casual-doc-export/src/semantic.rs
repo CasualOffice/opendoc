@@ -5495,6 +5495,22 @@ fn write_run_properties(
         let mut el = start("w:u");
         if !on {
             el.push_attribute(("w:val", "none"));
+        } else if let Some(style) = properties.underline_style {
+            // `w:u@val` line style; `single` is the default and stays implicit.
+            use casual_doc_model::v1::UnderlineStyle;
+            let token = match style {
+                UnderlineStyle::Single => "single",
+                UnderlineStyle::Double => "double",
+                UnderlineStyle::Thick => "thick",
+                UnderlineStyle::Dotted => "dotted",
+                UnderlineStyle::Dashed => "dash",
+                UnderlineStyle::DotDash => "dotDash",
+                UnderlineStyle::Wavy => "wave",
+                UnderlineStyle::Words => "words",
+            };
+            if !matches!(style, UnderlineStyle::Single) {
+                el.push_attribute(("w:val", token));
+            }
         }
         // `w:u@color` round-trips the explicit underline color when present.
         let color;

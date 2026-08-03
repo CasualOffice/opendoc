@@ -41,6 +41,9 @@ pub struct Glyph {
 pub struct Decoration {
     /// Underline.
     pub underline: bool,
+    /// The underline line style (`w:u@val`), drawn only when `underline` is on.
+    #[serde(default, skip_serializing_if = "is_single_underline")]
+    pub underline_style: casual_doc_model::v1::UnderlineStyle,
     /// Explicit underline color (`w:u@color`) resolved to RGBA; `None` means the
     /// underline takes the run's text color.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -486,6 +489,10 @@ const fn default_character_scale() -> u16 {
 
 fn is_default_character_scale(value: &u16) -> bool {
     *value == default_character_scale()
+}
+
+fn is_single_underline(value: &casual_doc_model::v1::UnderlineStyle) -> bool {
+    *value == casual_doc_model::v1::UnderlineStyle::Single
 }
 
 /// Horizontal alignment of a paragraph's lines.

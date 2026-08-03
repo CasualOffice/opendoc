@@ -534,7 +534,7 @@ fn render_glyph_run(
                 // `w:u@color` colors the underline independently of the text; it
                 // falls back to the run color when unset (`auto`).
                 let underline_color = run.decoration.underline_color.unwrap_or(run.color);
-                draw_decoration(
+                draw_underline(
                     surface,
                     clip,
                     start_x,
@@ -542,6 +542,7 @@ fn render_glyph_run(
                     advance,
                     thickness,
                     underline_color,
+                    run.decoration.underline_style,
                 );
             }
             if run.decoration.strikethrough || run.decoration.double_strike {
@@ -602,6 +603,71 @@ fn draw_decoration(
         Transform::identity(),
         clip,
     );
+}
+
+/// Draws an underline in its `w:u@val` line style. Single/double/thick are drawn
+/// exactly; dotted/dashed/dot-dash as patterned segments; wave and words are
+/// approximated by a single line (a true sine wave / per-word gapping is a
+/// follow-up), so they still underline rather than disappearing.
+#[allow(clippy::too_many_arguments)]
+fn draw_underline(
+    surface: &mut Surface,
+    clip: Option<&Mask>,
+    x: f32,
+    y_center: f32,
+    advance: f32,
+    thickness: f32,
+    color: [u8; 4],
+    style: casual_doc_model::v1::UnderlineStyle,
+) {
+    use casual_doc_model::v1::UnderlineStyle;
+    let line = |surface: &mut Surface, x: f32, w: f32, y: f32, t: f32| {
+        draw_decoration(surface, clip, x, y, w, t, color);
+    };
+    // A repeating on/off pattern of segments (dotted/dashed) across the advance.
+    let dashed = |surface: &mut Surface, on: f32, off: f32| {
+        let mut cursor = 0.0_f32;
+        while cursor < advance {
+            let seg = on.min(advance - cursor);
+            if seg > 0.0 {
+                line(surface, x + cursor, seg, y_center, thickness);
+            }
+            cursor += on + off;
+        }
+    };
+    match style {
+        UnderlineStyle::Single | UnderlineStyle::Wavy | UnderlineStyle::Words => {
+            line(surface, x, advance, y_center, thickness);
+        }
+        UnderlineStyle::Double => {
+            let gap = (thickness * 2.0).max(1.5);
+            line(surface, x, advance, y_center - gap / 2.0, thickness);
+            line(surface, x, advance, y_center + gap / 2.0, thickness);
+        }
+        UnderlineStyle::Thick => {
+            line(surface, x, advance, y_center, (thickness * 2.0).max(1.5));
+        }
+        UnderlineStyle::Dotted => dashed(surface, thickness.max(1.0), thickness * 1.6),
+        UnderlineStyle::Dashed => dashed(surface, thickness * 4.0, thickness * 3.0),
+        UnderlineStyle::DotDash => {
+            // Alternating dash then dot, each followed by a gap.
+            let (dash, dot, gap) = (thickness * 4.0, thickness.max(1.0), thickness * 2.5);
+            let period = dash + gap + dot + gap;
+            let mut base = 0.0_f32;
+            while base < advance {
+                let d = dash.min(advance - base);
+                if d > 0.0 {
+                    line(surface, x + base, d, y_center, thickness);
+                }
+                let dot_start = base + dash + gap;
+                if dot_start < advance {
+                    let d2 = dot.min(advance - dot_start);
+                    line(surface, x + dot_start, d2, y_center, thickness);
+                }
+                base += period;
+            }
+        }
+    }
 }
 
 /// A `skrifa` outline pen that appends glyph contours to a `tiny-skia` path,
@@ -1233,6 +1299,7 @@ mod tests {
             strikethrough: false,
             double_strike: false,
             underline_color: None,
+            underline_style: casual_doc_model::v1::UnderlineStyle::Single,
         });
         let plain_below = band_dark(&plain, baseline + 2, baseline + 10);
         let under_below = band_dark(&underlined, baseline + 2, baseline + 10);
@@ -1256,6 +1323,7 @@ mod tests {
             strikethrough: true,
             double_strike: false,
             underline_color: None,
+            underline_style: casual_doc_model::v1::UnderlineStyle::Single,
         });
         // Search the mid-band between the baseline and ~cap height above it.
         let (y0, y1) = (baseline.saturating_sub(20), baseline);
@@ -1280,16 +1348,40 @@ mod tests {
             strikethrough: true,
             double_strike: false,
             underline_color: None,
+            underline_style: casual_doc_model::v1::UnderlineStyle::Single,
         });
         let (double, _) = render_decorated(Decoration {
             underline: false,
             strikethrough: false,
             double_strike: true,
             underline_color: None,
+            underline_style: casual_doc_model::v1::UnderlineStyle::Single,
         });
         assert!(
             dark_pixel_count(&double) > dark_pixel_count(&single),
             "double strike ({}) lays down more ink than a single strike ({})",
+            dark_pixel_count(&double),
+            dark_pixel_count(&single),
+        );
+    }
+
+    #[test]
+    fn a_double_underline_draws_more_ink_than_a_single_underline() {
+        use casual_doc_layout::text::Decoration;
+        let single = render_decorated(Decoration {
+            underline: true,
+            ..Decoration::default()
+        })
+        .0;
+        let double = render_decorated(Decoration {
+            underline: true,
+            underline_style: casual_doc_model::v1::UnderlineStyle::Double,
+            ..Decoration::default()
+        })
+        .0;
+        assert!(
+            dark_pixel_count(&double) > dark_pixel_count(&single),
+            "the double underline ({}) lays down more ink than a single ({})",
             dark_pixel_count(&double),
             dark_pixel_count(&single),
         );

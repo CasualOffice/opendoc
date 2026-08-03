@@ -223,17 +223,19 @@ fn paragraphs_runs_and_run_properties_are_mapped() {
 }
 
 #[test]
-fn underline_color_is_imported_from_w_u_color() {
-    use casual_doc_model::v1::RgbColor;
+fn underline_style_and_color_are_imported_from_w_u() {
+    use casual_doc_model::v1::{RgbColor, UnderlineStyle};
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
-            <w:p><w:r><w:rPr><w:u w:val="single" w:color="FF0000"/></w:rPr>
+            <w:p><w:r><w:rPr><w:u w:val="double" w:color="FF0000"/></w:rPr>
                 <w:t>link</w:t></w:r></w:p>
+            <w:p><w:r><w:rPr><w:u w:val="wavyHeavy"/></w:rPr><w:t>x</w:t></w:r></w:p>
         </w:body></w:document>"#;
     let import = import(xml);
     let InlineNode::Run(run) = &paragraph(&import, 0).inlines[0] else {
         panic!("expected run");
     };
     assert_eq!(run.properties.underline, Some(true));
+    assert_eq!(run.properties.underline_style, Some(UnderlineStyle::Double));
     assert_eq!(
         run.properties.underline_color,
         Some(RgbColor {
@@ -243,6 +245,11 @@ fn underline_color_is_imported_from_w_u_color() {
         }),
         "w:u@color imports as the underline color"
     );
+    // A heavy variant folds into its base line style.
+    let InlineNode::Run(wavy) = &paragraph(&import, 1).inlines[0] else {
+        panic!("expected run");
+    };
+    assert_eq!(wavy.properties.underline_style, Some(UnderlineStyle::Wavy));
 }
 
 #[test]

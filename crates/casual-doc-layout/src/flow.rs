@@ -4484,6 +4484,7 @@ fn styled_owned_run(
             strikethrough: effective.strike.unwrap_or(false),
             double_strike: effective.double_strike.unwrap_or(false),
             underline_color: effective.underline_color.map(|c| [c.r, c.g, c.b, 255]),
+            underline_style: effective.underline_style.unwrap_or_default(),
         },
         highlight: effective.highlight.and_then(highlight_rgba),
         shading: shading_rgba(&effective.shading),
@@ -4526,6 +4527,7 @@ fn build_styled_run<'a>(
             strikethrough: properties.strike.unwrap_or(false),
             double_strike: properties.double_strike.unwrap_or(false),
             underline_color: properties.underline_color.map(|c| [c.r, c.g, c.b, 255]),
+            underline_style: properties.underline_style.unwrap_or_default(),
         },
         highlight: properties.highlight.and_then(highlight_rgba),
         shading: shading_rgba(&properties.shading),
@@ -4606,6 +4608,7 @@ fn symbol_glyph_run(symbol: &Symbol, ctx: &mut FlowCtx) -> StyledRun<'static> {
             strikethrough: effective.strike.unwrap_or(false),
             double_strike: effective.double_strike.unwrap_or(false),
             underline_color: effective.underline_color.map(|c| [c.r, c.g, c.b, 255]),
+            underline_style: effective.underline_style.unwrap_or_default(),
         },
         highlight: effective.highlight.and_then(highlight_rgba),
         shading: shading_rgba(&effective.shading),
@@ -4831,6 +4834,7 @@ fn build_script_run<'a>(
             strikethrough: properties.strike.unwrap_or(false),
             double_strike: properties.double_strike.unwrap_or(false),
             underline_color: properties.underline_color.map(|c| [c.r, c.g, c.b, 255]),
+            underline_style: properties.underline_style.unwrap_or_default(),
         },
         highlight: properties.highlight.and_then(highlight_rgba),
         shading: shading_rgba(&properties.shading),
@@ -4860,6 +4864,7 @@ fn push_small_caps_runs<'a>(
         strikethrough: properties.strike.unwrap_or(false),
         double_strike: properties.double_strike.unwrap_or(false),
         underline_color: properties.underline_color.map(|c| [c.r, c.g, c.b, 255]),
+        underline_style: properties.underline_style.unwrap_or_default(),
     };
     let highlight = properties.highlight.and_then(highlight_rgba);
     let shading = shading_rgba(&properties.shading);
