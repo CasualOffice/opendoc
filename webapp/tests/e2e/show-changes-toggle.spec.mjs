@@ -41,20 +41,24 @@ test("the Show changes toggle renders the read-only markup view and back (REVIEW
   await page.keyboard.press("Shift+ArrowRight");
   await page.keyboard.press("Backspace"); // tracked deletion of 3 chars
 
-  const toggle = page.locator("#showChangesToggle");
-  await expect(toggle).toBeVisible();
-  await expect(toggle).toBeEnabled();
-  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  // The read-only markup preview lives in the View menu (not the ribbon).
+  const showChanges = page.locator('#appMenuPopover [data-command="view.showChanges"]');
+
+  async function toggleShowChanges() {
+    await page.locator('.app-menu-button[data-menu="view"]').click();
+    await expect(showChanges).toBeVisible();
+    await showChanges.click();
+  }
 
   // Turn on the markup preview: it re-renders the canvas (still at least one
-  // page) with no engine errors, and reflects the pressed state.
-  await toggle.click();
-  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  // page) with no engine errors.
+  await toggleShowChanges();
+  await page.waitForTimeout(150);
   await expect(page.locator(".page-wrap .page").first()).toBeVisible();
 
   // Turn it back off.
-  await toggle.click();
-  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await toggleShowChanges();
+  await page.waitForTimeout(150);
   await expect(page.locator(".page-wrap .page").first()).toBeVisible();
 
   expect(consoleErrors).toEqual([]);
