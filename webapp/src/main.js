@@ -547,18 +547,12 @@ let activeReviewCommentId = null;
 // The read-only "Show changes" markup preview (docs/93): renders struck
 // deletions + author-colored insertions + highlighted comments from the engine's
 // markup layout. A view toggle only — it never changes the model or the caret.
-const showChangesToggle = document.getElementById("showChangesToggle");
+// Driven from the View menu (`view.showChanges`), not the width-limited ribbon.
 let showingChanges = false;
-if (showChangesToggle) {
-  showChangesToggle.addEventListener("click", async () => {
-    if (!doc) return;
-    showingChanges = !showingChanges;
-    showChangesToggle.setAttribute("aria-pressed", String(showingChanges));
-    showChangesToggle.title = showingChanges
-      ? "Showing tracked changes (read-only) — click to hide"
-      : "Show tracked changes (read-only markup preview)";
-    await renderAll();
-  });
+async function toggleShowChanges() {
+  if (!doc) return;
+  showingChanges = !showingChanges;
+  await renderAll();
 }
 let activeReviewItemId = null;
 let reviewPopover = null;
@@ -722,8 +716,6 @@ function updateReviewControls() {
   let count = 0;
   try { count = (JSON.parse(doc.listRevisions()) ?? []).length; } catch { count = 0; }
   for (const button of reviewModeButtons) button.disabled = false;
-  // The read-only markup preview is available whenever a document is loaded.
-  if (showChangesToggle) showChangesToggle.disabled = false;
   if (reviewPrevious) reviewPrevious.disabled = count === 0;
   if (reviewNext) reviewNext.disabled = count === 0;
   const canDecide = count > 0 && reviewMode !== "viewing";
@@ -6215,6 +6207,7 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "insert.link", label: "Add or edit link", group: "Insert", kw: "hyperlink url bookmark toc", shortcut: "⌘K", enabled: context.hasRange ?? hasRange(), disabledReason: "Select text to add a link", run: () => editSelectionLink() },
     { id: "insert.bookmark", label: "Bookmark manager", group: "Insert", kw: "bookmarks navigate links", run: () => openBookmarkManager() },
     { id: "view.outline", label: "Toggle outline", group: "View", kw: "headings navigation", run: () => toggleOutline() },
+    { id: "view.showChanges", label: "Show changes (read-only)", group: "View", kw: "tracked changes markup deletions insertions review redline", run: () => toggleShowChanges() },
     { id: "view.zoomIn", label: "Zoom in", group: "View", kw: "", run: () => stepZoom(1) },
     { id: "view.zoomOut", label: "Zoom out", group: "View", kw: "", run: () => stepZoom(-1) },
     { id: "view.settings", label: "Settings", group: "View", kw: "theme accent dark", run: () => settingsBtn.click() },
@@ -6274,7 +6267,7 @@ const APP_MENU_SECTIONS = {
     ["edit.selectAll", "edit.find"],
   ],
   view: [
-    ["view.outline", "review.toggle"],
+    ["view.outline", "review.toggle", "view.showChanges"],
     ["view.zoomIn", "view.zoomOut"],
     ["review.mode.editing", "review.mode.suggesting", "review.mode.viewing"],
   ],
