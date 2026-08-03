@@ -116,6 +116,11 @@ Additional gates should be added as capabilities appear:
 - structure-aware XML and relationship fuzzing;
 - snapshot serialization tests;
 - DOCX corpus import tests;
+- per-format detection, ambiguity, and explicit-selection tests;
+- per-format parser limits, corpus import, semantic reopen, and preservation tests;
+- cross-format export compatibility reports proving that target-inexpressible
+  source data is never dropped silently;
+- schema/profile validation for every emitted standardized package format;
 - round-trip tests;
 - visual layout snapshot tests;
 - benchmark regression checks;

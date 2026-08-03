@@ -71,7 +71,7 @@ report.
 | TXT import/export | Yes | Planned as a simple conformance path. |
 | Page render to raster (PNG) | Yes | CPU backend implemented: real pages, tables, images, and VML render via `tiny-skia`/`skrifa`; structurally strong, not yet pixel-perfect Word-grade (see doc 46). |
 | PDF render/export | Yes | Backend decision pending. |
-| ODT import/export | Later | Not a v1 release gate. |
+| ODT import/export | Later | Architecture accepted in doc 94 and the format-neutral Slice A foundation is implemented; no ODT implementation or support claim yet. Not a v1 release gate. |
 | HTML/Markdown interchange | Later | Not an editing source of truth. |
 | Macros/VBA execution | No | Blocked by policy. |
 

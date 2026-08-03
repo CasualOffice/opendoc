@@ -3,6 +3,7 @@ members = [
     "crates/casual-doc-edit",
     "crates/casual-doc-export",
     "crates/casual-doc-import",
+    "crates/casual-doc-io",
     "crates/casual-doc-layout",
     "crates/casual-doc-model",
     "crates/casual-doc-ooxml",
@@ -28,6 +29,7 @@ authors = ["CasualOffice contributors"]
 casual-doc-edit = { path = "crates/casual-doc-edit", version = "=0.0.1" }
 casual-doc-export = { path = "crates/casual-doc-export", version = "=0.0.1" }
 casual-doc-import = { path = "crates/casual-doc-import", version = "=0.0.1" }
+casual-doc-io = { path = "crates/casual-doc-io", version = "=0.0.1" }
 casual-doc-layout = { path = "crates/casual-doc-layout", version = "=0.0.1" }
 casual-doc-model = { path = "crates/casual-doc-model", version = "=0.0.1" }
 casual-doc-ooxml = { path = "crates/casual-doc-ooxml", version = "=0.0.1" }

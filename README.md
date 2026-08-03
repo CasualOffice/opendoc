@@ -180,6 +180,7 @@ Details: [fidelity gap analysis](docs/46-RENDERING-FIDELITY-GAP-ANALYSIS.md) ·
 | `casual-doc-ooxml` | Security-bounded OOXML package inspection |
 | `casual-doc-import` | WordprocessingML semantic import into the normalized model |
 | `casual-doc-export` | DOCX writers: byte-identical reconstruction and the semantic model → WordprocessingML writer |
+| `casual-doc-io` | Format-neutral identities, capability descriptors, deterministic detection/dispatch, preservation envelopes, and built-in adapters |
 | `casual-doc-layout` | Geometry, text shaping (`parley`), style cascade, block/flow galley, pagination, and the backend-neutral display list |
 | `casual-doc-render` | CPU render backend: executes the display list on a `tiny-skia` pixmap, rasterizing glyphs from `skrifa` outlines |
 

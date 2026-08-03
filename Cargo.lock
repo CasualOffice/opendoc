@@ -99,6 +99,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "casual-doc-io"
+version = "0.0.1"
+dependencies = [
+ "casual-doc-export",
+ "casual-doc-import",
+ "casual-doc-model",
+ "casual-doc-ooxml",
+]
+
+[[package]]
 name = "casual-doc-layout"
 version = "0.0.1"
 dependencies = [
