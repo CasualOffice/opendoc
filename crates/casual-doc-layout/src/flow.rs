@@ -3827,7 +3827,9 @@ fn layout_math_expression(
         MathExpression::Accent { .. }
         | MathExpression::Limit { .. }
         | MathExpression::Matrix { .. }
-        | MathExpression::EqArray { .. } => None,
+        | MathExpression::EqArray { .. }
+        | MathExpression::Bar { .. }
+        | MathExpression::GroupChar { .. } => None,
     }
 }
 

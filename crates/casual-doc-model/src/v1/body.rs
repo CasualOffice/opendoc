@@ -1983,6 +1983,45 @@ pub enum MathExpression {
         /// The stacked rows (non-empty).
         rows: Vec<MathExpression>,
     },
+    /// A base with an overline or underline rule, from `m:bar`.
+    Bar {
+        /// Whether the rule sits above (overline) or below (underline) the base.
+        position: BarPosition,
+        /// The barred base expression.
+        base: Box<MathExpression>,
+    },
+    /// A base grouped by a stretchy character (e.g. over-/under-brace), from
+    /// `m:groupChr`.
+    GroupChar {
+        /// The grouping character (`m:groupChrPr/m:chr@m:val`); empty means the
+        /// OOXML default top curly bracket.
+        character: String,
+        /// Whether the grouping character sits above or below the base.
+        position: GroupPosition,
+        /// The grouped base expression.
+        base: Box<MathExpression>,
+    },
+}
+
+/// Whether a [`MathExpression::Bar`] rule sits above or below its base.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BarPosition {
+    /// The rule sits above the base (an overline; `m:pos` `top`).
+    Top,
+    /// The rule sits below the base (an underline; `m:pos` `bot`).
+    Bottom,
+}
+
+/// Whether a [`MathExpression::GroupChar`] character sits above or below its
+/// base.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GroupPosition {
+    /// The character sits above the base (e.g. an over-brace; `m:pos` `top`).
+    Top,
+    /// The character sits below the base (e.g. an under-brace; `m:pos` `bot`).
+    Bottom,
 }
 
 /// Whether a [`MathExpression::Limit`] places its limit below or above the base.

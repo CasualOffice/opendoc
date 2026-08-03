@@ -2270,6 +2270,16 @@ fn validate_math_expression(expression: &MathExpression) -> Result<(), ModelErro
                     visit(row, depth + 1, nodes, text_bytes)?;
                 }
             }
+            MathExpression::Bar { base, .. } => {
+                visit(base, depth + 1, nodes, text_bytes)?;
+            }
+            MathExpression::GroupChar {
+                character, base, ..
+            } => {
+                *text_bytes = text_bytes.saturating_add(character.len());
+                check_domain(*text_bytes <= MAX_MATH_BYTES, "math.expression.textBytes")?;
+                visit(base, depth + 1, nodes, text_bytes)?;
+            }
         }
         Ok(())
     }
@@ -2395,6 +2405,19 @@ fn math_expression_size(expression: &MathExpression) -> (usize, usize) {
                 size.1 = size.1.saturating_add(child.1);
             }
             size
+        }
+        MathExpression::Bar { base, .. } => {
+            let base = math_expression_size(base);
+            (base.0.saturating_add(1), base.1)
+        }
+        MathExpression::GroupChar {
+            character, base, ..
+        } => {
+            let base = math_expression_size(base);
+            (
+                base.0.saturating_add(1),
+                base.1.saturating_add(character.len()),
+            )
         }
     }
 }
