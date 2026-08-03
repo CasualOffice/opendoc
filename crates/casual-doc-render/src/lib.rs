@@ -519,7 +519,7 @@ fn render_glyph_run(
     // the run color, spanning the run's total advance, over the glyphs. Positions
     // and thickness come from the face's own metrics, falling back to size-derived
     // defaults for faces that omit them.
-    if run.decoration.underline || run.decoration.strikethrough {
+    if run.decoration.underline || run.decoration.strikethrough || run.decoration.double_strike {
         let advance = pen_x - start_x;
         if advance > 0.0 {
             let metrics = Metrics::new(&font, Size::new(size_px), LocationRef::default());
@@ -541,20 +541,29 @@ fn render_glyph_run(
                     run.color,
                 );
             }
-            if run.decoration.strikethrough {
+            if run.decoration.strikethrough || run.decoration.double_strike {
                 let (offset, thickness) = metrics
                     .strikeout
                     .map(|d| (d.offset, d.thickness))
                     .unwrap_or((size_px * 0.26, size_px * 0.06));
-                draw_decoration(
-                    surface,
-                    clip,
-                    start_x,
-                    baseline_y - offset,
-                    advance,
-                    thickness,
-                    run.color,
-                );
+                // Double strike-through (`w:dstrike`) draws two parallel lines
+                // straddling the single strike position; a single strike draws one.
+                let ys: &[f32] = if run.decoration.double_strike {
+                    &[offset + thickness, offset - thickness]
+                } else {
+                    &[offset]
+                };
+                for line_offset in ys {
+                    draw_decoration(
+                        surface,
+                        clip,
+                        start_x,
+                        baseline_y - line_offset,
+                        advance,
+                        thickness,
+                        run.color,
+                    );
+                }
             }
         }
     }
@@ -1219,6 +1228,7 @@ mod tests {
         let (underlined, _) = render_decorated(Decoration {
             underline: true,
             strikethrough: false,
+            double_strike: false,
         });
         let plain_below = band_dark(&plain, baseline + 2, baseline + 10);
         let under_below = band_dark(&underlined, baseline + 2, baseline + 10);
@@ -1240,6 +1250,7 @@ mod tests {
         let (struck, _) = render_decorated(Decoration {
             underline: false,
             strikethrough: true,
+            double_strike: false,
         });
         // Search the mid-band between the baseline and ~cap height above it.
         let (y0, y1) = (baseline.saturating_sub(20), baseline);
@@ -1252,6 +1263,28 @@ mod tests {
         assert!(
             dark_pixel_count(&struck) > dark_pixel_count(&plain),
             "the strike adds net ink over the plain glyphs"
+        );
+    }
+
+    #[test]
+    fn double_strike_draws_two_lines_more_ink_than_a_single_strike() {
+        // `w:dstrike` draws two parallel lines straddling the strike position, so
+        // it adds more ink than a single strike over the same glyphs.
+        let (single, _) = render_decorated(Decoration {
+            underline: false,
+            strikethrough: true,
+            double_strike: false,
+        });
+        let (double, _) = render_decorated(Decoration {
+            underline: false,
+            strikethrough: false,
+            double_strike: true,
+        });
+        assert!(
+            dark_pixel_count(&double) > dark_pixel_count(&single),
+            "double strike ({}) lays down more ink than a single strike ({})",
+            dark_pixel_count(&double),
+            dark_pixel_count(&single),
         );
     }
 

@@ -43,6 +43,11 @@ pub struct Decoration {
     pub underline: bool,
     /// Strike-through.
     pub strikethrough: bool,
+    /// Double strike-through (`w:dstrike`): two parallel lines through the run.
+    /// Independent of `strikethrough` (Word treats `w:strike`/`w:dstrike` as
+    /// separate toggles; a run carries at most one in practice).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub double_strike: bool,
 }
 
 /// A run of glyphs sharing one font, size, color, and bidi level, positioned at
