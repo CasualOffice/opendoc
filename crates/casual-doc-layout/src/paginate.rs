@@ -17,7 +17,7 @@
 use std::collections::HashMap;
 
 use casual_doc_model::NodeId;
-use casual_doc_model::v1::SectionId;
+use casual_doc_model::v1::{SectionBoundary, SectionId};
 
 use crate::block::{BlockFragment, BoxMetrics, BreakControl, CellFragment, ParagraphDecor};
 use crate::flow::shape_field_run;
@@ -1227,19 +1227,149 @@ pub(crate) fn build_page(
 /// handled by [`resolve_anchored_fields`], which must run after
 /// [`crate::anchor::place_floats`] has populated [`Page::anchored`].
 pub fn resolve_fields(layout: &mut PaginatedLayout, shaper: &dyn LineShaper) {
+    let labels = decimal_page_labels(layout);
+    resolve_fields_labeled(layout, &labels, shaper);
+}
+
+/// [`resolve_fields`] with an explicit per-page `PAGE` label for each page (index
+/// aligned to `layout.pages`), so the document driver can honor a section's
+/// `w:pgNumType` format (`lowerRoman`/`upperLetter`/…) and `@start` restart
+/// instead of the physical decimal index. A page whose label is missing falls
+/// back to its physical `number`.
+pub(crate) fn resolve_fields_labeled(
+    layout: &mut PaginatedLayout,
+    labels: &[String],
+    shaper: &dyn LineShaper,
+) {
     let total = layout.pages.len() as u32;
-    for page in &mut layout.pages {
-        let number = page.number;
+    for (index, page) in layout.pages.iter_mut().enumerate() {
+        let fallback = page.number.to_string();
+        let label = labels.get(index).unwrap_or(&fallback);
         for placed in &mut page.placed {
-            resolve_in_fragment(&mut placed.fragment, number, total, shaper);
+            resolve_in_fragment(&mut placed.fragment, label, total, shaper);
         }
         for placed in &mut page.header {
-            resolve_in_fragment(&mut placed.fragment, number, total, shaper);
+            resolve_in_fragment(&mut placed.fragment, label, total, shaper);
         }
         for placed in &mut page.footer {
-            resolve_in_fragment(&mut placed.fragment, number, total, shaper);
+            resolve_in_fragment(&mut placed.fragment, label, total, shaper);
         }
     }
+}
+
+/// The physical-decimal `PAGE` label for every page — the no-`pgNumType` default.
+fn decimal_page_labels(layout: &PaginatedLayout) -> Vec<String> {
+    layout
+        .pages
+        .iter()
+        .map(|page| page.number.to_string())
+        .collect()
+}
+
+/// Computes each page's `PAGE` display label honoring section `w:pgNumType`: the
+/// `@fmt` number format and the `@start` restart (a section carrying a start value
+/// resets the running counter at its first page; a section without one continues
+/// the count). NUMPAGES is unaffected (it stays the physical total).
+pub(crate) fn page_number_labels(
+    layout: &PaginatedLayout,
+    sections: &[SectionBoundary],
+) -> Vec<String> {
+    page_number_labels_for(layout.pages.iter().map(|page| page.section), sections)
+}
+
+/// The [`page_number_labels`] core over a page→section sequence, so the restart /
+/// format logic is unit-testable without building full [`Page`] values.
+fn page_number_labels_for(
+    page_sections: impl Iterator<Item = SectionId>,
+    sections: &[SectionBoundary],
+) -> Vec<String> {
+    let numbering = |id: SectionId| {
+        sections
+            .iter()
+            .find(|s| s.id == id)
+            .map(|s| &s.page_numbering)
+    };
+    let mut labels = Vec::new();
+    let mut counter: u32 = 0;
+    let mut prev_section: Option<SectionId> = None;
+    for section in page_sections {
+        let page_numbering = numbering(section);
+        let start = page_numbering.and_then(|n| n.start);
+        counter = if prev_section != Some(section) {
+            // First page of this section: restart at `@start` (clamped to a
+            // non-negative page number) or continue the running count.
+            match start {
+                Some(value) => value.max(0) as u32,
+                None => counter + 1,
+            }
+        } else {
+            counter + 1
+        };
+        prev_section = Some(section);
+        let fmt = page_numbering.and_then(|n| n.format.as_deref());
+        labels.push(format_page_number(counter, fmt));
+    }
+    labels
+}
+
+/// Formats a page number per a `w:pgNumType/@w:fmt` token. Unknown/absent tokens
+/// (and values outside a format's expressible range) fall back to decimal.
+fn format_page_number(number: u32, fmt: Option<&str>) -> String {
+    let formatted = match fmt {
+        Some("lowerRoman") => to_roman(number).map(|s| s.to_lowercase()),
+        Some("upperRoman") => to_roman(number),
+        Some("lowerLetter") => to_letters(number),
+        Some("upperLetter") => to_letters(number).map(|s| s.to_uppercase()),
+        _ => None,
+    };
+    formatted.unwrap_or_else(|| number.to_string())
+}
+
+/// Classic Roman numeral for `1..=3999`; `None` outside that range.
+fn to_roman(mut number: u32) -> Option<String> {
+    if number == 0 || number >= 4000 {
+        return None;
+    }
+    const TABLE: [(u32, &str); 13] = [
+        (1000, "M"),
+        (900, "CM"),
+        (500, "D"),
+        (400, "CD"),
+        (100, "C"),
+        (90, "XC"),
+        (50, "L"),
+        (40, "XL"),
+        (10, "X"),
+        (9, "IX"),
+        (5, "V"),
+        (4, "IV"),
+        (1, "I"),
+    ];
+    let mut out = String::new();
+    for (value, symbol) in TABLE {
+        while number >= value {
+            out.push_str(symbol);
+            number -= value;
+        }
+    }
+    Some(out)
+}
+
+/// Bijective base-26 letters (`1=a, 26=z, 27=aa, …`, Word's `lowerLetter`); `None`
+/// for `0`.
+fn to_letters(mut number: u32) -> Option<String> {
+    if number == 0 {
+        return None;
+    }
+    let mut buf = Vec::new();
+    while number > 0 {
+        let rem = ((number - 1) % 26) as u8;
+        buf.push(b'a' + rem);
+        number = (number - 1) / 26;
+    }
+    buf.reverse();
+    // `buf` holds only ASCII `a..=z`, so this never fails.
+    String::from_utf8(buf).ok()
 }
 
 /// Resolves `PAGE`/`NUMPAGES` fields inside anchored (floating) text boxes — the
@@ -1252,13 +1382,26 @@ pub fn resolve_fields(layout: &mut PaginatedLayout, shaper: &dyn LineShaper) {
 /// result baked into the model. Recursing into table cells and nested text boxes,
 /// it is idempotent for the same reason [`resolve_fields`] is.
 pub fn resolve_anchored_fields(layout: &mut PaginatedLayout, shaper: &dyn LineShaper) {
+    let labels = decimal_page_labels(layout);
+    resolve_anchored_fields_labeled(layout, &labels, shaper);
+}
+
+/// [`resolve_anchored_fields`] with explicit per-page `PAGE` labels (see
+/// [`resolve_fields_labeled`]), so a floating text box's page-number field shows
+/// the same `w:pgNumType`-formatted value as the body/footer.
+pub(crate) fn resolve_anchored_fields_labeled(
+    layout: &mut PaginatedLayout,
+    labels: &[String],
+    shaper: &dyn LineShaper,
+) {
     let total = layout.pages.len() as u32;
-    for page in &mut layout.pages {
-        let number = page.number;
+    for (index, page) in layout.pages.iter_mut().enumerate() {
+        let fallback = page.number.to_string();
+        let label = labels.get(index).unwrap_or(&fallback);
         for anchor in &mut page.anchored {
             if let AnchorContent::TextBox { blocks, .. } = &mut anchor.content {
                 for block in blocks {
-                    resolve_in_fragment(block, number, total, shaper);
+                    resolve_in_fragment(block, label, total, shaper);
                 }
             }
         }
@@ -1270,17 +1413,17 @@ pub fn resolve_anchored_fields(layout: &mut PaginatedLayout, shaper: &dyn LineSh
 /// may hold `PAGE`/`NUMPAGES` fields).
 fn resolve_in_fragment(
     fragment: &mut BlockFragment,
-    number: u32,
+    page_label: &str,
     total: u32,
     shaper: &dyn LineShaper,
 ) {
     match fragment {
         BlockFragment::Paragraph { lines, .. } => {
             for line in &mut lines.lines {
-                resolve_in_line(line, number, total, shaper);
+                resolve_in_line(line, page_label, total, shaper);
                 for text_box in &mut line.text_boxes {
                     for block in &mut text_box.blocks {
-                        resolve_in_fragment(block, number, total, shaper);
+                        resolve_in_fragment(block, page_label, total, shaper);
                     }
                 }
             }
@@ -1288,7 +1431,7 @@ fn resolve_in_fragment(
         BlockFragment::TableRow { cells, .. } => {
             for cell in cells {
                 for block in &mut cell.blocks {
-                    resolve_in_fragment(block, number, total, shaper);
+                    resolve_in_fragment(block, page_label, total, shaper);
                 }
             }
         }
@@ -1300,7 +1443,7 @@ fn resolve_in_fragment(
 /// value whose width changed (e.g. `9` → `10`) keeps the following text contiguous.
 /// The reposition seeds from each field's stored `base_x` (its flow anchor), so the
 /// pass is idempotent.
-fn resolve_in_line(line: &mut Line, number: u32, total: u32, shaper: &dyn LineShaper) {
+fn resolve_in_line(line: &mut Line, page_label: &str, total: u32, shaper: &dyn LineShaper) {
     if line.fields.is_empty() {
         return;
     }
@@ -1312,7 +1455,7 @@ fn resolve_in_line(line: &mut Line, number: u32, total: u32, shaper: &dyn LineSh
             continue;
         }
         field.value = match field.kind {
-            FieldKind::Page => number.to_string(),
+            FieldKind::Page => page_label.to_string(),
             FieldKind::NumPages => total.to_string(),
             // Any other field displays its cached result verbatim.
             FieldKind::Passthrough => std::mem::take(&mut field.value),
@@ -1362,6 +1505,96 @@ mod tests {
         LineBreak, LineLayout, TextBoxContentLayout,
     };
     use casual_doc_model::NodeId;
+
+    #[test]
+    fn page_number_formats_cover_roman_and_letters_with_decimal_fallback() {
+        assert_eq!(format_page_number(1, Some("lowerRoman")), "i");
+        assert_eq!(format_page_number(4, Some("lowerRoman")), "iv");
+        assert_eq!(format_page_number(2024, Some("upperRoman")), "MMXXIV");
+        assert_eq!(format_page_number(1, Some("lowerLetter")), "a");
+        assert_eq!(format_page_number(27, Some("lowerLetter")), "aa");
+        assert_eq!(format_page_number(28, Some("upperLetter")), "AB");
+        assert_eq!(format_page_number(5, None), "5");
+        // Unknown token and out-of-range roman fall back to decimal.
+        assert_eq!(format_page_number(5, Some("cardinalText")), "5");
+        assert_eq!(format_page_number(4000, Some("upperRoman")), "4000");
+    }
+
+    fn numbering_section(id: u64, fmt: Option<&str>, start: Option<i32>) -> SectionBoundary {
+        use casual_doc_model::v1::{
+            DocGrid, NoteProperties, PageBorders, PageMargins, PageNumbering, PageSize,
+            PaperSource, SectionColumns,
+        };
+        SectionBoundary {
+            id: SectionId::new(NodeId::from_parts(id, 1).unwrap()),
+            page_size: PageSize {
+                width_twips: 12_240,
+                height_twips: 15_840,
+            },
+            page_margins: PageMargins {
+                top_twips: 1_440,
+                bottom_twips: 1_440,
+                start_twips: 1_440,
+                end_twips: 1_440,
+                header_twips: None,
+                footer_twips: None,
+            },
+            columns: SectionColumns {
+                count: 1,
+                space_twips: None,
+                separator: None,
+                equal_width: None,
+                columns: Vec::new(),
+            },
+            headers: Vec::new(),
+            footers: Vec::new(),
+            section_type: None,
+            title_page: None,
+            vertical_alignment: None,
+            page_numbering: PageNumbering {
+                format: fmt.map(str::to_owned),
+                start,
+            },
+            doc_grid: DocGrid::default(),
+            orientation: None,
+            paper_source: PaperSource::default(),
+            page_borders: PageBorders::default(),
+            line_numbering: Default::default(),
+            footnote_props: NoteProperties::default(),
+            endnote_props: NoteProperties::default(),
+            text_direction: None,
+            bidi: false,
+        }
+    }
+
+    #[test]
+    fn page_labels_apply_section_format_and_start_restart() {
+        let front = SectionId::new(NodeId::from_parts(10, 1).unwrap());
+        let body = SectionId::new(NodeId::from_parts(11, 1).unwrap());
+        let sections = [
+            // Front matter: lower-roman, default start (i, ii).
+            numbering_section(10, Some("lowerRoman"), None),
+            // Body: decimal, restart at 1 (1, 2, 3) despite being physical page 3+.
+            numbering_section(11, None, Some(1)),
+        ];
+        // Two front-matter pages then three body pages.
+        let page_sections = [front, front, body, body, body];
+        let labels = page_number_labels_for(page_sections.into_iter(), &sections);
+        assert_eq!(labels, ["i", "ii", "1", "2", "3"]);
+    }
+
+    #[test]
+    fn page_labels_continue_the_count_when_a_section_has_no_start() {
+        let a = SectionId::new(NodeId::from_parts(20, 1).unwrap());
+        let b = SectionId::new(NodeId::from_parts(21, 1).unwrap());
+        // Neither section restarts: the running count carries across the boundary.
+        let sections = [
+            numbering_section(20, None, None),
+            numbering_section(21, None, None),
+        ];
+        let labels = page_number_labels_for([a, a, b, b].into_iter(), &sections);
+        assert_eq!(labels, ["1", "2", "3", "4"]);
+    }
 
     /// A US-Letter page (12240×15840 twips) with 1-inch (1440) margins → an
     /// 1152×12960-twip content area.
