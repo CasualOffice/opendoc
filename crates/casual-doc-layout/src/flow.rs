@@ -6717,7 +6717,10 @@ mod tests {
             panic!();
         };
         // The w:shd fill resolves to opaque RGBA and rides the shaped run.
-        assert_eq!(lines.lines[0].runs[0].shading, Some([0xCC, 0xEE, 0xFF, 255]));
+        assert_eq!(
+            lines.lines[0].runs[0].shading,
+            Some([0xCC, 0xEE, 0xFF, 255])
+        );
         // ...and composition paints it as a background rect before the glyphs.
         let list = compose_paragraph(lines, Point::new(Twip::ZERO, Twip::ZERO));
         let rect_before_glyphs = list.items.iter().position(|item| {
