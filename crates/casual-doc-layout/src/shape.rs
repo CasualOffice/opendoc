@@ -45,6 +45,8 @@ struct RunBrush {
     character_scale_percent: u16,
     /// The run's resolved highlight fill (RGBA); alpha `0` means no highlight.
     highlight: [u8; 4],
+    /// The run's resolved shading fill (RGBA); alpha `0` means no shading.
+    shading: [u8; 4],
     /// Baseline shift in twips (positive = raised); subtracted from the run's
     /// glyph-run origin so super/subscript and `w:position` offsets survive shaping.
     baseline_shift: i32,
@@ -798,6 +800,7 @@ impl ParleyShaper {
                     size: run.size.raw(),
                     character_scale_percent: scale,
                     highlight: run.highlight.unwrap_or([0, 0, 0, 0]),
+                    shading: run.shading.unwrap_or([0, 0, 0, 0]),
                     baseline_shift: run.baseline_shift.raw(),
                 }),
                 *start..*end,
@@ -1088,8 +1091,10 @@ impl ParleyShaper {
                 // the run's direction (even = LTR, odd = RTL), which is all the
                 // public API exposes and all `hittest` reads.
                 let bidi_level = u8::from(is_rtl);
-                // Alpha 0 is the "no highlight" sentinel carried through the brush.
+                // Alpha 0 is the "no highlight"/"no shading" sentinel carried
+                // through the brush.
                 let highlight = (style.brush.highlight[3] != 0).then_some(style.brush.highlight);
+                let shading = (style.brush.shading[3] != 0).then_some(style.brush.shading);
                 out_runs.push(GlyphRun {
                     is_marker: false,
                     font,
@@ -1103,6 +1108,7 @@ impl ParleyShaper {
                         strikethrough: style.strikethrough.is_some(),
                     },
                     highlight,
+                    shading,
                     glyphs,
                 });
             }
@@ -1201,6 +1207,7 @@ mod tests {
             color: [0, 0, 0, 255],
             decoration: Decoration::default(),
             highlight: None,
+            shading: None,
             baseline_shift: Twip::ZERO,
         }
     }
@@ -1271,6 +1278,7 @@ mod tests {
                 bidi_level: 0,
                 decoration: Decoration::default(),
                 highlight: None,
+                shading: None,
                 glyphs: vec![Glyph {
                     id: 1,
                     advance,
@@ -1679,6 +1687,7 @@ mod tests {
                 strikethrough: false,
             },
             highlight: None,
+            shading: None,
             baseline_shift: Twip::ZERO,
         };
         let layout = shaper.shape_paragraph(&[styled], constraints(500), para_range());

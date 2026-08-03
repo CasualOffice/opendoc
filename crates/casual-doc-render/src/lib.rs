@@ -891,6 +891,7 @@ mod tests {
                 color: [0, 0, 0, 255],
                 decoration: Decoration::default(),
                 highlight: None,
+                shading: None,
                 baseline_shift: Twip::ZERO,
             }],
             LineConstraints {
@@ -929,6 +930,7 @@ mod tests {
             bidi_level: 0,
             decoration: Decoration::default(),
             highlight: None,
+            shading: None,
             glyphs: vec![casual_doc_layout::text::Glyph {
                 id: 5,
                 advance: Twip::from_points(6),
@@ -1162,6 +1164,7 @@ mod tests {
                 color: [0, 0, 0, 255],
                 decoration,
                 highlight: None,
+                shading: None,
                 baseline_shift: Twip::ZERO,
             }],
             LineConstraints {
@@ -1568,6 +1571,7 @@ mod tests {
                 color: [0, 0, 0, 255],
                 decoration: Decoration::default(),
                 highlight: None,
+                shading: None,
                 baseline_shift: Twip::ZERO,
             }],
             LineConstraints {
@@ -1619,6 +1623,7 @@ mod tests {
                 color: [0, 0, 0, 255],
                 decoration: Decoration::default(),
                 highlight: None,
+                shading: None,
                 baseline_shift: Twip::ZERO,
             }],
             LineConstraints {
