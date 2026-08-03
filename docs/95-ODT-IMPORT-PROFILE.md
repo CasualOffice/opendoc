@@ -137,8 +137,9 @@ The initial mapping is intentionally layered:
 `meta.xml` is subject to the same XML depth, element, attribute, and aggregate
 attribute-byte ceilings as content/style XML. Duplicate custom-property names
 retain the first value and produce a deterministic degraded finding.
-Metadata matching uses namespace-qualified ODF local names rather than relying
-on producer-chosen XML prefixes.
+Metadata matching uses bounded local-name matching and does not rely on
+producer-chosen XML prefixes; full foreign-namespace disambiguation remains a
+future hardening item.
 
 - Namespace seeds are derived from admitted semantic source facts, not ZIP entry
   order or host filenames.
