@@ -163,6 +163,7 @@ impl Document {
         self.validate_sections()?;
         self.validate_media()?;
         self.validate_document_defaults()?;
+        self.validate_latent_styles()?;
         self.validate_notes()?;
         self.validate_headers_footers()?;
         self.validate_comments()?;
@@ -325,6 +326,23 @@ impl Document {
             }
             if let Some(properties) = &defaults.run {
                 self.check_run_property_refs(properties)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_latent_styles(&self) -> Result<(), ModelError> {
+        if let Some(latent) = &self.definitions.latent_styles {
+            check_domain(
+                latent.exceptions.len() <= MAX_LATENT_STYLE_EXCEPTIONS,
+                "latentStyles.exceptions",
+            )?;
+            for exception in &latent.exceptions {
+                check_domain(
+                    !exception.name.is_empty()
+                        && exception.name.len() <= MAX_LATENT_STYLE_NAME_BYTES,
+                    "latentStyles.exception.name",
+                )?;
             }
         }
         Ok(())

@@ -2285,6 +2285,72 @@ mod semantic_tests {
         <w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
 
     #[test]
+    fn latent_styles_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::LsdException;
+
+        // A `w:latentStyles` block with block-level defaults and two
+        // `w:lsdException` overrides, alongside one real style. The writer must
+        // re-emit the block in schema order (after docDefaults, before styles)
+        // so it round-trips unchanged.
+        let styles = br#"<w:styles xmlns:w="urn:w">
+            <w:latentStyles w:defLockedState="0" w:defUIPriority="99" w:defSemiHidden="1" w:defUnhideWhenUsed="1" w:defQFormat="0" w:count="371">
+                <w:lsdException w:name="Normal" w:semiHidden="0" w:uiPriority="0" w:unhideWhenUsed="0" w:qFormat="1"/>
+                <w:lsdException w:name="heading 1" w:semiHidden="0" w:uiPriority="9" w:unhideWhenUsed="0" w:qFormat="1" w:locked="1"/>
+            </w:latentStyles>
+            <w:style w:type="paragraph" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
+        </w:styles>"#;
+        let source = package_with_styles(MINIMAL_BODY, styles);
+        let mut src_package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let m1 = import_package(
+            &mut src_package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+
+        // Sanity: the block and both exceptions were typed.
+        let latent = m1
+            .definitions()
+            .latent_styles
+            .as_ref()
+            .expect("latentStyles block was modeled");
+        assert_eq!(latent.default_locked_state, Some(false));
+        assert_eq!(latent.default_ui_priority, Some(99));
+        assert_eq!(latent.default_semi_hidden, Some(true));
+        assert_eq!(latent.default_unhide_when_used, Some(true));
+        assert_eq!(latent.default_q_format, Some(false));
+        assert_eq!(latent.count, Some(371));
+        assert_eq!(
+            latent.exceptions,
+            vec![
+                LsdException {
+                    name: "Normal".to_owned(),
+                    locked: None,
+                    ui_priority: Some(0),
+                    semi_hidden: Some(false),
+                    unhide_when_used: Some(false),
+                    q_format: Some(true),
+                },
+                LsdException {
+                    name: "heading 1".to_owned(),
+                    locked: Some(true),
+                    ui_priority: Some(9),
+                    semi_hidden: Some(false),
+                    unhide_when_used: Some(false),
+                    q_format: Some(true),
+                },
+            ]
+        );
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(m1, m2, "the latentStyles block survives write -> reopen");
+    }
+
+    #[test]
     fn table_style_with_banding_survives_the_semantic_round_trip() {
         // A table style with style-level `w:tblPr` borders plus two `w:tblStylePr`
         // conditional-format blocks: `wholeTable` paragraph/run/table borders,
