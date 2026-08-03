@@ -1426,6 +1426,24 @@ pub struct NoteReference {
     pub note: NoteId,
 }
 
+/// The auto-number mark inside a note's own body (`w:footnoteRef` /
+/// `w:endnoteRef`): the point where the note renders its own number. Unlike
+/// [`NoteReference`] (the body-side mark that points AT a note), this appears
+/// INSIDE the footnote/endnote definition and prints that note's number. It
+/// carries the run formatting of its enclosing run (typically the note's
+/// reference character style), so the number round-trips with its styling.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NoteNumberMark {
+    /// Stable identity.
+    pub id: NodeId,
+    /// Whether this is a footnote's (`w:footnoteRef`) or an endnote's
+    /// (`w:endnoteRef`) auto-number mark.
+    pub kind: NoteKind,
+    /// The run properties of the enclosing run (the mark's own formatting).
+    pub properties: RunProperties,
+}
+
 /// An inline reference to a comment definition (`w:commentReference`).
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -2100,6 +2118,9 @@ pub enum InlineNode {
     Group(WordprocessingGroup),
     /// An inline reference to a footnote or endnote.
     NoteReference(NoteReference),
+    /// The auto-number mark inside a note's own body (`w:footnoteRef` /
+    /// `w:endnoteRef`), printing that note's own number.
+    NoteNumberMark(NoteNumberMark),
     /// An inline reference to a comment.
     CommentReference(CommentReference),
     /// The start marker of a comment's anchored range.
@@ -2149,6 +2170,7 @@ impl InlineNode {
             Self::TextBox(text_box) => text_box.id,
             Self::Group(group) => group.id,
             Self::NoteReference(note) => note.id,
+            Self::NoteNumberMark(mark) => mark.id,
             Self::CommentReference(comment) => comment.id,
             Self::CommentRangeStart(node) => node.id,
             Self::CommentRangeEnd(node) => node.id,

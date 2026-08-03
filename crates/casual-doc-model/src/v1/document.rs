@@ -1256,6 +1256,13 @@ impl Document {
                     }
                     previous_run_properties = None;
                 }
+                // A note auto-number mark is an inert leaf carrying only its own
+                // run formatting (like a symbol); it prints the enclosing note's
+                // number and resolves against no definition.
+                InlineNode::NoteNumberMark(mark) => {
+                    self.check_run_property_refs(&mark.properties)?;
+                    previous_run_properties = None;
+                }
                 InlineNode::CommentReference(reference) => {
                     if !self.definitions.comments.contains_key(&reference.comment) {
                         return Err(ModelError::DanglingCommentRef(reference.comment.node_id()));
@@ -1783,6 +1790,7 @@ fn accumulate_inline_limits(
         | InlineNode::AnchoredDrawing(_)
         | InlineNode::EmbeddedObject(_)
         | InlineNode::NoteReference(_)
+        | InlineNode::NoteNumberMark(_)
         | InlineNode::CommentReference(_)
         | InlineNode::CommentRangeStart(_)
         | InlineNode::CommentRangeEnd(_)

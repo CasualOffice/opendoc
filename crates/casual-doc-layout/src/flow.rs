@@ -2601,6 +2601,12 @@ fn collect_items_with_measure<'a>(
                 }));
                 out.push(FlowItem::Run(note_reference_run(reference, ctx)));
             }
+            // The note's own auto-number mark (`w:footnoteRef`/`w:endnoteRef`),
+            // inside a note body. Painting its number needs the enclosing note's
+            // ordinal, which is not threaded into local inline flow; the mark is
+            // preserved in the model and round-trips. Omitting it here does not
+            // regress (the mark was previously dropped at import).
+            InlineNode::NoteNumberMark(_) => {}
             // `w:commentReference` is a zero-width model marker. Its visible
             // affordance belongs to the host review UI; shaping placeholder
             // text here changes line wrapping and leaks a superscript

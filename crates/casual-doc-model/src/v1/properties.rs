@@ -39,6 +39,41 @@ pub struct PropChange<P> {
     pub prior: Box<P>,
 }
 
+/// Whether a tracked paragraph-mark change inserted or deleted the mark.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MarkRevisionKind {
+    /// The paragraph mark was inserted (`w:pPr > w:rPr > w:ins`) — this
+    /// paragraph break is a tracked insertion (a split).
+    Insertion,
+    /// The paragraph mark was deleted (`w:pPr > w:rPr > w:del`) — this
+    /// paragraph break is a tracked deletion (a merge with the next paragraph).
+    Deletion,
+}
+
+/// A tracked insertion/deletion of a paragraph mark (`w:pPr > w:rPr > w:ins` or
+/// `w:del`): the pilcrow itself is a tracked change, distinct from any tracked
+/// change to the paragraph's runs.
+///
+/// Author/date/id are retained as the producer wrote them (opaque, bounded),
+/// mirroring [`super::Revision`] and [`PropChange`] metadata.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MarkRevision {
+    /// Whether the mark was inserted or deleted.
+    pub kind: MarkRevisionKind,
+    /// The revision author, if declared (non-empty, at most 255 bytes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    /// The revision date as written (ISO-8601 string), if declared (<= 64 bytes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date: Option<String>,
+    /// The producer's revision id (`w:id`) as written, if declared (<= 64 bytes).
+    /// Opaque and non-unique across changes — a grouping key, not a node identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision_id: Option<String>,
+}
+
 /// A paragraph border set (`w:pBdr`); any subset of edges. Reuses the shared
 /// `BorderEdge` value type.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -916,6 +951,11 @@ pub struct ParagraphProperties {
     /// re-emitted as the last child of `w:pPr`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prop_change: Option<PropChange<ParagraphProperties>>,
+    /// Tracked insertion/deletion of the paragraph mark itself
+    /// (`w:pPr > w:rPr > w:ins` / `w:del`). Additive, omitted when absent;
+    /// re-emitted as the first child of the mark's `w:rPr`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mark_revision: Option<MarkRevision>,
 }
 
 /// Run vertical alignment (`w:vertAlign`).

@@ -4293,11 +4293,12 @@ fn revision_inside_a_hyperlink_is_modeled() {
 }
 
 #[test]
-fn paragraph_mark_insertion_is_reported_and_run_property_change_is_modeled() {
+fn paragraph_mark_insertion_and_run_property_change_are_modeled() {
     // A `w:ins` inside `w:pPr>w:rPr` (paragraph-mark insertion) is not a run
-    // range: it is reported and produces no Revision node. A `w:rPrChange` on the
-    // run IS modeled (its prior snapshot on `prop_change`); the text is intact.
-    use casual_doc_model::v1::InlineNode;
+    // range: it produces no Revision node, but IS modeled as the paragraph's
+    // `mark_revision`. A `w:rPrChange` on the run IS modeled (its prior snapshot
+    // on `prop_change`); the text is intact.
+    use casual_doc_model::v1::{InlineNode, MarkRevisionKind};
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
         <w:p>
             <w:pPr><w:rPr><w:ins w:id="1"/></w:rPr></w:pPr>
@@ -4315,7 +4316,13 @@ fn paragraph_mark_insertion_is_reported_and_run_property_change_is_modeled() {
         .iter()
         .for_each(|i| inline_text(i, &mut text));
     assert_eq!(text, "body");
-    assert!(features(&import).contains(&"ins"));
+    let mark_revision = paragraph(&import, 0)
+        .properties
+        .mark_revision
+        .as_ref()
+        .expect("paragraph-mark insertion is modeled");
+    assert_eq!(mark_revision.kind, MarkRevisionKind::Insertion);
+    assert_eq!(mark_revision.revision_id.as_deref(), Some("1"));
     // The run's rPrChange is modeled (empty prior), not reported.
     let InlineNode::Run(run) = &paragraph(&import, 0).inlines[0] else {
         panic!("expected a run");

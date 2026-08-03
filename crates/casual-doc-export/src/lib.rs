@@ -2938,6 +2938,80 @@ mod semantic_tests {
     }
 
     #[test]
+    fn note_number_marks_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{InlineNode, NoteKind, VerticalAlignment};
+
+        // The note's own auto-number mark (`w:footnoteRef`/`w:endnoteRef`) lives
+        // INSIDE the note body and prints that note's number. It was dropped at
+        // import; now it is modeled as `InlineNode::NoteNumberMark`, carrying its
+        // enclosing run's formatting, and must survive write -> reopen.
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/footnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"/><Override PartName="/word/endnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:r><w:t>a</w:t></w:r><w:r><w:footnoteReference w:id="2"/></w:r></w:p>
+            <w:p><w:r><w:t>b</w:t></w:r><w:r><w:endnoteReference w:id="5"/></w:r></w:p>
+        </w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes" Target="endnotes.xml"/></Relationships>"#;
+        // The footnote's body opens with the number mark carrying superscript
+        // formatting; the endnote's is a bare mark (default formatting).
+        let footnotes = br#"<w:footnotes xmlns:w="urn:w"><w:footnote w:id="2"><w:p><w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:footnoteRef/></w:r><w:r><w:t> fn body</w:t></w:r></w:p></w:footnote></w:footnotes>"#;
+        let endnotes = br#"<w:endnotes xmlns:w="urn:w"><w:endnote w:id="5"><w:p><w:r><w:endnoteRef/></w:r><w:r><w:t> en body</w:t></w:r></w:p></w:endnote></w:endnotes>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/footnotes.xml", footnotes),
+            ("word/endnotes.xml", endnotes),
+        ]);
+        let m1 = reopen(&source);
+
+        // The footnote body's first inline is the footnote number mark with its
+        // superscript formatting; the endnote body's is an endnote mark.
+        let footnote = m1
+            .definitions()
+            .footnotes
+            .iter()
+            .next()
+            .expect("a footnote definition")
+            .1;
+        let casual_doc_model::v1::BlockNode::Paragraph(fn_para) = &footnote.blocks[0] else {
+            panic!("expected a footnote body paragraph");
+        };
+        let InlineNode::NoteNumberMark(fn_mark) = &fn_para.inlines[0] else {
+            panic!("expected a footnote number mark as the first inline");
+        };
+        assert_eq!(fn_mark.kind, NoteKind::Footnote);
+        assert_eq!(
+            fn_mark.properties.vertical_alignment,
+            Some(VerticalAlignment::Superscript),
+            "the mark carries its enclosing run's formatting"
+        );
+
+        let endnote = m1
+            .definitions()
+            .endnotes
+            .iter()
+            .next()
+            .expect("an endnote definition")
+            .1;
+        let casual_doc_model::v1::BlockNode::Paragraph(en_para) = &endnote.blocks[0] else {
+            panic!("expected an endnote body paragraph");
+        };
+        assert!(
+            matches!(&en_para.inlines[0], InlineNode::NoteNumberMark(m) if m.kind == NoteKind::Endnote),
+            "the endnote body opens with an endnote number mark"
+        );
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(
+            m1, m2,
+            "note number marks (with formatting) survive write -> reopen"
+        );
+    }
+
+    #[test]
     fn comments_survive_the_semantic_round_trip() {
         // A comment with author/initials/date, referenced from the body.
         let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/></Types>"#;
@@ -3566,6 +3640,62 @@ mod semantic_tests {
         assert_eq!(
             m1, m2,
             "paragraph-mark run properties survive write -> reopen"
+        );
+    }
+
+    #[test]
+    fn paragraph_mark_revision_survives_the_semantic_round_trip() {
+        // A tracked paragraph-mark change (`w:pPr>w:rPr>w:ins`/`w:del`): the
+        // pilcrow itself is a tracked insertion (a split) or deletion (a merge),
+        // distinct from any run-level revision. The first paragraph's mark is a
+        // tracked insertion with author/date/id; the second's mark is a tracked
+        // deletion alongside mark formatting (both must coexist in the mark rPr).
+        use casual_doc_model::v1::{BlockNode, MarkRevisionKind};
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:pPr><w:rPr><w:ins w:id="7" w:author="Ada" w:date="2021-03-04T05:06:07Z"/></w:rPr></w:pPr>
+                <w:r><w:t>a</w:t></w:r></w:p>
+            <w:p><w:pPr><w:rPr><w:del w:id="8" w:author="Bo"/><w:b/></w:rPr></w:pPr>
+                <w:r><w:t>b</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        let BlockNode::Paragraph(p0) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let ins = p0
+            .properties
+            .mark_revision
+            .as_ref()
+            .expect("mark revision modeled");
+        assert_eq!(ins.kind, MarkRevisionKind::Insertion);
+        assert_eq!(ins.author.as_deref(), Some("Ada"));
+        assert_eq!(ins.date.as_deref(), Some("2021-03-04T05:06:07Z"));
+        assert_eq!(ins.revision_id.as_deref(), Some("7"));
+        let BlockNode::Paragraph(p1) = &m1.body()[1] else {
+            panic!("expected a paragraph");
+        };
+        let del = p1
+            .properties
+            .mark_revision
+            .as_ref()
+            .expect("mark revision modeled");
+        assert_eq!(del.kind, MarkRevisionKind::Deletion);
+        assert_eq!(del.author.as_deref(), Some("Bo"));
+        assert_eq!(
+            p1.properties
+                .mark_run
+                .as_ref()
+                .expect("mark formatting coexists with the revision")
+                .bold,
+            Some(true),
+            "the deleted mark keeps its own formatting"
+        );
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(
+            m1, m2,
+            "paragraph-mark insertion/deletion revisions survive write -> reopen"
         );
     }
 
