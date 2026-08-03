@@ -247,6 +247,13 @@ pub struct NumberingLevel {
     /// restart behavior.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lvl_restart: Option<u8>,
+    /// The paragraph style this level binds to (`w:lvl/w:pStyle`) — how a
+    /// numbered Heading 1/2/3 list ties each level to its heading style.
+    /// Resolved from the referenced style's id during import; re-emitted using
+    /// that style's id token on export. Distinct from `style_ref` (a char-style
+    /// placeholder).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pstyle: Option<StyleId>,
 }
 
 /// An abstract numbering definition (its id is the map key).
@@ -259,6 +266,16 @@ pub struct AbstractNumbering {
     /// every abstract definition; additive, omitted when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub multi_level_type: Option<MultiLevelType>,
+    /// A reusable "List Style" whose numbering this abstract defers to
+    /// (`w:numStyleLink`) — this definition points at a numbering-style paragraph
+    /// style for its actual levels. Resolved to/from the referenced style's id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub num_style_link: Option<StyleId>,
+    /// The numbering-style paragraph style this abstract *is* the definition for
+    /// (`w:styleLink`) — the back-link from an abstract to its owning List Style.
+    /// Resolved to/from the referenced style's id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style_link: Option<StyleId>,
 }
 
 /// The overall structure of an abstract numbering definition (`w:multiLevelType`).
