@@ -44,6 +44,8 @@ test("format pipeline rows are complete and do not overstate ODT", () => {
   assert.equal(odt.import, "partial");
   assert.equal(odt.export, "partial");
   assert.equal(odt.host, "partial");
+  assert.match(odt.note, /nested bullet\/number lists/);
+  assert.match(odt.note, /advanced list continuation\/item overrides/);
   assert.equal(
     FORMAT_SUPPORT.find((row) => row.format === "Normalized JSON").host,
     "full",

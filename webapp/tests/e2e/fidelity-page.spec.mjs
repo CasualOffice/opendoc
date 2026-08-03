@@ -22,6 +22,12 @@ test("the fidelity matrix page renders an accessible, data-grounded table", asyn
   await expect(odtRow.locator("td.cell").nth(1)).toContainText("Partial");
   await expect(odtRow.locator("td.cell").nth(2)).toContainText("Partial");
   await expect(odtRow.locator("td.cell").nth(3)).toContainText("Partial");
+  await expect(page.locator(".fidelity-notes")).toContainText(
+    "Nested bullet and common numbered lists",
+  );
+  await expect(page.locator(".fidelity-notes")).toContainText(
+    "advanced list continuation",
+  );
 
   const table = page.locator("#docx-fidelity-table");
   await expect(table).toBeVisible();

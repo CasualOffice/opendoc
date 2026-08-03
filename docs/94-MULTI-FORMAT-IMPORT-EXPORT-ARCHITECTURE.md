@@ -20,9 +20,10 @@ until its security, corpus, round-trip, and compatibility gates pass.
 Implementation snapshot (2026-08-04): Slices A–C, bounded ODT package admission,
 and the staged `content.xml` importer are in progress. The importer maps
 paragraphs, headings, spans, explicit spaces, tabs, line breaks, safe
-external/internal hyperlinks, and bookmark points/ranges into a validated
-schema-v1 document with semantic-fact-derived identities and bounded findings.
-Slice E now has a deterministic bounded ODF 1.4 writer for that same core subset,
+external/internal hyperlinks, bookmark points/ranges, bounded direct/named
+styles, and core nested lists into a validated schema-v1 document with
+semantic-fact-derived identities and bounded findings. Slice E now has a
+deterministic bounded ODF 1.4 writer for that matching core/style/list subset,
 registered semantic export, and exact unchanged-byte recovery. The remaining
 Slice D semantic surface, edit-tolerant ODF preservation, native SDK, and
 production conformance work remain incomplete. The WASM
@@ -494,18 +495,21 @@ Slice D is in progress on `feature/multi-format-io`:
 
 - bounded ODF 1.2–1.4 package admission validates the ODT media type, manifest,
   version, and required parts and rejects encrypted or active content;
-- the core namespace-aware importer maps paragraphs, headings, spans, spaces,
-  tabs, line breaks, safe external/internal links, and paired bookmark markers
-  with deterministic IDs and explicit deferred/blocked findings;
+- the namespace-aware importer maps core text, safe external/internal links,
+  paired bookmark markers, bounded direct/named style chains, and core nested
+  bullet/number lists with deterministic IDs and explicit deferred/blocked
+  findings;
 - definitive registry detection, optional original-byte retention, and package
   and content fuzz targets are implemented;
-- styles, lists, tables, notes, media, metadata, and broader preservation remain
-  pending under doc 95.
+- style defaults/broader properties, advanced list counters/label layout,
+  tables, notes, media, metadata, and broader preservation remain pending under
+  doc 95.
 
 Slice E is in progress on `feature/multi-format-io`:
 
-- a deterministic bounded ODF 1.4 writer emits the implemented core semantic
-  subset and explicit compatibility findings for model content it cannot carry;
+- a deterministic bounded ODF 1.4 writer emits the implemented core
+  text/style/list subset and explicit compatibility findings for model content
+  it cannot carry;
 - the built-in ODT adapter exposes semantic export and exact unchanged-byte
   recovery, but does not advertise edit-tolerant preservation;
 - the WASM facade now auto-detects registered formats through `open(bytes)`,
