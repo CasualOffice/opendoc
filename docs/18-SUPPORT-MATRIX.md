@@ -56,7 +56,7 @@ report.
 | Rust library | Yes | Initial pre-release facade implemented. |
 | Headless CLI/service | Yes | Planned. |
 | Tauri desktop | Yes | Planned reference host. |
-| Browser/WASM | Yes | Planned reference host. |
+| Browser/WASM | Yes | WASM facade and reference webapp implemented; generic multi-format WASM open/export is available and browser Save/Save As wiring is in progress. |
 | C ABI | Yes | Planned after the Rust facade stabilizes. |
 | React/Vue/Svelte wrappers | Optional | Must live outside the core runtime. |
 | Native mobile UI | No | Out of scope for v1. |
@@ -65,13 +65,13 @@ report.
 
 | Format/capability | v1 target | Current status |
 | --- | --- | --- |
-| Normalized JSON snapshot | Yes | Strict bounded schema-v1 import and deterministic compact export are implemented in the internal format registry; stable SDK/WASM host surfaces are pending. |
+| Normalized JSON snapshot | Yes | Strict bounded schema-v1 import and deterministic compact export are available through the registry and generic WASM host API; native SDK and browser UI integration remain pending. |
 | Canonical normalized CBOR | Yes | Designed, not implemented. |
 | DOCX import/export | Yes | Bounded ZIP inspection implemented; semantic import complete (every construct family modeled); the semantic writer (Phase 1B) is complete and round-trips the modeled surface (import → write → reopen = identical model). |
-| TXT import/export | Yes | Bounded strict UTF-8 import, deterministic semantic LF export, exact retained unchanged bytes, and compatibility-loss reporting are implemented in the internal format registry; stable SDK/WASM host surfaces are pending. |
+| TXT import/export | Yes | Bounded strict UTF-8 import, deterministic semantic LF export, exact retained unchanged bytes, and compatibility-loss reporting are available through the registry and generic WASM host API; native SDK and browser UI integration remain pending. |
 | Page render to raster (PNG) | Yes | CPU backend implemented: real pages, tables, images, and VML render via `tiny-skia`/`skrifa`; structurally strong, not yet pixel-perfect Word-grade (see doc 46). |
 | PDF render/export | Yes | Backend decision pending. |
-| ODT import/export | Later | In progress under docs 94–96. Bounded ODF 1.2–1.4 ODT package/profile admission and deterministic registry detection/dispatch are implemented. The internal semantic importer maps validated core paragraphs, headings, spans, explicit spaces, tabs, line breaks, safe external/internal hyperlinks, and bookmark points/ranges. A deterministic bounded ODF 1.4 writer exports the core text surface, reports unsupported model content, and can return explicitly retained unchanged source bytes exactly. Styles, lists, tables, notes, media, metadata, edit-tolerant preservation, stable SDK/WASM host integration, corpus conformance, schema validation, and interoperability gates remain incomplete; this is not yet a general ODT support claim or v1 release gate. |
+| ODT import/export | Later | In progress under docs 94–96. Bounded ODF 1.2–1.4 admission, deterministic registry detection/dispatch, and generic WASM open/export are implemented. The semantic importer maps validated core paragraphs, headings, spans, explicit spaces, tabs, line breaks, safe external/internal hyperlinks, and bookmark points/ranges. A deterministic bounded ODF 1.4 writer exports the core text surface, reports unsupported model content, and can return explicitly retained unchanged source bytes exactly. Styles, lists, tables, notes, media, metadata, edit-tolerant preservation, native SDK/browser UI integration, corpus conformance, schema validation, and interoperability gates remain incomplete; this is not yet a general ODT support claim or v1 release gate. |
 | HTML/Markdown interchange | Later | Not an editing source of truth. |
 | Macros/VBA execution | No | Blocked by policy. |
 

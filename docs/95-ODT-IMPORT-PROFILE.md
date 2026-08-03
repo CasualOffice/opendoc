@@ -40,9 +40,9 @@ The work lands as reviewable commits:
   degrade explicitly without producing an invalid normalized document.
 - Named/automatic style resolution, lists, tables, notes, media, metadata, and
   the remaining structures in sections 4 and 6 remain in progress. Partial ODT
-  export is tracked separately under doc 96. Stable SDK/WASM host methods are
-  still absent, so availability remains internal rather than a public host
-  support claim.
+  export is tracked separately under doc 96. Generic WASM open/export methods
+  are implemented, while the native SDK, browser UI, and production ODT gates
+  remain incomplete; this is still not a general support claim.
 
 ## 2. Normative package profile
 

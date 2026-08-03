@@ -7,6 +7,7 @@ use casual_doc_import::{
     ImportConfig, ImportMode, ModelOutcome as DocxModelOutcome, RetainedParts,
     RetentionOutcome as DocxRetentionOutcome, import_package,
 };
+use casual_doc_odf::{OdfImportLimits, OdfPackageLimits};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
 
 use crate::{
@@ -180,8 +181,14 @@ impl FormatExporter for DocxAdapter {
 
 /// Creates the built-in registry for the currently implemented formats.
 pub fn builtin_registry() -> FormatRegistry {
+    builtin_registry_with_package_limits(PackageLimits::default())
+}
+
+/// Creates the built-in registry with one host-selected ZIP admission policy
+/// shared by the DOCX and ODT package adapters.
+pub fn builtin_registry_with_package_limits(package_limits: PackageLimits) -> FormatRegistry {
     let mut registry = FormatRegistry::new();
-    let adapter = Arc::new(DocxAdapter::default());
+    let adapter = Arc::new(DocxAdapter::new(package_limits, ImportConfig::default()));
     registry
         .register_importer(adapter.clone())
         .expect("built-in DOCX importer registration is unique");
@@ -202,7 +209,13 @@ pub fn builtin_registry() -> FormatRegistry {
     registry
         .register_exporter(adapter)
         .expect("built-in text exporter registration is unique");
-    let adapter = Arc::new(OdtAdapter::default());
+    let adapter = Arc::new(OdtAdapter::new(
+        OdfPackageLimits {
+            package: package_limits,
+            ..OdfPackageLimits::default()
+        },
+        OdfImportLimits::default(),
+    ));
     registry
         .register_importer(adapter.clone())
         .expect("built-in ODT importer registration is unique");

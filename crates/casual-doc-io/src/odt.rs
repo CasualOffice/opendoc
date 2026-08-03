@@ -242,7 +242,11 @@ mod tests {
     use zip::write::{SimpleFileOptions, ZipWriter};
 
     use super::*;
-    use crate::{DetectionRequest, FormatSelection, IoError, builtin_registry};
+    use crate::{
+        DetectionRequest, FormatSelection, IoError, builtin_registry,
+        builtin_registry_with_package_limits,
+    };
+    use casual_doc_ooxml::PackageLimits;
 
     const CONTENT: &[u8] = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.4"><office:body><office:text><text:p text:style-name="Body">Hello ODT</text:p></office:text></office:body></office:document-content>"#;
 
@@ -526,6 +530,27 @@ mod tests {
                     selection: FormatSelection::Explicit(FormatId::new(formats::ODT).unwrap()),
                     file_name_hint: Some("document.odt"),
                     mime_hint: Some(ODT_MIME),
+                },
+                false,
+            )
+            .unwrap_err();
+        assert!(matches!(error, IoError::ImportFailed { .. }));
+    }
+
+    #[test]
+    fn shared_host_package_limit_applies_to_odt_admission() {
+        let bytes = odt_bytes();
+        let registry = builtin_registry_with_package_limits(PackageLimits {
+            max_input_bytes: bytes.len() - 1,
+            ..PackageLimits::default()
+        });
+        let error = registry
+            .import(
+                DetectionRequest {
+                    bytes: &bytes,
+                    selection: FormatSelection::Explicit(FormatId::new(formats::ODT).unwrap()),
+                    file_name_hint: None,
+                    mime_hint: None,
                 },
                 false,
             )
