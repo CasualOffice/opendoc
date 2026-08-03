@@ -44,6 +44,15 @@ from canonical property values, definitions are emitted in sorted order, and
 explicit `false` toggles remain distinct from absent properties. Theme colors
 and every property outside this bounded subset remain compatibility findings.
 
+The list checkpoint maps normalized bullet, decimal, lowercase/uppercase
+letter, and lowercase/uppercase Roman levels into canonical `text:list-style`
+definitions. It emits the first paragraph of each list item, nested list trees,
+per-instance level starts, and continuation markers for separated sequences.
+Style names derive from canonical list semantics rather than model IDs, making
+supported output stable across reopen and re-export. Unsupported number systems,
+multi-placeholder labels, and unimplemented level formatting are reported;
+labels that cannot be represented safely are projected as plain paragraphs.
+
 Until their dedicated import/export mappings land, wrappers and complex blocks
 may emit a bounded visible-text projection only when that projection is safe.
 Every such case is reported as degraded; content with no safe projection is
@@ -114,7 +123,9 @@ The first internal checkpoint is implemented on `feature/multi-format-io`:
 
 The matching automatic-style import subset is implemented and tested as a
 semantic fixed point. Named `styles.xml` resolution and same-family inheritance
-also feed that normalized subset on import. Style defaults, broader style
-properties, edit-tolerant source preservation, broader semantic writing, stable
+also feed that normalized subset on import. Bounded list import/export covers
+the label systems and nesting described in section 3, with deterministic
+reopen/re-export tests. Style defaults, broader style properties, advanced list
+continuation/item overrides and label layout, edit-tolerant source preservation, broader semantic writing, stable
 native SDK surfaces, Relax NG validation, interoperability fixtures, and
 production claims remain pending.

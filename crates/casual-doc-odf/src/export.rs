@@ -5,6 +5,7 @@ use std::io::{Cursor, Write};
 
 use casual_doc_model::v1::{
     Alignment, BlockNode, BreakKind, Color, Definitions, Document, GroupChild, InlineNode,
+    LevelJustification, LevelSuffix, NumberFormat, NumberingInstanceId, Paragraph,
     ParagraphProperties, RevisionKind, RunProperties,
 };
 use zip::CompressionMethod;
@@ -231,6 +232,29 @@ struct OdtRunStyle {
     size_half_points: Option<u32>,
 }
 
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum OdtListLabel {
+    Bullet(String),
+    Number {
+        format: &'static str,
+        prefix: String,
+        suffix: String,
+    },
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct OdtListLevel {
+    level: u8,
+    start: u16,
+    label: OdtListLabel,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OdtListStyle {
+    name: String,
+    levels: BTreeMap<u8, OdtListLevel>,
+}
+
 impl OdtRunStyle {
     fn is_empty(&self) -> bool {
         self == &Self::default()
@@ -282,6 +306,8 @@ struct Writer {
     xml: String,
     paragraph_styles: BTreeSet<OdtParagraphAlignment>,
     run_styles: BTreeSet<OdtRunStyle>,
+    list_styles: BTreeMap<NumberingInstanceId, OdtListStyle>,
+    emitted_lists: BTreeSet<NumberingInstanceId>,
     limits: OdfExportLimits,
     blocks: usize,
     inlines: usize,
@@ -296,6 +322,8 @@ impl Writer {
             xml: String::new(),
             paragraph_styles: BTreeSet::new(),
             run_styles: BTreeSet::new(),
+            list_styles: BTreeMap::new(),
+            emitted_lists: BTreeSet::new(),
             limits,
             blocks: 0,
             inlines: 0,
@@ -305,6 +333,63 @@ impl Writer {
         };
         writer.push(BODY_PREFIX)?;
         Ok(writer)
+    }
+
+    fn register_numbering(&mut self, definitions: &Definitions) {
+        for (instance_id, instance) in definitions.numbering.iter() {
+            let Some(abstract_numbering) =
+                definitions.abstract_numbering.get(&instance.abstract_ref)
+            else {
+                continue;
+            };
+            let overrides = instance
+                .overrides
+                .iter()
+                .filter_map(|value| value.start.map(|start| (value.level, start)))
+                .collect::<BTreeMap<_, _>>();
+            let mut levels = BTreeMap::new();
+            let mut supported = true;
+            for level in &abstract_numbering.levels {
+                let label = match odt_list_label(
+                    level.level,
+                    level.num_fmt.as_ref(),
+                    level.lvl_text.as_deref(),
+                ) {
+                    Some(label) => label,
+                    None => {
+                        supported = false;
+                        self.reporter
+                            .record("odt.export.list_label", ModelOutcome::Omitted);
+                        continue;
+                    }
+                };
+                if level
+                    .lvl_jc
+                    .is_some_and(|value| value != LevelJustification::Start)
+                    || level.suff.is_some_and(|value| value != LevelSuffix::Tab)
+                    || level.is_lgl
+                    || level.paragraph_properties.is_some()
+                    || level.run_properties.is_some()
+                    || level.style_ref.is_some()
+                {
+                    self.reporter
+                        .record("odt.export.list_level_properties", ModelOutcome::Omitted);
+                }
+                levels.insert(
+                    level.level,
+                    OdtListLevel {
+                        level: level.level,
+                        start: overrides.get(&level.level).copied().unwrap_or(level.start),
+                        label,
+                    },
+                );
+            }
+            if supported && !levels.is_empty() {
+                let name = odt_list_style_name(&levels);
+                self.list_styles
+                    .insert(*instance_id, OdtListStyle { name, levels });
+            }
+        }
     }
 
     fn push(&mut self, value: &str) -> Result<(), OdfError> {
@@ -351,43 +436,35 @@ impl Writer {
 
     fn write_blocks(&mut self, blocks: &[BlockNode], depth: usize) -> Result<(), OdfError> {
         self.check_depth(depth)?;
-        for block in blocks {
+        let mut index = 0_usize;
+        while index < blocks.len() {
+            if let BlockNode::Paragraph(paragraph) = &blocks[index]
+                && let Some(numbering) = paragraph.properties.numbering
+                && self.list_styles.contains_key(&numbering.instance)
+            {
+                let mut paragraphs = Vec::new();
+                while let Some(BlockNode::Paragraph(paragraph)) = blocks.get(index) {
+                    let Some(reference) = paragraph.properties.numbering else {
+                        break;
+                    };
+                    if reference.instance != numbering.instance
+                        || !self.list_styles.contains_key(&reference.instance)
+                    {
+                        break;
+                    }
+                    self.visit_block()?;
+                    paragraphs.push(paragraph);
+                    index += 1;
+                }
+                self.write_list(numbering.instance, &paragraphs, depth + 1)?;
+                continue;
+            }
+            let block = &blocks[index];
+            index += 1;
             self.visit_block()?;
             match block {
                 BlockNode::Paragraph(paragraph) => {
-                    self.paragraphs_written = self.paragraphs_written.saturating_add(1);
-                    let mut remainder = paragraph.properties.clone();
-                    let outline = remainder.outline_level.take();
-                    let alignment = remainder.alignment.take().map(OdtParagraphAlignment::from);
-                    if remainder != ParagraphProperties::default() {
-                        self.reporter
-                            .record("odt.export.paragraph_properties", ModelOutcome::Omitted);
-                    }
-                    if let Some(level) = outline {
-                        self.push("<text:h text:outline-level=\"")?;
-                        self.push(&(u16::from(level) + 1).to_string())?;
-                        if let Some(alignment) = alignment {
-                            self.paragraph_styles.insert(alignment);
-                            self.push("\" text:style-name=\"")?;
-                            self.push(alignment.name())?;
-                        }
-                        self.push("\">")?;
-                    } else {
-                        self.push("<text:p")?;
-                        if let Some(alignment) = alignment {
-                            self.paragraph_styles.insert(alignment);
-                            self.push(" text:style-name=\"")?;
-                            self.push(alignment.name())?;
-                            self.push("\"")?;
-                        }
-                        self.push(">")?;
-                    }
-                    self.write_inlines(&paragraph.inlines, depth + 1)?;
-                    self.push(if outline.is_some() {
-                        "</text:h>"
-                    } else {
-                        "</text:p>"
-                    })?;
+                    self.write_paragraph(paragraph, depth + 1, false)?
                 }
                 BlockNode::Sdt(sdt) => {
                     self.reporter
@@ -403,6 +480,114 @@ impl Writer {
             }
         }
         Ok(())
+    }
+
+    fn write_list(
+        &mut self,
+        instance: NumberingInstanceId,
+        paragraphs: &[&Paragraph],
+        depth: usize,
+    ) -> Result<(), OdfError> {
+        self.check_depth(depth)?;
+        let style_name = self
+            .list_styles
+            .get(&instance)
+            .map(|style| style.name.clone())
+            .ok_or(OdfError::InvalidModel)?;
+        let continued = !self.emitted_lists.insert(instance);
+        let mut current_level = None::<u8>;
+        for paragraph in paragraphs {
+            let reference = paragraph
+                .properties
+                .numbering
+                .ok_or(OdfError::InvalidModel)?;
+            let target = reference.level;
+            self.check_depth(depth + usize::from(target))?;
+            match current_level {
+                None => {
+                    for level in 0..=target {
+                        self.push("<text:list")?;
+                        if level == 0 {
+                            self.push(" text:style-name=\"")?;
+                            self.push(&style_name)?;
+                            self.push("\"")?;
+                            if continued {
+                                self.push(" text:continue-numbering=\"true\"")?;
+                            }
+                        }
+                        self.push("><text:list-item>")?;
+                    }
+                }
+                Some(current) if target == current => {
+                    self.push("</text:list-item><text:list-item>")?;
+                }
+                Some(current) if target > current => {
+                    for _ in current + 1..=target {
+                        self.push("<text:list><text:list-item>")?;
+                    }
+                }
+                Some(current) => {
+                    for _ in target + 1..=current {
+                        self.push("</text:list-item></text:list>")?;
+                    }
+                    self.push("</text:list-item><text:list-item>")?;
+                }
+            }
+            self.write_paragraph(paragraph, depth + usize::from(target) + 1, true)?;
+            current_level = Some(target);
+        }
+        if let Some(current) = current_level {
+            for _ in 0..=current {
+                self.push("</text:list-item></text:list>")?;
+            }
+        }
+        Ok(())
+    }
+
+    fn write_paragraph(
+        &mut self,
+        paragraph: &Paragraph,
+        depth: usize,
+        numbering_mapped: bool,
+    ) -> Result<(), OdfError> {
+        self.check_depth(depth)?;
+        self.paragraphs_written = self.paragraphs_written.saturating_add(1);
+        let mut remainder = paragraph.properties.clone();
+        let outline = remainder.outline_level.take();
+        let alignment = remainder.alignment.take().map(OdtParagraphAlignment::from);
+        if remainder.numbering.take().is_some() && !numbering_mapped {
+            self.reporter
+                .record("odt.export.numbering", ModelOutcome::Omitted);
+        }
+        if remainder != ParagraphProperties::default() {
+            self.reporter
+                .record("odt.export.paragraph_properties", ModelOutcome::Omitted);
+        }
+        if let Some(level) = outline {
+            self.push("<text:h text:outline-level=\"")?;
+            self.push(&(u16::from(level) + 1).to_string())?;
+            if let Some(alignment) = alignment {
+                self.paragraph_styles.insert(alignment);
+                self.push("\" text:style-name=\"")?;
+                self.push(alignment.name())?;
+            }
+            self.push("\">")?;
+        } else {
+            self.push("<text:p")?;
+            if let Some(alignment) = alignment {
+                self.paragraph_styles.insert(alignment);
+                self.push(" text:style-name=\"")?;
+                self.push(alignment.name())?;
+                self.push("\"")?;
+            }
+            self.push(">")?;
+        }
+        self.write_inlines(&paragraph.inlines, depth + 1)?;
+        self.push(if outline.is_some() {
+            "</text:h>"
+        } else {
+            "</text:p>"
+        })
     }
 
     fn write_inlines(&mut self, inlines: &[InlineNode], depth: usize) -> Result<(), OdfError> {
@@ -599,12 +784,94 @@ impl Writer {
     }
 }
 
+fn odt_list_label(
+    level: u8,
+    format: Option<&NumberFormat>,
+    template: Option<&str>,
+) -> Option<OdtListLabel> {
+    match format {
+        Some(NumberFormat::Bullet) => {
+            let glyph = template.unwrap_or("•");
+            let mut characters = glyph.chars();
+            let character = characters.next()?;
+            if characters.next().is_some() || !is_xml_character(character) {
+                return None;
+            }
+            Some(OdtListLabel::Bullet(glyph.to_owned()))
+        }
+        Some(format) => {
+            let format = match format {
+                NumberFormat::Decimal => "1",
+                NumberFormat::LowerLetter => "a",
+                NumberFormat::UpperLetter => "A",
+                NumberFormat::LowerRoman => "i",
+                NumberFormat::UpperRoman => "I",
+                _ => return None,
+            };
+            let placeholder = format!("%{}", u16::from(level) + 1);
+            let template = template
+                .map(str::to_owned)
+                .unwrap_or_else(|| format!("{placeholder}."));
+            let (prefix, suffix) = template.split_once(&placeholder)?;
+            if prefix.contains('%')
+                || suffix.contains('%')
+                || !prefix.chars().all(is_xml_character)
+                || !suffix.chars().all(is_xml_character)
+            {
+                return None;
+            }
+            Some(OdtListLabel::Number {
+                format,
+                prefix: prefix.to_owned(),
+                suffix: suffix.to_owned(),
+            })
+        }
+        None => None,
+    }
+}
+
+fn odt_list_style_name(levels: &BTreeMap<u8, OdtListLevel>) -> String {
+    let mut hash = 0x6c62_272e_07bb_0142_62b8_2175_6295_c58d_u128;
+    for level in levels.values() {
+        hash_bytes_128(&mut hash, &[level.level]);
+        hash_bytes_128(&mut hash, &level.start.to_le_bytes());
+        match &level.label {
+            OdtListLabel::Bullet(glyph) => {
+                hash_bytes_128(&mut hash, b"bullet");
+                hash_bytes_128(&mut hash, glyph.as_bytes());
+            }
+            OdtListLabel::Number {
+                format,
+                prefix,
+                suffix,
+            } => {
+                hash_bytes_128(&mut hash, b"number");
+                hash_bytes_128(&mut hash, format.as_bytes());
+                hash_bytes_128(&mut hash, prefix.as_bytes());
+                hash_bytes_128(&mut hash, suffix.as_bytes());
+            }
+        }
+    }
+    format!("L_{hash:032x}")
+}
+
+fn hash_bytes_128(hash: &mut u128, bytes: &[u8]) {
+    const PRIME: u128 = 0x0000_0000_0100_0000_0000_0000_0000_013b;
+    for byte in bytes {
+        *hash ^= u128::from(*byte);
+        *hash = hash.wrapping_mul(PRIME);
+    }
+    *hash ^= 0xff;
+    *hash = hash.wrapping_mul(PRIME);
+}
+
 fn automatic_styles_xml(
     paragraph_styles: &BTreeSet<OdtParagraphAlignment>,
     run_styles: &BTreeSet<OdtRunStyle>,
+    list_styles: &BTreeMap<NumberingInstanceId, OdtListStyle>,
     max_content_bytes: usize,
 ) -> Result<String, OdfError> {
-    if paragraph_styles.is_empty() && run_styles.is_empty() {
+    if paragraph_styles.is_empty() && run_styles.is_empty() && list_styles.is_empty() {
         return Ok(String::new());
     }
     let mut xml = String::new();
@@ -691,8 +958,84 @@ fn automatic_styles_xml(
         }
         push_bounded(&mut xml, "/></style:style>", max_content_bytes)?;
     }
+    let mut unique_list_styles = BTreeMap::<&str, &OdtListStyle>::new();
+    for style in list_styles.values() {
+        if let Some(previous) = unique_list_styles.insert(&style.name, style)
+            && previous.levels != style.levels
+        {
+            return Err(OdfError::SerializationFailed);
+        }
+    }
+    for style in unique_list_styles.into_values() {
+        push_bounded(
+            &mut xml,
+            "<text:list-style style:name=\"",
+            max_content_bytes,
+        )?;
+        push_bounded(&mut xml, &style.name, max_content_bytes)?;
+        push_bounded(&mut xml, "\">", max_content_bytes)?;
+        for level in style.levels.values() {
+            match &level.label {
+                OdtListLabel::Bullet(glyph) => {
+                    push_bounded(
+                        &mut xml,
+                        "<text:list-level-style-bullet text:level=\"",
+                        max_content_bytes,
+                    )?;
+                    push_bounded(
+                        &mut xml,
+                        &(u16::from(level.level) + 1).to_string(),
+                        max_content_bytes,
+                    )?;
+                    push_bounded(&mut xml, "\" text:bullet-char=\"", max_content_bytes)?;
+                    push_escaped_attribute(&mut xml, glyph, max_content_bytes)?;
+                    push_bounded(&mut xml, "\"/>", max_content_bytes)?;
+                }
+                OdtListLabel::Number {
+                    format,
+                    prefix,
+                    suffix,
+                } => {
+                    push_bounded(
+                        &mut xml,
+                        "<text:list-level-style-number text:level=\"",
+                        max_content_bytes,
+                    )?;
+                    push_bounded(
+                        &mut xml,
+                        &(u16::from(level.level) + 1).to_string(),
+                        max_content_bytes,
+                    )?;
+                    push_bounded(&mut xml, "\" style:num-format=\"", max_content_bytes)?;
+                    push_bounded(&mut xml, format, max_content_bytes)?;
+                    push_bounded(&mut xml, "\" style:num-prefix=\"", max_content_bytes)?;
+                    push_escaped_attribute(&mut xml, prefix, max_content_bytes)?;
+                    push_bounded(&mut xml, "\" style:num-suffix=\"", max_content_bytes)?;
+                    push_escaped_attribute(&mut xml, suffix, max_content_bytes)?;
+                    if level.start != 1 {
+                        push_bounded(&mut xml, "\" text:start-value=\"", max_content_bytes)?;
+                        push_bounded(&mut xml, &level.start.to_string(), max_content_bytes)?;
+                    }
+                    push_bounded(&mut xml, "\"/>", max_content_bytes)?;
+                }
+            }
+        }
+        push_bounded(&mut xml, "</text:list-style>", max_content_bytes)?;
+    }
     push_bounded(&mut xml, "</office:automatic-styles>", max_content_bytes)?;
     Ok(xml)
+}
+
+fn push_escaped_attribute(
+    output: &mut String,
+    value: &str,
+    allowed: usize,
+) -> Result<(), OdfError> {
+    if !value.chars().all(is_xml_character) {
+        return Err(OdfError::InvalidXmlCharacter);
+    }
+    let escaped = quick_xml::escape::escape(value);
+    push_bounded(output, escaped.as_ref(), allowed)
 }
 
 fn push_bounded(output: &mut String, value: &str, allowed: usize) -> Result<(), OdfError> {
@@ -714,7 +1057,11 @@ pub fn write_odt(document: &Document, limits: OdfExportLimits) -> Result<OdtExpo
     limits.validate()?;
     document.validate().map_err(|_| OdfError::InvalidModel)?;
     let mut writer = Writer::new(limits)?;
-    if document.definitions() != &Definitions::default() {
+    writer.register_numbering(document.definitions());
+    let mut definition_remainder = document.definitions().clone();
+    definition_remainder.abstract_numbering = Default::default();
+    definition_remainder.numbering = Default::default();
+    if definition_remainder != Definitions::default() {
         writer
             .reporter
             .record("odt.export.definitions", ModelOutcome::Omitted);
@@ -737,6 +1084,7 @@ pub fn write_odt(document: &Document, limits: OdfExportLimits) -> Result<OdtExpo
     let styles = automatic_styles_xml(
         &writer.paragraph_styles,
         &writer.run_styles,
+        &writer.list_styles,
         limits.max_content_bytes,
     )?;
     let content_len = CONTENT_HEADER
@@ -915,6 +1263,108 @@ mod tests {
         let mut package = OdtPackage::open(&reexported.bytes, OdfPackageLimits::default()).unwrap();
         let reopened_again = package.import_document(OdfImportLimits::default()).unwrap();
         assert_eq!(reopened_again.document, reopened.document);
+    }
+
+    #[test]
+    fn lists_are_deterministic_nested_and_semantically_stable() {
+        let source = r#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" office:version="1.4"><office:automatic-styles><text:list-style style:name="Mixed"><text:list-level-style-bullet text:level="1" text:bullet-char="•"/><text:list-level-style-number text:level="2" style:num-format="a" style:num-prefix="(" style:num-suffix=")" text:start-value="3"/></text:list-style></office:automatic-styles><office:body><office:text><text:list text:style-name="Mixed"><text:list-item><text:p>outer</text:p><text:list><text:list-item><text:p>nested one</text:p></text:list-item><text:list-item><text:p>nested two</text:p></text:list-item></text:list></text:list-item><text:list-item><text:p>second</text:p></text:list-item></text:list></office:text></office:body></office:document-content>"#;
+        let document = import_content_xml(
+            source.as_bytes(),
+            OdfVersion::V1_4,
+            OdfImportLimits::default(),
+        )
+        .unwrap()
+        .document;
+        let first = write_odt(&document, OdfExportLimits::default()).unwrap();
+        let second = write_odt(&document, OdfExportLimits::default()).unwrap();
+        assert_eq!(first.bytes, second.bytes);
+        assert!(first.report.entries.is_empty(), "{:?}", first.report);
+
+        let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+        let content = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+        assert!(content.contains("<text:list-style style:name=\"L_"));
+        assert!(
+            content.contains(
+                "<text:list-level-style-bullet text:level=\"1\" text:bullet-char=\"•\"/>"
+            )
+        );
+        assert!(content.contains(
+            "<text:list-level-style-number text:level=\"2\" style:num-format=\"a\" style:num-prefix=\"(\" style:num-suffix=\")\" text:start-value=\"3\"/>"
+        ));
+        assert!(content.contains(
+            "<text:list-item><text:p>outer</text:p><text:list><text:list-item><text:p>nested<text:s/>one</text:p></text:list-item><text:list-item><text:p>nested<text:s/>two</text:p>"
+        ));
+
+        let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+        assert!(reopened.report.entries.is_empty(), "{:?}", reopened.report);
+        let levels = reopened
+            .document
+            .body()
+            .iter()
+            .map(|block| match block {
+                BlockNode::Paragraph(paragraph) => paragraph.properties.numbering.unwrap().level,
+                _ => panic!("paragraph"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(levels, [0, 1, 1, 0]);
+        let reexported = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+        assert_eq!(reexported.bytes, first.bytes);
+    }
+
+    #[test]
+    fn unsupported_list_labels_are_reported_and_projected_as_plain_paragraphs() {
+        let mut document = core_document();
+        let mut ids = casual_doc_model::IdGenerator::new(0x0d7);
+        let abstract_id = casual_doc_model::v1::AbstractNumberingId::new(ids.next_id().unwrap());
+        let instance_id = NumberingInstanceId::new(ids.next_id().unwrap());
+        document.definitions_mut().abstract_numbering.insert(
+            abstract_id,
+            casual_doc_model::v1::AbstractNumbering {
+                levels: vec![casual_doc_model::v1::NumberingLevel {
+                    level: 0,
+                    start: 1,
+                    num_fmt: Some(NumberFormat::DecimalZero),
+                    lvl_text: Some("%1".to_owned()),
+                    lvl_jc: None,
+                    suff: None,
+                    is_lgl: false,
+                    paragraph_properties: None,
+                    run_properties: None,
+                    style_ref: None,
+                }],
+            },
+        );
+        document.definitions_mut().numbering.insert(
+            instance_id,
+            casual_doc_model::v1::NumberingInstance {
+                abstract_ref: abstract_id,
+                overrides: Vec::new(),
+            },
+        );
+        let paragraph = match &mut document.body_mut()[0] {
+            BlockNode::Paragraph(paragraph) => paragraph,
+            _ => panic!("paragraph"),
+        };
+        paragraph.properties.numbering = Some(casual_doc_model::v1::NumberingRef {
+            instance: instance_id,
+            level: 0,
+        });
+
+        let exported = write_odt(&document, OdfExportLimits::default()).unwrap();
+        for feature in ["odt.export.list_label", "odt.export.numbering"] {
+            assert!(
+                exported
+                    .report
+                    .entries
+                    .iter()
+                    .any(|entry| entry.feature == feature),
+                "missing {feature}"
+            );
+        }
+        let mut package = OdtPackage::open(&exported.bytes, OdfPackageLimits::default()).unwrap();
+        let content = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+        assert!(!content.contains("<text:list"));
+        assert!(content.contains("<text:p>one"));
     }
 
     #[test]
