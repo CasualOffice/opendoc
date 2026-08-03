@@ -684,6 +684,7 @@ fn paragraph_hash(
                 run.decoration.underline.hash(&mut hasher);
                 run.decoration.strikethrough.hash(&mut hasher);
                 run.highlight.hash(&mut hasher);
+                run.shading.hash(&mut hasher);
                 run.baseline_shift.0.hash(&mut hasher);
             }
             FlowItem::Tab => 1u8.hash(&mut hasher),
@@ -4041,6 +4042,7 @@ pub(crate) fn shape_field_run(
         color: style.color,
         decoration: style.decoration,
         highlight: None,
+        shading: None,
         baseline_shift: Twip::ZERO,
     };
     let node = NodeId::from_parts(1, 1).expect("1/1 is a valid node id");
@@ -4073,6 +4075,7 @@ pub(crate) fn shape_field_run(
             bidi_level: 0,
             decoration: style.decoration,
             highlight: None,
+            shading: None,
             glyphs,
         },
         ascent,
@@ -4481,6 +4484,7 @@ fn styled_owned_run(
             strikethrough: effective.strike.unwrap_or(false),
         },
         highlight: effective.highlight.and_then(highlight_rgba),
+        shading: shading_rgba(&effective.shading),
         baseline_shift,
     }
 }
@@ -4520,6 +4524,7 @@ fn build_styled_run<'a>(
             strikethrough: properties.strike.unwrap_or(false),
         },
         highlight: properties.highlight.and_then(highlight_rgba),
+        shading: shading_rgba(&properties.shading),
         baseline_shift,
     }
 }
@@ -4597,6 +4602,7 @@ fn symbol_glyph_run(symbol: &Symbol, ctx: &mut FlowCtx) -> StyledRun<'static> {
             strikethrough: effective.strike.unwrap_or(false),
         },
         highlight: effective.highlight.and_then(highlight_rgba),
+        shading: shading_rgba(&effective.shading),
         baseline_shift,
     }
 }
@@ -4819,6 +4825,7 @@ fn build_script_run<'a>(
             strikethrough: properties.strike.unwrap_or(false),
         },
         highlight: properties.highlight.and_then(highlight_rgba),
+        shading: shading_rgba(&properties.shading),
         baseline_shift,
     }
 }
@@ -4845,6 +4852,7 @@ fn push_small_caps_runs<'a>(
         strikethrough: properties.strike.unwrap_or(false),
     };
     let highlight = properties.highlight.and_then(highlight_rgba);
+    let shading = shading_rgba(&properties.shading);
     let family = requested_family(properties, ctx.scheme);
     for (span, was_lower) in small_caps_spans(text) {
         let size = if was_lower {
@@ -4866,6 +4874,7 @@ fn push_small_caps_runs<'a>(
             color,
             decoration,
             highlight,
+            shading,
             baseline_shift,
         });
     }
@@ -5492,6 +5501,12 @@ fn highlight_rgba(color: HighlightColor) -> Option<[u8; 4]> {
     Some([r, g, b, 255])
 }
 
+/// A run's `w:rPr/w:shd` fill resolved to an opaque RGBA background, or `None`
+/// when the run declares no fill (`auto`/absent/theme-only).
+fn shading_rgba(shading: &casual_doc_model::v1::Shading) -> Option<[u8; 4]> {
+    shading.fill.map(|color| [color.r, color.g, color.b, 255])
+}
+
 /// Deterministic placeholder label for an unrendered `w:altChunk` block (see
 /// [`alt_chunk_fragment`]). Not the chunk's actual content — just a fixed,
 /// visible marker, in the spirit of [`crate::symbol_map::resolve_symbol`]'s `□`
@@ -5923,6 +5938,7 @@ mod tests {
                 bidi_level: 0,
                 decoration: Decoration::default(),
                 highlight: None,
+                shading: None,
                 glyphs: vec![Glyph {
                     id: 1,
                     advance: Twip(50),
@@ -6671,6 +6687,49 @@ mod tests {
             lines.lines[0].runs[0].highlight,
             Some([255, 255, 0, 255]),
             "the yellow highlight resolves to RGBA and rides the shaped run"
+        );
+    }
+
+    #[test]
+    fn a_run_shading_fill_carries_into_the_shaped_run_and_paints() {
+        use crate::compose::compose_paragraph;
+        use crate::display::PaintItem;
+        use casual_doc_model::v1::{RgbColor, Shading};
+        let props = RunProperties {
+            shading: Shading {
+                fill: Some(RgbColor {
+                    r: 0xCC,
+                    g: 0xEE,
+                    b: 0xFF,
+                }),
+            },
+            ..RunProperties::default()
+        };
+        let doc = document(vec![paragraph(10, vec![run_node(11, "shd", props)])]);
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&doc, &shaper, Twip::from_points(400));
+        let BlockFragment::Paragraph { lines, .. } = &galley[0] else {
+            panic!();
+        };
+        // The w:shd fill resolves to opaque RGBA and rides the shaped run.
+        assert_eq!(
+            lines.lines[0].runs[0].shading,
+            Some([0xCC, 0xEE, 0xFF, 255])
+        );
+        // ...and composition paints it as a background rect before the glyphs.
+        let list = compose_paragraph(lines, Point::new(Twip::ZERO, Twip::ZERO));
+        let rect_before_glyphs = list.items.iter().position(|item| {
+            matches!(item, PaintItem::Rect { fill: Some(fill), .. }
+                if [fill.r, fill.g, fill.b] == [0xCC, 0xEE, 0xFF])
+        });
+        let first_glyphs = list
+            .items
+            .iter()
+            .position(|item| matches!(item, PaintItem::Glyphs { .. }));
+        assert!(rect_before_glyphs.is_some(), "a shading rect is emitted");
+        assert!(
+            rect_before_glyphs < first_glyphs,
+            "the shading rect paints behind (before) the glyphs"
         );
     }
 

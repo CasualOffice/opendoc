@@ -61,19 +61,32 @@ pub fn compose_paragraph(layout: &LineLayout, origin: Point) -> DisplayList {
         for run in &line.runs {
             let placed_x = origin.x + run.origin.x;
             let baseline_y = origin.y + run.origin.y;
-            // A run highlight (`w:highlight`) fills the run's glyph box *before*
-            // the glyphs (behind the text). The box spans the run's total advance
-            // horizontally and the line's ascent+descent vertically.
-            if let Some(highlight) = run.highlight {
+            // Run backgrounds fill the run's glyph box *before* the glyphs (behind
+            // the text): the box spans the run's total advance horizontally and the
+            // line's ascent+descent vertically. Shading (`w:rPr/w:shd`) is painted
+            // first, then the highlight (`w:highlight`) over it — Word's order.
+            let run_box = |advance: Twip| {
+                Rect::new(
+                    Point::new(placed_x, baseline_y - line.ascent),
+                    Size::new(advance, line.ascent + line.descent),
+                )
+            };
+            if run.shading.is_some() || run.highlight.is_some() {
                 let advance = run.glyphs.iter().fold(Twip::ZERO, |acc, g| acc + g.advance);
-                list.push(PaintItem::Rect {
-                    rect: Rect::new(
-                        Point::new(placed_x, baseline_y - line.ascent),
-                        Size::new(advance, line.ascent + line.descent),
-                    ),
-                    fill: Some(rgba(highlight)),
-                    stroke: None,
-                });
+                if let Some(shading) = run.shading {
+                    list.push(PaintItem::Rect {
+                        rect: run_box(advance),
+                        fill: Some(rgba(shading)),
+                        stroke: None,
+                    });
+                }
+                if let Some(highlight) = run.highlight {
+                    list.push(PaintItem::Rect {
+                        rect: run_box(advance),
+                        fill: Some(rgba(highlight)),
+                        stroke: None,
+                    });
+                }
             }
             let mut placed = run.clone();
             placed.origin = Point::new(placed_x, baseline_y);
@@ -784,6 +797,7 @@ mod tests {
                 color: [0, 0, 0, 255],
                 decoration: Decoration::default(),
                 highlight: None,
+                shading: None,
                 baseline_shift: Twip::ZERO,
             }],
             LineConstraints {
@@ -823,6 +837,7 @@ mod tests {
                 color: [0, 0, 0, 255],
                 decoration: Decoration::default(),
                 highlight: None,
+                shading: None,
                 baseline_shift: Twip::ZERO,
             }],
             LineConstraints {
@@ -1143,6 +1158,7 @@ mod tests {
             bidi_level: 0,
             decoration: Decoration::default(),
             highlight,
+            shading: None,
             glyphs: vec![Glyph {
                 id: 1,
                 advance,

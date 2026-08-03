@@ -719,6 +719,7 @@ mod tests {
                 bidi_level: 0,
                 decoration: Decoration::default(),
                 highlight: None,
+                shading: None,
                 glyphs,
             };
             off += len;
@@ -775,6 +776,7 @@ mod tests {
             bidi_level: 1,
             decoration: Decoration::default(),
             highlight: None,
+            shading: None,
             glyphs,
         };
         let line = Line {
@@ -1209,6 +1211,7 @@ mod tests {
             color: [0, 0, 0, 255],
             decoration: Decoration::default(),
             highlight: None,
+            shading: None,
             baseline_shift: Twip::ZERO,
         };
         let shaped = shaper.shape_paragraph(&[run], LineConstraints::default(), range);
@@ -1256,6 +1259,7 @@ mod tests {
             color: [0, 0, 0, 255],
             decoration: Decoration::default(),
             highlight: None,
+            shading: None,
             baseline_shift: Twip::ZERO,
         };
         // A wide column keeps it on one line so every offset is present.

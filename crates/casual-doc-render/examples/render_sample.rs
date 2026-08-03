@@ -22,6 +22,7 @@ fn styled(text: &str, bold: bool, italic: bool, color: [u8; 4]) -> StyledRun<'_>
         color,
         decoration: Decoration::default(),
         highlight: None,
+        shading: None,
         baseline_shift: Twip::ZERO,
     }
 }

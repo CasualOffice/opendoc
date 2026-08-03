@@ -1670,6 +1670,7 @@ mod tests {
                         bidi_level: 0,
                         decoration: crate::text::Decoration::default(),
                         highlight: None,
+                        shading: None,
                         glyphs: vec![Glyph {
                             id: 1,
                             advance: line_h,
@@ -1746,6 +1747,7 @@ mod tests {
             bidi_level: 0,
             decoration: Decoration::default(),
             highlight: None,
+            shading: None,
             glyphs: vec![Glyph {
                 id: 1,
                 advance: Twip(50),

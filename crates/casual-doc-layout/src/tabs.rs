@@ -917,6 +917,7 @@ fn leader_run(
         color: style.color,
         decoration: Decoration::default(),
         highlight: None,
+        shading: None,
         baseline_shift: Twip::ZERO,
     };
     let dummy = ModelRange::new(
@@ -952,6 +953,7 @@ fn leader_run(
         bidi_level: 0,
         decoration: Decoration::default(),
         highlight: None,
+        shading: None,
         glyphs,
     })
 }
@@ -1036,6 +1038,7 @@ mod tests {
             color: [0, 0, 0, 255],
             decoration: Decoration::default(),
             highlight: None,
+            shading: None,
             baseline_shift: Twip::ZERO,
         }
     }

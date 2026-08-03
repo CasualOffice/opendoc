@@ -74,6 +74,11 @@ pub struct GlyphRun {
     /// RGBA; `None` when the run is not highlighted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub highlight: Option<[u8; 4]>,
+    /// Run shading fill painted behind the run's glyph box (`w:rPr/w:shd`), RGBA;
+    /// `None` when the run has no shading. Distinct from `highlight`: shading is an
+    /// arbitrary `w:fill` color and is painted *under* the highlight.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shading: Option<[u8; 4]>,
     /// The positioned glyphs, in visual (left-to-right) order.
     pub glyphs: Vec<Glyph>,
     /// Whether this run is a list marker (a bullet/number/checkbox glyph injected
@@ -456,6 +461,9 @@ pub struct StyledRun<'a> {
     /// Text-highlight fill (`w:highlight`) resolved to RGBA, painted behind the
     /// run's glyph box; `None` when unset.
     pub highlight: Option<[u8; 4]>,
+    /// Run shading fill (`w:rPr/w:shd`) resolved to RGBA, painted behind the run's
+    /// glyph box (under the highlight); `None` when unset.
+    pub shading: Option<[u8; 4]>,
     /// Baseline shift in twips, positive = raised toward the top of the line
     /// (screen-y grows downward, so the shaper subtracts this from the glyph-run
     /// origin). Carries `w:vertAlign` super/subscript and the `w:position` offset;
@@ -709,6 +717,7 @@ mod tests {
             bidi_level: 0,
             decoration: Decoration::default(),
             highlight: None,
+            shading: None,
             glyphs: vec![Glyph {
                 id: 5,
                 advance: Twip(120),
