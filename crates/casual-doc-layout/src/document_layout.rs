@@ -40,7 +40,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     BlockNode, Document, GroupChild, HeaderFooterKind, HeaderFooterRef, InlineNode, NoteId,
-    NoteKind, PageBorders, SectionBoundary,
+    NoteKind, PageBorders, PageVerticalAlignment, SectionBoundary,
 };
 
 use crate::anchor::{body_wrap_rects, header_float_reserve_for_section, place_floats};
@@ -690,6 +690,12 @@ fn finish_pagination_pass(
         paginate_columns(runs)
     };
 
+    // Section `w:vAlign` (center/both/bottom): shift each page's placed body
+    // content within its content area. Runs first, before any pass reads body
+    // positions (float exclusions, anchored placement, the display list), since
+    // every glyph/image/text-box origin is relative to its fragment's rect.
+    apply_page_vertical_alignment(&mut layout, &document.definitions().sections);
+
     // Post-pagination passes, in the required order: running content is placed
     // first so its fields exist to stamp, then the field pass resolves every
     // `PAGE`/`NUMPAGES` (body and running content), then anchored drawings are
@@ -724,6 +730,72 @@ fn finish_pagination_pass(
     resolve_anchored_fields_labeled(&mut layout, &page_labels, shaper);
 
     layout
+}
+
+/// Applies each section's `w:vAlign` to its pages: shifts the placed body
+/// content within the page's content area. `Top` (Word's default) is a no-op;
+/// `Center` centers the content block, `Bottom` pushes it to the bottom, and
+/// `Both` distributes the vertical slack evenly between the placed blocks
+/// (vertical justification). The slack is the content-area height minus the
+/// content's own height; a page whose content fills (or overflows) the area has
+/// no slack and is left untouched. Every glyph/image/text-box origin is relative
+/// to its fragment's `rect`, so moving `rect.origin.y` moves the whole block.
+fn apply_page_vertical_alignment(
+    layout: &mut crate::page::PaginatedLayout,
+    sections: &[SectionBoundary],
+) {
+    for page in &mut layout.pages {
+        let Some(align) = sections
+            .iter()
+            .find(|section| section.id == page.section)
+            .and_then(|section| section.vertical_alignment)
+        else {
+            continue;
+        };
+        if matches!(align, PageVerticalAlignment::Top) || page.placed.is_empty() {
+            continue;
+        }
+        let content_top = page.content_area.origin.y;
+        let content_bottom = content_top + page.content_area.size.height;
+        // The content's own extent: the lowest placed-fragment bottom.
+        let used_bottom = page
+            .placed
+            .iter()
+            .map(|placed| placed.rect.origin.y + placed.rect.size.height)
+            .max()
+            .unwrap_or(content_top);
+        let slack = content_bottom - used_bottom;
+        if slack <= Twip::ZERO {
+            continue;
+        }
+        match align {
+            PageVerticalAlignment::Center => {
+                let offset = Twip(slack.raw() / 2);
+                for placed in &mut page.placed {
+                    placed.rect.origin.y = placed.rect.origin.y + offset;
+                }
+            }
+            PageVerticalAlignment::Bottom => {
+                for placed in &mut page.placed {
+                    placed.rect.origin.y = placed.rect.origin.y + slack;
+                }
+            }
+            PageVerticalAlignment::Both => {
+                // Vertical justification: spread the slack across the gaps between
+                // the placed blocks (block `i` of `n` moves down by `slack*i/(n-1)`).
+                // A single block has no gap and stays at the top.
+                let gaps = page.placed.len().saturating_sub(1);
+                if gaps == 0 {
+                    continue;
+                }
+                for (index, placed) in page.placed.iter_mut().enumerate() {
+                    let offset = Twip((slack.raw() as i64 * index as i64 / gaps as i64) as i32);
+                    placed.rect.origin.y = placed.rect.origin.y + offset;
+                }
+            }
+            PageVerticalAlignment::Top => {}
+        }
+    }
 }
 
 fn paragraph_float_exclusions(
