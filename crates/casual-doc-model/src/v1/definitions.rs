@@ -241,6 +241,12 @@ pub struct NumberingLevel {
     /// Optional character style reference.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub style_ref: Option<StyleId>,
+    /// The higher level whose increment restarts this level's counter
+    /// (`w:lvlRestart`). `None` = the default (restart when any higher level
+    /// advances); `Some(0)` = never restart. Needed to reproduce multilevel
+    /// restart behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lvl_restart: Option<u8>,
 }
 
 /// An abstract numbering definition (its id is the map key).
@@ -249,6 +255,22 @@ pub struct NumberingLevel {
 pub struct AbstractNumbering {
     /// Ordered levels.
     pub levels: Vec<NumberingLevel>,
+    /// The list's overall shape (`w:multiLevelType`) — Word emits it on nearly
+    /// every abstract definition; additive, omitted when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub multi_level_type: Option<MultiLevelType>,
+}
+
+/// The overall structure of an abstract numbering definition (`w:multiLevelType`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MultiLevelType {
+    /// A single-level list (`singleLevel`).
+    SingleLevel,
+    /// A multi-level list where every level shares one format (`multilevel`).
+    Multilevel,
+    /// A multi-level list assembled from mixed level formats (`hybridMultilevel`).
+    HybridMultilevel,
 }
 
 /// A per-instance numbering level override.

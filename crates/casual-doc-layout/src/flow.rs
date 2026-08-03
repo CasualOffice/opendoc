@@ -11024,7 +11024,9 @@ mod tests {
                     paragraph_properties: None,
                     run_properties: level_rpr,
                     style_ref: None,
+                    lvl_restart: None,
                 }],
+                multi_level_type: None,
             },
         );
         definitions.numbering.insert(
