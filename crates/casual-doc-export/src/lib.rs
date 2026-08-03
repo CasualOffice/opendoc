@@ -843,6 +843,66 @@ mod semantic_tests {
     }
 
     #[test]
+    fn typed_omml_constructs_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, InlineNode, LimitPosition, MathExpression};
+
+        // One paragraph carrying six equations, one per newly-typed OMML
+        // construct: function, accent, lower limit, n-ary summation, matrix, and
+        // equation array. The retained OMML stays authoritative for export, so
+        // each must survive write -> reopen verbatim, and its typed projection
+        // must match the expected variant on both sides of the round trip.
+        let xml = br#"<w:document xmlns:w="urn:w" xmlns:m="urn:m"><w:body><w:p>
+            <m:oMath><m:func><m:fName><m:r><m:t>sin</m:t></m:r></m:fName><m:e><m:r><m:t>x</m:t></m:r></m:e></m:func></m:oMath>
+            <m:oMath><m:acc><m:accPr><m:chr m:val="^"/></m:accPr><m:e><m:r><m:t>x</m:t></m:r></m:e></m:acc></m:oMath>
+            <m:oMath><m:limLow><m:e><m:r><m:t>lim</m:t></m:r></m:e><m:lim><m:r><m:t>n</m:t></m:r></m:lim></m:limLow></m:oMath>
+            <m:oMath><m:nary><m:naryPr><m:chr m:val="&#8721;"/></m:naryPr><m:sub><m:r><m:t>i</m:t></m:r></m:sub><m:sup><m:r><m:t>n</m:t></m:r></m:sup><m:e><m:r><m:t>x</m:t></m:r></m:e></m:nary></m:oMath>
+            <m:oMath><m:m><m:mr><m:e><m:r><m:t>a</m:t></m:r></m:e><m:e><m:r><m:t>b</m:t></m:r></m:e></m:mr></m:m></m:oMath>
+            <m:oMath><m:eqArr><m:e><m:r><m:t>a</m:t></m:r></m:e><m:e><m:r><m:t>b</m:t></m:r></m:e></m:eqArr></m:oMath>
+        </w:p></w:body></w:document>"#;
+
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(m1, m2, "the typed equations survive write -> reopen");
+
+        let BlockNode::Paragraph(paragraph) = &m2.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let expressions: Vec<&MathExpression> = paragraph
+            .inlines
+            .iter()
+            .filter_map(|inline| match inline {
+                InlineNode::Math(math) => math.expression.as_ref(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(expressions.len(), 6, "one projection per equation");
+        assert!(matches!(expressions[0], MathExpression::Function { .. }));
+        assert!(matches!(
+            expressions[1],
+            MathExpression::Accent { accent, .. } if accent == "^"
+        ));
+        assert!(matches!(
+            expressions[2],
+            MathExpression::Limit {
+                position: LimitPosition::Lower,
+                ..
+            }
+        ));
+        assert!(matches!(
+            expressions[3],
+            MathExpression::Nary { operator, lower: Some(_), upper: Some(_), .. }
+                if operator == "\u{2211}"
+        ));
+        assert!(matches!(
+            expressions[4],
+            MathExpression::Matrix { rows } if rows.len() == 1 && rows[0].cells.len() == 2
+        ));
+        assert!(matches!(
+            expressions[5],
+            MathExpression::EqArray { rows } if rows.len() == 2
+        ));
+    }
+
+    #[test]
     fn symbol_survives_the_semantic_round_trip() {
         // A run carrying a `w:sym` (a Wingdings glyph in the Private Use Area).
         // The symbol must import to a first-class `Symbol` node — not vanish into

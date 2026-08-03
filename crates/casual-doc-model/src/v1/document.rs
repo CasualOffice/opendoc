@@ -2226,6 +2226,50 @@ fn validate_math_expression(expression: &MathExpression) -> Result<(), ModelErro
                 check_domain(*text_bytes <= MAX_MATH_BYTES, "math.expression.textBytes")?;
                 visit(content, depth + 1, nodes, text_bytes)?;
             }
+            MathExpression::Function { name, argument } => {
+                visit(name, depth + 1, nodes, text_bytes)?;
+                visit(argument, depth + 1, nodes, text_bytes)?;
+            }
+            MathExpression::Accent { accent, base } => {
+                *text_bytes = text_bytes.saturating_add(accent.len());
+                check_domain(*text_bytes <= MAX_MATH_BYTES, "math.expression.textBytes")?;
+                visit(base, depth + 1, nodes, text_bytes)?;
+            }
+            MathExpression::Limit { base, limit, .. } => {
+                visit(base, depth + 1, nodes, text_bytes)?;
+                visit(limit, depth + 1, nodes, text_bytes)?;
+            }
+            MathExpression::Nary {
+                operator,
+                lower,
+                upper,
+                base,
+            } => {
+                *text_bytes = text_bytes.saturating_add(operator.len());
+                check_domain(*text_bytes <= MAX_MATH_BYTES, "math.expression.textBytes")?;
+                if let Some(lower) = lower {
+                    visit(lower, depth + 1, nodes, text_bytes)?;
+                }
+                if let Some(upper) = upper {
+                    visit(upper, depth + 1, nodes, text_bytes)?;
+                }
+                visit(base, depth + 1, nodes, text_bytes)?;
+            }
+            MathExpression::Matrix { rows } => {
+                check_domain(!rows.is_empty(), "math.expression.matrix.rows")?;
+                for row in rows {
+                    check_domain(!row.cells.is_empty(), "math.expression.matrix.cells")?;
+                    for cell in &row.cells {
+                        visit(cell, depth + 1, nodes, text_bytes)?;
+                    }
+                }
+            }
+            MathExpression::EqArray { rows } => {
+                check_domain(!rows.is_empty(), "math.expression.eqArray.rows")?;
+                for row in rows {
+                    visit(row, depth + 1, nodes, text_bytes)?;
+                }
+            }
         }
         Ok(())
     }
@@ -2292,6 +2336,65 @@ fn math_expression_size(expression: &MathExpression) -> (usize, usize) {
                     .saturating_add(open.len())
                     .saturating_add(close.len()),
             )
+        }
+        MathExpression::Function { name, argument } => {
+            let name = math_expression_size(name);
+            let argument = math_expression_size(argument);
+            (
+                1usize.saturating_add(name.0).saturating_add(argument.0),
+                name.1.saturating_add(argument.1),
+            )
+        }
+        MathExpression::Accent { accent, base } => {
+            let base = math_expression_size(base);
+            (
+                base.0.saturating_add(1),
+                base.1.saturating_add(accent.len()),
+            )
+        }
+        MathExpression::Limit { base, limit, .. } => {
+            let base = math_expression_size(base);
+            let limit = math_expression_size(limit);
+            (
+                1usize.saturating_add(base.0).saturating_add(limit.0),
+                base.1.saturating_add(limit.1),
+            )
+        }
+        MathExpression::Nary {
+            operator,
+            lower,
+            upper,
+            base,
+        } => {
+            let mut size = math_expression_size(base);
+            size.0 = size.0.saturating_add(1);
+            size.1 = size.1.saturating_add(operator.len());
+            for bound in [lower, upper].into_iter().flatten() {
+                let child = math_expression_size(bound);
+                size.0 = size.0.saturating_add(child.0);
+                size.1 = size.1.saturating_add(child.1);
+            }
+            size
+        }
+        MathExpression::Matrix { rows } => {
+            let mut size = (1usize, 0usize);
+            for row in rows {
+                for cell in &row.cells {
+                    let child = math_expression_size(cell);
+                    size.0 = size.0.saturating_add(child.0);
+                    size.1 = size.1.saturating_add(child.1);
+                }
+            }
+            size
+        }
+        MathExpression::EqArray { rows } => {
+            let mut size = (1usize, 0usize);
+            for row in rows {
+                let child = math_expression_size(row);
+                size.0 = size.0.saturating_add(child.0);
+                size.1 = size.1.saturating_add(child.1);
+            }
+            size
         }
     }
 }
