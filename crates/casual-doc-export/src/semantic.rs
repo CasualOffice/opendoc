@@ -19,29 +19,30 @@ use std::io::{Cursor, Write};
 use casual_doc_import::{RelationshipOwner, RetainedParts};
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, AltChunk, AnchorHorizontal, AnchorVertical,
-    AnchoredDrawing, AppProperties, BlockNode, BorderEdge, BreakKind, CellVerticalAlignment,
-    CnfStyle, Color, ColorScheme, Comment, CommentId, CoreProperties, CropRect, CustomProperty,
-    CustomValue, DashStyle, DefinitionMap, Definitions, DocGridType, Document, DocumentDefaults,
-    DocumentProtectionEdit, DocumentSettings, DropCapFrame, DropCapMode, EmbeddedKind,
-    EmbeddedObject, EmbeddedPart, EmphasisMark, Extent, FontCollection, FontDescriptor,
-    FontFamilyKind, FontPitch, FontRef, FontScheme, FormCheckBoxSize, FormFieldData, FormFieldKind,
-    FormTextType, FrameHorizontalAlignment, FrameHorizontalAnchor, FrameVerticalAlignment,
-    FrameVerticalAnchor, FrameWrap, GridColumn, GroupChild, GroupShape, GroupTextBox,
-    GroupTransform, HeaderFooterId, HeaderFooterKind, HeightRule, HighlightColor, HorizontalAlign,
-    HorizontalAnchor, HorizontalPosition, HorizontalRuleAlign, HyperlinkTarget, InlineNode,
-    LevelJustification, LevelSuffix, LineEnd, LineEndKind, LineEndSize, LineNumberRestart,
-    LineRule, MarkRevisionKind, MediaId, MediaReference, MoveKind, Note, NoteId, NoteKind,
-    NoteNumberRestart, NotePosition, NoteProperties, NumberFormat, NumberingInstance,
-    NumberingInstanceId, NumberingLevel, PageBorderDisplay, PageBorderOffset, PageOrientation,
-    PageVerticalAlignment, ParagraphProperties, Person, PointEmu, PositionalTabAlignment,
-    PositionalTabLeader, PositionalTabRelativeTo, ProofState, PropChange, RevisionKind, RgbColor,
-    Rgba, RunFontHint, RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData,
-    SdtControlKind, SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionType,
-    ShapeAdjustment, ShapeGeometry, ShapeStroke, Style, StyleId, StyleKind, TabAlignment,
-    TabLeader, Table, TableAnchor, TableBorders, TableCell, TableCellProperties,
-    TableFloatPosition, TableLayout, TableOverlap, TableProperties, TableRow, TableRowProperties,
-    TableStyleOverride, TableStyleRegion, TableWidth, TableXAlign, TableYAlign, TextBox,
-    TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxVerticalAnchor,
+    AnchoredDrawing, AppProperties, BlockNode, BorderEdge, BreakKind, CellMergeAnnotation,
+    CellMergeRevision, CellVerticalAlignment, CnfStyle, Color, ColorScheme, Comment, CommentId,
+    CoreProperties, CropRect, CustomProperty, CustomValue, DashStyle, DefinitionMap, Definitions,
+    DocGridType, Document, DocumentDefaults, DocumentProtectionEdit, DocumentSettings,
+    DropCapFrame, DropCapMode, EmbeddedKind, EmbeddedObject, EmbeddedPart, EmphasisMark, Extent,
+    FontCollection, FontDescriptor, FontFamilyKind, FontPitch, FontRef, FontScheme,
+    FormCheckBoxSize, FormFieldData, FormFieldKind, FormTextType, FrameHorizontalAlignment,
+    FrameHorizontalAnchor, FrameVerticalAlignment, FrameVerticalAnchor, FrameWrap, GridColumn,
+    GroupChild, GroupShape, GroupTextBox, GroupTransform, HeaderFooterId, HeaderFooterKind,
+    HeightRule, HighlightColor, HorizontalAlign, HorizontalAnchor, HorizontalPosition,
+    HorizontalRuleAlign, HyperlinkTarget, InlineNode, LevelJustification, LevelSuffix, LineEnd,
+    LineEndKind, LineEndSize, LineNumberRestart, LineRule, MarkRevision, MarkRevisionKind, MediaId,
+    MediaReference, MoveKind, Note, NoteId, NoteKind, NoteNumberRestart, NotePosition,
+    NoteProperties, NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel,
+    PageBorderDisplay, PageBorderOffset, PageOrientation, PageVerticalAlignment,
+    ParagraphProperties, Person, PointEmu, PositionalTabAlignment, PositionalTabLeader,
+    PositionalTabRelativeTo, ProofState, PropChange, RevisionKind, RgbColor, Rgba, RunFontHint,
+    RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind,
+    SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionType, ShapeAdjustment,
+    ShapeGeometry, ShapeStroke, Style, StyleId, StyleKind, TabAlignment, TabLeader, Table,
+    TableAnchor, TableBorders, TableCell, TableCellProperties, TableFloatPosition, TableLayout,
+    TableOverlap, TableProperties, TableRow, TableRowProperties, TableStyleOverride,
+    TableStyleRegion, TableWidth, TableXAlign, TableYAlign, TextBox, TextBoxAutoFit,
+    TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxVerticalAnchor,
     TextBoxVerticalOverflow, TextDirection, ThemeColorRef, ThemeFontRef, VerticalAlign,
     VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition, VerticalTextAlignment,
     WidthType, WordprocessingGroup, WrapMode, Zoom, ZoomMode,
@@ -2776,6 +2777,66 @@ fn push_prop_change_attrs<P>(el: &mut BytesStart<'_>, change: &PropChange<P>) {
     }
 }
 
+/// Writes a tracked mark insertion/deletion as an empty element carrying the
+/// revision's author/date/id. The element names differ by container (a row uses
+/// `w:ins`/`w:del`; a cell uses `w:cellIns`/`w:cellDel`), so the caller passes
+/// them.
+fn write_mark_revision(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    revision: &MarkRevision,
+    insertion: &str,
+    deletion: &str,
+) -> Result<(), ExportError> {
+    let mut el = start(match revision.kind {
+        MarkRevisionKind::Insertion => insertion,
+        MarkRevisionKind::Deletion => deletion,
+    });
+    if let Some(author) = &revision.author {
+        el.push_attribute(("w:author", author.as_str()));
+    }
+    if let Some(date) = &revision.date {
+        el.push_attribute(("w:date", date.as_str()));
+    }
+    if let Some(id) = &revision.revision_id {
+        el.push_attribute(("w:id", id.as_str()));
+    }
+    w.write_event(Event::Empty(el)).map_err(pkg)?;
+    Ok(())
+}
+
+fn cell_merge_annotation_token(annotation: CellMergeAnnotation) -> &'static str {
+    match annotation {
+        CellMergeAnnotation::Cont => "cont",
+        CellMergeAnnotation::Rest => "rest",
+    }
+}
+
+/// Writes a tracked cell merge (`w:cellMerge`): author/date/id plus the current
+/// and original vertical-merge annotations.
+fn write_cell_merge(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    merge: &CellMergeRevision,
+) -> Result<(), ExportError> {
+    let mut el = start("w:cellMerge");
+    if let Some(author) = &merge.author {
+        el.push_attribute(("w:author", author.as_str()));
+    }
+    if let Some(date) = &merge.date {
+        el.push_attribute(("w:date", date.as_str()));
+    }
+    if let Some(id) = &merge.revision_id {
+        el.push_attribute(("w:id", id.as_str()));
+    }
+    if let Some(vmerge) = merge.vmerge {
+        el.push_attribute(("w:vMerge", cell_merge_annotation_token(vmerge)));
+    }
+    if let Some(vmerge_orig) = merge.vmerge_orig {
+        el.push_attribute(("w:vMergeOrig", cell_merge_annotation_token(vmerge_orig)));
+    }
+    w.write_event(Event::Empty(el)).map_err(pkg)?;
+    Ok(())
+}
+
 fn write_table_properties(
     w: &mut Writer<Cursor<Vec<u8>>>,
     properties: &TableProperties,
@@ -3052,6 +3113,11 @@ fn write_row_properties(
         el.push_attribute(("w:val", alignment_token(alignment)));
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
+    // A tracked row insertion/deletion (`w:ins`/`w:del`) follows the base row
+    // properties and precedes `w:trPrChange` in CT_TrPr.
+    if let Some(revision) = &properties.row_revision {
+        write_mark_revision(w, revision, "w:ins", "w:del")?;
+    }
     // `w:trPrChange` is the last child of `w:trPr`; its `w:trPr` is the prior
     // snapshot. An all-default prior still emits a bare `<w:trPr/>`.
     if let Some(change) = &properties.prop_change {
@@ -3149,6 +3215,15 @@ fn write_cell_properties(
     if properties.hide_mark {
         w.write_event(Event::Empty(start("w:hideMark")))
             .map_err(pkg)?;
+    }
+    // Tracked cell changes (`w:cellIns`/`w:cellDel`/`w:cellMerge`) form
+    // EG_CellMarkupElements, following the base cell properties and preceding
+    // `w:tcPrChange` in CT_TcPr.
+    if let Some(revision) = &properties.cell_revision {
+        write_mark_revision(w, revision, "w:cellIns", "w:cellDel")?;
+    }
+    if let Some(merge) = &properties.cell_merge {
+        write_cell_merge(w, merge)?;
     }
     // `w:tcPrChange` is the last child of `w:tcPr`; its `w:tcPr` is the prior
     // snapshot. An all-default prior still emits a bare `<w:tcPr/>`.

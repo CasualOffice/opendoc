@@ -41,21 +41,27 @@ pub struct PropChange<P> {
     pub prior: Box<P>,
 }
 
-/// Whether a tracked paragraph-mark change inserted or deleted the mark.
+/// Whether a tracked mark change (a paragraph mark, or a table row/cell) was
+/// inserted or deleted.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MarkRevisionKind {
-    /// The paragraph mark was inserted (`w:pPr > w:rPr > w:ins`) — this
-    /// paragraph break is a tracked insertion (a split).
+    /// The mark was inserted (`w:pPr > w:rPr > w:ins`, `w:trPr > w:ins`, or
+    /// `w:tcPr > w:cellIns`) — a tracked insertion (for a paragraph mark, a
+    /// split).
     Insertion,
-    /// The paragraph mark was deleted (`w:pPr > w:rPr > w:del`) — this
-    /// paragraph break is a tracked deletion (a merge with the next paragraph).
+    /// The mark was deleted (`w:pPr > w:rPr > w:del`, `w:trPr > w:del`, or
+    /// `w:tcPr > w:cellDel`) — a tracked deletion (for a paragraph mark, a merge
+    /// with the next paragraph).
     Deletion,
 }
 
-/// A tracked insertion/deletion of a paragraph mark (`w:pPr > w:rPr > w:ins` or
-/// `w:del`): the pilcrow itself is a tracked change, distinct from any tracked
-/// change to the paragraph's runs.
+/// A tracked insertion/deletion carrying only revision metadata, modeling a
+/// content mark (not a span) inserted or deleted under tracked changes: a
+/// paragraph mark (`w:pPr > w:rPr > w:ins`/`w:del`) — the pilcrow itself, a
+/// tracked split/merge distinct from any change to the paragraph's runs — and,
+/// reusing the same shape, a tracked table row (`w:trPr > w:ins`/`w:del`) or
+/// cell (`w:tcPr > w:cellIns`/`w:cellDel`) insertion/deletion.
 ///
 /// Author/date/id are retained as the producer wrote them (opaque, bounded),
 /// mirroring [`super::Revision`] and [`PropChange`] metadata.
