@@ -11292,13 +11292,15 @@ fn set_table_borders_preset(bd: &mut TableBorders, edges: &str, mk: impl Fn() ->
     }
 }
 
-/// Ruler tab-alignment code (0 start / 1 center / 2 end / 3 decimal / 4 bar) → model.
+/// Ruler tab-alignment code (0 start / 1 center / 2 end / 3 decimal / 4 bar /
+/// 5 clear) → model.
 fn tab_alignment_from_code(code: u8) -> TabAlignment {
     match code {
         1 => TabAlignment::Center,
         2 => TabAlignment::End,
         3 => TabAlignment::Decimal,
         4 => TabAlignment::Bar,
+        5 => TabAlignment::Clear,
         _ => TabAlignment::Start,
     }
 }
@@ -11311,6 +11313,7 @@ fn tab_alignment_code(alignment: TabAlignment) -> i32 {
         TabAlignment::End => 2,
         TabAlignment::Decimal => 3,
         TabAlignment::Bar => 4,
+        TabAlignment::Clear => 5,
     }
 }
 

@@ -3291,6 +3291,25 @@ impl BodyParser<'_> {
                     _ => self.reporter.report(b"textDirection"),
                 }
             }
+            // Paragraph text-flow direction (`w:textDirection`), a direct `w:pPr`
+            // child — not the section's (`self.section` guards that arm above) nor a
+            // cell's (`tcpr_depth` guards that arm above). Reuses the shared vocab.
+            b"textDirection"
+                if self.ppr_depth > 0 && self.rpr_depth == 0 && self.mark_rpr_depth == 0 =>
+            {
+                match attribute_value(element, b"val").as_deref() {
+                    Some("lrTb") => {
+                        self.paragraph_properties.text_direction = Some(TextDirection::LrTb)
+                    }
+                    Some("tbRl") => {
+                        self.paragraph_properties.text_direction = Some(TextDirection::TbRl)
+                    }
+                    Some("btLr") => {
+                        self.paragraph_properties.text_direction = Some(TextDirection::BtLr)
+                    }
+                    _ => self.reporter.report(b"textDirection"),
+                }
+            }
             b"tcFitText" if self.tcpr_depth > 0 => self
                 .tables
                 .set_cell_fit_text(is_true(attribute_value(element, b"val").as_deref())),
@@ -4843,6 +4862,9 @@ impl BodyParser<'_> {
             Some("end" | "right") => TabAlignment::End,
             Some("decimal") => TabAlignment::Decimal,
             Some("bar") => TabAlignment::Bar,
+            // A cleared tab (`w:val="clear"`) suppresses an inherited/default stop
+            // at `w:pos`; captured (not dropped) so the suppression survives.
+            Some("clear") => TabAlignment::Clear,
             _ => {
                 self.reporter.report(b"tab");
                 return;

@@ -2504,6 +2504,68 @@ mod semantic_tests {
     }
 
     #[test]
+    fn paragraph_text_direction_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, TextDirection};
+        // A direct `w:pPr/w:textDirection` (vertical flow) is a paragraph-level
+        // property, distinct from the section's and a cell's textDirection.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:pPr><w:textDirection w:val="tbRl"/></w:pPr><w:r><w:t>vertical</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(
+            m1, m2,
+            "the paragraph text direction survives write -> reopen unchanged"
+        );
+
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        assert_eq!(
+            paragraph.properties.text_direction,
+            Some(TextDirection::TbRl),
+            "the pPr textDirection is captured"
+        );
+    }
+
+    #[test]
+    fn cleared_tab_stop_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, TabAlignment};
+        // A `w:tab w:val="clear"` suppresses an inherited/default stop at its
+        // position; it must be captured (not dropped) so the suppression survives.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:pPr><w:tabs>
+                <w:tab w:val="clear" w:pos="720"/>
+                <w:tab w:val="left" w:pos="1440"/>
+            </w:tabs></w:pPr><w:r><w:t>x</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(
+            m1, m2,
+            "the cleared tab stop survives write -> reopen unchanged"
+        );
+
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        assert_eq!(
+            paragraph.properties.tabs.len(),
+            2,
+            "both stops are captured"
+        );
+        assert_eq!(paragraph.properties.tabs[0].position_twips, 720);
+        assert_eq!(
+            paragraph.properties.tabs[0].alignment,
+            TabAlignment::Clear,
+            "the cleared stop is modeled, not dropped"
+        );
+        assert_eq!(
+            paragraph.properties.tabs[1].alignment,
+            TabAlignment::Start,
+            "the ordinary stop is unaffected"
+        );
+    }
+
+    #[test]
     fn theme_color_and_format_schemes_survive_the_semantic_round_trip() {
         // A full theme: a 12-slot clrScheme (sysClr with lastClr for dk1/lt1,
         // srgbClr for the rest), a fontScheme, and an fmtScheme. The clrScheme is
