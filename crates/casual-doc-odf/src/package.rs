@@ -1,5 +1,10 @@
 //! ODF/ODT package profile admission over the generic bounded ZIP substrate.
 
+use casual_doc_model::IdGenerator;
+use casual_doc_model::v1::{
+    DocGrid, LineNumbering, NoteProperties, PageBorders, PageNumbering, PaperSource,
+    SectionBoundary, SectionColumns, SectionId,
+};
 use casual_doc_package::{
     BoundedPackage, CancellationToken, PackageEntry, PackageLimits, PartCompression,
 };
@@ -315,6 +320,54 @@ impl<'a> OdtPackage<'a> {
                     .then(a.model_outcome.cmp(&b.model_outcome))
                     .then(a.retention_outcome.cmp(&b.retention_outcome))
             });
+        }
+        if let Some(geometry) = styles
+            .as_deref()
+            .and_then(crate::page_style::parse_page_layout)
+        {
+            let mut seed = 0x4f44_544c_4159_4f55_u64;
+            for byte in geometry
+                .size
+                .width_twips
+                .to_le_bytes()
+                .into_iter()
+                .chain(geometry.size.height_twips.to_le_bytes())
+            {
+                seed = seed.wrapping_mul(33).wrapping_add(byte as u64);
+            }
+            let mut ids = IdGenerator::new(seed);
+            let section_id = SectionId::new(ids.next_id().map_err(|_| OdfError::InvalidModel)?);
+            imported
+                .document
+                .definitions_mut()
+                .sections
+                .push(SectionBoundary {
+                    id: section_id,
+                    page_size: geometry.size,
+                    page_margins: geometry.margins,
+                    columns: SectionColumns {
+                        count: 1,
+                        space_twips: None,
+                        separator: None,
+                        equal_width: None,
+                        columns: Vec::new(),
+                    },
+                    headers: Vec::new(),
+                    footers: Vec::new(),
+                    section_type: None,
+                    title_page: None,
+                    vertical_alignment: None,
+                    page_numbering: PageNumbering::default(),
+                    doc_grid: DocGrid::default(),
+                    orientation: geometry.orientation,
+                    paper_source: PaperSource::default(),
+                    page_borders: PageBorders::default(),
+                    line_numbering: LineNumbering::default(),
+                    footnote_props: NoteProperties::default(),
+                    endnote_props: NoteProperties::default(),
+                    text_direction: None,
+                    bidi: false,
+                });
         }
         Ok(imported)
     }

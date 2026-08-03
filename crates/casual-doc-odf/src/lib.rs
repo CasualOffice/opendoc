@@ -9,6 +9,7 @@ mod export;
 mod manifest;
 mod metadata;
 mod package;
+mod page_style;
 
 #[cfg(test)]
 mod content_tests;

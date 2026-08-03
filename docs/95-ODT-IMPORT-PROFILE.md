@@ -141,6 +141,10 @@ Metadata matching uses bounded local-name matching and does not rely on
 producer-chosen XML prefixes; full foreign-namespace disambiguation remains a
 future hardening item.
 
+The first bounded `style:page-layout-properties` geometry is also mapped into a
+schema-v1 section: page width/height, margins, and portrait/landscape
+orientation use deterministic unit conversion and IDs.
+
 - Namespace seeds are derived from admitted semantic source facts, not ZIP entry
   order or host filenames.
 - XML attribute order and manifest entry order do not change the normalized
