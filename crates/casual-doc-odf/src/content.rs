@@ -4,9 +4,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
-    Alignment, BlockNode, Bookmark, BookmarkEnd, BookmarkId, BookmarkStart, Break, BreakKind,
-    Color, Definitions, Document, ExternalTarget, Hyperlink, HyperlinkTarget, InlineNode,
-    InternalTarget, Paragraph, ParagraphProperties, RgbColor, Run, RunProperties, Tab,
+    AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, Bookmark, BookmarkEnd,
+    BookmarkId, BookmarkStart, Break, BreakKind, Color, Definitions, Document, ExternalTarget,
+    Hyperlink, HyperlinkTarget, InlineNode, InternalTarget, LevelJustification, LevelSuffix,
+    NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel, NumberingRef, Paragraph,
+    ParagraphProperties, RgbColor, Run, RunProperties, Tab,
 };
 use casual_doc_package::CancellationToken;
 use quick_xml::NsReader;
@@ -116,6 +118,10 @@ pub struct OdfImportLimits {
     pub max_paragraphs: usize,
     /// Maximum normalized inline nodes.
     pub max_inline_nodes: usize,
+    /// Maximum source list elements.
+    pub max_lists: usize,
+    /// Maximum nested source list depth.
+    pub max_list_depth: usize,
     /// Maximum aggregate normalized text bytes.
     pub max_text_bytes: usize,
     /// Maximum spaces emitted by one `text:s` element.
@@ -143,6 +149,10 @@ impl OdfImportLimits {
     pub const HARD_MAX_PARAGRAPHS: usize = 2_000_000;
     /// Compiled maximum inline-node count.
     pub const HARD_MAX_INLINE_NODES: usize = 16_000_000;
+    /// Compiled maximum source list count.
+    pub const HARD_MAX_LISTS: usize = 2_000_000;
+    /// Compiled maximum nested source list depth.
+    pub const HARD_MAX_LIST_DEPTH: usize = 256;
     /// Compiled maximum aggregate normalized text bytes.
     pub const HARD_MAX_TEXT_BYTES: usize = 512 * 1024 * 1024;
     /// Compiled maximum one-element space expansion.
@@ -197,6 +207,12 @@ impl OdfImportLimits {
                 self.max_inline_nodes,
                 Self::HARD_MAX_INLINE_NODES,
             ),
+            ("odf_content_lists", self.max_lists, Self::HARD_MAX_LISTS),
+            (
+                "odf_content_list_depth",
+                self.max_list_depth,
+                Self::HARD_MAX_LIST_DEPTH,
+            ),
             (
                 "odf_content_text_bytes",
                 self.max_text_bytes,
@@ -237,6 +253,8 @@ impl Default for OdfImportLimits {
             max_xml_name_bytes: 1_024,
             max_paragraphs: 250_000,
             max_inline_nodes: 2_000_000,
+            max_lists: 250_000,
+            max_list_depth: 64,
             max_text_bytes: 128 * 1024 * 1024,
             max_space_repeat: 65_536,
             max_report_features: 4_096,
@@ -278,7 +296,29 @@ struct ParagraphDraft {
     depth: usize,
     outline_level: Option<u8>,
     alignment: Option<Alignment>,
+    numbering: Option<ListParagraphDraft>,
     inlines: Vec<InlineDraft>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ListParagraphDraft {
+    instance: usize,
+    level: u8,
+    style_name: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OpenList {
+    depth: usize,
+    instance: usize,
+    level: u8,
+    style_name: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OpenListItem {
+    depth: usize,
+    first_paragraph: bool,
 }
 
 impl ParagraphDraft {
@@ -325,6 +365,21 @@ struct OpenStyle {
     depth: usize,
     name: String,
     style: OdfStyle,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OdfListLevel {
+    level: u8,
+    num_fmt: NumberFormat,
+    lvl_text: String,
+    start: u16,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OpenListStyle {
+    depth: usize,
+    name: String,
+    levels: BTreeMap<u8, OdfListLevel>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -401,6 +456,13 @@ impl Reporter {
 }
 
 type AutomaticStyles = BTreeMap<(StyleFamily, String), OdfStyle>;
+type ListStyles = BTreeMap<String, BTreeMap<u8, OdfListLevel>>;
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct StyleCatalog {
+    automatic: AutomaticStyles,
+    lists: ListStyles,
+}
 
 #[allow(clippy::too_many_arguments)]
 fn parse_style_catalog(
@@ -410,7 +472,7 @@ fn parse_style_catalog(
     limits: OdfImportLimits,
     cancellation: &CancellationToken,
     reporter: &mut Reporter,
-) -> Result<AutomaticStyles, OdfError> {
+) -> Result<StyleCatalog, OdfError> {
     let mut catalog = if let Some(styles_part) = styles_part {
         parse_style_document(
             styles_part,
@@ -422,7 +484,7 @@ fn parse_style_catalog(
             reporter,
         )?
     } else {
-        AutomaticStyles::new()
+        StyleCatalog::default()
     };
     let content_styles = parse_style_document(
         content,
@@ -433,12 +495,18 @@ fn parse_style_catalog(
         cancellation,
         reporter,
     )?;
-    for (key, style) in content_styles {
-        if catalog.insert(key, style).is_some() {
+    for (key, style) in content_styles.automatic {
+        if catalog.automatic.insert(key, style).is_some() {
             reporter.report("odf.style.shadowed".to_owned(), ModelOutcome::Degraded);
         }
     }
-    resolve_style_inheritance(&catalog, limits, reporter)
+    for (name, list_style) in content_styles.lists {
+        if catalog.lists.insert(name, list_style).is_some() {
+            reporter.report("odf.list-style.shadowed".to_owned(), ModelOutcome::Degraded);
+        }
+    }
+    catalog.automatic = resolve_style_inheritance(&catalog.automatic, limits, reporter)?;
+    Ok(catalog)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -450,7 +518,7 @@ fn parse_style_document(
     limits: OdfImportLimits,
     cancellation: &CancellationToken,
     reporter: &mut Reporter,
-) -> Result<AutomaticStyles, OdfError> {
+) -> Result<StyleCatalog, OdfError> {
     let mut reader = NsReader::from_reader(bytes);
     reader
         .resolver_mut()
@@ -466,7 +534,9 @@ fn parse_style_document(
     let mut root_seen = false;
     let mut root_closed = false;
     let mut open_style: Option<OpenStyle> = None;
+    let mut open_list_style: Option<OpenListStyle> = None;
     let mut styles = AutomaticStyles::new();
+    let mut list_styles = ListStyles::new();
 
     loop {
         check_cancelled(cancellation)?;
@@ -537,6 +607,8 @@ fn parse_style_document(
                         &mut attribute_bytes,
                         &mut open_style,
                         &mut styles,
+                        &mut open_list_style,
+                        &mut list_styles,
                         false,
                         reporter,
                     )?;
@@ -587,6 +659,8 @@ fn parse_style_document(
                         &mut attribute_bytes,
                         &mut open_style,
                         &mut styles,
+                        &mut open_list_style,
+                        &mut list_styles,
                         true,
                         reporter,
                     )?;
@@ -600,6 +674,12 @@ fn parse_style_document(
                     .is_some_and(|style: &OpenStyle| style.depth == depth)
                 {
                     finish_style(&mut open_style, &mut styles)?;
+                }
+                if open_list_style
+                    .as_ref()
+                    .is_some_and(|style: &OpenListStyle| style.depth == depth)
+                {
+                    finish_list_style(&mut open_list_style, &mut list_styles)?;
                 }
                 if style_container_depth == Some(depth) {
                     style_container_depth = None;
@@ -639,10 +719,14 @@ fn parse_style_document(
         || depth != 0
         || style_container_depth.is_some()
         || open_style.is_some()
+        || open_list_style.is_some()
     {
         return Err(OdfError::MalformedContent);
     }
-    Ok(styles)
+    Ok(StyleCatalog {
+        automatic: styles,
+        lists: list_styles,
+    })
 }
 
 fn resolve_style_inheritance(
@@ -724,11 +808,13 @@ fn process_style_element(
     attribute_bytes: &mut usize,
     open_style: &mut Option<OpenStyle>,
     styles: &mut AutomaticStyles,
+    open_list_style: &mut Option<OpenListStyle>,
+    list_styles: &mut ListStyles,
     empty: bool,
     reporter: &mut Reporter,
 ) -> Result<(), OdfError> {
     if depth == 3 && is_name(name, NamespaceKind::Style, b"style") {
-        if open_style.is_some() {
+        if open_style.is_some() || open_list_style.is_some() {
             return Err(OdfError::MalformedContent);
         }
         *open_style = Some(read_style_header(
@@ -742,6 +828,50 @@ fn process_style_element(
         )?);
         if empty {
             finish_style(open_style, styles)?;
+        }
+    } else if depth == 3 && is_name(name, NamespaceKind::Text, b"list-style") {
+        if open_style.is_some() || open_list_style.is_some() {
+            return Err(OdfError::MalformedContent);
+        }
+        *open_list_style = Some(read_list_style_header(
+            reader,
+            element,
+            depth,
+            limits,
+            attributes,
+            attribute_bytes,
+            reporter,
+        )?);
+        if empty {
+            finish_list_style(open_list_style, list_styles)?;
+        }
+    } else if let Some(list_style) = open_list_style {
+        if depth == list_style.depth + 1
+            && (is_name(name, NamespaceKind::Text, b"list-level-style-bullet")
+                || is_name(name, NamespaceKind::Text, b"list-level-style-number"))
+        {
+            let level = read_list_level(
+                reader,
+                element,
+                name,
+                limits,
+                attributes,
+                attribute_bytes,
+                reporter,
+            )?;
+            if list_style.levels.insert(level.level, level).is_some() {
+                return Err(OdfError::MalformedContent);
+            }
+        } else {
+            count_and_report_attributes(
+                reader,
+                element,
+                attributes,
+                attribute_bytes,
+                limits,
+                reporter,
+            )?;
+            reporter.report(feature("element", name), ModelOutcome::Degraded);
         }
     } else if let Some(style) = open_style {
         if depth != style.depth + 1 {
@@ -788,6 +918,154 @@ fn process_style_element(
             reporter,
         )?;
         reporter.report(feature("element", name), ModelOutcome::Degraded);
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn read_list_style_header(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    depth: usize,
+    limits: OdfImportLimits,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    reporter: &mut Reporter,
+) -> Result<OpenListStyle, OdfError> {
+    let mut style_name = None;
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        if namespace_kind(&namespace) == NamespaceKind::Style && local.as_ref() == b"name" {
+            if style_name.is_some() {
+                return Err(OdfError::MalformedContent);
+            }
+            style_name = Some(decode_attribute(&attribute)?);
+        } else if !is_namespace_declaration(&attribute) {
+            reporter.report(
+                attribute_feature(reader, &attribute),
+                ModelOutcome::Degraded,
+            );
+        }
+    }
+    let name = style_name.ok_or(OdfError::MalformedContent)?;
+    if name.is_empty() {
+        return Err(OdfError::MalformedContent);
+    }
+    Ok(OpenListStyle {
+        depth,
+        name,
+        levels: BTreeMap::new(),
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn read_list_level(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    element_name: &ResolvedName,
+    limits: OdfImportLimits,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    reporter: &mut Reporter,
+) -> Result<OdfListLevel, OdfError> {
+    let bullet = element_name.local == b"list-level-style-bullet";
+    let mut source_level = None;
+    let mut bullet_char = None;
+    let mut num_format = None;
+    let mut prefix = String::new();
+    let mut suffix = String::new();
+    let mut start = 1_u16;
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        let namespace = namespace_kind(&namespace);
+        match (namespace, local.as_ref()) {
+            (NamespaceKind::Text, b"level") => {
+                if source_level.is_some() {
+                    return Err(OdfError::MalformedContent);
+                }
+                source_level = Some(
+                    decode_attribute(&attribute)?
+                        .parse::<u16>()
+                        .map_err(|_| OdfError::MalformedContent)?,
+                );
+            }
+            (NamespaceKind::Text, b"bullet-char") if bullet => {
+                bullet_char = Some(decode_attribute(&attribute)?);
+            }
+            (NamespaceKind::Style, b"num-format") if !bullet => {
+                num_format = Some(decode_attribute(&attribute)?);
+            }
+            (NamespaceKind::Style, b"num-prefix") if !bullet => {
+                prefix = decode_attribute(&attribute)?;
+            }
+            (NamespaceKind::Style, b"num-suffix") if !bullet => {
+                suffix = decode_attribute(&attribute)?;
+            }
+            (NamespaceKind::Text, b"start-value") if !bullet => {
+                let value = decode_attribute(&attribute)?;
+                start = value
+                    .parse::<u16>()
+                    .map_err(|_| OdfError::MalformedContent)?
+                    .min(32_767);
+            }
+            _ if !is_namespace_declaration(&attribute) => reporter.report(
+                attribute_feature(reader, &attribute),
+                ModelOutcome::Degraded,
+            ),
+            _ => {}
+        }
+    }
+    let source_level = source_level.ok_or(OdfError::MalformedContent)?;
+    if source_level == 0 || source_level > u16::from(u8::MAX) + 1 {
+        return Err(OdfError::MalformedContent);
+    }
+    let level = u8::try_from(source_level - 1).map_err(|_| OdfError::MalformedContent)?;
+    let (num_fmt, lvl_text) = if bullet {
+        let glyph = bullet_char.ok_or(OdfError::MalformedContent)?;
+        if glyph.is_empty() || glyph.len() > 255 {
+            return Err(OdfError::MalformedContent);
+        }
+        (NumberFormat::Bullet, glyph)
+    } else {
+        let format = match num_format.as_deref().unwrap_or("1") {
+            "1" => NumberFormat::Decimal,
+            "a" => NumberFormat::LowerLetter,
+            "A" => NumberFormat::UpperLetter,
+            "i" => NumberFormat::LowerRoman,
+            "I" => NumberFormat::UpperRoman,
+            _ => {
+                reporter.report(
+                    "odf.list-style.number-format".to_owned(),
+                    ModelOutcome::Degraded,
+                );
+                NumberFormat::Decimal
+            }
+        };
+        let template = format!("{prefix}%{}{suffix}", u16::from(level) + 1);
+        if template.len() > 255 {
+            return Err(OdfError::MalformedContent);
+        }
+        (format, template)
+    };
+    Ok(OdfListLevel {
+        level,
+        num_fmt,
+        lvl_text,
+        start,
+    })
+}
+
+fn finish_list_style(
+    open_list_style: &mut Option<OpenListStyle>,
+    list_styles: &mut ListStyles,
+) -> Result<(), OdfError> {
+    let style = open_list_style.take().ok_or(OdfError::MalformedContent)?;
+    if list_styles.insert(style.name, style.levels).is_some() {
+        return Err(OdfError::MalformedContent);
     }
     Ok(())
 }
@@ -1087,7 +1365,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
     check_cancelled(cancellation)?;
 
     let mut reporter = Reporter::new(limits.max_report_features);
-    let automatic_styles = parse_style_catalog(
+    let style_catalog = parse_style_catalog(
         bytes,
         styles_bytes,
         expected_version,
@@ -1122,6 +1400,10 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
     let mut open_bookmarks = BTreeMap::new();
     let mut active_run_properties = RunProperties::default();
     let mut open_spans = Vec::new();
+    let mut open_lists = Vec::new();
+    let mut open_list_items = Vec::new();
+    let mut list_count = 0_usize;
+    let mut list_instances = 0_usize;
 
     loop {
         check_cancelled(cancellation)?;
@@ -1173,30 +1455,67 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                     if root_closed {
                         return Err(OdfError::MalformedContent);
                     }
-                    process_start(
-                        &reader,
-                        &element,
-                        &name,
-                        depth,
-                        limits,
-                        &mut attributes,
-                        &mut attribute_bytes,
-                        &mut body_seen,
-                        &mut body_depth,
-                        &mut text_body_depth,
-                        &mut leaf_depth,
-                        &mut body_kind_seen,
-                        &mut current,
-                        &mut active_link,
-                        &mut bookmarks,
-                        &mut open_bookmarks,
-                        &mut inline_nodes,
-                        &mut text_bytes,
-                        &automatic_styles,
-                        &mut active_run_properties,
-                        &mut open_spans,
-                        &mut reporter,
-                    )?;
+                    if text_body_depth.is_some()
+                        && current.is_none()
+                        && is_name(&name, NamespaceKind::Text, b"list")
+                    {
+                        start_list(
+                            &reader,
+                            &element,
+                            depth,
+                            limits,
+                            &mut attributes,
+                            &mut attribute_bytes,
+                            &mut open_lists,
+                            &open_list_items,
+                            &mut list_count,
+                            &mut list_instances,
+                            &style_catalog.lists,
+                            &mut reporter,
+                        )?;
+                    } else if text_body_depth.is_some()
+                        && current.is_none()
+                        && is_name(&name, NamespaceKind::Text, b"list-item")
+                    {
+                        start_list_item(
+                            &reader,
+                            &element,
+                            depth,
+                            limits,
+                            &mut attributes,
+                            &mut attribute_bytes,
+                            &open_lists,
+                            &mut open_list_items,
+                            &mut reporter,
+                        )?;
+                    } else {
+                        process_start(
+                            &reader,
+                            &element,
+                            &name,
+                            depth,
+                            limits,
+                            &mut attributes,
+                            &mut attribute_bytes,
+                            &mut body_seen,
+                            &mut body_depth,
+                            &mut text_body_depth,
+                            &mut leaf_depth,
+                            &mut body_kind_seen,
+                            &mut current,
+                            &mut active_link,
+                            &mut bookmarks,
+                            &mut open_bookmarks,
+                            &mut inline_nodes,
+                            &mut text_bytes,
+                            &style_catalog.automatic,
+                            &open_lists,
+                            &mut open_list_items,
+                            &mut active_run_properties,
+                            &mut open_spans,
+                            &mut reporter,
+                        )?;
+                    }
                 }
             }
             Event::Empty(element) => {
@@ -1238,7 +1557,9 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                         &mut paragraphs,
                         &mut inline_nodes,
                         &mut text_bytes,
-                        &automatic_styles,
+                        &style_catalog.automatic,
+                        &open_lists,
+                        &mut open_list_items,
                         &mut active_run_properties,
                         &mut open_spans,
                         &mut reporter,
@@ -1269,6 +1590,18 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                     let paragraph = current.take().ok_or(OdfError::MalformedContent)?;
                     push_paragraph(&mut paragraphs, paragraph, limits)?;
                     active_run_properties = RunProperties::default();
+                }
+                if open_list_items
+                    .last()
+                    .is_some_and(|item: &OpenListItem| item.depth == depth)
+                {
+                    open_list_items.pop();
+                }
+                if open_lists
+                    .last()
+                    .is_some_and(|list: &OpenList| list.depth == depth)
+                {
+                    open_lists.pop();
                 }
                 if automatic_styles_depth == Some(depth) {
                     automatic_styles_depth = None;
@@ -1358,6 +1691,8 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
         || current.is_some()
         || active_link.is_some()
         || !open_spans.is_empty()
+        || !open_lists.is_empty()
+        || !open_list_items.is_empty()
     {
         return Err(OdfError::MalformedContent);
     }
@@ -1371,6 +1706,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                 depth: 0,
                 outline_level: None,
                 alignment: None,
+                numbering: None,
                 inlines: Vec::new(),
             },
             limits,
@@ -1396,11 +1732,161 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
         normalized_inline_nodes,
         limits.max_inline_nodes,
     )?;
-    let document = build_document(expected_version, &paragraphs, &bookmarks)?;
+    let document = build_document(
+        expected_version,
+        &paragraphs,
+        &bookmarks,
+        &style_catalog.lists,
+        &mut reporter,
+    )?;
     Ok(OdtImport {
         document,
         report: reporter.finish(),
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn start_list(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    depth: usize,
+    limits: OdfImportLimits,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    open_lists: &mut Vec<OpenList>,
+    open_list_items: &[OpenListItem],
+    list_count: &mut usize,
+    list_instances: &mut usize,
+    list_styles: &ListStyles,
+    reporter: &mut Reporter,
+) -> Result<(), OdfError> {
+    if let Some(parent) = open_lists.last()
+        && open_list_items
+            .last()
+            .is_none_or(|item| item.depth != parent.depth + 1 || depth != item.depth + 1)
+    {
+        return Err(OdfError::MalformedContent);
+    }
+    *list_count = checked_increment(*list_count)?;
+    enforce("odf_content_lists", *list_count, limits.max_lists)?;
+    let list_depth = open_lists
+        .len()
+        .checked_add(1)
+        .ok_or(OdfError::MalformedContent)?;
+    enforce("odf_content_list_depth", list_depth, limits.max_list_depth)?;
+    let mut explicit_style = None;
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        if namespace_kind(&namespace) == NamespaceKind::Text && local.as_ref() == b"style-name" {
+            if explicit_style.is_some() {
+                return Err(OdfError::MalformedContent);
+            }
+            explicit_style = Some(decode_attribute(&attribute)?);
+        } else if namespace_kind(&namespace) == NamespaceKind::Text
+            && matches!(local.as_ref(), b"continue-list" | b"continue-numbering")
+        {
+            reporter.report("odf.list.continuation".to_owned(), ModelOutcome::Degraded);
+        } else if !is_namespace_declaration(&attribute) {
+            reporter.report(
+                attribute_feature(reader, &attribute),
+                ModelOutcome::Degraded,
+            );
+        }
+    }
+    let inherited_style = open_lists.last().and_then(|list| list.style_name.clone());
+    let style_name = explicit_style.or(inherited_style);
+    match style_name.as_deref() {
+        Some(name) if list_styles.contains_key(name) => {}
+        Some(_) => reporter.report(
+            "odf.list-style.unresolved".to_owned(),
+            ModelOutcome::Degraded,
+        ),
+        None => reporter.report(
+            "odf.list-style.defaulted".to_owned(),
+            ModelOutcome::Degraded,
+        ),
+    }
+    let (instance, level) = if let Some(parent) = open_lists.first() {
+        let level = u8::try_from(open_lists.len()).map_err(|_| OdfError::MalformedContent)?;
+        (parent.instance, level)
+    } else {
+        let instance = *list_instances;
+        *list_instances = list_instances
+            .checked_add(1)
+            .ok_or(OdfError::MalformedContent)?;
+        (instance, 0)
+    };
+    open_lists.push(OpenList {
+        depth,
+        instance,
+        level,
+        style_name,
+    });
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn start_list_item(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    depth: usize,
+    limits: OdfImportLimits,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    open_lists: &[OpenList],
+    open_list_items: &mut Vec<OpenListItem>,
+    reporter: &mut Reporter,
+) -> Result<(), OdfError> {
+    if open_lists.last().is_none_or(|list| depth != list.depth + 1) {
+        return Err(OdfError::MalformedContent);
+    }
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        if namespace_kind(&namespace) == NamespaceKind::Text
+            && matches!(local.as_ref(), b"start-value" | b"style-override")
+        {
+            reporter.report("odf.list.item-override".to_owned(), ModelOutcome::Degraded);
+        } else if !is_namespace_declaration(&attribute) {
+            reporter.report(
+                attribute_feature(reader, &attribute),
+                ModelOutcome::Degraded,
+            );
+        }
+    }
+    open_list_items.push(OpenListItem {
+        depth,
+        first_paragraph: true,
+    });
+    Ok(())
+}
+
+fn list_numbering(
+    paragraph_depth: usize,
+    open_lists: &[OpenList],
+    open_list_items: &mut [OpenListItem],
+) -> Result<Option<ListParagraphDraft>, OdfError> {
+    let Some(list) = open_lists.last() else {
+        return Ok(None);
+    };
+    let item = open_list_items
+        .last_mut()
+        .ok_or(OdfError::MalformedContent)?;
+    if item.depth != list.depth + 1 || paragraph_depth != item.depth + 1 {
+        return Err(OdfError::MalformedContent);
+    }
+    if !item.first_paragraph {
+        return Ok(None);
+    }
+    item.first_paragraph = false;
+    Ok(Some(ListParagraphDraft {
+        instance: list.instance,
+        level: list.level,
+        style_name: list.style_name.clone(),
+    }))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1424,6 +1910,8 @@ fn process_start(
     inline_nodes: &mut usize,
     text_bytes: &mut usize,
     automatic_styles: &AutomaticStyles,
+    open_lists: &[OpenList],
+    open_list_items: &mut [OpenListItem],
     active_run_properties: &mut RunProperties,
     open_spans: &mut Vec<OpenSpan>,
     reporter: &mut Reporter,
@@ -1463,6 +1951,7 @@ fn process_start(
             return Err(OdfError::MalformedContent);
         }
     } else if text_body_depth.is_some() && is_name(name, NamespaceKind::Text, b"p") {
+        let numbering = list_numbering(depth, open_lists, open_list_items)?;
         start_paragraph(
             reader,
             element,
@@ -1473,9 +1962,11 @@ fn process_start(
             attribute_bytes,
             current,
             automatic_styles,
+            numbering,
             reporter,
         )?;
     } else if text_body_depth.is_some() && is_name(name, NamespaceKind::Text, b"h") {
+        let numbering = list_numbering(depth, open_lists, open_list_items)?;
         start_paragraph(
             reader,
             element,
@@ -1486,6 +1977,7 @@ fn process_start(
             attribute_bytes,
             current,
             automatic_styles,
+            numbering,
             reporter,
         )?;
     } else if current.is_some() {
@@ -1554,6 +2046,8 @@ fn process_empty(
     inline_nodes: &mut usize,
     text_bytes: &mut usize,
     automatic_styles: &AutomaticStyles,
+    open_lists: &[OpenList],
+    open_list_items: &mut [OpenListItem],
     active_run_properties: &mut RunProperties,
     open_spans: &mut Vec<OpenSpan>,
     reporter: &mut Reporter,
@@ -1587,6 +2081,7 @@ fn process_empty(
     } else if text_body_depth.is_some()
         && (is_name(name, NamespaceKind::Text, b"p") || is_name(name, NamespaceKind::Text, b"h"))
     {
+        let numbering = list_numbering(depth, open_lists, open_list_items)?;
         start_paragraph(
             reader,
             element,
@@ -1597,6 +2092,7 @@ fn process_empty(
             attribute_bytes,
             current,
             automatic_styles,
+            numbering,
             reporter,
         )?;
         push_paragraph(
@@ -1660,6 +2156,7 @@ fn start_paragraph(
     attribute_bytes: &mut usize,
     current: &mut Option<ParagraphDraft>,
     automatic_styles: &AutomaticStyles,
+    numbering: Option<ListParagraphDraft>,
     reporter: &mut Reporter,
 ) -> Result<(), OdfError> {
     if current.is_some() {
@@ -1713,6 +2210,7 @@ fn start_paragraph(
         depth,
         outline_level,
         alignment,
+        numbering,
         inlines: Vec::new(),
     });
     Ok(())
@@ -2209,6 +2707,8 @@ fn build_document(
     version: OdfVersion,
     paragraphs: &[ParagraphDraft],
     bookmarks: &[BookmarkDraft],
+    list_styles: &ListStyles,
+    reporter: &mut Reporter,
 ) -> Result<Document, OdfError> {
     let mut namespace = 0xcbf2_9ce4_8422_2325_u64;
     hash_bytes(&mut namespace, version.as_str().as_bytes());
@@ -2218,6 +2718,14 @@ fn build_document(
             &mut namespace,
             &[paragraph.outline_level.unwrap_or(u8::MAX)],
         );
+        if let Some(numbering) = &paragraph.numbering {
+            hash_bytes(&mut namespace, b"list");
+            hash_bytes(&mut namespace, &numbering.instance.to_le_bytes());
+            hash_bytes(&mut namespace, &[numbering.level]);
+            if let Some(style_name) = &numbering.style_name {
+                hash_bytes(&mut namespace, style_name.as_bytes());
+            }
+        }
         hash_bytes(
             &mut namespace,
             &[match paragraph.alignment {
@@ -2238,6 +2746,76 @@ fn build_document(
     let mut ids = IdGenerator::new(namespace);
     let document_id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
     let mut definitions = Definitions::default();
+    let mut list_levels = BTreeMap::<usize, BTreeMap<u8, OdfListLevel>>::new();
+    for paragraph in paragraphs {
+        let Some(numbering) = &paragraph.numbering else {
+            continue;
+        };
+        let resolved = numbering
+            .style_name
+            .as_ref()
+            .and_then(|name| list_styles.get(name))
+            .and_then(|levels| levels.get(&numbering.level))
+            .cloned()
+            .unwrap_or_else(|| {
+                reporter.report(
+                    "odf.list-style.missing-level".to_owned(),
+                    ModelOutcome::Degraded,
+                );
+                OdfListLevel {
+                    level: numbering.level,
+                    num_fmt: NumberFormat::Bullet,
+                    lvl_text: "\u{2022}".to_owned(),
+                    start: 1,
+                }
+            });
+        if let Some(previous) = list_levels
+            .entry(numbering.instance)
+            .or_default()
+            .insert(numbering.level, resolved.clone())
+            && previous != resolved
+        {
+            reporter.report(
+                "odf.list-style.level-conflict".to_owned(),
+                ModelOutcome::Degraded,
+            );
+        }
+    }
+    let mut numbering_ids = BTreeMap::new();
+    for (instance, levels) in list_levels {
+        let abstract_id =
+            AbstractNumberingId::new(ids.next_id().map_err(|_| OdfError::InvalidModel)?);
+        let instance_id =
+            NumberingInstanceId::new(ids.next_id().map_err(|_| OdfError::InvalidModel)?);
+        definitions.abstract_numbering.insert(
+            abstract_id,
+            AbstractNumbering {
+                levels: levels
+                    .into_values()
+                    .map(|level| NumberingLevel {
+                        level: level.level,
+                        start: level.start,
+                        num_fmt: Some(level.num_fmt),
+                        lvl_text: Some(level.lvl_text),
+                        lvl_jc: Some(LevelJustification::Start),
+                        suff: Some(LevelSuffix::Tab),
+                        is_lgl: false,
+                        paragraph_properties: None,
+                        run_properties: None,
+                        style_ref: None,
+                    })
+                    .collect(),
+            },
+        );
+        definitions.numbering.insert(
+            instance_id,
+            NumberingInstance {
+                abstract_ref: abstract_id,
+                overrides: Vec::new(),
+            },
+        );
+        numbering_ids.insert(instance, instance_id);
+    }
     let mut bookmark_ids = Vec::with_capacity(bookmarks.len());
     for bookmark in bookmarks {
         if bookmark.paired {
@@ -2259,6 +2837,10 @@ fn build_document(
         let properties = ParagraphProperties {
             outline_level: draft.outline_level,
             alignment: draft.alignment,
+            numbering: draft.numbering.as_ref().map(|numbering| NumberingRef {
+                instance: numbering_ids[&numbering.instance],
+                level: numbering.level,
+            }),
             ..ParagraphProperties::default()
         };
         let inlines = build_inlines(&draft.inlines, &mut ids, &bookmark_ids)?;

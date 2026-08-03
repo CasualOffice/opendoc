@@ -48,7 +48,13 @@ The work lands as reviewable commits:
   resolves named paragraph/text styles and same-family parent chains for that
   subset, and reports shadowing, missing parents, and inheritance cycles without
   losing safe direct properties.
-- Style defaults and broader properties, lists, tables, notes, media, metadata,
+- Checkpoint 7 maps bounded bullet/decimal list styles, the first paragraph of
+  each list item, and nested list levels into deterministic normalized numbering
+  definitions. Implementation-dependent defaults, missing/conflicting levels,
+  continuation, per-item overrides, and unsupported label details are reported;
+  list count and depth are independently bounded.
+- Style defaults and broader properties, advanced list counters/label layout,
+  tables, notes, media, metadata,
   and the remaining structures in sections 4 and 6 remain in progress. Generic
   WASM open/export methods and capability-driven browser Open/Save controls are
   implemented, while the native SDK and production ODT gates remain incomplete;

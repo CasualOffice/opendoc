@@ -1,5 +1,5 @@
 use casual_doc_model::v1::{
-    Alignment, BlockNode, BreakKind, Color, HyperlinkTarget, InlineNode, RgbColor,
+    Alignment, BlockNode, BreakKind, Color, HyperlinkTarget, InlineNode, NumberFormat, RgbColor,
 };
 use casual_doc_package::CancellationToken;
 
@@ -262,7 +262,7 @@ fn wrong_version_document_kind_dtd_and_active_content_fail_closed() {
 }
 
 #[test]
-fn empty_text_body_and_deferred_containers_have_explicit_outcomes() {
+fn empty_text_body_and_defaulted_lists_have_explicit_outcomes() {
     let empty = content("1.4", "");
     let imported =
         import_content_xml(&empty, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
@@ -281,7 +281,7 @@ fn empty_text_body_and_deferred_containers_have_explicit_outcomes() {
         if matches!(&link.target, HyperlinkTarget::External(target) if target.url == "https://example.invalid/")
         && matches!(&link.inlines[0], InlineNode::Run(run) if run.text == "visible"))
     );
-    for expected in ["odf.element.text.list", "odf.element.text.list-item"] {
+    for expected in ["odf.list-style.defaulted", "odf.list-style.missing-level"] {
         assert!(
             imported
                 .report
@@ -289,6 +289,91 @@ fn empty_text_body_and_deferred_containers_have_explicit_outcomes() {
                 .iter()
                 .any(|entry| entry.feature == expected)
         );
+    }
+}
+
+#[test]
+fn bullet_decimal_and_nested_lists_map_to_numbering_definitions() {
+    let xml = styled_content(
+        r#"<text:list-style style:name="Mixed"><text:list-level-style-bullet text:level="1" text:bullet-char="•"/><text:list-level-style-number text:level="2" style:num-format="a" style:num-prefix="(" style:num-suffix=")" text:start-value="3"/></text:list-style>"#,
+        r#"<text:list text:style-name="Mixed"><text:list-item><text:p>outer</text:p><text:p>continuation</text:p><text:list><text:list-item><text:p>nested</text:p></text:list-item></text:list></text:list-item><text:list-item><text:p>second</text:p></text:list-item></text:list>"#,
+    );
+    let imported = import_content_xml(&xml, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
+    imported.document.validate().unwrap();
+    assert!(imported.report.entries.is_empty(), "{:?}", imported.report);
+    assert_eq!(imported.document.body().len(), 4);
+
+    let outer = paragraph(&imported, 0).properties.numbering.unwrap();
+    assert!(paragraph(&imported, 1).properties.numbering.is_none());
+    let nested = paragraph(&imported, 2).properties.numbering.unwrap();
+    let second = paragraph(&imported, 3).properties.numbering.unwrap();
+    assert_eq!(outer.instance, nested.instance);
+    assert_eq!(outer.instance, second.instance);
+    assert_eq!(outer.level, 0);
+    assert_eq!(nested.level, 1);
+    assert_eq!(second.level, 0);
+
+    let instance = imported
+        .document
+        .definitions()
+        .numbering
+        .get(&outer.instance)
+        .unwrap();
+    let abstract_numbering = imported
+        .document
+        .definitions()
+        .abstract_numbering
+        .get(&instance.abstract_ref)
+        .unwrap();
+    assert_eq!(abstract_numbering.levels.len(), 2);
+    assert_eq!(
+        abstract_numbering.levels[0].num_fmt,
+        Some(NumberFormat::Bullet)
+    );
+    assert_eq!(abstract_numbering.levels[0].lvl_text.as_deref(), Some("•"));
+    assert_eq!(
+        abstract_numbering.levels[1].num_fmt,
+        Some(NumberFormat::LowerLetter)
+    );
+    assert_eq!(
+        abstract_numbering.levels[1].lvl_text.as_deref(),
+        Some("(%2)")
+    );
+    assert_eq!(abstract_numbering.levels[1].start, 3);
+}
+
+#[test]
+fn list_limits_and_unsupported_counter_controls_are_explicit() {
+    let xml = styled_content(
+        r#"<text:list-style style:name="N"><text:list-level-style-number text:level="1" style:num-format="1"/></text:list-style>"#,
+        r#"<text:list text:style-name="N" text:continue-numbering="true"><text:list-item text:start-value="7"><text:p>x</text:p></text:list-item></text:list>"#,
+    );
+    let imported = import_content_xml(&xml, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
+    for feature in ["odf.list.continuation", "odf.list.item-override"] {
+        assert!(
+            imported
+                .report
+                .entries
+                .iter()
+                .any(|entry| entry.feature == feature),
+            "missing {feature}"
+        );
+    }
+
+    for limits in [
+        OdfImportLimits {
+            max_lists: 0,
+            ..OdfImportLimits::default()
+        },
+        OdfImportLimits {
+            max_list_depth: 0,
+            ..OdfImportLimits::default()
+        },
+    ] {
+        assert!(matches!(
+            import_content_xml(&xml, OdfVersion::V1_4, limits),
+            Err(OdfError::LimitExceeded { .. })
+        ));
     }
 }
 
@@ -388,6 +473,21 @@ fn malformed_leaf_content_and_duplicate_bodies_are_rejected() {
         import_content_xml(duplicate, OdfVersion::V1_4, OdfImportLimits::default()).unwrap_err(),
         OdfError::MalformedContent
     );
+
+    for body in [
+        "<text:list><text:p>missing item</text:p></text:list>",
+        "<text:list><text:list><text:list-item><text:p>bad nesting</text:p></text:list-item></text:list></text:list>",
+    ] {
+        assert_eq!(
+            import_content_xml(
+                &content("1.4", body),
+                OdfVersion::V1_4,
+                OdfImportLimits::default(),
+            )
+            .unwrap_err(),
+            OdfError::MalformedContent
+        );
+    }
 }
 
 #[test]
