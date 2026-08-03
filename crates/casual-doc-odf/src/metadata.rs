@@ -158,6 +158,27 @@ pub(crate) fn parse_metadata(
                 let name_ref = end.name();
                 let (_, local) = split_name(name_ref.as_ref());
                 if let Some((name, value)) = current.take() {
+                    if name == "editing-duration" {
+                        match parse_duration_minutes(&value) {
+                            Some(minutes) => app.total_time = Some(minutes),
+                            None => findings.push((
+                                "odf.metadata.editing-duration".to_owned(),
+                                ModelOutcome::Degraded,
+                                RetentionOutcome::NotRetained,
+                            )),
+                        }
+                        depth = depth.saturating_sub(1);
+                        continue;
+                    }
+                    if name == "editing-cycles" {
+                        findings.push((
+                            "odf.metadata.editing-cycles".to_owned(),
+                            ModelOutcome::Omitted,
+                            RetentionOutcome::NotRetained,
+                        ));
+                        depth = depth.saturating_sub(1);
+                        continue;
+                    }
                     let target = match name.as_str() {
                         "title" => Some(&mut core.title),
                         "subject" => Some(&mut core.subject),
@@ -219,6 +240,27 @@ pub(crate) fn parse_metadata(
         buf.clear();
     }
     Ok((DocumentProperties { core, app, custom }, findings))
+}
+
+fn parse_duration_minutes(value: &str) -> Option<i64> {
+    let body = value.strip_prefix("PT")?;
+    let mut number = String::new();
+    let mut total = 0i64;
+    for character in body.chars() {
+        if character.is_ascii_digit() {
+            number.push(character);
+            continue;
+        }
+        let parsed = number.parse::<i64>().ok()?;
+        number.clear();
+        total = total.checked_add(match character {
+            'H' => parsed.checked_mul(60)?,
+            'M' => parsed,
+            'S' => parsed / 60,
+            _ => return None,
+        })?;
+    }
+    if number.is_empty() { Some(total) } else { None }
 }
 
 fn parse_custom_value(
@@ -356,5 +398,13 @@ mod tests {
                 .iter()
                 .any(|(feature, _, _)| feature.ends_with("duplicate"))
         );
+    }
+
+    #[test]
+    fn maps_editing_duration_to_minutes() {
+        let xml = br#"<office:document-meta xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0"><office:meta><meta:editing-duration>PT1H30M</meta:editing-duration></office:meta></office:document-meta>"#;
+        let (properties, findings) = parse_metadata(xml, OdfImportLimits::default()).unwrap();
+        assert_eq!(properties.app.total_time, Some(90));
+        assert!(findings.is_empty());
     }
 }

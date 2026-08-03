@@ -1588,6 +1588,13 @@ fn metadata_xml(
             "<meta:document-statistic meta:word-count=\"{value}\"/>"
         ));
     }
+    if let Some(value) = properties.app.total_time {
+        let hours = value / 60;
+        let minutes = value % 60;
+        xml.push_str(&format!(
+            "<meta:editing-duration>PT{hours}H{minutes}M</meta:editing-duration>"
+        ));
+    }
     for property in &properties.custom {
         let (kind, value) = match &property.value {
             casual_doc_model::v1::CustomValue::Text { value } => ("string", value.clone()),

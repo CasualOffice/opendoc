@@ -105,6 +105,7 @@ is emitted as `meta:generator`; unsupported application/custom fields are
 reported rather than silently represented as unrelated ODT metadata.
 Numeric page/word statistics and typed custom properties are emitted as their
 corresponding ODT metadata elements.
+Total editing time is emitted as a canonical `PT#H#M` duration.
 
 ## 6. Acceptance gates
 
