@@ -16,13 +16,13 @@
 const FIDELITY = [
   {
     family: "Paragraphs & text",
-    note: "Typing, IME, selection, navigation, undo/redo.",
-    modeled: "full", rendered: "full", editable: "full", roundtrips: "full",
+    note: "Typing, IME, selection, navigation, undo/redo, alignment, indentation, spacing, keepNext/keepLines, widow/orphan and contextualSpacing all render and edit. Document-grid line/character snapping and before/after autospacing sizing remain approximate.",
+    modeled: "full", rendered: "partial", editable: "full", roundtrips: "full",
   },
   {
     family: "Character / run formatting",
-    note: "Bold, italic, underline, strike, color, highlight, size, font, super/subscript render and edit. Rare effects (double-strike, emphasis marks, outline/shadow, run border/shading) are preserved for export but not painted.",
-    modeled: "full", rendered: "full", editable: "full", roundtrips: "full",
+    note: "Bold, italic, underline, strike, color, highlight, size, font, super/subscript render and edit. Typed underline styles (double/wavy/dotted/thick) and colored underlines paint as a plain single line, and rare effects (double-strike, emphasis marks, outline/shadow, run border/shading) are preserved for export but not painted.",
+    modeled: "full", rendered: "partial", editable: "full", roundtrips: "full",
   },
   {
     family: "Paragraph & named styles",
@@ -36,8 +36,8 @@ const FIDELITY = [
   },
   {
     family: "Lists & numbering",
-    note: "Bullet/numbered toggle, level, restart, continue. No multilevel gallery or checklist authoring.",
-    modeled: "full", rendered: "full", editable: "partial", roundtrips: "full",
+    note: "Bullet/numbered toggle, level, and style-inherited numbering render and edit. Per-instance level/start overrides, numStyleLink/styleLink indirection, and per-level restart are not yet resolved, and spelled-out formats (cardinalText/ordinalText) fall back to decimal. No multilevel gallery or checklist authoring.",
+    modeled: "partial", rendered: "partial", editable: "partial", roundtrips: "full",
   },
   {
     family: "Images & inline drawings",
