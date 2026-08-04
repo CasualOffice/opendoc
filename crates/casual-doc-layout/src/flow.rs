@@ -3918,6 +3918,30 @@ fn layout_math_expression(
             }
             eqarray_box(row_boxes, scaled_em(base, scale_permille))
         }
+        MathExpression::PreScript {
+            base: expression_base,
+            subscript,
+            superscript,
+        } => {
+            let expression_base =
+                layout_math_expression(shaper, expression_base, base, scale_permille)?;
+            let script_scale = scaled_permille(scale_permille, 700);
+            let subscript = match subscript.as_deref() {
+                Some(value) => Some(layout_math_expression(shaper, value, base, script_scale)?),
+                None => None,
+            };
+            let superscript = match superscript.as_deref() {
+                Some(value) => Some(layout_math_expression(shaper, value, base, script_scale)?),
+                None => None,
+            };
+            pre_script_box(expression_base, subscript, superscript, base.size)
+        }
+        // A grouping box (`m:box`) is a transparent wrapper: lay out its content.
+        // A border box (`m:borderBox`) renders its content likewise here; the box
+        // edges stay authoritative in the retained OMML (a follow-up render item).
+        MathExpression::Box { content } | MathExpression::BorderBox { content, .. } => {
+            layout_math_expression(shaper, content, base, scale_permille)
+        }
     }
 }
 
@@ -4268,6 +4292,58 @@ fn script_box(
         let y = safe_add(ascent, gap);
         translate_math_box(subscript, script_x, y);
         width = width.max(safe_add(script_x, subscript.size.width));
+        height = height.max(safe_add(y, subscript.size.height));
+        runs.append(&mut subscript.runs);
+        rules.append(&mut subscript.rules);
+    }
+    Some(MathBox {
+        size: Size::new(width, height),
+        ascent,
+        descent: height - ascent,
+        runs,
+        rules,
+    })
+}
+
+/// Lays out a pre-script (`m:sPre`): the sub/superscript sit to the LEFT of the
+/// base (the mirror of [`script_box`]). Scripts occupy the left column; the base
+/// follows past the widest script.
+fn pre_script_box(
+    mut base: MathBox,
+    mut subscript: Option<MathBox>,
+    mut superscript: Option<MathBox>,
+    em: Twip,
+) -> Option<MathBox> {
+    let gap = Twip((em.raw() / 12).max(8));
+    let sup_height = superscript
+        .as_ref()
+        .map_or(Twip::ZERO, |value| value.size.height);
+    let ascent = base.ascent.max(safe_add(sup_height, gap));
+    let base_y = ascent - base.ascent;
+    let script_width = superscript
+        .as_ref()
+        .map_or(Twip::ZERO, |value| value.size.width)
+        .max(
+            subscript
+                .as_ref()
+                .map_or(Twip::ZERO, |value| value.size.width),
+        );
+    translate_math_box(&mut base, script_width, base_y);
+    let mut width = safe_add(script_width, base.size.width);
+    let mut height = safe_add(base_y, base.size.height);
+    let mut runs = base.runs;
+    let mut rules = base.rules;
+    if let Some(superscript) = &mut superscript {
+        translate_math_box(superscript, Twip::ZERO, Twip::ZERO);
+        width = width.max(superscript.size.width);
+        height = height.max(superscript.size.height);
+        runs.append(&mut superscript.runs);
+        rules.append(&mut superscript.rules);
+    }
+    if let Some(subscript) = &mut subscript {
+        let y = safe_add(ascent, gap);
+        translate_math_box(subscript, Twip::ZERO, y);
+        width = width.max(subscript.size.width);
         height = height.max(safe_add(y, subscript.size.height));
         runs.append(&mut subscript.runs);
         rules.append(&mut subscript.rules);
