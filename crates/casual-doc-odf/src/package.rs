@@ -484,12 +484,18 @@ impl<'a> OdtPackage<'a> {
             let mut corrections: Vec<(MediaId, MediaReference)> = Vec::new();
             let mut missing = false;
             for (id, media) in imported.document.definitions().media.iter() {
+                // The manifest is authoritative: package admission already proved
+                // every manifest entry maps to a real part, so a manifest match
+                // means present. Compare with escape-normalized paths so an href
+                // and manifest that differ only in percent-escape case still
+                // match (the ZIP index normalizes escapes but neither the href
+                // nor the manifest full-path is normalized).
+                let target = normalized_part_path(&media.part_name);
                 let entry = self
                     .manifest_entries
                     .iter()
-                    .find(|entry| entry.full_path == media.part_name);
-                let present = entry.is_some() && self.package.contains_part(&media.part_name);
-                if !present {
+                    .find(|entry| normalized_part_path(&entry.full_path) == target);
+                if entry.is_none() {
                     missing = true;
                 }
                 if let Some(entry) = entry
@@ -570,6 +576,32 @@ fn build_header_footer_blocks(
         }));
     }
     Ok(blocks)
+}
+
+/// Uppercases the hex digits of every `%XX` percent-escape so two package paths
+/// that differ only in escape case compare equal (matching how the ZIP index
+/// normalizes entry names). Non-escape bytes, including multi-byte UTF-8, are
+/// preserved verbatim, so the result stays valid UTF-8.
+pub(crate) fn normalized_part_path(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%'
+            && index + 2 < bytes.len()
+            && bytes[index + 1].is_ascii_hexdigit()
+            && bytes[index + 2].is_ascii_hexdigit()
+        {
+            out.push(b'%');
+            out.push(bytes[index + 1].to_ascii_uppercase());
+            out.push(bytes[index + 2].to_ascii_uppercase());
+            index += 3;
+        } else {
+            out.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(out).unwrap_or_else(|_| path.to_owned())
 }
 
 fn validate_manifest(package: &BoundedPackage<'_>, manifest: &Manifest) -> Result<(), OdfError> {

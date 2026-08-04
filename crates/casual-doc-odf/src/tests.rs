@@ -651,6 +651,18 @@ fn image_package(content: Vec<u8>, image_entries: &str, extra: &[Entry]) -> Vec<
 }
 
 #[test]
+fn part_path_normalization_folds_escape_case() {
+    use crate::package::normalized_part_path;
+    assert_eq!(
+        normalized_part_path("Pictures/a%2bb.png"),
+        normalized_part_path("Pictures/a%2Bb.png")
+    );
+    // Non-escape content (including a lone %) is preserved.
+    assert_eq!(normalized_part_path("Pictures/50%.png"), "Pictures/50%.png");
+    assert_eq!(normalized_part_path("Pictures/x.png"), "Pictures/x.png");
+}
+
+#[test]
 fn manifest_media_type_is_authoritative_for_images() {
     // The href extension (.dat) would infer octet-stream; the manifest declares
     // image/png, which must win.
