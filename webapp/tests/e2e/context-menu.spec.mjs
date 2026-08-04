@@ -100,7 +100,7 @@ test("Shift+F10 supports menu keyboard navigation and theme-aware surfaces", asy
   await page.keyboard.press("End");
   await expect(menu.locator(".menu-item.active")).toHaveAttribute(
     "data-command-id",
-    "paragraph.indent.decrease",
+    "paragraph.properties",
   );
   await page.keyboard.press("Escape");
   await expect(page.locator("#pages")).toBeFocused();
@@ -156,13 +156,24 @@ test("table and suggestion contexts expose exact commands and mode-safe reasons"
   await page.locator("#pages").focus();
   await page.keyboard.press("Shift+F10");
   const menu = page.locator(".editor-context-menu");
+  const submenu = page.locator(".editor-submenu");
   await expect(menu).toBeVisible();
-  await expect(menu.locator('[data-command-id="table.select.row"]')).toBeVisible();
-  await expect(menu.locator('[data-command-id="table.insert.rowAbove"]')).toBeEnabled();
-  await expect(menu.locator('[data-command-id="table.insert.columnRight"]')).toBeEnabled();
+  // Structure ops live in Insert / Delete / Select submenus, not a flat dump.
+  await expect(menu.locator('[data-command-id="table.insert"]')).toBeVisible();
+  await expect(menu.locator('[data-command-id="table.delete"]')).toBeVisible();
   await expect(menu.locator('[data-command-id="table.properties"]')).toBeVisible();
-  await expect(menu.locator('[data-command-id="table.delete.table"]')).toBeEnabled();
-  await menu.locator('[data-command-id="table.select.row"]').click();
+  await menu.locator('[data-command-id="table.insert"]').click();
+  await expect(submenu.locator('[data-command-id="table.insert.rowAbove"]')).toBeEnabled();
+  await expect(submenu.locator('[data-command-id="table.insert.columnRight"]')).toBeEnabled();
+  await menu.locator('[data-command-id="table.delete"]').click();
+  await expect(submenu.locator('[data-command-id="table.delete.table"]')).toBeEnabled();
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+
+  await page.locator("#pages").focus();
+  await page.keyboard.press("Shift+F10");
+  await menu.locator('[data-command-id="table.select"]').click();
+  await submenu.locator('[data-command-id="table.select.row"]').click();
   await expect(page.locator(".table-cell-selection")).toHaveCount(2);
   await page.locator("#pages").focus();
   await page.keyboard.press("Shift+F10");
@@ -172,12 +183,14 @@ test("table and suggestion contexts expose exact commands and mode-safe reasons"
   await setReviewMode(page, "suggesting");
   await page.locator("#pages").focus();
   await page.keyboard.press("Shift+F10");
+  await menu.locator('[data-command-id="table.insert"]').click();
   await expect(
-    menu.locator('[data-command-id="table.insert.rowAbove"]'),
+    submenu.locator('[data-command-id="table.insert.rowAbove"]'),
   ).toBeDisabled();
   await expect(
-    menu.locator('[data-command-id="table.insert.rowAbove"] .menu-item-hint'),
+    submenu.locator('[data-command-id="table.insert.rowAbove"] .menu-item-hint'),
   ).toContainText("cannot be tracked");
+  await page.keyboard.press("Escape");
   await page.keyboard.press("Escape");
 
   await page.locator("#suggestingBanner").getByRole("button", {
@@ -192,5 +205,33 @@ test("table and suggestion contexts expose exact commands and mode-safe reasons"
   await expect(menu.locator('[data-command-id="review.reject"]')).toBeVisible();
   await menu.locator('[data-command-id="review.accept"]').click();
   await expect(page.locator(".review-margin-card.review-margin-insertion")).toHaveCount(0);
+  expect(consoleErrors).toEqual([]);
+});
+
+test("the menu is contextual — a table cell exposes table tools a text selection does not", async ({
+  page,
+  consoleErrors,
+}) => {
+  // Prose selection: text tools present, table submenus absent.
+  await gotoEditor(page);
+  await selectTypedMarker(page, "CONTEXTUAL_MENU");
+  const box = await page.locator(".overlay .highlight").first().boundingBox();
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, {
+    button: "right",
+  });
+  const menu = page.locator(".editor-context-menu");
+  await expect(menu).toBeVisible();
+  await expect(menu.locator('[data-command-id="format.menu"]')).toBeVisible();
+  await expect(menu.locator('[data-command-id="table.insert"]')).toHaveCount(0);
+  await expect(menu.locator('[data-command-id="table.delete"]')).toHaveCount(0);
+  await page.keyboard.press("Escape");
+
+  // Table cell: the very same surface now gains Insert / Delete / Select tools.
+  await insertTwoByTwoTable(page);
+  await page.locator("#pages").focus();
+  await page.keyboard.press("Shift+F10");
+  await expect(menu.locator('[data-command-id="table.insert"]')).toBeVisible();
+  await expect(menu.locator('[data-command-id="table.delete"]')).toBeVisible();
+  await expect(menu.locator('[data-command-id="table.select"]')).toBeVisible();
   expect(consoleErrors).toEqual([]);
 });
