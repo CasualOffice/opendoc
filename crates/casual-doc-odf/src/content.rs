@@ -1880,7 +1880,11 @@ fn parse_fo_border(value: &str) -> Option<BorderEdge> {
     let mut color = None;
     let mut style = None;
     for token in value.split_whitespace() {
-        if let Some(rgb) = token.strip_prefix('#').and(parse_rgb_color(token)) {
+        if token.starts_with('#') {
+            // A `#`-prefixed token must be a valid sRGB colour; a malformed one
+            // (3-hex, non-hex) invalidates the border rather than being misread
+            // as a style token.
+            let rgb = parse_rgb_color(token)?;
             if color.is_some() {
                 return None;
             }
@@ -1894,6 +1898,17 @@ fn parse_fo_border(value: &str) -> Option<BorderEdge> {
                 return None;
             }
             width = Some(parse_border_width_eighths(token)?);
+        } else if matches!(token, "thin" | "medium" | "thick") {
+            // The XSL-FO keyword widths; map to fixed eighth-points so the border
+            // survives (re-exported as an explicit length, a stable fixed point).
+            if width.is_some() {
+                return None;
+            }
+            width = Some(match token {
+                "thin" => 4,
+                "medium" => 8,
+                _ => 12,
+            });
         } else {
             if style.is_some() {
                 return None;
@@ -1917,12 +1932,13 @@ fn parse_fo_border(value: &str) -> Option<BorderEdge> {
 /// are rounded.
 fn parse_border_width_eighths(token: &str) -> Option<u32> {
     let eighths = if let Some(pt) = token.strip_suffix("pt") {
-        // 1 eighth-pt = 0.125pt, so eighths = thousandths-of-a-pt / 125.
+        // 1 eighth-pt = 0.125pt, so eighths = round(thousandths-of-a-pt / 125).
+        // Rounding (rather than requiring an exact 1/8-pt multiple) keeps an
+        // off-grid width like 0.2pt instead of dropping the whole border, and is
+        // exact for the boundary values the writer emits. Matches the cm/mm/in
+        // path, which also rounds.
         let thousandths = parse_decimal_thousandths(pt.trim())?;
-        if thousandths % 125 != 0 {
-            return None;
-        }
-        u32::try_from(thousandths / 125).ok()?
+        u32::try_from(thousandths.checked_mul(8)?.checked_add(500)? / 1000).ok()?
     } else {
         let (number, pt_per_unit) = if let Some(cm) = token.strip_suffix("cm") {
             (cm, 72.0 / 2.54)

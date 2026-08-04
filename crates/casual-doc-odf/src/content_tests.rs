@@ -332,6 +332,64 @@ fn table_cell_borders_round_trip_to_a_fixed_point() {
 }
 
 #[test]
+fn cell_border_with_zero_padding_is_emitted_not_dropped() {
+    // Word writes w:space="0" on every edge (space_points = Some(0)); zero padding
+    // is the ODF default, so the border must still be emitted, not dropped.
+    use casual_doc_model::v1::BorderEdge;
+    let body = r#"<table:table><table:table-column/><table:table-row><table:table-cell><text:p>a</text:p></table:table-cell></table:table-row></table:table>"#;
+    let import = import_content_xml(
+        &content("1.4", body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    let mut document = import.document;
+    let BlockNode::Table(table) = &mut document.body_mut()[0] else {
+        panic!("table")
+    };
+    let edge = BorderEdge {
+        style: "solid".to_owned(),
+        size_eighth_points: Some(4),
+        color: Some(RgbColor { r: 0, g: 0, b: 0 }),
+        space_points: Some(0),
+    };
+    let cell = &mut table.rows[0].cells[0];
+    cell.properties.borders.top = Some(edge.clone());
+    cell.properties.borders.start = Some(edge.clone());
+    cell.properties.borders.bottom = Some(edge.clone());
+    cell.properties.borders.end = Some(edge);
+    document.validate().unwrap();
+    let first = write_odt(&document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+    let content_xml = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+    assert!(
+        content_xml.contains(r##"fo:border="0.5pt solid #000000""##),
+        "a zero-padding (Word-style) border must be emitted: {content_xml}"
+    );
+}
+
+#[test]
+fn off_grid_pt_border_width_is_rounded_not_dropped() {
+    // A width not on the 1/8-pt grid (0.2pt) must round and keep the border, not
+    // drop style+color along with the width.
+    let xml = br##"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.4"><office:automatic-styles><style:style style:name="ce1" style:family="table-cell"><style:table-cell-properties fo:border="0.2pt solid #000000"/></style:style></office:automatic-styles><office:body><office:text><table:table><table:table-column/><table:table-row><table:table-cell table:style-name="ce1"><text:p>a</text:p></table:table-cell></table:table-row></table:table></office:text></office:body></office:document-content>"##;
+    let import = import_content_xml(xml, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
+    import.document.validate().unwrap();
+    let BlockNode::Table(table) = &import.document.body()[0] else {
+        panic!("table")
+    };
+    let edge = table.rows[0].cells[0]
+        .properties
+        .borders
+        .top
+        .as_ref()
+        .expect("off-grid border must be kept, not dropped");
+    assert_eq!(edge.style, "solid");
+    assert_eq!(edge.size_eighth_points, Some(2)); // 0.2pt rounds to 0.25pt (2 eighths)
+    assert_eq!(edge.color, Some(RgbColor { r: 0, g: 0, b: 0 }));
+}
+
+#[test]
 fn table_column_width_over_domain_degrades_and_no_spurious_finding() {
     // An out-of-domain width (24in = 34560 twips > 31680) must be dropped with a
     // finding, never abort the whole import; a valid width is captured; and a

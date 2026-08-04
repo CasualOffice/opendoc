@@ -396,15 +396,18 @@ impl From<&casual_doc_model::v1::BorderEdge> for OdtBorderEdge {
     }
 }
 
-/// A cell border edge is representable as `fo:border` only when it carries no
-/// text padding (`space_points`; ODF uses a separate `fo:padding`). An edge with
-/// padding is left in the model remainder so it is reported, not silently lost.
+/// A cell border edge is representable as `fo:border` when it carries no text
+/// padding. Zero padding is the ODF default (no `fo:padding` needed), so
+/// `space_points` of `None` or `Some(0)` is representable — Word writes
+/// `w:space="0"` on essentially every edge, so requiring `None` would drop the
+/// borders of most Word-authored cells. Only genuine padding (`>= 1`) is left in
+/// the model remainder to be reported rather than silently lost.
 fn take_representable_border(
     edge: &mut Option<casual_doc_model::v1::BorderEdge>,
 ) -> Option<OdtBorderEdge> {
     if edge
         .as_ref()
-        .is_some_and(|edge| edge.space_points.is_none())
+        .is_some_and(|edge| edge.space_points.unwrap_or(0) == 0)
     {
         edge.take().as_ref().map(OdtBorderEdge::from)
     } else {
