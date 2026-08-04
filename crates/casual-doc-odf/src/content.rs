@@ -5,14 +5,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, Bookmark, BookmarkEnd,
-    BookmarkId, BookmarkStart, Break, BreakKind, CellVerticalAlignment, Color, Definitions,
-    Document, DocumentDefaults, Drawing, Extent, ExternalTarget, FontName, FontRef, GridColumn,
-    Hyperlink, HyperlinkTarget, Indentation, InlineNode, InternalTarget, LevelJustification,
-    LevelSuffix, MAX_DESCR_BYTES, MAX_EMU, MAX_TABLE_DEPTH, MediaId, MediaReference, Note, NoteId,
-    NoteKind, NoteReference, NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel,
-    NumberingOverride, NumberingRef, Paragraph, ParagraphProperties, RgbColor, Run, RunProperties,
-    Shading, Spacing, Tab, Table, TableCell, TableCellProperties, TableProperties, TableRow,
-    TableRowProperties, VerticalAlignment, VerticalMerge,
+    BookmarkId, BookmarkStart, BorderEdge, Break, BreakKind, CellVerticalAlignment, Color,
+    Definitions, Document, DocumentDefaults, Drawing, Extent, ExternalTarget, FontName, FontRef,
+    GridColumn, Hyperlink, HyperlinkTarget, Indentation, InlineNode, InternalTarget,
+    LevelJustification, LevelSuffix, MAX_DESCR_BYTES, MAX_EMU, MAX_TABLE_DEPTH, MediaId,
+    MediaReference, Note, NoteId, NoteKind, NoteReference, NumberFormat, NumberingInstance,
+    NumberingInstanceId, NumberingLevel, NumberingOverride, NumberingRef, Paragraph,
+    ParagraphProperties, RgbColor, Run, RunProperties, Shading, Spacing, Tab, Table, TableBorders,
+    TableCell, TableCellProperties, TableProperties, TableRow, TableRowProperties,
+    VerticalAlignment, VerticalMerge,
 };
 use casual_doc_package::CancellationToken;
 use quick_xml::NsReader;
@@ -424,6 +425,10 @@ struct TableRowDraft {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+// The `Cell` payload is larger than `Covered`, but these drafts are short-lived
+// per-row scratch, not a bulk-stored structure, so boxing would only add
+// indirection.
+#[allow(clippy::large_enum_variant)]
 enum TableSlotDraft {
     Cell(TableCellDraft),
     Covered,
@@ -435,6 +440,7 @@ struct TableCellDraft {
     row_span: u32,
     shading_fill: Option<RgbColor>,
     vertical_alignment: Option<CellVerticalAlignment>,
+    borders: TableBorders,
     blocks: Vec<BlockDraft>,
 }
 
@@ -499,6 +505,7 @@ struct OpenTableCell {
     row_span: u32,
     shading_fill: Option<RgbColor>,
     vertical_alignment: Option<CellVerticalAlignment>,
+    borders: TableBorders,
     blocks: Vec<BlockDraft>,
 }
 
@@ -574,6 +581,8 @@ struct OdfStyle {
     cell_shading_fill: Option<RgbColor>,
     /// `style:vertical-align` for a `table-cell` style.
     cell_vertical_alignment: Option<CellVerticalAlignment>,
+    /// `fo:border[-edge]` edges for a `table-cell` style.
+    cell_borders: TableBorders,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1817,6 +1826,23 @@ fn read_table_cell_style_properties(
                 "automatic" => true,
                 _ => false,
             },
+            (NamespaceKind::Fo, b"border") => match parse_fo_border(&value) {
+                Some(edge) => {
+                    let borders = &mut style.style.cell_borders;
+                    borders.top = Some(edge.clone());
+                    borders.start = Some(edge.clone());
+                    borders.bottom = Some(edge.clone());
+                    borders.end = Some(edge);
+                    true
+                }
+                None => false,
+            },
+            (NamespaceKind::Fo, b"border-top") => set_cell_border(style, |b| &mut b.top, &value),
+            (NamespaceKind::Fo, b"border-bottom") => {
+                set_cell_border(style, |b| &mut b.bottom, &value)
+            }
+            (NamespaceKind::Fo, b"border-left") => set_cell_border(style, |b| &mut b.start, &value),
+            (NamespaceKind::Fo, b"border-right") => set_cell_border(style, |b| &mut b.end, &value),
             _ => false,
         };
         if !mapped && !is_namespace_declaration(&attribute) {
@@ -1827,6 +1853,116 @@ fn read_table_cell_style_properties(
         }
     }
     Ok(())
+}
+
+/// Sets one edge of a table-cell style's borders from an `fo:border-*` value.
+fn set_cell_border(
+    style: &mut OpenStyle,
+    edge: impl FnOnce(&mut TableBorders) -> &mut Option<BorderEdge>,
+    value: &str,
+) -> bool {
+    match parse_fo_border(value) {
+        Some(border) => {
+            *edge(&mut style.style.cell_borders) = Some(border);
+            true
+        }
+        None => false,
+    }
+}
+
+/// Parses an ODF `fo:border` compound value (`<width> <style> <color>`, any
+/// subset, order-tolerant) into a `BorderEdge`. The style token is required and
+/// stored verbatim; the width is bounded to the model's eighth-point domain and
+/// the colour must be explicit sRGB. Returns `None` (reported) when no style
+/// token is present or a token is out of domain.
+fn parse_fo_border(value: &str) -> Option<BorderEdge> {
+    let mut width = None;
+    let mut color = None;
+    let mut style = None;
+    for token in value.split_whitespace() {
+        if let Some(rgb) = token.strip_prefix('#').and(parse_rgb_color(token)) {
+            if color.is_some() {
+                return None;
+            }
+            color = Some(rgb);
+        } else if token.ends_with("pt")
+            || token.ends_with("cm")
+            || token.ends_with("mm")
+            || token.ends_with("in")
+        {
+            if width.is_some() {
+                return None;
+            }
+            width = Some(parse_border_width_eighths(token)?);
+        } else {
+            if style.is_some() {
+                return None;
+            }
+            if token.is_empty() || token.len() > 32 {
+                return None;
+            }
+            style = Some(token.to_owned());
+        }
+    }
+    Some(BorderEdge {
+        style: style?,
+        size_eighth_points: width,
+        color,
+        space_points: None,
+    })
+}
+
+/// Parses a border width length into eighth-points (`w:sz`, 1 eighth-pt =
+/// 0.125pt), bounded to the model domain `0..=1024`. `pt` is exact; `cm`/`mm`/`in`
+/// are rounded.
+fn parse_border_width_eighths(token: &str) -> Option<u32> {
+    let eighths = if let Some(pt) = token.strip_suffix("pt") {
+        // 1 eighth-pt = 0.125pt, so eighths = thousandths-of-a-pt / 125.
+        let thousandths = parse_decimal_thousandths(pt.trim())?;
+        if thousandths % 125 != 0 {
+            return None;
+        }
+        u32::try_from(thousandths / 125).ok()?
+    } else {
+        let (number, pt_per_unit) = if let Some(cm) = token.strip_suffix("cm") {
+            (cm, 72.0 / 2.54)
+        } else if let Some(mm) = token.strip_suffix("mm") {
+            (mm, 72.0 / 25.4)
+        } else if let Some(inch) = token.strip_suffix("in") {
+            (inch, 72.0)
+        } else {
+            return None;
+        };
+        let pt: f64 = number.trim().parse().ok()?;
+        let eighths = (pt * pt_per_unit * 8.0).round();
+        if !eighths.is_finite() || eighths < 0.0 || eighths > f64::from(u32::MAX) {
+            return None;
+        }
+        eighths as u32
+    };
+    (eighths <= 1024).then_some(eighths)
+}
+
+/// Parses a non-negative decimal into thousandths (integer arithmetic, at most
+/// three fractional digits). Requires at least one digit.
+fn parse_decimal_thousandths(value: &str) -> Option<i64> {
+    let (whole, frac) = value.split_once('.').unwrap_or((value, ""));
+    if whole.is_empty() && frac.is_empty() {
+        return None;
+    }
+    if frac.len() > 3
+        || !frac.bytes().all(|byte| byte.is_ascii_digit())
+        || !whole.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    let whole: i64 = if whole.is_empty() {
+        0
+    } else {
+        whole.parse().ok()?
+    };
+    let thousandths: i64 = format!("{frac:0<3}").parse().ok()?;
+    whole.checked_mul(1000)?.checked_add(thousandths)
 }
 
 /// Reads a `style:table-column-properties` element, capturing `style:column-width`
@@ -3611,6 +3747,7 @@ fn start_table_cell(
     let mut row_span = None;
     let mut shading_fill = None;
     let mut vertical_alignment = None;
+    let mut borders = TableBorders::default();
     for attribute in element.attributes() {
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
@@ -3622,6 +3759,7 @@ fn start_table_cell(
                     Some(style) => {
                         shading_fill = style.cell_shading_fill;
                         vertical_alignment = style.cell_vertical_alignment;
+                        borders = style.cell_borders.clone();
                     }
                     None => {
                         reporter.report("odf.style.unresolved".to_owned(), ModelOutcome::Degraded);
@@ -3665,6 +3803,7 @@ fn start_table_cell(
         row_span,
         shading_fill,
         vertical_alignment,
+        borders,
         blocks: Vec::new(),
     });
     Ok(())
@@ -3776,6 +3915,7 @@ fn finish_table_cell(
         row_span: cell.row_span,
         shading_fill: cell.shading_fill,
         vertical_alignment: cell.vertical_alignment,
+        borders: cell.borders,
         blocks: cell.blocks,
     };
     row.slots.extend(std::iter::repeat_n(
@@ -5607,6 +5747,7 @@ fn build_table(
                                 ..Shading::default()
                             },
                             vertical_alignment: cell.vertical_alignment,
+                            borders: cell.borders.clone(),
                             ..TableCellProperties::default()
                         },
                         blocks,

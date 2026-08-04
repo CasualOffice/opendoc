@@ -347,10 +347,85 @@ fn push_paragraph_properties(
 
 /// The supported table-cell-formatting subset, emitted as one deterministic
 /// automatic `table-cell` style referenced by a cell's `table:style-name`.
-#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
 struct OdtCellStyle {
     fill: Option<(u8, u8, u8)>,
     vertical_align: Option<OdtCellVAlign>,
+    borders: OdtCellBorders,
+}
+
+/// The four physical cell-border edges (ODF has no cell inside-H/V borders).
+#[derive(Clone, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+struct OdtCellBorders {
+    top: Option<OdtBorderEdge>,
+    left: Option<OdtBorderEdge>,
+    bottom: Option<OdtBorderEdge>,
+    right: Option<OdtBorderEdge>,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct OdtBorderEdge {
+    size_eighth_points: Option<u32>,
+    style: String,
+    color: Option<(u8, u8, u8)>,
+}
+
+impl OdtBorderEdge {
+    /// The ODF `fo:border` compound value: `<width> <style> <color>`, omitting
+    /// absent components. Exactly re-parsed by the importer's `parse_fo_border`.
+    fn value(&self) -> String {
+        let mut parts = Vec::new();
+        if let Some(size) = self.size_eighth_points {
+            parts.push(eighth_points_to_pt(size));
+        }
+        parts.push(self.style.clone());
+        if let Some((red, green, blue)) = self.color {
+            parts.push(format!("#{red:02x}{green:02x}{blue:02x}"));
+        }
+        parts.join(" ")
+    }
+}
+
+impl From<&casual_doc_model::v1::BorderEdge> for OdtBorderEdge {
+    fn from(edge: &casual_doc_model::v1::BorderEdge) -> Self {
+        Self {
+            size_eighth_points: edge.size_eighth_points,
+            style: edge.style.clone(),
+            color: edge.color.map(|color| (color.r, color.g, color.b)),
+        }
+    }
+}
+
+/// A cell border edge is representable as `fo:border` only when it carries no
+/// text padding (`space_points`; ODF uses a separate `fo:padding`). An edge with
+/// padding is left in the model remainder so it is reported, not silently lost.
+fn take_representable_border(
+    edge: &mut Option<casual_doc_model::v1::BorderEdge>,
+) -> Option<OdtBorderEdge> {
+    if edge
+        .as_ref()
+        .is_some_and(|edge| edge.space_points.is_none())
+    {
+        edge.take().as_ref().map(OdtBorderEdge::from)
+    } else {
+        None
+    }
+}
+
+/// 1 eighth-point = 0.125pt; emits the minimal exact decimal `pt` string.
+fn eighth_points_to_pt(eighths: u32) -> String {
+    let thousandths = eighths * 125;
+    let whole = thousandths / 1000;
+    let frac = thousandths % 1000;
+    if frac == 0 {
+        format!("{whole}pt")
+    } else {
+        let mut digits = format!("{frac:03}");
+        while digits.ends_with('0') {
+            digits.pop();
+        }
+        format!("{whole}.{digits}pt")
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -397,6 +472,14 @@ impl OdtCellStyle {
                 OdtCellVAlign::Bottom => "_vb",
             });
         }
+        if self.borders != OdtCellBorders::default() {
+            // Borders are compound strings, so identify them by a deterministic
+            // hash rather than an unwieldy encoding.
+            name.push_str(&format!(
+                "_b{:016x}",
+                font_family_hash(&format!("{:?}", self.borders))
+            ));
+        }
         name
     }
 }
@@ -421,6 +504,42 @@ fn push_cell_properties(
         push_bounded(xml, valign.value(), max_content_bytes)?;
         push_bounded(xml, "\"", max_content_bytes)?;
     }
+    let borders = &style.borders;
+    // Collapse four identical edges to the `fo:border` shorthand; otherwise emit
+    // each present edge. Both forms re-import to the same model.
+    if let (Some(top), Some(left), Some(bottom), Some(right)) =
+        (&borders.top, &borders.left, &borders.bottom, &borders.right)
+        && top == left
+        && left == bottom
+        && bottom == right
+    {
+        push_border_attribute(xml, "fo:border", top, max_content_bytes)?;
+    } else {
+        for (attr, edge) in [
+            ("fo:border-top", &borders.top),
+            ("fo:border-left", &borders.left),
+            ("fo:border-bottom", &borders.bottom),
+            ("fo:border-right", &borders.right),
+        ] {
+            if let Some(edge) = edge {
+                push_border_attribute(xml, attr, edge, max_content_bytes)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn push_border_attribute(
+    xml: &mut String,
+    attr: &str,
+    edge: &OdtBorderEdge,
+    max_content_bytes: usize,
+) -> Result<(), OdfError> {
+    push_bounded(xml, " ", max_content_bytes)?;
+    push_bounded(xml, attr, max_content_bytes)?;
+    push_bounded(xml, "=\"", max_content_bytes)?;
+    push_escaped_attribute(xml, &edge.value(), max_content_bytes)?;
+    push_bounded(xml, "\"", max_content_bytes)?;
     Ok(())
 }
 
@@ -1058,6 +1177,12 @@ impl Writer {
                 cell_style.vertical_align = Some(valign.into());
                 remainder.vertical_alignment = None;
             }
+            // The four physical edges map to fo:border-*; inside-H/V and any edge
+            // with text padding stay in the remainder and are reported.
+            cell_style.borders.top = take_representable_border(&mut remainder.borders.top);
+            cell_style.borders.left = take_representable_border(&mut remainder.borders.start);
+            cell_style.borders.bottom = take_representable_border(&mut remainder.borders.bottom);
+            cell_style.borders.right = take_representable_border(&mut remainder.borders.end);
             if remainder != TableCellProperties::default() {
                 self.reporter
                     .record("odt.export.table_cell_properties", ModelOutcome::Omitted);

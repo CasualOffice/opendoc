@@ -62,6 +62,13 @@ a general ODT support claim.
   limits, not grammar conformance — so no schema-validator dependency is bundled.
   A dependency-free `#[ignore]`-gated timing harness records import/export cost
   across the corpus (import 3.5–42 ms, export 1–8 ms).
+- **Table cell borders (fidelity parity, T2c-3)**: a cell's four edge borders
+  (`fo:border` and per-edge `fo:border-top/-left/-bottom/-right`, each `<width>
+  <style> <color>`) now round-trip via the `table-cell` style family. Widths use
+  an exact eighth-point↔`pt` codec (bounded to the model's `0..=1024` domain);
+  the style token is stored verbatim; four identical edges collapse to the
+  `fo:border` shorthand. Inside-H/V borders and edges carrying text padding are
+  reported (not cell-representable as `fo:border`).
 - **Table cell shading & vertical alignment (fidelity parity, T2c-2)**: a table
   cell's background fill (`fo:background-color`) and vertical alignment
   (`style:vertical-align`) now round-trip via a new `table-cell` style family —

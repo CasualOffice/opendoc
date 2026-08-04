@@ -282,6 +282,56 @@ fn table_cell_shading_and_valign_round_trip_to_a_fixed_point() {
 }
 
 #[test]
+fn table_cell_borders_round_trip_to_a_fixed_point() {
+    use casual_doc_model::v1::BorderEdge;
+    let body = r#"<table:table><table:table-column/><table:table-row><table:table-cell><text:p>a</text:p></table:table-cell></table:table-row></table:table>"#;
+    let import = import_content_xml(
+        &content("1.4", body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    let mut document = import.document;
+    let BlockNode::Table(table) = &mut document.body_mut()[0] else {
+        panic!("table")
+    };
+    let edge = BorderEdge {
+        style: "solid".to_owned(),
+        size_eighth_points: Some(4), // 0.5pt
+        color: Some(RgbColor { r: 0, g: 0, b: 0 }),
+        space_points: None,
+    };
+    let cell = &mut table.rows[0].cells[0];
+    cell.properties.borders.top = Some(edge.clone());
+    cell.properties.borders.start = Some(edge.clone());
+    cell.properties.borders.bottom = Some(edge.clone());
+    cell.properties.borders.end = Some(edge.clone());
+    document.validate().unwrap();
+
+    let first = write_odt(&document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+    let content_xml = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+    assert!(
+        content_xml.contains(r##"fo:border="0.5pt solid #000000""##),
+        "uniform border shorthand missing: {content_xml}"
+    );
+
+    let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+    reopened.document.validate().unwrap();
+    let BlockNode::Table(table) = &reopened.document.body()[0] else {
+        panic!("table")
+    };
+    let cell = &table.rows[0].cells[0];
+    assert_eq!(cell.properties.borders.top, Some(edge.clone()));
+    assert_eq!(cell.properties.borders.start, Some(edge.clone()));
+    assert_eq!(cell.properties.borders.bottom, Some(edge.clone()));
+    assert_eq!(cell.properties.borders.end, Some(edge));
+
+    let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+    assert_eq!(first.bytes, second.bytes);
+}
+
+#[test]
 fn table_column_width_over_domain_degrades_and_no_spurious_finding() {
     // An out-of-domain width (24in = 34560 twips > 31680) must be dropped with a
     // finding, never abort the whole import; a valid width is captured; and a
