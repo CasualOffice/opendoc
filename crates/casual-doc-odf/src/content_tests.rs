@@ -177,6 +177,45 @@ fn linked_and_unsafe_image_hrefs_are_blocked() {
 }
 
 #[test]
+fn hyperlinks_and_bookmarks_survive_export_round_trip() {
+    // Both are imported faithfully; a semantic export must re-emit the `text:a`
+    // wrapper (external + internal targets) and the `text:bookmark-start`/`-end`
+    // markers, not drop them, and reopen to a byte-exact fixed point.
+    let body = r##"<text:p><text:bookmark-start text:name="mark"/>Go to <text:a xlink:type="simple" xlink:href="https://example.com/">site</text:a> then <text:a xlink:type="simple" xlink:href="#mark">back</text:a><text:bookmark-end text:name="mark"/></text:p>"##;
+    let import = import_content_xml(
+        &content("1.4", body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    import.document.validate().unwrap();
+
+    let first = write_odt(&import.document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+    let content_xml = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+    assert!(
+        content_xml.contains(
+            r#"<text:a xlink:type="simple" xlink:href="https://example.com/">site</text:a>"#
+        ),
+        "external hyperlink must round-trip: {content_xml}"
+    );
+    assert!(
+        content_xml.contains(r##"<text:a xlink:type="simple" xlink:href="#mark">back</text:a>"##),
+        "internal hyperlink must round-trip: {content_xml}"
+    );
+    assert!(content_xml.contains(r#"<text:bookmark-start text:name="mark"/>"#));
+    assert!(content_xml.contains(r#"<text:bookmark-end text:name="mark"/>"#));
+
+    let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+    reopened.document.validate().unwrap();
+    let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+    assert_eq!(
+        first.bytes, second.bytes,
+        "hyperlink/bookmark export must be a fixed point"
+    );
+}
+
+#[test]
 fn list_item_start_value_maps_to_numbering_override() {
     let styles = r#"<text:list-style style:name="L1"><text:list-level-style-number text:level="1" style:num-format="1"/></text:list-style>"#;
     let body = r#"<text:list text:style-name="L1"><text:list-item text:start-value="5"><text:p>item</text:p></text:list-item></text:list>"#;

@@ -4,11 +4,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Write};
 
 use casual_doc_model::v1::{
-    Alignment, BlockNode, BreakKind, Color, Definitions, Document, DocumentDefaults, Extent,
-    GroupChild, HeaderFooterKind, InlineNode, LevelJustification, LevelSuffix, MediaId, Note,
-    NoteId, NoteKind, NoteReference, NumberFormat, NumberingInstanceId, Paragraph,
-    ParagraphProperties, RevisionKind, RunProperties, Table, TableCell, TableCellProperties,
-    TableRow, TableRowProperties, VerticalMerge,
+    Alignment, BlockNode, BookmarkId, BreakKind, Color, Definitions, Document, DocumentDefaults,
+    Extent, GroupChild, HeaderFooterKind, HyperlinkTarget, InlineNode, LevelJustification,
+    LevelSuffix, MediaId, Note, NoteId, NoteKind, NoteReference, NumberFormat, NumberingInstanceId,
+    Paragraph, ParagraphProperties, RevisionKind, RunProperties, Table, TableCell,
+    TableCellProperties, TableRow, TableRowProperties, VerticalMerge,
 };
 use zip::CompressionMethod;
 use zip::write::{SimpleFileOptions, ZipWriter};
@@ -18,7 +18,7 @@ use crate::{
     ODT_MIME, OdfError, RetentionOutcome,
 };
 
-const CONTENT_HEADER: &str = r#"<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" office:version="1.4">"#;
+const CONTENT_HEADER: &str = r#"<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" office:version="1.4">"#;
 /// Content header for the preserving writer, which additionally emits
 /// `draw:frame`/`draw:image` and therefore declares the drawing/svg/xlink
 /// namespaces. Kept separate so plain semantic output stays byte-identical.
@@ -381,6 +381,9 @@ struct Writer {
     /// `draw:frame`; otherwise it degrades to an alt-text projection. Empty on
     /// the plain semantic path.
     available_media: BTreeMap<MediaId, String>,
+    /// Bookmark id → name, so `BookmarkStart`/`BookmarkEnd` markers can re-emit
+    /// their `text:bookmark-start`/`-end` elements.
+    bookmarks: BTreeMap<BookmarkId, String>,
     reporter: Reporter,
 }
 
@@ -408,10 +411,20 @@ impl Writer {
             text_bytes: 0,
             paragraphs_written: 0,
             available_media: BTreeMap::new(),
+            bookmarks: BTreeMap::new(),
             reporter: Reporter::new(limits.max_report_features),
         };
         writer.push(BODY_PREFIX)?;
         Ok(writer)
+    }
+
+    fn register_bookmarks(&mut self, definitions: &Definitions) {
+        self.bookmarks.extend(
+            definitions
+                .bookmarks
+                .iter()
+                .map(|(id, bookmark)| (*id, bookmark.name.clone())),
+        );
     }
 
     fn register_numbering(&mut self, definitions: &Definitions) {
@@ -976,9 +989,26 @@ impl Writer {
                     self.push("<text:line-break/>")?;
                 }
                 InlineNode::Hyperlink(link) => {
-                    self.reporter
-                        .record("odt.export.hyperlink", ModelOutcome::Degraded);
+                    // A `text:a` wrapper round-trips both external and internal
+                    // targets; the importer reads exactly this form
+                    // (`xlink:type="simple" xlink:href=…`, `#anchor` for internal).
+                    let href = match &link.target {
+                        HyperlinkTarget::External(target) => match &target.anchor {
+                            Some(anchor) => format!("{}#{anchor}", target.url),
+                            None => target.url.clone(),
+                        },
+                        HyperlinkTarget::Internal(target) => format!("#{}", target.anchor),
+                    };
+                    let max = self.limits.max_content_bytes;
+                    self.push("<text:a xlink:type=\"simple\" xlink:href=\"")?;
+                    push_escaped_attribute(&mut self.xml, &href, max)?;
+                    if let Some(tooltip) = &link.tooltip {
+                        self.push("\" office:title=\"")?;
+                        push_escaped_attribute(&mut self.xml, tooltip, max)?;
+                    }
+                    self.push("\">")?;
                     self.write_inlines(&link.inlines, depth + 1)?;
+                    self.push("</text:a>")?;
                 }
                 InlineNode::Field(field) => {
                     self.reporter
@@ -1057,9 +1087,12 @@ impl Writer {
                 | InlineNode::CommentRangeEnd(_) => self
                     .reporter
                     .record("odt.export.comment", ModelOutcome::Omitted),
-                InlineNode::BookmarkStart(_) | InlineNode::BookmarkEnd(_) => self
-                    .reporter
-                    .record("odt.export.bookmark", ModelOutcome::Omitted),
+                InlineNode::BookmarkStart(start) => {
+                    self.write_bookmark_marker("bookmark-start", start.bookmark)?
+                }
+                InlineNode::BookmarkEnd(end) => {
+                    self.write_bookmark_marker("bookmark-end", end.bookmark)?
+                }
                 InlineNode::MoveRangeStart(_) | InlineNode::MoveRangeEnd(_) => self
                     .reporter
                     .record("odt.export.move_range", ModelOutcome::Omitted),
@@ -1139,6 +1172,29 @@ impl Writer {
                     .record("odt.export.unreferenced_note", ModelOutcome::Omitted);
             }
         }
+    }
+
+    /// Emits a `text:bookmark-start`/`text:bookmark-end` marker for a bookmark
+    /// id, looking up its name in the registered bookmark table. A marker whose
+    /// bookmark is unknown (a dangling id a validated document cannot contain) is
+    /// reported and skipped rather than emitting a nameless element.
+    fn write_bookmark_marker(
+        &mut self,
+        element: &str,
+        bookmark: BookmarkId,
+    ) -> Result<(), OdfError> {
+        let Some(name) = self.bookmarks.get(&bookmark).cloned() else {
+            self.reporter
+                .record("odt.export.bookmark", ModelOutcome::Omitted);
+            return Ok(());
+        };
+        let max = self.limits.max_content_bytes;
+        self.push("<text:")?;
+        self.push(element)?;
+        self.push(" text:name=\"")?;
+        push_escaped_attribute(&mut self.xml, &name, max)?;
+        self.push("\"/>")?;
+        Ok(())
     }
 
     /// Emits an inline `draw:frame` referencing a retained package image part.
@@ -1734,6 +1790,7 @@ fn write_odt_impl(
     writer.available_media = available_media;
     writer.register_numbering(document.definitions());
     writer.register_notes(document.definitions());
+    writer.register_bookmarks(document.definitions());
     let mut definition_remainder = document.definitions().clone();
     definition_remainder.abstract_numbering = Default::default();
     definition_remainder.numbering = Default::default();

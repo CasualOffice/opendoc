@@ -62,6 +62,13 @@ a general ODT support claim.
   limits, not grammar conformance — so no schema-validator dependency is bundled.
   A dependency-free `#[ignore]`-gated timing harness records import/export cost
   across the corpus (import 3.5–42 ms, export 1–8 ms).
+- **Hyperlink & bookmark export (round-trip parity)**: hyperlinks and bookmarks
+  were imported faithfully but dropped on export (a silent round-trip loss).
+  Export now re-emits `text:a` wrappers (external URLs with fragments, and
+  `#anchor` internal targets, plus `office:title` screen-tips) and
+  `text:bookmark-start`/`-end` markers, reaching a byte-exact fixed point with the
+  importer. `xmlns:xlink` is now declared in the semantic content header. First
+  slice of the ODT→DOCX fidelity-parity effort.
 - **Metadata conformance fix**: `meta.xml` now writes the creation timestamp as
   `meta:creation-date` and the last modification as `dc:date` (the ODF-native
   elements the importer reads), instead of the non-ODF `dcterms:created`/

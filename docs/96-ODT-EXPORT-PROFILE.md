@@ -72,13 +72,20 @@ are explicitly omitted, and unreferenced definitions receive an omission finding
 Authored ODT citation labels are not present in schema v1, so semantic output uses
 an empty canonical citation element.
 
+Hyperlinks and bookmarks round-trip: an `InlineNode::Hyperlink` is written as a
+`text:a` wrapper (`xlink:type="simple"`, `xlink:href` carrying the external URL
+with any fragment, or `#anchor` for an internal target; the screen-tip becomes
+`office:title`), and `BookmarkStart`/`BookmarkEnd` markers are written as
+`text:bookmark-start`/`text:bookmark-end` with the registered bookmark name — the
+exact forms the importer reads back, giving a byte-exact fixed point.
+
 Until their dedicated import/export mappings land, wrappers and complex blocks
 may emit a bounded visible-text projection only when that projection is safe.
 Every such case is reported as degraded; content with no safe projection is
 reported as omitted. Unsupported run/paragraph properties, definitions,
-resources, table formatting, advanced lists, links, bookmarks, media, tracked
-changes, fields, controls, math, drawings, and embedded objects may not silently
-disappear from the report.
+resources, table formatting, advanced lists, media, tracked changes, fields,
+controls, math, drawings, and embedded objects may not silently disappear from
+the report.
 
 ## 4. Export modes
 
