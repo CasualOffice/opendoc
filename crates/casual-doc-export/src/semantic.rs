@@ -29,11 +29,11 @@ use casual_doc_model::v1::{
     FrameHorizontalAnchor, FrameVerticalAlignment, FrameVerticalAnchor, FrameWrap, GridColumn,
     GroupChild, GroupShape, GroupTextBox, GroupTransform, HeaderFooterId, HeaderFooterKind,
     HeightRule, HighlightColor, HorizontalAlign, HorizontalAnchor, HorizontalPosition,
-    HorizontalRuleAlign, HyperlinkTarget, InlineNode, LevelJustification, LevelSuffix, LineEnd,
-    LineEndKind, LineEndSize, LineNumberRestart, LineRule, MarkRevision, MarkRevisionKind, MediaId,
-    MediaReference, MoveKind, Note, NoteId, NoteKind, NoteNumberRestart, NotePosition,
-    NoteProperties, NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel,
-    PageBorderDisplay, PageBorderOffset, PageOrientation, PageVerticalAlignment,
+    HorizontalRuleAlign, HyperlinkTarget, InlineNode, LatentStyles, LevelJustification,
+    LevelSuffix, LineEnd, LineEndKind, LineEndSize, LineNumberRestart, LineRule, MarkRevision,
+    MarkRevisionKind, MediaId, MediaReference, MoveKind, Note, NoteId, NoteKind, NoteNumberRestart,
+    NotePosition, NoteProperties, NumberFormat, NumberingInstance, NumberingInstanceId,
+    NumberingLevel, PageBorderDisplay, PageBorderOffset, PageOrientation, PageVerticalAlignment,
     ParagraphProperties, Person, PointEmu, PositionalTabAlignment, PositionalTabLeader,
     PositionalTabRelativeTo, ProofState, PropChange, RevisionKind, RgbColor, Rgba, RunFontHint,
     RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind,
@@ -394,13 +394,20 @@ pub fn write_document_with_retained_parts(
             settings_xml(&definitions.settings)?,
         ));
     }
-    if !definitions.styles.is_empty() || definitions.document_defaults.is_some() {
+    if !definitions.styles.is_empty()
+        || definitions.document_defaults.is_some()
+        || definitions.latent_styles.is_some()
+    {
         extras.push(ExtraPart::new(
             "word/styles.xml",
             STYLES_CT,
             STYLES_REL_TYPE,
             "styles.xml",
-            styles_xml(&definitions.styles, definitions.document_defaults.as_ref())?,
+            styles_xml(
+                &definitions.styles,
+                definitions.document_defaults.as_ref(),
+                definitions.latent_styles.as_ref(),
+            )?,
         ));
     }
     if !definitions.abstract_numbering.is_empty() || !definitions.numbering.is_empty() {
@@ -1638,6 +1645,7 @@ fn write_font_collection(
 fn styles_xml(
     styles: &DefinitionMap<StyleId, Style>,
     document_defaults: Option<&DocumentDefaults>,
+    latent_styles: Option<&LatentStyles>,
 ) -> Result<Vec<u8>, ExportError> {
     let mut w = new_writer();
     let mut root = start("w:styles");
@@ -1673,6 +1681,53 @@ fn styles_xml(
             .map_err(pkg)?;
         w.write_event(Event::End(BytesEnd::new("w:docDefaults")))
             .map_err(pkg)?;
+    }
+    // `w:latentStyles` follows `w:docDefaults` and precedes the styles (schema
+    // order). Its block-level defaults and `w:lsdException` children are
+    // attribute-only.
+    if let Some(latent) = latent_styles {
+        let mut el = start("w:latentStyles");
+        for (name, value) in [
+            ("w:defLockedState", latent.default_locked_state),
+            ("w:defSemiHidden", latent.default_semi_hidden),
+            ("w:defUnhideWhenUsed", latent.default_unhide_when_used),
+            ("w:defQFormat", latent.default_q_format),
+        ] {
+            if let Some(value) = value {
+                el.push_attribute((name, if value { "1" } else { "0" }));
+            }
+        }
+        if let Some(priority) = latent.default_ui_priority {
+            el.push_attribute(("w:defUIPriority", priority.to_string().as_str()));
+        }
+        if let Some(count) = latent.count {
+            el.push_attribute(("w:count", count.to_string().as_str()));
+        }
+        if latent.exceptions.is_empty() {
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        } else {
+            w.write_event(Event::Start(el)).map_err(pkg)?;
+            for exception in &latent.exceptions {
+                let mut el = start("w:lsdException");
+                el.push_attribute(("w:name", exception.name.as_str()));
+                for (name, value) in [
+                    ("w:locked", exception.locked),
+                    ("w:semiHidden", exception.semi_hidden),
+                    ("w:unhideWhenUsed", exception.unhide_when_used),
+                    ("w:qFormat", exception.q_format),
+                ] {
+                    if let Some(value) = value {
+                        el.push_attribute((name, if value { "1" } else { "0" }));
+                    }
+                }
+                if let Some(priority) = exception.ui_priority {
+                    el.push_attribute(("w:uiPriority", priority.to_string().as_str()));
+                }
+                w.write_event(Event::Empty(el)).map_err(pkg)?;
+            }
+            w.write_event(Event::End(BytesEnd::new("w:latentStyles")))
+                .map_err(pkg)?;
+        }
     }
     for (id, style) in styles.iter() {
         let style_id = style_id_token(*id);

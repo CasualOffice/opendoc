@@ -1192,6 +1192,7 @@ pub(crate) fn import_with_sources(
 
     let (abstract_numbering, numbering_instances) = numbering.into_definitions();
     let document_defaults = styles.document_defaults();
+    let latent_styles = styles.latent_styles();
     let definitions = Definitions {
         styles: styles.into_definitions(),
         abstract_numbering,
@@ -1205,6 +1206,7 @@ pub(crate) fn import_with_sources(
         comments: comments_map,
         bookmarks,
         document_defaults,
+        latent_styles,
         font_table,
         font_scheme: theme.font_scheme,
         color_scheme: theme.color_scheme,

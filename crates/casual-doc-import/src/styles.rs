@@ -12,10 +12,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
     Alignment, BorderEdge, CellMargins, CellVerticalAlignment, DefinitionMap, DocumentDefaults,
-    HeightRule, ParagraphBorders, ParagraphProperties, RowHeight, RunProperties, Style, StyleId,
-    StyleKind, TabAlignment, TabLeader, TabStop, TableBorders, TableCellProperties, TableLayout,
-    TableLook, TableOverlap, TableProperties, TableRowProperties, TableStyleOverride,
-    TableStyleRegion, TextDirection, VerticalMerge,
+    HeightRule, LatentStyles, LsdException, ParagraphBorders, ParagraphProperties, RowHeight,
+    RunProperties, Style, StyleId, StyleKind, TabAlignment, TabLeader, TabStop, TableBorders,
+    TableCellProperties, TableLayout, TableLook, TableOverlap, TableProperties, TableRowProperties,
+    TableStyleOverride, TableStyleRegion, TextDirection, VerticalMerge,
 };
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
@@ -35,6 +35,7 @@ pub(crate) struct Styles {
     by_name: BTreeMap<String, (StyleId, StyleKind)>,
     definitions: DefinitionMap<StyleId, Style>,
     document_defaults: Option<DocumentDefaults>,
+    latent_styles: Option<LatentStyles>,
     /// Styles whose `w:pPr/w:numPr` was captured raw during parse; resolved to
     /// each style's `paragraph.numbering` by [`Styles::resolve_numbering`] once the
     /// numbering part is parsed (the numbering `numId -> instance` map does not
@@ -81,6 +82,11 @@ impl Styles {
         self.document_defaults.clone()
     }
 
+    /// The `w:latentStyles` block, if the part carried one.
+    pub(crate) fn latent_styles(&self) -> Option<LatentStyles> {
+        self.latent_styles.clone()
+    }
+
     pub(crate) fn into_definitions(self) -> DefinitionMap<StyleId, Style> {
         self.definitions
     }
@@ -121,7 +127,7 @@ pub(crate) fn parse(
     reporter: &mut Reporter,
     config: ImportConfig,
 ) -> Result<Styles, ImportError> {
-    let (raw, document_defaults) = parse_raw(xml, reporter, config)?;
+    let (raw, document_defaults, latent_styles) = parse_raw(xml, reporter, config)?;
 
     let mut by_name: BTreeMap<String, (StyleId, StyleKind)> = BTreeMap::new();
     let mut assigned: Vec<(StyleId, StyleKind, Option<String>, RawStyle)> = Vec::new();
@@ -223,6 +229,7 @@ pub(crate) fn parse(
         by_name,
         definitions,
         document_defaults,
+        latent_styles,
         pending_numbering,
     })
 }
@@ -366,11 +373,19 @@ struct PropAcc {
     has_table_cell: bool,
 }
 
+/// The raw styles-part payload: the parsed styles plus the optional
+/// `w:docDefaults` and `w:latentStyles` blocks.
+type RawStylesPart = (
+    Vec<RawStyle>,
+    Option<DocumentDefaults>,
+    Option<LatentStyles>,
+);
+
 fn parse_raw(
     xml: &[u8],
     reporter: &mut Reporter,
     config: ImportConfig,
-) -> Result<(Vec<RawStyle>, Option<DocumentDefaults>), ImportError> {
+) -> Result<RawStylesPart, ImportError> {
     let mut reader = Reader::from_reader(xml);
     let mut buffer = Vec::new();
     let mut ctx = Ctx {
@@ -381,16 +396,18 @@ fn parse_raw(
     };
     let mut styles = Vec::new();
     let mut document_defaults = None;
+    let mut latent_styles = None;
 
     loop {
         match read_node(&mut reader, &mut buffer, &mut ctx)? {
             Node::Eof => break,
             Node::Close => {}
-            Node::Empty(element) => {
-                if element.local_name().as_ref() == b"style" {
-                    styles.push(empty_style(&element));
-                }
-            }
+            Node::Empty(element) => match element.local_name().as_ref() {
+                b"style" => styles.push(empty_style(&element)),
+                // A childless `<w:latentStyles/>` still carries block defaults.
+                b"latentStyles" => latent_styles = Some(read_latent_styles(&element, &[])),
+                _ => {}
+            },
             Node::Open(element) => match element.local_name().as_ref() {
                 // The `w:styles` root: fall through so its children are read by
                 // the same top-level loop.
@@ -402,11 +419,92 @@ fn parse_raw(
                     document_defaults =
                         Some(read_doc_defaults(&mut reader, &mut buffer, &mut ctx, 1)?);
                 }
+                b"latentStyles" => {
+                    let exceptions = read_lsd_exceptions(&mut reader, &mut buffer, &mut ctx)?;
+                    latent_styles = Some(read_latent_styles(&element, &exceptions));
+                }
                 _ => skip_subtree(&mut reader, &mut buffer, &mut ctx)?,
             },
         }
     }
-    Ok((styles, document_defaults))
+    Ok((styles, document_defaults, latent_styles))
+}
+
+/// Reads the `w:lsdException` children of an open `w:latentStyles`, up to its
+/// matching close. Each exception carries only attributes; an entry with no
+/// `w:name` is dropped (the schema requires it). Other descendants are skipped.
+fn read_lsd_exceptions(
+    reader: &mut Reader<&[u8]>,
+    buffer: &mut Vec<u8>,
+    ctx: &mut Ctx,
+) -> Result<Vec<LsdException>, ImportError> {
+    let mut exceptions = Vec::new();
+    let mut depth = 1_u64;
+    loop {
+        match read_node(reader, buffer, ctx)? {
+            Node::Open(element) => {
+                depth += 1;
+                if element.local_name().as_ref() == b"lsdException"
+                    && let Some(exception) = read_lsd_exception(&element)
+                {
+                    exceptions.push(exception);
+                }
+            }
+            Node::Empty(element) => {
+                if element.local_name().as_ref() == b"lsdException"
+                    && let Some(exception) = read_lsd_exception(&element)
+                {
+                    exceptions.push(exception);
+                }
+            }
+            Node::Close => {
+                depth -= 1;
+                if depth == 0 {
+                    return Ok(exceptions);
+                }
+            }
+            Node::Eof => return Ok(exceptions),
+        }
+    }
+}
+
+/// Builds a [`LatentStyles`] from the `w:latentStyles` block attributes and the
+/// already-parsed `w:lsdException` children.
+fn read_latent_styles(element: &BytesStart<'_>, exceptions: &[LsdException]) -> LatentStyles {
+    LatentStyles {
+        default_locked_state: on_off_attribute(element, b"defLockedState"),
+        default_ui_priority: int_attribute(element, b"defUIPriority"),
+        default_semi_hidden: on_off_attribute(element, b"defSemiHidden"),
+        default_unhide_when_used: on_off_attribute(element, b"defUnhideWhenUsed"),
+        default_q_format: on_off_attribute(element, b"defQFormat"),
+        count: int_attribute(element, b"count"),
+        exceptions: exceptions.to_vec(),
+    }
+}
+
+/// Builds an [`LsdException`] from a `w:lsdException` element's attributes,
+/// returning `None` when the required `w:name` is absent or empty.
+fn read_lsd_exception(element: &BytesStart<'_>) -> Option<LsdException> {
+    let name = attribute_value(element, b"name").filter(|name| !name.is_empty())?;
+    Some(LsdException {
+        name,
+        locked: on_off_attribute(element, b"locked"),
+        ui_priority: int_attribute(element, b"uiPriority"),
+        semi_hidden: on_off_attribute(element, b"semiHidden"),
+        unhide_when_used: on_off_attribute(element, b"unhideWhenUsed"),
+        q_format: on_off_attribute(element, b"qFormat"),
+    })
+}
+
+/// Reads an optional `ST_OnOff` attribute: `Some(bool)` when present, `None`
+/// when the attribute is absent.
+fn on_off_attribute(element: &BytesStart<'_>, name: &[u8]) -> Option<bool> {
+    attribute_value(element, name).map(|value| is_true(Some(&value)))
+}
+
+/// Reads an optional `ST_DecimalNumber` attribute, ignoring an unparseable value.
+fn int_attribute(element: &BytesStart<'_>, name: &[u8]) -> Option<i32> {
+    attribute_value(element, name).and_then(|value| value.trim().parse::<i32>().ok())
 }
 
 /// A `<w:style .../>` with no body: only its attributes are meaningful.
