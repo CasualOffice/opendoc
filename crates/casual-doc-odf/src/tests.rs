@@ -434,6 +434,78 @@ fn geometry_only_styles_have_no_master_page() {
 }
 
 #[test]
+fn header_trailing_text_is_charged_against_inline_budget() {
+    // "a" <tab> "b" is three inline nodes; the trailing "b" must be counted like
+    // any other run, so a budget of 2 fails closed (regression: it used to slip).
+    let styles = styles_with_master(
+        r#"<office:master-styles><style:master-page style:name="Standard" style:page-layout-name="pm1"><style:header><text:p>a<text:tab/>b</text:p></style:header></style:master-page></office:master-styles>"#,
+    );
+    let bytes = package_with_styles(styles);
+    let error = OdtPackage::open(&bytes, OdfPackageLimits::default())
+        .unwrap()
+        .import_document(OdfImportLimits {
+            max_inline_nodes: 2,
+            ..OdfImportLimits::default()
+        })
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        OdfError::LimitExceeded {
+            limit: "odf_content_inline_nodes",
+            ..
+        }
+    ));
+}
+
+#[test]
+fn out_of_domain_page_geometry_is_clamped_and_reported() {
+    // A 50in x 60in page exceeds the model domain (max 31,680 twips = 22in). It
+    // must clamp and stay valid whether or not a header is present (regression:
+    // the header path aborted and the header-less path returned an invalid model).
+    let styles = br#"<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.4"><office:automatic-styles><style:page-layout style:name="pm1"><style:page-layout-properties fo:page-width="50in" fo:page-height="60in" fo:margin-top="2cm" fo:margin-bottom="2cm" fo:margin-left="2cm" fo:margin-right="2cm" style:print-orientation="portrait"/></style:page-layout></office:automatic-styles><office:master-styles><style:master-page style:name="Standard" style:page-layout-name="pm1"><style:header><text:p>H</text:p></style:header></style:master-page></office:master-styles></office:document-styles>"#.to_vec();
+    let imported = OdtPackage::open(&package_with_styles(styles), OdfPackageLimits::default())
+        .unwrap()
+        .import_document(OdfImportLimits::default())
+        .unwrap();
+    imported.document.validate().unwrap();
+    let section = &imported.document.definitions().sections[0];
+    assert_eq!(section.page_size.width_twips, 31_680);
+    assert_eq!(section.page_size.height_twips, 31_680);
+    assert_eq!(section.headers.len(), 1);
+    assert!(
+        imported
+            .report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "odf.page-layout.out-of-range")
+    );
+}
+
+#[test]
+fn empty_header_region_is_dropped_on_import_and_export() {
+    let styles = styles_with_master(
+        r#"<office:master-styles><style:master-page style:name="Standard" style:page-layout-name="pm1"><style:header></style:header><style:footer><text:p>F</text:p></style:footer></style:master-page></office:master-styles>"#,
+    );
+    let document = OdtPackage::open(&package_with_styles(styles), OdfPackageLimits::default())
+        .unwrap()
+        .import_document(OdfImportLimits::default())
+        .unwrap()
+        .document;
+    let section = &document.definitions().sections[0];
+    assert!(
+        section.headers.is_empty(),
+        "empty header must not become a def"
+    );
+    assert_eq!(section.footers.len(), 1);
+
+    let export = crate::write_odt(&document, crate::OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let styles_out = String::from_utf8(package.read_part(STYLES_PART).unwrap()).unwrap();
+    assert!(!styles_out.contains("<style:header>"));
+    assert!(styles_out.contains("<style:footer><text:p>F</text:p></style:footer>"));
+}
+
+#[test]
 fn mimetype_must_be_first_stored_exact_and_without_extra_data() {
     let mut not_first = minimal_entries("1.4");
     not_first.swap(0, 1);

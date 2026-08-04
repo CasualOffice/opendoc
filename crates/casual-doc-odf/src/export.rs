@@ -1600,6 +1600,9 @@ pub fn write_odt(document: &Document, limits: OdfExportLimits) -> Result<OdtExpo
         .len()
         .checked_add(styles.len())
         .and_then(|value| value.checked_add(writer.xml.len()))
+        // Header/footer markup lives in styles.xml (built via a buffer swap), so
+        // fold its bytes in here or it would escape the content byte budget.
+        .and_then(|value| value.checked_add(master_page.total_len()))
         .ok_or(OdfError::LimitExceeded {
             limit: "odt_export_content_bytes",
             observed: usize::MAX,
@@ -1701,11 +1704,32 @@ impl MasterPageXml {
             && self.default_footer.is_none()
             && self.even_footer.is_none()
     }
+
+    /// Total serialized fragment bytes, folded into the content byte budget so
+    /// header/footer markup cannot escape `max_content_bytes` via the buffer swap.
+    fn total_len(&self) -> usize {
+        [
+            &self.default_header,
+            &self.even_header,
+            &self.default_footer,
+            &self.even_footer,
+        ]
+        .into_iter()
+        .flatten()
+        .map(String::len)
+        .sum()
+    }
 }
 
-/// Stores a rendered fragment in its slot, reporting (and dropping) a duplicate
-/// reference to the same page type rather than emitting two regions.
+/// Stores a rendered fragment in its slot. An empty fragment (a header/footer
+/// whose blocks produced no output) is dropped so it neither emits an empty
+/// region nor forces the text namespace on; the block-level loss is already
+/// reported by the renderer. A second fragment for the same page type is a
+/// duplicate loss finding rather than a second region.
 fn store_master_slot(slot: &mut Option<String>, fragment: String, reporter: &mut Reporter) {
+    if fragment.is_empty() {
+        return;
+    }
     if slot.is_some() {
         reporter.record("odt.export.header_footer.duplicate", ModelOutcome::Omitted);
         return;

@@ -190,10 +190,22 @@ pub(crate) fn parse_master_page(
                     append_text(&mut state, &value, limits)?;
                 }
             }
-            Event::End(_) => close_element(&mut state)?,
+            Event::End(_) => close_element(&mut state, limits)?,
             _ => {}
         }
         buffer.clear();
+    }
+
+    // quick-xml does not error on elements left open at EOF; a non-zero depth
+    // (or any still-open context) means the input was truncated, so fail closed
+    // rather than silently dropping the unterminated region.
+    if state.depth != 0
+        || state.master_page_open
+        || state.region_slot.is_some()
+        || state.para_open
+        || state.skip_depth.is_some()
+    {
+        return Err(OdfError::MalformedContent);
     }
 
     let mut content = state.content;
@@ -424,7 +436,7 @@ fn open_paragraph_child(
 }
 
 /// Handles an `End` event, closing whichever open context matches the depth.
-fn close_element(state: &mut State) -> Result<(), OdfError> {
+fn close_element(state: &mut State, limits: OdfImportLimits) -> Result<(), OdfError> {
     let closing_depth = state.depth;
     state.depth = state.depth.saturating_sub(1);
 
@@ -436,12 +448,9 @@ fn close_element(state: &mut State) -> Result<(), OdfError> {
     }
 
     if state.para_open && closing_depth == state.para_depth {
-        // Trailing text is flushed with the paragraph's own limits already
-        // charged; the flush cannot exceed a new budget here.
-        if !state.text.is_empty() {
-            let text = std::mem::take(&mut state.text);
-            state.para.inlines.push(HeaderFooterInline::Text(text));
-        }
+        // Charge the trailing text run against the inline-node budget, exactly
+        // like a run terminated by a tab or line break.
+        flush_text(state, limits)?;
         let para = std::mem::take(&mut state.para);
         state.region.paragraphs.push(para);
         state.para_open = false;
@@ -588,4 +597,31 @@ fn enforce(limit: &'static str, observed: usize, allowed: usize) -> Result<(), O
         });
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncated_input_fails_closed() {
+        // quick-xml does not error on tags left open at EOF; the post-loop
+        // balance check must reject the truncated region rather than drop it.
+        let xml = b"<office:document-styles><office:master-styles><style:master-page><style:header><text:p>hi";
+        assert!(parse_master_page(xml, OdfImportLimits::default()).is_err());
+    }
+
+    #[test]
+    fn plain_header_and_footer_regions_map_to_text() {
+        let xml = br#"<office:document-styles><office:master-styles><style:master-page><style:header><text:p>Head</text:p></style:header><style:footer><text:p>Foot</text:p></style:footer></style:master-page></office:master-styles></office:document-styles>"#;
+        let content = parse_master_page(xml, OdfImportLimits::default()).unwrap();
+        let header = content.default_header.unwrap();
+        assert_eq!(header.paragraphs.len(), 1);
+        assert_eq!(
+            header.paragraphs[0].inlines,
+            vec![HeaderFooterInline::Text("Head".to_owned())]
+        );
+        assert!(content.default_footer.is_some());
+        assert!(content.even_header.is_none());
+    }
 }

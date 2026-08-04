@@ -325,7 +325,7 @@ impl<'a> OdtPackage<'a> {
                     .then(a.retention_outcome.cmp(&b.retention_outcome))
             });
         }
-        if let Some(geometry) = styles
+        if let Some(mut geometry) = styles
             .as_deref()
             .and_then(crate::page_style::parse_page_layout)
         {
@@ -367,6 +367,12 @@ impl<'a> OdtPackage<'a> {
                 let Some(region) = region else {
                     continue;
                 };
+                // An empty region carries no renderable content; skipping it keeps
+                // the model free of empty header/footer definitions that would
+                // export as an empty region and force a spurious text namespace.
+                if region.paragraphs.is_empty() {
+                    continue;
+                }
                 if matches!(kind, HeaderFooterKind::Even) {
                     even_present = true;
                 }
@@ -381,7 +387,19 @@ impl<'a> OdtPackage<'a> {
                     footer_refs.push(HeaderFooterRef { kind, reference });
                 }
             }
-            let added_header_footer = !header_defs.is_empty() || !footer_defs.is_empty();
+            // Clamp page geometry to the normalized model domain (matching the
+            // DOCX importer) so the section is always valid regardless of
+            // header/footer presence; report when a value is actually clamped.
+            let original = geometry;
+            geometry.size.width_twips = geometry.size.width_twips.clamp(1, 31_680);
+            geometry.size.height_twips = geometry.size.height_twips.clamp(1, 31_680);
+            geometry.margins.top_twips = geometry.margins.top_twips.clamp(0, 31_680);
+            geometry.margins.bottom_twips = geometry.margins.bottom_twips.clamp(0, 31_680);
+            geometry.margins.start_twips = geometry.margins.start_twips.clamp(0, 31_680);
+            geometry.margins.end_twips = geometry.margins.end_twips.clamp(0, 31_680);
+            geometry.columns = geometry.columns.clamp(1, 64);
+            geometry.column_gap_twips = geometry.column_gap_twips.map(|gap| gap.clamp(0, 31_680));
+            let geometry_clamped = geometry != original;
 
             {
                 let definitions = imported.document.definitions_mut();
@@ -423,18 +441,23 @@ impl<'a> OdtPackage<'a> {
                 });
             }
 
-            if !master.findings.is_empty() {
-                imported
-                    .report
-                    .entries
-                    .extend(master.findings.into_iter().map(
-                        |(feature, model_outcome, retention_outcome)| crate::CompatibilityEntry {
-                            feature,
-                            occurrences: 1,
-                            model_outcome,
-                            retention_outcome,
-                        },
-                    ));
+            let mut findings = master.findings;
+            if geometry_clamped {
+                findings.push((
+                    "odf.page-layout.out-of-range".to_owned(),
+                    crate::ModelOutcome::Degraded,
+                    crate::RetentionOutcome::NotRetained,
+                ));
+            }
+            if !findings.is_empty() {
+                imported.report.entries.extend(findings.into_iter().map(
+                    |(feature, model_outcome, retention_outcome)| crate::CompatibilityEntry {
+                        feature,
+                        occurrences: 1,
+                        model_outcome,
+                        retention_outcome,
+                    },
+                ));
                 imported.report.entries.sort_by(|a, b| {
                     a.feature
                         .cmp(&b.feature)
@@ -443,14 +466,14 @@ impl<'a> OdtPackage<'a> {
                 });
             }
 
-            // Header/footer block content is arbitrary text, so re-validate the
-            // document to keep import atomic if any model invariant is violated.
-            if added_header_footer {
-                imported
-                    .document
-                    .validate()
-                    .map_err(|_| OdfError::InvalidModel)?;
-            }
+            // The section (and any header/footer content) is mutated in after the
+            // content pass already validated the document, so re-validate
+            // unconditionally to keep import atomic — this guards out-of-domain
+            // geometry and any node-id collision regardless of header presence.
+            imported
+                .document
+                .validate()
+                .map_err(|_| OdfError::InvalidModel)?;
         }
         Ok(imported)
     }
