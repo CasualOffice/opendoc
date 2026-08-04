@@ -62,6 +62,14 @@ a general ODT support claim.
   limits, not grammar conformance — so no schema-validator dependency is bundled.
   A dependency-free `#[ignore]`-gated timing harness records import/export cost
   across the corpus (import 3.5–42 ms, export 1–8 ms).
+- **Table column widths (fidelity parity, T2c)**: a table's grid column widths
+  now round-trip. Import resolves each `table:table-column`'s referenced
+  `table-column` style (`style:table-column-properties`/`style:column-width`) —
+  `number-columns-repeated` expanded — into `GridColumn.width_twips`; export emits
+  a deterministic `table-column` automatic style per distinct width and references
+  it from the column grid, grouping equal consecutive widths. Width-less tables
+  stay byte-identical to before. Introduces the `table-column` style family the
+  remaining table properties (cell shading, borders) will build on.
 - **Paragraph properties (fidelity parity, T2b)**: paragraph formatting beyond
   alignment now round-trips — indentation (`fo:margin-left`/`-right`,
   `fo:text-indent` incl. hanging), spacing (`fo:margin-top`/`-bottom`,

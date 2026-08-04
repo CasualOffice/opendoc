@@ -345,6 +345,17 @@ fn push_paragraph_properties(
     Ok(())
 }
 
+/// A deterministic, NCName-safe automatic style name for a table column of the
+/// given width (twips). Negative widths (not model-valid, but defensive) use an
+/// `n` marker instead of a bare minus.
+fn column_style_name(twips: i32) -> String {
+    if twips < 0 {
+        format!("co_n{}", twips.unsigned_abs())
+    } else {
+        format!("co{twips}")
+    }
+}
+
 /// Formats a twips length (1/1440 in) as an ODF `pt` string exactly reversible by
 /// the importer's length parser: 1 twip = 0.05pt, so at most two decimals.
 fn twips_to_pt(twips: i32) -> String {
@@ -576,6 +587,8 @@ fn split_paragraph_properties(remainder: &mut ParagraphProperties) -> OdtParagra
 struct Writer {
     xml: String,
     paragraph_styles: BTreeSet<OdtParagraphStyle>,
+    /// Distinct table-column widths (twips) that need a `table-column` style.
+    column_styles: BTreeSet<i32>,
     run_styles: BTreeSet<OdtRunStyle>,
     list_styles: BTreeMap<NumberingInstanceId, OdtListStyle>,
     emitted_lists: BTreeSet<NumberingInstanceId>,
@@ -610,6 +623,7 @@ impl Writer {
         let mut writer = Self {
             xml: String::new(),
             paragraph_styles: BTreeSet::new(),
+            column_styles: BTreeSet::new(),
             run_styles: BTreeSet::new(),
             list_styles: BTreeMap::new(),
             emitted_lists: BTreeSet::new(),
@@ -832,10 +846,6 @@ impl Writer {
             self.reporter
                 .record("odt.export.table_grid", ModelOutcome::Degraded);
         }
-        if table.grid.iter().any(|column| column.width_twips.is_some()) {
-            self.reporter
-                .record("odt.export.table_grid_widths", ModelOutcome::Omitted);
-        }
         if table.grid_change.is_some() {
             self.reporter
                 .record("odt.export.table_grid_change", ModelOutcome::Omitted);
@@ -847,13 +857,45 @@ impl Writer {
 
         let merges = analyze_table_merges(table)?;
         self.push("<table:table>")?;
-        self.push("<table:table-column")?;
-        if columns > 1 {
-            self.push(" table:number-columns-repeated=\"")?;
-            self.push(&columns.to_string())?;
-            self.push("\"")?;
+        // Per-column widths, padded with None where rows imply more columns than
+        // the grid declares.
+        let widths: Vec<Option<i32>> = (0..columns)
+            .map(|index| table.grid.get(index).and_then(|column| column.width_twips))
+            .collect();
+        if widths.iter().all(Option::is_none) {
+            // No widths: one width-less repeated column (byte-identical to before).
+            self.push("<table:table-column")?;
+            if columns > 1 {
+                self.push(" table:number-columns-repeated=\"")?;
+                self.push(&columns.to_string())?;
+                self.push("\"")?;
+            }
+            self.push("/>")?;
+        } else {
+            // Emit a column group per run of equal widths.
+            let mut index = 0;
+            while index < columns {
+                let width = widths[index];
+                let mut run = 1;
+                while index + run < columns && widths[index + run] == width {
+                    run += 1;
+                }
+                self.push("<table:table-column")?;
+                if let Some(width) = width {
+                    self.column_styles.insert(width);
+                    self.push(" table:style-name=\"")?;
+                    self.push(&column_style_name(width))?;
+                    self.push("\"")?;
+                }
+                if run > 1 {
+                    self.push(" table:number-columns-repeated=\"")?;
+                    self.push(&run.to_string())?;
+                    self.push("\"")?;
+                }
+                self.push("/>")?;
+                index += run;
+            }
         }
-        self.push("/>")?;
 
         let header_rows = table
             .rows
@@ -1711,13 +1753,29 @@ fn automatic_styles_xml(
     paragraph_styles: &BTreeSet<OdtParagraphStyle>,
     run_styles: &BTreeSet<OdtRunStyle>,
     list_styles: &BTreeMap<NumberingInstanceId, OdtListStyle>,
+    column_styles: &BTreeSet<i32>,
     max_content_bytes: usize,
 ) -> Result<String, OdfError> {
-    if paragraph_styles.is_empty() && run_styles.is_empty() && list_styles.is_empty() {
+    if paragraph_styles.is_empty()
+        && run_styles.is_empty()
+        && list_styles.is_empty()
+        && column_styles.is_empty()
+    {
         return Ok(String::new());
     }
     let mut xml = String::new();
     push_bounded(&mut xml, "<office:automatic-styles>", max_content_bytes)?;
+    for &width in column_styles {
+        push_bounded(&mut xml, "<style:style style:name=\"", max_content_bytes)?;
+        push_bounded(&mut xml, &column_style_name(width), max_content_bytes)?;
+        push_bounded(
+            &mut xml,
+            "\" style:family=\"table-column\"><style:table-column-properties style:column-width=\"",
+            max_content_bytes,
+        )?;
+        push_bounded(&mut xml, &twips_to_pt(width), max_content_bytes)?;
+        push_bounded(&mut xml, "\"/></style:style>", max_content_bytes)?;
+    }
     for style in paragraph_styles {
         push_bounded(&mut xml, "<style:style style:name=\"", max_content_bytes)?;
         push_bounded(&mut xml, &style.name(), max_content_bytes)?;
@@ -2141,6 +2199,7 @@ fn write_odt_impl(
         &writer.paragraph_styles,
         &writer.run_styles,
         &writer.list_styles,
+        &writer.column_styles,
         limits.max_content_bytes,
     )?;
     let content_len = content_header

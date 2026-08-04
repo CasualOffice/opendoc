@@ -205,6 +205,52 @@ fn overflow_and_malformed_paragraph_lengths_are_reported_not_panicking() {
 }
 
 #[test]
+fn table_column_widths_round_trip_to_a_fixed_point() {
+    let body = r#"<table:table><table:table-column table:number-columns-repeated="2"/><table:table-row><table:table-cell><text:p>a</text:p></table:table-cell><table:table-cell><text:p>b</text:p></table:table-cell></table:table-row></table:table>"#;
+    let import = import_content_xml(
+        &content("1.4", body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    let mut document = import.document;
+    let BlockNode::Table(table) = &mut document.body_mut()[0] else {
+        panic!("table")
+    };
+    assert_eq!(table.grid.len(), 2);
+    table.grid[0].width_twips = Some(1440);
+    table.grid[1].width_twips = Some(2880);
+    document.validate().unwrap();
+
+    let first = write_odt(&document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+    let content_xml = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+    assert!(
+        content_xml.contains(
+            r#"<style:style style:name="co1440" style:family="table-column"><style:table-column-properties style:column-width="72pt"/></style:style>"#
+        ),
+        "column style missing: {content_xml}"
+    );
+    assert!(
+        content_xml.contains(
+            r#"<table:table-column table:style-name="co1440"/><table:table-column table:style-name="co2880"/>"#
+        ),
+        "column refs missing: {content_xml}"
+    );
+
+    let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+    reopened.document.validate().unwrap();
+    let BlockNode::Table(table) = &reopened.document.body()[0] else {
+        panic!("table")
+    };
+    assert_eq!(table.grid[0].width_twips, Some(1440));
+    assert_eq!(table.grid[1].width_twips, Some(2880));
+
+    let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+    assert_eq!(first.bytes, second.bytes);
+}
+
+#[test]
 fn hyperlinks_and_bookmarks_survive_export_round_trip() {
     // Both are imported faithfully; a semantic export must re-emit the `text:a`
     // wrapper (external + internal targets) and the `text:bookmark-start`/`-end`
