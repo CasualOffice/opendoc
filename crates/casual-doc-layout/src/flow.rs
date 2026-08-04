@@ -35,6 +35,8 @@ use casual_doc_model::v1::{
 };
 // Separate `use` line to minimize import-block merge conflicts.
 use casual_doc_model::v1::{BarPosition, GroupPosition, LimitPosition};
+// Separate `use` line (anti-conflict): the legacy form-field checkbox payload.
+use casual_doc_model::v1::FormFieldKind;
 
 use crate::block::{
     BlockBorders, BlockFragment, BorderPattern, BoxMetrics, BreakControl, CellBorders,
@@ -2563,7 +2565,17 @@ fn collect_items_with_measure<'a>(
                     out.push(item);
                 }
             }
-            InlineNode::Field(field) => out.push(field_item(field, ctx)),
+            InlineNode::Field(field) => {
+                // A legacy checkbox form field (`w:ffData/w:checkBox`) paints a box
+                // glyph reflecting its state — like Word (and the SDT checkbox
+                // above) — rather than its empty text result. Other field kinds
+                // flow their (recomputable) cached value.
+                if let Some(glyph) = form_checkbox_glyph_run(field, ctx) {
+                    out.push(FlowItem::Run(glyph));
+                } else {
+                    out.push(field_item(field, ctx));
+                }
+            }
             InlineNode::HorizontalRule(rule) => {
                 let rule_width = if intrinsic.is_some() { Twip(1) } else { width };
                 out.push(hr_item(rule, rule_width));
@@ -3145,6 +3157,41 @@ fn field_item(field: &casual_doc_model::v1::Field, ctx: &mut FlowCtx) -> FlowIte
     };
     let style = field_style(&field.inlines, &value, ctx);
     FlowItem::Field { kind, value, style }
+}
+
+/// If `field` is a legacy checkbox form field (`w:ffData/w:checkBox`, the
+/// FORMCHECKBOX ubiquitous on Word forms), synthesize the box glyph reflecting its
+/// state — `☑` (U+2611) checked, `□` (U+25A1) unchecked — styled by the field's
+/// cached-result run so it sits inline at the field's font size/color. The state
+/// is `w:checked`, else `w:default`, else off. Word paints such a box before its
+/// label; without this the field showed only its empty text result, so the boxes
+/// vanished (docs/60). Uses the same reliably-covered BMP box glyphs the symbol
+/// map resolves legacy checkboxes to, not a producer's symbol font. Returns
+/// `None` for a text-input / drop-down / non-form field.
+fn form_checkbox_glyph_run(
+    field: &casual_doc_model::v1::Field,
+    ctx: &mut FlowCtx,
+) -> Option<StyledRun<'static>> {
+    let FormFieldKind::CheckBox(checkbox) = &field.form.as_ref()?.kind else {
+        return None;
+    };
+    let checked = checkbox.checked.or(checkbox.default).unwrap_or(false);
+    // `□` (U+25A1 WHITE SQUARE) / `☑` (U+2611 BALLOT BOX WITH CHECK): the same
+    // widely-covered BMP box glyphs the symbol map resolves legacy Wingdings
+    // checkboxes to, so they paint reliably (U+2610 BALLOT BOX is often absent and
+    // renders blank).
+    let glyph = if checked { '\u{2611}' } else { '\u{25A1}' };
+    // The field's cached-result run carries the authored font/size/color; reuse it
+    // so the box matches the surrounding text, defaulting when absent.
+    let properties = field
+        .inlines
+        .iter()
+        .find_map(|inline| match inline {
+            InlineNode::Run(run) => Some(run.properties.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    Some(styled_owned_run(glyph.to_string(), &properties, ctx))
 }
 
 /// Classifies a field instruction by its leading keyword (case-insensitive):
@@ -8165,6 +8212,90 @@ mod tests {
             runs,
             vec!["\u{2611}".to_string()],
             "a checkbox with no declared state glyph keeps its transparent recurse"
+        );
+    }
+
+    #[test]
+    fn a_legacy_checkbox_form_field_paints_a_state_distinct_box_glyph() {
+        use casual_doc_model::v1::{Field, FormCheckBox, FormFieldData, FormFieldKind, RgbColor};
+
+        // A legacy `w:ffData/w:checkBox` form field (38 of these on the loan form)
+        // must paint a box glyph — `☑` when checked, `☐` when unchecked — where the
+        // field sits, styled by its cached-result run. Before this it flowed only
+        // its empty text result, so the boxes vanished.
+        fn checkbox_field(checked: Option<bool>, default: Option<bool>) -> InlineNode {
+            InlineNode::Field(Field {
+                id: NodeId::from_parts(20, 1).unwrap(),
+                instruction: " FORMCHECKBOX ".to_owned(),
+                kind: casual_doc_model::v1::FieldKind::default(),
+                // The cached-result run carries the authored size/color the box
+                // should inherit.
+                inlines: vec![InlineNode::Run(Run {
+                    id: NodeId::from_parts(20, 2).unwrap(),
+                    properties: RunProperties {
+                        size_half_points: Some(24),
+                        color: Some(Color::Rgb(RgbColor {
+                            r: 10,
+                            g: 20,
+                            b: 30,
+                        })),
+                        ..RunProperties::default()
+                    },
+                    text: String::new(),
+                })],
+                form: Some(FormFieldData {
+                    name: None,
+                    enabled: None,
+                    calc_on_exit: None,
+                    help_text: None,
+                    status_text: None,
+                    entry_macro: None,
+                    exit_macro: None,
+                    kind: FormFieldKind::CheckBox(FormCheckBox {
+                        size: None,
+                        default,
+                        checked,
+                    }),
+                }),
+            })
+        }
+
+        let definitions = Definitions::default();
+        // Returns the single emitted glyph run's (text, size, color), all owned.
+        let glyph = |inline: InlineNode| -> (String, Twip, [u8; 4]) {
+            let items = collected_items(&definitions, std::slice::from_ref(&inline));
+            let mut runs = items.into_iter().filter_map(|item| match item {
+                FlowItem::Run(run) => Some((run.text.to_string(), run.size, run.color)),
+                _ => None,
+            });
+            let run = runs.next().expect("a checkbox emits one glyph run");
+            assert!(runs.next().is_none(), "exactly one glyph run");
+            run
+        };
+
+        // Unchecked (no state declared) → the empty ballot box, sized/colored from
+        // the field's cached run.
+        let (text, size, color) = glyph(checkbox_field(None, None));
+        assert_eq!(text, "\u{25A1}", "unchecked → □");
+        assert_eq!(size, Twip::from_points(12), "inherits the field size");
+        assert_eq!(color, [10, 20, 30, 255], "inherits the field color");
+        // `w:checked` on → the checked box.
+        assert_eq!(
+            glyph(checkbox_field(Some(true), None)).0,
+            "\u{2611}",
+            "checked → ☑"
+        );
+        // No `w:checked` but `w:default` on → checked box (default drives state).
+        assert_eq!(
+            glyph(checkbox_field(None, Some(true))).0,
+            "\u{2611}",
+            "default checked → ☑"
+        );
+        // `w:checked` overrides `w:default`.
+        assert_eq!(
+            glyph(checkbox_field(Some(false), Some(true))).0,
+            "\u{25A1}",
+            "explicit unchecked wins over a checked default → □"
         );
     }
 
