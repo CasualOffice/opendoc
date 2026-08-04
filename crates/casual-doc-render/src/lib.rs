@@ -1963,6 +1963,30 @@ mod tests {
     }
 
     #[test]
+    fn a_webp_image_decodes_and_blits_pixels_into_its_rect() {
+        // WEBP is increasingly common in web-sourced art pasted into documents;
+        // it shares the generic decode path (pure-Rust `image-webp` codec) and
+        // used to fall back to the placeholder box. A solid-red raster must now
+        // paint red ink inside the box and leave the surrounding page white.
+        let bytes = solid_image(8, 8, [210, 40, 40, 255], image::ImageFormat::WebP);
+        assert!(
+            decode_to_pixmap(&bytes).is_some(),
+            "WEBP decodes to a pixmap"
+        );
+        let surface = render_one_image(bytes);
+        let inside = pixel_at(&surface, 50, 20, 20);
+        assert!(
+            inside[0] > 150 && inside[0] > inside[2] + 40,
+            "the WEBP red ink lands inside the box (got {inside:?})"
+        );
+        assert_eq!(
+            pixel_at(&surface, 50, 2, 2),
+            [255, 255, 255, 255],
+            "outside the WEBP image box stays background white"
+        );
+    }
+
+    #[test]
     fn an_image_over_the_dimension_limit_is_rejected_before_decode_and_placeholdered() {
         // A very wide but shallow PNG keeps the regression fixture small while
         // proving that encoded byte size alone cannot admit an extreme raster:
