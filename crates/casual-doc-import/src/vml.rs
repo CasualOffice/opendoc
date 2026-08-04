@@ -165,7 +165,8 @@ fn parse_len(token: &str) -> Option<Len> {
 // --- neutral intermediate types -------------------------------------------
 
 /// A solid RGBA color parsed from a VML `fillcolor`/`strokecolor` or a
-/// `v:fill`/`v:stroke` `color`. Gradients collapse to their first stop.
+/// `v:fill`/`v:stroke` `color`. A `v:fill` gradient's stops are each a
+/// [`VmlColor`] (see [`VmlGradientStop`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VmlColor {
     /// Red channel.
@@ -366,13 +367,57 @@ pub struct VmlWrap {
     pub distances_twips: [Option<i64>; 4],
 }
 
-/// A shape's fill: whether it is filled, and the solid RGBA color if given.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// A shape's fill: whether it is filled, its primary flat color, and — for a
+/// `v:fill type="gradient"`/`"gradientRadial"` — the parsed [`VmlGradient`].
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VmlFill {
     /// Whether the shape is filled (`filled`, default `true`).
     pub on: bool,
-    /// The fill color, if a `fillcolor`/`v:fill@color` was given.
+    /// The primary fill color, if a `fillcolor`/`v:fill@color` was given. It is
+    /// the flat-color fallback when [`VmlFill::gradient`] is `None`, and the first
+    /// stop's color when a gradient is present.
     pub color: Option<VmlColor>,
+    /// The parsed gradient, present only when the fill declared a gradient `type`
+    /// and yielded at least two stops. When present the shape paints as a gradient
+    /// through the same shared path DrawingML gradients use; otherwise it falls
+    /// back to the flat [`VmlFill::color`].
+    pub gradient: Option<VmlGradient>,
+}
+
+/// A parsed VML gradient fill (`v:fill type="gradient"`/`"gradientRadial"`): its
+/// ordered color stops and geometry, shaped to map directly onto the shared
+/// model `Fill::Gradient`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VmlGradient {
+    /// The gradient stops in ascending position order; always at least two.
+    pub stops: Vec<VmlGradientStop>,
+    /// Linear (with a converted sweep angle) or radial geometry.
+    pub kind: VmlGradientKind,
+}
+
+/// One VML gradient stop: a position and the resolved color painted there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VmlGradientStop {
+    /// The stop position in per-100000 units (`0` = start, `100000` = end),
+    /// matching the shared model's `GradientStop::position`.
+    pub position: i32,
+    /// The resolved stop color.
+    pub color: VmlColor,
+}
+
+/// The geometry of a VML gradient.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VmlGradientKind {
+    /// A linear sweep. `angle` is in 60000ths of a degree, clockwise from the
+    /// positive x-axis — the DrawingML `a:lin@ang` convention the model and render
+    /// backend already use — converted from VML's own `angle` attribute.
+    Linear {
+        /// The sweep angle in 60000ths of a degree (DrawingML convention).
+        angle: i32,
+    },
+    /// A radial fill (`type="gradientRadial"`), collapsed to a concentric fill
+    /// centered on the box (matching the model's `GradientKind::Radial`).
+    Radial,
 }
 
 /// A shape's stroke: whether it is stroked, its RGBA color, and its width.
@@ -688,6 +733,57 @@ fn parse_pair_i64(value: &str) -> Option<(i64, i64)> {
     Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
 }
 
+/// Converts a VML `v:fill@angle` (degrees) to the model/DrawingML sweep angle in
+/// 60000ths of a degree (the `a:lin@ang` convention: clockwise from the positive
+/// x-axis). VML's fill angle is `0` for a horizontal left→right sweep and runs
+/// opposite the DrawingML axis, so the equivalent DrawingML angle is `180° + vml`
+/// normalized to `[0°, 360°)`. Cross-checked against the VML reference example: a
+/// `45°` fill puts `color2` in the top-left corner and `color` in the
+/// bottom-right, i.e. a `225°` DrawingML sweep (`stop@0`→`stop@1` pointing up-left).
+fn vml_fill_angle_to_model(vml_degrees: f64) -> i32 {
+    let degrees = if vml_degrees.is_finite() {
+        (180.0 + vml_degrees).rem_euclid(360.0)
+    } else {
+        180.0
+    };
+    (degrees * 60_000.0).round() as i32
+}
+
+/// Parses a VML `v:fill@colors` list (`"0 #ff0000;.5 lime;1 #0000ff"`): a
+/// `;`-separated list of `position color` pairs. Malformed entries are skipped.
+fn parse_gradient_colors(list: &str) -> Vec<(i32, VmlColor)> {
+    let mut out = Vec::new();
+    for entry in list.split(';') {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        let mut parts = entry.split_whitespace();
+        let Some(position) = parts.next().and_then(parse_gradient_position) else {
+            continue;
+        };
+        let Some(color) = parts.next().and_then(parse_color) else {
+            continue;
+        };
+        out.push((position, color));
+    }
+    out
+}
+
+/// Parses a VML gradient stop position to per-100000 units: a fraction (`0`..`1`),
+/// a percentage (`50%`), or a `65536`-based `f` value (`32768f`).
+fn parse_gradient_position(token: &str) -> Option<i32> {
+    let token = token.trim();
+    let fraction = if let Some(pct) = token.strip_suffix('%') {
+        pct.parse::<f64>().ok()? / 100.0
+    } else if let Some(f) = token.strip_suffix('f') {
+        f.parse::<f64>().ok()? / 65536.0
+    } else {
+        token.parse::<f64>().ok()?
+    };
+    Some((fraction.clamp(0.0, 1.0) * 100_000.0).round() as i32)
+}
+
 // --- group coordinate transform -------------------------------------------
 
 /// A `v:group`'s resolved affine transform from its local coordinate space to
@@ -832,6 +928,16 @@ struct ShapeBuilder {
     filled_attr: Option<bool>,
     fill_color: Option<VmlColor>,
     fill_opacity: Option<u8>,
+    /// The `v:fill@type` (lowercased), e.g. `gradient`/`gradientradial`.
+    fill_type: Option<String>,
+    /// The second gradient color (`v:fill@color2`), the stop at position `1`.
+    fill_color2: Option<VmlColor>,
+    /// The opacity applied to `color2` (`v:fill@opacity2`).
+    fill_opacity2: Option<u8>,
+    /// The gradient sweep angle in degrees (`v:fill@angle`, VML convention).
+    fill_angle: Option<f64>,
+    /// The raw intermediate-stop list (`v:fill@colors`).
+    fill_colors: Option<String>,
     stroked_attr: Option<bool>,
     stroke_color: Option<VmlColor>,
     stroke_weight: Option<Len>,
@@ -856,6 +962,14 @@ impl ShapeBuilder {
             filled_attr: attr(element, b"filled").as_deref().map(parse_bool),
             fill_color: attr(element, b"fillcolor").as_deref().and_then(parse_color),
             fill_opacity: None,
+            // Gradient descriptors live on the `<v:fill>` child, not the shape
+            // element (whose `type` names a `v:shapetype`, not a fill), so they are
+            // captured in `apply_fill`.
+            fill_type: None,
+            fill_color2: None,
+            fill_opacity2: None,
+            fill_angle: None,
+            fill_colors: None,
             stroked_attr: attr(element, b"stroked").as_deref().map(parse_bool),
             stroke_color: attr(element, b"strokecolor")
                 .as_deref()
@@ -879,13 +993,35 @@ impl ShapeBuilder {
         }
     }
 
-    /// Applies a `v:fill` child (color / opacity fallbacks).
+    /// Applies a `v:fill` child (color / opacity fallbacks, plus the gradient
+    /// descriptors that only appear on this element: `type`, `color2`, `angle`,
+    /// and the `colors` multi-stop list).
     fn apply_fill(&mut self, element: &BytesStart<'_>) {
         if self.fill_color.is_none() {
             self.fill_color = attr(element, b"color").as_deref().and_then(parse_color);
         }
         if let Some(op) = attr(element, b"opacity").as_deref().and_then(parse_opacity) {
             self.fill_opacity = Some(op);
+        }
+        if self.fill_type.is_none() {
+            self.fill_type = attr(element, b"type").map(|t| t.trim().to_ascii_lowercase());
+        }
+        if self.fill_color2.is_none() {
+            self.fill_color2 = attr(element, b"color2").as_deref().and_then(parse_color);
+        }
+        if let Some(op) = attr(element, b"opacity2")
+            .as_deref()
+            .and_then(parse_opacity)
+        {
+            self.fill_opacity2 = Some(op);
+        }
+        if self.fill_angle.is_none() {
+            self.fill_angle = attr(element, b"angle")
+                .as_deref()
+                .and_then(|token| token.trim().parse::<f64>().ok());
+        }
+        if self.fill_colors.is_none() {
+            self.fill_colors = attr(element, b"colors");
         }
     }
 
@@ -906,16 +1042,60 @@ impl ShapeBuilder {
         self.wrap.apply_element(element);
     }
 
+    /// Builds the typed [`VmlGradient`] when the fill declared a gradient `type`
+    /// and yields at least two stops: the primary color (already opacity-adjusted)
+    /// at position `0`, any `colors="…"` intermediate stops, and `color2` at
+    /// position `100000`. Returns `None` for a non-gradient fill, or one too
+    /// sparse to form a gradient, so the caller keeps the flat-color fallback.
+    fn build_gradient(&self, primary: Option<VmlColor>) -> Option<VmlGradient> {
+        let kind = match self.fill_type.as_deref() {
+            Some("gradient") => VmlGradientKind::Linear {
+                angle: vml_fill_angle_to_model(self.fill_angle.unwrap_or(0.0)),
+            },
+            Some("gradientradial") => VmlGradientKind::Radial,
+            _ => return None,
+        };
+        // Push the explicit endpoint colors first, then the intermediate list, so
+        // that when a `colors` entry duplicates an endpoint position the explicit
+        // endpoint wins (stable sort + `dedup_by_key` keep the first of each run).
+        let mut stops: Vec<VmlGradientStop> = Vec::new();
+        if let Some(color) = primary {
+            stops.push(VmlGradientStop { position: 0, color });
+        }
+        if let Some(mut color) = self.fill_color2 {
+            if let Some(a) = self.fill_opacity2 {
+                color.a = a;
+            }
+            stops.push(VmlGradientStop {
+                position: 100_000,
+                color,
+            });
+        }
+        if let Some(list) = self.fill_colors.as_deref() {
+            for (position, color) in parse_gradient_colors(list) {
+                stops.push(VmlGradientStop { position, color });
+            }
+        }
+        stops.sort_by_key(|stop| stop.position);
+        stops.dedup_by_key(|stop| stop.position);
+        if stops.len() < 2 {
+            return None;
+        }
+        Some(VmlGradient { stops, kind })
+    }
+
     fn finalize(self, group: Option<&GroupCtx>) -> VmlDrawing {
         let position = self.resolve_position(group);
+        let color = self.fill_color.map(|mut c| {
+            if let Some(a) = self.fill_opacity {
+                c.a = a;
+            }
+            c
+        });
         let fill = VmlFill {
             on: self.filled_attr.unwrap_or(true),
-            color: self.fill_color.map(|mut c| {
-                if let Some(a) = self.fill_opacity {
-                    c.a = a;
-                }
-                c
-            }),
+            gradient: self.build_gradient(color),
+            color,
         };
         let stroke_on = self.stroke_child_on.unwrap_or(true) && self.stroked_attr.unwrap_or(true);
         let stroke = VmlStroke {
@@ -1605,5 +1785,164 @@ mod tests {
         let drawings = parse_vml_pict(xml);
         assert_eq!(drawings.len(), 1);
         assert_eq!(drawings[0].kind, VmlShapeKind::Rect);
+    }
+
+    #[test]
+    fn fill_angle_converts_from_vml_to_drawingml_convention() {
+        // VML `0` = horizontal left→right; the DrawingML equivalent is 180°.
+        assert_eq!(vml_fill_angle_to_model(0.0), 180 * 60_000);
+        // VML `90` → 270° (a vertical sweep in the model's convention).
+        assert_eq!(vml_fill_angle_to_model(90.0), 270 * 60_000);
+        // VML `45` → 225° (the reference example: color2 top-left, color bottom-right).
+        assert_eq!(vml_fill_angle_to_model(45.0), 225 * 60_000);
+        // Angles normalize into [0°, 360°): VML `270` → 450° → 90°.
+        assert_eq!(vml_fill_angle_to_model(270.0), 90 * 60_000);
+        assert_eq!(vml_fill_angle_to_model(-180.0), 0);
+    }
+
+    #[test]
+    fn two_color_linear_gradient_parses_stops_kind_and_angle() {
+        // `fillcolor` is the first stop; `v:fill@color2` the second; the flat
+        // `color` fallback stays the primary color.
+        let xml = r##"<v:rect style="position:absolute;margin-left:0pt;margin-top:0pt;width:100pt;height:20pt" fillcolor="#ff0000"><v:fill type="gradient" color2="#0000ff" angle="0"/></v:rect>"##;
+        let d = &parse_vml_pict(xml)[0];
+        let g = d.fill.gradient.as_ref().expect("gradient parsed");
+        assert_eq!(
+            g.kind,
+            VmlGradientKind::Linear {
+                angle: 180 * 60_000
+            }
+        );
+        assert_eq!(
+            g.stops,
+            vec![
+                VmlGradientStop {
+                    position: 0,
+                    color: VmlColor {
+                        r: 0xff,
+                        g: 0,
+                        b: 0,
+                        a: 255
+                    },
+                },
+                VmlGradientStop {
+                    position: 100_000,
+                    color: VmlColor {
+                        r: 0,
+                        g: 0,
+                        b: 0xff,
+                        a: 255
+                    },
+                },
+            ]
+        );
+        // The flat fallback color is preserved (first stop) for any flat-only path.
+        assert_eq!(d.fill.color.map(|c| (c.r, c.g, c.b)), Some((0xff, 0, 0)));
+    }
+
+    #[test]
+    fn radial_gradient_maps_to_radial_kind() {
+        let xml = r##"<v:oval style="position:absolute;margin-left:0pt;margin-top:0pt;width:60pt;height:60pt" fillcolor="red"><v:fill type="gradientRadial" color2="blue"/></v:oval>"##;
+        let g = parse_vml_pict(xml)[0]
+            .fill
+            .gradient
+            .clone()
+            .expect("radial gradient parsed");
+        assert_eq!(g.kind, VmlGradientKind::Radial);
+        assert_eq!(g.stops.len(), 2);
+        assert_eq!(g.stops[0].position, 0);
+        assert_eq!(g.stops[1].position, 100_000);
+    }
+
+    #[test]
+    fn multi_stop_colors_list_becomes_intermediate_stops() {
+        // A `colors="…"` list supplies three ordered stops on its own.
+        let xml = r##"<v:rect style="position:absolute;margin-left:0pt;margin-top:0pt;width:10pt;height:10pt" filled="true"><v:fill type="gradient" colors="0 #ff0000;.5 lime;100% #0000ff"/></v:rect>"##;
+        let g = parse_vml_pict(xml)[0]
+            .fill
+            .gradient
+            .clone()
+            .expect("multi-stop gradient parsed");
+        assert_eq!(
+            g.stops,
+            vec![
+                VmlGradientStop {
+                    position: 0,
+                    color: VmlColor {
+                        r: 0xff,
+                        g: 0,
+                        b: 0,
+                        a: 255
+                    },
+                },
+                VmlGradientStop {
+                    position: 50_000,
+                    color: VmlColor {
+                        r: 0,
+                        g: 0xff,
+                        b: 0,
+                        a: 255
+                    },
+                },
+                VmlGradientStop {
+                    position: 100_000,
+                    color: VmlColor {
+                        r: 0,
+                        g: 0,
+                        b: 0xff,
+                        a: 255
+                    },
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn explicit_endpoint_color_wins_over_duplicate_colors_entry() {
+        // `fillcolor`/`color2` define the endpoints; a `colors` entry duplicating
+        // position 0 or 1 must not override them.
+        let xml = r##"<v:rect style="position:absolute;margin-left:0pt;margin-top:0pt;width:10pt;height:10pt" fillcolor="#ff0000"><v:fill type="gradient" color2="#0000ff" colors="0 #00ff00;1 #00ff00;.5 #ffffff"/></v:rect>"##;
+        let g = parse_vml_pict(xml)[0].fill.gradient.clone().unwrap();
+        assert_eq!(g.stops.len(), 3);
+        // Endpoints are the explicit fillcolor (red) and color2 (blue), not the
+        // green `colors` entries at the same positions.
+        assert_eq!(g.stops[0].position, 0);
+        assert_eq!((g.stops[0].color.r, g.stops[0].color.b), (0xff, 0));
+        assert_eq!(g.stops[2].position, 100_000);
+        assert_eq!((g.stops[2].color.r, g.stops[2].color.b), (0, 0xff));
+        // The mid-stop from the list survives.
+        assert_eq!(g.stops[1].position, 50_000);
+    }
+
+    #[test]
+    fn gradient_opacity_sets_stop_alpha() {
+        let xml = r##"<v:rect style="position:absolute;margin-left:0pt;margin-top:0pt;width:10pt;height:10pt" fillcolor="#000000"><v:fill type="gradient" color2="#ffffff" opacity="0.5" opacity2="25%"/></v:rect>"##;
+        let g = parse_vml_pict(xml)[0].fill.gradient.clone().unwrap();
+        assert_eq!(g.stops[0].color.a, 128);
+        assert_eq!(g.stops[1].color.a, 64);
+    }
+
+    #[test]
+    fn solid_fill_has_no_gradient() {
+        let xml = r##"<v:rect style="position:absolute;margin-left:0pt;margin-top:0pt;width:10pt;height:10pt" fillcolor="#123456"><v:fill type="solid"/></v:rect>"##;
+        let d = &parse_vml_pict(xml)[0];
+        assert!(d.fill.gradient.is_none());
+        assert_eq!(
+            d.fill.color.map(|c| (c.r, c.g, c.b)),
+            Some((0x12, 0x34, 0x56))
+        );
+    }
+
+    #[test]
+    fn gradient_with_a_single_color_falls_back_to_flat() {
+        // A gradient `type` with only one color cannot form a gradient; the flat
+        // color fallback is kept instead.
+        let xml = r##"<v:rect style="position:absolute;margin-left:0pt;margin-top:0pt;width:10pt;height:10pt" fillcolor="#abcdef"><v:fill type="gradient"/></v:rect>"##;
+        let d = &parse_vml_pict(xml)[0];
+        assert!(d.fill.gradient.is_none());
+        assert_eq!(
+            d.fill.color.map(|c| (c.r, c.g, c.b)),
+            Some((0xab, 0xcd, 0xef))
+        );
     }
 }

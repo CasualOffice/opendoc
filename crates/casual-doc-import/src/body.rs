@@ -52,8 +52,9 @@ use crate::report::Reporter;
 use crate::styles::Styles;
 use crate::tables::TableStack;
 use crate::vml::{
-    VmlColor, VmlDrawing, VmlFill, VmlHorizontalAlign, VmlHr, VmlHrAlign, VmlPosition, VmlRelFrame,
-    VmlShapeKind, VmlStroke, VmlTextAnchor, VmlVerticalAlign, VmlWrap, VmlWrapMode, parse_vml_pict,
+    VmlColor, VmlDrawing, VmlFill, VmlGradientKind, VmlHorizontalAlign, VmlHr, VmlHrAlign,
+    VmlPosition, VmlRelFrame, VmlShapeKind, VmlStroke, VmlTextAnchor, VmlVerticalAlign, VmlWrap,
+    VmlWrapMode, parse_vml_pict,
 };
 
 /// A run/tab/break/drawing/hyperlink/field segment before ids and normalization.
@@ -7460,13 +7461,29 @@ fn vml_hr_segment(drawing: &VmlDrawing, hr: VmlHr) -> Segment {
 
 /// The resolved fill of a VML shape: `None` when unfilled or when filled with no
 /// declared color (a colorless fill is invisible over the page, so it is skipped
-/// rather than defaulted).
+/// rather than defaulted). A parsed `v:fill` gradient maps onto the shared
+/// [`Fill::Gradient`] so it paints through the same path as a DrawingML gradient;
+/// a fill without a parsed gradient stays a flat [`Fill::Solid`].
 fn vml_fill(fill: &VmlFill) -> Option<Fill> {
-    if fill.on {
-        fill.color.map(|color| Fill::Solid(vml_rgba(color)))
-    } else {
-        None
+    if !fill.on {
+        return None;
     }
+    if let Some(gradient) = &fill.gradient {
+        let stops = gradient
+            .stops
+            .iter()
+            .map(|stop| GradientStop {
+                position: stop.position,
+                color: vml_rgba(stop.color),
+            })
+            .collect();
+        let kind = match gradient.kind {
+            VmlGradientKind::Linear { angle } => GradientKind::Linear { angle },
+            VmlGradientKind::Radial => GradientKind::Radial,
+        };
+        return Some(Fill::Gradient { stops, kind });
+    }
+    fill.color.map(|color| Fill::Solid(vml_rgba(color)))
 }
 
 /// The resolved outline of a VML shape: `None` when unstroked; otherwise the
@@ -7517,5 +7534,78 @@ fn vml_rgba(color: VmlColor) -> Rgba {
         g: color.g,
         b: color.b,
         a: color.a,
+    }
+}
+
+#[cfg(test)]
+mod vml_fill_tests {
+    use super::*;
+
+    #[test]
+    fn vml_two_color_gradient_maps_to_model_fill_gradient() {
+        // A `w:pict` rect with a two-color `v:fill` gradient maps onto the shared
+        // `Fill::Gradient` (two stops + Linear kind), so it paints through the same
+        // gradient path as a DrawingML `a:gradFill` — no flat-color collapse.
+        let xml = r##"<w:pict><v:rect style="position:absolute;margin-left:0pt;margin-top:0pt;width:100pt;height:20pt" fillcolor="#ff0000"><v:fill type="gradient" color2="#0000ff" angle="90"/></v:rect></w:pict>"##;
+        let drawing = &parse_vml_pict(xml)[0];
+        let Some(Fill::Gradient { stops, kind }) = vml_fill(&drawing.fill) else {
+            panic!("VML gradient fill must map to Fill::Gradient, not Fill::Solid");
+        };
+        assert_eq!(
+            stops,
+            vec![
+                GradientStop {
+                    position: 0,
+                    color: Rgba {
+                        r: 0xff,
+                        g: 0,
+                        b: 0,
+                        a: 255
+                    },
+                },
+                GradientStop {
+                    position: 100_000,
+                    color: Rgba {
+                        r: 0,
+                        g: 0,
+                        b: 0xff,
+                        a: 255
+                    },
+                },
+            ]
+        );
+        // VML angle 90 → DrawingML 270° (in 60000ths), the model/render convention.
+        assert_eq!(
+            kind,
+            GradientKind::Linear {
+                angle: 270 * 60_000
+            }
+        );
+    }
+
+    #[test]
+    fn vml_radial_gradient_maps_to_radial_fill() {
+        let xml = r##"<w:pict><v:oval style="position:absolute;margin-left:0pt;margin-top:0pt;width:60pt;height:60pt" fillcolor="red"><v:fill type="gradientRadial" color2="blue"/></v:oval></w:pict>"##;
+        let drawing = &parse_vml_pict(xml)[0];
+        let Some(Fill::Gradient { stops, kind }) = vml_fill(&drawing.fill) else {
+            panic!("radial VML gradient must map to Fill::Gradient");
+        };
+        assert_eq!(kind, GradientKind::Radial);
+        assert_eq!(stops.len(), 2);
+    }
+
+    #[test]
+    fn vml_solid_fill_still_maps_to_solid() {
+        let xml = r##"<w:pict><v:rect style="position:absolute;margin-left:0pt;margin-top:0pt;width:10pt;height:10pt" fillcolor="#123456"/></w:pict>"##;
+        let drawing = &parse_vml_pict(xml)[0];
+        assert_eq!(
+            vml_fill(&drawing.fill),
+            Some(Fill::Solid(Rgba {
+                r: 0x12,
+                g: 0x34,
+                b: 0x56,
+                a: 255
+            }))
+        );
     }
 }
