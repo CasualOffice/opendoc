@@ -106,6 +106,8 @@ pub fn compose_paragraph(layout: &LineLayout, origin: Point) -> DisplayList {
                     image.size,
                 ),
                 crop: image.crop,
+                // Inline images are not rotated (a:xfrm applies to floats).
+                transform: None,
             });
         }
         // Inline text boxes: the fill and border paint first, then the box's flowed
@@ -329,6 +331,7 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor) {
                 media: media.clone(),
                 rect: anchor.rect,
                 crop: *crop,
+                transform: anchor.transform,
             });
             // A framed picture's `pic:spPr/a:ln` paints as a stroked rectangle over
             // the picture box (pictures are rectangular).
@@ -350,6 +353,7 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor) {
                 stroke: stroke.as_ref().map(shape_outline),
                 head_end: None,
                 tail_end: None,
+                transform: anchor.transform,
             });
         }
         AnchorContent::Ellipse { fill, stroke } => {
@@ -359,6 +363,7 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor) {
                 stroke: stroke.as_ref().map(shape_outline),
                 head_end: None,
                 tail_end: None,
+                transform: anchor.transform,
             });
         }
         AnchorContent::RoundedRectangle {
@@ -375,6 +380,7 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor) {
                 stroke: stroke.as_ref().map(shape_outline),
                 head_end: None,
                 tail_end: None,
+                transform: anchor.transform,
             });
         }
         AnchorContent::Polygon {
@@ -390,6 +396,7 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor) {
                 stroke: stroke.as_ref().map(shape_outline),
                 head_end: None,
                 tail_end: None,
+                transform: anchor.transform,
             });
         }
         AnchorContent::Line {
@@ -408,6 +415,7 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor) {
                 stroke: Some(shape_outline(stroke)),
                 head_end: *head_end,
                 tail_end: *tail_end,
+                transform: anchor.transform,
             });
         }
         AnchorContent::TextBox {
@@ -425,6 +433,7 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor) {
                     stroke: None,
                     head_end: None,
                     tail_end: None,
+                    transform: anchor.transform,
                 });
             }
             if let Some(border) = border {
@@ -1706,6 +1715,7 @@ mod tests {
                 order: 0,
             },
             descr: None,
+            transform: None,
         }
     }
 
@@ -1741,6 +1751,54 @@ mod tests {
                     if *r == rect && s.color == Color { r: 10, g: 20, b: 30, a: 255 }
             ),
             "the frame paints as a stroked rect over the picture box"
+        );
+    }
+
+    #[test]
+    fn a_floats_transform_rides_onto_its_composed_shape_and_image() {
+        use crate::display::ShapeTransform;
+        let rect = Rect::new(
+            Point::new(Twip(0), Twip(0)),
+            Size::new(Twip(100), Twip(100)),
+        );
+        let xform = ShapeTransform {
+            rotation: 90 * 60_000,
+            flip_h: false,
+            flip_v: true,
+            center: Point::new(Twip(50), Twip(50)),
+        };
+
+        // An image float carries its rotation/flip onto the emitted blit.
+        let mut anchor = anchor_at(
+            AnchorContent::Image {
+                media: "m".to_owned(),
+                crop: None,
+                border: None,
+            },
+            rect,
+        );
+        anchor.transform = Some(xform);
+        let mut list = DisplayList::new();
+        compose_anchor(&mut list, &anchor);
+        assert!(
+            matches!(&list.items[0], PaintItem::Image { transform: Some(t), .. } if *t == xform),
+            "the image blit carries the float transform"
+        );
+
+        // A shape float likewise carries it onto the emitted shape.
+        let mut anchor = anchor_at(
+            AnchorContent::Rectangle {
+                fill: None,
+                stroke: None,
+            },
+            rect,
+        );
+        anchor.transform = Some(xform);
+        let mut list = DisplayList::new();
+        compose_anchor(&mut list, &anchor);
+        assert!(
+            matches!(&list.items[0], PaintItem::Shape { transform: Some(t), .. } if *t == xform),
+            "the shape carries the float transform"
         );
     }
 

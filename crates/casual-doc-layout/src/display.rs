@@ -143,6 +143,34 @@ pub enum ShapeGeometry {
     },
 }
 
+/// An affine transform applied to a [`PaintItem::Shape`] or [`PaintItem::Image`]
+/// about the object's own center: a clockwise rotation and/or axis flips
+/// (`a:xfrm@rot` / `@flipH` / `@flipV`).
+///
+/// Stored as integers and booleans so the display list stays deterministic; the
+/// backend derives the floating-point matrix (rotation about the center, flips)
+/// at paint time. `None` on a paint item means the identity (unrotated,
+/// unflipped) transform.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct ShapeTransform {
+    /// Clockwise rotation in 60000ths of a degree (`a:xfrm@rot`).
+    #[serde(default, skip_serializing_if = "is_zero_rotation")]
+    pub rotation: i32,
+    /// Horizontal flip about the center (`a:xfrm@flipH`).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub flip_h: bool,
+    /// Vertical flip about the center (`a:xfrm@flipV`).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub flip_v: bool,
+    /// The center of rotation/flip — the object rect's center, in the same
+    /// device-scaled twips as the rest of the list.
+    pub center: Point,
+}
+
+fn is_zero_rotation(rotation: &i32) -> bool {
+    *rotation == 0
+}
+
 /// One paint command. Items are painted in list order (painter's algorithm);
 /// clips nest via [`PaintItem::PushClip`]/[`PaintItem::PopClip`].
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -204,6 +232,9 @@ pub enum PaintItem {
         /// fill `rect`. `None` = the whole source fills `rect` (`P1G-OBJ-MODEL`).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         crop: Option<CropRect>,
+        /// The rotation/flip applied about the image's center (`a:xfrm`), if any.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        transform: Option<ShapeTransform>,
     },
     /// A straight line / connector between two points (a floating DrawingML line
     /// shape or `wps:cxnSp` straight connector).
@@ -235,6 +266,9 @@ pub enum PaintItem {
         /// The end (`a:tailEnd`) arrowhead — only meaningful for a line.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tail_end: Option<LineEnd>,
+        /// The rotation/flip applied about the shape's center (`a:xfrm`), if any.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        transform: Option<ShapeTransform>,
     },
     /// Push a clip rectangle; subsequent items are clipped until [`PaintItem::PopClip`].
     PushClip(Rect),
