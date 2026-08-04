@@ -7,12 +7,12 @@ use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, Bookmark, BookmarkEnd,
     BookmarkId, BookmarkStart, Break, BreakKind, Color, Definitions, Document, DocumentDefaults,
     Drawing, Extent, ExternalTarget, FontName, FontRef, GridColumn, Hyperlink, HyperlinkTarget,
-    InlineNode, InternalTarget, LevelJustification, LevelSuffix, MAX_DESCR_BYTES, MAX_EMU,
-    MAX_TABLE_DEPTH, MediaId, MediaReference, Note, NoteId, NoteKind, NoteReference, NumberFormat,
-    NumberingInstance, NumberingInstanceId, NumberingLevel, NumberingOverride, NumberingRef,
-    Paragraph, ParagraphProperties, RgbColor, Run, RunProperties, Tab, Table, TableCell,
-    TableCellProperties, TableProperties, TableRow, TableRowProperties, VerticalAlignment,
-    VerticalMerge,
+    Indentation, InlineNode, InternalTarget, LevelJustification, LevelSuffix, MAX_DESCR_BYTES,
+    MAX_EMU, MAX_TABLE_DEPTH, MediaId, MediaReference, Note, NoteId, NoteKind, NoteReference,
+    NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel, NumberingOverride,
+    NumberingRef, Paragraph, ParagraphProperties, RgbColor, Run, RunProperties, Spacing, Tab,
+    Table, TableCell, TableCellProperties, TableProperties, TableRow, TableRowProperties,
+    VerticalAlignment, VerticalMerge,
 };
 use casual_doc_package::CancellationToken;
 use quick_xml::NsReader;
@@ -398,6 +398,7 @@ struct ParagraphDraft {
     depth: usize,
     outline_level: Option<u8>,
     alignment: Option<Alignment>,
+    paragraph_properties: ParagraphProperties,
     numbering: Option<ListParagraphDraft>,
     inlines: Vec<InlineDraft>,
 }
@@ -552,6 +553,9 @@ struct OdfStyle {
     parent: Option<String>,
     alignment: Option<Alignment>,
     run_properties: RunProperties,
+    /// The supported paragraph-formatting subset (indent, spacing, keeps, break);
+    /// `alignment` above stays separate for the existing cascade.
+    paragraph_properties: ParagraphProperties,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -999,6 +1003,10 @@ fn resolve_style(
                 inherited.alignment = style.alignment;
             }
             merge_run_properties(&mut inherited.run_properties, &style.run_properties);
+            merge_paragraph_properties(
+                &mut inherited.paragraph_properties,
+                &style.paragraph_properties,
+            );
             inherited.family = style.family;
             inherited.parent = None;
             style = inherited;
@@ -1628,8 +1636,9 @@ fn read_paragraph_style_properties(
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let value = decode_attribute(&attribute)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
-        let mapped =
-            if namespace_kind(&namespace) == NamespaceKind::Fo && local.as_ref() == b"text-align" {
+        let paragraph = &mut style.style.paragraph_properties;
+        let mapped = match (namespace_kind(&namespace), local.as_ref()) {
+            (NamespaceKind::Fo, b"text-align") => {
                 style.style.alignment = match value.as_str() {
                     "start" => Some(Alignment::Start),
                     "end" => Some(Alignment::End),
@@ -1638,9 +1647,58 @@ fn read_paragraph_style_properties(
                     _ => None,
                 };
                 style.style.alignment.is_some()
-            } else {
-                false
-            };
+            }
+            (NamespaceKind::Fo, b"margin-left") => {
+                set_indent_field(paragraph, |indent| &mut indent.start_twips, &value)
+            }
+            (NamespaceKind::Fo, b"margin-right") => {
+                set_indent_field(paragraph, |indent| &mut indent.end_twips, &value)
+            }
+            (NamespaceKind::Fo, b"text-indent") => match parse_length_to_twips(&value) {
+                Some(twips) => {
+                    let indent = paragraph.indentation.get_or_insert_with(Default::default);
+                    if twips < 0 {
+                        indent.hanging_twips = Some(-twips);
+                    } else {
+                        indent.first_line_twips = Some(twips);
+                    }
+                    true
+                }
+                None => false,
+            },
+            (NamespaceKind::Fo, b"margin-top") => {
+                set_spacing_field(paragraph, |spacing| &mut spacing.before_twips, &value)
+            }
+            (NamespaceKind::Fo, b"margin-bottom") => {
+                set_spacing_field(paragraph, |spacing| &mut spacing.after_twips, &value)
+            }
+            (NamespaceKind::Fo, b"line-height") => match value.strip_suffix('%') {
+                Some(percent) => match percent.trim().parse::<u16>() {
+                    Ok(percent) => {
+                        paragraph
+                            .spacing
+                            .get_or_insert_with(Default::default)
+                            .line_percent = Some(percent);
+                        true
+                    }
+                    Err(_) => false,
+                },
+                None => false,
+            },
+            (NamespaceKind::Fo, b"keep-with-next") => {
+                paragraph.keep_next = value.trim() == "always";
+                paragraph.keep_next
+            }
+            (NamespaceKind::Fo, b"keep-together") => {
+                paragraph.keep_lines = value.trim() == "always";
+                paragraph.keep_lines
+            }
+            (NamespaceKind::Fo, b"break-before") => {
+                paragraph.page_break_before = value.trim() == "page";
+                paragraph.page_break_before
+            }
+            _ => false,
+        };
         if !mapped && !is_namespace_declaration(&attribute) {
             reporter.report(
                 attribute_feature(reader, &attribute),
@@ -1649,6 +1707,92 @@ fn read_paragraph_style_properties(
         }
     }
     Ok(())
+}
+
+/// Sets an `Indentation` twips field from a length string, allocating the
+/// `Indentation` on first use. Returns whether the length parsed.
+fn set_indent_field(
+    paragraph: &mut ParagraphProperties,
+    field: impl FnOnce(&mut Indentation) -> &mut Option<i32>,
+    value: &str,
+) -> bool {
+    match parse_length_to_twips(value) {
+        Some(twips) => {
+            *field(paragraph.indentation.get_or_insert_with(Default::default)) = Some(twips);
+            true
+        }
+        None => false,
+    }
+}
+
+/// Sets a `Spacing` twips field from a length string, allocating the `Spacing`
+/// on first use. Returns whether the length parsed.
+fn set_spacing_field(
+    paragraph: &mut ParagraphProperties,
+    field: impl FnOnce(&mut Spacing) -> &mut Option<i32>,
+    value: &str,
+) -> bool {
+    match parse_length_to_twips(value) {
+        Some(twips) => {
+            *field(paragraph.spacing.get_or_insert_with(Default::default)) = Some(twips);
+            true
+        }
+        None => false,
+    }
+}
+
+/// Parses an ODF length into twips (1/1440 in). `pt` is exactly reversible with
+/// the writer's `twips_to_pt`; `cm`/`mm`/`in` are accepted (rounded) for real
+/// producer input. Any other unit or a malformed value returns `None`.
+fn parse_length_to_twips(value: &str) -> Option<i32> {
+    let value = value.trim();
+    if let Some(pt) = value.strip_suffix("pt") {
+        return parse_pt_to_twips(pt.trim());
+    }
+    let (number, twips_per_unit) = if let Some(cm) = value.strip_suffix("cm") {
+        (cm, 1440.0 / 2.54)
+    } else if let Some(mm) = value.strip_suffix("mm") {
+        (mm, 1440.0 / 25.4)
+    } else if let Some(inch) = value.strip_suffix("in") {
+        (inch, 1440.0)
+    } else {
+        return None;
+    };
+    let parsed: f64 = number.trim().parse().ok()?;
+    let twips = (parsed * twips_per_unit).round();
+    if twips.is_finite() && twips.abs() < f64::from(i32::MAX) {
+        Some(twips as i32)
+    } else {
+        None
+    }
+}
+
+/// Exactly parses a decimal `pt` value into twips (1 twip = 0.05pt). Integer
+/// arithmetic avoids float error, and a value not on a twip boundary (finer than
+/// 0.05pt) returns `None`.
+fn parse_pt_to_twips(number: &str) -> Option<i32> {
+    let (negative, number) = match number.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, number),
+    };
+    let (whole, frac) = number.split_once('.').unwrap_or((number, ""));
+    if frac.len() > 2 || !frac.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let whole: i64 = if whole.is_empty() {
+        0
+    } else if whole.bytes().all(|byte| byte.is_ascii_digit()) {
+        whole.parse().ok()?
+    } else {
+        return None;
+    };
+    let hundredths: i64 = format!("{frac:0<2}").parse().ok()?;
+    let total_hundredths = whole.checked_mul(100)?.checked_add(hundredths)?;
+    if total_hundredths % 5 != 0 {
+        return None;
+    }
+    let twips = total_hundredths / 5;
+    i32::try_from(if negative { -twips } else { twips }).ok()
 }
 
 fn parse_toggle(value: &str, enabled: &str, disabled: &str) -> Option<bool> {
@@ -2406,6 +2550,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                 depth: 0,
                 outline_level: None,
                 alignment: None,
+                paragraph_properties: ParagraphProperties::default(),
                 numbering: None,
                 inlines: Vec::new(),
             },
@@ -4033,6 +4178,7 @@ fn start_paragraph(
     }
     let mut outline_level = None;
     let mut alignment = None;
+    let mut paragraph_properties = ParagraphProperties::default();
     for attribute in element.attributes() {
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
@@ -4062,6 +4208,7 @@ fn start_paragraph(
             let style_name = decode_attribute(&attribute)?;
             if let Some(style) = automatic_styles.get(&(StyleFamily::Paragraph, style_name)) {
                 alignment = style.alignment;
+                paragraph_properties = style.paragraph_properties.clone();
             } else {
                 reporter.report("odf.style.unresolved".to_owned(), ModelOutcome::Degraded);
             }
@@ -4079,6 +4226,7 @@ fn start_paragraph(
         depth,
         outline_level,
         alignment,
+        paragraph_properties,
         numbering,
         inlines: Vec::new(),
     });
@@ -4293,6 +4441,27 @@ fn merge_run_properties(target: &mut RunProperties, overlay: &RunProperties) {
     }
     if overlay.small_caps.is_some() {
         target.small_caps = overlay.small_caps;
+    }
+}
+
+/// Layers the supported paragraph-formatting subset of `overlay` (a child style)
+/// over `target` (its resolved parent). Only the fields the adapter maps are
+/// merged; each set field wins, matching the run-property cascade.
+fn merge_paragraph_properties(target: &mut ParagraphProperties, overlay: &ParagraphProperties) {
+    if overlay.indentation.is_some() {
+        target.indentation = overlay.indentation;
+    }
+    if overlay.spacing.is_some() {
+        target.spacing = overlay.spacing;
+    }
+    if overlay.keep_next {
+        target.keep_next = true;
+    }
+    if overlay.keep_lines {
+        target.keep_lines = true;
+    }
+    if overlay.page_break_before {
+        target.page_break_before = true;
     }
 }
 
@@ -5095,7 +5264,9 @@ fn build_paragraph(
             instance: numbering_ids[&numbering.instance],
             level: numbering.level,
         }),
-        ..ParagraphProperties::default()
+        // Carry the supported paragraph-formatting subset resolved from the
+        // paragraph's style; the three fields above are set explicitly on top.
+        ..draft.paragraph_properties.clone()
     };
     Ok(Paragraph {
         id,

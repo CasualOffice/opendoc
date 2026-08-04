@@ -5,10 +5,11 @@ use std::io::{Cursor, Write};
 
 use casual_doc_model::v1::{
     Alignment, BlockNode, BookmarkId, BreakKind, Color, Definitions, Document, DocumentDefaults,
-    Extent, FontRef, GroupChild, HeaderFooterKind, HyperlinkTarget, InlineNode, LevelJustification,
-    LevelSuffix, MediaId, Note, NoteId, NoteKind, NoteReference, NumberFormat, NumberingInstanceId,
-    Paragraph, ParagraphProperties, RevisionKind, RunProperties, Table, TableCell,
-    TableCellProperties, TableRow, TableRowProperties, VerticalAlignment, VerticalMerge,
+    Extent, FontRef, GroupChild, HeaderFooterKind, HyperlinkTarget, Indentation, InlineNode,
+    LevelJustification, LevelSuffix, MediaId, Note, NoteId, NoteKind, NoteReference, NumberFormat,
+    NumberingInstanceId, Paragraph, ParagraphProperties, RevisionKind, RunProperties, Spacing,
+    Table, TableCell, TableCellProperties, TableRow, TableRowProperties, VerticalAlignment,
+    VerticalMerge,
 };
 use zip::CompressionMethod;
 use zip::write::{SimpleFileOptions, ZipWriter};
@@ -263,6 +264,103 @@ impl From<Alignment> for OdtParagraphAlignment {
     }
 }
 
+/// The supported paragraph-formatting subset, emitted as one deterministic
+/// automatic `style:style`. Alignment keeps its historical bare name (`P_center`)
+/// so alignment-only output is byte-identical to before; any other property
+/// appends a deterministic hash suffix.
+#[derive(Clone, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+struct OdtParagraphStyle {
+    alignment: Option<OdtParagraphAlignment>,
+    margin_left_twips: Option<i32>,
+    margin_right_twips: Option<i32>,
+    text_indent_twips: Option<i32>,
+    margin_top_twips: Option<i32>,
+    margin_bottom_twips: Option<i32>,
+    line_percent: Option<u16>,
+    keep_next: bool,
+    keep_together: bool,
+    break_before: bool,
+}
+
+impl OdtParagraphStyle {
+    fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
+
+    fn name(&self) -> String {
+        let base = match self.alignment {
+            Some(alignment) => alignment.name().to_owned(),
+            None => "P".to_owned(),
+        };
+        let mut non_alignment = self.clone();
+        non_alignment.alignment = None;
+        if non_alignment.is_empty() {
+            return base;
+        }
+        format!("{base}_{:016x}", font_family_hash(&format!("{self:?}")))
+    }
+}
+
+/// Emits the supported `<style:paragraph-properties>` attributes for a paragraph
+/// style. Lengths use the exactly-reversible `pt` form.
+fn push_paragraph_properties(
+    xml: &mut String,
+    style: &OdtParagraphStyle,
+    max_content_bytes: usize,
+) -> Result<(), OdfError> {
+    if let Some(alignment) = style.alignment {
+        push_bounded(xml, " fo:text-align=\"", max_content_bytes)?;
+        push_bounded(xml, alignment.value(), max_content_bytes)?;
+        push_bounded(xml, "\"", max_content_bytes)?;
+    }
+    for (attr, twips) in [
+        ("fo:margin-left", style.margin_left_twips),
+        ("fo:margin-right", style.margin_right_twips),
+        ("fo:text-indent", style.text_indent_twips),
+        ("fo:margin-top", style.margin_top_twips),
+        ("fo:margin-bottom", style.margin_bottom_twips),
+    ] {
+        if let Some(twips) = twips {
+            push_bounded(xml, " ", max_content_bytes)?;
+            push_bounded(xml, attr, max_content_bytes)?;
+            push_bounded(xml, "=\"", max_content_bytes)?;
+            push_bounded(xml, &twips_to_pt(twips), max_content_bytes)?;
+            push_bounded(xml, "\"", max_content_bytes)?;
+        }
+    }
+    if let Some(percent) = style.line_percent {
+        push_bounded(xml, " fo:line-height=\"", max_content_bytes)?;
+        push_bounded(xml, &percent.to_string(), max_content_bytes)?;
+        push_bounded(xml, "%\"", max_content_bytes)?;
+    }
+    if style.keep_next {
+        push_bounded(xml, " fo:keep-with-next=\"always\"", max_content_bytes)?;
+    }
+    if style.keep_together {
+        push_bounded(xml, " fo:keep-together=\"always\"", max_content_bytes)?;
+    }
+    if style.break_before {
+        push_bounded(xml, " fo:break-before=\"page\"", max_content_bytes)?;
+    }
+    Ok(())
+}
+
+/// Formats a twips length (1/1440 in) as an ODF `pt` string exactly reversible by
+/// the importer's length parser: 1 twip = 0.05pt, so at most two decimals.
+fn twips_to_pt(twips: i32) -> String {
+    let sign = if twips < 0 { "-" } else { "" };
+    let abs = twips.unsigned_abs();
+    let whole = abs / 20;
+    let hundredths = (abs % 20) * 5;
+    if hundredths == 0 {
+        format!("{sign}{whole}pt")
+    } else if hundredths.is_multiple_of(10) {
+        format!("{sign}{whole}.{}pt", hundredths / 10)
+    } else {
+        format!("{sign}{whole}.{hundredths:02}pt")
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
 struct OdtRunStyle {
     bold: Option<bool>,
@@ -419,9 +517,62 @@ fn split_run_properties(properties: &RunProperties) -> (OdtRunStyle, RunProperti
     (style, remainder)
 }
 
+/// Extracts the supported paragraph-formatting subset out of `remainder` into an
+/// `OdtParagraphStyle`, leaving every unsupported field (and the unrepresentable
+/// residue of a partially-mapped sub-struct) in place so the caller's
+/// `!= default` check still reports it.
+fn split_paragraph_properties(remainder: &mut ParagraphProperties) -> OdtParagraphStyle {
+    let mut style = OdtParagraphStyle {
+        alignment: remainder.alignment.take().map(OdtParagraphAlignment::from),
+        ..OdtParagraphStyle::default()
+    };
+    if let Some(indent) = remainder.indentation.take() {
+        style.margin_left_twips = indent.start_twips;
+        style.margin_right_twips = indent.end_twips;
+        // ODF `fo:text-indent` is a single value: positive is a first-line
+        // indent, negative is a hanging indent.
+        style.text_indent_twips = indent
+            .first_line_twips
+            .or_else(|| indent.hanging_twips.map(|hanging| -hanging));
+        // A model carrying both is not representable as one text-indent; keep the
+        // dropped hanging value so it is reported.
+        let leftover = Indentation {
+            start_twips: None,
+            end_twips: None,
+            first_line_twips: None,
+            hanging_twips: if indent.first_line_twips.is_some() {
+                indent.hanging_twips
+            } else {
+                None
+            },
+        };
+        if leftover != Indentation::default() {
+            remainder.indentation = Some(leftover);
+        }
+    }
+    if let Some(spacing) = remainder.spacing.take() {
+        style.margin_top_twips = spacing.before_twips;
+        style.margin_bottom_twips = spacing.after_twips;
+        style.line_percent = spacing.line_percent;
+        let leftover = Spacing {
+            before_twips: None,
+            after_twips: None,
+            line_percent: None,
+            ..spacing
+        };
+        if leftover != Spacing::default() {
+            remainder.spacing = Some(leftover);
+        }
+    }
+    style.keep_next = std::mem::take(&mut remainder.keep_next);
+    style.keep_together = std::mem::take(&mut remainder.keep_lines);
+    style.break_before = std::mem::take(&mut remainder.page_break_before);
+    style
+}
+
 struct Writer {
     xml: String,
-    paragraph_styles: BTreeSet<OdtParagraphAlignment>,
+    paragraph_styles: BTreeSet<OdtParagraphStyle>,
     run_styles: BTreeSet<OdtRunStyle>,
     list_styles: BTreeMap<NumberingInstanceId, OdtListStyle>,
     emitted_lists: BTreeSet<NumberingInstanceId>,
@@ -867,7 +1018,7 @@ impl Writer {
         self.paragraphs_written = self.paragraphs_written.saturating_add(1);
         let mut remainder = paragraph.properties.clone();
         let outline = remainder.outline_level.take();
-        let alignment = remainder.alignment.take().map(OdtParagraphAlignment::from);
+        let style = split_paragraph_properties(&mut remainder);
         if remainder.numbering.take().is_some() && !numbering_mapped {
             self.reporter
                 .record("odt.export.numbering", ModelOutcome::Omitted);
@@ -876,21 +1027,26 @@ impl Writer {
             self.reporter
                 .record("odt.export.paragraph_properties", ModelOutcome::Omitted);
         }
+        let style_name = if style.is_empty() {
+            None
+        } else {
+            let name = style.name();
+            self.paragraph_styles.insert(style);
+            Some(name)
+        };
         if let Some(level) = outline {
             self.push("<text:h text:outline-level=\"")?;
             self.push(&(u16::from(level) + 1).to_string())?;
-            if let Some(alignment) = alignment {
-                self.paragraph_styles.insert(alignment);
+            if let Some(name) = &style_name {
                 self.push("\" text:style-name=\"")?;
-                self.push(alignment.name())?;
+                self.push(name)?;
             }
             self.push("\">")?;
         } else {
             self.push("<text:p")?;
-            if let Some(alignment) = alignment {
-                self.paragraph_styles.insert(alignment);
+            if let Some(name) = &style_name {
                 self.push(" text:style-name=\"")?;
-                self.push(alignment.name())?;
+                self.push(name)?;
                 self.push("\"")?;
             }
             self.push(">")?;
@@ -1549,7 +1705,7 @@ fn hash_bytes_128(hash: &mut u128, bytes: &[u8]) {
 }
 
 fn automatic_styles_xml(
-    paragraph_styles: &BTreeSet<OdtParagraphAlignment>,
+    paragraph_styles: &BTreeSet<OdtParagraphStyle>,
     run_styles: &BTreeSet<OdtRunStyle>,
     list_styles: &BTreeMap<NumberingInstanceId, OdtListStyle>,
     max_content_bytes: usize,
@@ -1559,16 +1715,16 @@ fn automatic_styles_xml(
     }
     let mut xml = String::new();
     push_bounded(&mut xml, "<office:automatic-styles>", max_content_bytes)?;
-    for alignment in paragraph_styles {
+    for style in paragraph_styles {
         push_bounded(&mut xml, "<style:style style:name=\"", max_content_bytes)?;
-        push_bounded(&mut xml, alignment.name(), max_content_bytes)?;
+        push_bounded(&mut xml, &style.name(), max_content_bytes)?;
         push_bounded(
             &mut xml,
-            "\" style:family=\"paragraph\"><style:paragraph-properties fo:text-align=\"",
+            "\" style:family=\"paragraph\"><style:paragraph-properties",
             max_content_bytes,
         )?;
-        push_bounded(&mut xml, alignment.value(), max_content_bytes)?;
-        push_bounded(&mut xml, "\"/></style:style>", max_content_bytes)?;
+        push_paragraph_properties(&mut xml, style, max_content_bytes)?;
+        push_bounded(&mut xml, "/></style:style>", max_content_bytes)?;
     }
     for style in run_styles {
         push_bounded(&mut xml, "<style:style style:name=\"", max_content_bytes)?;
@@ -2893,6 +3049,87 @@ mod tests {
                 name: " Arial ".to_owned(),
             }))
         );
+        let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+        assert_eq!(first.bytes, second.bytes);
+    }
+
+    #[test]
+    fn paragraph_properties_round_trip_to_a_fixed_point() {
+        use casual_doc_model::v1::{Indentation, Spacing};
+        let mut document = core_document();
+        let BlockNode::Paragraph(paragraph) = &mut document.body_mut()[0] else {
+            panic!("paragraph")
+        };
+        paragraph.properties.indentation = Some(Indentation {
+            start_twips: Some(720),
+            end_twips: Some(360),
+            first_line_twips: Some(240),
+            hanging_twips: None,
+        });
+        paragraph.properties.spacing = Some(Spacing {
+            before_twips: Some(120),
+            after_twips: Some(240),
+            line_percent: Some(150),
+            ..Spacing::default()
+        });
+        paragraph.properties.keep_next = true;
+        paragraph.properties.keep_lines = true;
+        paragraph.properties.page_break_before = true;
+
+        let first = write_odt(&document, OdfExportLimits::default()).unwrap();
+        let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+        let content = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+        for expected in [
+            "fo:margin-left=\"36pt\"",
+            "fo:margin-right=\"18pt\"",
+            "fo:text-indent=\"12pt\"",
+            "fo:margin-top=\"6pt\"",
+            "fo:margin-bottom=\"12pt\"",
+            "fo:line-height=\"150%\"",
+            "fo:keep-with-next=\"always\"",
+            "fo:keep-together=\"always\"",
+            "fo:break-before=\"page\"",
+        ] {
+            assert!(
+                content.contains(expected),
+                "missing {expected} in {content}"
+            );
+        }
+        assert!(
+            !first
+                .report
+                .entries
+                .iter()
+                .any(|entry| entry.feature == "odt.export.paragraph_properties")
+        );
+
+        let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+        reopened.document.validate().unwrap();
+        let BlockNode::Paragraph(paragraph) = &reopened.document.body()[0] else {
+            panic!("paragraph")
+        };
+        assert_eq!(
+            paragraph.properties.indentation,
+            Some(Indentation {
+                start_twips: Some(720),
+                end_twips: Some(360),
+                first_line_twips: Some(240),
+                hanging_twips: None,
+            })
+        );
+        assert_eq!(
+            paragraph.properties.spacing,
+            Some(Spacing {
+                before_twips: Some(120),
+                after_twips: Some(240),
+                line_percent: Some(150),
+                ..Spacing::default()
+            })
+        );
+        assert!(paragraph.properties.keep_next);
+        assert!(paragraph.properties.keep_lines);
+        assert!(paragraph.properties.page_break_before);
+
         let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
         assert_eq!(first.bytes, second.bytes);
     }

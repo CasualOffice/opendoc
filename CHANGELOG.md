@@ -62,6 +62,15 @@ a general ODT support claim.
   limits, not grammar conformance — so no schema-validator dependency is bundled.
   A dependency-free `#[ignore]`-gated timing harness records import/export cost
   across the corpus (import 3.5–42 ms, export 1–8 ms).
+- **Paragraph properties (fidelity parity, T2b)**: paragraph formatting beyond
+  alignment now round-trips — indentation (`fo:margin-left`/`-right`,
+  `fo:text-indent` incl. hanging), spacing (`fo:margin-top`/`-bottom`,
+  `fo:line-height` percent), and keep-with-next / keep-together / break-before.
+  The single-alignment automatic style (`P_center`, …) is generalized to a
+  deterministic paragraph style that keeps its historical name when only
+  alignment is set. Lengths use an exactly-reversible `pt` form; the importer
+  also accepts `cm`/`mm`/`in` from real producers. Tab stops and border/shading
+  remain reported remainders (nested-element sub-slices).
 - **Broader run properties (fidelity parity, T2a)**: the run-property round trip
   now covers font family (`fo:font-family`), superscript/subscript
   (`style:text-position`), all-caps (`fo:text-transform`), and small-caps
