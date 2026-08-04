@@ -5,10 +5,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, Bookmark, BookmarkEnd,
-    BookmarkId, BookmarkStart, Break, BreakKind, Color, Definitions, Document, ExternalTarget,
-    GridColumn, Hyperlink, HyperlinkTarget, InlineNode, InternalTarget, LevelJustification,
-    LevelSuffix, MAX_TABLE_DEPTH, Note, NoteId, NoteKind, NoteReference, NumberFormat,
-    NumberingInstance, NumberingInstanceId, NumberingLevel, NumberingRef, Paragraph,
+    BookmarkId, BookmarkStart, Break, BreakKind, Color, Definitions, Document, DocumentDefaults,
+    ExternalTarget, GridColumn, Hyperlink, HyperlinkTarget, InlineNode, InternalTarget,
+    LevelJustification, LevelSuffix, MAX_TABLE_DEPTH, Note, NoteId, NoteKind, NoteReference,
+    NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel, NumberingRef, Paragraph,
     ParagraphProperties, RgbColor, Run, RunProperties, Tab, Table, TableCell, TableCellProperties,
     TableProperties, TableRow, TableRowProperties, VerticalMerge,
 };
@@ -507,6 +507,8 @@ struct OpenStyle {
     depth: usize,
     name: String,
     style: OdfStyle,
+    /// A `style:default-style` (family-wide default) rather than a named style.
+    is_default: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -599,11 +601,14 @@ impl Reporter {
 
 type AutomaticStyles = BTreeMap<(StyleFamily, String), OdfStyle>;
 type ListStyles = BTreeMap<String, BTreeMap<u8, OdfListLevel>>;
+/// Family-wide `style:default-style` properties keyed by family.
+type DefaultStyles = BTreeMap<StyleFamily, OdfStyle>;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct StyleCatalog {
     automatic: AutomaticStyles,
     lists: ListStyles,
+    defaults: DefaultStyles,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -647,6 +652,12 @@ fn parse_style_catalog(
             reporter.report("odf.list-style.shadowed".to_owned(), ModelOutcome::Degraded);
         }
     }
+    // `style:default-style` only appears in the common `office:styles`, i.e. the
+    // styles.xml part, so the styles-part parse is the sole source; merge
+    // defensively in case a content default ever appears.
+    for (family, default) in content_styles.defaults {
+        catalog.defaults.entry(family).or_insert(default);
+    }
     catalog.automatic = resolve_style_inheritance(&catalog.automatic, limits, reporter)?;
     Ok(catalog)
 }
@@ -679,6 +690,7 @@ fn parse_style_document(
     let mut open_list_style: Option<OpenListStyle> = None;
     let mut styles = AutomaticStyles::new();
     let mut list_styles = ListStyles::new();
+    let mut defaults = DefaultStyles::new();
 
     loop {
         check_cancelled(cancellation)?;
@@ -749,6 +761,7 @@ fn parse_style_document(
                         &mut attribute_bytes,
                         &mut open_style,
                         &mut styles,
+                        &mut defaults,
                         &mut open_list_style,
                         &mut list_styles,
                         false,
@@ -801,6 +814,7 @@ fn parse_style_document(
                         &mut attribute_bytes,
                         &mut open_style,
                         &mut styles,
+                        &mut defaults,
                         &mut open_list_style,
                         &mut list_styles,
                         true,
@@ -815,7 +829,7 @@ fn parse_style_document(
                     .as_ref()
                     .is_some_and(|style: &OpenStyle| style.depth == depth)
                 {
-                    finish_style(&mut open_style, &mut styles)?;
+                    finish_style(&mut open_style, &mut styles, &mut defaults)?;
                 }
                 if open_list_style
                     .as_ref()
@@ -868,6 +882,7 @@ fn parse_style_document(
     Ok(StyleCatalog {
         automatic: styles,
         lists: list_styles,
+        defaults,
     })
 }
 
@@ -950,6 +965,7 @@ fn process_style_element(
     attribute_bytes: &mut usize,
     open_style: &mut Option<OpenStyle>,
     styles: &mut AutomaticStyles,
+    defaults: &mut DefaultStyles,
     open_list_style: &mut Option<OpenListStyle>,
     list_styles: &mut ListStyles,
     empty: bool,
@@ -969,7 +985,23 @@ fn process_style_element(
             reporter,
         )?);
         if empty {
-            finish_style(open_style, styles)?;
+            finish_style(open_style, styles, defaults)?;
+        }
+    } else if depth == 3 && is_name(name, NamespaceKind::Style, b"default-style") {
+        if open_style.is_some() || open_list_style.is_some() {
+            return Err(OdfError::MalformedContent);
+        }
+        *open_style = Some(read_default_style_header(
+            reader,
+            element,
+            depth,
+            limits,
+            attributes,
+            attribute_bytes,
+            reporter,
+        )?);
+        if empty {
+            finish_style(open_style, styles, defaults)?;
         }
     } else if depth == 3 && is_name(name, NamespaceKind::Text, b"list-style") {
         if open_style.is_some() || open_list_style.is_some() {
@@ -1281,17 +1313,71 @@ fn read_style_header(
             parent,
             ..OdfStyle::default()
         },
+        is_default: false,
+    })
+}
+
+/// Reads a `style:default-style` header (family only, no name). Unlike a named
+/// style, an unsupported or missing family degrades to `None` and the whole
+/// default is later ignored rather than failing the import.
+fn read_default_style_header(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    depth: usize,
+    limits: OdfImportLimits,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    reporter: &mut Reporter,
+) -> Result<OpenStyle, OdfError> {
+    let mut family = None;
+    let mut family_seen = false;
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        if namespace_kind(&namespace) == NamespaceKind::Style && local.as_ref() == b"family" {
+            if family_seen {
+                return Err(OdfError::MalformedContent);
+            }
+            family_seen = true;
+            family = match decode_attribute(&attribute)?.as_str() {
+                "paragraph" => Some(StyleFamily::Paragraph),
+                "text" => Some(StyleFamily::Text),
+                _ => None,
+            };
+        } else if !is_namespace_declaration(&attribute) {
+            reporter.report(
+                attribute_feature(reader, &attribute),
+                ModelOutcome::Degraded,
+            );
+        }
+    }
+    Ok(OpenStyle {
+        depth,
+        name: String::new(),
+        style: OdfStyle {
+            family,
+            parent: None,
+            ..OdfStyle::default()
+        },
+        is_default: true,
     })
 }
 
 fn finish_style(
     open_style: &mut Option<OpenStyle>,
     styles: &mut AutomaticStyles,
+    defaults: &mut DefaultStyles,
 ) -> Result<(), OdfError> {
     let style = open_style.take().ok_or(OdfError::MalformedContent)?;
     let Some(family) = style.style.family else {
         return Ok(());
     };
+    if style.is_default {
+        // One default per family; keep the first and ignore any duplicate.
+        defaults.entry(family).or_insert(style.style);
+        return Ok(());
+    }
     if styles.insert((family, style.name), style.style).is_some() {
         return Err(OdfError::MalformedContent);
     }
@@ -2100,6 +2186,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
         &notes,
         &bookmarks,
         &style_catalog.lists,
+        &style_catalog.defaults,
         &mut reporter,
     )?;
     Ok(OdtImport {
@@ -4091,6 +4178,7 @@ fn push_paragraph_block(
     push_block_draft(blocks, open_tables, open_note, BlockDraft::Paragraph(index))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_document(
     version: OdfVersion,
     paragraphs: &[ParagraphDraft],
@@ -4098,6 +4186,7 @@ fn build_document(
     notes: &[NoteDraft],
     bookmarks: &[BookmarkDraft],
     list_styles: &ListStyles,
+    defaults: &DefaultStyles,
     reporter: &mut Reporter,
 ) -> Result<Document, OdfError> {
     let mut namespace = 0xcbf2_9ce4_8422_2325_u64;
@@ -4274,7 +4363,29 @@ fn build_document(
         &numbering_ids,
         &note_ids,
     )?;
+    definitions.document_defaults = build_document_defaults(defaults);
     Document::new(document_id, body, definitions).map_err(|_| OdfError::InvalidModel)
+}
+
+/// Converts bounded `style:default-style` properties into the model's
+/// document-wide cascade base. Returns `None` when no supported default property
+/// is present so an empty defaults bag is never attached.
+fn build_document_defaults(defaults: &DefaultStyles) -> Option<DocumentDefaults> {
+    let paragraph = defaults
+        .get(&StyleFamily::Paragraph)
+        .map(|style| ParagraphProperties {
+            alignment: style.alignment,
+            ..ParagraphProperties::default()
+        })
+        .filter(|properties| *properties != ParagraphProperties::default());
+    let run = defaults
+        .get(&StyleFamily::Text)
+        .map(|style| style.run_properties.clone())
+        .filter(|properties| *properties != RunProperties::default());
+    if paragraph.is_none() && run.is_none() {
+        return None;
+    }
+    Some(DocumentDefaults { paragraph, run })
 }
 
 fn hash_block_drafts(hash: &mut u64, blocks: &[BlockDraft]) {

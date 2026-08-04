@@ -1582,6 +1582,13 @@ pub fn write_odt(document: &Document, limits: OdfExportLimits) -> Result<OdtExpo
         }
     }
     writer.write_blocks(document.body(), 0)?;
+    if document.definitions().document_defaults.is_some() {
+        // Import maps style:default-style into document defaults; emitting them
+        // back is a later checkpoint, so disclose rather than silently drop.
+        writer
+            .reporter
+            .record("odt.export.document_defaults", ModelOutcome::Omitted);
+    }
     writer.report_unreferenced_notes();
     if writer.paragraphs_written == 0 {
         writer.push("<text:p/>")?;

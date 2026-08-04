@@ -506,6 +506,37 @@ fn empty_header_region_is_dropped_on_import_and_export() {
 }
 
 #[test]
+fn document_default_styles_map_to_document_defaults() {
+    let styles = br#"<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.4"><office:styles><style:default-style style:family="paragraph"><style:paragraph-properties fo:text-align="center"/></style:default-style><style:default-style style:family="text"><style:text-properties fo:font-weight="bold"/></style:default-style></office:styles></office:document-styles>"#.to_vec();
+    let imported = OdtPackage::open(&package_with_styles(styles), OdfPackageLimits::default())
+        .unwrap()
+        .import_document(OdfImportLimits::default())
+        .unwrap();
+    imported.document.validate().unwrap();
+    let defaults = imported
+        .document
+        .definitions()
+        .document_defaults
+        .as_ref()
+        .expect("document defaults");
+    assert_eq!(
+        defaults.paragraph.as_ref().unwrap().alignment,
+        Some(Alignment::Center)
+    );
+    assert_eq!(defaults.run.as_ref().unwrap().bold, Some(true));
+
+    // Export does not yet re-emit defaults; the loss must be disclosed.
+    let export = crate::write_odt(&imported.document, crate::OdfExportLimits::default()).unwrap();
+    assert!(
+        export
+            .report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "odt.export.document_defaults")
+    );
+}
+
+#[test]
 fn mimetype_must_be_first_stored_exact_and_without_extra_data() {
     let mut not_first = minimal_entries("1.4");
     not_first.swap(0, 1);

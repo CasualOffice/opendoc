@@ -77,7 +77,14 @@ The work lands as reviewable commits:
   header/footer node ids are minted from the same page-geometry generator that
   mints the section id, so identity stays deterministic and globally unique; the
   document is re-validated so any invariant violation fails the import atomically.
-- Style defaults and broader properties, advanced list counters/label layout,
+- Document style defaults are mapped: `office:styles` `style:default-style`
+  entries for the paragraph and text families feed the bounded supported subset
+  (paragraph alignment; direct bold/italic/underline/strike/RGB-color/half-point
+  size) into `DocumentDefaults`, the cascade base the shared model already
+  honors, so unstyled runs inherit them without baking properties into each run.
+  Unsupported default properties remain findings, and export currently discloses
+  the defaults as a loss pending its own writer checkpoint.
+- Broader style properties, advanced list counters/label layout,
   table formatting, media, metadata, header/footer formatting and fields, and the
   remaining structures in sections 4 and 6 remain in progress. Generic
   WASM open/export methods and capability-driven browser Open/Save controls are
