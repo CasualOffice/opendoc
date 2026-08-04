@@ -1029,7 +1029,10 @@ impl WasmDocument {
                         anchor: anchor.to_owned(),
                     })
                 } else {
-                    HyperlinkTarget::External(ExternalTarget { url: href.clone() })
+                    HyperlinkTarget::External(ExternalTarget {
+                        url: href.clone(),
+                        anchor: None,
+                    })
                 };
                 ops.push(Operation::SetHyperlink {
                     range: EditRange {
@@ -1271,7 +1274,10 @@ impl WasmDocument {
                 anchor: anchor.to_owned(),
             })
         } else {
-            HyperlinkTarget::External(ExternalTarget { url: target })
+            HyperlinkTarget::External(ExternalTarget {
+                url: target,
+                anchor: None,
+            })
         };
         let id = self
             .edit_ids
@@ -11866,17 +11872,17 @@ fn object_anchor_in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<Dr
     for inline in inlines {
         match inline {
             InlineNode::AnchoredDrawing(drawing) if drawing.id == object => {
-                return Some(drawing.anchor);
+                return Some(drawing.anchor.clone());
             }
             InlineNode::TextBox(text_box) => {
                 if text_box.id == object {
-                    return text_box.anchor;
+                    return text_box.anchor.clone();
                 }
                 if let Some(anchor) = object_anchor(&text_box.blocks, object) {
                     return Some(anchor);
                 }
             }
-            InlineNode::Group(group) if group.id == object => return group.anchor,
+            InlineNode::Group(group) if group.id == object => return group.anchor.clone(),
             InlineNode::Hyperlink(hyperlink) => {
                 if let Some(anchor) = object_anchor_in_inlines(&hyperlink.inlines, object) {
                     return Some(anchor);
@@ -14352,6 +14358,7 @@ mod tests {
             links[0].link.target,
             HyperlinkTarget::External(ExternalTarget {
                 url: "https://example.com/document".to_owned(),
+                anchor: None,
             })
         );
 
@@ -17962,6 +17969,7 @@ mod tests {
                         descr: None,
                         relative_height: None,
                         crop: None,
+                        border: None,
                         flip_h: false,
                         flip_v: false,
                         rotation: None,
@@ -17985,6 +17993,7 @@ mod tests {
             },
             wrap: WrapMode::Square,
             wrap_distances: casual_doc_model::v1::WrapDistances::default(),
+            wrap_polygon: None,
             behind_doc: false,
         }
     }

@@ -424,6 +424,16 @@ pub struct TableProperties {
     /// Render the table right-to-left, mirroring column order (`w:bidiVisual`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub tbl_bidi_visual: bool,
+    /// Row-stripe period for a banded table style (`w:tblStyleRowBandSize`): how
+    /// many rows form one band before the style's `band1Horz`/`band2Horz`
+    /// conditional formatting alternates. Absent means the style default (1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row_band_size: Option<u32>,
+    /// Column-stripe period for a banded table style (`w:tblStyleColBandSize`):
+    /// how many columns form one band before `band1Vert`/`band2Vert` alternates.
+    /// Absent means the style default (1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub col_band_size: Option<u32>,
     /// Table alignment (`w:jc`); start/center/end (justify reported at import).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alignment: Option<Alignment>,
@@ -523,6 +533,23 @@ pub struct TableRowProperties {
     /// formats this row. `None` when no flag is set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conditional_format: Option<CnfStyle>,
+    /// Number of grid columns skipped before this (short) row's first cell
+    /// (`w:gridBefore`): the row starts partway across the shared grid. `None`
+    /// when the row fills the grid from the leading edge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grid_before: Option<u32>,
+    /// Number of grid columns skipped after this (short) row's last cell
+    /// (`w:gridAfter`): the row ends before the grid's trailing edge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grid_after: Option<u32>,
+    /// Preferred width of the skipped span before the first cell (`w:wBefore`),
+    /// typed by unit like any table width. Meaningful only with `grid_before`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub w_before: Option<TableWidth>,
+    /// Preferred width of the skipped span after the last cell (`w:wAfter`),
+    /// typed by unit like any table width. Meaningful only with `grid_after`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub w_after: Option<TableWidth>,
     /// Row height (`w:trHeight`).
     #[serde(default, skip_serializing_if = "RowHeight::is_empty")]
     pub height: RowHeight,

@@ -24,25 +24,25 @@ use casual_doc_model::v1::{
     CoreProperties, CropRect, CustomProperty, CustomValue, DashStyle, DefinitionMap, Definitions,
     DocGridType, Document, DocumentDefaults, DocumentProtectionEdit, DocumentSettings,
     DropCapFrame, DropCapMode, EmbeddedKind, EmbeddedObject, EmbeddedPart, EmphasisMark, Extent,
-    FontCollection, FontDescriptor, FontFamilyKind, FontPitch, FontRef, FontScheme,
+    Fill, FontCollection, FontDescriptor, FontFamilyKind, FontPitch, FontRef, FontScheme,
     FormCheckBoxSize, FormFieldData, FormFieldKind, FormTextType, FrameHorizontalAlignment,
-    FrameHorizontalAnchor, FrameVerticalAlignment, FrameVerticalAnchor, FrameWrap, GridColumn,
-    GroupChild, GroupShape, GroupTextBox, GroupTransform, HeaderFooterId, HeaderFooterKind,
-    HeightRule, HighlightColor, HorizontalAlign, HorizontalAnchor, HorizontalPosition,
-    HorizontalRuleAlign, HyperlinkTarget, InlineNode, LevelJustification, LevelSuffix, LineEnd,
-    LineEndKind, LineEndSize, LineNumberRestart, LineRule, MarkRevision, MarkRevisionKind, MediaId,
-    MediaReference, MoveKind, Note, NoteId, NoteKind, NoteNumberRestart, NotePosition,
-    NoteProperties, NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel,
-    PageBorderDisplay, PageBorderOffset, PageOrientation, PageVerticalAlignment,
-    ParagraphProperties, Person, PointEmu, PositionalTabAlignment, PositionalTabLeader,
-    PositionalTabRelativeTo, ProofState, PropChange, RevisionKind, RgbColor, Rgba, RunFontHint,
-    RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind,
-    SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionType, ShapeAdjustment,
-    ShapeGeometry, ShapeStroke, Style, StyleId, StyleKind, TabAlignment, TabLeader, Table,
-    TableAnchor, TableBorders, TableCell, TableCellProperties, TableFloatPosition, TableLayout,
-    TableOverlap, TableProperties, TableRow, TableRowProperties, TableStyleOverride,
-    TableStyleRegion, TableWidth, TableXAlign, TableYAlign, TextBox, TextBoxAutoFit,
-    TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxVerticalAnchor,
+    FrameHorizontalAnchor, FrameVerticalAlignment, FrameVerticalAnchor, FrameWrap, GradientKind,
+    GradientStop, GridColumn, GroupChild, GroupShape, GroupTextBox, GroupTransform, HeaderFooterId,
+    HeaderFooterKind, HeightRule, HighlightColor, HorizontalAlign, HorizontalAnchor,
+    HorizontalPosition, HorizontalRuleAlign, HyperlinkTarget, InlineNode, LatentStyles,
+    LevelJustification, LevelSuffix, LineEnd, LineEndKind, LineEndSize, LineNumberRestart,
+    LineRule, MarkRevision, MarkRevisionKind, MediaId, MediaReference, MoveKind, Note, NoteId,
+    NoteKind, NoteNumberRestart, NotePosition, NoteProperties, NumberFormat, NumberingInstance,
+    NumberingInstanceId, NumberingLevel, PageBorderDisplay, PageBorderOffset, PageOrientation,
+    PageVerticalAlignment, ParagraphProperties, Person, PointEmu, PositionalTabAlignment,
+    PositionalTabLeader, PositionalTabRelativeTo, ProofState, PropChange, RevisionKind, RgbColor,
+    Rgba, RunFontHint, RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData,
+    SdtControlKind, SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionType,
+    ShapeAdjustment, ShapeGeometry, ShapeStroke, Style, StyleId, StyleKind, TabAlignment,
+    TabLeader, Table, TableAnchor, TableBorders, TableCell, TableCellProperties,
+    TableFloatPosition, TableLayout, TableOverlap, TableProperties, TableRow, TableRowProperties,
+    TableStyleOverride, TableStyleRegion, TableWidth, TableXAlign, TableYAlign, TextBox,
+    TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxVerticalAnchor,
     TextBoxVerticalOverflow, TextDirection, ThemeColorRef, ThemeFontRef, VerticalAlign,
     VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition, VerticalTextAlignment,
     WidthType, WordprocessingGroup, WrapMode, Zoom, ZoomMode,
@@ -394,13 +394,20 @@ pub fn write_document_with_retained_parts(
             settings_xml(&definitions.settings)?,
         ));
     }
-    if !definitions.styles.is_empty() || definitions.document_defaults.is_some() {
+    if !definitions.styles.is_empty()
+        || definitions.document_defaults.is_some()
+        || definitions.latent_styles.is_some()
+    {
         extras.push(ExtraPart::new(
             "word/styles.xml",
             STYLES_CT,
             STYLES_REL_TYPE,
             "styles.xml",
-            styles_xml(&definitions.styles, definitions.document_defaults.as_ref())?,
+            styles_xml(
+                &definitions.styles,
+                definitions.document_defaults.as_ref(),
+                definitions.latent_styles.as_ref(),
+            )?,
         ));
     }
     if !definitions.abstract_numbering.is_empty() || !definitions.numbering.is_empty() {
@@ -1638,6 +1645,7 @@ fn write_font_collection(
 fn styles_xml(
     styles: &DefinitionMap<StyleId, Style>,
     document_defaults: Option<&DocumentDefaults>,
+    latent_styles: Option<&LatentStyles>,
 ) -> Result<Vec<u8>, ExportError> {
     let mut w = new_writer();
     let mut root = start("w:styles");
@@ -1673,6 +1681,53 @@ fn styles_xml(
             .map_err(pkg)?;
         w.write_event(Event::End(BytesEnd::new("w:docDefaults")))
             .map_err(pkg)?;
+    }
+    // `w:latentStyles` follows `w:docDefaults` and precedes the styles (schema
+    // order). Its block-level defaults and `w:lsdException` children are
+    // attribute-only.
+    if let Some(latent) = latent_styles {
+        let mut el = start("w:latentStyles");
+        for (name, value) in [
+            ("w:defLockedState", latent.default_locked_state),
+            ("w:defSemiHidden", latent.default_semi_hidden),
+            ("w:defUnhideWhenUsed", latent.default_unhide_when_used),
+            ("w:defQFormat", latent.default_q_format),
+        ] {
+            if let Some(value) = value {
+                el.push_attribute((name, if value { "1" } else { "0" }));
+            }
+        }
+        if let Some(priority) = latent.default_ui_priority {
+            el.push_attribute(("w:defUIPriority", priority.to_string().as_str()));
+        }
+        if let Some(count) = latent.count {
+            el.push_attribute(("w:count", count.to_string().as_str()));
+        }
+        if latent.exceptions.is_empty() {
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        } else {
+            w.write_event(Event::Start(el)).map_err(pkg)?;
+            for exception in &latent.exceptions {
+                let mut el = start("w:lsdException");
+                el.push_attribute(("w:name", exception.name.as_str()));
+                for (name, value) in [
+                    ("w:locked", exception.locked),
+                    ("w:semiHidden", exception.semi_hidden),
+                    ("w:unhideWhenUsed", exception.unhide_when_used),
+                    ("w:qFormat", exception.q_format),
+                ] {
+                    if let Some(value) = value {
+                        el.push_attribute((name, if value { "1" } else { "0" }));
+                    }
+                }
+                if let Some(priority) = exception.ui_priority {
+                    el.push_attribute(("w:uiPriority", priority.to_string().as_str()));
+                }
+                w.write_event(Event::Empty(el)).map_err(pkg)?;
+            }
+            w.write_event(Event::End(BytesEnd::new("w:latentStyles")))
+                .map_err(pkg)?;
+        }
     }
     for (id, style) in styles.iter() {
         let style_id = style_id_token(*id);
@@ -1865,6 +1920,12 @@ fn settings_xml(settings: &DocumentSettings) -> Result<Vec<u8>, ExportError> {
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
     write_zoom(&mut w, &settings.zoom)?;
+    // `w:displayBackgroundShape` (CT_Settings §17.15.1.29) precedes the embed-font
+    // flags in schema order.
+    if settings.display_background_shape {
+        w.write_event(Event::Empty(start("w:displayBackgroundShape")))
+            .map_err(pkg)?;
+    }
     for (name, on) in [
         ("w:embedTrueTypeFonts", settings.embed_true_type_fonts),
         ("w:embedSystemFonts", settings.embed_system_fonts),
@@ -1907,6 +1968,26 @@ fn settings_xml(settings: &DocumentSettings) -> Result<Vec<u8>, ExportError> {
         let mut el = start("w:defaultTabStop");
         el.push_attribute(("w:val", value.to_string().as_str()));
         w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    // Hyphenation group (CT_Settings §17.15.1.10/22/48/32), in schema order:
+    // autoHyphenation, consecutiveHyphenLimit, hyphenationZone, doNotHyphenateCaps.
+    if settings.auto_hyphenation {
+        w.write_event(Event::Empty(start("w:autoHyphenation")))
+            .map_err(pkg)?;
+    }
+    if let Some(value) = settings.consecutive_hyphen_limit {
+        let mut el = start("w:consecutiveHyphenLimit");
+        el.push_attribute(("w:val", value.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(value) = settings.hyphenation_zone {
+        let mut el = start("w:hyphenationZone");
+        el.push_attribute(("w:val", value.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if settings.do_not_hyphenate_caps {
+        w.write_event(Event::Empty(start("w:doNotHyphenateCaps")))
+            .map_err(pkg)?;
     }
     if settings.even_and_odd_headers {
         w.write_event(Event::Empty(start("w:evenAndOddHeaders")))
@@ -2871,6 +2952,18 @@ fn write_table_properties(
         w.write_event(Event::Empty(start("w:bidiVisual")))
             .map_err(pkg)?;
     }
+    // `w:tblStyleRowBandSize`/`w:tblStyleColBandSize` follow `w:bidiVisual` and
+    // precede `w:tblW`/`w:jc` in `CT_TblPrBase`.
+    if let Some(size) = properties.row_band_size {
+        let mut el = start("w:tblStyleRowBandSize");
+        el.push_attribute(("w:val", size.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(size) = properties.col_band_size {
+        let mut el = start("w:tblStyleColBandSize");
+        el.push_attribute(("w:val", size.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
     if let Some(alignment) = properties.alignment {
         let mut jc = start("w:jc");
         jc.push_attribute(("w:val", alignment_token(alignment)));
@@ -3077,6 +3170,25 @@ fn write_row_properties(
     }
     w.write_event(Event::Start(start("w:trPr"))).map_err(pkg)?;
     write_cnf_style(w, properties.conditional_format)?;
+    // Short-row grid skips (`w:gridBefore`/`w:gridAfter`) and their preferred
+    // widths (`w:wBefore`/`w:wAfter`) follow `w:cnfStyle` and precede
+    // `w:cantSplit`/`w:trHeight` in `CT_TrPrBase`.
+    if let Some(count) = properties.grid_before {
+        let mut el = start("w:gridBefore");
+        el.push_attribute(("w:val", count.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(count) = properties.grid_after {
+        let mut el = start("w:gridAfter");
+        el.push_attribute(("w:val", count.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(width) = properties.w_before {
+        write_table_width(w, "w:wBefore", width)?;
+    }
+    if let Some(width) = properties.w_after {
+        write_table_width(w, "w:wAfter", width)?;
+    }
     if !properties.height.is_empty() {
         let mut el = start("w:trHeight");
         if let Some(value) = properties.height.value_twips {
@@ -3896,6 +4008,10 @@ fn write_inline(
                 HyperlinkTarget::External(ext) => {
                     let rid = ctx.rels.hyperlink(&ext.url);
                     el.push_attribute(("r:id", rid.as_str()));
+                    // An in-target fragment rides alongside the `r:id` base URL.
+                    if let Some(anchor) = &ext.anchor {
+                        el.push_attribute(("w:anchor", anchor.as_str()));
+                    }
                     if let Some(tip) = &link.tooltip {
                         el.push_attribute(("w:tooltip", tip.as_str()));
                     }
@@ -4126,6 +4242,7 @@ fn write_inline(
                 drawing.extent.as_ref(),
                 drawing.descr.as_deref(),
                 drawing.crop.as_ref(),
+                drawing.border,
                 Xfrm2D {
                     rotation: drawing.rotation,
                     flip_h: drawing.flip_h,
@@ -4283,6 +4400,7 @@ fn write_drawing(
     extent: Option<&Extent>,
     descr: Option<&str>,
     crop: Option<&CropRect>,
+    border: Option<ShapeStroke>,
     xfrm: Xfrm2D,
 ) -> Result<(), ExportError> {
     let (cx, cy) = extent.map_or((0, 0), |extent| (extent.width_emu, extent.height_emu));
@@ -4307,7 +4425,7 @@ fn write_drawing(
         doc_pr.push_attribute(("descr", descr));
     }
     w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
-    write_pic_graphic(w, embed, cx, cy, crop, xfrm)?;
+    write_pic_graphic(w, embed, cx, cy, crop, border, xfrm)?;
     w.write_event(Event::End(BytesEnd::new("wp:inline")))
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("w:drawing")))
@@ -4352,6 +4470,7 @@ fn write_pic_graphic(
     cx: i64,
     cy: i64,
     crop: Option<&CropRect>,
+    border: Option<ShapeStroke>,
     xfrm: Xfrm2D,
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("a:graphic")))
@@ -4408,6 +4527,11 @@ fn write_pic_graphic(
     w.write_event(Event::Empty(start("a:avLst"))).map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("a:prstGeom")))
         .map_err(pkg)?;
+    // A framed picture keeps its `a:ln` outline (schema order: after the geometry).
+    // Absent border = no `a:ln` (the default), so it is only written when present.
+    if border.is_some() {
+        write_outline(w, border)?;
+    }
     w.write_event(Event::End(BytesEnd::new("pic:spPr")))
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("pic:pic")))
@@ -4466,7 +4590,7 @@ fn write_anchored_drawing(
     extent.push_attribute(("cx", cx.to_string().as_str()));
     extent.push_attribute(("cy", cy.to_string().as_str()));
     w.write_event(Event::Empty(extent)).map_err(pkg)?;
-    write_wrap(w, anchor.wrap)?;
+    write_wrap(w, anchor.wrap, anchor.wrap_polygon.as_deref())?;
     let mut doc_pr = start("wp:docPr");
     doc_pr.push_attribute(("id", "1"));
     doc_pr.push_attribute(("name", "Picture 1"));
@@ -4480,6 +4604,7 @@ fn write_anchored_drawing(
         cx,
         cy,
         drawing.crop.as_ref(),
+        drawing.border,
         Xfrm2D {
             rotation: drawing.rotation,
             flip_h: drawing.flip_h,
@@ -4548,10 +4673,10 @@ fn write_group(
     if let Some(anchor) = anchor {
         write_position_h(w, &anchor.horizontal)?;
         write_position_v(w, &anchor.vertical)?;
-        write_wrap_after_extent(w, group, anchor.wrap)?;
+        write_wrap_after_extent(w, group, anchor.wrap, anchor.wrap_polygon.as_deref())?;
     } else {
         write_extent_only(w, group)?;
-        write_wrap(w, WrapMode::None)?;
+        write_wrap(w, WrapMode::None, None)?;
         write_group_body(w, group, ctx)?;
         close_group_drawing(w)?;
         return Ok(());
@@ -4578,9 +4703,10 @@ fn write_wrap_after_extent(
     w: &mut Writer<Cursor<Vec<u8>>>,
     group: &WordprocessingGroup,
     wrap: WrapMode,
+    polygon: Option<&[PointEmu]>,
 ) -> Result<(), ExportError> {
     write_extent_only(w, group)?;
-    write_wrap(w, wrap)?;
+    write_wrap(w, wrap, polygon)?;
     let mut doc_pr = start("wp:docPr");
     doc_pr.push_attribute(("id", "1"));
     doc_pr.push_attribute(("name", "Group 1"));
@@ -4643,6 +4769,7 @@ fn write_wgp(
                         picture.offset,
                         picture.extent,
                         picture.crop.as_ref(),
+                        picture.border,
                         Xfrm2D {
                             rotation: picture.rotation,
                             flip_h: picture.flip_h,
@@ -4707,6 +4834,7 @@ fn write_group_picture(
     offset: PointEmu,
     extent: Extent,
     crop: Option<&CropRect>,
+    border: Option<ShapeStroke>,
     xfrm: Xfrm2D,
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("pic:pic"))).map_err(pkg)?;
@@ -4738,6 +4866,10 @@ fn write_group_picture(
         .map_err(pkg)?;
     write_shape_xfrm(w, offset, extent, xfrm.rotation, xfrm.flip_h, xfrm.flip_v)?;
     write_prst_geom(w, "rect")?;
+    // A framed grouped picture keeps its `a:ln` outline (only when present).
+    if border.is_some() {
+        write_outline(w, border)?;
+    }
     w.write_event(Event::End(BytesEnd::new("pic:spPr")))
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("pic:pic")))
@@ -4772,8 +4904,8 @@ fn write_group_shape(
         .as_deref()
         .unwrap_or_else(|| geometry_prst(shape.geometry));
     write_prst_geom_with_adjustments(w, preset, &shape.adjustments)?;
-    if let Some(fill) = shape.fill {
-        write_solid_fill(w, fill)?;
+    if let Some(fill) = &shape.fill {
+        write_fill(w, fill)?;
     }
     write_outline(w, shape.stroke)?;
     w.write_event(Event::End(BytesEnd::new("wps:spPr")))
@@ -4809,8 +4941,8 @@ fn write_group_text_box(
         text_box.flip_v,
     )?;
     write_prst_geom(w, "rect")?;
-    if let Some(fill) = text_box.fill {
-        write_solid_fill(w, fill)?;
+    if let Some(fill) = &text_box.fill {
+        write_fill(w, fill)?;
     } else {
         w.write_event(Event::Empty(start("a:noFill")))
             .map_err(pkg)?;
@@ -4923,10 +5055,9 @@ fn geometry_prst(geometry: ShapeGeometry) -> &'static str {
     }
 }
 
-/// Emits an `a:solidFill > a:srgbClr` for a resolved color.
-fn write_solid_fill(w: &mut Writer<Cursor<Vec<u8>>>, color: Rgba) -> Result<(), ExportError> {
-    w.write_event(Event::Start(start("a:solidFill")))
-        .map_err(pkg)?;
+/// Emits an `a:srgbClr` element for a resolved color, carrying an `a:alpha` child
+/// when the color is not fully opaque.
+fn write_srgb_color(w: &mut Writer<Cursor<Vec<u8>>>, color: Rgba) -> Result<(), ExportError> {
     let mut srgb = start("a:srgbClr");
     srgb.push_attribute(("val", hex_rgb(color).as_str()));
     if color.a == u8::MAX {
@@ -4940,7 +5071,61 @@ fn write_solid_fill(w: &mut Writer<Cursor<Vec<u8>>>, color: Rgba) -> Result<(), 
         w.write_event(Event::End(BytesEnd::new("a:srgbClr")))
             .map_err(pkg)?;
     }
+    Ok(())
+}
+
+/// Emits an `a:solidFill > a:srgbClr` for a resolved color.
+fn write_solid_fill(w: &mut Writer<Cursor<Vec<u8>>>, color: Rgba) -> Result<(), ExportError> {
+    w.write_event(Event::Start(start("a:solidFill")))
+        .map_err(pkg)?;
+    write_srgb_color(w, color)?;
     w.write_event(Event::End(BytesEnd::new("a:solidFill")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits a shape/text-box background fill: a flat `a:solidFill` or a multi-stop
+/// `a:gradFill`.
+fn write_fill(w: &mut Writer<Cursor<Vec<u8>>>, fill: &Fill) -> Result<(), ExportError> {
+    match fill {
+        Fill::Solid(color) => write_solid_fill(w, *color),
+        Fill::Gradient { stops, kind } => write_grad_fill(w, stops, *kind),
+    }
+}
+
+/// Emits an `a:gradFill` with its stops (`a:gsLst/a:gs`) and geometry (`a:lin` or
+/// `a:path`) in `CT_GradientFillProperties` schema order.
+fn write_grad_fill(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    stops: &[GradientStop],
+    kind: GradientKind,
+) -> Result<(), ExportError> {
+    w.write_event(Event::Start(start("a:gradFill")))
+        .map_err(pkg)?;
+    w.write_event(Event::Start(start("a:gsLst"))).map_err(pkg)?;
+    for stop in stops {
+        let mut gs = start("a:gs");
+        gs.push_attribute(("pos", stop.position.to_string().as_str()));
+        w.write_event(Event::Start(gs)).map_err(pkg)?;
+        write_srgb_color(w, stop.color)?;
+        w.write_event(Event::End(BytesEnd::new("a:gs")))
+            .map_err(pkg)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("a:gsLst")))
+        .map_err(pkg)?;
+    match kind {
+        GradientKind::Linear { angle } => {
+            let mut lin = start("a:lin");
+            lin.push_attribute(("ang", angle.to_string().as_str()));
+            w.write_event(Event::Empty(lin)).map_err(pkg)?;
+        }
+        GradientKind::Radial => {
+            let mut path = start("a:path");
+            path.push_attribute(("path", "circle"));
+            w.write_event(Event::Empty(path)).map_err(pkg)?;
+        }
+    }
+    w.write_event(Event::End(BytesEnd::new("a:gradFill")))
         .map_err(pkg)?;
     Ok(())
 }
@@ -5113,7 +5298,11 @@ fn write_text_child(
 /// Emits the wrap element for an anchor. `wrapNone` is an empty element; the
 /// others carry a `wrapText="bothSides"` (the round-trip only reads the element
 /// name, so the attribute is fixed scaffold).
-fn write_wrap(w: &mut Writer<Cursor<Vec<u8>>>, wrap: WrapMode) -> Result<(), ExportError> {
+fn write_wrap(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    wrap: WrapMode,
+    polygon: Option<&[PointEmu]>,
+) -> Result<(), ExportError> {
     match wrap {
         WrapMode::None => {
             w.write_event(Event::Empty(start("wp:wrapNone")))
@@ -5127,13 +5316,44 @@ fn write_wrap(w: &mut Writer<Cursor<Vec<u8>>>, wrap: WrapMode) -> Result<(), Exp
             };
             let mut el = start(tag);
             el.push_attribute(("wrapText", "bothSides"));
-            w.write_event(Event::Empty(el)).map_err(pkg)?;
+            // A tight/through wrap can carry a `wp:wrapPolygon` contour; emit it
+            // (in schema order, inside the wrap element) when the anchor has one.
+            match polygon {
+                Some(points) if matches!(wrap, WrapMode::Tight | WrapMode::Through) => {
+                    w.write_event(Event::Start(el)).map_err(pkg)?;
+                    write_wrap_polygon(w, points)?;
+                    w.write_event(Event::End(BytesEnd::new(tag))).map_err(pkg)?;
+                }
+                _ => {
+                    w.write_event(Event::Empty(el)).map_err(pkg)?;
+                }
+            }
         }
         WrapMode::TopAndBottom => {
             w.write_event(Event::Empty(start("wp:wrapTopAndBottom")))
                 .map_err(pkg)?;
         }
     }
+    Ok(())
+}
+
+/// Emits a `wp:wrapPolygon` contour: its ordered vertices as `wp:start` (the
+/// first point) then `wp:lineTo` (the rest), each an EMU `@x`/`@y` `CT_Point2D`.
+fn write_wrap_polygon(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    points: &[PointEmu],
+) -> Result<(), ExportError> {
+    w.write_event(Event::Start(start("wp:wrapPolygon")))
+        .map_err(pkg)?;
+    for (index, point) in points.iter().enumerate() {
+        let tag = if index == 0 { "wp:start" } else { "wp:lineTo" };
+        let mut el = start(tag);
+        el.push_attribute(("x", point.x_emu.to_string().as_str()));
+        el.push_attribute(("y", point.y_emu.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("wp:wrapPolygon")))
+        .map_err(pkg)?;
     Ok(())
 }
 
@@ -5371,7 +5591,7 @@ fn write_text_box(
                 height_emu: 0,
             }),
         )?;
-        write_wrap(w, anchor.wrap)?;
+        write_wrap(w, anchor.wrap, anchor.wrap_polygon.as_deref())?;
         "wp:anchor"
     } else {
         let mut frame = start("wp:inline");
@@ -5415,8 +5635,8 @@ fn write_text_box(
         false,
     )?;
     write_prst_geom(w, "rect")?;
-    if let Some(fill) = text_box.fill {
-        write_solid_fill(w, fill)?;
+    if let Some(fill) = &text_box.fill {
+        write_fill(w, fill)?;
     }
     write_outline(w, text_box.border)?;
     w.write_event(Event::End(BytesEnd::new("wps:spPr")))
@@ -5613,6 +5833,22 @@ fn write_sdt_control(
                 _ => None,
             };
             write_sdt_checkbox(w, checkbox)?;
+        }
+        SdtControlKind::BuildingBlockGallery => {
+            let element = sdt_kind_element(kind);
+            if properties.gallery.is_none() && properties.category.is_none() {
+                w.write_event(Event::Empty(start(element))).map_err(pkg)?;
+            } else {
+                w.write_event(Event::Start(start(element))).map_err(pkg)?;
+                if let Some(gallery) = &properties.gallery {
+                    write_val_element(w, "w:docPartGallery", gallery)?;
+                }
+                if let Some(category) = &properties.category {
+                    write_val_element(w, "w:docPartCategory", category)?;
+                }
+                w.write_event(Event::End(BytesEnd::new(element)))
+                    .map_err(pkg)?;
+            }
         }
         _ => {
             w.write_event(Event::Empty(start(sdt_kind_element(kind))))

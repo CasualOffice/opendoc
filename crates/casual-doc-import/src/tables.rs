@@ -335,6 +335,20 @@ impl TableStack {
         }
     }
 
+    /// Sets the banded-style row-stripe period (`w:tblStyleRowBandSize`).
+    pub(crate) fn set_table_row_band_size(&mut self, size: u32) {
+        if let Some(properties) = self.table_properties() {
+            properties.row_band_size = Some(size);
+        }
+    }
+
+    /// Sets the banded-style column-stripe period (`w:tblStyleColBandSize`).
+    pub(crate) fn set_table_col_band_size(&mut self, size: u32) {
+        if let Some(properties) = self.table_properties() {
+            properties.col_band_size = Some(size);
+        }
+    }
+
     /// Sets the preferred table width (`w:tblW`).
     pub(crate) fn set_table_width(&mut self, width: TableWidth) {
         if let Some(properties) = self.table_properties() {
@@ -468,6 +482,38 @@ impl TableStack {
     pub(crate) fn set_row_conditional_format(&mut self, cnf: CnfStyle) {
         if let Some(properties) = self.row_properties() {
             properties.conditional_format = (!cnf.is_empty()).then_some(cnf);
+        }
+    }
+
+    /// Sets the count of grid columns skipped before the row's first cell
+    /// (`w:gridBefore`).
+    pub(crate) fn set_row_grid_before(&mut self, count: u32) {
+        if let Some(properties) = self.row_properties() {
+            properties.grid_before = Some(count);
+        }
+    }
+
+    /// Sets the count of grid columns skipped after the row's last cell
+    /// (`w:gridAfter`).
+    pub(crate) fn set_row_grid_after(&mut self, count: u32) {
+        if let Some(properties) = self.row_properties() {
+            properties.grid_after = Some(count);
+        }
+    }
+
+    /// Sets the preferred width of the span skipped before the first cell
+    /// (`w:wBefore`).
+    pub(crate) fn set_row_w_before(&mut self, width: TableWidth) {
+        if let Some(properties) = self.row_properties() {
+            properties.w_before = Some(width);
+        }
+    }
+
+    /// Sets the preferred width of the span skipped after the last cell
+    /// (`w:wAfter`).
+    pub(crate) fn set_row_w_after(&mut self, width: TableWidth) {
+        if let Some(properties) = self.row_properties() {
+            properties.w_after = Some(width);
         }
     }
 

@@ -3442,8 +3442,12 @@ editorContextMenu.hidden = true;
 editorContextMenu.setAttribute("role", "menu");
 editorContextMenu.setAttribute("aria-label", "Editor commands");
 document.body.appendChild(editorContextMenu);
-let contextMenuEntries = [];
-let contextMenuIndex = -1;
+// Open menus form a stack: index 0 is the root context menu, deeper indexes are
+// nested submenu flyouts. `keyboardLevelIndex` marks which level the arrow keys
+// currently drive; hovering a submenu opens a deeper level visually without
+// stealing keyboard control until the user presses ArrowRight/Enter.
+let menuLevels = [];
+let keyboardLevelIndex = 0;
 let contextMenuReturnFocus = null;
 
 function selectionContainsClientPoint(clientX, clientY) {
@@ -3604,69 +3608,100 @@ function removeContextLink(link) {
   );
 }
 
+function openContextLink(link) {
+  if (!link) return;
+  if (link.url) {
+    window.open(link.url, "_blank", "noopener");
+    return;
+  }
+  if (link.targetNode != null) {
+    selection = {
+      anchor: { node: link.targetNode, offset: link.targetOffset ?? 0 },
+      focus: { node: link.targetNode, offset: link.targetOffset ?? 0 },
+    };
+    drawSelection();
+    scrollCaretIntoView("center");
+    focusEditorSurface();
+  }
+}
+
+// Builds the right-click menu as a short, grouped, contextual set. Primary
+// actions (clipboard, link, comment, review decisions) stay at the top level;
+// the long tail (text styling, list/indent, table row/column operations) is
+// tucked into submenus so no single target dumps a 30-row list. Every entry
+// still routes through the same transaction-backed actions as the ribbon and
+// command palette, so availability and mutation gates never drift.
 function buildContextCommands(context) {
-  const commands = editorCommands(context).filter((command) => command.contextMenu);
+  const registry = new Map(editorCommands(context).map((command) => [command.id, command]));
+  const pick = (id, extra = {}) => {
+    const base = registry.get(id);
+    return base ? { ...base, ...extra } : null;
+  };
   const structuralEnabled = !context.suggesting;
   const structuralReason = structuralEnabled
     ? ""
     : "This structural change cannot be tracked in Suggesting mode";
+  const commands = [];
+
+  // 1 — Clipboard: the universal primary actions, with leading icons.
+  commands.push(
+    pick("edit.cut", { icon: "cut", group: "clipboard" }),
+    pick("edit.copy", { icon: "copy", group: "clipboard" }),
+    pick("edit.paste", { icon: "paste", group: "clipboard" }),
+  );
+
+  // 2 — Review decisions: only over a tracked change, kept near the top since
+  // they are the most specific thing a right-click can land on.
   if (context.revision) {
     commands.push(
       {
         id: "review.accept",
         label: "Accept suggestion",
         group: "review",
+        icon: "accept",
         run: () => decideContextRevision(context.revision, true),
       },
       {
         id: "review.reject",
         label: "Reject suggestion",
         group: "review",
+        icon: "reject",
         danger: true,
         run: () => decideContextRevision(context.revision, false),
       },
     );
   }
-  if (context.comment) {
-    commands.push({
-      id: "comment.open",
-      label: "Open comment",
-      group: "review",
-      run: () => focusReviewComment(context.comment),
-    });
-  } else {
-    commands.push({
-      id: "comment.add",
-      label: "Add comment",
-      group: "review",
-      shortcut: "⌘⌥M",
-      enabled: context.sameParagraphRange,
-      disabledReason: context.hasRange
-        ? "Comments currently require one paragraph"
-        : "Select text to add a comment",
-      run: () => openReviewComposer(),
-    });
-  }
+
+  // 3 — Link: edit/remove when the click landed on a link, otherwise add.
   if (context.link) {
+    const linkReason = context.suggesting
+      ? "Link changes cannot be tracked in Suggesting mode"
+      : "";
+    if (context.link.url || context.link.targetNode != null) {
+      commands.push({
+        id: "link.open",
+        label: "Open link",
+        group: "annotate",
+        icon: "linkOpen",
+        run: () => openContextLink(context.link),
+      });
+    }
     commands.push(
       {
         id: "link.edit",
         label: "Edit link…",
-        group: "link",
+        group: "annotate",
+        icon: "link",
         enabled: !context.suggesting,
-        disabledReason: context.suggesting
-          ? "Link changes cannot be tracked in Suggesting mode"
-          : "",
+        disabledReason: linkReason,
         run: () => editContextLink(context.link),
       },
       {
         id: "link.remove",
         label: "Remove link",
-        group: "link",
+        group: "annotate",
         enabled: !context.suggesting,
-        disabledReason: context.suggesting
-          ? "Link changes cannot be tracked in Suggesting mode"
-          : "",
+        disabledReason: linkReason,
         run: () => removeContextLink(context.link),
       },
     );
@@ -3674,7 +3709,8 @@ function buildContextCommands(context) {
     commands.push({
       id: "link.add",
       label: "Add link…",
-      group: "link",
+      group: "annotate",
+      icon: "link",
       shortcut: "⌘K",
       enabled: context.sameParagraphRange && !context.suggesting,
       disabledReason: context.suggesting
@@ -3685,37 +3721,71 @@ function buildContextCommands(context) {
       run: () => editSelectionLink(),
     });
   }
-  commands.push(
-    {
-      id: "paragraph.properties",
-      label: "Paragraph properties",
-      group: "paragraph",
-      enabled: structuralEnabled,
-      disabledReason: structuralReason,
-      run: () => toggleParagraphProperties(true),
-    },
+
+  // 4 — Comment: open the existing thread or start a new one.
+  if (context.comment) {
+    commands.push({
+      id: "comment.open",
+      label: "Open comment",
+      group: "annotate",
+      icon: "comment",
+      run: () => focusReviewComment(context.comment),
+    });
+  } else {
+    commands.push({
+      id: "comment.add",
+      label: "Add comment",
+      group: "annotate",
+      icon: "comment",
+      shortcut: "⌘⌥M",
+      enabled: context.sameParagraphRange,
+      disabledReason: context.hasRange
+        ? "Comments currently require one paragraph"
+        : "Select text to add a comment",
+      run: () => openReviewComposer(),
+    });
+  }
+
+  // 5 — Text styling, collapsed into a submenu so the root stays short.
+  const formatSubmenu = [
+    pick("format.bold", { group: "style" }),
+    pick("format.italic", { group: "style" }),
+    pick("format.underline", { group: "style" }),
+    pick("format.strike", { group: "style" }),
+    pick("format.superscript", { group: "script" }),
+    pick("format.subscript", { group: "script" }),
+    pick("format.clear", { group: "clear" }),
+  ].filter(Boolean);
+  commands.push({
+    id: "format.menu",
+    label: "Format text",
+    group: "arrange",
+    icon: "format",
+    submenu: formatSubmenu,
+  });
+
+  // 6 — List & indentation submenu (restart/continue only when numbered).
+  const listSubmenu = [
     {
       id: "paragraph.bullets",
       label: context.listKind === "bullet" ? "Remove bullets" : "Bulleted list",
-      group: "paragraph",
+      group: "list",
       enabled: structuralEnabled,
       disabledReason: structuralReason,
-      run: () => runToolbarEdit((a, b, c, d) =>
-        doc.toggleList(a, b, c, d, "bullet")),
+      run: () => runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "bullet")),
     },
     {
       id: "paragraph.numbering",
       label: context.listKind === "numbered" ? "Remove numbering" : "Numbered list",
-      group: "paragraph",
+      group: "list",
       enabled: structuralEnabled,
       disabledReason: structuralReason,
-      run: () => runToolbarEdit((a, b, c, d) =>
-        doc.toggleList(a, b, c, d, "numbered")),
+      run: () => runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "numbered")),
     },
     {
       id: "paragraph.restart",
       label: "Restart numbering",
-      group: "paragraph",
+      group: "list",
       visible: context.listKind === "numbered",
       enabled: structuralEnabled,
       disabledReason: structuralReason,
@@ -3724,7 +3794,7 @@ function buildContextCommands(context) {
     {
       id: "paragraph.continue",
       label: "Continue numbering",
-      group: "paragraph",
+      group: "list",
       visible: context.listKind === "numbered" && doc.canContinueList(context.anchor.node),
       enabled: structuralEnabled,
       disabledReason: structuralReason,
@@ -3733,7 +3803,7 @@ function buildContextCommands(context) {
     {
       id: "paragraph.indent.increase",
       label: "Increase indent",
-      group: "paragraph",
+      group: "indent",
       enabled: structuralEnabled,
       disabledReason: structuralReason,
       run: () => adjustIndentCommand(360),
@@ -3741,12 +3811,34 @@ function buildContextCommands(context) {
     {
       id: "paragraph.indent.decrease",
       label: "Decrease indent",
-      group: "paragraph",
+      group: "indent",
       enabled: structuralEnabled,
       disabledReason: structuralReason,
       run: () => adjustIndentCommand(-360),
     },
-  );
+  ];
+  commands.push({
+    id: "paragraph.list",
+    label: "List & indentation",
+    group: "arrange",
+    icon: "list",
+    submenu: listSubmenu,
+  });
+
+  // 7 — Paragraph dialog (the structural catch-all) stays a top-level row.
+  commands.push({
+    id: "paragraph.properties",
+    label: "Paragraph properties…",
+    group: "arrange",
+    icon: "paragraph",
+    enabled: structuralEnabled,
+    disabledReason: structuralReason,
+    run: () => toggleParagraphProperties(true),
+  });
+
+  // 8 — Table target: Insert / Delete / Select / layout as submenus, matching
+  // Word's and Google Docs' table context menus, plus merge/split and the two
+  // property dialogs at the top level.
   if (context.table) {
     const regular = context.table.regular;
     const selectedTable = tableSelection
@@ -3760,7 +3852,7 @@ function buildContextCommands(context) {
     const tableMutation = (id, label, run, options = {}) => ({
       id,
       label,
-      group: options.group ?? "table-structure",
+      group: options.group ?? "op",
       enabled:
         structuralEnabled &&
         (options.regular !== true || regular) &&
@@ -3776,17 +3868,43 @@ function buildContextCommands(context) {
       danger: options.danger,
       run,
     });
-    commands.push(
+
+    const insertSubmenu = [
+      tableMutation("table.insert.rowAbove", "Row above",
+        () => runEdit(() => doc.insertRow(context.anchor.node, false), { gate: true }),
+        { group: "row" }),
+      tableMutation("table.insert.rowBelow", "Row below",
+        () => runEdit(() => doc.insertRow(context.anchor.node, true), { gate: true }),
+        { group: "row" }),
+      tableMutation("table.insert.columnLeft", "Column left",
+        () => runEdit(() => doc.insertColumn(context.anchor.node, false), { gate: true }),
+        { regular: true, group: "col" }),
+      tableMutation("table.insert.columnRight", "Column right",
+        () => runEdit(() => doc.insertColumn(context.anchor.node, true), { gate: true }),
+        { regular: true, group: "col" }),
+    ];
+    const deleteSubmenu = [
+      tableMutation("table.delete.row", "Delete row",
+        () => runEdit(() => doc.deleteRow(context.anchor.node), { gate: true }),
+        { danger: true, group: "cell" }),
+      tableMutation("table.delete.column", "Delete column",
+        () => runEdit(() => doc.deleteColumn(context.anchor.node), { gate: true }),
+        { danger: true, regular: true, group: "cell" }),
+      tableMutation("table.delete.table", "Delete table",
+        () => runEdit(() => doc.deleteTable(context.anchor.node), { gate: true }),
+        { danger: true, group: "table" }),
+    ];
+    const selectSubmenu = [
       {
         id: "table.select.row",
         label: "Select row",
-        group: "table-select",
+        group: "sel",
         run: () => selectTableContext(context.anchor.node, "row"),
       },
       {
         id: "table.select.column",
         label: "Select column",
-        group: "table-select",
+        group: "sel",
         enabled: regular,
         disabledReason: regular ? "" : columnsReason,
         run: () => selectTableContext(context.anchor.node, "column"),
@@ -3794,52 +3912,78 @@ function buildContextCommands(context) {
       {
         id: "table.select.table",
         label: "Select table",
-        group: "table-select",
+        group: "sel",
         run: () => selectTableContext(context.anchor.node, "table"),
       },
-      tableMutation("table.insert.rowAbove", "Insert row above",
-        () => runEdit(() => doc.insertRow(context.anchor.node, false), { gate: true })),
-      tableMutation("table.insert.rowBelow", "Insert row below",
-        () => runEdit(() => doc.insertRow(context.anchor.node, true), { gate: true })),
-      tableMutation("table.insert.columnLeft", "Insert column left",
-        () => runEdit(() => doc.insertColumn(context.anchor.node, false), { gate: true }),
-        { regular: true }),
-      tableMutation("table.insert.columnRight", "Insert column right",
-        () => runEdit(() => doc.insertColumn(context.anchor.node, true), { gate: true }),
-        { regular: true }),
+    ];
+    const layoutSubmenu = [
       tableMutation("table.distribute.rows", "Distribute rows",
         () => runEdit(() => doc.distributeTableRows(context.anchor.node), { gate: true }),
         {
           regular: true,
+          group: "distribute",
           enabled: ["exact", "atLeast"].includes(context.table.rowHeightRule),
           disabledReason: "Rows need a fixed or minimum height before distribution",
         }),
       tableMutation("table.distribute.columns", "Distribute columns",
         () => runEdit(() => doc.distributeTableColumns(context.anchor.node), { gate: true }),
-        { regular: true }),
+        { regular: true, group: "distribute" }),
       tableMutation("table.sort.ascending", "Sort ascending",
         () => runEdit(() => doc.sortTable(context.anchor.node, "ascending"), { gate: true }),
-        { regular: true }),
+        { regular: true, group: "sort" }),
       tableMutation("table.sort.descending", "Sort descending",
         () => runEdit(() => doc.sortTable(context.anchor.node, "descending"), { gate: true }),
-        { regular: true }),
-      tableMutation("table.merge", "Merge selected cells",
+        { regular: true, group: "sort" }),
+    ];
+
+    commands.push(
+      {
+        id: "table.insert",
+        label: "Insert",
+        group: "table",
+        icon: "tableInsert",
+        submenu: insertSubmenu,
+      },
+      {
+        id: "table.delete",
+        label: "Delete",
+        group: "table",
+        icon: "tableDelete",
+        submenu: deleteSubmenu,
+      },
+      tableMutation("table.merge", "Merge cells",
         async () => {
           await runEdit(() =>
             doc.mergeTableSelection(tableSelection.node, tableSelection.mode), { gate: true });
           tableSelection = null;
         },
         {
-          enabled:
-            hasTableSelection,
+          group: "table",
+          enabled: hasTableSelection,
           disabledReason: "Select a row, column, or table before merging",
         }),
       tableMutation("table.split", "Split cell…",
-        () => toggleSplitCellDialog(true)),
+        () => toggleSplitCellDialog(true),
+        { group: "table" }),
+      {
+        id: "table.select",
+        label: "Select",
+        group: "table-select",
+        icon: "tableSelect",
+        submenu: selectSubmenu,
+      },
+      {
+        id: "table.layout",
+        label: "Autofit & sort",
+        group: "table-select",
+        icon: "tableLayout",
+        submenu: layoutSubmenu,
+      },
       {
         id: "table.cellFormat",
         label: "Cell formatting…",
         group: "table-properties",
+        icon: "paragraph",
         enabled: structuralEnabled,
         disabledReason: structuralReason,
         run: () => {
@@ -3849,30 +3993,60 @@ function buildContextCommands(context) {
       },
       {
         id: "table.properties",
-        label: "Table properties",
+        label: "Table properties…",
         group: "table-properties",
+        icon: "settings",
         enabled: structuralEnabled,
         disabledReason: structuralReason,
         run: () => toggleTableProperties(true),
       },
-      tableMutation("table.delete.row", "Delete row",
-        () => runEdit(() => doc.deleteRow(context.anchor.node), { gate: true }),
-        { group: "table-delete", danger: true }),
-      tableMutation("table.delete.column", "Delete column",
-        () => runEdit(() => doc.deleteColumn(context.anchor.node), { gate: true }),
-        { group: "table-delete", danger: true, regular: true }),
-      tableMutation("table.delete.table", "Delete table",
-        () => runEdit(() => doc.deleteTable(context.anchor.node), { gate: true }),
-        { group: "table-delete", danger: true }),
     );
   }
-  return commands;
+  return commands.filter(Boolean);
 }
 
-function setContextMenuIndex(index, focus = true) {
-  contextMenuIndex = index;
-  const items = [...editorContextMenu.querySelectorAll(".menu-item")];
-  for (const item of items) {
+// ---- Menu rendering engine (root context menu + nested submenu flyouts) -----
+// Compact, currentColor stroke icons for primary rows and submenu parents. The
+// icon gutter is always reserved so labels align whether or not a row has one —
+// the same alignment Word and Google Docs use.
+const menuIcon = (inner) =>
+  `<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
+const MENU_ICONS = {
+  cut: menuIcon('<circle cx="4" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><path d="M5.3 10.7 13 3M10.7 10.7 3 3"/>'),
+  copy: menuIcon('<rect x="5.5" y="5.5" width="8" height="8" rx="1.4"/><path d="M10.5 5.5V3.4A1.4 1.4 0 0 0 9.1 2H3.4A1.4 1.4 0 0 0 2 3.4v5.7A1.4 1.4 0 0 0 3.4 10.5h2.1"/>'),
+  paste: menuIcon('<rect x="3.5" y="3" width="9" height="11" rx="1.4"/><path d="M6 3.2V2.4A1.1 1.1 0 0 1 7.1 1.3h1.8A1.1 1.1 0 0 1 10 2.4v.8z"/>'),
+  link: menuIcon('<path d="M6.7 9.3 9.3 6.7"/><path d="M7.2 4.6 8.4 3.4a2.4 2.4 0 0 1 3.4 3.4L10.6 8"/><path d="M8.8 11.4 7.6 12.6a2.4 2.4 0 0 1-3.4-3.4L5.4 8"/>'),
+  linkOpen: menuIcon('<path d="M9 3h4v4"/><path d="M13 3 7.5 8.5"/><path d="M11 9.5V12a1.5 1.5 0 0 1-1.5 1.5H4A1.5 1.5 0 0 1 2.5 12V6.5A1.5 1.5 0 0 1 4 5h2.5"/>'),
+  comment: menuIcon('<path d="M2.5 3.5h11a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H7l-3 2.3V10.5H2.5a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1z"/>'),
+  accept: menuIcon('<path d="M3 8.5 6.3 12 13 4"/>'),
+  reject: menuIcon('<path d="M4 4 12 12M12 4 4 12"/>'),
+  format: menuIcon('<path d="M4 12.5 7.5 3.5h1L12 12.5M5.4 9.5h5.2"/>'),
+  list: menuIcon('<path d="M6 4h8M6 8h8M6 12h8"/><path d="M2.7 4h.01M2.7 8h.01M2.7 12h.01"/>'),
+  paragraph: menuIcon('<path d="M8.5 2.5H12M8.5 6H12M4 9.5H12M4 13H12M5 6.5A2.2 2.2 0 0 1 5 2.5h1.5v4"/>'),
+  settings: menuIcon('<circle cx="8" cy="8" r="1.9"/><path d="M8 1.7v1.8M8 12.5v1.8M2.4 5.5l1.6.9M12 9.6l1.6.9M2.4 10.5l1.6-.9M12 6.4l1.6-.9"/>'),
+  tableInsert: menuIcon('<path d="M2.5 6h7M2.5 10h4M6 2.5v8"/><path d="M11.5 8.5v5M9 11h5"/>'),
+  tableDelete: menuIcon('<rect x="2.5" y="2.5" width="11" height="11" rx="1"/><path d="M6.2 6.2 9.8 9.8M9.8 6.2 6.2 9.8"/>'),
+  tableSelect: menuIcon('<rect x="2.5" y="2.5" width="11" height="11" rx="1"/><path d="M2.5 6.5h11M6.5 2.5v11"/>'),
+  tableLayout: menuIcon('<rect x="2.5" y="2.5" width="11" height="11" rx="1"/><path d="M2.5 8h11M8 2.5v11"/>'),
+};
+
+function menuLevelItems(level) {
+  return [...level.el.querySelectorAll(":scope > .menu-item")];
+}
+
+function menuItemAt(level, index) {
+  return menuLevelItems(level).find(
+    (item) => Number(item.dataset.menuIndex) === index,
+  ) ?? null;
+}
+
+function activeMenuLevel() {
+  return menuLevels[keyboardLevelIndex] ?? null;
+}
+
+function focusMenuIndex(level, index, focus = true) {
+  level.index = index;
+  for (const item of menuLevelItems(level)) {
     const active = Number(item.dataset.menuIndex) === index;
     item.tabIndex = active ? 0 : -1;
     item.classList.toggle("active", active);
@@ -3883,69 +4057,166 @@ function setContextMenuIndex(index, focus = true) {
   }
 }
 
+// Removes every open level deeper than `depth`, releasing submenu DOM nodes and
+// resetting the parent's expanded state.
+function closeMenuLevelsAbove(depth) {
+  while (menuLevels.length > depth + 1) {
+    const level = menuLevels.pop();
+    level.parentButton?.setAttribute("aria-expanded", "false");
+    if (level.el !== editorContextMenu) level.el.remove();
+  }
+  if (keyboardLevelIndex > menuLevels.length - 1) {
+    keyboardLevelIndex = Math.max(0, menuLevels.length - 1);
+  }
+}
+
+function renderMenuLevel(el, entries, depth) {
+  el.replaceChildren();
+  entries.forEach((entry, index) => {
+    if (entry.separator) {
+      const sep = document.createElement("div");
+      sep.className = "menu-divider";
+      sep.setAttribute("role", "separator");
+      el.appendChild(sep);
+      return;
+    }
+    const hasSub = Array.isArray(entry.submenu);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className =
+      `menu-item${entry.danger ? " danger" : ""}${hasSub ? " has-submenu" : ""}`;
+    button.dataset.menuIndex = String(index);
+    button.dataset.commandId = entry.id;
+    button.setAttribute("role", "menuitem");
+    button.disabled = entry.enabled === false;
+    button.tabIndex = -1;
+    if (hasSub) {
+      button.setAttribute("aria-haspopup", "menu");
+      button.setAttribute("aria-expanded", "false");
+    }
+    if (entry.disabledReason) button.title = entry.disabledReason;
+    const icon = document.createElement("span");
+    icon.className = "menu-item-icon";
+    if (entry.icon && MENU_ICONS[entry.icon]) icon.innerHTML = MENU_ICONS[entry.icon];
+    button.appendChild(icon);
+    const label = document.createElement("span");
+    label.className = "menu-item-label";
+    label.textContent = entry.label;
+    button.appendChild(label);
+    if (hasSub) {
+      const caret = document.createElement("span");
+      caret.className = "menu-item-caret";
+      caret.textContent = "›";
+      button.appendChild(caret);
+    } else if (entry.shortcut || (entry.enabled === false && entry.disabledReason)) {
+      const hint = document.createElement("span");
+      hint.className = "menu-item-hint";
+      hint.textContent = entry.enabled === false ? entry.disabledReason : entry.shortcut;
+      button.appendChild(hint);
+    }
+    button.addEventListener("mousemove", () => {
+      if (button.disabled) return;
+      const level = menuLevels[depth];
+      if (!level) return;
+      keyboardLevelIndex = depth;
+      focusMenuIndex(level, index, false);
+      if (hasSub) openSubmenu(depth, button, entry);
+      else closeMenuLevelsAbove(depth);
+    });
+    button.addEventListener("click", (event) => {
+      if (hasSub) {
+        event.stopPropagation();
+        openSubmenu(depth, button, entry, true);
+        return;
+      }
+      runMenuEntry(entry);
+    });
+    el.appendChild(button);
+  });
+}
+
+// Opens (or re-focuses) the flyout for a submenu-parent button. Prefers opening
+// to the right of the parent and flips left near the viewport edge.
+function openSubmenu(parentDepth, button, entry, viaKeyboard = false) {
+  const depth = parentDepth + 1;
+  const existing = menuLevels[depth];
+  if (existing && existing.parentButton === button) {
+    if (viaKeyboard) {
+      keyboardLevelIndex = depth;
+      focusMenuIndex(existing, moveMenuIndex(existing.entries, -1, 1));
+    }
+    return;
+  }
+  closeMenuLevelsAbove(parentDepth);
+  button.setAttribute("aria-expanded", "true");
+  const el = document.createElement("div");
+  el.className = "context-menu editor-submenu";
+  el.setAttribute("role", "menu");
+  el.setAttribute("aria-label", entry.label);
+  el.hidden = true;
+  document.body.appendChild(el);
+  const entries = normalizeMenuEntries(entry.submenu);
+  const level = { el, entries, index: -1, parentButton: button };
+  renderMenuLevel(el, entries, depth);
+  el.hidden = false;
+  const rect = button.getBoundingClientRect();
+  const width = el.offsetWidth;
+  const height = el.offsetHeight;
+  let left = rect.right - 4;
+  if (left + width > window.innerWidth - 8) left = rect.left - width + 4;
+  left = Math.max(8, Math.min(left, window.innerWidth - width - 8));
+  let top = Math.max(8, Math.min(rect.top - 5, window.innerHeight - height - 8));
+  el.style.left = `${left}px`;
+  el.style.top = `${top}px`;
+  menuLevels[depth] = level;
+  if (viaKeyboard) {
+    keyboardLevelIndex = depth;
+    focusMenuIndex(level, moveMenuIndex(entries, -1, 1));
+  }
+}
+
+function stepToParentLevel() {
+  const parentDepth = keyboardLevelIndex - 1;
+  const parent = menuLevels[parentDepth];
+  closeMenuLevelsAbove(parentDepth);
+  keyboardLevelIndex = parentDepth;
+  if (parent) {
+    focusMenuIndex(
+      parent,
+      parent.index >= 0 ? parent.index : moveMenuIndex(parent.entries, -1, 1),
+    );
+  }
+}
+
 function hideContextMenu({ restoreFocus = false } = {}) {
-  if (editorContextMenu.hidden) return;
+  if (editorContextMenu.hidden && menuLevels.length === 0) return;
+  for (const level of menuLevels) {
+    if (level.el === editorContextMenu) level.el.replaceChildren();
+    else level.el.remove();
+  }
+  menuLevels = [];
+  keyboardLevelIndex = 0;
   editorContextMenu.hidden = true;
-  contextMenuEntries = [];
-  contextMenuIndex = -1;
   if (restoreFocus) {
-    const target = contextMenuReturnFocus?.isConnected
-      ? contextMenuReturnFocus
-      : pagesEl;
+    const target = contextMenuReturnFocus?.isConnected ? contextMenuReturnFocus : pagesEl;
     target.focus({ preventScroll: true });
   }
   contextMenuReturnFocus = null;
 }
 
-function runContextMenuEntry(index) {
-  const command = contextMenuEntries[index];
-  if (!command || command.separator || command.enabled === false) return;
+function runMenuEntry(entry) {
+  if (!entry || entry.separator || entry.enabled === false || entry.submenu) return;
   hideContextMenu({ restoreFocus: true });
-  command.run();
+  entry.run();
 }
 
 function showContextMenu(clientX, clientY, context) {
   hideContextMenu();
   contextMenuReturnFocus =
     document.activeElement instanceof HTMLElement ? document.activeElement : pagesEl;
-  contextMenuEntries = normalizeMenuEntries(buildContextCommands(context));
-  editorContextMenu.replaceChildren();
-  contextMenuEntries.forEach((entry, index) => {
-    if (entry.separator) {
-      const separator = document.createElement("div");
-      separator.className = "menu-divider";
-      separator.setAttribute("role", "separator");
-      editorContextMenu.appendChild(separator);
-      return;
-    }
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = `menu-item${entry.danger ? " danger" : ""}`;
-    button.dataset.menuIndex = String(index);
-    button.dataset.commandId = entry.id;
-    button.setAttribute("role", "menuitem");
-    button.disabled = entry.enabled === false;
-    button.tabIndex = -1;
-    if (entry.disabledReason) button.title = entry.disabledReason;
-    const label = document.createElement("span");
-    label.className = "menu-item-label";
-    label.textContent = entry.label;
-    button.appendChild(label);
-    if (entry.shortcut || (entry.enabled === false && entry.disabledReason)) {
-      const hint = document.createElement("span");
-      hint.className = "menu-item-hint";
-      hint.textContent = entry.enabled === false
-        ? entry.disabledReason
-        : entry.shortcut;
-      button.appendChild(hint);
-    }
-    button.addEventListener("mousemove", () => {
-      if (!button.disabled) setContextMenuIndex(index, false);
-    });
-    button.addEventListener("click", () => runContextMenuEntry(index));
-    editorContextMenu.appendChild(button);
-  });
+  const entries = normalizeMenuEntries(buildContextCommands(context));
   editorContextMenu.hidden = false;
+  renderMenuLevel(editorContextMenu, entries, 0);
   const position = clampContextMenuPosition(
     clientX,
     clientY,
@@ -3956,8 +4227,9 @@ function showContextMenu(clientX, clientY, context) {
   );
   editorContextMenu.style.left = `${position.left}px`;
   editorContextMenu.style.top = `${position.top}px`;
-  const first = moveMenuIndex(contextMenuEntries, -1, 1);
-  setContextMenuIndex(first);
+  menuLevels = [{ el: editorContextMenu, entries, index: -1, parentButton: null }];
+  keyboardLevelIndex = 0;
+  focusMenuIndex(menuLevels[0], moveMenuIndex(entries, -1, 1));
 }
 
 function keyboardContextMenuPoint() {
@@ -3998,36 +4270,50 @@ pagesEl.addEventListener("contextmenu", (event) => {
 });
 
 document.addEventListener("pointerdown", (event) => {
-  if (!editorContextMenu.hidden && !editorContextMenu.contains(event.target)) {
-    hideContextMenu();
-  }
+  if (editorContextMenu.hidden) return;
+  if (menuLevels.some((level) => level.el.contains(event.target))) return;
+  hideContextMenu();
 });
 document.addEventListener("keydown", (event) => {
   if (!editorContextMenu.hidden) {
+    const level = activeMenuLevel();
+    if (!level) return;
+    const entry = level.entries[level.index];
     if (event.key === "Escape") {
       event.preventDefault();
-      hideContextMenu({ restoreFocus: true });
+      if (keyboardLevelIndex > 0) stepToParentLevel();
+      else hideContextMenu({ restoreFocus: true });
     } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
-      setContextMenuIndex(
-        moveMenuIndex(
-          contextMenuEntries,
-          contextMenuIndex,
-          event.key === "ArrowDown" ? 1 : -1,
-        ),
+      closeMenuLevelsAbove(keyboardLevelIndex);
+      focusMenuIndex(
+        level,
+        moveMenuIndex(level.entries, level.index, event.key === "ArrowDown" ? 1 : -1),
       );
     } else if (event.key === "Home" || event.key === "End") {
       event.preventDefault();
-      setContextMenuIndex(
-        moveMenuIndex(
-          contextMenuEntries,
-          contextMenuIndex,
-          event.key === "Home" ? "first" : "last",
-        ),
+      closeMenuLevelsAbove(keyboardLevelIndex);
+      focusMenuIndex(
+        level,
+        moveMenuIndex(level.entries, level.index, event.key === "Home" ? "first" : "last"),
       );
+    } else if (event.key === "ArrowRight") {
+      if (entry && entry.submenu && entry.enabled !== false) {
+        event.preventDefault();
+        openSubmenu(keyboardLevelIndex, menuItemAt(level, level.index), entry, true);
+      }
+    } else if (event.key === "ArrowLeft") {
+      if (keyboardLevelIndex > 0) {
+        event.preventDefault();
+        stepToParentLevel();
+      }
     } else if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      runContextMenuEntry(contextMenuIndex);
+      if (entry && entry.submenu) {
+        openSubmenu(keyboardLevelIndex, menuItemAt(level, level.index), entry, true);
+      } else {
+        runMenuEntry(entry);
+      }
     }
     return;
   }

@@ -2068,7 +2068,7 @@ fn numbering_level_detail_is_modeled_not_reported() {
 fn modeled_settings_are_captured_and_unmodeled_settings_are_reported() {
     // A settings part mixing modeled settings (header parity, default tab stop,
     // track changes, document protection, proof state, zoom, a compatSetting) with
-    // an unmodeled one (`w:autoHyphenation`) plus an unmodeled `w:compat` child
+    // an unmodeled one (`w:hideSpellingErrors`) plus an unmodeled `w:compat` child
     // (`w:doNotExpandShiftReturn`). The modeled ones land in the model; the two
     // unmodeled ones are reported (no silent loss).
     let settings = br#"<w:settings xmlns:w="urn:w">
@@ -2079,7 +2079,7 @@ fn modeled_settings_are_captured_and_unmodeled_settings_are_reported() {
         <w:trackChanges/>
         <w:documentProtection w:edit="readOnly" w:enforcement="1"/>
         <w:defaultTabStop w:val="720"/>
-        <w:autoHyphenation/>
+        <w:hideSpellingErrors/>
         <w:compat>
             <w:compatSetting w:name="compatibilityMode" w:uri="urn:x" w:val="15"/>
             <w:doNotExpandShiftReturn/>
@@ -2105,7 +2105,7 @@ fn modeled_settings_are_captured_and_unmodeled_settings_are_reported() {
     assert_eq!(s.compat.len(), 1);
     assert_eq!(s.compat[0].name, "compatibilityMode");
     // The unmodeled top-level setting and the unmodeled compat child are reported.
-    assert!(features(&import).contains(&"autoHyphenation"));
+    assert!(features(&import).contains(&"hideSpellingErrors"));
     assert!(features(&import).contains(&"doNotExpandShiftReturn"));
     // The modeled compatSetting is NOT reported (it is retained as a triple).
     assert!(!features(&import).contains(&"compatSetting"));
@@ -2462,7 +2462,13 @@ fn wpg_group_maps_to_a_group_with_children_sized_by_their_own_extent() {
         panic!("expected a shape first, got {:?}", group.children[0]);
     };
     assert_eq!(rect.geometry, ShapeGeometry::Rectangle);
-    assert_eq!(rect.fill.map(|c| [c.r, c.g, c.b]), Some([255, 0, 0]));
+    assert_eq!(
+        rect.fill.as_ref().map(|fill| {
+            let c = fill.flat_color();
+            [c.r, c.g, c.b]
+        }),
+        Some([255, 0, 0])
+    );
     let stroke = rect.stroke.expect("the outline");
     assert_eq!(
         [stroke.color.r, stroke.color.g, stroke.color.b],
@@ -2633,6 +2639,7 @@ fn vml_rect_horizon_rule_maps_to_a_behind_text_shape_float() {
     };
     let anchor = group
         .anchor
+        .clone()
         .expect("the shape float carries the VML anchor");
     assert!(
         anchor.behind_doc,
@@ -2651,7 +2658,13 @@ fn vml_rect_horizon_rule_maps_to_a_behind_text_shape_float() {
         panic!("expected a single shape child");
     };
     assert_eq!(shape.geometry, ShapeGeometry::Rectangle);
-    assert_eq!(shape.fill.map(|c| [c.r, c.g, c.b]), Some([0, 0, 0]));
+    assert_eq!(
+        shape.fill.as_ref().map(|fill| {
+            let c = fill.flat_color();
+            [c.r, c.g, c.b]
+        }),
+        Some([0, 0, 0])
+    );
     assert!(
         shape.stroke.is_none(),
         "stroked=\"false\" leaves no outline"
@@ -2673,7 +2686,10 @@ fn vml_shape_preserves_mirrored_margin_frames_and_relative_alignment() {
     let InlineNode::Group(group) = &paragraph(&import, 0).inlines[0] else {
         panic!("expected a positioned VML shape");
     };
-    let anchor = group.anchor.expect("relative alignment creates a float");
+    let anchor = group
+        .anchor
+        .clone()
+        .expect("relative alignment creates a float");
     assert_eq!(
         anchor.horizontal.relative_from,
         HorizontalAnchor::InsideMargin
@@ -2854,6 +2870,7 @@ fn header_vml_text_box_with_absolute_position_is_a_positioned_float() {
     let text_box = find_textbox(&para.inlines).expect("header text box is modeled");
     let anchor = text_box
         .anchor
+        .clone()
         .expect("a positioned header text box is a float carrying its VML anchor");
     assert_eq!(anchor.horizontal.relative_from, HorizontalAnchor::Page);
     assert!(
@@ -2898,7 +2915,10 @@ fn body_vml_text_box_stays_inline_not_floated() {
         "the safety fallback does not force a potentially undersized absolute box"
     );
     assert_eq!(
-        text_box.fill.map(|color| [color.r, color.g, color.b]),
+        text_box.fill.as_ref().map(|fill| {
+            let color = fill.flat_color();
+            [color.r, color.g, color.b]
+        }),
         Some([0x11, 0x22, 0x33])
     );
     assert_eq!(
@@ -2940,6 +2960,7 @@ fn local_top_and_bottom_vml_text_box_in_a_body_cell_is_positioned() {
     let text_box = find_textbox(&paragraph.inlines).expect("cell VML box is modeled");
     let anchor = text_box
         .anchor
+        .clone()
         .expect("the locally reflowable body box is positioned");
     assert_eq!(anchor.horizontal.relative_from, HorizontalAnchor::Column);
     assert_eq!(anchor.vertical.relative_from, VerticalAnchor::Paragraph);
@@ -2997,7 +3018,10 @@ fn footer_vml_text_box_preserves_relative_alignment_and_body_properties() {
         panic!("expected a footer paragraph");
     };
     let text_box = find_textbox(&paragraph.inlines).expect("footer text box is modeled");
-    let anchor = text_box.anchor.expect("footer text box remains positioned");
+    let anchor = text_box
+        .anchor
+        .clone()
+        .expect("footer text box remains positioned");
     assert_eq!(
         anchor.horizontal.relative_from,
         HorizontalAnchor::RightMargin
@@ -3021,7 +3045,10 @@ fn footer_vml_text_box_preserves_relative_alignment_and_body_properties() {
     );
     assert_eq!(text_box.body_properties.auto_fit, TextBoxAutoFit::Shape);
     assert_eq!(
-        text_box.fill.map(|color| [color.r, color.g, color.b]),
+        text_box.fill.as_ref().map(|fill| {
+            let color = fill.flat_color();
+            [color.r, color.g, color.b]
+        }),
         Some([0xab, 0xcd, 0xef])
     );
     assert_eq!(
@@ -3107,6 +3134,7 @@ fn external_hyperlink_maps_to_a_hyperlink_node() {
         link.target,
         HyperlinkTarget::External(casual_doc_model::v1::ExternalTarget {
             url: "https://example.com/docs".to_owned(),
+            anchor: None,
         })
     );
     assert_eq!(link.tooltip.as_deref(), Some("see docs"));
@@ -3573,12 +3601,14 @@ fn drawingml_text_box_is_modeled_and_does_not_corrupt_the_paragraph() {
     );
     assert_eq!(
         text_box.fill,
-        Some(casual_doc_model::v1::Rgba {
-            r: 0x11,
-            g: 0x22,
-            b: 0x33,
-            a: 255,
-        })
+        Some(casual_doc_model::v1::Fill::Solid(
+            casual_doc_model::v1::Rgba {
+                r: 0x11,
+                g: 0x22,
+                b: 0x33,
+                a: 255,
+            }
+        ))
     );
     assert_eq!(
         text_box.border,
@@ -5751,9 +5781,14 @@ fn block_content_control_without_sdt_pr_does_not_panic() {
 }
 
 #[test]
-fn building_block_gallery_forms_report_the_lost_distinction() {
+fn building_block_gallery_captures_gallery_and_category_without_reporting() {
+    // The modern `w:docPartObj` form is fully captured — kind plus the
+    // gallery/category children — so nothing is reported.
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
-        <w:p><w:sdt><w:sdtPr><w:docPartObj/></w:sdtPr>
+        <w:p><w:sdt><w:sdtPr><w:docPartObj>
+            <w:docPartGallery w:val="Quick Parts"/>
+            <w:docPartCategory w:val="General"/>
+        </w:docPartObj></w:sdtPr>
             <w:sdtContent><w:r><w:t>gallery</w:t></w:r></w:sdtContent></w:sdt></w:p>
     </w:body></w:document>"#;
     let import = import(xml);
@@ -5763,8 +5798,27 @@ fn building_block_gallery_forms_report_the_lost_distinction() {
         sdt.properties.control_kind,
         Some(SdtControlKind::BuildingBlockGallery)
     );
-    // The docPartObj vs docPartList distinction collapses to one kind: reported.
-    assert!(features(&import).contains(&"docPartObj"));
+    assert_eq!(sdt.properties.gallery.as_deref(), Some("Quick Parts"));
+    assert_eq!(sdt.properties.category.as_deref(), Some("General"));
+    assert!(!features(&import).contains(&"docPartObj"));
+}
+
+#[test]
+fn legacy_building_block_list_form_is_reported() {
+    // The legacy `w:docPartList` form collapses to the same kind and is normalized
+    // to `w:docPartObj` on export, so its form change is reported.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:sdt><w:sdtPr><w:docPartList/></w:sdtPr>
+            <w:sdtContent><w:r><w:t>gallery</w:t></w:r></w:sdtContent></w:sdt></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let para = paragraph(&import, 0);
+    let sdt = find_inline_sdt(&para.inlines).expect("gallery sdt");
+    assert_eq!(
+        sdt.properties.control_kind,
+        Some(SdtControlKind::BuildingBlockGallery)
+    );
+    assert!(features(&import).contains(&"docPartList"));
 }
 
 #[test]

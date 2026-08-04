@@ -826,7 +826,7 @@ pub fn apply(
             })
         }
         Operation::SetAnchor { object, anchor } => {
-            let previous = set_object_anchor(doc.body_mut(), *object, **anchor)
+            let previous = set_object_anchor(doc.body_mut(), *object, anchor)
                 .ok_or(EditError::NodeNotFound)?;
             Ok(Operation::SetAnchor {
                 object: *object,
@@ -1107,7 +1107,7 @@ fn set_object_extent_in_inlines(
 fn set_object_anchor(
     blocks: &mut [BlockNode],
     object: NodeId,
-    anchor: DrawingAnchor,
+    anchor: &DrawingAnchor,
 ) -> Option<DrawingAnchor> {
     for block in blocks.iter_mut() {
         match block {
@@ -1141,24 +1141,24 @@ fn set_object_anchor(
 fn set_object_anchor_in_inlines(
     inlines: &mut [InlineNode],
     object: NodeId,
-    anchor: DrawingAnchor,
+    anchor: &DrawingAnchor,
 ) -> Option<DrawingAnchor> {
     for inline in inlines.iter_mut() {
         match inline {
             InlineNode::AnchoredDrawing(drawing) if drawing.id == object => {
-                return Some(core::mem::replace(&mut drawing.anchor, anchor));
+                return Some(core::mem::replace(&mut drawing.anchor, anchor.clone()));
             }
             InlineNode::TextBox(text_box) => {
                 if text_box.id == object {
                     // Only an already-floating text box can be re-anchored.
-                    return text_box.anchor.replace(anchor);
+                    return text_box.anchor.replace(anchor.clone());
                 }
                 if let Some(prev) = set_object_anchor(&mut text_box.blocks, object, anchor) {
                     return Some(prev);
                 }
             }
             InlineNode::Group(group) if group.id == object => {
-                return group.anchor.replace(anchor);
+                return group.anchor.replace(anchor.clone());
             }
             InlineNode::Hyperlink(hyperlink) => {
                 if let Some(prev) =
@@ -2573,6 +2573,7 @@ mod tests {
     fn external(url: &str) -> HyperlinkTarget {
         HyperlinkTarget::External(casual_doc_model::v1::ExternalTarget {
             url: url.to_owned(),
+            anchor: None,
         })
     }
 
@@ -2639,6 +2640,7 @@ mod tests {
                         }),
                         descr: None,
                         crop: None,
+                        border: None,
                         flip_h: false,
                         flip_v: false,
                         rotation: None,
@@ -2718,6 +2720,7 @@ mod tests {
             },
             wrap: WrapMode::Square,
             wrap_distances: WrapDistances::default(),
+            wrap_polygon: None,
             behind_doc: false,
         };
         let mut definitions = Definitions::default();
@@ -2743,10 +2746,11 @@ mod tests {
                             width_emu: 914_400,
                             height_emu: 457_200,
                         },
-                        anchor: original,
+                        anchor: original.clone(),
                         descr: None,
                         relative_height: None,
                         crop: None,
+                        border: None,
                         flip_h: false,
                         flip_v: false,
                         rotation: None,
@@ -2770,6 +2774,7 @@ mod tests {
             },
             wrap: WrapMode::None,
             wrap_distances: WrapDistances::default(),
+            wrap_polygon: None,
             behind_doc: true,
         };
         let inverse = apply(
@@ -2777,7 +2782,7 @@ mod tests {
             &mut ids,
             &Operation::SetAnchor {
                 object: float_id,
-                anchor: Box::new(moved),
+                anchor: Box::new(moved.clone()),
             },
         )
         .expect("move + re-wrap the float");
@@ -2786,7 +2791,7 @@ mod tests {
             inverse,
             Operation::SetAnchor {
                 object: float_id,
-                anchor: Box::new(original),
+                anchor: Box::new(original.clone()),
             }
         );
         // Applying the inverse restores it exactly (undo).

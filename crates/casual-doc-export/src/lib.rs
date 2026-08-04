@@ -578,6 +578,71 @@ mod semantic_tests {
     }
 
     #[test]
+    fn tight_wrap_polygon_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, InlineNode, PointEmu, WrapMode};
+
+        // A floating picture with a tight wrap whose `wp:wrapPolygon` carries a
+        // contour (`wp:start` + `wp:lineTo` in EMU). The polygon must survive
+        // import -> write -> reopen (previously dropped, degrading to the bbox).
+        let document_xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="0" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="914400" cy="914400"/><wp:wrapTight wrapText="bothSides"><wp:wrapPolygon edited="0"><wp:start x="0" y="0"/><wp:lineTo x="457200" y="228600"/><wp:lineTo x="0" y="457200"/><wp:lineTo x="0" y="0"/></wp:wrapPolygon></wp:wrapTight><wp:docPr id="1" name="Pic 1"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+
+        let m1 = reopen(&pack(document_xml, document_rels));
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::AnchoredDrawing(drawing) = &paragraph.inlines[0] else {
+            panic!(
+                "expected an anchored drawing, got {:?}",
+                paragraph.inlines[0]
+            );
+        };
+        assert_eq!(drawing.anchor.wrap, WrapMode::Tight);
+        assert_eq!(
+            drawing.anchor.wrap_polygon.as_deref(),
+            Some(
+                [
+                    PointEmu { x_emu: 0, y_emu: 0 },
+                    PointEmu {
+                        x_emu: 457_200,
+                        y_emu: 228_600,
+                    },
+                    PointEmu {
+                        x_emu: 0,
+                        y_emu: 457_200,
+                    },
+                    PointEmu { x_emu: 0, y_emu: 0 },
+                ]
+                .as_slice()
+            )
+        );
+
+        // The writer emits the contour inside the tight wrap in schema order.
+        let written = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut written_package =
+            DocxPackage::open(&written, PackageLimits::default()).expect("written package");
+        let written_xml = written_package
+            .read_part("word/document.xml")
+            .expect("written main document");
+        let written_xml = std::str::from_utf8(&written_xml).expect("utf-8 document XML");
+        let wrap = written_xml.find("<wp:wrapTight").expect("wrapTight");
+        let poly = written_xml.find("<wp:wrapPolygon").expect("wrapPolygon");
+        let start = written_xml
+            .find(r#"<wp:start x="0" y="0"/>"#)
+            .expect("wrap start");
+        let line = written_xml
+            .find(r#"<wp:lineTo x="457200" y="228600"/>"#)
+            .expect("wrap lineTo");
+        assert!(
+            wrap < poly && poly < start && start < line,
+            "wrapTight > wrapPolygon > start > lineTo in schema order"
+        );
+
+        let m2 = reopen(&written);
+        assert_eq!(m1, m2, "the tight wrap polygon survives write -> reopen");
+    }
+
+    #[test]
     fn inline_drawing_crop_and_alt_text_survive_the_semantic_round_trip() {
         use casual_doc_model::v1::{BlockNode, CropRect, InlineNode};
 
@@ -655,7 +720,11 @@ mod semantic_tests {
         };
         assert_eq!(group.relative_height, Some(251_659_264));
         assert_eq!(
-            group.anchor.expect("the group anchor").wrap_distances,
+            group
+                .anchor
+                .as_ref()
+                .expect("the group anchor")
+                .wrap_distances,
             casual_doc_model::v1::WrapDistances {
                 top_emu: 12_700,
                 bottom_emu: 25_400,
@@ -676,7 +745,13 @@ mod semantic_tests {
                 formula: "val 25000".to_owned(),
             }]
         );
-        assert_eq!(shape.fill.map(|c| [c.r, c.g, c.b]), Some([255, 0, 0]));
+        assert_eq!(
+            shape.fill.as_ref().map(|fill| {
+                let c = fill.flat_color();
+                [c.r, c.g, c.b]
+            }),
+            Some([255, 0, 0])
+        );
         assert_eq!(shape.stroke.map(|s| s.width_emu), Some(9525));
 
         assert_eq!(m1, m2, "the group survives write -> reopen");
@@ -783,6 +858,108 @@ mod semantic_tests {
         assert!(text_box.flip_v);
 
         assert_eq!(m1, m2, "group flip + rotation survive write -> reopen");
+    }
+
+    #[test]
+    fn shape_gradient_fill_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::{
+            BlockNode, Fill, GradientKind, GradientStop, GroupChild, InlineNode, Rgba,
+        };
+
+        // A group with a linear-gradient rectangle (two stops, 90° sweep) and a
+        // radial-gradient rectangle (three stops). Each `a:gradFill` — its stops
+        // (`a:gs@pos` + color) and geometry (`a:lin`/`a:path`) — must survive
+        // import -> write -> reopen (dropped/flattened before this change).
+        let xml = br#"<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps" xmlns:wpg="urn:wpg"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="0" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="1000000" cy="1000000"/><wp:wrapNone/><wp:docPr id="1" name="Group 1"/><a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000000" cy="1000000"/><a:chOff x="0" y="0"/><a:chExt cx="1000000" cy="1000000"/></a:xfrm></wpg:grpSpPr><wps:wsp><wps:cNvPr id="2" name="Linear"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000000" cy="500000"/></a:xfrm><a:prstGeom prst="rect"/><a:gradFill><a:gsLst><a:gs pos="0"><a:srgbClr val="FF0000"/></a:gs><a:gs pos="100000"><a:srgbClr val="0000FF"/></a:gs></a:gsLst><a:lin ang="5400000"/></a:gradFill></wps:spPr><wps:bodyPr/></wps:wsp><wps:wsp><wps:cNvPr id="3" name="Radial"/><wps:spPr><a:xfrm><a:off x="0" y="500000"/><a:ext cx="1000000" cy="500000"/></a:xfrm><a:prstGeom prst="rect"/><a:gradFill><a:gsLst><a:gs pos="0"><a:srgbClr val="00FF00"/></a:gs><a:gs pos="50000"><a:srgbClr val="FFFF00"/></a:gs><a:gs pos="100000"><a:srgbClr val="000000"/></a:gs></a:gsLst><a:path path="circle"/></a:gradFill></wps:spPr><wps:bodyPr/></wps:wsp></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Group(group) = &paragraph.inlines[0] else {
+            panic!("expected a group, got {:?}", paragraph.inlines[0]);
+        };
+
+        let GroupChild::Shape(linear) = &group.children[0] else {
+            panic!("expected a shape");
+        };
+        assert_eq!(
+            linear.fill,
+            Some(Fill::Gradient {
+                stops: vec![
+                    GradientStop {
+                        position: 0,
+                        color: Rgba {
+                            r: 255,
+                            g: 0,
+                            b: 0,
+                            a: 255
+                        },
+                    },
+                    GradientStop {
+                        position: 100_000,
+                        color: Rgba {
+                            r: 0,
+                            g: 0,
+                            b: 255,
+                            a: 255
+                        },
+                    },
+                ],
+                kind: GradientKind::Linear { angle: 5_400_000 },
+            })
+        );
+
+        let GroupChild::Shape(radial) = &group.children[1] else {
+            panic!("expected a shape");
+        };
+        let Some(Fill::Gradient { stops, kind }) = &radial.fill else {
+            panic!("expected a radial gradient, got {:?}", radial.fill);
+        };
+        assert_eq!(stops.len(), 3);
+        assert_eq!(stops[1].position, 50_000);
+        assert_eq!(*kind, GradientKind::Radial);
+
+        assert_eq!(m1, m2, "shape gradient fills survive write -> reopen");
+    }
+
+    #[test]
+    fn inline_picture_border_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, InlineNode, Rgba, ShapeStroke};
+
+        // An inline framed photo: `pic:spPr/a:ln` with a solid color + width. The
+        // border must survive import -> write -> reopen (previously dropped, since a
+        // lone picture has no shape builder). Imported through a package so `r:embed`
+        // resolves.
+        let document_xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="Pic 1"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:prstGeom prst="rect"/><a:ln w="12700"><a:solidFill><a:srgbClr val="FF8800"/></a:solidFill></a:ln></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+
+        let m1 = reopen(&pack(document_xml, document_rels));
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Drawing(drawing) = &paragraph.inlines[0] else {
+            panic!("expected an inline drawing, got {:?}", paragraph.inlines[0]);
+        };
+        assert_eq!(
+            drawing.border,
+            Some(ShapeStroke {
+                color: Rgba {
+                    r: 0xFF,
+                    g: 0x88,
+                    b: 0x00,
+                    a: 255,
+                },
+                width_emu: 12_700,
+                dash: None,
+                head_end: None,
+                tail_end: None,
+            })
+        );
+
+        let written = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&written);
+        assert_eq!(m1, m2, "inline picture border survives write -> reopen");
     }
 
     #[test]
@@ -1405,6 +1582,81 @@ mod semantic_tests {
     }
 
     #[test]
+    fn table_style_band_sizes_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::BlockNode;
+        // A banded table style's stripe periods: two rows per horizontal band and
+        // three columns per vertical band. Both were dropped at import; now they
+        // are modeled on `row_band_size`/`col_band_size` and must round-trip.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:tbl>
+                <w:tblPr>
+                    <w:tblStyleRowBandSize w:val="2"/>
+                    <w:tblStyleColBandSize w:val="3"/>
+                </w:tblPr>
+                <w:tblGrid><w:gridCol w:w="5000"/></w:tblGrid>
+                <w:tr><w:tc><w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc></w:tr>
+            </w:tbl>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        let BlockNode::Table(table) = &m1.body()[0] else {
+            panic!("expected a table");
+        };
+        assert_eq!(table.properties.row_band_size, Some(2));
+        assert_eq!(table.properties.col_band_size, Some(3));
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(m1, m2, "table style band sizes survive write -> reopen");
+    }
+
+    #[test]
+    fn short_row_grid_skips_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, TableWidth, WidthType};
+        // A short row: it skips one grid column before its cell and two after,
+        // with preferred widths for each skipped span. gridBefore/gridAfter and
+        // wBefore/wAfter were dropped at import; now modeled and must round-trip.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:tbl>
+                <w:tblGrid>
+                    <w:gridCol w:w="2000"/><w:gridCol w:w="2000"/>
+                    <w:gridCol w:w="2000"/><w:gridCol w:w="2000"/>
+                </w:tblGrid>
+                <w:tr>
+                    <w:trPr>
+                        <w:gridBefore w:val="1"/>
+                        <w:gridAfter w:val="2"/>
+                        <w:wBefore w:type="dxa" w:w="2000"/>
+                        <w:wAfter w:type="pct" w:w="1000"/>
+                    </w:trPr>
+                    <w:tc><w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc>
+                </w:tr>
+            </w:tbl>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        let BlockNode::Table(table) = &m1.body()[0] else {
+            panic!("expected a table");
+        };
+        let row = &table.rows[0].properties;
+        assert_eq!(row.grid_before, Some(1));
+        assert_eq!(row.grid_after, Some(2));
+        assert_eq!(row.w_before, Some(TableWidth::dxa(2000)));
+        assert_eq!(
+            row.w_after,
+            Some(TableWidth {
+                value: 1000,
+                width_type: WidthType::Pct,
+            }),
+            "wAfter round-trips with its pct type",
+        );
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(m1, m2, "short-row grid skips survive write -> reopen");
+    }
+
+    #[test]
     fn writer_is_deterministic() {
         let xml = br#"<w:document xmlns:w="urn:w"><w:body>
             <w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
@@ -1932,12 +2184,14 @@ mod semantic_tests {
     }
 
     #[test]
-    fn external_hyperlink_survives_the_semantic_round_trip() {
+    fn external_hyperlink_with_anchor_fragment_survives_the_semantic_round_trip() {
         // An external hyperlink resolves through a relationship; the writer must
         // regenerate `document.xml.rels` so the reopened model carries the same
-        // URL. Source is a full package (the URL only resolves with its rels).
+        // URL. A `w:anchor` alongside `r:id` is an in-target fragment (a named
+        // location within the external target), not an internal bookmark.
+        use casual_doc_model::v1::{BlockNode, HyperlinkTarget, InlineNode};
         let document = br#"<w:document xmlns:w="urn:w" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>
-            <w:p><w:hyperlink r:id="rId100" w:tooltip="visit">
+            <w:p><w:hyperlink r:id="rId100" w:anchor="section2" w:tooltip="visit">
                 <w:r><w:t>Example</w:t></w:r></w:hyperlink></w:p>
         </w:body></w:document>"#;
         let rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId100" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com/a" TargetMode="External"/></Relationships>"#;
@@ -1952,6 +2206,22 @@ mod semantic_tests {
         )
         .unwrap()
         .document;
+
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Hyperlink(link) = &paragraph.inlines[0] else {
+            panic!("expected a hyperlink");
+        };
+        let HyperlinkTarget::External(ext) = &link.target else {
+            panic!("expected an external target");
+        };
+        assert_eq!(ext.url, "https://example.com/a");
+        assert_eq!(
+            ext.anchor.as_deref(),
+            Some("section2"),
+            "the in-target fragment is captured alongside the base URL"
+        );
 
         let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
         let mut package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
@@ -1968,6 +2238,39 @@ mod semantic_tests {
             m1, m2,
             "the external-hyperlink model survives write -> reopen unchanged"
         );
+    }
+
+    #[test]
+    fn building_block_gallery_and_category_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, InlineNode, SdtControlKind};
+        // A building-block content control (`w:docPartObj`) carrying its gallery and
+        // category; both survive write -> reopen as a fixed point.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:sdt>
+                <w:sdtPr><w:docPartObj>
+                    <w:docPartGallery w:val="Quick Parts"/>
+                    <w:docPartCategory w:val="General"/>
+                </w:docPartObj></w:sdtPr>
+                <w:sdtContent><w:r><w:t>bb</w:t></w:r></w:sdtContent></w:sdt></w:p>
+        </w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(
+            m1, m2,
+            "the building-block gallery survives write -> reopen unchanged"
+        );
+
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Sdt(sdt) = &paragraph.inlines[0] else {
+            panic!("expected an inline content control");
+        };
+        assert_eq!(
+            sdt.properties.control_kind,
+            Some(SdtControlKind::BuildingBlockGallery)
+        );
+        assert_eq!(sdt.properties.gallery.as_deref(), Some("Quick Parts"));
+        assert_eq!(sdt.properties.category.as_deref(), Some("General"));
     }
 
     #[test]
@@ -2283,6 +2586,72 @@ mod semantic_tests {
 
     const MINIMAL_BODY: &[u8] = br#"<w:document xmlns:w="urn:w"><w:body>
         <w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+
+    #[test]
+    fn latent_styles_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::LsdException;
+
+        // A `w:latentStyles` block with block-level defaults and two
+        // `w:lsdException` overrides, alongside one real style. The writer must
+        // re-emit the block in schema order (after docDefaults, before styles)
+        // so it round-trips unchanged.
+        let styles = br#"<w:styles xmlns:w="urn:w">
+            <w:latentStyles w:defLockedState="0" w:defUIPriority="99" w:defSemiHidden="1" w:defUnhideWhenUsed="1" w:defQFormat="0" w:count="371">
+                <w:lsdException w:name="Normal" w:semiHidden="0" w:uiPriority="0" w:unhideWhenUsed="0" w:qFormat="1"/>
+                <w:lsdException w:name="heading 1" w:semiHidden="0" w:uiPriority="9" w:unhideWhenUsed="0" w:qFormat="1" w:locked="1"/>
+            </w:latentStyles>
+            <w:style w:type="paragraph" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
+        </w:styles>"#;
+        let source = package_with_styles(MINIMAL_BODY, styles);
+        let mut src_package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let m1 = import_package(
+            &mut src_package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+
+        // Sanity: the block and both exceptions were typed.
+        let latent = m1
+            .definitions()
+            .latent_styles
+            .as_ref()
+            .expect("latentStyles block was modeled");
+        assert_eq!(latent.default_locked_state, Some(false));
+        assert_eq!(latent.default_ui_priority, Some(99));
+        assert_eq!(latent.default_semi_hidden, Some(true));
+        assert_eq!(latent.default_unhide_when_used, Some(true));
+        assert_eq!(latent.default_q_format, Some(false));
+        assert_eq!(latent.count, Some(371));
+        assert_eq!(
+            latent.exceptions,
+            vec![
+                LsdException {
+                    name: "Normal".to_owned(),
+                    locked: None,
+                    ui_priority: Some(0),
+                    semi_hidden: Some(false),
+                    unhide_when_used: Some(false),
+                    q_format: Some(true),
+                },
+                LsdException {
+                    name: "heading 1".to_owned(),
+                    locked: Some(true),
+                    ui_priority: Some(9),
+                    semi_hidden: Some(false),
+                    unhide_when_used: Some(false),
+                    q_format: Some(true),
+                },
+            ]
+        );
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(m1, m2, "the latentStyles block survives write -> reopen");
+    }
 
     #[test]
     fn table_style_with_banding_survives_the_semantic_round_trip() {
@@ -3039,23 +3408,29 @@ mod semantic_tests {
 
     #[test]
     fn expanded_settings_survive_the_semantic_round_trip() {
-        // settings.xml carrying the newly modeled settings (evenAndOddHeaders,
+        // settings.xml carrying the modeled settings (evenAndOddHeaders,
         // defaultTabStop, trackChanges, documentProtection, a proofState, a zoom,
-        // and a compatSetting) plus an UNMODELED setting (`w:autoHyphenation`). The
-        // modeled settings survive write -> reopen as a fixed point; the unmodeled
-        // one produces a compat-report entry (omitted, not-retained in Semantic).
+        // a compatSetting, the hyphenation group, and displayBackgroundShape) plus
+        // an UNMODELED setting (`w:hideSpellingErrors`). The modeled settings
+        // survive write -> reopen as a fixed point; the unmodeled one produces a
+        // compat-report entry (omitted, not-retained in Semantic).
         let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/></Types>"#;
         let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
         let document = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
         let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/></Relationships>"#;
         let settings = br#"<w:settings xmlns:w="urn:w">
             <w:zoom w:percent="120"/>
+            <w:displayBackgroundShape/>
+            <w:hideSpellingErrors/>
             <w:proofState w:spelling="clean" w:grammar="dirty"/>
             <w:trackChanges/>
             <w:updateFields/>
             <w:documentProtection w:edit="comments" w:enforcement="1"/>
             <w:defaultTabStop w:val="708"/>
             <w:autoHyphenation/>
+            <w:consecutiveHyphenLimit w:val="2"/>
+            <w:hyphenationZone w:val="425"/>
+            <w:doNotHyphenateCaps/>
             <w:evenAndOddHeaders/>
             <w:compat><w:compatSetting w:name="compatibilityMode" w:uri="urn:x" w:val="15"/></w:compat>
         </w:settings>"#;
@@ -3082,13 +3457,19 @@ mod semantic_tests {
         assert!(s.update_fields);
         assert_eq!(s.default_tab_stop, Some(708));
         assert_eq!(s.compat.len(), 1);
+        // The hyphenation group and the background-shape flag are modeled.
+        assert!(s.auto_hyphenation);
+        assert_eq!(s.consecutive_hyphen_limit, Some(2));
+        assert_eq!(s.hyphenation_zone, Some(425));
+        assert!(s.do_not_hyphenate_caps);
+        assert!(s.display_background_shape);
         // The unmodeled setting is reported, not silently dropped.
         assert!(
             import
                 .report
                 .entries
                 .iter()
-                .any(|entry| entry.feature == "autoHyphenation"),
+                .any(|entry| entry.feature == "hideSpellingErrors"),
             "the unmodeled setting produces a compat-report entry"
         );
 
@@ -3542,7 +3923,7 @@ mod semantic_tests {
                     p.inlines.first(),
                     Some(casual_doc_model::v1::InlineNode::TextBox(text_box))
                         if text_box.anchor.is_some()
-                            && text_box.anchor.expect("the text-box anchor").wrap_distances
+                            && text_box.anchor.as_ref().expect("the text-box anchor").wrap_distances
                                 == casual_doc_model::v1::WrapDistances {
                                     top_emu: 12_700,
                                     bottom_emu: 25_400,

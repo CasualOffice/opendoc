@@ -537,6 +537,7 @@ fn a_header_can_contain_an_inline_image() {
             }),
             descr: None,
             crop: None,
+            border: None,
             flip_h: false,
             flip_v: false,
             rotation: None,

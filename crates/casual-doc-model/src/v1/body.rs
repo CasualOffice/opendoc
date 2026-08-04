@@ -277,6 +277,9 @@ pub struct Drawing {
     /// The source-rectangle crop (`a:srcRect`), if the picture is cropped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub crop: Option<CropRect>,
+    /// The picture frame outline (`pic:spPr/a:ln`), if the picture is bordered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub border: Option<ShapeStroke>,
     /// Horizontal flip (`a:xfrm@flipH`): mirror the picture across its vertical
     /// axis.
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
@@ -458,7 +461,7 @@ impl WrapDistances {
 
 /// The position, wrap, and z-order of an anchored (floating) drawing — the
 /// `wp:anchor` frame around a `pic:pic`, as opposed to an inline `wp:inline`.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DrawingAnchor {
     /// The horizontal placement (`wp:positionH`).
@@ -470,6 +473,14 @@ pub struct DrawingAnchor {
     /// Text-exclusion distances around the object.
     #[serde(default, skip_serializing_if = "WrapDistances::is_zero")]
     pub wrap_distances: WrapDistances,
+    /// The tight/through wrap contour (`wp:wrapTight`/`wp:wrapThrough` >
+    /// `wp:wrapPolygon`): its ordered vertices (`wp:start` + `wp:lineTo`) in EMU,
+    /// relative to the object's extent. `None` unless the producer authored a
+    /// polygon; only meaningful for [`WrapMode::Tight`]/[`WrapMode::Through`].
+    /// Carried through round-trips; layout still wraps to the bounding box (using
+    /// the contour for exclusion geometry is a follow-up).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrap_polygon: Option<Vec<PointEmu>>,
     /// Whether the drawing paints behind the document text (`@behindDoc`),
     /// i.e. its z-order relative to the flow. Only meaningful for
     /// [`WrapMode::None`].
@@ -510,6 +521,9 @@ pub struct AnchoredDrawing {
     /// The source-rectangle crop (`a:srcRect`), if the picture is cropped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub crop: Option<CropRect>,
+    /// The picture frame outline (`pic:spPr/a:ln`), if the picture is bordered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub border: Option<ShapeStroke>,
     /// Horizontal flip (`a:xfrm@flipH`): mirror the picture across its vertical
     /// axis.
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
@@ -542,6 +556,76 @@ pub struct Rgba {
     pub b: u8,
     /// Alpha channel (`255` = opaque).
     pub a: u8,
+}
+
+/// A floating shape/text-box/callout background fill: either a single flat color
+/// (`a:solidFill`) or a multi-stop gradient (`a:gradFill`).
+///
+/// A gradient retains its ordered stops and direction so it round-trips, but
+/// layout currently flattens it to its first stop's color (see
+/// [`Fill::flat_color`]); real gradient rendering is a follow-up. Colors are
+/// resolved to concrete channels at import, exactly like [`Rgba`].
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Fill {
+    /// A single flat color (`a:solidFill`).
+    Solid(Rgba),
+    /// A multi-stop gradient (`a:gradFill`): its stops (`a:gsLst/a:gs`) and
+    /// direction (`a:lin`/`a:path`).
+    Gradient {
+        /// The gradient stops in document order (`a:gsLst/a:gs`); always at least
+        /// one when imported.
+        stops: Vec<GradientStop>,
+        /// The gradient geometry (`a:lin` linear or `a:path` radial).
+        kind: GradientKind,
+    },
+}
+
+impl Fill {
+    /// The flat color layout paints for this fill: the solid color, or a
+    /// gradient's first stop (opaque black if a gradient somehow has no stops).
+    #[must_use]
+    pub fn flat_color(&self) -> Rgba {
+        match self {
+            Fill::Solid(color) => *color,
+            Fill::Gradient { stops, .. } => stops.first().map_or(
+                Rgba {
+                    r: 0,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                },
+                |stop| stop.color,
+            ),
+        }
+    }
+}
+
+/// One gradient stop (`a:gsLst/a:gs`): a position along the gradient and the
+/// resolved color painted there.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GradientStop {
+    /// The stop position (`a:gs@pos`, `ST_PositiveFixedPercentage`) in per-100000
+    /// units (`0` = start, `100000` = 100% = end).
+    pub position: i32,
+    /// The resolved stop color.
+    pub color: Rgba,
+}
+
+/// The geometry of a gradient fill: a linear sweep (`a:lin`) or a radial/path
+/// gradient (`a:path`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GradientKind {
+    /// A linear gradient (`a:lin`).
+    Linear {
+        /// The sweep angle (`a:lin@ang`) in 60000ths of a degree, clockwise from
+        /// the positive x-axis.
+        angle: i32,
+    },
+    /// A radial/path gradient (`a:path`), collapsed to a concentric fill.
+    Radial,
 }
 
 /// A point in English Metric Units (EMU): a group child's offset within its
@@ -755,6 +839,9 @@ pub struct GroupPicture {
     /// The source-rectangle crop (`a:srcRect`), if the picture is cropped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub crop: Option<CropRect>,
+    /// The picture frame outline (`pic:spPr/a:ln`), if the picture is bordered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub border: Option<ShapeStroke>,
     /// Horizontal flip (`a:xfrm@flipH`): mirror the picture across its vertical
     /// axis.
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
@@ -946,9 +1033,9 @@ pub struct GroupTextBox {
     /// The box's block content (non-empty; paragraphs and nested tables), flowed
     /// through the same pipeline as the body.
     pub blocks: Vec<BlockNode>,
-    /// The box background fill (`a:solidFill`), if any.
+    /// The box background fill (`a:solidFill`/`a:gradFill`), if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fill: Option<Rgba>,
+    pub fill: Option<Fill>,
     /// The box outline (`a:ln`), if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub border: Option<ShapeStroke>,
@@ -988,9 +1075,9 @@ pub struct GroupShape {
     /// Ordered preset adjustment guides (`a:avLst/a:gd`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub adjustments: Vec<ShapeAdjustment>,
-    /// The fill (`a:solidFill`), if any.
+    /// The fill (`a:solidFill`/`a:gradFill`), if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fill: Option<Rgba>,
+    pub fill: Option<Fill>,
     /// The outline (`a:ln`), if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stroke: Option<ShapeStroke>,
@@ -1170,6 +1257,11 @@ pub struct AltChunk {
 pub struct ExternalTarget {
     /// The target URL (non-empty, at most 2048 bytes).
     pub url: String,
+    /// An in-target fragment (`w:hyperlink@w:anchor` alongside `r:id`): a named
+    /// location within the external target (e.g. a bookmark in another document).
+    /// Non-empty, at most 255 bytes; absent when the link carries no fragment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<String>,
 }
 
 /// An internal hyperlink target (a document bookmark anchor).
@@ -1570,9 +1662,9 @@ pub struct TextBox {
     /// context and content during layout.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extent: Option<Extent>,
-    /// The box background fill (`a:solidFill`), if any.
+    /// The box background fill (`a:solidFill`/`a:gradFill`), if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fill: Option<Rgba>,
+    pub fill: Option<Fill>,
     /// The box outline (`a:ln`), if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub border: Option<ShapeStroke>,
@@ -1937,6 +2029,14 @@ pub struct SdtProperties {
     /// control kind carries any. Validated to agree with `control_kind`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data: Option<SdtControlData>,
+    /// The building-block gallery name (`w:docPartObj/w:docPartGallery@w:val`), for
+    /// a [`SdtControlKind::BuildingBlockGallery`] control. Non-empty, <= 255 bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gallery: Option<String>,
+    /// The building-block category (`w:docPartObj/w:docPartCategory@w:val`), for a
+    /// [`SdtControlKind::BuildingBlockGallery`] control. Non-empty, <= 255 bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
 }
 
 /// The edit-lock behaviour of a content control (`w:lock@w:val`, `ST_Lock`).

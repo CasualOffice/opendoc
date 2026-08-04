@@ -1056,6 +1056,24 @@ pub struct DocumentSettings {
     /// in document order. Additive: omitted when empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub compat: Vec<CompatSetting>,
+    /// `w:autoHyphenation` — automatically hyphenate the document.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub auto_hyphenation: bool,
+    /// `w:hyphenationZone` — the hyphenation zone in twips (the maximum space left
+    /// at a line's end before a word is hyphenated).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hyphenation_zone: Option<i32>,
+    /// `w:consecutiveHyphenLimit` — the maximum number of consecutive lines that
+    /// may end in a hyphen (`0` = no limit).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consecutive_hyphen_limit: Option<i32>,
+    /// `w:doNotHyphenateCaps` — do not hyphenate words in all capitals.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub do_not_hyphenate_caps: bool,
+    /// `w:displayBackgroundShape` — render the document's page background
+    /// (`w:background`). When off, the modeled background is not painted.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub display_background_shape: bool,
 }
 
 impl DocumentSettings {
@@ -1064,6 +1082,69 @@ impl DocumentSettings {
     pub fn is_default(&self) -> bool {
         *self == Self::default()
     }
+}
+
+/// Maximum number of `w:lsdException` entries retained from a latent-styles
+/// block. Word's default template declares a few hundred; this bounds a hostile
+/// part.
+pub const MAX_LATENT_STYLE_EXCEPTIONS: usize = 4096;
+
+/// Maximum length, in UTF-8 bytes, of a latent-style exception name.
+pub const MAX_LATENT_STYLE_NAME_BYTES: usize = 255;
+
+/// The `w:latentStyles` block from `word/styles.xml`.
+///
+/// Word emits this block to declare the UI defaults (sort priority, hidden /
+/// quick-format state, …) it applies to built-in styles that are *not*
+/// explicitly defined in the part, plus per-style [`LsdException`] overrides.
+/// Modeled as typed defaults so the block round-trips without being dropped.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LatentStyles {
+    /// `w:defLockedState` — the default locked state for latent styles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_locked_state: Option<bool>,
+    /// `w:defUIPriority` — the default UI sort priority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_ui_priority: Option<i32>,
+    /// `w:defSemiHidden` — the default semi-hidden state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_semi_hidden: Option<bool>,
+    /// `w:defUnhideWhenUsed` — the default unhide-when-used state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_unhide_when_used: Option<bool>,
+    /// `w:defQFormat` — the default primary (quick-format) state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_q_format: Option<bool>,
+    /// `w:count` — the number of built-in styles Word declares defaults for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<i32>,
+    /// Per-style overrides (`w:lsdException`), in document order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exceptions: Vec<LsdException>,
+}
+
+/// A `w:lsdException`: a per-style override of the latent-style UI defaults.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LsdException {
+    /// `w:name` — the built-in style's primary name (non-empty, bounded).
+    pub name: String,
+    /// `w:locked`, if declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locked: Option<bool>,
+    /// `w:uiPriority`, if declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui_priority: Option<i32>,
+    /// `w:semiHidden`, if declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semi_hidden: Option<bool>,
+    /// `w:unhideWhenUsed`, if declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unhide_when_used: Option<bool>,
+    /// `w:qFormat`, if declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub q_format: Option<bool>,
 }
 
 /// The document definition tables.
@@ -1108,6 +1189,10 @@ pub struct Definitions {
     /// Document-wide defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub document_defaults: Option<DocumentDefaults>,
+    /// The `w:latentStyles` block (built-in-style UI defaults). Additive:
+    /// omitted when absent so existing snapshots serialize byte-identically.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latent_styles: Option<LatentStyles>,
     /// Font-table descriptors (`word/fontTable.xml`), in document order.
     /// Additive: omitted when empty so existing snapshots serialize
     /// byte-identically.

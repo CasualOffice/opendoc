@@ -163,6 +163,7 @@ impl Document {
         self.validate_sections()?;
         self.validate_media()?;
         self.validate_document_defaults()?;
+        self.validate_latent_styles()?;
         self.validate_notes()?;
         self.validate_headers_footers()?;
         self.validate_comments()?;
@@ -325,6 +326,23 @@ impl Document {
             }
             if let Some(properties) = &defaults.run {
                 self.check_run_property_refs(properties)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_latent_styles(&self) -> Result<(), ModelError> {
+        if let Some(latent) = &self.definitions.latent_styles {
+            check_domain(
+                latent.exceptions.len() <= MAX_LATENT_STYLE_EXCEPTIONS,
+                "latentStyles.exceptions",
+            )?;
+            for exception in &latent.exceptions {
+                check_domain(
+                    !exception.name.is_empty()
+                        && exception.name.len() <= MAX_LATENT_STYLE_NAME_BYTES,
+                    "latentStyles.exception.name",
+                )?;
             }
         }
         Ok(())
@@ -1004,6 +1022,12 @@ impl Document {
     fn check_row_properties(&self, properties: &TableRowProperties) -> Result<(), ModelError> {
         if let Some(height) = properties.height.value_twips {
             check_domain(height <= 31_680, "table.row.height")?;
+        }
+        for width in [properties.w_before, properties.w_after]
+            .into_iter()
+            .flatten()
+        {
+            check_domain(width.is_valid(), "table.row.short_width")?;
         }
         if let Some(spacing) = properties.cell_spacing_twips {
             check_domain((0..=31_680).contains(&spacing), "table.row.cell_spacing")?;

@@ -1193,12 +1193,12 @@ body.modal-open {
 
 .menu-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 16px;
+  column-gap: 10px;
   width: 100%;
   text-align: left;
-  padding: 7px 10px;
+  padding: 5px 9px;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -1206,6 +1206,48 @@ body.modal-open {
   font-size: var(--fs-body);
   cursor: pointer;
   white-space: nowrap;
+}
+
+/* Leading-icon gutter — reserved on every row so labels align whether or not
+   a row carries an icon (Word / Google Docs convention). */
+.menu-item-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  opacity: 0.72;
+}
+
+.menu-item.active .menu-item-icon,
+.menu-item:hover .menu-item-icon,
+.menu-item:focus-visible .menu-item-icon {
+  opacity: 1;
+}
+
+/* Submenu affordance + the flyout that opens to the side. */
+.menu-item-caret {
+  justify-self: end;
+  color: var(--faint);
+  font-size: 15px;
+  line-height: 1;
+}
+
+.menu-item.active .menu-item-caret,
+.menu-item:hover .menu-item-caret,
+.menu-item:focus-visible .menu-item-caret {
+  color: inherit;
+}
+
+/* Keep a submenu-parent lit while focus is inside its open flyout, so the
+   open path stays visible. */
+.menu-item.has-submenu[aria-expanded="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.editor-submenu {
+  z-index: 61;
 }
 
 .menu-item:hover,

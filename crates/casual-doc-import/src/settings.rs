@@ -221,6 +221,19 @@ fn apply_setting(local: &[u8], element: &BytesStart<'_>, settings: &mut Document
             Some(value) => settings.default_tab_stop = Some(value),
             None => return false,
         },
+        b"autoHyphenation" => settings.auto_hyphenation = on_off(element),
+        b"doNotHyphenateCaps" => settings.do_not_hyphenate_caps = on_off(element),
+        b"displayBackgroundShape" => settings.display_background_shape = on_off(element),
+        // `w:hyphenationZone` is a non-negative twip measure (same bound as a tab
+        // stop); `w:consecutiveHyphenLimit` is a non-negative count.
+        b"hyphenationZone" => match bounded_int(element, 0..=31_680) {
+            Some(value) => settings.hyphenation_zone = Some(value),
+            None => return false,
+        },
+        b"consecutiveHyphenLimit" => match bounded_int(element, 0..=32_767) {
+            Some(value) => settings.consecutive_hyphen_limit = Some(value),
+            None => return false,
+        },
         b"defaultTableStyle" => match table_style(element) {
             Some(value) => settings.default_table_style = Some(value),
             None => return false,
@@ -299,6 +312,13 @@ fn tab_stop(element: &BytesStart<'_>) -> Option<i32> {
     attribute_value(element, b"val")
         .and_then(|value| value.parse::<i32>().ok())
         .filter(|value| (0..=31_680).contains(value))
+}
+
+/// A `@w:val` decimal integer clamped to `range` (rejected — reported — otherwise).
+fn bounded_int(element: &BytesStart<'_>, range: std::ops::RangeInclusive<i32>) -> Option<i32> {
+    attribute_value(element, b"val")
+        .and_then(|value| value.parse::<i32>().ok())
+        .filter(|value| range.contains(value))
 }
 
 /// The default table style name (`w:defaultTableStyle/@w:val`), non-empty and

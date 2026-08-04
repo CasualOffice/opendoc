@@ -145,14 +145,14 @@ fn collect_body_wrap_inlines(
                     ctx,
                     paragraph,
                     section,
-                    drawing.anchor,
+                    drawing.anchor.clone(),
                     drawing.extent,
                     None,
                     out,
                 );
             }
             InlineNode::TextBox(text_box) if text_box.anchor.is_some() => {
-                let anchor = text_box.anchor.expect("guarded");
+                let anchor = text_box.anchor.clone().expect("guarded");
                 let extent = text_box.extent.unwrap_or(Extent {
                     width_emu: 0,
                     height_emu: 0,
@@ -178,7 +178,7 @@ fn collect_body_wrap_inlines(
                 );
             }
             InlineNode::Group(group) => {
-                if let Some(anchor) = group.anchor {
+                if let Some(anchor) = group.anchor.clone() {
                     push_body_wrap_rect(
                         layout,
                         ctx,
@@ -345,7 +345,7 @@ fn float_extent_inlines(
                 *bottom = (*bottom).max(rect.bottom());
             }
             InlineNode::TextBox(text_box) if text_box.anchor.is_some() => {
-                let anchor = text_box.anchor.expect("guarded");
+                let anchor = text_box.anchor.clone().expect("guarded");
                 let extent = text_box.extent.unwrap_or(Extent {
                     width_emu: 0,
                     height_emu: 0,
@@ -378,7 +378,7 @@ fn float_extent_inlines(
                 *bottom = (*bottom).max(painted);
             }
             InlineNode::Group(group) => {
-                if let Some(anchor) = group.anchor {
+                if let Some(anchor) = group.anchor.clone() {
                     let origin = resolve_anchor_rect(&anchor, group.extent, refs).origin;
                     let mapper = GroupMapper::root(group);
                     group_extent_children(group, origin, &mapper, bottom);
@@ -589,7 +589,7 @@ fn collect_inlines(
                 );
             }
             InlineNode::TextBox(text_box) if text_box.anchor.is_some() => {
-                let anchor = text_box.anchor.expect("guarded");
+                let anchor = text_box.anchor.clone().expect("guarded");
                 let extent = text_box.extent.unwrap_or(Extent {
                     width_emu: 0,
                     height_emu: 0,
@@ -616,7 +616,7 @@ fn collect_inlines(
                         node: Some(text_box.id),
                         content: AnchorContent::TextBox {
                             blocks: flowed.blocks,
-                            fill: text_box.fill.map(rgba),
+                            fill: text_box.fill.as_ref().map(|fill| rgba(fill.flat_color())),
                             border: text_box.border.map(text_box_stroke),
                             content_layout: flowed.content_layout,
                         },
@@ -628,7 +628,7 @@ fn collect_inlines(
                 );
             }
             InlineNode::Group(group) => {
-                let Some(anchor) = group.anchor else {
+                let Some(anchor) = group.anchor.clone() else {
                     continue;
                 };
                 let (page_index, refs) =
@@ -764,7 +764,7 @@ fn place_group_children(
                         node: None,
                         content: AnchorContent::TextBox {
                             blocks: flowed.blocks,
-                            fill: text_box.fill.map(rgba),
+                            fill: text_box.fill.as_ref().map(|fill| rgba(fill.flat_color())),
                             border: text_box.border.map(text_box_stroke),
                             content_layout: flowed.content_layout,
                         },
@@ -788,17 +788,20 @@ fn place_group_children(
                         // A line without an explicit stroke still draws a hairline
                         // in its fill color (Word's connector default).
                         stroke: shape_stroke(shape.stroke).unwrap_or(AnchorStroke {
-                            color: shape.fill.map_or([0, 0, 0, 255], rgba),
+                            color: shape
+                                .fill
+                                .as_ref()
+                                .map_or([0, 0, 0, 255], |fill| rgba(fill.flat_color())),
                             width: Twip::ZERO,
                         }),
                     },
                     ShapeGeometry::Ellipse => AnchorContent::Ellipse {
-                        fill: shape.fill.map(rgba),
+                        fill: shape.fill.as_ref().map(|fill| rgba(fill.flat_color())),
                         stroke: shape_stroke(shape.stroke),
                     },
                     ShapeGeometry::RoundRectangle => AnchorContent::RoundedRectangle {
                         radius: rounded_rectangle_radius(shape, rect),
-                        fill: shape.fill.map(rgba),
+                        fill: shape.fill.as_ref().map(|fill| rgba(fill.flat_color())),
                         stroke: shape_stroke(shape.stroke),
                     },
                     ShapeGeometry::Triangle => AnchorContent::Polygon {
@@ -810,7 +813,7 @@ fn place_group_children(
                             Point::new(rect.right(), rect.bottom()),
                             Point::new(rect.origin.x, rect.bottom()),
                         ],
-                        fill: shape.fill.map(rgba),
+                        fill: shape.fill.as_ref().map(|fill| rgba(fill.flat_color())),
                         stroke: shape_stroke(shape.stroke),
                     },
                     ShapeGeometry::RightTriangle => AnchorContent::Polygon {
@@ -819,7 +822,7 @@ fn place_group_children(
                             Point::new(rect.right(), rect.bottom()),
                             Point::new(rect.origin.x, rect.bottom()),
                         ],
-                        fill: shape.fill.map(rgba),
+                        fill: shape.fill.as_ref().map(|fill| rgba(fill.flat_color())),
                         stroke: shape_stroke(shape.stroke),
                     },
                     ShapeGeometry::Diamond => AnchorContent::Polygon {
@@ -841,11 +844,11 @@ fn place_group_children(
                                 rect.origin.y + Twip(rect.size.height.raw() / 2),
                             ),
                         ],
-                        fill: shape.fill.map(rgba),
+                        fill: shape.fill.as_ref().map(|fill| rgba(fill.flat_color())),
                         stroke: shape_stroke(shape.stroke),
                     },
                     ShapeGeometry::Rectangle | ShapeGeometry::Other => AnchorContent::Rectangle {
-                        fill: shape.fill.map(rgba),
+                        fill: shape.fill.as_ref().map(|fill| rgba(fill.flat_color())),
                         stroke: shape_stroke(shape.stroke),
                     },
                 };
@@ -1419,6 +1422,7 @@ mod tests {
             },
             wrap: WrapMode::None,
             wrap_distances: Default::default(),
+            wrap_polygon: None,
             behind_doc: false,
         }
     }

@@ -47,7 +47,29 @@ Derived from a 14-agent, evidence-cited model-completeness sweep, prevalence-ran
 
 ### Tier 2 — ubiquitous/common L, or occasional S/M
 
-Big-value L: typed **`FieldKind`** for `w:instrText` (PAGE/TOC/REF/DATE/SEQ/STYLEREF/HYPERLINK…); **`latentStyles`** table; **gradient fill** (Fill enum). Occasional S/M: paragraph `w:textDirection` *(partial)*; clear tab `w:tab@val=clear` *(partial)*; table-style band sizes; row `gridBefore/gridAfter`; picture border *(partial)*; hyperlink `@anchor` fragment *(partial)*; `pgNumType` fmt → enum *(partial)*; `displayBackgroundShape` *(partial)*; sdt gallery/category *(partial)*; ~~math `bar`/`groupChr`~~ (done); full `lvlOverride/lvl` *(partial)*; wrap polygon *(partial)*; `sectPrChange`; tracked table row/cell ins/del; auto-hyphenation settings.
+| Done | Item | OOXML | Scope |
+|---|---|---|---|
+| ✅ | Typed `FieldKind` for field instructions | `w:instrText` (PAGE/TOC/REF/DATE/SEQ/STYLEREF/HYPERLINK…) | L |
+| ✅ | `latentStyles` table | `w:latentStyles`/`w:lsdException` | L |
+| ✅ | Gradient fill (Fill enum) | `a:gradFill` | L |
+| ✅ | Table-style band sizes | `w:tblStyleRowBandSize`/`w:tblStyleColBandSize` | S |
+| ✅ | Short-row skipped columns | `w:gridBefore`/`w:gridAfter`/`w:wBefore`/`w:wAfter` | S |
+| ✅ | Picture frame border | `pic:spPr/a:ln` | S |
+| ✅ | Hyperlink in-target fragment | `w:hyperlink@w:anchor` | S |
+| ✅ | `displayBackgroundShape` | `w:settings/w:displayBackgroundShape` | S |
+| ✅ | Sdt building-block gallery/category | `w:docPartObj/w:docPartGallery`/`w:docPartCategory` | S |
+| ✅ | Auto-hyphenation settings | `w:autoHyphenation`/`w:hyphenationZone`/`w:consecutiveHyphenLimit`/`w:doNotHyphenateCaps` | S |
+| ✅ | Math `bar`/`groupChr` | `m:bar`,`m:groupChr` | S |
+| ✅ | Tracked table row/cell ins/del | `w:trPr/w:ins\|w:del`, `w:tcPr/w:cellIns\|w:cellDel` | M |
+| ✅ | Tracked property-change markers | `w:pPrChange`/`w:rPrChange`/`w:tblPrChange`/`w:trPrChange`/`w:tcPrChange`/`w:tblGridChange` | M |
+| ✅ | Paragraph text direction | `w:pPr/w:textDirection` | S |
+| ✅ | Clear tab | `w:tab@val=clear` (`TabAlignment::Clear`) | S |
+| 🔄 | Full per-instance level override | `w:lvlOverride/w:lvl` (full level, not just startOverride) | M |
+| 🔄 | Page-number format → enum | `w:pgNumType@fmt`/`@start` | S |
+| 🔄 | Section-properties revision | `w:sectPrChange` | M |
+| 🔄 | Wrap polygon | `wp:wrapPolygon` | M |
+
+Legend: ✅ merged · 🔄 in flight · ⬜ not started. **All Tier 1 complete (21/21).** Tier 2: 15 merged, 4 in flight (`lvlOverride/lvl`, `pgNumType@fmt`→enum, `sectPrChange`, `wrapPolygon`), 0 not-started — **Layer 1 is closing out.** A completeness-critic sweep of the import disposition report is running to confirm no common construct remains dropped before the layer is declared done.
 
 ### Tier 3 — none.
 

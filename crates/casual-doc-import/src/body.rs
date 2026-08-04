@@ -9,30 +9,30 @@ use casual_doc_model::v1::{
     ColorScheme, ColumnDef, Comment, CommentId, CommentRangeEnd, CommentRangeStart,
     CommentReference, CropRect, DashStyle, DefinitionMap, DocGrid, DocGridType, Drawing,
     DrawingAnchor, EmbeddedKind, EmbeddedObject, EmbeddedPart, Extent, ExternalTarget, Field,
-    FieldKind, FormCheckBox, FormCheckBoxSize, FormDropDown, FormFieldData, FormFieldKind,
-    FormTextInput, FormTextType, GridColumn, GroupChild, GroupPicture, GroupShape, GroupTextBox,
-    GroupTransform, HR_FULL_WIDTH_PERMILLE, HeaderFooterId, HeaderFooterKind, HeaderFooterRef,
-    HeightRule, HorizontalAlign, HorizontalAnchor, HorizontalPosition, HorizontalRule,
-    HorizontalRuleAlign, Hyperlink, HyperlinkTarget, InlineNode, InlineSdt, InternalTarget,
-    LineEnd, LineEndKind, LineEndSize, LineNumberRestart, LineNumbering, MAX_DESCR_BYTES, MAX_EMU,
-    MAX_FIELD_INSTRUCTION_BYTES, MAX_FORM_FIELD_ENTRIES, MAX_FORM_FIELD_STRING_BYTES,
-    MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH, MAX_SHAPE_ADJUSTMENTS,
-    MAX_SHAPE_FORMULA_BYTES, MAX_SHAPE_GUIDE_NAME_BYTES, MAX_SHAPE_PRESET_BYTES, MAX_TEXTBOX_DEPTH,
-    MarkRevision, MarkRevisionKind, Math, MathExpression, MediaId, MoveKind, MoveRangeEnd,
-    MoveRangeStart, NoBreakHyphen, NoteId, NoteKind, NoteNumberMark, NoteNumberRestart,
-    NotePosition, NoteProperties, NoteReference, PageBorderDisplay, PageBorderOffset, PageBorders,
-    PageMargins, PageNumbering, PageOrientation, PageSize, PageVerticalAlignment, PaperSource,
-    Paragraph, ParagraphProperties, PointEmu, PositionalTab, PositionalTabAlignment,
-    PositionalTabLeader, PositionalTabRelativeTo, PropChange, Revision, RevisionKind, RgbColor,
-    Rgba, Run, RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData,
-    SdtControlKind, SdtDataBinding, SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary,
-    SectionColumns, SectionId, SectionType, Shading, ShapeAdjustment, ShapeGeometry, ShapeStroke,
-    SoftHyphen, StyleKind, Symbol, Tab, TabAlignment, TabLeader, TabStop, TableAnchor,
-    TableCellProperties, TableFloatPosition, TableLayout, TableOverlap, TableProperties,
-    TableRowProperties, TableXAlign, TableYAlign, TextBox, TextBoxAutoFit, TextBoxBodyProperties,
-    TextBoxHorizontalOverflow, TextBoxInsets, TextBoxVerticalAnchor, TextBoxVerticalOverflow,
-    TextDirection, VerticalAlign, VerticalAnchor, VerticalMerge, VerticalPosition,
-    WordprocessingGroup, WrapDistances, WrapMode,
+    FieldKind, Fill, FormCheckBox, FormCheckBoxSize, FormDropDown, FormFieldData, FormFieldKind,
+    FormTextInput, FormTextType, GradientKind, GradientStop, GridColumn, GroupChild, GroupPicture,
+    GroupShape, GroupTextBox, GroupTransform, HR_FULL_WIDTH_PERMILLE, HeaderFooterId,
+    HeaderFooterKind, HeaderFooterRef, HeightRule, HorizontalAlign, HorizontalAnchor,
+    HorizontalPosition, HorizontalRule, HorizontalRuleAlign, Hyperlink, HyperlinkTarget,
+    InlineNode, InlineSdt, InternalTarget, LineEnd, LineEndKind, LineEndSize, LineNumberRestart,
+    LineNumbering, MAX_DESCR_BYTES, MAX_EMU, MAX_FIELD_INSTRUCTION_BYTES, MAX_FORM_FIELD_ENTRIES,
+    MAX_FORM_FIELD_STRING_BYTES, MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH,
+    MAX_SHAPE_ADJUSTMENTS, MAX_SHAPE_FORMULA_BYTES, MAX_SHAPE_GUIDE_NAME_BYTES,
+    MAX_SHAPE_PRESET_BYTES, MAX_TEXTBOX_DEPTH, MarkRevision, MarkRevisionKind, Math,
+    MathExpression, MediaId, MoveKind, MoveRangeEnd, MoveRangeStart, NoBreakHyphen, NoteId,
+    NoteKind, NoteNumberMark, NoteNumberRestart, NotePosition, NoteProperties, NoteReference,
+    PageBorderDisplay, PageBorderOffset, PageBorders, PageMargins, PageNumbering, PageOrientation,
+    PageSize, PageVerticalAlignment, PaperSource, Paragraph, ParagraphProperties, PointEmu,
+    PositionalTab, PositionalTabAlignment, PositionalTabLeader, PositionalTabRelativeTo,
+    PropChange, Revision, RevisionKind, RgbColor, Rgba, Run, RunProperties, SchemeColor,
+    SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind, SdtDataBinding, SdtDate,
+    SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionColumns, SectionId, SectionType,
+    Shading, ShapeAdjustment, ShapeGeometry, ShapeStroke, SoftHyphen, StyleKind, Symbol, Tab,
+    TabAlignment, TabLeader, TabStop, TableAnchor, TableCellProperties, TableFloatPosition,
+    TableLayout, TableOverlap, TableProperties, TableRowProperties, TableXAlign, TableYAlign,
+    TextBox, TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxInsets,
+    TextBoxVerticalAnchor, TextBoxVerticalOverflow, TextDirection, VerticalAlign, VerticalAnchor,
+    VerticalMerge, VerticalPosition, WordprocessingGroup, WrapDistances, WrapMode,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::events::{BytesStart, Event};
@@ -71,6 +71,7 @@ enum Segment {
         extent: Option<Extent>,
         descr: Option<String>,
         crop: Option<CropRect>,
+        border: Option<ShapeStroke>,
         flip_h: bool,
         flip_v: bool,
         rotation: Option<i32>,
@@ -194,6 +195,7 @@ enum Segment {
         descr: Option<String>,
         relative_height: Option<u32>,
         crop: Option<CropRect>,
+        border: Option<ShapeStroke>,
         flip_h: bool,
         flip_v: bool,
         rotation: Option<i32>,
@@ -237,6 +239,12 @@ struct PendingAnchor {
     wrap: Option<WrapMode>,
     /// The `wp:anchor@distT/distB/distL/distR` text-exclusion distances.
     wrap_distances: WrapDistances,
+    /// The tight/through wrap contour (`wp:wrapPolygon` > `wp:start`/`wp:lineTo`),
+    /// accumulated while the polygon element is open.
+    wrap_polygon: Option<Vec<PointEmu>>,
+    /// Whether a `wp:wrapPolygon` is currently open (so a `wp:start`/`wp:lineTo`
+    /// point routes to `wrap_polygon` rather than being scaffolding).
+    in_wrap_polygon: bool,
     /// The `wp:docPr@descr` alt text (bounded).
     descr: Option<String>,
     /// The axis whose `wp:posOffset`/`wp:align` text is currently being captured.
@@ -265,6 +273,7 @@ impl PendingAnchor {
             },
             wrap: self.wrap.unwrap_or(WrapMode::None),
             wrap_distances: self.wrap_distances,
+            wrap_polygon: self.wrap_polygon.clone(),
             behind_doc: self.behind_doc,
         }
     }
@@ -296,7 +305,7 @@ struct ShapeBuilder {
     preset: Option<String>,
     adjustments: Vec<ShapeAdjustment>,
     in_adjustment_list: bool,
-    fill: Option<Rgba>,
+    fill: Option<Fill>,
     stroke: Option<ShapeStroke>,
     /// The picture's `a:blip@r:embed`, for a picture child.
     embed: Option<String>,
@@ -326,11 +335,15 @@ enum XfrmTarget {
     Shape,
 }
 
-/// Whether an open DrawingML color element paints a shape's fill or its outline.
+/// Whether an open DrawingML color element paints a shape's fill (or gradient
+/// stop), its outline, or a lone picture's frame border.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ColorDest {
     Fill,
     Stroke,
+    /// A lone inline/anchored picture's `pic:spPr/a:ln` frame color (no open shape
+    /// builder — routed to [`BodyParser::picture_border_color`]).
+    PictureBorder,
 }
 
 /// A DrawingML color (`a:srgbClr`/`a:schemeClr`/`a:sysClr`) being accumulated,
@@ -835,6 +848,22 @@ struct BodyParser<'a> {
     ln_head_end: Option<LineEnd>,
     /// The `a:tailEnd` decoration captured inside the open `a:ln`.
     ln_tail_end: Option<LineEnd>,
+    /// Whether an `a:gradFill` is open on the current shape's fill (so a `solidFill`
+    /// color folds into a gradient stop rather than the flat fill).
+    in_grad_fill: bool,
+    /// The gradient stops accumulated inside the open `a:gradFill`.
+    grad_stops: Vec<GradientStop>,
+    /// The `a:gs@pos` of the open gradient stop, awaiting its folded color.
+    grad_stop_position: Option<i32>,
+    /// The gradient geometry (`a:lin`/`a:path`) captured inside the open gradient.
+    grad_kind: Option<GradientKind>,
+    /// Whether an `a:ln` open on a LONE picture (no shape builder) is being captured
+    /// as that picture's frame border.
+    capturing_picture_border: bool,
+    /// The folded color of a lone picture's frame border, awaiting the `a:ln` close.
+    picture_border_color: Option<Rgba>,
+    /// The finished lone-picture frame border, consumed by `commit_drawing`.
+    pending_picture_border: Option<ShapeStroke>,
     /// The open DrawingML color element being accumulated (base + modifiers).
     pending_color: Option<PendingColor>,
     /// The resolved 12-slot theme color palette (DrawingML `schemeClr` targets),
@@ -1071,9 +1100,16 @@ impl<'a> BodyParser<'a> {
             xfrm_target: XfrmTarget::None,
             ln_depth: 0,
             ln_width_emu: 0,
+            capturing_picture_border: false,
+            grad_kind: None,
+            grad_stop_position: None,
+            grad_stops: Vec::new(),
+            in_grad_fill: false,
             ln_dash: None,
             ln_head_end: None,
             ln_tail_end: None,
+            pending_picture_border: None,
+            picture_border_color: None,
             style_ref_depth: 0,
             pending_color: None,
             palette,
@@ -2291,12 +2327,40 @@ impl BodyParser<'_> {
                     anchor.capture_buffer.clear();
                 }
             }
-            // The wrap mode (`wp:wrap*`, an empty element).
+            // The wrap mode (`wp:wrap*`). `wrapTight`/`wrapThrough` may be non-empty,
+            // carrying a `wp:wrapPolygon` contour parsed below.
             b"wrapSquare" | b"wrapTight" | b"wrapThrough" | b"wrapTopAndBottom" | b"wrapNone"
                 if self.pending_anchor.is_some() =>
             {
                 if let Some(anchor) = self.pending_anchor.as_mut() {
                     anchor.wrap = Some(wrap_mode(local));
+                }
+            }
+            // The tight/through wrap contour (`wp:wrapPolygon`): open the point
+            // accumulator so its `wp:start`/`wp:lineTo` children are captured.
+            b"wrapPolygon" if self.pending_anchor.is_some() => {
+                if let Some(anchor) = self.pending_anchor.as_mut() {
+                    anchor.in_wrap_polygon = true;
+                    anchor.wrap_polygon = Some(Vec::new());
+                }
+            }
+            // A wrap-contour vertex (`wp:start`/`wp:lineTo`, `CT_Point2D` `@x`/`@y`
+            // in EMU). Guarded by an open `wp:wrapPolygon` so it never collides with
+            // the table-margin `w:start` element parsed elsewhere.
+            b"start" | b"lineTo"
+                if self
+                    .pending_anchor
+                    .as_ref()
+                    .is_some_and(|anchor| anchor.in_wrap_polygon) =>
+            {
+                let point = PointEmu {
+                    x_emu: attr_i64(element, b"x").unwrap_or(0),
+                    y_emu: attr_i64(element, b"y").unwrap_or(0),
+                };
+                if let Some(anchor) = self.pending_anchor.as_mut()
+                    && let Some(points) = anchor.wrap_polygon.as_mut()
+                {
+                    points.push(point);
                 }
             }
             // `wp:docPr@descr` is the drawing's alt text (accessibility): modeled on
@@ -2584,6 +2648,41 @@ impl BodyParser<'_> {
             b"tailEnd" if self.ln_depth > 0 => {
                 self.ln_tail_end = Some(parse_line_end(element));
             }
+            // A LONE inline/anchored picture's frame outline (`pic:spPr/a:ln`): no
+            // shape builder is open, so capture its width + solid color into the
+            // picture-border accumulator, finalized when the `a:ln` closes.
+            b"ln" if self.drawing_depth > 0 && self.group_stack.is_empty() => {
+                self.capturing_picture_border = true;
+                self.picture_border_color = None;
+                self.ln_depth += 1;
+                self.ln_width_emu = attr_i64(element, b"w").filter(|w| *w >= 0).unwrap_or(0);
+            }
+            // A gradient fill (`a:gradFill`) on the open shape (not inside its
+            // outline): open the gradient accumulator; its `a:gs` stop colors fold
+            // into stops instead of the flat fill.
+            b"gradFill" if self.pending_shape.is_some() && self.ln_depth == 0 => {
+                self.in_grad_fill = true;
+                self.grad_stops.clear();
+                self.grad_stop_position = None;
+                self.grad_kind = None;
+            }
+            // A gradient stop (`a:gs@pos`): remember its position; the folded color
+            // that closes inside it attaches to this position (`ST_PositiveFixed­
+            // Percentage`, per-100000, clamped).
+            b"gs" if self.in_grad_fill => {
+                self.grad_stop_position =
+                    Some(attr_i64(element, b"pos").unwrap_or(0).clamp(0, 100_000) as i32);
+            }
+            // The gradient geometry: a linear sweep (`a:lin@ang`) or a radial/path
+            // gradient (`a:path`).
+            b"lin" if self.in_grad_fill => {
+                self.grad_kind = Some(GradientKind::Linear {
+                    angle: attr_i64(element, b"ang").unwrap_or(0) as i32,
+                });
+            }
+            b"path" if self.in_grad_fill => {
+                self.grad_kind = Some(GradientKind::Radial);
+            }
             // An explicit `a:noFill`: clears the shape fill or (inside `a:ln`) the
             // stroke, so a later default is not assumed.
             b"noFill" if self.pending_shape.is_some() => {
@@ -2603,7 +2702,7 @@ impl BodyParser<'_> {
                 self.style_ref_depth += 1;
             }
             b"srgbClr" | b"schemeClr" | b"sysClr"
-                if self.pending_shape.is_some()
+                if (self.pending_shape.is_some() || self.capturing_picture_border)
                     && self.pending_color.is_none()
                     && self.style_ref_depth == 0 =>
             {
@@ -2618,7 +2717,9 @@ impl BodyParser<'_> {
                     _ => Some([0, 0, 0, 255]),
                 };
                 if let Some(base) = base {
-                    let dest = if self.ln_depth > 0 {
+                    let dest = if self.capturing_picture_border {
+                        ColorDest::PictureBorder
+                    } else if self.ln_depth > 0 {
                         ColorDest::Stroke
                     } else {
                         ColorDest::Fill
@@ -3151,6 +3252,20 @@ impl BodyParser<'_> {
             b"bidiVisual" if self.tblpr_depth > 0 => self
                 .tables
                 .set_table_bidi_visual(is_true(attribute_value(element, b"val").as_deref())),
+            // Banded-style stripe periods (`w:tblStyleRowBandSize` /
+            // `w:tblStyleColBandSize`), each an unsigned count in `w:val`.
+            b"tblStyleRowBandSize" if self.tblpr_depth > 0 => {
+                match attribute_value(element, b"val").and_then(|value| value.parse::<u32>().ok()) {
+                    Some(size) => self.tables.set_table_row_band_size(size),
+                    None => self.reporter.report(b"tblStyleRowBandSize"),
+                }
+            }
+            b"tblStyleColBandSize" if self.tblpr_depth > 0 => {
+                match attribute_value(element, b"val").and_then(|value| value.parse::<u32>().ok()) {
+                    Some(size) => self.tables.set_table_col_band_size(size),
+                    None => self.reporter.report(b"tblStyleColBandSize"),
+                }
+            }
             b"jc" if self.tblpr_depth > 0 => match table_alignment(element) {
                 Some(alignment) => self.tables.set_table_alignment(alignment),
                 None => self.reporter.report(b"jc"),
@@ -3216,6 +3331,30 @@ impl BodyParser<'_> {
                 self.tables
                     .set_row_conditional_format(parse_cnf_style(element));
             }
+            // Short rows: grid columns skipped before/after the row's cells
+            // (`w:gridBefore` / `w:gridAfter`, unsigned counts in `w:val`) and the
+            // preferred width of each skipped span (`w:wBefore` / `w:wAfter`,
+            // typed like any table width).
+            b"gridBefore" if self.trpr_depth > 0 => {
+                match attribute_value(element, b"val").and_then(|value| value.parse::<u32>().ok()) {
+                    Some(count) => self.tables.set_row_grid_before(count),
+                    None => self.reporter.report(b"gridBefore"),
+                }
+            }
+            b"gridAfter" if self.trpr_depth > 0 => {
+                match attribute_value(element, b"val").and_then(|value| value.parse::<u32>().ok()) {
+                    Some(count) => self.tables.set_row_grid_after(count),
+                    None => self.reporter.report(b"gridAfter"),
+                }
+            }
+            b"wBefore" if self.trpr_depth > 0 => match parse_table_width(element) {
+                Some(width) => self.tables.set_row_w_before(width),
+                None => self.reporter.report(b"wBefore"),
+            },
+            b"wAfter" if self.trpr_depth > 0 => match parse_table_width(element) {
+                Some(width) => self.tables.set_row_w_after(width),
+                None => self.reporter.report(b"wAfter"),
+            },
             b"trHeight" if self.trpr_depth > 0 => {
                 let value = attribute_value(element, b"val")
                     .and_then(|value| value.parse::<u32>().ok())
@@ -3561,12 +3700,29 @@ impl BodyParser<'_> {
                     properties.temporary = on;
                 }
             }
-            // Both building-block gallery forms collapse to one control kind, so the
-            // `w:docPartObj` vs `w:docPartList` distinction is reported as lost.
+            // Both building-block gallery forms collapse to one control kind. The
+            // modern `w:docPartObj` (with its gallery/category children) is fully
+            // captured; the legacy `w:docPartList`, normalized to `docPartObj` on
+            // export, has its form change reported.
             b"docPartObj" | b"docPartList" if self.sdt_prop_depth > 0 => {
-                self.reporter.report(local);
+                if local == b"docPartList" {
+                    self.reporter.report(local);
+                }
                 if let Some(properties) = self.current_sdt_properties() {
                     properties.control_kind = Some(SdtControlKind::BuildingBlockGallery);
+                }
+            }
+            // `w:docPartObj` children: the building-block gallery name and category.
+            b"docPartGallery" if self.sdt_prop_depth > 0 => {
+                let value = self.sdt_bounded_value(element, b"docPartGallery", 255);
+                if let Some(properties) = self.current_sdt_properties() {
+                    properties.gallery = value;
+                }
+            }
+            b"docPartCategory" if self.sdt_prop_depth > 0 => {
+                let value = self.sdt_bounded_value(element, b"docPartCategory", 255);
+                if let Some(properties) = self.current_sdt_properties() {
+                    properties.category = value;
                 }
             }
             b"alias" if self.sdt_prop_depth > 0 => {
@@ -3822,13 +3978,20 @@ impl BodyParser<'_> {
                     anchor.capture_axis = None;
                 }
             }
+            // A `wp:wrapPolygon` closes: stop routing points to the contour.
+            b"wrapPolygon" if self.pending_anchor.is_some() => {
+                if let Some(anchor) = self.pending_anchor.as_mut() {
+                    anchor.in_wrap_polygon = false;
+                }
+            }
             // A DrawingML color element closes: fold its modifiers and assign the
             // resulting color to the open shape's fill or stroke.
             b"srgbClr" | b"schemeClr" | b"sysClr" if self.pending_color.is_some() => {
                 self.commit_color();
             }
             // An outline closes: apply the buffered dash/line-ends to the shape's
-            // captured stroke (if any), then drop the depth and clear the buffers.
+            // captured stroke (if any), finalize a lone picture's frame border, then
+            // drop the depth and clear the buffers.
             b"ln" if self.ln_depth > 0 => {
                 self.ln_depth = self.ln_depth.saturating_sub(1);
                 if self.ln_depth == 0 {
@@ -3842,6 +4005,39 @@ impl BodyParser<'_> {
                     self.ln_dash = None;
                     self.ln_head_end = None;
                     self.ln_tail_end = None;
+                    // A lone picture's frame outline: finalize the captured width +
+                    // color into the pending border.
+                    if self.capturing_picture_border {
+                        self.capturing_picture_border = false;
+                        if let Some(color) = self.picture_border_color.take() {
+                            self.pending_picture_border = Some(ShapeStroke {
+                                color,
+                                width_emu: self.ln_width_emu,
+                                dash: None,
+                                head_end: None,
+                                tail_end: None,
+                            });
+                        }
+                    }
+                }
+            }
+            // A gradient fill closes: build the typed [`Fill::Gradient`] from the
+            // accumulated stops + geometry and assign it to the open shape. An empty
+            // gradient (no stops) leaves the fill unset.
+            b"gradFill" if self.in_grad_fill => {
+                self.in_grad_fill = false;
+                self.grad_stop_position = None;
+                if !self.grad_stops.is_empty() {
+                    let stops = std::mem::take(&mut self.grad_stops);
+                    let kind = self
+                        .grad_kind
+                        .take()
+                        .unwrap_or(GradientKind::Linear { angle: 0 });
+                    if let Some(shape) = self.pending_shape.as_mut() {
+                        shape.fill = Some(Fill::Gradient { stops, kind });
+                    }
+                } else {
+                    self.grad_kind = None;
                 }
             }
             b"lnRef" | b"fillRef" | b"effectRef" | b"fontRef" if self.style_ref_depth > 0 => {
@@ -4155,28 +4351,44 @@ impl BodyParser<'_> {
         }
     }
 
-    /// Folds the open [`PendingColor`] and assigns it to the open shape's fill or
-    /// stroke.
+    /// Folds the open [`PendingColor`] and assigns it: to a lone picture's frame
+    /// border, to the open gradient stop, or to the open shape's flat fill/stroke.
     fn commit_color(&mut self) {
         let Some(color) = self.pending_color.take() else {
             return;
         };
-        let Some(shape) = self.pending_shape.as_mut() else {
-            return;
-        };
         let rgba = fold_color(&color);
         match color.dest {
-            ColorDest::Fill => shape.fill = Some(rgba),
+            // A lone picture's frame color: no shape builder is open; the border is
+            // finalized (with its width) when the `a:ln` closes.
+            ColorDest::PictureBorder => self.picture_border_color = Some(rgba),
+            // A gradient stop color: attach it to the open stop position rather than
+            // the flat fill. Access the gradient buffers before borrowing the shape.
+            ColorDest::Fill if self.in_grad_fill => {
+                if let Some(position) = self.grad_stop_position.take() {
+                    self.grad_stops.push(GradientStop {
+                        position,
+                        color: rgba,
+                    });
+                }
+            }
+            ColorDest::Fill => {
+                if let Some(shape) = self.pending_shape.as_mut() {
+                    shape.fill = Some(Fill::Solid(rgba));
+                }
+            }
             ColorDest::Stroke => {
-                shape.stroke = Some(ShapeStroke {
-                    color: rgba,
-                    width_emu: color.stroke_width_emu,
-                    // Dash/line-end are applied from the outline buffers when the
-                    // enclosing `a:ln` closes (they follow the fill in schema order).
-                    dash: None,
-                    head_end: None,
-                    tail_end: None,
-                });
+                if let Some(shape) = self.pending_shape.as_mut() {
+                    shape.stroke = Some(ShapeStroke {
+                        color: rgba,
+                        width_emu: color.stroke_width_emu,
+                        // Dash/line-end are applied from the outline buffers when the
+                        // enclosing `a:ln` closes (they follow the fill in schema order).
+                        dash: None,
+                        head_end: None,
+                        tail_end: None,
+                    });
+                }
             }
         }
     }
@@ -4289,6 +4501,9 @@ impl BodyParser<'_> {
                 extent: shape.extent,
                 descr: shape.descr,
                 crop: shape.srcrect,
+                // A grouped picture's `pic:spPr/a:ln` frame is captured as the
+                // shape's stroke (via the shared outline path).
+                border: shape.stroke,
                 flip_h: shape.flip_h,
                 flip_v: shape.flip_v,
                 rotation: shape.rotation,
@@ -4424,6 +4639,7 @@ impl BodyParser<'_> {
         // inline picture stays a `Drawing`.
         let anchor = self.pending_anchor.take();
         let crop = self.pending_srcrect.take();
+        let border = self.pending_picture_border.take();
         let inline_descr = self.pending_inline_descr.take();
         let flip_h = std::mem::take(&mut self.pending_flip_h);
         let flip_v = std::mem::take(&mut self.pending_flip_v);
@@ -4439,6 +4655,7 @@ impl BodyParser<'_> {
                             descr: anchor.descr,
                             relative_height: anchor.relative_height,
                             crop,
+                            border,
                             flip_h,
                             flip_v,
                             rotation,
@@ -4459,6 +4676,7 @@ impl BodyParser<'_> {
                         extent,
                         descr: inline_descr,
                         crop,
+                        border,
                         flip_h,
                         flip_v,
                         rotation,
@@ -4577,6 +4795,7 @@ impl BodyParser<'_> {
                         extent: None,
                         descr: None,
                         crop: None,
+                        border: None,
                         flip_h: false,
                         flip_v: false,
                         rotation: None,
@@ -4620,6 +4839,7 @@ impl BodyParser<'_> {
                     descr: None,
                     relative_height,
                     crop: None,
+                    border: None,
                     flip_h: false,
                     flip_v: false,
                     rotation: None,
@@ -4641,6 +4861,7 @@ impl BodyParser<'_> {
                 extent,
                 descr: None,
                 crop: None,
+                border: None,
                 flip_h: false,
                 flip_v: false,
                 rotation: None,
@@ -5931,8 +6152,15 @@ impl BodyParser<'_> {
             if url.is_empty() || url.len() > 2048 {
                 return None;
             }
+            // An `@w:anchor` alongside `r:id` is an in-target fragment (a named
+            // location within the external target), not an internal bookmark.
+            let anchor = attribute_value(element, b"anchor")
+                .filter(|value| !value.is_empty() && value.len() <= 255);
             return Some((
-                HyperlinkTarget::External(ExternalTarget { url: url.clone() }),
+                HyperlinkTarget::External(ExternalTarget {
+                    url: url.clone(),
+                    anchor,
+                }),
                 tooltip,
             ));
         }
@@ -6049,6 +6277,7 @@ impl BodyParser<'_> {
                 extent,
                 descr,
                 crop,
+                border,
                 flip_h,
                 flip_v,
                 rotation,
@@ -6060,6 +6289,7 @@ impl BodyParser<'_> {
                     extent,
                     descr,
                     crop,
+                    border,
                     flip_h,
                     flip_v,
                     rotation,
@@ -6072,6 +6302,7 @@ impl BodyParser<'_> {
                 descr,
                 relative_height,
                 crop,
+                border,
                 flip_h,
                 flip_v,
                 rotation,
@@ -6085,6 +6316,7 @@ impl BodyParser<'_> {
                     descr,
                     relative_height,
                     crop,
+                    border,
                     flip_h,
                     flip_v,
                     rotation,
@@ -6805,6 +7037,7 @@ fn is_drawing_scaffolding(local: &[u8]) -> bool {
             | b"ln"
             | b"noFill"
             | b"solidFill"
+            | b"gsLst"
             | b"srgbClr"
             | b"stretch"
             | b"fillRect"
@@ -7019,6 +7252,8 @@ fn vml_anchor_at(
         },
         wrap: vml_wrap_mode(drawing.wrap.mode),
         wrap_distances: vml_wrap_distances(drawing.wrap),
+        // VML text wrapping has no polygon contour.
+        wrap_polygon: None,
         behind_doc: position.behind_doc(),
     };
     (anchor, position.z_index.map(vml_rel_height))
@@ -7130,7 +7365,9 @@ fn vml_hr_segment(drawing: &VmlDrawing, hr: VmlHr) -> Segment {
         .height
         .filter(|h| *h > 0)
         .unwrap_or(HR_DEFAULT_THICKNESS_TWIPS);
-    let color = vml_fill(&drawing.fill).unwrap_or(HR_DEFAULT_COLOR);
+    let color = vml_fill(&drawing.fill)
+        .map(|fill| fill.flat_color())
+        .unwrap_or(HR_DEFAULT_COLOR);
     let align = match hr.align {
         VmlHrAlign::Left => HorizontalRuleAlign::Left,
         VmlHrAlign::Center => HorizontalRuleAlign::Center,
@@ -7151,9 +7388,9 @@ fn vml_hr_segment(drawing: &VmlDrawing, hr: VmlHr) -> Segment {
 /// The resolved fill of a VML shape: `None` when unfilled or when filled with no
 /// declared color (a colorless fill is invisible over the page, so it is skipped
 /// rather than defaulted).
-fn vml_fill(fill: &VmlFill) -> Option<Rgba> {
+fn vml_fill(fill: &VmlFill) -> Option<Fill> {
     if fill.on {
-        fill.color.map(vml_rgba)
+        fill.color.map(|color| Fill::Solid(vml_rgba(color)))
     } else {
         None
     }
