@@ -83,6 +83,53 @@ fn embedded_image_frame_maps_to_drawing_and_media_reference() {
 }
 
 #[test]
+fn active_content_in_frame_does_not_leak_macro_source_into_descr() {
+    // A macro source nested (via office:scripts/office:script) inside a captured
+    // svg:desc must be dropped wholesale, not copied into the image's alt text
+    // and re-emitted on export. The valid image href still maps a drawing.
+    let xml = draw_content(
+        r#"<text:p><draw:frame><draw:image xlink:href="Pictures/x.png"/><svg:desc><office:scripts><office:script>Shell("calc")</office:script></office:scripts></svg:desc></draw:frame></text:p>"#,
+    );
+    let import = import_content_xml(&xml, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
+    import.document.validate().unwrap();
+
+    let InlineNode::Drawing(drawing) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected drawing")
+    };
+    assert_eq!(
+        drawing.descr, None,
+        "macro source must not survive as the image description"
+    );
+    assert!(import.report.entries.iter().any(|entry| {
+        entry.feature == "odf.security.active-content-dropped"
+            && entry.model_outcome == ModelOutcome::Degraded
+    }));
+}
+
+#[test]
+fn active_content_nested_image_is_not_adopted_as_frame_image() {
+    // A draw:image that exists only inside active content must not be promoted to
+    // the frame's modeled image; the frame is image-less and drops the drawing.
+    let xml = draw_content(
+        r#"<text:p><draw:frame><office:scripts><draw:image xlink:href="Pictures/handler-icon.png"/></office:scripts></draw:frame></text:p>"#,
+    );
+    let import = import_content_xml(&xml, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
+    import.document.validate().unwrap();
+    assert!(
+        import.document.definitions().media.is_empty(),
+        "an image nested in active content must not become media"
+    );
+    assert!(paragraph(&import, 0).inlines.is_empty());
+    assert!(
+        import
+            .report
+            .entries
+            .iter()
+            .any(|entry| { entry.feature == "odf.security.active-content-dropped" })
+    );
+}
+
+#[test]
 fn overlong_image_href_degrades_not_aborts() {
     // 256+ bytes exceeds the model relationship_id cap: block the drawing rather
     // than abort the whole import.

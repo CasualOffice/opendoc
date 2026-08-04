@@ -1773,7 +1773,16 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                     // never modeled or re-emitted. skip_active_subtree consumes
                     // the matching `End`, so undo the `Start` depth increment.
                     reporter.report(ACTIVE_CONTENT_FINDING.to_owned(), ModelOutcome::Degraded);
-                    skip_active_subtree(&mut reader, limits, &mut elements, cancellation)?;
+                    count_attributes_only(&element, &mut attributes, &mut attribute_bytes, limits)?;
+                    skip_active_subtree(
+                        &mut reader,
+                        limits,
+                        depth,
+                        &mut elements,
+                        &mut attributes,
+                        &mut attribute_bytes,
+                        cancellation,
+                    )?;
                     depth = depth.checked_sub(1).ok_or(OdfError::MalformedContent)?;
                     buffer.clear();
                     continue;
@@ -2286,7 +2295,13 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                         limits,
                     )?;
                 } else if !value.trim().is_empty() {
-                    return Err(OdfError::MalformedContent);
+                    // An entity reference resolving to character data outside any
+                    // modeled paragraph: drop it with a finding, mirroring the
+                    // Text/CData handling, rather than failing a valid document.
+                    reporter.report(
+                        "odf.text.outside-paragraph".to_owned(),
+                        ModelOutcome::Degraded,
+                    );
                 }
             }
             _ => {}
@@ -2609,10 +2624,28 @@ fn parse_draw_frame(
                 validate_name(&element, limits)?;
                 let name = resolved_name(reader, &element);
                 if is_active(&name) {
-                    // Frame content is a count-only pass; report and count, never
-                    // model, the active content.
+                    // Drop the active-content subtree wholesale, exactly like the
+                    // body pass. Merely counting and continuing would let the
+                    // loop keep walking into the subtree, so a macro source under
+                    // a nested svg:title/desc would be captured into `descr`, or a
+                    // draw:image nested in active content would be adopted as the
+                    // frame's image, and either would be re-emitted on export.
                     reporter.report(ACTIVE_CONTENT_FINDING.to_owned(), ModelOutcome::Degraded);
                     count_attributes_only(&element, attributes, attribute_bytes, limits)?;
+                    skip_active_subtree(
+                        reader,
+                        limits,
+                        frame_depth
+                            .checked_add(sub_depth)
+                            .ok_or(OdfError::MalformedContent)?,
+                        elements,
+                        attributes,
+                        attribute_bytes,
+                        cancellation,
+                    )?;
+                    sub_depth = sub_depth.checked_sub(1).ok_or(OdfError::MalformedContent)?;
+                    buffer.clear();
+                    continue;
                 } else if is_name(&name, NamespaceKind::Draw, b"image") {
                     if href.is_none() {
                         href = read_href(reader, &element, attributes, attribute_bytes, limits)?;
@@ -5491,13 +5524,19 @@ const ACTIVE_CONTENT_FINDING: &str = "odf.security.active-content-dropped";
 /// safer than the alternative of rejecting the whole document, and it lets
 /// documents from real producers (which routinely emit an empty
 /// `office:scripts`) import. The caller has already incremented its own depth
-/// for the opening `Start`; since this consumes the matching `End`, the caller
-/// must undo that increment afterwards. Element and depth limits keep the skip
-/// bounded.
+/// for the opening `Start` (to `base_depth`) and is responsible for counting the
+/// opening element's own attributes; since this consumes the matching `End`, the
+/// caller must undo that increment afterwards. Skipped descendants are still
+/// charged against the element, attribute, and *absolute* depth limits
+/// (`base_depth + sub_depth`), so dropped active content costs the same as
+/// modeled content of equal size and cannot nest deeper than the modeled limit.
 fn skip_active_subtree(
     reader: &mut NsReader<&[u8]>,
     limits: OdfImportLimits,
+    base_depth: usize,
     elements: &mut usize,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
     cancellation: &CancellationToken,
 ) -> Result<(), OdfError> {
     let mut buffer = Vec::new();
@@ -5517,8 +5556,15 @@ fn skip_active_subtree(
                     limits.max_xml_elements,
                 )?;
                 validate_name(&element, limits)?;
+                count_attributes_only(&element, attributes, attribute_bytes, limits)?;
                 sub_depth = sub_depth.checked_add(1).ok_or(OdfError::MalformedContent)?;
-                enforce("odf_content_xml_depth", sub_depth, limits.max_xml_depth)?;
+                enforce(
+                    "odf_content_xml_depth",
+                    base_depth
+                        .checked_add(sub_depth)
+                        .ok_or(OdfError::MalformedContent)?,
+                    limits.max_xml_depth,
+                )?;
             }
             Event::Empty(element) => {
                 *elements = checked_increment(*elements)?;
@@ -5528,6 +5574,7 @@ fn skip_active_subtree(
                     limits.max_xml_elements,
                 )?;
                 validate_name(&element, limits)?;
+                count_attributes_only(&element, attributes, attribute_bytes, limits)?;
             }
             Event::End(_) => {
                 if sub_depth == 0 {
