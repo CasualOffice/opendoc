@@ -205,6 +205,35 @@ fn overflow_and_malformed_paragraph_lengths_are_reported_not_panicking() {
 }
 
 #[test]
+fn table_column_width_over_domain_degrades_and_no_spurious_finding() {
+    // An out-of-domain width (24in = 34560 twips > 31680) must be dropped with a
+    // finding, never abort the whole import; a valid width is captured; and a
+    // consumed table:style-name must NOT produce a spurious degraded finding.
+    let xml = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" office:version="1.4"><office:automatic-styles><style:style style:name="cowide" style:family="table-column"><style:table-column-properties style:column-width="24in"/></style:style><style:style style:name="conarrow" style:family="table-column"><style:table-column-properties style:column-width="2cm"/></style:style></office:automatic-styles><office:body><office:text><table:table><table:table-column table:style-name="cowide"/><table:table-column table:style-name="conarrow"/><table:table-row><table:table-cell><text:p>a</text:p></table:table-cell><table:table-cell><text:p>b</text:p></table:table-cell></table:table-row></table:table></office:text></office:body></office:document-content>"#;
+    let import = import_content_xml(xml, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
+    import.document.validate().unwrap();
+    let BlockNode::Table(table) = &import.document.body()[0] else {
+        panic!("table")
+    };
+    assert_eq!(
+        table.grid[0].width_twips, None,
+        "over-domain width must be dropped"
+    );
+    assert!(
+        table.grid[1].width_twips.is_some(),
+        "in-domain width must be captured"
+    );
+    assert!(
+        !import
+            .report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "odf.attribute.table.style-name"),
+        "a consumed table:style-name must not be reported degraded"
+    );
+}
+
+#[test]
 fn table_column_widths_round_trip_to_a_fixed_point() {
     let body = r#"<table:table><table:table-column table:number-columns-repeated="2"/><table:table-row><table:table-cell><text:p>a</text:p></table:table-cell><table:table-cell><text:p>b</text:p></table:table-cell></table:table-row></table:table>"#;
     let import = import_content_xml(

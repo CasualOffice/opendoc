@@ -1765,8 +1765,11 @@ fn read_table_column_style_properties(
         let mapped = if namespace_kind(&namespace) == NamespaceKind::Style
             && local.as_ref() == b"column-width"
         {
+            // Bound to the model's GridColumn domain: an out-of-range width would
+            // otherwise fail whole-document validation. Drop it with a finding
+            // instead of aborting an otherwise-valid table.
             match parse_length_to_twips(&value) {
-                Some(twips) if twips >= 0 => {
+                Some(twips) if (0..=MAX_COLUMN_WIDTH_TWIPS).contains(&twips) => {
                     style.style.column_width_twips = Some(twips);
                     true
                 }
@@ -3128,6 +3131,10 @@ fn parse_emu(value: &str) -> Option<i64> {
 
 const MAX_TABLE_COLUMNS: usize = 16_384;
 
+/// The model's `GridColumn::width_twips` domain upper bound (twips); an imported
+/// width beyond this is dropped with a finding rather than failing validation.
+const MAX_COLUMN_WIDTH_TWIPS: i32 = 31_680;
+
 #[allow(clippy::too_many_arguments)]
 fn process_table_start(
     reader: &NsReader<&[u8]>,
@@ -3408,19 +3415,20 @@ fn add_table_columns(
         reader,
         element,
         b"number-columns-repeated",
+        &[b"style-name"],
         limits,
         attributes,
         attribute_bytes,
         reporter,
     )?;
-    // Resolve this column group's style to a width (if any); `read_table_repeat`
-    // already counted number-columns-repeated but not the style-name attribute.
+    // Resolve this column group's style to a width (if any). `read_table_repeat`
+    // already counted (and recognized without reporting) the style-name attribute,
+    // so this pass only reads its value — it must not count it again.
     let mut width = None;
     for attribute in element.attributes() {
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
         if namespace_kind(&namespace) == NamespaceKind::Table && local.as_ref() == b"style-name" {
-            count_attribute(&attribute, attributes, attribute_bytes, limits)?;
             let style_name = decode_attribute(&attribute)?;
             match automatic_styles.get(&(StyleFamily::TableColumn, style_name)) {
                 Some(style) => width = style.column_width_twips,
@@ -3462,6 +3470,7 @@ fn start_table_row(
         reader,
         element,
         b"number-rows-repeated",
+        &[],
         limits,
         attributes,
         attribute_bytes,
@@ -3564,6 +3573,7 @@ fn add_covered_table_cells(
         reader,
         element,
         b"number-columns-repeated",
+        &[],
         limits,
         attributes,
         attribute_bytes,
@@ -3586,6 +3596,7 @@ fn read_table_repeat(
     reader: &NsReader<&[u8]>,
     element: &BytesStart<'_>,
     expected_local: &[u8],
+    recognized: &[&[u8]],
     limits: OdfImportLimits,
     attributes: &mut usize,
     attribute_bytes: &mut usize,
@@ -3601,6 +3612,10 @@ fn read_table_repeat(
                 return Err(OdfError::MalformedContent);
             }
             repeat = Some(parse_positive_usize(&decode_attribute(&attribute)?)?);
+        } else if namespace_kind(&namespace) == NamespaceKind::Table
+            && recognized.contains(&local.as_ref())
+        {
+            // Counted here (once) but consumed and reported by the caller.
         } else if !is_namespace_declaration(&attribute) {
             reporter.report(
                 attribute_feature(reader, &attribute),
