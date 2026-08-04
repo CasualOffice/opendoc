@@ -1776,6 +1776,11 @@ fn parse_pt_to_twips(number: &str) -> Option<i32> {
         None => (false, number),
     };
     let (whole, frac) = number.split_once('.').unwrap_or((number, ""));
+    // Require at least one digit so "pt", ".pt", "-pt" are rejected (reported),
+    // not silently accepted as a zero length.
+    if whole.is_empty() && frac.is_empty() {
+        return None;
+    }
     if frac.len() > 2 || !frac.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
     }
@@ -1792,7 +1797,10 @@ fn parse_pt_to_twips(number: &str) -> Option<i32> {
         return None;
     }
     let twips = total_hundredths / 5;
-    i32::try_from(if negative { -twips } else { twips }).ok()
+    let twips = i32::try_from(if negative { -twips } else { twips }).ok()?;
+    // Exclude i32::MIN: a hanging indent negates the value (`-twips`), which would
+    // overflow for MIN. The cm/mm/in path already excludes this magnitude.
+    (twips != i32::MIN).then_some(twips)
 }
 
 fn parse_toggle(value: &str, enabled: &str, disabled: &str) -> Option<bool> {
@@ -4445,15 +4453,40 @@ fn merge_run_properties(target: &mut RunProperties, overlay: &RunProperties) {
 }
 
 /// Layers the supported paragraph-formatting subset of `overlay` (a child style)
-/// over `target` (its resolved parent). Only the fields the adapter maps are
-/// merged; each set field wins, matching the run-property cascade.
+/// over `target` (its resolved parent). Each ODF `fo:` attribute cascades
+/// independently, so indent/spacing sub-fields are merged one at a time — a child
+/// setting only `fo:margin-left` must not erase the parent's `fo:margin-right`.
 fn merge_paragraph_properties(target: &mut ParagraphProperties, overlay: &ParagraphProperties) {
-    if overlay.indentation.is_some() {
-        target.indentation = overlay.indentation;
+    if let Some(overlay_indent) = &overlay.indentation {
+        let indent = target.indentation.get_or_insert_with(Default::default);
+        if overlay_indent.start_twips.is_some() {
+            indent.start_twips = overlay_indent.start_twips;
+        }
+        if overlay_indent.end_twips.is_some() {
+            indent.end_twips = overlay_indent.end_twips;
+        }
+        // first-line and hanging both come from the single `fo:text-indent`
+        // attribute, so a child specifying it replaces both.
+        if overlay_indent.first_line_twips.is_some() || overlay_indent.hanging_twips.is_some() {
+            indent.first_line_twips = overlay_indent.first_line_twips;
+            indent.hanging_twips = overlay_indent.hanging_twips;
+        }
     }
-    if overlay.spacing.is_some() {
-        target.spacing = overlay.spacing;
+    if let Some(overlay_spacing) = &overlay.spacing {
+        let spacing = target.spacing.get_or_insert_with(Default::default);
+        if overlay_spacing.before_twips.is_some() {
+            spacing.before_twips = overlay_spacing.before_twips;
+        }
+        if overlay_spacing.after_twips.is_some() {
+            spacing.after_twips = overlay_spacing.after_twips;
+        }
+        if overlay_spacing.line_percent.is_some() {
+            spacing.line_percent = overlay_spacing.line_percent;
+        }
     }
+    // The keep/break flags are booleans in the model: a child can add but cannot
+    // clear an inherited flag (distinguishing an explicit `auto` from "unset"
+    // would need presence tracking). A rare inheritance edge, not a data loss.
     if overlay.keep_next {
         target.keep_next = true;
     }

@@ -177,6 +177,34 @@ fn linked_and_unsafe_image_hrefs_are_blocked() {
 }
 
 #[test]
+fn overflow_and_malformed_paragraph_lengths_are_reported_not_panicking() {
+    // `fo:text-indent="-107374182.4pt"` parses to exactly i32::MIN, whose
+    // negation (needed for a hanging indent) would overflow — it must be rejected
+    // and reported, never panic. A malformed `"pt"` must also be reported, not
+    // silently read as a zero margin.
+    let styles = r#"<style:style style:name="P1" style:family="paragraph"><style:paragraph-properties fo:text-indent="-107374182.4pt" fo:margin-left="pt"/></style:style>"#;
+    let body = r#"<text:p text:style-name="P1">x</text:p>"#;
+    let import = import_content_xml(
+        &styled_content(styles, body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    import.document.validate().unwrap();
+    let BlockNode::Paragraph(paragraph) = &import.document.body()[0] else {
+        panic!("paragraph")
+    };
+    assert!(
+        paragraph.properties.indentation.is_none(),
+        "malformed/overflowing lengths must not be captured"
+    );
+    assert!(import.report.entries.iter().any(|entry| {
+        entry.feature == "odf.attribute.fo.text-indent"
+            || entry.feature == "odf.attribute.fo.margin-left"
+    }));
+}
+
+#[test]
 fn hyperlinks_and_bookmarks_survive_export_round_trip() {
     // Both are imported faithfully; a semantic export must re-emit the `text:a`
     // wrapper (external + internal targets) and the `text:bookmark-start`/`-end`

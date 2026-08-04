@@ -530,21 +530,24 @@ fn split_paragraph_properties(remainder: &mut ParagraphProperties) -> OdtParagra
         style.margin_left_twips = indent.start_twips;
         style.margin_right_twips = indent.end_twips;
         // ODF `fo:text-indent` is a single value: positive is a first-line
-        // indent, negative is a hanging indent.
-        style.text_indent_twips = indent
-            .first_line_twips
-            .or_else(|| indent.hanging_twips.map(|hanging| -hanging));
-        // A model carrying both is not representable as one text-indent; keep the
-        // dropped hanging value so it is reported.
+        // indent, negative is a hanging indent. A negative model `first_line` is
+        // therefore intentionally canonicalized to `hanging` on the round trip.
+        // `checked_neg` guards the i32::MIN case (its negation is unrepresentable).
+        let hanging_indent = indent.hanging_twips.and_then(i32::checked_neg);
+        style.text_indent_twips = indent.first_line_twips.or(hanging_indent);
+        // Keep any hanging value that could not be represented as a single
+        // text-indent (both first-line and hanging set, or an unnegatable MIN) so
+        // it is reported rather than silently dropped.
+        let hanging_dropped = if indent.first_line_twips.is_some() || hanging_indent.is_none() {
+            indent.hanging_twips
+        } else {
+            None
+        };
         let leftover = Indentation {
             start_twips: None,
             end_twips: None,
             first_line_twips: None,
-            hanging_twips: if indent.first_line_twips.is_some() {
-                indent.hanging_twips
-            } else {
-                None
-            },
+            hanging_twips: hanging_dropped,
         };
         if leftover != Indentation::default() {
             remainder.indentation = Some(leftover);
