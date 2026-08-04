@@ -56,7 +56,12 @@ a general ODT support claim.
   a full sample document, 9 in all — each verified to import, validate, and
   re-export to a byte-exact canonical fixed point. Published limitations
   (admitted/mapped, dropped-with-finding, preserved-opaque, not-yet-done, and the
-  round-trip contract) are documented in `docs/95` §10.
+  round-trip contract) are documented in `docs/95` §10. Relax NG schema
+  validation is a documented out-of-scope decision — the admission bar is
+  structural well-formedness plus the bounded fail-closed profile and security
+  limits, not grammar conformance — so no schema-validator dependency is bundled.
+  A dependency-free `#[ignore]`-gated timing harness records import/export cost
+  across the corpus (import 3.5–42 ms, export 1–8 ms).
 - **Metadata conformance fix**: `meta.xml` now writes the creation timestamp as
   `meta:creation-date` and the last modification as `dc:date` (the ODF-native
   elements the importer reads), instead of the non-ODF `dcterms:created`/

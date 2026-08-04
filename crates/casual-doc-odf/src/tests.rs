@@ -1139,6 +1139,114 @@ real_odt_interop_test!(
     "synthetic-rich-metadata.odt"
 );
 
+/// The real-producer ODT corpus, for the timing harness below.
+const ODT_CORPUS: &[(&str, &[u8])] = &[
+    (
+        "libreoffice-sample",
+        include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/corpus/libreoffice-sample.odt"
+        )),
+    ),
+    (
+        "rich",
+        include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/corpus/real-producer-rich.odt"
+        )),
+    ),
+    (
+        "table-merges",
+        include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/corpus/real-producer-table-merges.odt"
+        )),
+    ),
+    (
+        "table-list",
+        include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/corpus/real-producer-table-list.odt"
+        )),
+    ),
+    (
+        "footnotes",
+        include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/corpus/real-producer-footnotes.odt"
+        )),
+    ),
+    (
+        "hyperlinks",
+        include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/corpus/real-producer-hyperlinks.odt"
+        )),
+    ),
+    (
+        "header-footer",
+        include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/corpus/real-producer-header-footer.odt"
+        )),
+    ),
+];
+
+/// Lightweight, dependency-free timing harness over the real-producer ODT
+/// corpus. `#[ignore]` by default (timings are informational, not a CI gate);
+/// run with `cargo test -p casual-doc-odf odt_corpus_import_export_timing --
+/// --ignored --nocapture` to print per-fixture import + preserving-export
+/// medians. A deliberately generous per-run ceiling still trips on a
+/// catastrophic (e.g. accidentally quadratic) regression without being flaky.
+#[test]
+#[ignore = "timing harness; run explicitly with --ignored --nocapture"]
+#[allow(clippy::print_stdout)] // intentional: this harness reports timings to stdout
+fn odt_corpus_import_export_timing() {
+    use std::time::Instant;
+
+    const ITERS: u32 = 25;
+    const CEILING: std::time::Duration = std::time::Duration::from_secs(2);
+
+    for (name, bytes) in ODT_CORPUS {
+        let mut import_samples = Vec::with_capacity(ITERS as usize);
+        let mut export_samples = Vec::with_capacity(ITERS as usize);
+        for _ in 0..ITERS {
+            let t0 = Instant::now();
+            let mut package = OdtPackage::open(bytes, OdfPackageLimits::default()).unwrap();
+            let imported = package.import_document(OdfImportLimits::default()).unwrap();
+            let retained = package
+                .retained_media_parts(&imported.document, OdfImportLimits::default())
+                .unwrap();
+            let import_dt = t0.elapsed();
+
+            let t1 = Instant::now();
+            let _ = write_odt_with_retained_parts(
+                &imported.document,
+                &retained,
+                OdfExportLimits::default(),
+            )
+            .unwrap();
+            let export_dt = t1.elapsed();
+
+            assert!(
+                import_dt < CEILING && export_dt < CEILING,
+                "{name}: import {import_dt:?} / export {export_dt:?} exceeded {CEILING:?} ceiling"
+            );
+            import_samples.push(import_dt);
+            export_samples.push(export_dt);
+        }
+        import_samples.sort_unstable();
+        export_samples.sort_unstable();
+        let median = |v: &[std::time::Duration]| v[v.len() / 2];
+        println!(
+            "{name:>18}: import median {:>8.1?}  export median {:>8.1?}  ({} bytes)",
+            median(&import_samples),
+            median(&export_samples),
+            bytes.len(),
+        );
+    }
+}
+
 #[test]
 fn mimetype_must_be_first_stored_exact_and_without_extra_data() {
     let mut not_first = minimal_entries("1.4");

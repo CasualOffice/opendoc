@@ -234,8 +234,10 @@ Configured limits may tighten but never exceed compiled hard ceilings.
 Slice D is complete only when:
 
 1. malformed, traversal, duplicate, overlapping, high-expansion, encrypted,
-   wrong-mimetype, wrong-order, extra-field, active-content, and DTD cases fail
-   with stable redacted errors;
+   wrong-mimetype, wrong-order, extra-field, active-content-storage-part
+   (manifest-declared macro/script parts), and DTD cases fail with stable
+   redacted errors; inline active content in `content.xml` is instead dropped
+   with a security finding (§10);
 2. ODF 1.2, 1.3, and 1.4 fixtures import deterministically;
 3. ZIP and XML reorder tests preserve semantic identity where order is not
    meaningful;
@@ -304,11 +306,18 @@ bytes and safe unknown non-semantic parts (thumbnails, settings, configurations)
 are carried verbatim through a `PreserveWhenSafe` edit; reserved/active-content
 and orphaned parts are never repackaged.
 
-**Not yet done.** Relax NG schema validation against the official ODF schema (no
-validator dependency is bundled yet); `.ods`/`.odp`/other non-text bodies (out of
-scope by design); and the unmapped families enumerated in §9 — advanced
-fields/variables, indexes/TOC and cross-references, annotations and tracked
-changes, formulas and embedded objects, forms, and broader style/table
+**Deliberately out of scope.** Relax NG schema validation against the official
+ODF grammar is **not** performed and no validator dependency is bundled. The
+conformance bar for admission is structural well-formedness plus the bounded,
+fail-closed package/content profile in §2–§7 and the security limits — not
+grammar conformance. Full Relax NG validation would require a mature validator
+dependency parsing untrusted schemas; it is intentionally excluded to keep the
+dependency and attack surface small. `.ods`/`.odp`/other non-text bodies are also
+out of scope by design.
+
+**Not yet done (additive modeling).** The unmapped families enumerated in §9 —
+advanced fields/variables, indexes/TOC and cross-references, annotations and
+tracked changes, formulas and embedded objects, forms, and broader style/table
 properties.
 
 **Round-trip contract and interoperability evidence.** Nine real fixtures —
