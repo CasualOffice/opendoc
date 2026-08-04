@@ -96,7 +96,7 @@ test("comments use the dedicated sidebar and an in-column composer", async ({
   await card.click();
   await expect(card).toHaveAttribute("aria-expanded", "true");
 
-  const reply = card.locator(".review-reply-composer input");
+  const reply = card.locator(".review-reply-composer textarea");
   await reply.click();
   await reply.fill("Thread reply");
   await card.locator(".review-reply-composer").getByRole("button", { name: "Reply" }).click();
@@ -141,7 +141,7 @@ test("a reply can be edited and individually deleted (REVIEW-GAP-011)", async ({
   await card.click();
   await expect(card).toHaveAttribute("aria-expanded", "true");
 
-  const reply = card.locator(".review-reply-composer input");
+  const reply = card.locator(".review-reply-composer textarea");
   await reply.click();
   await reply.fill("First draft");
   await card.locator(".review-reply-composer").getByRole("button", { name: "Reply" }).click();
