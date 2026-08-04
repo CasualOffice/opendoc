@@ -274,7 +274,56 @@ objects; edit-tolerant preservation; and schema/corpus/interoperability gates.
 These ranges must move only with an auditable inventory, not by counting tests
 or treating partial feature families as complete.
 
-## 10. Normative references
+## 10. Published limitations (interoperability status)
+
+This is the honest, user- and integrator-facing statement of what the ODT
+adapter does and does not do today. It is a *bounded, deterministic subset* of
+OpenDocument Text, not a general ODT support claim.
+
+**Admitted and semantically mapped.** ODF 1.2–1.4 text packages: paragraphs and
+runs with a bounded direct/named-style property subset (alignment, bold, italic,
+underline, strike, RGB colour, half-point size, parent-style chains, document
+style defaults); bounded bullet/decimal lists with nesting and per-item
+start-value overrides; tables with inferred/declared grids, header/repeated rows,
+and rectangular merges; safe internal and external hyperlinks and paired
+bookmarks; footnotes and endnotes; page-layout geometry and the first master
+page's header/footer regions (plain text); embedded images as reference-only
+`MediaReference` values (no image bytes enter the model); and core document
+metadata.
+
+**Admitted but dropped with a finding (never modeled, never re-emitted).**
+Character data outside a modeled paragraph; style-property children outside the
+subset (`style:tab-stops`, drop-caps, background images); inline active content
+in `content.xml` (`office:scripts`, `script:event-listener`) — the subtree is
+consumed wholesale, so no macro or handler code survives. A macro/script *storage
+part* declared in the manifest (e.g. `Basic/…`) instead fails package admission
+closed.
+
+**Preserved opaquely but not modeled.** Under source retention, referenced image
+bytes and safe unknown non-semantic parts (thumbnails, settings, configurations)
+are carried verbatim through a `PreserveWhenSafe` edit; reserved/active-content
+and orphaned parts are never repackaged.
+
+**Not yet done.** Relax NG schema validation against the official ODF schema (no
+validator dependency is bundled yet); `.ods`/`.odp`/other non-text bodies (out of
+scope by design); and the unmapped families enumerated in §9 — advanced
+fields/variables, indexes/TOC and cross-references, annotations and tracked
+changes, formulas and embedded objects, forms, and broader style/table
+properties.
+
+**Round-trip contract and interoperability evidence.** Nine real fixtures —
+authentic LibreOffice conversions of the real-producer DOCX corpus plus a full
+sample document (`fixtures/corpus/*.odt`) — are each imported, validated, and
+re-exported to a **byte-exact canonical fixed point**. The guarantee is that our
+*own* output round-trips stably (export of the reopened document equals export of
+the twice-reopened document). Byte-equality with the *original producer bytes* is
+deliberately **not** claimed: the first ingest of foreign XML mints fresh
+canonical node ids and normalises producer-specific style names, citation labels,
+and whitespace encoding, exactly as a semantic (lossy-by-design) importer must.
+`ExactIfUnchanged` export is the separate mechanism for returning the original
+bytes verbatim when the document is unedited.
+
+## 11. Normative references
 
 - OASIS, [OpenDocument Version 1.4, Part 2: Packages](https://docs.oasis-open.org/office/OpenDocument/v1.4/os/part2-packages/OpenDocument-v1.4-os-part2-packages.html).
 - OASIS, [OpenDocument Version 1.4, Part 3: OpenDocument Schema](https://docs.oasis-open.org/office/OpenDocument/v1.4/os/part3-schema/OpenDocument-v1.4-os-part3-schema.html).

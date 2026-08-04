@@ -1122,6 +1122,22 @@ real_odt_interop_test!(
     real_libreoffice_hyperlinks_odt_round_trips,
     "real-producer-hyperlinks.odt"
 );
+real_odt_interop_test!(
+    real_libreoffice_header_footer_odt_round_trips,
+    "real-producer-header-footer.odt"
+);
+real_odt_interop_test!(
+    real_libreoffice_table_list_odt_round_trips,
+    "real-producer-table-list.odt"
+);
+real_odt_interop_test!(
+    real_libreoffice_roundtrip_odt_round_trips,
+    "real-producer-libreoffice.odt"
+);
+real_odt_interop_test!(
+    real_libreoffice_rich_metadata_odt_round_trips,
+    "synthetic-rich-metadata.odt"
+);
 
 #[test]
 fn mimetype_must_be_first_stored_exact_and_without_extra_data() {

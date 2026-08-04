@@ -50,8 +50,13 @@ a general ODT support claim.
   finding rather than aborting the document; the active-content subtree is never
   modeled or re-emitted, so no macro/handler code survives (`office:scripts` as a
   *manifest part* is still refused at package open). Interop is fixed by real
-  LibreOffice-converted ODT fixtures under `fixtures/corpus/`, verified to import,
-  validate, and re-export to a byte-exact canonical fixed point.
+  LibreOffice-converted ODT fixtures under `fixtures/corpus/` — the whole
+  real-producer corpus (rich text, table merges, table/list, footnotes,
+  hyperlinks, header/footer, a round-tripped LibreOffice doc, rich metadata) plus
+  a full sample document, 9 in all — each verified to import, validate, and
+  re-export to a byte-exact canonical fixed point. Published limitations
+  (admitted/mapped, dropped-with-finding, preserved-opaque, not-yet-done, and the
+  round-trip contract) are documented in `docs/95` §10.
 - **Metadata conformance fix**: `meta.xml` now writes the creation timestamp as
   `meta:creation-date` and the last modification as `dc:date` (the ODF-native
   elements the importer reads), instead of the non-ODF `dcterms:created`/
