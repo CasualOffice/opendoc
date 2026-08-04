@@ -1654,20 +1654,24 @@ pub fn write_odt_with_retained_parts(
     retained: &crate::OdfRetainedParts,
     limits: OdfExportLimits,
 ) -> Result<OdtExport, OdfError> {
+    // Only media still referenced by the (possibly edited) document and actually
+    // retained are re-emitted and repackaged. The normalized part name is used
+    // consistently for the draw:frame href, the ZIP entry, and the manifest, so
+    // no orphan parts are written and the output is a byte fixed point.
     let mut available_media = BTreeMap::new();
+    let mut used = crate::OdfRetainedParts::default();
     for (id, media) in document.definitions().media.iter() {
-        if retained
-            .parts
-            .contains_key(&crate::package::normalized_part_path(&media.part_name))
-        {
-            available_media.insert(*id, media.part_name.clone());
+        let name = crate::package::normalized_part_path(&media.part_name);
+        if let Some(part) = retained.parts.get(&name) {
+            available_media.insert(*id, name.clone());
+            used.parts.entry(name).or_insert_with(|| part.clone());
         }
     }
     write_odt_impl(
         document,
         limits,
         available_media,
-        Some(retained),
+        Some(&used),
         CONTENT_HEADER_PRESERVING,
     )
 }

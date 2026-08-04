@@ -7,8 +7,8 @@ use zip::write::{FullFileOptions, ZipWriter};
 
 use crate::{
     CONTENT_PART, MANIFEST_PART, MIMETYPE_PART, ODT_MIME, OdfError, OdfExportLimits,
-    OdfImportLimits, OdfPackageLimits, OdfVersion, OdtPackage, STYLES_PART, write_odt,
-    write_odt_with_retained_parts,
+    OdfImportLimits, OdfPackageLimits, OdfVersion, OdtPackage, RetainedPart, STYLES_PART,
+    write_odt, write_odt_with_retained_parts,
 };
 
 const CONTENT: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?>
@@ -728,6 +728,39 @@ fn preserving_writer_emits_draw_frame_and_repackages_bytes() {
     let plain_content = String::from_utf8(plain.read_part(CONTENT_PART).unwrap()).unwrap();
     assert!(!plain_content.contains("draw:frame"));
     assert!(plain.read_part("Pictures/pic.dat").is_err());
+}
+
+#[test]
+fn only_referenced_retained_parts_are_repackaged() {
+    let bytes = image_package(
+        image_content("Pictures/pic.dat"),
+        r#"<m:file-entry m:full-path="Pictures/pic.dat" m:media-type="image/png"/>"#,
+        &[Entry {
+            name: "Pictures/pic.dat",
+            bytes: b"\x89PNG\r\n".to_vec(),
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        }],
+    );
+    let mut package = OdtPackage::open(&bytes, OdfPackageLimits::default()).unwrap();
+    let imported = package.import_document(OdfImportLimits::default()).unwrap();
+    let mut retained = package
+        .retained_media_parts(&imported.document, OdfImportLimits::default())
+        .unwrap();
+    // An unreferenced retained part must not be repackaged (no orphan output).
+    retained.parts.insert(
+        "Pictures/orphan.png".to_owned(),
+        RetainedPart {
+            media_type: "image/png".to_owned(),
+            bytes: vec![1, 2, 3],
+        },
+    );
+    let preserved =
+        write_odt_with_retained_parts(&imported.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    let mut out = OdtPackage::open(&preserved.bytes, OdfPackageLimits::default()).unwrap();
+    assert!(out.read_part("Pictures/pic.dat").is_ok());
+    assert!(out.read_part("Pictures/orphan.png").is_err());
 }
 
 #[test]
