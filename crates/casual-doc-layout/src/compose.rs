@@ -10,8 +10,11 @@ use crate::block::{
     BlockFragment, BorderPattern, CellBorders, CellVerticalMerge, ParagraphDecor,
     ResolvedBorderSegment, ResolvedEdge,
 };
-use crate::display::{Color, DisplayList, PaintItem, Stroke};
-use crate::page::{AnchorContent, Page, PlacedAnchor, ResolvedPageBorders};
+use crate::display::{
+    Color, DisplayList, Fill, Gradient, GradientKind, GradientStop, PaintItem, ShapeGeometry,
+    ShapeOutline, Stroke,
+};
+use crate::page::{AnchorContent, AnchorStroke, Page, PlacedAnchor, ResolvedPageBorders};
 use crate::text::{LineLayout, TextBoxContentLayout};
 use crate::units::{Point, Rect, Size, Twip};
 
@@ -178,6 +181,40 @@ fn rgba(c: [u8; 4]) -> Color {
     }
 }
 
+/// Translates a resolved model fill (`a:solidFill`/`a:gradFill`) into the display
+/// [`Fill`]. Gradient stop positions (per-100000) become `0.0..=1.0`; a linear
+/// angle (60000ths of a degree) becomes degrees clockwise from +x.
+fn fill_to_display(fill: &casual_doc_model::v1::Fill) -> Fill {
+    use casual_doc_model::v1::{Fill as ModelFill, GradientKind as ModelGradientKind};
+    match fill {
+        ModelFill::Solid(color) => Fill::Solid(rgba([color.r, color.g, color.b, color.a])),
+        ModelFill::Gradient { stops, kind } => Fill::Gradient(Gradient {
+            stops: stops
+                .iter()
+                .map(|stop| GradientStop {
+                    position: (stop.position as f32 / 100_000.0).clamp(0.0, 1.0),
+                    color: rgba([stop.color.r, stop.color.g, stop.color.b, stop.color.a]),
+                })
+                .collect(),
+            kind: match kind {
+                ModelGradientKind::Linear { angle } => GradientKind::Linear {
+                    angle_deg: *angle as f32 / 60_000.0,
+                },
+                ModelGradientKind::Radial => GradientKind::Radial,
+            },
+        }),
+    }
+}
+
+/// Translates a resolved anchor stroke into the display [`ShapeOutline`].
+fn shape_outline(stroke: &AnchorStroke) -> ShapeOutline {
+    ShapeOutline {
+        color: rgba(stroke.color),
+        width: stroke_px(stroke.width),
+        dash: stroke.dash,
+    }
+}
+
 /// Builds the display list for a whole paginated [`Page`]: the running header, the
 /// body content (each placed paragraph or table row), then the running footer —
 /// each fragment composed at its position on the page. Header and footer are laid
@@ -283,31 +320,45 @@ fn compose_page_borders(list: &mut DisplayList, borders: &ResolvedPageBorders) {
 /// text box).
 fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor) {
     match &anchor.content {
-        AnchorContent::Image { media, crop } => {
+        AnchorContent::Image {
+            media,
+            crop,
+            border,
+        } => {
             list.push(PaintItem::Image {
                 media: media.clone(),
                 rect: anchor.rect,
                 crop: *crop,
             });
+            // A framed picture's `pic:spPr/a:ln` paints as a stroked rectangle over
+            // the picture box (pictures are rectangular).
+            if let Some(border) = border {
+                list.push(PaintItem::Rect {
+                    rect: anchor.rect,
+                    fill: None,
+                    stroke: Some(Stroke {
+                        color: rgba(border.color),
+                        width: stroke_px(border.width),
+                    }),
+                });
+            }
         }
         AnchorContent::Rectangle { fill, stroke } => {
-            list.push(PaintItem::Rect {
-                rect: anchor.rect,
-                fill: fill.map(rgba),
-                stroke: stroke.map(|s| Stroke {
-                    color: rgba(s.color),
-                    width: stroke_px(s.width),
-                }),
+            list.push(PaintItem::Shape {
+                geometry: ShapeGeometry::Rect { rect: anchor.rect },
+                fill: fill.as_ref().map(fill_to_display),
+                stroke: stroke.as_ref().map(shape_outline),
+                head_end: None,
+                tail_end: None,
             });
         }
         AnchorContent::Ellipse { fill, stroke } => {
-            list.push(PaintItem::Ellipse {
-                rect: anchor.rect,
-                fill: fill.map(rgba),
-                stroke: stroke.map(|s| Stroke {
-                    color: rgba(s.color),
-                    width: stroke_px(s.width),
-                }),
+            list.push(PaintItem::Shape {
+                geometry: ShapeGeometry::Ellipse { rect: anchor.rect },
+                fill: fill.as_ref().map(fill_to_display),
+                stroke: stroke.as_ref().map(shape_outline),
+                head_end: None,
+                tail_end: None,
             });
         }
         AnchorContent::RoundedRectangle {
@@ -315,14 +366,15 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor) {
             fill,
             stroke,
         } => {
-            list.push(PaintItem::RoundedRect {
-                rect: anchor.rect,
-                radius: *radius,
-                fill: fill.map(rgba),
-                stroke: stroke.map(|s| Stroke {
-                    color: rgba(s.color),
-                    width: stroke_px(s.width),
-                }),
+            list.push(PaintItem::Shape {
+                geometry: ShapeGeometry::RoundedRect {
+                    rect: anchor.rect,
+                    radius: *radius,
+                },
+                fill: fill.as_ref().map(fill_to_display),
+                stroke: stroke.as_ref().map(shape_outline),
+                head_end: None,
+                tail_end: None,
             });
         }
         AnchorContent::Polygon {
@@ -330,23 +382,32 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor) {
             fill,
             stroke,
         } => {
-            list.push(PaintItem::Polygon {
-                points: points.clone(),
-                fill: fill.map(rgba),
-                stroke: stroke.map(|s| Stroke {
-                    color: rgba(s.color),
-                    width: stroke_px(s.width),
-                }),
+            list.push(PaintItem::Shape {
+                geometry: ShapeGeometry::Polygon {
+                    points: points.clone(),
+                },
+                fill: fill.as_ref().map(fill_to_display),
+                stroke: stroke.as_ref().map(shape_outline),
+                head_end: None,
+                tail_end: None,
             });
         }
-        AnchorContent::Line { from, to, stroke } => {
-            list.push(PaintItem::Line {
-                from: *from,
-                to: *to,
-                stroke: Stroke {
-                    color: rgba(stroke.color),
-                    width: stroke_px(stroke.width),
+        AnchorContent::Line {
+            from,
+            to,
+            stroke,
+            head_end,
+            tail_end,
+        } => {
+            list.push(PaintItem::Shape {
+                geometry: ShapeGeometry::Line {
+                    from: *from,
+                    to: *to,
                 },
+                fill: None,
+                stroke: Some(shape_outline(stroke)),
+                head_end: *head_end,
+                tail_end: *tail_end,
             });
         }
         AnchorContent::TextBox {
@@ -356,10 +417,14 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor) {
             content_layout,
         } => {
             if let Some(fill) = fill {
-                list.push(PaintItem::Rect {
-                    rect: anchor.rect,
-                    fill: Some(rgba(*fill)),
+                // The box background paints as a shape rect so a gradient fill
+                // (`a:gradFill`) is honored, not just a solid color.
+                list.push(PaintItem::Shape {
+                    geometry: ShapeGeometry::Rect { rect: anchor.rect },
+                    fill: Some(fill_to_display(fill)),
                     stroke: None,
+                    head_end: None,
+                    tail_end: None,
                 });
             }
             if let Some(border) = border {
@@ -779,6 +844,7 @@ mod tests {
     use crate::text::{Decoration, FontId, LineConstraints, LineShaper, StyledRun};
     use crate::units::Twip;
     use casual_doc_model::NodeId;
+    use casual_doc_model::v1::DashStyle;
 
     #[test]
     fn compose_places_glyph_runs_at_the_paragraph_origin() {
@@ -1626,5 +1692,120 @@ mod tests {
             Some(672),
             "the box content is inset from the box's left edge by the margin"
         );
+    }
+
+    fn anchor_at(content: AnchorContent, rect: Rect) -> PlacedAnchor {
+        use crate::page::AnchorZ;
+        PlacedAnchor {
+            node: None,
+            content,
+            rect,
+            behind_doc: false,
+            z: AnchorZ {
+                relative_height: 0,
+                order: 0,
+            },
+            descr: None,
+        }
+    }
+
+    #[test]
+    fn a_bordered_picture_composes_an_image_then_a_stroked_frame() {
+        let rect = Rect::new(
+            Point::new(Twip(100), Twip(200)),
+            Size::new(Twip(500), Twip(400)),
+        );
+        let anchor = anchor_at(
+            AnchorContent::Image {
+                media: "word/media/image1.png".to_owned(),
+                crop: None,
+                border: Some(AnchorStroke {
+                    color: [10, 20, 30, 255],
+                    width: Twip(20),
+                    dash: DashStyle::Solid,
+                }),
+            },
+            rect,
+        );
+        let mut list = DisplayList::new();
+        compose_anchor(&mut list, &anchor);
+
+        assert!(
+            matches!(&list.items[0], PaintItem::Image { rect: r, .. } if *r == rect),
+            "the picture blits first"
+        );
+        assert!(
+            matches!(
+                &list.items[1],
+                PaintItem::Rect { rect: r, fill: None, stroke: Some(s) }
+                    if *r == rect && s.color == Color { r: 10, g: 20, b: 30, a: 255 }
+            ),
+            "the frame paints as a stroked rect over the picture box"
+        );
+    }
+
+    #[test]
+    fn a_gradient_dashed_shape_composes_to_a_shape_paint_item() {
+        use casual_doc_model::v1::{
+            Fill as ModelFill, GradientKind as ModelGradientKind,
+            GradientStop as ModelGradientStop, Rgba,
+        };
+
+        let rect = Rect::new(
+            Point::new(Twip::ZERO, Twip::ZERO),
+            Size::new(Twip(200), Twip(100)),
+        );
+        let anchor = anchor_at(
+            AnchorContent::Rectangle {
+                fill: Some(ModelFill::Gradient {
+                    stops: vec![
+                        ModelGradientStop {
+                            position: 0,
+                            color: Rgba {
+                                r: 255,
+                                g: 0,
+                                b: 0,
+                                a: 255,
+                            },
+                        },
+                        ModelGradientStop {
+                            position: 100_000,
+                            color: Rgba {
+                                r: 0,
+                                g: 0,
+                                b: 255,
+                                a: 255,
+                            },
+                        },
+                    ],
+                    kind: ModelGradientKind::Linear { angle: 5_400_000 },
+                }),
+                stroke: Some(AnchorStroke {
+                    color: [0, 0, 0, 255],
+                    width: Twip(30),
+                    dash: DashStyle::DashDot,
+                }),
+            },
+            rect,
+        );
+        let mut list = DisplayList::new();
+        compose_anchor(&mut list, &anchor);
+
+        let PaintItem::Shape {
+            geometry: ShapeGeometry::Rect { .. },
+            fill: Some(Fill::Gradient(gradient)),
+            stroke: Some(outline),
+            ..
+        } = &list.items[0]
+        else {
+            panic!("expected a gradient-filled shape, got {:?}", list.items[0]);
+        };
+        assert_eq!(gradient.stops.len(), 2);
+        // 5_400_000 sixty-thousandths of a degree = 90°.
+        assert!(matches!(
+            gradient.kind,
+            GradientKind::Linear { angle_deg } if (angle_deg - 90.0).abs() < 0.01
+        ));
+        assert!(matches!(outline.dash, DashStyle::DashDot));
     }
 }

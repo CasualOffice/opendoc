@@ -8,6 +8,9 @@
 
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::SectionId;
+// Kept on a separate `use` line (anti-conflict): the shape fill/outline/line-end
+// model types the anchor paint content carries.
+use casual_doc_model::v1::{DashStyle, Fill, LineEnd};
 use serde::{Deserialize, Serialize};
 
 use crate::block::{BlockFragment, ResolvedEdge};
@@ -81,14 +84,26 @@ pub struct AnchorZ {
     pub order: u32,
 }
 
-/// A stroke (outline) painted for a floating shape or connector: a resolved color
-/// and a width in twips.
+/// A stroke (outline) painted for a floating shape or connector: a resolved color,
+/// a width in twips, and a preset dash pattern (`a:ln > a:prstDash`).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct AnchorStroke {
     /// The stroke color (RGBA).
     pub color: [u8; 4],
     /// The stroke width in twips (a hairline when `0`).
     pub width: Twip,
+    /// The preset dash pattern (`DashStyle::Solid` = an unbroken line).
+    #[serde(default = "solid_dash", skip_serializing_if = "is_solid_dash")]
+    pub dash: DashStyle,
+}
+
+/// The default dash for a serialized [`AnchorStroke`] that predates the field.
+fn solid_dash() -> DashStyle {
+    DashStyle::Solid
+}
+
+fn is_solid_dash(dash: &DashStyle) -> bool {
+    matches!(dash, DashStyle::Solid)
 }
 
 /// What a [`PlacedAnchor`] paints: an image, a filled/stroked shape, a line/
@@ -103,18 +118,23 @@ pub enum AnchorContent {
         /// (`P1G-OBJ-MODEL`).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         crop: Option<casual_doc_model::v1::CropRect>,
+        /// The picture frame outline (`pic:spPr/a:ln`), if the picture is bordered.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        border: Option<AnchorStroke>,
     },
     /// A rectangle (a group's background/foreground shape).
     Rectangle {
-        /// The fill color (RGBA), if filled.
-        fill: Option<[u8; 4]>,
+        /// The fill (solid or gradient), if filled.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fill: Option<Fill>,
         /// The outline, if stroked.
         stroke: Option<AnchorStroke>,
     },
     /// An ellipse fitted to the anchor rectangle.
     Ellipse {
-        /// The fill color (RGBA), if filled.
-        fill: Option<[u8; 4]>,
+        /// The fill (solid or gradient), if filled.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fill: Option<Fill>,
         /// The outline, if stroked.
         stroke: Option<AnchorStroke>,
     },
@@ -122,8 +142,9 @@ pub enum AnchorContent {
     RoundedRectangle {
         /// Corner radius in twips, clamped to half the shorter side.
         radius: Twip,
-        /// The fill color (RGBA), if filled.
-        fill: Option<[u8; 4]>,
+        /// The fill (solid or gradient), if filled.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fill: Option<Fill>,
         /// The outline, if stroked.
         stroke: Option<AnchorStroke>,
     },
@@ -132,8 +153,9 @@ pub enum AnchorContent {
         /// Vertices in path order. Typed presets currently produce three or four
         /// points; arbitrary package-provided paths never enter this primitive.
         points: Vec<Point>,
-        /// The fill color (RGBA), if filled.
-        fill: Option<[u8; 4]>,
+        /// The fill (solid or gradient), if filled.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fill: Option<Fill>,
         /// The outline, if stroked.
         stroke: Option<AnchorStroke>,
     },
@@ -145,6 +167,12 @@ pub enum AnchorContent {
         to: Point,
         /// The line's stroke.
         stroke: AnchorStroke,
+        /// The start (`a:headEnd`) arrowhead, if any.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        head_end: Option<LineEnd>,
+        /// The end (`a:tailEnd`) arrowhead, if any.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tail_end: Option<LineEnd>,
     },
     /// A text box: block content flowed through the shared pipeline, with an
     /// optional fill and border.
@@ -152,8 +180,9 @@ pub enum AnchorContent {
         /// The flowed block fragments, positioned relative to the box's content
         /// origin (the box top-left inset by the internal margin).
         blocks: Vec<BlockFragment>,
-        /// The box background fill (RGBA), if any.
-        fill: Option<[u8; 4]>,
+        /// The box background fill (solid or gradient), if any.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fill: Option<Fill>,
         /// The box border color and width, if any.
         border: Option<TextBoxStroke>,
         /// Resolved content offset and overflow clipping.
