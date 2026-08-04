@@ -4072,12 +4072,68 @@ mod semantic_tests {
             section.section_type,
             Some(casual_doc_model::v1::SectionType::Continuous)
         );
+        // `w:pgNumType@w:fmt` is typed as the shared NumberFormat enum, not a string.
+        assert_eq!(
+            section.page_numbering.format,
+            Some(casual_doc_model::v1::NumberFormat::LowerRoman)
+        );
         assert_eq!(section.page_numbering.start, Some(3));
         let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
         let m2 = reopen(&bytes);
         assert_eq!(
             m1, m2,
             "expanded section properties survive write -> reopen"
+        );
+    }
+
+    #[test]
+    fn section_properties_change_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::NumberFormat;
+        // A `w:sectPrChange` (tracked change of section properties): the metadata
+        // (author/date/id) plus the prior `w:sectPr` snapshot (different page size,
+        // margins, and page-number format) must be captured and survive write ->
+        // reopen as a fixed point.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:r><w:t>x</w:t></w:r></w:p>
+            <w:sectPr>
+                <w:pgSz w:w="12240" w:h="15840"/>
+                <w:pgMar w:top="1440" w:bottom="1440" w:start="1440" w:end="1440"/>
+                <w:pgNumType w:fmt="decimal"/>
+                <w:sectPrChange w:author="alice" w:date="2020-01-02T03:04:05Z" w:id="7">
+                    <w:sectPr>
+                        <w:pgSz w:w="15840" w:h="12240"/>
+                        <w:pgMar w:top="720" w:bottom="720" w:start="720" w:end="720"/>
+                        <w:pgNumType w:fmt="lowerRoman"/>
+                    </w:sectPr>
+                </w:sectPrChange>
+            </w:sectPr>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        let section = &m1.definitions().sections[0];
+        let change = section
+            .section_change
+            .as_ref()
+            .expect("the section carries a sectPrChange");
+        assert_eq!(change.author.as_deref(), Some("alice"));
+        assert_eq!(change.date.as_deref(), Some("2020-01-02T03:04:05Z"));
+        assert_eq!(change.revision_id.as_deref(), Some("7"));
+        // The prior snapshot preserves the pre-change geometry and format.
+        assert_eq!(change.prior.page_size.width_twips, 15_840);
+        assert_eq!(change.prior.page_margins.top_twips, 720);
+        assert_eq!(
+            change.prior.page_numbering.format,
+            Some(NumberFormat::LowerRoman)
+        );
+        // The prior snapshot never itself carries a further change.
+        assert!(change.prior.section_change.is_none());
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(
+            m1, m2,
+            "the section-properties change survives write -> reopen unchanged"
         );
     }
 

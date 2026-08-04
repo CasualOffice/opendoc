@@ -2575,6 +2575,7 @@ fn valid_section(
         endnote_props: NoteProperties::default(),
         text_direction: None,
         bidi: false,
+        section_change: None,
     }
 }
 

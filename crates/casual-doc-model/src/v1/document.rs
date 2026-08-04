@@ -350,72 +350,7 @@ impl Document {
 
     fn validate_sections(&self) -> Result<(), ModelError> {
         for section in &self.definitions.sections {
-            check_domain(
-                (1..=31_680).contains(&section.page_size.width_twips),
-                "section.page_size.width",
-            )?;
-            check_domain(
-                (1..=31_680).contains(&section.page_size.height_twips),
-                "section.page_size.height",
-            )?;
-            for margin in [
-                section.page_margins.top_twips,
-                section.page_margins.bottom_twips,
-                section.page_margins.start_twips,
-                section.page_margins.end_twips,
-            ] {
-                check_domain((0..=31_680).contains(&margin), "section.page_margins")?;
-            }
-            check_domain(
-                (1..=64).contains(&section.columns.count),
-                "section.column_count",
-            )?;
-            if let Some(space) = section.columns.space_twips {
-                check_domain((0..=31_680).contains(&space), "section.column_space")?;
-            }
-            if let Some(format) = &section.page_numbering.format {
-                check_domain(
-                    !format.is_empty() && format.len() <= 32,
-                    "section.page_numbering.format",
-                )?;
-            }
-            if let Some(start) = section.page_numbering.start {
-                check_domain(
-                    (0..=1_000_000).contains(&start),
-                    "section.page_numbering.start",
-                )?;
-            }
-            for value in [section.doc_grid.line_pitch, section.doc_grid.char_space]
-                .into_iter()
-                .flatten()
-            {
-                check_domain((0..=31_680).contains(&value), "section.doc_grid")?;
-            }
-            check_page_borders(&section.page_borders)?;
-            for value in [
-                section.line_numbering.count_by,
-                section.line_numbering.start,
-            ]
-            .into_iter()
-            .flatten()
-            {
-                check_domain((0..=32_767).contains(&value), "section.line_numbering")?;
-            }
-            if let Some(distance) = section.line_numbering.distance {
-                check_domain(
-                    (0..=31_680).contains(&distance),
-                    "section.line_numbering.distance",
-                )?;
-            }
-            for value in [section.paper_source.first, section.paper_source.other]
-                .into_iter()
-                .flatten()
-            {
-                check_domain((0..=32_767).contains(&value), "section.paper_source")?;
-            }
-            for props in [&section.footnote_props, &section.endnote_props] {
-                check_note_props(props)?;
-            }
+            check_section_domains(section)?;
             for header in &section.headers {
                 if !self.definitions.headers.contains_key(&header.reference) {
                     return Err(ModelError::DanglingHeaderFooterRef(
@@ -429,6 +364,13 @@ impl Document {
                         footer.reference.node_id(),
                     ));
                 }
+            }
+            // The `w:sectPrChange` prior snapshot: bound its metadata, then the prior
+            // section's own domains (a prior never carries a further change, and its
+            // historical header/footer references are not re-validated here).
+            if let Some(change) = &section.section_change {
+                check_prop_change_meta(change, "section.sectPrChange")?;
+                check_section_domains(&change.prior)?;
             }
         }
         Ok(())
@@ -2213,6 +2155,80 @@ fn check_note_props(props: &NoteProperties) -> Result<(), ModelError> {
     }
     if let Some(start) = props.number_start {
         check_domain((0..=1_000_000).contains(&start), "note_props.number_start")?;
+    }
+    Ok(())
+}
+
+/// Validates a section's own value domains (page geometry, columns, page numbering,
+/// grid, borders, line numbering, paper source, note props) — the bounds that hold
+/// for a real section AND for a `w:sectPrChange` prior snapshot. Header/footer
+/// reference resolution is validated separately (only for real sections).
+fn check_section_domains(section: &SectionBoundary) -> Result<(), ModelError> {
+    check_domain(
+        (1..=31_680).contains(&section.page_size.width_twips),
+        "section.page_size.width",
+    )?;
+    check_domain(
+        (1..=31_680).contains(&section.page_size.height_twips),
+        "section.page_size.height",
+    )?;
+    for margin in [
+        section.page_margins.top_twips,
+        section.page_margins.bottom_twips,
+        section.page_margins.start_twips,
+        section.page_margins.end_twips,
+    ] {
+        check_domain((0..=31_680).contains(&margin), "section.page_margins")?;
+    }
+    check_domain(
+        (1..=64).contains(&section.columns.count),
+        "section.column_count",
+    )?;
+    if let Some(space) = section.columns.space_twips {
+        check_domain((0..=31_680).contains(&space), "section.column_space")?;
+    }
+    if let Some(NumberFormat::Other(token)) = &section.page_numbering.format {
+        check_domain(
+            !token.is_empty() && token.len() <= 64,
+            "section.page_numbering.format",
+        )?;
+    }
+    if let Some(start) = section.page_numbering.start {
+        check_domain(
+            (0..=1_000_000).contains(&start),
+            "section.page_numbering.start",
+        )?;
+    }
+    for value in [section.doc_grid.line_pitch, section.doc_grid.char_space]
+        .into_iter()
+        .flatten()
+    {
+        check_domain((0..=31_680).contains(&value), "section.doc_grid")?;
+    }
+    check_page_borders(&section.page_borders)?;
+    for value in [
+        section.line_numbering.count_by,
+        section.line_numbering.start,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        check_domain((0..=32_767).contains(&value), "section.line_numbering")?;
+    }
+    if let Some(distance) = section.line_numbering.distance {
+        check_domain(
+            (0..=31_680).contains(&distance),
+            "section.line_numbering.distance",
+        )?;
+    }
+    for value in [section.paper_source.first, section.paper_source.other]
+        .into_iter()
+        .flatten()
+    {
+        check_domain((0..=32_767).contains(&value), "section.paper_source")?;
+    }
+    for props in [&section.footnote_props, &section.endnote_props] {
+        check_note_props(props)?;
     }
     Ok(())
 }

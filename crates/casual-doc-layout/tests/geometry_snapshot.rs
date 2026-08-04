@@ -92,6 +92,7 @@ fn section(id: u64, valign: Option<PageVerticalAlignment>) -> SectionBoundary {
         endnote_props: Default::default(),
         text_direction: None,
         bidi: false,
+        section_change: None,
     }
 }
 

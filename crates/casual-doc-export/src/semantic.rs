@@ -2474,7 +2474,7 @@ fn write_section_properties(
     if !section.page_numbering.is_empty() {
         let mut el = start("w:pgNumType");
         if let Some(format) = &section.page_numbering.format {
-            el.push_attribute(("w:fmt", format.as_str()));
+            el.push_attribute(("w:fmt", number_format_token(format)));
         }
         if let Some(start_num) = section.page_numbering.start {
             el.push_attribute(("w:start", start_num.to_string().as_str()));
@@ -2563,6 +2563,24 @@ fn write_section_properties(
             el.push_attribute(("w:charSpace", char_space.to_string().as_str()));
         }
         w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    // `w:sectPrChange` is the last `CT_SectPr` child: the change metadata plus the
+    // prior `w:sectPr` snapshot (which never itself carries a further change).
+    if let Some(change) = &section.section_change {
+        let mut el = start("w:sectPrChange");
+        if let Some(author) = &change.author {
+            el.push_attribute(("w:author", author.as_str()));
+        }
+        if let Some(date) = &change.date {
+            el.push_attribute(("w:date", date.as_str()));
+        }
+        if let Some(revision_id) = &change.revision_id {
+            el.push_attribute(("w:id", revision_id.as_str()));
+        }
+        w.write_event(Event::Start(el)).map_err(pkg)?;
+        write_section_properties(w, change.prior.as_ref())?;
+        w.write_event(Event::End(BytesEnd::new("w:sectPrChange")))
+            .map_err(pkg)?;
     }
     w.write_event(Event::End(BytesEnd::new("w:sectPr")))
         .map_err(pkg)?;

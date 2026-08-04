@@ -34,6 +34,9 @@ use casual_doc_model::v1::{
     TextBoxVerticalAnchor, TextBoxVerticalOverflow, TextDirection, VerticalAlign, VerticalAnchor,
     VerticalMerge, VerticalPosition, WordprocessingGroup, WrapDistances, WrapMode,
 };
+// Separate `use` line (kept out of the sorted block above) to avoid import-list
+// merge collisions with other agents editing this shared file.
+use casual_doc_model::v1::NumberFormat;
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Reader, Writer};
@@ -696,7 +699,7 @@ struct SectionAccumulator {
     section_type: Option<SectionType>,
     title_page: Option<bool>,
     vertical_alignment: Option<PageVerticalAlignment>,
-    page_number_format: Option<String>,
+    page_number_format: Option<NumberFormat>,
     page_number_start: Option<i32>,
     doc_grid_type: Option<DocGridType>,
     doc_grid_line_pitch: Option<i32>,
@@ -720,6 +723,10 @@ struct SectionAccumulator {
     endnote_props: NoteProperties,
     text_direction: Option<TextDirection>,
     bidi: bool,
+    /// The section-properties change (`w:sectPrChange`) captured for THIS section:
+    /// its metadata plus the fully-built prior section snapshot. Attached to the
+    /// built [`SectionBoundary`].
+    section_change: Option<PropChange<SectionBoundary>>,
 }
 
 /// Which per-section note-properties container (if any) is open, so its
@@ -974,6 +981,15 @@ struct BodyParser<'a> {
     alt_stack: Vec<bool>,
     section: Option<SectionAccumulator>,
     sections: Vec<SectionBoundary>,
+    /// The open `w:sectPrChange`'s metadata (`Some` between its start and end). While
+    /// set, the enclosing section is set aside in [`Self::saved_section`] so the
+    /// nested prior `w:sectPr` accumulates through the ordinary section routing.
+    section_change_meta: Option<PropChangeMeta>,
+    /// The CURRENT section accumulator, parked while the `w:sectPrChange`'s prior
+    /// `w:sectPr` snapshot is parsed into the live [`Self::section`] slot.
+    saved_section: Option<SectionAccumulator>,
+    /// The built prior-section snapshot, pending attachment on `</w:sectPrChange>`.
+    prior_section: Option<SectionBoundary>,
     /// Body reference resolution: footnote source `w:id` -> deterministic id.
     footnote_ids: &'a BTreeMap<String, NoteId>,
     /// Body reference resolution: endnote source `w:id` -> deterministic id.
@@ -1151,6 +1167,9 @@ impl<'a> BodyParser<'a> {
             alt_stack: Vec::new(),
             section: None,
             sections: Vec::new(),
+            section_change_meta: None,
+            saved_section: None,
+            prior_section: None,
             footnote_ids: inputs.footnote_ids,
             endnote_ids: inputs.endnote_ids,
             note_container,
@@ -1710,10 +1729,19 @@ impl BodyParser<'_> {
                     });
                 }
             }
-            // A section- or numbering-properties change is not yet modeled: report
-            // the container and skip its subtree so the historical values are never
-            // mapped over the current ones. The counter is incremented here (before
-            // the skip catch) so nested changes still balance.
+            // A section-properties change: capture its metadata and park the CURRENT
+            // section so the nested prior `w:sectPr` accumulates through the ordinary
+            // section routing (built and attached on the matching close). Only when a
+            // section is actually open (a real `w:sectPr` around it).
+            b"sectPrChange" if self.section.is_some() => {
+                self.section_change_meta = Some(PropChangeMeta::from_element(element));
+                self.saved_section = self.section.take();
+            }
+            // A numbering-properties change (or a stray section change with no open
+            // section) is not modeled: report the container and skip its subtree so
+            // the historical values are never mapped over the current ones. The
+            // counter is incremented here (before the skip catch) so nested changes
+            // still balance.
             b"sectPrChange" | b"numberingChange" if self.in_document => {
                 self.pr_change_depth += 1;
                 self.reporter.report(local);
@@ -2941,8 +2969,11 @@ impl BodyParser<'_> {
                 }
             }
             b"pgNumType" if self.section.is_some() => {
-                let format =
-                    attribute_value(element, b"fmt").filter(|v| !v.is_empty() && v.len() <= 32);
+                // `w:pgNumType@w:fmt` shares the `ST_NumberFormat` vocabulary with
+                // `w:numFmt`; type it like note/level numbering (unknown tokens are
+                // retained verbatim, oversized ones reported).
+                let format = attribute_value(element, b"fmt")
+                    .and_then(crate::numbering::number_format_from_str);
                 let start = attr_i32(element, b"start");
                 if let Some(section) = self.section.as_mut() {
                     section.page_number_format = format;
@@ -3810,6 +3841,24 @@ impl BodyParser<'_> {
             {
                 self.finish_prop_change();
             }
+            // Close of a MODELED section-properties change: the current section was
+            // restored at the prior `w:sectPr`'s close; attach the built prior with
+            // its metadata. (A malformed change with no prior `w:sectPr` still
+            // restores the parked current section so it is not lost.)
+            b"sectPrChange" if self.section_change_meta.is_some() => {
+                let meta = self
+                    .section_change_meta
+                    .take()
+                    .expect("section_change_meta is Some in this arm");
+                if self.section.is_none() {
+                    self.section = self.saved_section.take();
+                }
+                if let (Some(prior), Some(section)) =
+                    (self.prior_section.take(), self.section.as_mut())
+                {
+                    section.section_change = Some(meta.into_change(prior));
+                }
+            }
             // Close of a reported-and-skipped change (`w:sectPrChange` /
             // `w:numberingChange`); balances the on_start increment. Placed BEFORE
             // the skip catch so it is not swallowed.
@@ -3923,6 +3972,16 @@ impl BodyParser<'_> {
                 } else {
                     self.rpr_depth = self.rpr_depth.saturating_sub(1);
                 }
+            }
+            // The prior `w:sectPr` snapshot inside an open `w:sectPrChange`: build it
+            // (without pushing a real section) and restore the parked current
+            // section. Placed BEFORE the ordinary section close so the prior is not
+            // mistaken for a real section.
+            b"sectPr" if self.section_change_meta.is_some() && self.prior_section.is_none() => {
+                if let Some(prior_acc) = self.section.take() {
+                    self.prior_section = Some(self.build_section_boundary(prior_acc)?);
+                }
+                self.section = self.saved_section.take();
             }
             b"sectPr" => {
                 if let Some(accumulator) = self.section.take() {
@@ -5242,6 +5301,20 @@ impl BodyParser<'_> {
     }
 
     fn build_section(&mut self, accumulator: SectionAccumulator) -> Result<SectionId, ImportError> {
+        let boundary = self.build_section_boundary(accumulator)?;
+        let id = boundary.id;
+        self.sections.push(boundary);
+        Ok(id)
+    }
+
+    /// Builds a [`SectionBoundary`] from an accumulator (allocating its id in
+    /// document order) WITHOUT pushing it to the section list — used both for a real
+    /// section (via [`Self::build_section`]) and for the prior snapshot nested in a
+    /// `w:sectPrChange`.
+    fn build_section_boundary(
+        &mut self,
+        accumulator: SectionAccumulator,
+    ) -> Result<SectionBoundary, ImportError> {
         let id = SectionId::new(self.next_id()?);
         let page_size = PageSize {
             width_twips: accumulator.page_width.unwrap_or(12_240).clamp(1, 31_680),
@@ -5294,7 +5367,7 @@ impl BodyParser<'_> {
             props.number_start = props.number_start.map(|v| v.clamp(0, 1_000_000));
             props
         };
-        self.sections.push(SectionBoundary {
+        Ok(SectionBoundary {
             id,
             page_size,
             page_margins,
@@ -5314,8 +5387,8 @@ impl BodyParser<'_> {
             endnote_props: clamp_note(accumulator.endnote_props),
             text_direction: accumulator.text_direction,
             bidi: accumulator.bidi,
-        });
-        Ok(id)
+            section_change: accumulator.section_change,
+        })
     }
 
     /// Enters a text box: allocate its id (document order), then suspend the
