@@ -36,8 +36,8 @@ const FIDELITY = [
   },
   {
     family: "Lists & numbering",
-    note: "Bullet/numbered toggle, level, and style-inherited numbering render and edit. Per-instance level/start overrides, numStyleLink/styleLink indirection, and per-level restart are not yet resolved, and spelled-out formats (cardinalText/ordinalText) fall back to decimal. No multilevel gallery or checklist authoring.",
-    modeled: "partial", rendered: "partial", editable: "partial", roundtrips: "full",
+    note: "Numbering is fully modeled: multiLevelType, per-level restart, level→pStyle links, numStyleLink/styleLink indirection, full per-instance level/start overrides, and the numFmt vocabulary (incl. spelled-out cardinalText/ordinalText) are typed and round-trip. Rendering resolves the common cases; per-instance overrides and spelled-out formats still fall back to decimal when painted, and there is no multilevel gallery or checklist authoring.",
+    modeled: "full", rendered: "partial", editable: "partial", roundtrips: "full",
   },
   {
     family: "Images & inline drawings",
@@ -46,8 +46,8 @@ const FIDELITY = [
   },
   {
     family: "Text boxes & shapes",
-    note: "Anchored DrawingML shapes retain bounded preset identities/adjustments; rectangles, lines, ellipses, rounded rectangles, triangles, right triangles, and diamonds render distinctly. Other preset/custom paths, non-text inline shapes, gradients, rotation, vertical text, and linked boxes remain partial. Not editable.",
-    modeled: "partial", rendered: "partial", editable: "none", roundtrips: "partial",
+    note: "Shape geometry (bounded presets + adjustments), fill (solid and multi-stop gradient), outline (color/width/dash/arrowheads), rotation/flip, and the tight/through wrap contour are typed and round-trip. Custom geometry (custGeom paths) is retained verbatim, not typed — so semantic-mode round-trip stays partial for those. Rendering still paints only the common preset shapes distinctly; gradients, rotation, vertical text, and linked boxes are unpainted. Not editable.",
+    modeled: "full", rendered: "partial", editable: "none", roundtrips: "partial",
   },
   {
     family: "Headers & footers",
