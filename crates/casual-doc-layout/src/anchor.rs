@@ -145,14 +145,14 @@ fn collect_body_wrap_inlines(
                     ctx,
                     paragraph,
                     section,
-                    drawing.anchor,
+                    drawing.anchor.clone(),
                     drawing.extent,
                     None,
                     out,
                 );
             }
             InlineNode::TextBox(text_box) if text_box.anchor.is_some() => {
-                let anchor = text_box.anchor.expect("guarded");
+                let anchor = text_box.anchor.clone().expect("guarded");
                 let extent = text_box.extent.unwrap_or(Extent {
                     width_emu: 0,
                     height_emu: 0,
@@ -178,7 +178,7 @@ fn collect_body_wrap_inlines(
                 );
             }
             InlineNode::Group(group) => {
-                if let Some(anchor) = group.anchor {
+                if let Some(anchor) = group.anchor.clone() {
                     push_body_wrap_rect(
                         layout,
                         ctx,
@@ -345,7 +345,7 @@ fn float_extent_inlines(
                 *bottom = (*bottom).max(rect.bottom());
             }
             InlineNode::TextBox(text_box) if text_box.anchor.is_some() => {
-                let anchor = text_box.anchor.expect("guarded");
+                let anchor = text_box.anchor.clone().expect("guarded");
                 let extent = text_box.extent.unwrap_or(Extent {
                     width_emu: 0,
                     height_emu: 0,
@@ -378,7 +378,7 @@ fn float_extent_inlines(
                 *bottom = (*bottom).max(painted);
             }
             InlineNode::Group(group) => {
-                if let Some(anchor) = group.anchor {
+                if let Some(anchor) = group.anchor.clone() {
                     let origin = resolve_anchor_rect(&anchor, group.extent, refs).origin;
                     let mapper = GroupMapper::root(group);
                     group_extent_children(group, origin, &mapper, bottom);
@@ -589,7 +589,7 @@ fn collect_inlines(
                 );
             }
             InlineNode::TextBox(text_box) if text_box.anchor.is_some() => {
-                let anchor = text_box.anchor.expect("guarded");
+                let anchor = text_box.anchor.clone().expect("guarded");
                 let extent = text_box.extent.unwrap_or(Extent {
                     width_emu: 0,
                     height_emu: 0,
@@ -628,7 +628,7 @@ fn collect_inlines(
                 );
             }
             InlineNode::Group(group) => {
-                let Some(anchor) = group.anchor else {
+                let Some(anchor) = group.anchor.clone() else {
                     continue;
                 };
                 let (page_index, refs) =
@@ -1422,6 +1422,7 @@ mod tests {
             },
             wrap: WrapMode::None,
             wrap_distances: Default::default(),
+            wrap_polygon: None,
             behind_doc: false,
         }
     }

@@ -461,7 +461,7 @@ impl WrapDistances {
 
 /// The position, wrap, and z-order of an anchored (floating) drawing — the
 /// `wp:anchor` frame around a `pic:pic`, as opposed to an inline `wp:inline`.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DrawingAnchor {
     /// The horizontal placement (`wp:positionH`).
@@ -473,6 +473,14 @@ pub struct DrawingAnchor {
     /// Text-exclusion distances around the object.
     #[serde(default, skip_serializing_if = "WrapDistances::is_zero")]
     pub wrap_distances: WrapDistances,
+    /// The tight/through wrap contour (`wp:wrapTight`/`wp:wrapThrough` >
+    /// `wp:wrapPolygon`): its ordered vertices (`wp:start` + `wp:lineTo`) in EMU,
+    /// relative to the object's extent. `None` unless the producer authored a
+    /// polygon; only meaningful for [`WrapMode::Tight`]/[`WrapMode::Through`].
+    /// Carried through round-trips; layout still wraps to the bounding box (using
+    /// the contour for exclusion geometry is a follow-up).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrap_polygon: Option<Vec<PointEmu>>,
     /// Whether the drawing paints behind the document text (`@behindDoc`),
     /// i.e. its z-order relative to the flow. Only meaningful for
     /// [`WrapMode::None`].

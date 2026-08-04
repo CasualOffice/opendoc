@@ -2639,6 +2639,7 @@ fn vml_rect_horizon_rule_maps_to_a_behind_text_shape_float() {
     };
     let anchor = group
         .anchor
+        .clone()
         .expect("the shape float carries the VML anchor");
     assert!(
         anchor.behind_doc,
@@ -2685,7 +2686,10 @@ fn vml_shape_preserves_mirrored_margin_frames_and_relative_alignment() {
     let InlineNode::Group(group) = &paragraph(&import, 0).inlines[0] else {
         panic!("expected a positioned VML shape");
     };
-    let anchor = group.anchor.expect("relative alignment creates a float");
+    let anchor = group
+        .anchor
+        .clone()
+        .expect("relative alignment creates a float");
     assert_eq!(
         anchor.horizontal.relative_from,
         HorizontalAnchor::InsideMargin
@@ -2866,6 +2870,7 @@ fn header_vml_text_box_with_absolute_position_is_a_positioned_float() {
     let text_box = find_textbox(&para.inlines).expect("header text box is modeled");
     let anchor = text_box
         .anchor
+        .clone()
         .expect("a positioned header text box is a float carrying its VML anchor");
     assert_eq!(anchor.horizontal.relative_from, HorizontalAnchor::Page);
     assert!(
@@ -2955,6 +2960,7 @@ fn local_top_and_bottom_vml_text_box_in_a_body_cell_is_positioned() {
     let text_box = find_textbox(&paragraph.inlines).expect("cell VML box is modeled");
     let anchor = text_box
         .anchor
+        .clone()
         .expect("the locally reflowable body box is positioned");
     assert_eq!(anchor.horizontal.relative_from, HorizontalAnchor::Column);
     assert_eq!(anchor.vertical.relative_from, VerticalAnchor::Paragraph);
@@ -3012,7 +3018,10 @@ fn footer_vml_text_box_preserves_relative_alignment_and_body_properties() {
         panic!("expected a footer paragraph");
     };
     let text_box = find_textbox(&paragraph.inlines).expect("footer text box is modeled");
-    let anchor = text_box.anchor.expect("footer text box remains positioned");
+    let anchor = text_box
+        .anchor
+        .clone()
+        .expect("footer text box remains positioned");
     assert_eq!(
         anchor.horizontal.relative_from,
         HorizontalAnchor::RightMargin

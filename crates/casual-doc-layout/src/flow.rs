@@ -11522,6 +11522,7 @@ mod tests {
                 start_emu: 180 * 635,
                 ..WrapDistances::default()
             },
+            wrap_polygon: None,
             behind_doc: false,
         };
         let item = float_flow_item(
