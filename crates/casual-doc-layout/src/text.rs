@@ -99,6 +99,14 @@ pub struct GlyphRun {
     /// while a caret click still lands in the body. Additive: defaults false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub is_marker: bool,
+    /// Whether this run is a tab **leader** fill (the tiled dot/underscore/hyphen
+    /// glyphs drawn across a tab's advance), not model text. Its glyphs all share
+    /// the paragraph's start offset — a rendering artifact, never a caret anchor —
+    /// so `crate::hittest` excludes it from caret slots (a click on a leader
+    /// underline resolves to the tab's real caret positions, not the paragraph
+    /// start). Additive: defaults false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_leader: bool,
 }
 
 /// How a line ends.
@@ -725,6 +733,7 @@ mod tests {
     fn glyph_run_serializes() {
         let run = GlyphRun {
             is_marker: false,
+            is_leader: false,
             font: FontId(0),
             size: Twip::from_points(11),
             character_scale_percent: 100,

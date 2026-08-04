@@ -553,7 +553,13 @@ fn layout_tabbed_line(
         push_shifted(&mut current.runs, &seg.runs, Twip(left), Twip::ZERO);
         current.ascent = current.ascent.max(seg.ascent);
         current.descent = current.descent.max(seg.descent);
-        current.range.end = ModelPos::new(node, segment_end(block, i));
+        // Extend the line's model range to this segment's end, but never let it
+        // regress: an empty trailing segment (a label + leader-tab blank, with no
+        // value typed) has `segment_end == block.start_offset`, which would
+        // otherwise collapse the whole line to `[start, start)` and make the label
+        // text unaddressable by the caret (`crate::hittest`).
+        let seg_end = segment_end(block, i).max(current.range.end.offset);
+        current.range.end = ModelPos::new(node, seg_end);
         pen = left + seg.width.raw();
     }
 
@@ -953,6 +959,8 @@ fn leader_run(
         .collect();
     Some(GlyphRun {
         is_marker: false,
+        // A leader is decorative fill, not model text: exclude it from caret slots.
+        is_leader: true,
         font: template.font,
         size: template.size,
         character_scale_percent: template.character_scale_percent,

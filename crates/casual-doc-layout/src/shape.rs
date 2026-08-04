@@ -1106,6 +1106,7 @@ impl ParleyShaper {
                 let shading = (style.brush.shading[3] != 0).then_some(style.brush.shading);
                 out_runs.push(GlyphRun {
                     is_marker: false,
+                    is_leader: false,
                     font,
                     size,
                     character_scale_percent: style.brush.character_scale_percent,
@@ -1283,6 +1284,7 @@ mod tests {
         Line {
             runs: vec![GlyphRun {
                 is_marker: false,
+                is_leader: false,
                 font: FontId(0),
                 size: Twip(220),
                 character_scale_percent: 100,
