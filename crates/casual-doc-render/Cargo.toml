@@ -47,6 +47,19 @@ image = { version = "0.25", default-features = false, features = [
 # browser/WASM path is unaffected (it uses the host-populated registry instead).
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 casual-doc-layout = { workspace = true, features = ["system-fonts"] }
+# SVG (vector image) rasterization straight into a `tiny-skia` Pixmap — the same
+# backend the raster path uses, so a rendered SVG blits like any other image.
+# `resvg` re-exports `usvg` + `tiny_skia` (pinned to our 0.11 so the Pixmap types
+# unify). Native-only: not built for the browser/WASM path, which keeps the
+# placeholder. Licensed `Apache-2.0 OR MIT`.
+#
+# `default-features = false` drops resvg's `text` feature (and `system-fonts`/
+# `memmap-fonts`/`raster-images`) so shape/path rasterization pulls NONE of the
+# text-shaping font stack — specifically the unmaintained `rustybuzz`
+# (RUSTSEC-2026-0206) and `ttf-parser` (RUSTSEC-2026-0192) that `usvg/text` pulls.
+# The documented trade-off: SVG `<text>` is not rendered (paths/shapes/gradients
+# are). Doc-embedded SVGs are logos/vector paths, so this is acceptable.
+resvg = { version = "0.45", default-features = false }
 
 [dev-dependencies]
 casual-doc-import.workspace = true
