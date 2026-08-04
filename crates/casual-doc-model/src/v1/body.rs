@@ -2299,6 +2299,75 @@ pub enum MathExpression {
         /// The grouped base expression.
         base: Box<MathExpression>,
     },
+    /// A base with a preceding (left) subscript and/or superscript, from `m:sPre` —
+    /// the left-script mirror of [`MathExpression::Script`].
+    PreScript {
+        /// The base expression (the `m:e`).
+        base: Box<MathExpression>,
+        /// The preceding subscript (the `m:sub`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        subscript: Option<Box<MathExpression>>,
+        /// The preceding superscript (the `m:sup`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        superscript: Option<Box<MathExpression>>,
+    },
+    /// A formula enclosed in a border/strike box, from `m:borderBox`.
+    BorderBox {
+        /// The boxed content (the `m:e`).
+        content: Box<MathExpression>,
+        /// Which box edges are drawn and which strikes are present
+        /// (`m:borderBoxPr`); the default draws all four borders and no strike.
+        #[serde(default, skip_serializing_if = "MathBorderBox::is_default")]
+        borders: MathBorderBox,
+    },
+    /// A logical grouping box, from `m:box` — a transparent wrapper Word uses for
+    /// break/alignment grouping. Carries only its content; the box's layout-hint
+    /// `m:boxPr` stays authoritative in the retained OMML.
+    Box {
+        /// The grouped content (the `m:e`).
+        content: Box<MathExpression>,
+    },
+}
+
+/// The visible edges and strikes of a [`MathExpression::BorderBox`]
+/// (`m:borderBoxPr`). By default every border is drawn and no strike is present;
+/// each flag, when set, HIDES a border or ADDS a strike (matching the OMML
+/// `m:hide*`/`m:strike*` `CT_OnOff` children).
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MathBorderBox {
+    /// Hide the top border (`m:hideTop`).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub hide_top: bool,
+    /// Hide the bottom border (`m:hideBot`).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub hide_bottom: bool,
+    /// Hide the leading (left) border (`m:hideLeft`).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub hide_left: bool,
+    /// Hide the trailing (right) border (`m:hideRight`).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub hide_right: bool,
+    /// A horizontal strike-through (`m:strikeH`).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub strike_horizontal: bool,
+    /// A vertical strike-through (`m:strikeV`).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub strike_vertical: bool,
+    /// A bottom-left to top-right diagonal strike (`m:strikeBLTR`).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub strike_bltr: bool,
+    /// A top-left to bottom-right diagonal strike (`m:strikeTLBR`).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub strike_tlbr: bool,
+}
+
+impl MathBorderBox {
+    /// Whether every field is the OOXML default (all borders drawn, no strikes).
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// Whether a [`MathExpression::Bar`] rule sits above or below its base.

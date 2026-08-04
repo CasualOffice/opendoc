@@ -4,6 +4,9 @@ use casual_doc_model::v1::{
     BarPosition, GroupPosition, LimitPosition, MAX_MATH_BYTES, MAX_MATH_DEPTH, MAX_MATH_NODES,
     MathExpression, MathMatrixRow,
 };
+// Separate `use` line (kept out of the sorted block above) to avoid import-list
+// merge collisions with other agents editing this file.
+use casual_doc_model::v1::MathBorderBox;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Reader, XmlVersion};
 
@@ -280,6 +283,21 @@ fn convert(element: &Element) -> Option<Option<MathExpression>> {
             },
             base: Box::new(wrapper_expression(element, b"e")?),
         },
+        // Pre-scripts (`m:sPre`): the sub/sup precede the base (left scripts).
+        b"sPre" => MathExpression::PreScript {
+            base: Box::new(wrapper_expression(element, b"e")?),
+            subscript: wrapper_expression_optional(element, b"sub").map(Box::new),
+            superscript: wrapper_expression_optional(element, b"sup").map(Box::new),
+        },
+        // A border/strike box around a formula (`m:borderBox`).
+        b"borderBox" => MathExpression::BorderBox {
+            content: Box::new(wrapper_expression(element, b"e")?),
+            borders: border_box_edges(element),
+        },
+        // A logical grouping box (`m:box`): a transparent content wrapper.
+        b"box" => MathExpression::Box {
+            content: Box::new(wrapper_expression(element, b"e")?),
+        },
         // Property containers affect advanced typography and are intentionally
         // ignored for this first common-construct projection.
         name if name.ends_with(b"Pr") || name == b"ctrlPr" => return Some(None),
@@ -336,6 +354,33 @@ fn position_character<'a>(element: &'a Element, container: &[u8]) -> Option<&'a 
     child(element, container)
         .and_then(|properties| child(properties, b"pos"))
         .and_then(|position| attribute(position, b"val"))
+}
+
+/// Reads a `m:borderBox`'s `m:borderBoxPr` edge/strike flags. Each flag is a
+/// `CT_OnOff`-style `m:hide*`/`m:strike*` child; absent means default (all borders
+/// drawn, no strikes).
+fn border_box_edges(element: &Element) -> MathBorderBox {
+    let properties = child(element, b"borderBoxPr");
+    let flag = |name: &[u8]| properties.is_some_and(|pr| bool_property(pr, name));
+    MathBorderBox {
+        hide_top: flag(b"hideTop"),
+        hide_bottom: flag(b"hideBot"),
+        hide_left: flag(b"hideLeft"),
+        hide_right: flag(b"hideRight"),
+        strike_horizontal: flag(b"strikeH"),
+        strike_vertical: flag(b"strikeV"),
+        strike_bltr: flag(b"strikeBLTR"),
+        strike_tlbr: flag(b"strikeTLBR"),
+    }
+}
+
+/// Reads a `CT_OnOff`-style boolean OMML property child: present means on unless its
+/// `m:val` is a falsy token; absent means off.
+fn bool_property(container: &Element, name: &[u8]) -> bool {
+    match child(container, name) {
+        None => false,
+        Some(flag) => !matches!(attribute(flag, b"val"), Some("0" | "false" | "off")),
+    }
 }
 
 fn child<'a>(element: &'a Element, name: &[u8]) -> Option<&'a Element> {
@@ -399,6 +444,18 @@ fn expression_within_bounds(expression: &MathExpression, depth: usize, nodes: &m
         MathExpression::EqArray { rows } => !rows.is_empty() && rows.iter().all(&mut check),
         MathExpression::Bar { base, .. } => check(base),
         MathExpression::GroupChar { base, .. } => check(base),
+        MathExpression::PreScript {
+            base,
+            subscript,
+            superscript,
+        } => {
+            (subscript.is_some() || superscript.is_some())
+                && check(base)
+                && subscript.as_deref().is_none_or(&mut check)
+                && superscript.as_deref().is_none_or(&mut check)
+        }
+        MathExpression::BorderBox { content, .. } => check(content),
+        MathExpression::Box { content } => check(content),
     }
 }
 
@@ -428,14 +485,83 @@ mod tests {
 
     #[test]
     fn unsupported_structure_has_no_projection() {
-        // `m:box` (a logical grouping box) is not yet part of the projected
-        // subset.
+        // `m:phant` (phantom spacing) is intentionally excluded from the projected
+        // subset; an equation containing it has no typed projection (the raw OMML
+        // is retained and remains authoritative for export).
         assert!(
             parse_math_expression(
-                "<m:oMath><m:box><m:e><m:r><m:t>x</m:t></m:r></m:e></m:box></m:oMath>"
+                "<m:oMath><m:phant><m:e><m:r><m:t>x</m:t></m:r></m:e></m:phant></m:oMath>"
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn projects_pre_script() {
+        let pre_sub_sup = parse_math_expression(concat!(
+            "<m:oMath><m:sPre><m:sub><m:r><m:t>i</m:t></m:r></m:sub>",
+            "<m:sup><m:r><m:t>j</m:t></m:r></m:sup>",
+            "<m:e><m:r><m:t>X</m:t></m:r></m:e></m:sPre></m:oMath>"
+        ));
+        assert!(matches!(
+            pre_sub_sup,
+            Some(MathExpression::PreScript {
+                subscript: Some(_),
+                superscript: Some(_),
+                ..
+            })
+        ));
+
+        // Only a pre-superscript present (empty sub omitted).
+        let pre_sup_only = parse_math_expression(concat!(
+            "<m:oMath><m:sPre><m:sub/><m:sup><m:r><m:t>2</m:t></m:r></m:sup>",
+            "<m:e><m:r><m:t>X</m:t></m:r></m:e></m:sPre></m:oMath>"
+        ));
+        assert!(matches!(
+            pre_sup_only,
+            Some(MathExpression::PreScript {
+                subscript: None,
+                superscript: Some(_),
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn projects_border_box_edges() {
+        // Default borderBox (no borderBoxPr): all borders drawn, no strikes.
+        let plain = parse_math_expression(
+            "<m:oMath><m:borderBox><m:e><m:r><m:t>x</m:t></m:r></m:e></m:borderBox></m:oMath>",
+        );
+        assert!(matches!(
+            plain,
+            Some(MathExpression::BorderBox { borders, .. }) if borders == MathBorderBox::default()
+        ));
+
+        // A hidden top border plus a horizontal strike are captured.
+        let decorated = parse_math_expression(concat!(
+            "<m:oMath><m:borderBox><m:borderBoxPr><m:hideTop m:val=\"1\"/>",
+            "<m:strikeH m:val=\"on\"/></m:borderBoxPr>",
+            "<m:e><m:r><m:t>x</m:t></m:r></m:e></m:borderBox></m:oMath>"
+        ));
+        let Some(MathExpression::BorderBox { borders, .. }) = decorated else {
+            panic!("expected a border box");
+        };
+        assert!(borders.hide_top);
+        assert!(borders.strike_horizontal);
+        assert!(!borders.hide_bottom);
+        assert!(!borders.strike_vertical);
+    }
+
+    #[test]
+    fn projects_grouping_box() {
+        let boxed = parse_math_expression(
+            "<m:oMath><m:box><m:e><m:r><m:t>x</m:t></m:r></m:e></m:box></m:oMath>",
+        );
+        assert!(matches!(
+            boxed,
+            Some(MathExpression::Box { content }) if matches!(*content, MathExpression::Text { .. })
+        ));
     }
 
     #[test]

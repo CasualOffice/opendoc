@@ -1202,6 +1202,56 @@ mod semantic_tests {
     }
 
     #[test]
+    fn typed_prescript_borderbox_and_box_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, InlineNode, MathExpression};
+
+        // One paragraph carrying three equations, one per newly-typed OMML
+        // construct: a pre-sub/superscript (`m:sPre`), a border box with a hidden
+        // top edge and a horizontal strike (`m:borderBox`), and a logical grouping
+        // box (`m:box`). The retained OMML stays authoritative for export, so each
+        // must survive write -> reopen verbatim, and its typed projection must match
+        // on both sides of the round trip.
+        let xml = br#"<w:document xmlns:w="urn:w" xmlns:m="urn:m"><w:body><w:p>
+            <m:oMath><m:sPre><m:sub><m:r><m:t>i</m:t></m:r></m:sub><m:sup><m:r><m:t>j</m:t></m:r></m:sup><m:e><m:r><m:t>X</m:t></m:r></m:e></m:sPre></m:oMath>
+            <m:oMath><m:borderBox><m:borderBoxPr><m:hideTop m:val="1"/><m:strikeH m:val="1"/></m:borderBoxPr><m:e><m:r><m:t>x</m:t></m:r></m:e></m:borderBox></m:oMath>
+            <m:oMath><m:box><m:e><m:r><m:t>y</m:t></m:r></m:e></m:box></m:oMath>
+        </w:p></w:body></w:document>"#;
+
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(
+            m1, m2,
+            "the typed sPre/borderBox/box equations survive round trip"
+        );
+
+        let BlockNode::Paragraph(paragraph) = &m2.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let expressions: Vec<&MathExpression> = paragraph
+            .inlines
+            .iter()
+            .filter_map(|inline| match inline {
+                InlineNode::Math(math) => math.expression.as_ref(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(expressions.len(), 3, "one projection per equation");
+        assert!(matches!(
+            expressions[0],
+            MathExpression::PreScript {
+                subscript: Some(_),
+                superscript: Some(_),
+                ..
+            }
+        ));
+        assert!(matches!(
+            expressions[1],
+            MathExpression::BorderBox { borders, .. }
+                if borders.hide_top && borders.strike_horizontal && !borders.hide_bottom
+        ));
+        assert!(matches!(expressions[2], MathExpression::Box { .. }));
+    }
+
+    #[test]
     fn symbol_survives_the_semantic_round_trip() {
         // A run carrying a `w:sym` (a Wingdings glyph in the Private Use Area).
         // The symbol must import to a first-class `Symbol` node — not vanish into

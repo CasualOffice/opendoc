@@ -2358,6 +2358,26 @@ fn validate_math_expression(expression: &MathExpression) -> Result<(), ModelErro
                 check_domain(*text_bytes <= MAX_MATH_BYTES, "math.expression.textBytes")?;
                 visit(base, depth + 1, nodes, text_bytes)?;
             }
+            MathExpression::PreScript {
+                base,
+                subscript,
+                superscript,
+            } => {
+                check_domain(
+                    subscript.is_some() || superscript.is_some(),
+                    "math.expression.preScript",
+                )?;
+                visit(base, depth + 1, nodes, text_bytes)?;
+                if let Some(subscript) = subscript {
+                    visit(subscript, depth + 1, nodes, text_bytes)?;
+                }
+                if let Some(superscript) = superscript {
+                    visit(superscript, depth + 1, nodes, text_bytes)?;
+                }
+            }
+            MathExpression::BorderBox { content, .. } | MathExpression::Box { content } => {
+                visit(content, depth + 1, nodes, text_bytes)?;
+            }
         }
         Ok(())
     }
@@ -2496,6 +2516,24 @@ fn math_expression_size(expression: &MathExpression) -> (usize, usize) {
                 base.0.saturating_add(1),
                 base.1.saturating_add(character.len()),
             )
+        }
+        MathExpression::PreScript {
+            base,
+            subscript,
+            superscript,
+        } => {
+            let mut size = math_expression_size(base);
+            size.0 = size.0.saturating_add(1);
+            for script in [subscript, superscript].into_iter().flatten() {
+                let child = math_expression_size(script);
+                size.0 = size.0.saturating_add(child.0);
+                size.1 = size.1.saturating_add(child.1);
+            }
+            size
+        }
+        MathExpression::BorderBox { content, .. } | MathExpression::Box { content } => {
+            let content = math_expression_size(content);
+            (content.0.saturating_add(1), content.1)
         }
     }
 }
