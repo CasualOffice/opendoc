@@ -82,8 +82,17 @@ struct RawAbstract {
 struct RawNum {
     num_id: String,
     abstract_id: Option<String>,
-    /// Per-instance `w:lvlOverride/w:startOverride` captures: `(ilvl, start)`.
-    overrides: Vec<(u8, u16)>,
+    /// Per-instance `w:lvlOverride` captures, one per opened override element.
+    overrides: Vec<RawOverride>,
+}
+
+/// A raw `w:lvlOverride`: its target level plus the optional `w:startOverride`
+/// value and full `w:lvl` redefinition it carries.
+#[derive(Default)]
+struct RawOverride {
+    ilvl: u8,
+    start: Option<u16>,
+    level: Option<RawLevel>,
 }
 
 /// Parses the numbering part, allocating ids from `ids`. `styles` (parsed first)
@@ -113,25 +122,7 @@ pub(crate) fn parse(
         let mut defined = BTreeSet::new();
         for level in raw.levels {
             if defined.insert(level.level) {
-                levels.push(NumberingLevel {
-                    level: level.level,
-                    start: level.start.min(32_767),
-                    num_fmt: level.num_fmt,
-                    lvl_text: level.lvl_text,
-                    lvl_jc: level.lvl_jc,
-                    suff: level.suff,
-                    is_lgl: level.is_lgl,
-                    paragraph_properties: level.has_paragraph.then_some(level.paragraph),
-                    run_properties: level.has_run.then_some(level.run),
-                    style_ref: None,
-                    lvl_restart: level.lvl_restart,
-                    pstyle: resolve_style_link(
-                        styles,
-                        level.pstyle.as_deref(),
-                        reporter,
-                        b"pStyle",
-                    ),
-                });
+                levels.push(build_level(level, styles, reporter));
             }
         }
         abstract_by_key.insert(raw.id.clone(), (id, defined));
@@ -177,18 +168,33 @@ pub(crate) fn parse(
         by_num_id.insert(raw.num_id, id);
         valid_levels.insert(id, levels.clone());
         // Keep only the last override per level (a later `w:lvlOverride` for the
-        // same ilvl wins), preserving level order for deterministic output.
+        // same ilvl wins, per field), preserving level order for deterministic
+        // output.
         let mut overrides: Vec<NumberingOverride> = Vec::new();
-        for (level, start) in raw.overrides {
-            match overrides.iter_mut().find(|o| o.level == level) {
-                Some(existing) => existing.start = Some(start),
+        for raw_override in raw.overrides {
+            let definition = raw_override
+                .level
+                .map(|level| build_level(level, styles, reporter));
+            match overrides.iter_mut().find(|o| o.level == raw_override.ilvl) {
+                Some(existing) => {
+                    if let Some(start) = raw_override.start {
+                        existing.start = Some(start);
+                    }
+                    if definition.is_some() {
+                        existing.definition = definition;
+                    }
+                }
                 None => overrides.push(NumberingOverride {
-                    level,
-                    start: Some(start),
+                    level: raw_override.ilvl,
+                    start: raw_override.start,
+                    definition,
                 }),
             }
         }
         overrides.sort_by_key(|o| o.level);
+        // A `w:lvlOverride` with neither a start nor a full level carries no
+        // information; drop it so an empty override does not appear.
+        overrides.retain(|o| o.start.is_some() || o.definition.is_some());
         instances.insert(
             id,
             NumberingInstance {
@@ -228,6 +234,26 @@ fn resolve_style_link(
             reporter.report(label);
             None
         }
+    }
+}
+
+/// Converts a parsed raw level into the typed model level, resolving its
+/// `w:pStyle` binding and clamping its start value. Shared by abstract levels
+/// and per-instance `w:lvlOverride/w:lvl` redefinitions.
+fn build_level(level: RawLevel, styles: &Styles, reporter: &mut Reporter) -> NumberingLevel {
+    NumberingLevel {
+        level: level.level,
+        start: level.start.min(32_767),
+        num_fmt: level.num_fmt,
+        lvl_text: level.lvl_text,
+        lvl_jc: level.lvl_jc,
+        suff: level.suff,
+        is_lgl: level.is_lgl,
+        paragraph_properties: level.has_paragraph.then_some(level.paragraph),
+        run_properties: level.has_run.then_some(level.run),
+        style_ref: None,
+        lvl_restart: level.lvl_restart,
+        pstyle: resolve_style_link(styles, level.pstyle.as_deref(), reporter, b"pStyle"),
     }
 }
 
@@ -342,11 +368,14 @@ fn on_start(
                 ..RawAbstract::default()
             });
         }
-        b"lvl" if state.current_abstract.is_some() => {
+        // A `w:lvl` opens either an abstract level or, inside a `w:num`, a full
+        // `w:lvlOverride/w:lvl` redefinition; both feed the same `current_level`
+        // machinery. The override's `w:lvl@ilvl` defaults to the override target.
+        b"lvl" if state.current_abstract.is_some() || state.current_override_ilvl.is_some() => {
             state.current_level = Some(RawLevel {
                 level: attribute_value(element, b"ilvl")
                     .and_then(|value| value.parse().ok())
-                    .unwrap_or(0),
+                    .unwrap_or(state.current_override_ilvl.unwrap_or(0)),
                 start: 1,
                 ..RawLevel::default()
             });
@@ -455,13 +484,18 @@ fn on_start(
             }
         }
         b"lvlOverride" if state.current_num.is_some() => {
-            // Track the level this override targets; a nested `w:startOverride`
-            // (below) reads it. `w:ilvl` defaults to 0 when absent.
-            state.current_override_ilvl = Some(
-                attribute_value(element, b"ilvl")
-                    .and_then(|value| value.parse().ok())
-                    .unwrap_or(0),
-            );
+            // Open one override entry per `w:lvlOverride`; its nested
+            // `w:startOverride` and/or `w:lvl` fill it in. `w:ilvl` defaults to 0.
+            let ilvl = attribute_value(element, b"ilvl")
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0);
+            state.current_override_ilvl = Some(ilvl);
+            if let Some(num) = state.current_num.as_mut() {
+                num.overrides.push(RawOverride {
+                    ilvl,
+                    ..RawOverride::default()
+                });
+            }
         }
         b"startOverride" if state.current_num.is_some() => {
             // A per-instance restart (`<w:lvlOverride><w:startOverride w:val="N"/>`):
@@ -471,13 +505,18 @@ fn on_start(
                 state.current_num.as_mut(),
                 attribute_value(element, b"val").and_then(|value| value.parse::<u16>().ok()),
             ) {
-                let ilvl = state.current_override_ilvl.unwrap_or(0);
-                num.overrides.push((ilvl, start.min(32_767)));
+                let start = start.min(32_767);
+                match num.overrides.last_mut() {
+                    Some(over) if state.current_override_ilvl.is_some() => over.start = Some(start),
+                    _ => num.overrides.push(RawOverride {
+                        ilvl: state.current_override_ilvl.unwrap_or(0),
+                        start: Some(start),
+                        level: None,
+                    }),
+                }
             }
         }
-        // A `w:lvlOverride/w:lvl` full-format override is not representable in the
-        // per-instance model (only start is); its children fall through and are
-        // reported. Any still-unmapped numbering detail is too.
+        // Any still-unmapped numbering detail is reported (no silent loss).
         _ if state.current_abstract.is_some() || state.current_num.is_some() => {
             reporter.report(local);
         }
@@ -502,10 +541,16 @@ fn on_end(
         b"pPr" => state.ppr_depth = state.ppr_depth.saturating_sub(1),
         b"rPr" => state.rpr_depth = state.rpr_depth.saturating_sub(1),
         b"lvl" => {
-            if let (Some(abstract_num), Some(level)) =
-                (state.current_abstract.as_mut(), state.current_level.take())
-            {
-                abstract_num.levels.push(level);
+            if let Some(level) = state.current_level.take() {
+                if let Some(abstract_num) = state.current_abstract.as_mut() {
+                    abstract_num.levels.push(level);
+                } else if let Some(num) = state.current_num.as_mut() {
+                    // A `w:lvlOverride/w:lvl` redefinition: attach it to the
+                    // override entry opened by the enclosing `w:lvlOverride`.
+                    if let Some(over) = num.overrides.last_mut() {
+                        over.level = Some(level);
+                    }
+                }
             }
         }
         b"abstractNum" => {
