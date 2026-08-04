@@ -4,12 +4,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Write};
 
 use casual_doc_model::v1::{
-    Alignment, BlockNode, BookmarkId, BreakKind, Color, Definitions, Document, DocumentDefaults,
-    Extent, FontRef, GroupChild, HeaderFooterKind, HyperlinkTarget, Indentation, InlineNode,
-    LevelJustification, LevelSuffix, MediaId, Note, NoteId, NoteKind, NoteReference, NumberFormat,
-    NumberingInstanceId, Paragraph, ParagraphProperties, RevisionKind, RunProperties, Spacing,
-    Table, TableCell, TableCellProperties, TableRow, TableRowProperties, VerticalAlignment,
-    VerticalMerge,
+    Alignment, BlockNode, BookmarkId, BreakKind, CellVerticalAlignment, Color, Definitions,
+    Document, DocumentDefaults, Extent, FontRef, GroupChild, HeaderFooterKind, HyperlinkTarget,
+    Indentation, InlineNode, LevelJustification, LevelSuffix, MediaId, Note, NoteId, NoteKind,
+    NoteReference, NumberFormat, NumberingInstanceId, Paragraph, ParagraphProperties, RevisionKind,
+    RunProperties, Spacing, Table, TableCell, TableCellProperties, TableRow, TableRowProperties,
+    VerticalAlignment, VerticalMerge,
 };
 use zip::CompressionMethod;
 use zip::write::{SimpleFileOptions, ZipWriter};
@@ -345,6 +345,85 @@ fn push_paragraph_properties(
     Ok(())
 }
 
+/// The supported table-cell-formatting subset, emitted as one deterministic
+/// automatic `table-cell` style referenced by a cell's `table:style-name`.
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+struct OdtCellStyle {
+    fill: Option<(u8, u8, u8)>,
+    vertical_align: Option<OdtCellVAlign>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum OdtCellVAlign {
+    Top,
+    Middle,
+    Bottom,
+}
+
+impl OdtCellVAlign {
+    const fn value(self) -> &'static str {
+        match self {
+            Self::Top => "top",
+            Self::Middle => "middle",
+            Self::Bottom => "bottom",
+        }
+    }
+}
+
+impl From<CellVerticalAlignment> for OdtCellVAlign {
+    fn from(value: CellVerticalAlignment) -> Self {
+        match value {
+            CellVerticalAlignment::Top => Self::Top,
+            CellVerticalAlignment::Center => Self::Middle,
+            CellVerticalAlignment::Bottom => Self::Bottom,
+        }
+    }
+}
+
+impl OdtCellStyle {
+    fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
+
+    fn name(&self) -> String {
+        let mut name = String::from("ce");
+        if let Some((red, green, blue)) = self.fill {
+            name.push_str(&format!("_c{red:02x}{green:02x}{blue:02x}"));
+        }
+        if let Some(valign) = self.vertical_align {
+            name.push_str(match valign {
+                OdtCellVAlign::Top => "_vt",
+                OdtCellVAlign::Middle => "_vm",
+                OdtCellVAlign::Bottom => "_vb",
+            });
+        }
+        name
+    }
+}
+
+/// Emits the supported `<style:table-cell-properties>` attributes for a cell style.
+fn push_cell_properties(
+    xml: &mut String,
+    style: &OdtCellStyle,
+    max_content_bytes: usize,
+) -> Result<(), OdfError> {
+    if let Some((red, green, blue)) = style.fill {
+        push_bounded(xml, " fo:background-color=\"#", max_content_bytes)?;
+        push_bounded(
+            xml,
+            &format!("{red:02x}{green:02x}{blue:02x}"),
+            max_content_bytes,
+        )?;
+        push_bounded(xml, "\"", max_content_bytes)?;
+    }
+    if let Some(valign) = style.vertical_align {
+        push_bounded(xml, " style:vertical-align=\"", max_content_bytes)?;
+        push_bounded(xml, valign.value(), max_content_bytes)?;
+        push_bounded(xml, "\"", max_content_bytes)?;
+    }
+    Ok(())
+}
+
 /// A deterministic, NCName-safe automatic style name for a table column of the
 /// given width (twips). Negative widths (not model-valid, but defensive) use an
 /// `n` marker instead of a bare minus.
@@ -589,6 +668,8 @@ struct Writer {
     paragraph_styles: BTreeSet<OdtParagraphStyle>,
     /// Distinct table-column widths (twips) that need a `table-column` style.
     column_styles: BTreeSet<i32>,
+    /// Distinct cell formatting that needs a `table-cell` style.
+    cell_styles: BTreeSet<OdtCellStyle>,
     run_styles: BTreeSet<OdtRunStyle>,
     list_styles: BTreeMap<NumberingInstanceId, OdtListStyle>,
     emitted_lists: BTreeSet<NumberingInstanceId>,
@@ -624,6 +705,7 @@ impl Writer {
             xml: String::new(),
             paragraph_styles: BTreeSet::new(),
             column_styles: BTreeSet::new(),
+            cell_styles: BTreeSet::new(),
             run_styles: BTreeSet::new(),
             list_styles: BTreeMap::new(),
             emitted_lists: BTreeSet::new(),
@@ -942,10 +1024,24 @@ impl Writer {
             let mut remainder = cell.properties.clone();
             remainder.grid_span = None;
             remainder.vertical_merge = None;
+            let mut cell_style = OdtCellStyle::default();
+            if let Some(fill) = remainder.shading.fill {
+                cell_style.fill = Some((fill.r, fill.g, fill.b));
+                remainder.shading.fill = None;
+            }
+            if let Some(valign) = remainder.vertical_alignment {
+                cell_style.vertical_align = Some(valign.into());
+                remainder.vertical_alignment = None;
+            }
             if remainder != TableCellProperties::default() {
                 self.reporter
                     .record("odt.export.table_cell_properties", ModelOutcome::Omitted);
             }
+            let cell_style_name = (!cell_style.is_empty()).then(|| {
+                let name = cell_style.name();
+                self.cell_styles.insert(cell_style);
+                name
+            });
             if cell.properties.grid_span == Some(1) {
                 self.reporter
                     .record("odt.export.table_cell_properties", ModelOutcome::Degraded);
@@ -971,6 +1067,11 @@ impl Writer {
             }
 
             self.push("<table:table-cell")?;
+            if let Some(name) = &cell_style_name {
+                self.push(" table:style-name=\"")?;
+                self.push(name)?;
+                self.push("\"")?;
+            }
             if span > 1 {
                 self.push(" table:number-columns-spanned=\"")?;
                 self.push(&span.to_string())?;
@@ -1754,12 +1855,14 @@ fn automatic_styles_xml(
     run_styles: &BTreeSet<OdtRunStyle>,
     list_styles: &BTreeMap<NumberingInstanceId, OdtListStyle>,
     column_styles: &BTreeSet<i32>,
+    cell_styles: &BTreeSet<OdtCellStyle>,
     max_content_bytes: usize,
 ) -> Result<String, OdfError> {
     if paragraph_styles.is_empty()
         && run_styles.is_empty()
         && list_styles.is_empty()
         && column_styles.is_empty()
+        && cell_styles.is_empty()
     {
         return Ok(String::new());
     }
@@ -1775,6 +1878,17 @@ fn automatic_styles_xml(
         )?;
         push_bounded(&mut xml, &twips_to_pt(width), max_content_bytes)?;
         push_bounded(&mut xml, "\"/></style:style>", max_content_bytes)?;
+    }
+    for style in cell_styles {
+        push_bounded(&mut xml, "<style:style style:name=\"", max_content_bytes)?;
+        push_bounded(&mut xml, &style.name(), max_content_bytes)?;
+        push_bounded(
+            &mut xml,
+            "\" style:family=\"table-cell\"><style:table-cell-properties",
+            max_content_bytes,
+        )?;
+        push_cell_properties(&mut xml, style, max_content_bytes)?;
+        push_bounded(&mut xml, "/></style:style>", max_content_bytes)?;
     }
     for style in paragraph_styles {
         push_bounded(&mut xml, "<style:style style:name=\"", max_content_bytes)?;
@@ -2200,6 +2314,7 @@ fn write_odt_impl(
         &writer.run_styles,
         &writer.list_styles,
         &writer.column_styles,
+        &writer.cell_styles,
         limits.max_content_bytes,
     )?;
     let content_len = content_header

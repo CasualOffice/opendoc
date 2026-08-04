@@ -5,14 +5,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, Bookmark, BookmarkEnd,
-    BookmarkId, BookmarkStart, Break, BreakKind, Color, Definitions, Document, DocumentDefaults,
-    Drawing, Extent, ExternalTarget, FontName, FontRef, GridColumn, Hyperlink, HyperlinkTarget,
-    Indentation, InlineNode, InternalTarget, LevelJustification, LevelSuffix, MAX_DESCR_BYTES,
-    MAX_EMU, MAX_TABLE_DEPTH, MediaId, MediaReference, Note, NoteId, NoteKind, NoteReference,
-    NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel, NumberingOverride,
-    NumberingRef, Paragraph, ParagraphProperties, RgbColor, Run, RunProperties, Spacing, Tab,
-    Table, TableCell, TableCellProperties, TableProperties, TableRow, TableRowProperties,
-    VerticalAlignment, VerticalMerge,
+    BookmarkId, BookmarkStart, Break, BreakKind, CellVerticalAlignment, Color, Definitions,
+    Document, DocumentDefaults, Drawing, Extent, ExternalTarget, FontName, FontRef, GridColumn,
+    Hyperlink, HyperlinkTarget, Indentation, InlineNode, InternalTarget, LevelJustification,
+    LevelSuffix, MAX_DESCR_BYTES, MAX_EMU, MAX_TABLE_DEPTH, MediaId, MediaReference, Note, NoteId,
+    NoteKind, NoteReference, NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel,
+    NumberingOverride, NumberingRef, Paragraph, ParagraphProperties, RgbColor, Run, RunProperties,
+    Shading, Spacing, Tab, Table, TableCell, TableCellProperties, TableProperties, TableRow,
+    TableRowProperties, VerticalAlignment, VerticalMerge,
 };
 use casual_doc_package::CancellationToken;
 use quick_xml::NsReader;
@@ -433,6 +433,8 @@ enum TableSlotDraft {
 struct TableCellDraft {
     column_span: u32,
     row_span: u32,
+    shading_fill: Option<RgbColor>,
+    vertical_alignment: Option<CellVerticalAlignment>,
     blocks: Vec<BlockDraft>,
 }
 
@@ -495,6 +497,8 @@ struct OpenTableCell {
     repeat: usize,
     column_span: u32,
     row_span: u32,
+    shading_fill: Option<RgbColor>,
+    vertical_alignment: Option<CellVerticalAlignment>,
     blocks: Vec<BlockDraft>,
 }
 
@@ -552,6 +556,7 @@ enum StyleFamily {
     Paragraph,
     Text,
     TableColumn,
+    TableCell,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -565,6 +570,10 @@ struct OdfStyle {
     paragraph_properties: ParagraphProperties,
     /// `style:column-width` for a `table-column` style, in twips.
     column_width_twips: Option<i32>,
+    /// `fo:background-color` (cell shading fill) for a `table-cell` style.
+    cell_shading_fill: Option<RgbColor>,
+    /// `style:vertical-align` for a `table-cell` style.
+    cell_vertical_alignment: Option<CellVerticalAlignment>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1189,6 +1198,16 @@ fn process_style_element(
                 style,
                 reporter,
             )?;
+        } else if is_name(name, NamespaceKind::Style, b"table-cell-properties") {
+            read_table_cell_style_properties(
+                reader,
+                element,
+                limits,
+                attributes,
+                attribute_bytes,
+                style,
+                reporter,
+            )?;
         } else {
             count_and_report_attributes(
                 reader,
@@ -1395,6 +1414,7 @@ fn read_style_header(
                 "paragraph" => Some(StyleFamily::Paragraph),
                 "text" => Some(StyleFamily::Text),
                 "table-column" => Some(StyleFamily::TableColumn),
+                "table-cell" => Some(StyleFamily::TableCell),
                 _ => {
                     reporter.report(
                         "odf.style.unsupported-family".to_owned(),
@@ -1463,6 +1483,7 @@ fn read_default_style_header(
                 "paragraph" => Some(StyleFamily::Paragraph),
                 "text" => Some(StyleFamily::Text),
                 "table-column" => Some(StyleFamily::TableColumn),
+                "table-cell" => Some(StyleFamily::TableCell),
                 _ => None,
             };
         } else if !is_namespace_declaration(&attribute) {
@@ -1718,6 +1739,76 @@ fn read_paragraph_style_properties(
                 paragraph.page_break_before = value.trim() == "page";
                 paragraph.page_break_before
             }
+            _ => false,
+        };
+        if !mapped && !is_namespace_declaration(&attribute) {
+            reporter.report(
+                attribute_feature(reader, &attribute),
+                ModelOutcome::Degraded,
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Reads a `style:table-cell-properties` element, capturing `fo:background-color`
+/// (shading fill) and `style:vertical-align`. Borders, padding, wrap, and other
+/// cell properties are reported and dropped.
+fn read_table_cell_style_properties(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    limits: OdfImportLimits,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    style: &mut OpenStyle,
+    reporter: &mut Reporter,
+) -> Result<(), OdfError> {
+    if style.style.family != Some(StyleFamily::TableCell) {
+        count_and_report_attributes(
+            reader,
+            element,
+            attributes,
+            attribute_bytes,
+            limits,
+            reporter,
+        )?;
+        reporter.report(
+            "odf.style.table-cell-properties.family".to_owned(),
+            ModelOutcome::Degraded,
+        );
+        return Ok(());
+    }
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let value = decode_attribute(&attribute)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        let mapped = match (namespace_kind(&namespace), local.as_ref()) {
+            (NamespaceKind::Fo, b"background-color") => {
+                // `transparent` is the default (no fill); only an RGB value maps.
+                match parse_rgb_color(&value) {
+                    Some(color) => {
+                        style.style.cell_shading_fill = Some(color);
+                        true
+                    }
+                    None => false,
+                }
+            }
+            (NamespaceKind::Style, b"vertical-align") => match value.trim() {
+                "top" => {
+                    style.style.cell_vertical_alignment = Some(CellVerticalAlignment::Top);
+                    true
+                }
+                "middle" => {
+                    style.style.cell_vertical_alignment = Some(CellVerticalAlignment::Center);
+                    true
+                }
+                "bottom" => {
+                    style.style.cell_vertical_alignment = Some(CellVerticalAlignment::Bottom);
+                    true
+                }
+                _ => false,
+            },
             _ => false,
         };
         if !mapped && !is_namespace_declaration(&attribute) {
@@ -3206,6 +3297,7 @@ fn process_table_start(
             attributes,
             attribute_bytes,
             open_tables,
+            automatic_styles,
             reporter,
         ),
         b"covered-table-cell" => {
@@ -3272,6 +3364,7 @@ fn process_table_empty(
                 attributes,
                 attribute_bytes,
                 open_tables,
+                automatic_styles,
                 reporter,
             )?;
             finish_table_cell(open_tables, limits)
@@ -3495,6 +3588,7 @@ fn start_table_cell(
     attributes: &mut usize,
     attribute_bytes: &mut usize,
     open_tables: &mut [OpenTable],
+    automatic_styles: &AutomaticStyles,
     reporter: &mut Reporter,
 ) -> Result<(), OdfError> {
     let row = open_tables
@@ -3507,11 +3601,26 @@ fn start_table_cell(
     let mut repeat = None;
     let mut column_span = None;
     let mut row_span = None;
+    let mut shading_fill = None;
+    let mut vertical_alignment = None;
     for attribute in element.attributes() {
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
         if namespace_kind(&namespace) == NamespaceKind::Table {
+            if local.as_ref() == b"style-name" {
+                let style_name = decode_attribute(&attribute)?;
+                match automatic_styles.get(&(StyleFamily::TableCell, style_name)) {
+                    Some(style) => {
+                        shading_fill = style.cell_shading_fill;
+                        vertical_alignment = style.cell_vertical_alignment;
+                    }
+                    None => {
+                        reporter.report("odf.style.unresolved".to_owned(), ModelOutcome::Degraded);
+                    }
+                }
+                continue;
+            }
             let target = match local.as_ref() {
                 b"number-columns-repeated" => &mut repeat,
                 b"number-columns-spanned" => &mut column_span,
@@ -3546,6 +3655,8 @@ fn start_table_cell(
         repeat,
         column_span,
         row_span,
+        shading_fill,
+        vertical_alignment,
         blocks: Vec::new(),
     });
     Ok(())
@@ -3655,6 +3766,8 @@ fn finish_table_cell(
     let draft = TableCellDraft {
         column_span: cell.column_span,
         row_span: cell.row_span,
+        shading_fill: cell.shading_fill,
+        vertical_alignment: cell.vertical_alignment,
         blocks: cell.blocks,
     };
     row.slots.extend(std::iter::repeat_n(
@@ -5481,6 +5594,11 @@ fn build_table(
                         properties: TableCellProperties {
                             grid_span: (cell.column_span > 1).then_some(cell.column_span),
                             vertical_merge: (cell.row_span > 1).then_some(VerticalMerge::Restart),
+                            shading: Shading {
+                                fill: cell.shading_fill,
+                                ..Shading::default()
+                            },
+                            vertical_alignment: cell.vertical_alignment,
                             ..TableCellProperties::default()
                         },
                         blocks,

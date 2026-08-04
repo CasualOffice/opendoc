@@ -205,6 +205,66 @@ fn overflow_and_malformed_paragraph_lengths_are_reported_not_panicking() {
 }
 
 #[test]
+fn table_cell_shading_and_valign_round_trip_to_a_fixed_point() {
+    use casual_doc_model::v1::CellVerticalAlignment;
+    let body = r#"<table:table><table:table-column/><table:table-row><table:table-cell><text:p>a</text:p></table:table-cell></table:table-row></table:table>"#;
+    let import = import_content_xml(
+        &content("1.4", body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    let mut document = import.document;
+    let BlockNode::Table(table) = &mut document.body_mut()[0] else {
+        panic!("table")
+    };
+    let cell = &mut table.rows[0].cells[0];
+    cell.properties.shading.fill = Some(RgbColor {
+        r: 0xff,
+        g: 0xcc,
+        b: 0x00,
+    });
+    cell.properties.vertical_alignment = Some(CellVerticalAlignment::Center);
+    document.validate().unwrap();
+
+    let first = write_odt(&document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+    let content_xml = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+    assert!(
+        content_xml.contains(
+            r##"<style:style style:name="ce_cffcc00_vm" style:family="table-cell"><style:table-cell-properties fo:background-color="#ffcc00" style:vertical-align="middle"/></style:style>"##
+        ),
+        "cell style missing: {content_xml}"
+    );
+    assert!(
+        content_xml.contains(r#"<table:table-cell table:style-name="ce_cffcc00_vm">"#),
+        "cell style ref missing: {content_xml}"
+    );
+
+    let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+    reopened.document.validate().unwrap();
+    let BlockNode::Table(table) = &reopened.document.body()[0] else {
+        panic!("table")
+    };
+    let cell = &table.rows[0].cells[0];
+    assert_eq!(
+        cell.properties.shading.fill,
+        Some(RgbColor {
+            r: 0xff,
+            g: 0xcc,
+            b: 0x00,
+        })
+    );
+    assert_eq!(
+        cell.properties.vertical_alignment,
+        Some(CellVerticalAlignment::Center)
+    );
+
+    let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+    assert_eq!(first.bytes, second.bytes);
+}
+
+#[test]
 fn table_column_width_over_domain_degrades_and_no_spurious_finding() {
     // An out-of-domain width (24in = 34560 twips > 31680) must be dropped with a
     // finding, never abort the whole import; a valid width is captured; and a
