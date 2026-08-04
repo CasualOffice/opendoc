@@ -41,6 +41,22 @@ a general ODT support claim.
   `OdtPackage::retained_media_parts`, `write_odt_with_retained_parts`,
   `referenced_retained_parts`; new `OdfImportLimits` retained-part bounds; the ODT
   adapter now advertises `preserve_when_safe`.
+- **Real-producer interoperability**: the bounded importer now admits authentic
+  LibreOffice/Word output instead of failing closed on constructs outside the
+  modeled subset. Character data outside a modeled paragraph (e.g. index-template
+  titles), style-property children (`style:tab-stops`, drop-caps, background
+  images inside `style:paragraph-properties`), and inline active content
+  (`office:scripts`, `script:event-listener` in `content.xml`) are dropped with a
+  finding rather than aborting the document; the active-content subtree is never
+  modeled or re-emitted, so no macro/handler code survives (`office:scripts` as a
+  *manifest part* is still refused at package open). Interop is fixed by real
+  LibreOffice-converted ODT fixtures under `fixtures/corpus/`, verified to import,
+  validate, and re-export to a byte-exact canonical fixed point.
+- **Metadata conformance fix**: `meta.xml` now writes the creation timestamp as
+  `meta:creation-date` and the last modification as `dc:date` (the ODF-native
+  elements the importer reads), instead of the non-ODF `dcterms:created`/
+  `dcterms:modified`. This keeps document dates interoperable with LibreOffice/
+  Word and makes the metadata round trip idempotent.
 
 ### Rendering fidelity — 2026-07-27
 

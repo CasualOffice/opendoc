@@ -122,8 +122,18 @@ An admitted ODT is a format-neutral `BoundedPackage` plus ODF rules:
   result; encrypted payload bytes are never passed to XML parsers;
 - signature files may be retained for exact unchanged export but are never
   represented as a valid signature after semantic import or edit;
-- scripts, macros, event listeners, and executable embedded content are blocked
-  by the first profile and never executed or fetched;
+- scripts, macros, event listeners, and executable embedded content are never
+  executed or fetched. A macro/script *storage part* declared in the manifest
+  (e.g. `Basic/…`) fails package admission closed. Inline active content in
+  `content.xml` (`office:scripts`, `script:event-listener`) is instead dropped
+  wholesale with a security finding — the subtree is never modeled and never
+  re-emitted, so no handler code survives — because an empty `office:scripts` is
+  ubiquitous in real producer output and must not reject an otherwise-valid
+  document;
+- character data outside a modeled paragraph, and style-property children outside
+  the modeled subset (`style:tab-stops`, drop-caps and background images inside
+  `style:paragraph-properties`), are dropped with a finding rather than failing
+  the import, so authentic LibreOffice/Word output is admitted;
 - all XML parsing rejects DTDs, external entities, malformed UTF-8/XML, excess
   depth, excess elements/attributes, and excess accumulated text.
 

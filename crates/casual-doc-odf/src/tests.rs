@@ -999,6 +999,131 @@ fn realistic_multipart_odt_round_trips_and_preserves() {
 }
 
 #[test]
+fn real_libreoffice_odt_admits_imports_and_preserves() {
+    // Authentic LibreOffice output (sample.docx -> .odt): rich content.xml/
+    // styles.xml plus manifest.rdf, settings.xml, Configurations2/, Thumbnails,
+    // and a packaged image. The bounded adapter must admit it, import a subset
+    // (findings, not failure), and preserve/round-trip real producer bytes.
+    let bytes = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/corpus/libreoffice-sample.odt"
+    ));
+    let mut package = OdtPackage::open(bytes, OdfPackageLimits::default()).unwrap();
+    let imported = package.import_document(OdfImportLimits::default()).unwrap();
+    imported.document.validate().unwrap();
+    assert!(!imported.document.body().is_empty());
+
+    let retained = package
+        .retained_media_parts(&imported.document, OdfImportLimits::default())
+        .unwrap();
+    // The opaque non-semantic parts are carried; Configurations2/ (a directory
+    // entry) and META-INF are never retained.
+    assert!(retained.unknown.contains_key("settings.xml"));
+    assert!(
+        !retained
+            .unknown
+            .keys()
+            .any(|name| name.starts_with("META-INF/"))
+    );
+
+    let preserved =
+        write_odt_with_retained_parts(&imported.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    let mut out = OdtPackage::open(&preserved.bytes, OdfPackageLimits::default()).unwrap();
+    let reopened = out.import_document(OdfImportLimits::default()).unwrap();
+    reopened.document.validate().unwrap();
+    // The opaque settings part survived the semantic edit into the output.
+    assert!(out.read_part("settings.xml").is_ok());
+    let retained2 = out
+        .retained_media_parts(&reopened.document, OdfImportLimits::default())
+        .unwrap();
+    let reexported =
+        write_odt_with_retained_parts(&reopened.document, &retained2, OdfExportLimits::default())
+            .unwrap();
+    assert_eq!(reexported.bytes, preserved.bytes);
+}
+
+/// Admit a real-producer ODT, import a subset without failing, and prove the
+/// preserve-when-safe export reaches a byte-exact fixed point.
+///
+/// The very first export may pick fresh canonical node ids and normalise
+/// producer-specific style names / citations away, so it need not equal a later
+/// export. What must hold — and what this asserts — is that once the document is
+/// in our canonical form, the round trip is stable: exporting the reopened
+/// document and the twice-reopened document produce identical bytes. That is the
+/// interop guarantee against silently lossy or non-deterministic round trips.
+fn assert_real_odt_round_trips(bytes: &[u8]) {
+    let mut package = OdtPackage::open(bytes, OdfPackageLimits::default()).unwrap();
+    let imported = package.import_document(OdfImportLimits::default()).unwrap();
+    imported.document.validate().unwrap();
+    assert!(!imported.document.body().is_empty());
+    let retained = package
+        .retained_media_parts(&imported.document, OdfImportLimits::default())
+        .unwrap();
+    // Producer-private parts are carried opaquely; META-INF is never retained.
+    assert!(
+        !retained
+            .unknown
+            .keys()
+            .any(|name| name.starts_with("META-INF/"))
+    );
+
+    let export_once = |bytes: &[u8]| {
+        let mut package = OdtPackage::open(bytes, OdfPackageLimits::default()).unwrap();
+        let imported = package.import_document(OdfImportLimits::default()).unwrap();
+        imported.document.validate().unwrap();
+        let retained = package
+            .retained_media_parts(&imported.document, OdfImportLimits::default())
+            .unwrap();
+        write_odt_with_retained_parts(&imported.document, &retained, OdfExportLimits::default())
+            .unwrap()
+            .bytes
+    };
+
+    let first =
+        write_odt_with_retained_parts(&imported.document, &retained, OdfExportLimits::default())
+            .unwrap()
+            .bytes;
+    let second = export_once(&first);
+    let third = export_once(&second);
+    assert_eq!(second, third, "canonical ODT export must be a fixed point");
+}
+
+macro_rules! real_odt_interop_test {
+    ($name:ident, $file:literal) => {
+        #[test]
+        fn $name() {
+            let bytes = include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../fixtures/corpus/",
+                $file
+            ));
+            assert_real_odt_round_trips(bytes);
+        }
+    };
+}
+
+// Authentic LibreOffice conversions of the real-producer DOCX corpus, each
+// exercising a different construct set (rich text, table merges, footnotes,
+// hyperlinks) against the bounded ODT adapter.
+real_odt_interop_test!(
+    real_libreoffice_rich_odt_round_trips,
+    "real-producer-rich.odt"
+);
+real_odt_interop_test!(
+    real_libreoffice_table_merges_odt_round_trips,
+    "real-producer-table-merges.odt"
+);
+real_odt_interop_test!(
+    real_libreoffice_footnotes_odt_round_trips,
+    "real-producer-footnotes.odt"
+);
+real_odt_interop_test!(
+    real_libreoffice_hyperlinks_odt_round_trips,
+    "real-producer-hyperlinks.odt"
+);
+
+#[test]
 fn mimetype_must_be_first_stored_exact_and_without_extra_data() {
     let mut not_first = minimal_entries("1.4");
     not_first.swap(0, 1);

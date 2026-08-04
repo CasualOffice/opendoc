@@ -107,9 +107,13 @@ bytes, and compatibility feature buckets. Limit, model-validation,
 XML-character, serialization, or ZIP failure returns no partial artifact.
 
 When present, supported `DocumentProperties` core fields are emitted in a
-deterministic `meta.xml` part and registered in the manifest. Application name
-is emitted as `meta:generator`; unsupported application/custom fields are
-reported rather than silently represented as unrelated ODT metadata.
+deterministic `meta.xml` part and registered in the manifest. Dates use the
+ODF-native elements — the creation timestamp as `meta:creation-date` and the last
+modification as `dc:date` (not `dcterms:*`, which is outside the ODF meta schema
+and not read back by the importer) — so document dates stay interoperable and the
+metadata round trip is idempotent. Application name is emitted as `meta:generator`;
+unsupported application/custom fields are reported rather than silently
+represented as unrelated ODT metadata.
 Numeric page/word statistics and typed custom properties are emitted as their
 corresponding ODT metadata elements.
 Total editing time is emitted as a canonical `PT#H#M` duration.

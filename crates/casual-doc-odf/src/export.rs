@@ -2108,7 +2108,7 @@ fn metadata_xml(
 ) -> Result<Vec<u8>, OdfError> {
     use quick_xml::escape::escape;
     let mut xml = String::from(
-        r#"<?xml version="1.0" encoding="UTF-8"?><office:document-meta xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" office:version="1.4"><office:meta>"#,
+        r#"<?xml version="1.0" encoding="UTF-8"?><office:document-meta xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0" xmlns:dc="http://purl.org/dc/elements/1.1/" office:version="1.4"><office:meta>"#,
     );
     let mut field = |tag: &str, value: &Option<String>| {
         if let Some(value) = value {
@@ -2126,8 +2126,12 @@ fn metadata_xml(
     field("dc:creator", &properties.core.creator);
     field("dc:description", &properties.core.description);
     field("dc:language", &properties.core.language);
-    field("dcterms:created", &properties.core.created);
-    field("dcterms:modified", &properties.core.modified);
+    // ODF stores the creation timestamp as meta:creation-date and the last
+    // modification as dc:date (dcterms:* is not part of the ODF meta schema and
+    // is not read back by the importer). Emitting the native elements keeps the
+    // round trip idempotent and interoperable with LibreOffice/Word.
+    field("meta:creation-date", &properties.core.created);
+    field("dc:date", &properties.core.modified);
     if let Some(value) = &properties.core.keywords {
         field("meta:keyword", &Some(value.clone()));
     }

@@ -764,7 +764,10 @@ fn parse_style_document(
                 validate_name(&element, limits)?;
                 let name = resolved_name(&reader, &element);
                 if is_active(&name) {
-                    return Err(OdfError::ActiveContent);
+                    // Style catalog is a count-only pass: report the active
+                    // content and let it fall through to be counted, never
+                    // modeled. (The body pass drops the subtree wholesale.)
+                    reporter.report(ACTIVE_CONTENT_FINDING.to_owned(), ModelOutcome::Degraded);
                 }
                 if depth == 1 {
                     if root_seen
@@ -836,7 +839,7 @@ fn parse_style_document(
                 validate_name(&element, limits)?;
                 let name = resolved_name(&reader, &element);
                 if is_active(&name) {
-                    return Err(OdfError::ActiveContent);
+                    reporter.report(ACTIVE_CONTENT_FINDING.to_owned(), ModelOutcome::Degraded);
                 }
                 let event_depth = depth.checked_add(1).ok_or(OdfError::MalformedContent)?;
                 if event_depth == 1 {
@@ -1124,7 +1127,19 @@ fn process_style_element(
         }
     } else if let Some(style) = open_style {
         if depth != style.depth + 1 {
-            return Err(OdfError::MalformedContent);
+            // A grandchild of the style element — e.g. style:tab-stops or a
+            // drop-cap/background-image inside style:paragraph-properties. These
+            // are not in the modeled subset; report and skip rather than fail.
+            count_and_report_attributes(
+                reader,
+                element,
+                attributes,
+                attribute_bytes,
+                limits,
+                reporter,
+            )?;
+            reporter.report(feature("element", name), ModelOutcome::Degraded);
+            return Ok(());
         }
         if is_name(name, NamespaceKind::Style, b"text-properties") {
             read_text_style_properties(
@@ -1753,7 +1768,15 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                 validate_name(&element, limits)?;
                 let name = resolved_name(&reader, &element);
                 if is_active(&name) {
-                    return Err(OdfError::ActiveContent);
+                    // Drop the active-content subtree with a security finding
+                    // rather than aborting an otherwise-valid document; it is
+                    // never modeled or re-emitted. skip_active_subtree consumes
+                    // the matching `End`, so undo the `Start` depth increment.
+                    reporter.report(ACTIVE_CONTENT_FINDING.to_owned(), ModelOutcome::Degraded);
+                    skip_active_subtree(&mut reader, limits, &mut elements, cancellation)?;
+                    depth = depth.checked_sub(1).ok_or(OdfError::MalformedContent)?;
+                    buffer.clear();
+                    continue;
                 }
                 if !root_seen {
                     if depth != 1 || !is_name(&name, NamespaceKind::Office, b"document-content") {
@@ -1950,7 +1973,14 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                 }
                 let name = resolved_name(&reader, &element);
                 if is_active(&name) {
-                    return Err(OdfError::ActiveContent);
+                    // Empty active-content element (e.g. `<office:scripts/>` or a
+                    // self-closing `script:event-listener`): drop it with a
+                    // finding, count it for limits, and move on. No subtree, so
+                    // no depth adjustment is needed.
+                    reporter.report(ACTIVE_CONTENT_FINDING.to_owned(), ModelOutcome::Degraded);
+                    count_attributes_only(&element, &mut attributes, &mut attribute_bytes, limits)?;
+                    buffer.clear();
+                    continue;
                 }
                 if (depth + 1 == 2 && is_name(&name, NamespaceKind::Office, b"automatic-styles"))
                     || automatic_styles_depth.is_some()
@@ -2188,7 +2218,14 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                         limits,
                     )?;
                 } else if !value.trim().is_empty() {
-                    return Err(OdfError::MalformedContent);
+                    // Character data outside any modeled paragraph (e.g. a
+                    // table-of-content index-template title) belongs to an
+                    // unmodeled container; drop it with a finding rather than
+                    // failing an otherwise-valid document.
+                    reporter.report(
+                        "odf.text.outside-paragraph".to_owned(),
+                        ModelOutcome::Degraded,
+                    );
                 }
             }
             Event::CData(text) => {
@@ -2217,7 +2254,10 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                         limits,
                     )?;
                 } else if !value.trim().is_empty() {
-                    return Err(OdfError::MalformedContent);
+                    reporter.report(
+                        "odf.text.outside-paragraph".to_owned(),
+                        ModelOutcome::Degraded,
+                    );
                 }
             }
             Event::GeneralRef(reference) => {
@@ -2569,9 +2609,11 @@ fn parse_draw_frame(
                 validate_name(&element, limits)?;
                 let name = resolved_name(reader, &element);
                 if is_active(&name) {
-                    return Err(OdfError::ActiveContent);
-                }
-                if is_name(&name, NamespaceKind::Draw, b"image") {
+                    // Frame content is a count-only pass; report and count, never
+                    // model, the active content.
+                    reporter.report(ACTIVE_CONTENT_FINDING.to_owned(), ModelOutcome::Degraded);
+                    count_attributes_only(&element, attributes, attribute_bytes, limits)?;
+                } else if is_name(&name, NamespaceKind::Draw, b"image") {
                     if href.is_none() {
                         href = read_href(reader, &element, attributes, attribute_bytes, limits)?;
                     } else {
@@ -2599,7 +2641,7 @@ fn parse_draw_frame(
                 validate_name(&element, limits)?;
                 let name = resolved_name(reader, &element);
                 if is_active(&name) {
-                    return Err(OdfError::ActiveContent);
+                    reporter.report(ACTIVE_CONTENT_FINDING.to_owned(), ModelOutcome::Degraded);
                 }
                 if is_name(&name, NamespaceKind::Draw, b"image") && href.is_none() {
                     href = read_href(reader, &element, attributes, attribute_bytes, limits)?;
@@ -5435,6 +5477,69 @@ fn is_office_body_kind(name: &ResolvedName) -> bool {
 fn is_active(name: &ResolvedName) -> bool {
     (name.namespace == NamespaceKind::Office && name.local == b"scripts")
         || (name.namespace == NamespaceKind::Script && name.local == b"event-listener")
+}
+
+/// The stable finding reported when active content (macros, event listeners) is
+/// dropped rather than modeled or preserved.
+const ACTIVE_CONTENT_FINDING: &str = "odf.security.active-content-dropped";
+
+/// Consume the remaining subtree of an active-content element (e.g.
+/// `office:scripts` or a `script:event-listener`) that was just opened by the
+/// caller, up to and including its matching `End`. The content is dropped
+/// wholesale: it is never modeled and never re-emitted by a semantic export, so
+/// no macro or event-handler code survives the round trip. This is strictly
+/// safer than the alternative of rejecting the whole document, and it lets
+/// documents from real producers (which routinely emit an empty
+/// `office:scripts`) import. The caller has already incremented its own depth
+/// for the opening `Start`; since this consumes the matching `End`, the caller
+/// must undo that increment afterwards. Element and depth limits keep the skip
+/// bounded.
+fn skip_active_subtree(
+    reader: &mut NsReader<&[u8]>,
+    limits: OdfImportLimits,
+    elements: &mut usize,
+    cancellation: &CancellationToken,
+) -> Result<(), OdfError> {
+    let mut buffer = Vec::new();
+    let mut sub_depth: usize = 0;
+    loop {
+        check_cancelled(cancellation)?;
+        let event = reader
+            .read_event_into(&mut buffer)
+            .map_err(|_| OdfError::MalformedContent)?;
+        match event {
+            Event::Eof | Event::DocType(_) => return Err(OdfError::MalformedContent),
+            Event::Start(element) => {
+                *elements = checked_increment(*elements)?;
+                enforce(
+                    "odf_content_xml_elements",
+                    *elements,
+                    limits.max_xml_elements,
+                )?;
+                validate_name(&element, limits)?;
+                sub_depth = sub_depth.checked_add(1).ok_or(OdfError::MalformedContent)?;
+                enforce("odf_content_xml_depth", sub_depth, limits.max_xml_depth)?;
+            }
+            Event::Empty(element) => {
+                *elements = checked_increment(*elements)?;
+                enforce(
+                    "odf_content_xml_elements",
+                    *elements,
+                    limits.max_xml_elements,
+                )?;
+                validate_name(&element, limits)?;
+            }
+            Event::End(_) => {
+                if sub_depth == 0 {
+                    break;
+                }
+                sub_depth -= 1;
+            }
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(())
 }
 
 const fn namespace_label(namespace: NamespaceKind) -> &'static str {

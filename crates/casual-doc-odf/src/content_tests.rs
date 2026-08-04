@@ -455,7 +455,7 @@ fn identity_and_reports_ignore_prefix_and_attribute_order() {
 }
 
 #[test]
-fn wrong_version_document_kind_dtd_and_active_content_fail_closed() {
+fn wrong_version_document_kind_and_dtd_fail_closed_active_content_is_dropped() {
     let mismatch = content("1.2", "<text:p>x</text:p>");
     assert_eq!(
         import_content_xml(&mismatch, OdfVersion::V1_4, OdfImportLimits::default()).unwrap_err(),
@@ -474,18 +474,26 @@ fn wrong_version_document_kind_dtd_and_active_content_fail_closed() {
         OdfError::MalformedContent
     );
 
-    let active = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" office:version="1.4"><office:scripts/><office:body><office:text/></office:body></office:document-content>"#;
-    assert_eq!(
-        import_content_xml(active, OdfVersion::V1_4, OdfImportLimits::default()).unwrap_err(),
-        OdfError::ActiveContent
-    );
+    // Active content inside content.xml (macros, event listeners) is not a
+    // stored active-content *part*; it is dropped wholesale with a security
+    // finding rather than aborting the document, so real producer output (which
+    // routinely emits an empty office:scripts) still imports. Nothing survives
+    // into the model, so no macro or handler code is ever re-emitted.
+    let active = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:script="urn:oasis:names:tc:opendocument:xmlns:script:1.0" office:version="1.4"><office:scripts><script:event-listener/></office:scripts><office:body><office:text/></office:body></office:document-content>"#;
+    let imported =
+        import_content_xml(active, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
+    assert!(imported.report.entries.iter().any(|entry| {
+        entry.feature == "odf.security.active-content-dropped"
+            && entry.model_outcome == ModelOutcome::Degraded
+    }));
 
     let event_listener = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:script="urn:oasis:names:tc:opendocument:xmlns:script:1.0" office:version="1.4"><office:body><office:text><script:event-listener/></office:text></office:body></office:document-content>"#;
-    assert_eq!(
-        import_content_xml(event_listener, OdfVersion::V1_4, OdfImportLimits::default())
-            .unwrap_err(),
-        OdfError::ActiveContent
-    );
+    let imported =
+        import_content_xml(event_listener, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
+    assert!(imported.report.entries.iter().any(|entry| {
+        entry.feature == "odf.security.active-content-dropped"
+            && entry.model_outcome == ModelOutcome::Degraded
+    }));
 
     let undeclared_entity = content("1.4", "<text:p>&unknown;</text:p>");
     assert_eq!(
