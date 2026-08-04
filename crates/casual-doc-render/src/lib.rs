@@ -2115,16 +2115,18 @@ mod tests {
         );
     }
 
-    /// End to end with the `system-fonts` feature (native): a CJK run shapes to
-    /// real (non-`.notdef`) glyphs via an OS fallback face, and rasterizes real ink
-    /// — not the tofu box the bundled-only path produces. Gated on the feature +
-    /// native so the deterministic / WASM runs skip it. Whether the host has a CJK
-    /// face is environment-dependent (a headless CI runner may have none); when no
-    /// covering face is found the test returns early rather than failing, since
-    /// there is then no real ink to observe (the coverage-gap behavior is asserted
-    /// by the shaper's own `cjk_with_system_fonts_resolves_a_covering_face`).
+    /// End to end on the native path: a CJK run shapes to real (non-`.notdef`)
+    /// glyphs via an OS fallback face, and rasterizes real ink — not the tofu box
+    /// the bundled-only path produces. The native render crate enables the OS
+    /// system-font source by default (see this crate's `Cargo.toml` target
+    /// dependency), so this runs without an explicit feature flag; WASM is gated
+    /// out. Whether the host has a CJK face is environment-dependent (a headless CI
+    /// runner may have none); when no covering face is found the test returns early
+    /// rather than failing, since there is then no real ink to observe (the
+    /// coverage-gap behavior is asserted by the shaper's own
+    /// `cjk_with_system_fonts_resolves_a_covering_face`).
     #[test]
-    #[cfg(all(feature = "system-fonts", not(target_arch = "wasm32")))]
+    #[cfg(not(target_arch = "wasm32"))]
     fn cjk_renders_real_ink_with_system_fonts() {
         let shaper = ParleyShaper::new();
         let node = NodeId::from_parts(1, 1).unwrap();
