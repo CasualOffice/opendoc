@@ -2802,6 +2802,42 @@ mod semantic_tests {
     }
 
     #[test]
+    fn table_style_band_sizes_in_styles_survive_the_semantic_round_trip() {
+        // A banded table STYLE declares its stripe periods on its own `w:tblPr`
+        // (`w:tblStyleRowBandSize`/`w:tblStyleColBandSize`). The body reader typed
+        // these, but the styles reader dropped them — so a two-row / three-column
+        // banded style lost its period on write. They must now round-trip.
+        use casual_doc_model::v1::StyleKind;
+        let styles = br#"<w:styles xmlns:w="urn:w">
+            <w:style w:type="table" w:styleId="Banded">
+                <w:name w:val="Banded Table"/>
+                <w:tblPr>
+                    <w:tblStyleRowBandSize w:val="2"/>
+                    <w:tblStyleColBandSize w:val="3"/>
+                </w:tblPr>
+            </w:style>
+        </w:styles>"#;
+        let m1 = reopen(&package_with_styles(MINIMAL_BODY, styles));
+
+        let (_, style) = m1
+            .definitions()
+            .styles
+            .iter()
+            .find(|(_, style)| style.kind == StyleKind::Table)
+            .expect("a table style");
+        let table = style.table.as_ref().expect("style-level table properties");
+        assert_eq!(table.row_band_size, Some(2), "row band size captured");
+        assert_eq!(table.col_band_size, Some(3), "col band size captured");
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(
+            m1, m2,
+            "table-style band sizes are a write -> reopen fixed point"
+        );
+    }
+
+    #[test]
     fn floating_table_position_survives_the_semantic_round_trip() {
         use casual_doc_model::v1::{BlockNode, TableAnchor, TableYAlign};
         // A positioned (floating) table: `w:tblpPr` with both anchors, absolute
