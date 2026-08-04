@@ -83,6 +83,20 @@ fn embedded_image_frame_maps_to_drawing_and_media_reference() {
 }
 
 #[test]
+fn overlong_image_href_degrades_not_aborts() {
+    // 256+ bytes exceeds the model relationship_id cap: block the drawing rather
+    // than abort the whole import.
+    let href = format!("Pictures/{}.png", "a".repeat(300));
+    let xml = draw_content(&format!(
+        r#"<text:p><draw:frame><draw:image xlink:href="{href}"/></draw:frame></text:p>"#
+    ));
+    let import = import_content_xml(&xml, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
+    import.document.validate().unwrap();
+    assert!(import.document.definitions().media.is_empty());
+    assert!(paragraph(&import, 0).inlines.is_empty());
+}
+
+#[test]
 fn linked_and_unsafe_image_hrefs_are_blocked() {
     for href in [
         "http://evil.example/x.png",

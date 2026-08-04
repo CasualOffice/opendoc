@@ -2660,8 +2660,11 @@ fn is_svg_title_or_desc(name: &ResolvedName) -> bool {
 /// `javascript:`) and Windows drive letters at once — legitimate ODF part names
 /// (e.g. `Pictures/foo.png`) never contain one.
 fn is_safe_media_href(href: &str) -> bool {
+    // 255 bytes is the model's relationship_id ceiling (part_name allows more);
+    // both derive from the href, so bound to the tighter one and degrade an
+    // over-long href rather than aborting the whole import on validation.
     !href.is_empty()
-        && href.len() <= 1024
+        && href.len() <= 255
         && !href.contains(':')
         && !href.contains('\\')
         && !href.starts_with('/')
