@@ -65,7 +65,10 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
   // Headers/footers, text boxes, footnotes render but are not editing surfaces.
   assert.equal(by["Headers & footers"].editable, "none");
   assert.equal(by["Text boxes & shapes"].editable, "none");
-  assert.equal(by["Text boxes & shapes"].modeled, "partial");
+  // Common shape model (fill/gradient, outline/dash/arrows, rotation/flip, wrap
+  // contour, preset geometry) is fully typed as of Layer 1; custGeom stays
+  // retained-not-typed, so semantic-mode round-trip remains partial.
+  assert.equal(by["Text boxes & shapes"].modeled, "full");
   assert.equal(by["Text boxes & shapes"].roundtrips, "partial");
   assert.equal(by["Footnotes & endnotes"].editable, "none");
   assert.equal(by["Fields"].editable, "none");
@@ -79,7 +82,9 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
   assert.equal(by["Paragraphs & text"].rendered, "partial");
   assert.equal(by["Character / run formatting"].rendered, "partial");
   assert.equal(by["Lists & numbering"].rendered, "partial");
-  assert.equal(by["Lists & numbering"].modeled, "partial");
+  // Numbering is fully modeled as of Layer 1 (overrides/indirection/restart/
+  // numFmt vocabulary all typed + round-trip); only rendering stays partial.
+  assert.equal(by["Lists & numbering"].modeled, "full");
   // Charts / SmartArt are preserved, not rendered as charts/diagrams.
   assert.equal(by["Charts"].rendered, "preserved");
   assert.equal(by["SmartArt"].rendered, "preserved");
