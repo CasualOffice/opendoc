@@ -731,6 +731,24 @@ fn preserving_writer_emits_draw_frame_and_repackages_bytes() {
 }
 
 #[test]
+fn reserved_name_image_is_not_retained_or_repackaged() {
+    // A crafted href pointing at a regenerated semantic part must not be retained
+    // (repackaging it would emit a duplicate ZIP entry).
+    let bytes = image_package(image_content("content.xml"), "", &[]);
+    let mut package = OdtPackage::open(&bytes, OdfPackageLimits::default()).unwrap();
+    let imported = package.import_document(OdfImportLimits::default()).unwrap();
+    let retained = package
+        .retained_media_parts(&imported.document, OdfImportLimits::default())
+        .unwrap();
+    assert!(retained.is_empty());
+    // Preserving export still produces an admissible package (no duplicate part).
+    let preserved =
+        write_odt_with_retained_parts(&imported.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    OdtPackage::open(&preserved.bytes, OdfPackageLimits::default()).unwrap();
+}
+
+#[test]
 fn missing_image_part_is_reported() {
     // The draw:image references a part not present in the package/manifest.
     let bytes = image_package(image_content("Pictures/missing.png"), "", &[]);

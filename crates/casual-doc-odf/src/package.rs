@@ -590,6 +590,11 @@ impl<'a> OdtPackage<'a> {
             if retained.parts.len() >= limits.max_retained_parts {
                 break;
             }
+            // Never retain a part whose name collides with a regenerated semantic
+            // part or META-INF; repackaging it would emit a duplicate ZIP entry.
+            if is_reserved_part_name(&name) {
+                continue;
+            }
             let Some(full_path) = self
                 .manifest_entries
                 .iter()
@@ -659,6 +664,15 @@ fn build_header_footer_blocks(
 /// that differ only in escape case compare equal (matching how the ZIP index
 /// normalizes entry names). Non-escape bytes, including multi-byte UTF-8, are
 /// preserved verbatim, so the result stays valid UTF-8.
+/// Whether a part name is a reserved package part that the writer regenerates
+/// (so it must never be repackaged from a retained source).
+fn is_reserved_part_name(name: &str) -> bool {
+    matches!(name, MIMETYPE_PART | CONTENT_PART | STYLES_PART | META_PART)
+        || name.starts_with("META-INF/")
+        || name == "/"
+        || name.ends_with('/')
+}
+
 pub(crate) fn normalized_part_path(path: &str) -> String {
     let bytes = path.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
