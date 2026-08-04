@@ -2897,6 +2897,18 @@ fn write_table_properties(
         w.write_event(Event::Empty(start("w:bidiVisual")))
             .map_err(pkg)?;
     }
+    // `w:tblStyleRowBandSize`/`w:tblStyleColBandSize` follow `w:bidiVisual` and
+    // precede `w:tblW`/`w:jc` in `CT_TblPrBase`.
+    if let Some(size) = properties.row_band_size {
+        let mut el = start("w:tblStyleRowBandSize");
+        el.push_attribute(("w:val", size.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(size) = properties.col_band_size {
+        let mut el = start("w:tblStyleColBandSize");
+        el.push_attribute(("w:val", size.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
     if let Some(alignment) = properties.alignment {
         let mut jc = start("w:jc");
         jc.push_attribute(("w:val", alignment_token(alignment)));
@@ -3103,6 +3115,25 @@ fn write_row_properties(
     }
     w.write_event(Event::Start(start("w:trPr"))).map_err(pkg)?;
     write_cnf_style(w, properties.conditional_format)?;
+    // Short-row grid skips (`w:gridBefore`/`w:gridAfter`) and their preferred
+    // widths (`w:wBefore`/`w:wAfter`) follow `w:cnfStyle` and precede
+    // `w:cantSplit`/`w:trHeight` in `CT_TrPrBase`.
+    if let Some(count) = properties.grid_before {
+        let mut el = start("w:gridBefore");
+        el.push_attribute(("w:val", count.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(count) = properties.grid_after {
+        let mut el = start("w:gridAfter");
+        el.push_attribute(("w:val", count.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    if let Some(width) = properties.w_before {
+        write_table_width(w, "w:wBefore", width)?;
+    }
+    if let Some(width) = properties.w_after {
+        write_table_width(w, "w:wAfter", width)?;
+    }
     if !properties.height.is_empty() {
         let mut el = start("w:trHeight");
         if let Some(value) = properties.height.value_twips {
