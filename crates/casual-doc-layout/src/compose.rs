@@ -139,13 +139,9 @@ pub fn compose_paragraph(layout: &LineLayout, origin: Point) -> DisplayList {
                 box_origin.y + text_box.content_layout.origin.y,
             );
             let clip = text_box_clip(box_rect, text_box.content_layout);
-            if let Some(clip) = clip {
-                list.push(PaintItem::PushClip(clip));
-            }
+            list.push(PaintItem::PushClip(clip));
             compose_blocks(&mut list, &text_box.blocks, content_origin);
-            if clip.is_some() {
-                list.push(PaintItem::PopClip);
-            }
+            list.push(PaintItem::PopClip);
         }
         // Inline horizontal rules (`w:pict` / `v:rect@o:hr`): a filled rectangle
         // spanning (a fraction of) the content width, translated into page space.
@@ -451,33 +447,29 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor) {
                 anchor.rect.origin.y + content_layout.origin.y,
             );
             let clip = text_box_clip(anchor.rect, *content_layout);
-            if let Some(clip) = clip {
-                list.push(PaintItem::PushClip(clip));
-            }
+            list.push(PaintItem::PushClip(clip));
             compose_blocks(list, blocks, content_origin);
-            if clip.is_some() {
-                list.push(PaintItem::PopClip);
-            }
+            list.push(PaintItem::PopClip);
         }
     }
 }
 
-/// Builds a clip rectangle for the selected overflow axes. The unselected axis
-/// receives a deliberately broad page-independent span; any enclosing table/page
-/// clip still intersects it in the renderer.
-fn text_box_clip(rect: Rect, layout: TextBoxContentLayout) -> Option<Rect> {
-    if !layout.clip_horizontal && !layout.clip_vertical {
-        return None;
-    }
+/// Builds the clip rectangle that contains a text box's flowed content.
+///
+/// Text is always wrapped to the box's inner width, but a centered or
+/// unbreakable label can still be wider than the box, and a DrawingML shape
+/// never paints its text past its own horizontal bounds. So horizontal clipping
+/// to the box is applied **unconditionally as a backstop** — this is what keeps a
+/// label like `Paint` from spilling past a narrow node's right edge — regardless
+/// of the authored `horzOverflow` policy (the schema default is `overflow`, which
+/// Word honors only up to the shape's own edge).
+///
+/// Vertical clipping still follows the authored `vertOverflow` policy so autofit
+/// growth is not hidden; the unclipped axis receives a deliberately broad
+/// page-independent span, and any enclosing table/page clip still intersects it
+/// in the renderer.
+fn text_box_clip(rect: Rect, layout: TextBoxContentLayout) -> Rect {
     const PAD: i32 = 1_000_000;
-    let (x, width) = if layout.clip_horizontal {
-        (rect.origin.x, rect.size.width)
-    } else {
-        (
-            Twip(rect.origin.x.raw().saturating_sub(PAD)),
-            Twip(rect.size.width.raw().saturating_add(PAD.saturating_mul(2))),
-        )
-    };
     let (y, height) = if layout.clip_vertical {
         (rect.origin.y, rect.size.height)
     } else {
@@ -486,7 +478,10 @@ fn text_box_clip(rect: Rect, layout: TextBoxContentLayout) -> Option<Rect> {
             Twip(rect.size.height.raw().saturating_add(PAD.saturating_mul(2))),
         )
     };
-    Some(Rect::new(Point::new(x, y), Size::new(width, height)))
+    Rect::new(
+        Point::new(rect.origin.x, y),
+        Size::new(rect.size.width, height),
+    )
 }
 
 /// Composes one block fragment at `origin` (top-left, twips) into `list`.
@@ -1701,6 +1696,62 @@ mod tests {
             Some(672),
             "the box content is inset from the box's left edge by the margin"
         );
+    }
+
+    #[test]
+    fn a_text_box_clips_content_to_its_horizontal_bounds_as_a_backstop() {
+        use crate::text::TextBoxContentLayout;
+
+        // A shape/text-box with the schema-default overflow ("overflow"): its
+        // content must still be clipped to the box horizontally, so a centered or
+        // unbreakable label wider than the box cannot spill past its right edge
+        // (the corpus "Paint"/"Image" sub-label overflow). Vertical clipping
+        // follows the authored policy (here, unclipped).
+        let rect = Rect::new(
+            Point::new(Twip(1000), Twip(2000)),
+            Size::new(Twip(800), Twip(400)),
+        );
+        let anchor = anchor_at(
+            AnchorContent::TextBox {
+                blocks: Vec::new(),
+                fill: None,
+                border: None,
+                content_layout: TextBoxContentLayout {
+                    origin: Point::new(Twip(72), Twip(72)),
+                    clip_horizontal: false,
+                    clip_vertical: false,
+                },
+            },
+            rect,
+        );
+        let mut list = DisplayList::new();
+        compose_anchor(&mut list, &anchor);
+
+        let clip = list
+            .items
+            .iter()
+            .find_map(|item| match item {
+                PaintItem::PushClip(clip) => Some(*clip),
+                _ => None,
+            })
+            .expect("the text box clips its content as a backstop");
+        // The clip pins the horizontal extent to the box, so nothing paints past
+        // the box's left/right edge.
+        assert_eq!(clip.origin.x, rect.origin.x);
+        assert_eq!(clip.size.width, rect.size.width);
+        assert_eq!(
+            clip.origin.x.raw() + clip.size.width.raw(),
+            1800,
+            "the clip ends exactly at the box's right edge"
+        );
+        // Vertical is unclipped (a broad span) because vertOverflow defaults to
+        // "overflow", so autofit growth is never hidden.
+        assert!(
+            clip.size.height.raw() > rect.size.height.raw(),
+            "vertical extent stays unclipped per the authored policy"
+        );
+        // The clip is balanced with a matching pop after the content.
+        assert!(matches!(list.items.last(), Some(PaintItem::PopClip)));
     }
 
     fn anchor_at(content: AnchorContent, rect: Rect) -> PlacedAnchor {
