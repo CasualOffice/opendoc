@@ -541,18 +541,53 @@ const reviewSidebar = document.getElementById("reviewSidebar");
 const reviewSidebarBody = document.getElementById("reviewSidebarBody");
 const reviewSidebarHeader = document.getElementById("reviewSidebarHeader");
 let reviewMode = "editing";
-let reviewRevisionCursor = -1;
 let activeReviewCommentId = null;
 
-// The read-only "Show changes" markup preview (docs/93): renders struck
-// deletions + author-colored insertions + highlighted comments from the engine's
-// markup layout. A view toggle only — it never changes the model or the caret.
-// Driven from the View menu (`view.showChanges`), not the width-limited ribbon.
+// The "Show changes" markup preview (docs/93): renders struck deletions +
+// author-colored insertions + highlighted comments from the engine's markup
+// layout. A view toggle — it never changes the model or the caret. Reachable
+// from the View menu / palette (`view.showChanges`), and bound to the review
+// mode: Suggesting turns it on automatically, and a document that arrives with
+// tracked changes shows markup by default (review UX v2 Q1). The manual toggle
+// stays available in every mode.
 let showingChanges = false;
+
+/** Mirrors `showingChanges` onto the document element (a `.showing-changes`
+ *  body class + the View menu / palette pressed state) so the redline's on/off
+ *  status is visible and discoverable, not a silent internal flag. */
+function reflectShowingChangesState() {
+  document.body.classList.toggle("showing-changes", showingChanges);
+}
+
+/** The single entry point for turning the markup preview on or off. Re-renders
+ *  through the engine's markup vs. editing layout (`renderAll` → `setShowChanges`)
+ *  only when the state actually changes, so callers can request a state
+ *  idempotently (e.g. entering Suggesting when it is already on). */
+async function setShowingChanges(on) {
+  const next = !!on;
+  if (next === showingChanges) {
+    reflectShowingChangesState();
+    return;
+  }
+  showingChanges = next;
+  reflectShowingChangesState();
+  if (doc) await renderAll();
+}
+
 async function toggleShowChanges() {
   if (!doc) return;
-  showingChanges = !showingChanges;
-  await renderAll();
+  await setShowingChanges(!showingChanges);
+}
+
+/** Whether the open document currently carries any tracked revision, used to
+ *  decide whether markup should be shown by default on open (Q1). */
+function documentHasTrackedChanges() {
+  if (!doc) return false;
+  try {
+    return (JSON.parse(doc.listRevisions()) ?? []).length > 0;
+  } catch {
+    return false;
+  }
 }
 let activeReviewItemId = null;
 let reviewPopover = null;
@@ -741,6 +776,14 @@ function setReviewMode(mode) {
   if (reviewMode !== previous) {
     announceReview(`${reviewMode[0].toUpperCase()}${reviewMode.slice(1)} mode`);
   }
+  // Entering Suggesting auto-enables the markup view so a reviewer immediately
+  // sees struck deletions + author-colored insertions (Word/Docs behavior, Q1).
+  // Leaving Suggesting keeps whatever the reader last chose — the toggle stays
+  // manual in Editing/Viewing. `setShowingChanges` is idempotent and re-renders
+  // only on a real change, so this is a no-op when markup is already shown.
+  if (reviewMode === "suggesting" && !showingChanges) {
+    void setShowingChanges(true);
+  }
   updateReviewControls();
   drawSelection();
   // Toolbar controls must not retain focus after changing mode: clipboard,
@@ -862,6 +905,38 @@ function reviewIconButton(icon, label, action) {
     await action();
   });
   return button;
+}
+
+/** Makes a textarea grow with its content (modern Docs/Word composer): height
+ *  tracks the scroll height from a min of one row up to a cap, after which it
+ *  scrolls. Returns a `resize()` the caller can invoke after programmatic value
+ *  changes. */
+function autoGrowTextarea(textarea, { min = 34, max = 180 } = {}) {
+  const resize = () => {
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.min(max, Math.max(min, textarea.scrollHeight))}px`;
+  };
+  textarea.addEventListener("input", resize);
+  requestAnimationFrame(resize);
+  return resize;
+}
+
+/** Shared "modern comment" composer key handling: Enter submits, Shift+Enter
+ *  inserts a newline, Escape cancels. Kept identical across the top-level comment
+ *  box and every reply composer so the interaction never differs by surface (Q5).
+ *  Always stops propagation so a keystroke in the composer never reaches the
+ *  canvas editor or the card's expand/collapse handler. */
+function attachComposerKeys(textarea, { onSubmit, onCancel }) {
+  textarea.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+    if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      onSubmit?.();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      onCancel?.();
+    }
+  });
 }
 
 function scheduleReviewMarginRender() {
@@ -1100,16 +1175,13 @@ function renderReviewMarginItems() {
         drawSelection();
       }, false, "Add comment");
       submit.dataset.testid = "review-comment-submit";
-      textarea.addEventListener("keydown", (event) => {
-        event.stopPropagation();
-        if (event.key === "Escape") {
-          event.preventDefault();
-          closeReviewPopover();
-        } else if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-          event.preventDefault();
-          submit.click();
-        }
+      // Enter submits, Shift+Enter is a newline, Esc cancels — the modern
+      // Docs/Word comment interaction, identical to the reply composer (Q5).
+      attachComposerKeys(textarea, {
+        onSubmit: () => submit.click(),
+        onCancel: () => closeReviewPopover(),
       });
+      autoGrowTextarea(textarea);
       actions.append(cancel, submit);
       composer.append(textarea, actions);
       entry = { el: composer, sig, height: 0, measured: false, focusTextarea: textarea, needsFocus: true };
@@ -1430,14 +1502,27 @@ function renderReviewMarginItems() {
         card.appendChild(thread);
       }
       if (expanded && !item.data.resolved) {
+        // Always-ready multi-line reply composer (Q5): a textarea the user can
+        // type into immediately — no click-to-arm step — matching modern Docs/
+        // Word comment threads. It auto-grows; Enter submits, Shift+Enter is a
+        // newline, Esc clears. The action row surfaces only once the composer
+        // is focused or has text, so a collapsed thread stays dense.
         const replyComposer = document.createElement("div");
         replyComposer.className = "review-reply-composer";
-        const textarea = document.createElement("input");
-        textarea.type = "text";
+        const textarea = document.createElement("textarea");
+        textarea.rows = 1;
         textarea.maxLength = 4096;
-        textarea.readOnly = true;
         textarea.placeholder = "Reply…";
+        textarea.dataset.testid = "review-reply-composer";
         textarea.setAttribute("aria-label", "Reply to this comment");
+        const replyActions = document.createElement("div");
+        replyActions.className = "review-composer-actions";
+        const resize = autoGrowTextarea(textarea);
+        const clear = () => {
+          textarea.value = "";
+          resize();
+          syncActions();
+        };
         const submit = reviewCardButton("Reply", async () => {
           const text = textarea.value.trim();
           if (!text) return;
@@ -1447,29 +1532,22 @@ function renderReviewMarginItems() {
           drawSelection();
         }, false, "Send reply");
         const cancel = reviewCardButton("Cancel", () => {
-          textarea.value = "";
-          textarea.readOnly = true;
-          replyActions.hidden = true;
+          clear();
+          textarea.blur();
         });
-        const replyActions = document.createElement("div");
-        replyActions.className = "review-composer-actions";
-        replyActions.hidden = true;
         replyActions.append(cancel, submit);
-        textarea.addEventListener("click", (event) => {
-          event.stopPropagation();
-          textarea.readOnly = false;
-          replyActions.hidden = false;
-          textarea.focus({ preventScroll: true });
-        });
-        textarea.addEventListener("keydown", (event) => {
-          event.stopPropagation();
-          if (event.key === "Enter") {
-            event.preventDefault();
-            submit.click();
-          } else if (event.key === "Escape") {
-            event.preventDefault();
-            cancel.click();
-          }
+        const syncActions = () => {
+          const active = document.activeElement === textarea || textarea.value.trim().length > 0;
+          replyActions.hidden = !active;
+        };
+        syncActions();
+        textarea.addEventListener("pointerdown", (event) => event.stopPropagation());
+        textarea.addEventListener("input", syncActions);
+        textarea.addEventListener("focus", syncActions);
+        textarea.addEventListener("blur", () => requestAnimationFrame(syncActions));
+        attachComposerKeys(textarea, {
+          onSubmit: () => submit.click(),
+          onCancel: () => cancel.click(),
         });
         replyComposer.append(textarea, replyActions);
         card.appendChild(replyComposer);
@@ -1927,6 +2005,12 @@ async function openBytes(bytes, name) {
     populateTableStyles();
     dropEl.hidden = true;
     document.body.classList.add("doc-loaded");
+    // Redline visible by default (Q1): a document that arrives already carrying
+    // tracked changes shows markup on open, so struck deletions are never
+    // invisible behind a buried toggle. A clean document opens with markup off.
+    // Set before the first `renderAll` so it renders the correct layout once.
+    showingChanges = documentHasTrackedChanges();
+    reflectShowingChangesState();
     const fontWarnings = await provisionFonts(name);
     await renderAll();
     if (fontWarnings.length > 0) {
@@ -2269,6 +2353,17 @@ function paintReviewMarkers() {
       if (el) {
         el.style.setProperty("--review-author-color", color);
         el.title = tooltip;
+        // Inline accept/reject affordance (Q2): hovering a tracked-change marker
+        // previews a compact card; pressing on it pins the card open. The
+        // pointerdown is NOT swallowed, so it still bubbles to the page's
+        // hit-testing and caret placement is unaffected (REVIEW-GAP-005). Opening
+        // on pointerdown (before the caret repaint detaches this marker) keeps the
+        // pinned card reliable; the card itself lives on document.body and
+        // survives the repaint.
+        el.dataset.reviewRevisionId = String(revision.id ?? "");
+        el.addEventListener("mouseenter", () => showReviewInlineCard(revision, el, false));
+        el.addEventListener("mouseleave", () => scheduleReviewInlineCardHide());
+        el.addEventListener("pointerdown", () => showReviewInlineCard(revision, el, true));
       }
     }
   }
@@ -3370,7 +3465,17 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     hideLinkChip();
     closeReviewPopover();
+    closeReviewInlineCard();
   }
+});
+// Dismiss the inline accept/reject card on any pointerdown outside it and its
+// originating marker (the card's own buttons stopPropagation, so they are not
+// treated as "outside").
+document.addEventListener("pointerdown", (event) => {
+  if (!reviewInlineCard) return;
+  if (reviewInlineCard.contains(event.target)) return;
+  if (event.target.closest?.("[data-review-revision-id]")) return;
+  closeReviewInlineCard();
 });
 document.addEventListener("keydown", (event) => {
   if (!doc || event.defaultPrevented) return;
@@ -3385,6 +3490,21 @@ document.addEventListener("keydown", (event) => {
     const next =
       reviewMode === "editing" ? "suggesting" : reviewMode === "suggesting" ? "viewing" : "editing";
     setReviewMode(next);
+  } else if (mod && event.altKey && event.key === "Enter" && !isInteractiveChromeTarget(event.target)) {
+    // Word's Accept ▸ Next (⌘/Ctrl+Alt+Enter): decide the change at the caret and
+    // advance to the next one (Q3). `stopImmediatePropagation` keeps the canvas
+    // editor's own Enter handling from also firing.
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    void decideReviewAndAdvance(true);
+  } else if (
+    mod && event.altKey && (event.key === "Backspace" || event.key === "Delete")
+    && !isInteractiveChromeTarget(event.target)
+  ) {
+    // Reject ▸ Next (⌘/Ctrl+Alt+Backspace).
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    void decideReviewAndAdvance(false);
   }
 });
 viewportEl.addEventListener("scroll", hideLinkChip, { passive: true });
@@ -6142,103 +6262,332 @@ function closeReviewPopover() {
   scheduleReviewMarginRender();
 }
 
-function showReviewPopover(item) {
-  closeReviewPopover();
-  if (!item) return;
-  const popover = document.createElement("div");
-  popover.className = "review-popover";
-  popover.setAttribute("role", "dialog");
-  const head = document.createElement("div");
-  head.className = "review-popover-head";
-  const author = document.createElement("strong");
-  author.textContent = item.author || item.initials || (item.kind ? item.kind.replaceAll("_", " ") : "Comment");
-  const meta = document.createElement("span");
-  meta.className = "review-popover-meta";
-  meta.textContent = item.date || (item.resolved ? "Resolved" : "Open");
-  head.append(author, meta);
-  const body = document.createElement("div");
-  body.className = "review-popover-body";
-  body.textContent = String(item.text || "");
-  const actions = document.createElement("div");
-  actions.className = "review-popover-actions";
-  const addAction = (label, handler) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "review-card-action";
-    button.textContent = label;
-    button.addEventListener("click", async (event) => { event.stopPropagation(); await handler(); });
-    actions.appendChild(button);
-  };
-  if (item.kind) {
-    addAction("Accept", async () => { await runEdit(() => doc.decideRevision(item.id, true)); closeReviewPopover(); });
-    addAction("Reject", async () => { await runEdit(() => doc.decideRevision(item.id, false)); closeReviewPopover(); });
-  } else {
-    addAction(item.resolved ? "Reopen" : "Resolve", async () => { await runEdit(() => doc.setCommentResolved(item.id, !item.resolved)); closeReviewPopover(); });
-    addAction("Reply", async () => { closeReviewPopover(); openReviewComposer(item.id); });
-    addAction("Delete", async () => { await runEdit(() => doc.deleteComment(item.id)); closeReviewPopover(); });
+// --- Inline accept/reject card (Q2) ------------------------------------------
+// Hovering (or clicking) a tracked-change marker on the canvas surfaces a
+// compact card — author, one-line change summary, ✔ Accept / ✗ Reject — the
+// Google-Docs suggestion affordance. A pinned card (opened by click) stays until
+// an outside pointerdown or Escape; a hover card follows the pointer and hides
+// shortly after it leaves both the marker and the card. Accept/Reject reuse the
+// same grouped/move-aware decision path as the sidebar and context menu.
+let reviewInlineCard = null;
+let reviewInlineCardRevisionId = null;
+let reviewInlineCardPinned = false;
+let reviewInlineHideTimer = 0;
+
+/** One-line summary of a tracked change for the inline card and screen-reader
+ *  announcements. */
+function reviewRevisionSummary(revision) {
+  const text = String(revision?.text || "");
+  const quoted = text ? `“${text}”` : "";
+  switch (revision?.kind) {
+    case "deletion": return `Deleted ${quoted}`.trim();
+    case "insertion": return `Added ${quoted}`.trim();
+    case "formatting": return `Formatting change ${quoted}`.trim();
+    case "move_from": case "move_to": case "move": return `Moved ${quoted}`.trim();
+    case "replacement": return `Replaced ${quoted}`.trim();
+    default: return `Changed ${quoted}`.trim();
   }
-  const close = document.createElement("button");
-  close.type = "button";
-  close.className = "panel-close";
-  close.setAttribute("aria-label", "Close review item");
-  close.textContent = "×";
-  close.addEventListener("click", closeReviewPopover);
-  head.appendChild(close);
-  popover.append(head, body, actions);
-  document.body.appendChild(popover);
-  reviewPopover = popover;
-  const rect = selection && doc ? doc.caretRect(selection.focus.node, selection.focus.offset) : [];
-  const page = rect.length >= 5 ? pages[rect[0] - 1] : null;
-  const scale = page ? scaleOf(page) : { sx: 1, sy: 1 };
-  const pageRect = page?.canvas.getBoundingClientRect();
-  const left = pageRect && rect.length >= 5 ? pageRect.left + rect[1] * scale.sx : window.innerWidth / 2;
-  const top = pageRect && rect.length >= 5 ? pageRect.top + rect[2] * scale.sy : window.innerHeight / 2;
-  popover.style.left = `${Math.max(12, Math.min(window.innerWidth - popover.offsetWidth - 12, left))}px`;
-  popover.style.top = `${Math.max(12, Math.min(window.innerHeight - popover.offsetHeight - 12, top + 18))}px`;
 }
 
-/** Move the caret to the next/previous tracked text change.  Revision anchors
- * are intentionally resolved through the engine's text index rather than DOM
- * ranges, so this also works for changes inside tables and content controls. */
-function navigateReviewRevision(direction) {
-  if (!doc) return;
-  const revisions = JSON.parse(doc.listRevisions()) ?? [];
-  const usable = revisions.filter((revision) => String(revision.text || "").length);
-  if (!usable.length) return;
-  reviewRevisionCursor = (reviewRevisionCursor + (direction > 0 ? 1 : -1) + usable.length) % usable.length;
-  const revision = usable[reviewRevisionCursor];
-  // Announce which change the caret moved to, for a screen reader following
-  // Next/Previous without watching the canvas (REVIEW-GAP-023).
-  const changeKind = (reviewChangeTypeLabel(revision.kind) || "change").toLowerCase();
-  announceReview(`Change ${reviewRevisionCursor + 1} of ${usable.length}: ${changeKind} by ${reviewAuthorDisplay(revision) || "You"}`);
-  const range = revisionRange(revision);
-  if (range) {
-    selection = {
-      anchor: { node: range.startNode, offset: range.startOffset },
-      focus: { node: range.endNode, offset: range.endOffset },
+function closeReviewInlineCard() {
+  clearTimeout(reviewInlineHideTimer);
+  reviewInlineHideTimer = 0;
+  reviewInlineCard?.remove();
+  reviewInlineCard = null;
+  reviewInlineCardRevisionId = null;
+  reviewInlineCardPinned = false;
+}
+
+/** Hide a hover-opened card after a short grace period, so moving the pointer
+ *  from the marker onto the card itself does not dismiss it. A pinned (clicked)
+ *  card ignores this. */
+function scheduleReviewInlineCardHide() {
+  if (reviewInlineCardPinned) return;
+  clearTimeout(reviewInlineHideTimer);
+  reviewInlineHideTimer = window.setTimeout(() => {
+    if (!reviewInlineCardPinned) closeReviewInlineCard();
+  }, 220);
+}
+
+function showReviewInlineCard(revision, anchorEl, pinned) {
+  if (!revision || !anchorEl) return;
+  const revisionId = String(revision.id ?? "");
+  clearTimeout(reviewInlineHideTimer);
+  reviewInlineHideTimer = 0;
+  // Re-hovering / re-clicking the marker already showing keeps the one card;
+  // a click on an already-open hover card just pins it.
+  if (reviewInlineCard && reviewInlineCardRevisionId === revisionId) {
+    if (pinned) reviewInlineCardPinned = true;
+    return;
+  }
+  closeReviewInlineCard();
+  reviewInlineCardRevisionId = revisionId;
+  reviewInlineCardPinned = !!pinned;
+
+  const card = document.createElement("div");
+  card.className = "review-inline-card";
+  card.setAttribute("role", "dialog");
+  card.setAttribute("aria-label", "Tracked change");
+  card.tabIndex = -1;
+
+  const head = document.createElement("div");
+  head.className = "review-inline-head";
+  const dot = document.createElement("span");
+  dot.className = "review-inline-dot";
+  dot.style.background = reviewAuthorColor(reviewAuthorKey(revision));
+  const who = document.createElement("div");
+  who.className = "review-inline-who";
+  const author = document.createElement("strong");
+  author.textContent = reviewAuthorDisplay(revision);
+  const meta = document.createElement("small");
+  meta.textContent = [reviewChangeTypeLabel(revision.kind), formatReviewDate(revision.date)]
+    .filter(Boolean).join(" · ");
+  who.append(author, meta);
+  head.append(dot, who);
+
+  const body = document.createElement("p");
+  body.className = "review-inline-body";
+  body.textContent = reviewRevisionSummary(revision);
+  card.append(head, body);
+
+  // Accept/Reject are edits; hide them in read-only Viewing mode, leaving the
+  // card as a summary the reader can still see.
+  if (reviewMode !== "viewing") {
+    const bar = document.createElement("div");
+    bar.className = "review-inline-bar";
+    const makeBtn = (icon, label, danger, handler) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      if (danger) button.className = "danger";
+      const glyph = document.createElement("span");
+      glyph.className = "ms";
+      glyph.setAttribute("aria-hidden", "true");
+      glyph.textContent = icon;
+      button.append(glyph, document.createTextNode(label));
+      button.setAttribute("aria-label", `${label} this ${(reviewChangeTypeLabel(revision.kind) || "change").toLowerCase()}`);
+      button.title = button.getAttribute("aria-label");
+      button.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        await handler();
+      });
+      return button;
     };
-    drawSelection();
-    focusEditorSurface();
-    scrollCaretIntoView("center");
-    syncActiveReviewCommentToCaret(selection.focus);
-    return;
+    const decide = async (accept) => {
+      await decideContextRevision(revision, accept);
+      announceReview(`${accept ? "Accepted" : "Rejected"} ${(reviewChangeTypeLabel(revision.kind) || "change").toLowerCase()}`);
+      closeReviewInlineCard();
+      focusEditorSurface();
+    };
+    bar.append(
+      makeBtn("check", "Accept", false, () => decide(true)),
+      makeBtn("close", "Reject", true, () => decide(false)),
+    );
+    card.appendChild(bar);
   }
-  const start = selection?.focus || doc.firstPosition();
-  const match = doc.findText(String(revision.text), start.node, start.offset, direction > 0, false);
-  if (start.free) start.free();
-  if (!match.found) {
-    match.free();
-    return;
+
+  // The card is interactive: entering it cancels the hover-hide timer, leaving
+  // it reschedules the hide (unless pinned).
+  card.addEventListener("mouseenter", () => clearTimeout(reviewInlineHideTimer));
+  card.addEventListener("mouseleave", () => scheduleReviewInlineCardHide());
+
+  document.body.appendChild(card);
+  reviewInlineCard = card;
+
+  // Position just below the marker, clamped to the viewport.
+  const markerRect = anchorEl.getBoundingClientRect();
+  const left = Math.max(12, Math.min(window.innerWidth - card.offsetWidth - 12, markerRect.left));
+  const below = markerRect.bottom + 6;
+  const top = below + card.offsetHeight + 12 > window.innerHeight
+    ? Math.max(12, markerRect.top - card.offsetHeight - 6)
+    : below;
+  card.style.left = `${left}px`;
+  card.style.top = `${top}px`;
+
+  // A pinned card takes focus so it is keyboard-dismissable and its buttons are
+  // immediately reachable by Tab; a hover card must not steal the caret.
+  if (pinned) card.focus({ preventScroll: true });
+}
+
+// --- Unified Next/Previous over comments AND changes (Q4) --------------------
+// Word's Review "Previous / Next" walks every comment and tracked change in one
+// document-ordered loop. `reviewNavTargets` builds that merged list (honoring
+// the active Open/Resolved/All filter the same way the sidebar does) and orders
+// it by on-screen position — the same page/top/left ordering the comment column
+// uses — so Next/Previous visit exactly what the reader sees, in reading order.
+
+/** Whether rect `a` sits strictly after `ref` in document (reading) order. */
+function reviewRectIsAfter(a, ref) {
+  if (!a || !ref) return false;
+  if (a.pageNumber !== ref.pageNumber) return a.pageNumber > ref.pageNumber;
+  if (Math.abs(a.top - ref.top) > 2) return a.top > ref.top;
+  return a.left > ref.left + 2;
+}
+
+/** The current selection's leading/trailing on-screen positions, so navigation
+ *  can skip the item the caret is already on regardless of selection direction. */
+function reviewSelectionRects() {
+  if (!selection) return null;
+  const a = selection.anchor;
+  const f = selection.focus;
+  const ra = reviewRangeClientRect(a.node, a.offset, a.node, a.offset);
+  const rf = reviewRangeClientRect(f.node, f.offset, f.node, f.offset);
+  if (!ra && !rf) return null;
+  if (!ra) return { start: rf, end: rf };
+  if (!rf) return { start: ra, end: ra };
+  return reviewRectIsAfter(rf, ra) ? { start: ra, end: rf } : { start: rf, end: ra };
+}
+
+/** The merged, document-ordered list of navigable review items — root comments
+ *  (per filter) plus tracked changes — each with its model range and on-screen
+ *  rect. Replies are represented by their root; changes are individual (their
+ *  grouped sidebar card is still surfaced via the caret→card anchor index). */
+function reviewNavTargets() {
+  if (!doc) return [];
+  const { comments, revisions } = readReviewData(doc);
+  const targets = [];
+  for (const comment of comments ?? []) {
+    if (!comment.anchor?.node || comment.parentParaId) continue;
+    if (reviewFilter !== "all") {
+      const resolved = !!comment.resolved;
+      if (reviewFilter === "resolved" ? !resolved : resolved) continue;
+    }
+    const startOffset = Number(comment.anchor.start) || 0;
+    const endOffset = Number(comment.anchor.end) || startOffset;
+    const rect = reviewRangeClientRect(comment.anchor.node, startOffset, comment.anchor.node, endOffset);
+    if (rect) {
+      targets.push({
+        type: "comment",
+        data: comment,
+        range: { startNode: comment.anchor.node, startOffset, endNode: comment.anchor.node, endOffset },
+        rect,
+      });
+    }
   }
+  // Tracked changes are not comment-"resolved": show them under Open and All,
+  // hide them only under the comment-only Resolved filter (mirrors the sidebar).
+  if (reviewFilter !== "resolved") {
+    for (const revision of revisions ?? []) {
+      if (!String(revision.text || "").length && revision.kind !== "formatting") continue;
+      const range = revisionRange(revision);
+      if (!range) continue;
+      const rect = reviewRangeClientRect(range.startNode, range.startOffset, range.endNode, range.endOffset);
+      if (rect) targets.push({ type: "revision", data: revision, range, rect });
+    }
+  }
+  targets.sort((a, b) =>
+    a.rect.pageNumber - b.rect.pageNumber || a.rect.top - b.rect.top || a.rect.left - b.rect.left);
+  return targets;
+}
+
+/** Moves the caret/selection to a navigation target, scrolls it into view, and
+ *  surfaces its sidebar card (via the caret→card anchor index, which handles the
+ *  grouped/move cards correctly). Announces its position + kind for AT. */
+function focusReviewTarget(target, index, total) {
+  reviewSidebarPreference = true;
+  const { range } = target;
   selection = {
-    anchor: { node: match.startNode, offset: match.startOffset },
-    focus: { node: match.endNode, offset: match.endOffset },
+    anchor: { node: range.startNode, offset: range.startOffset },
+    focus: { node: range.endNode, offset: range.endOffset },
   };
   drawSelection();
   focusEditorSurface();
   scrollCaretIntoView("center");
-  match.free();
   syncActiveReviewCommentToCaret(selection.focus);
+  const who = reviewAuthorDisplay(target.data) || "You";
+  const label = target.type === "comment"
+    ? `Comment by ${who}`
+    : `${reviewChangeTypeLabel(target.data.kind)} by ${who}`;
+  announceReview(`${index + 1} of ${total}: ${label}`);
+}
+
+/** The index of the target the caret is currently on: an exact match to a just-
+ *  navigated selection, else the item whose range contains the caret. `-1` when
+ *  the caret is not on any item (a fresh navigation from arbitrary text). This
+ *  is what lets Next/Previous step by list position, so two items that share a
+ *  boundary (a change starting exactly where a comment ends) still advance. */
+function reviewCurrentTargetIndex(targets) {
+  const focus = selection?.focus;
+  const anchor = selection?.anchor;
+  if (!focus) return -1;
+  for (let i = 0; i < targets.length; i++) {
+    const r = targets[i].range;
+    if (anchor && r.startNode === anchor.node && r.endNode === focus.node) {
+      const forward = r.startOffset === anchor.offset && r.endOffset === focus.offset;
+      const backward = r.startOffset === focus.offset && r.endOffset === anchor.offset;
+      if (forward || backward) return i;
+    }
+  }
+  for (let i = 0; i < targets.length; i++) {
+    const r = targets[i].range;
+    if (r.startNode === focus.node && r.endNode === focus.node
+      && focus.offset >= r.startOffset && focus.offset <= r.endOffset) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+/** Next (`+1`) / Previous (`-1`) across the unified comment+change list, wrapping
+ *  at the ends. When the caret already sits on an item, it steps by list index
+ *  (robust to boundary-adjacent items); otherwise it lands on the nearest item
+ *  after/before the caret in reading order. */
+function navigateReview(direction) {
+  if (!doc) return;
+  const targets = reviewNavTargets();
+  if (!targets.length) return;
+  const current = reviewCurrentTargetIndex(targets);
+  let index;
+  if (current >= 0) {
+    index = (current + (direction > 0 ? 1 : -1) + targets.length) % targets.length;
+  } else {
+    const caret = reviewSelectionRects();
+    if (!caret) {
+      index = direction > 0 ? 0 : targets.length - 1;
+    } else if (direction > 0) {
+      const found = targets.findIndex((t) => reviewRectIsAfter(t.rect, caret.end));
+      index = found === -1 ? 0 : found;
+    } else {
+      let found = -1;
+      for (let i = 0; i < targets.length; i++) {
+        if (reviewRectIsAfter(caret.start, targets[i].rect)) found = i;
+      }
+      index = found === -1 ? targets.length - 1 : found;
+    }
+  }
+  focusReviewTarget(targets[index], index, targets.length);
+}
+
+// --- Single-change decisions at the caret + Accept/Reject ▸ Next (Q3) --------
+
+/** The tracked change under the caret (its focus, else its anchor), or null. */
+function reviewRevisionAtCaret() {
+  return reviewContextAt(selection?.focus).revision
+    || reviewContextAt(selection?.anchor).revision;
+}
+
+/** Accepts (or rejects) the tracked change at the caret, using the same
+ *  grouped/move-aware decision path as the sidebar and context menu. Returns
+ *  whether a change was found and decided. */
+async function decideReviewAtCaret(accept) {
+  const revision = reviewRevisionAtCaret();
+  if (!revision) {
+    setStatus("Place the caret inside a tracked change to accept or reject it", "error");
+    return false;
+  }
+  await decideContextRevision(revision, accept);
+  announceReview(`${accept ? "Accepted" : "Rejected"} ${(reviewChangeTypeLabel(revision.kind) || "change").toLowerCase()}`);
+  drawSelection();
+  focusEditorSurface();
+  return true;
+}
+
+/** Word's core review loop: accept/reject the change at the caret, then advance
+ *  the caret to the next change/comment. Advances even when the caret was not on
+ *  a change, so the shortcut always makes progress through the document. */
+async function decideReviewAndAdvance(accept) {
+  const decided = await decideReviewAtCaret(accept);
+  navigateReview(1);
+  return decided;
 }
 
 /**
@@ -6362,8 +6711,8 @@ railReview.addEventListener("click", () => toggleReview());
 reviewClose.addEventListener("click", () => toggleReview(false));
 reviewAcceptAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(true)); announceReview("All changes accepted"); scheduleReviewMarginRender(); } });
 reviewRejectAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(false)); announceReview("All changes rejected"); scheduleReviewMarginRender(); } });
-reviewPrevious.addEventListener("click", () => navigateReviewRevision(-1));
-reviewNext.addEventListener("click", () => navigateReviewRevision(1));
+reviewPrevious.addEventListener("click", () => navigateReview(-1));
+reviewNext.addEventListener("click", () => navigateReview(1));
 // The visible mode control (`#reviewModeControl`) is a three-button segmented
 // group; each button carries `data-review-mode` and is wired below.
 suggestingBannerEdit.addEventListener("click", () => setReviewMode("editing"));
@@ -6536,8 +6885,12 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "review.mode.editing", label: "Editing mode", group: "Review", kw: "review mode edit", run: () => setReviewMode("editing") },
     { id: "review.mode.suggesting", label: "Suggesting mode (track changes)", group: "Review", kw: "review mode track changes suggest", run: () => setReviewMode("suggesting") },
     { id: "review.mode.viewing", label: "Viewing mode (read-only)", group: "Review", kw: "review mode view read only", run: () => setReviewMode("viewing") },
-    { id: "review.next", label: "Next change", group: "Review", kw: "revision suggestion navigate", run: () => navigateReviewRevision(1) },
-    { id: "review.previous", label: "Previous change", group: "Review", kw: "revision suggestion navigate", run: () => navigateReviewRevision(-1) },
+    { id: "review.next", label: "Next comment or change", group: "Review", kw: "revision suggestion comment navigate forward", run: () => navigateReview(1) },
+    { id: "review.previous", label: "Previous comment or change", group: "Review", kw: "revision suggestion comment navigate back", run: () => navigateReview(-1) },
+    { id: "review.acceptAtCaret", label: "Accept change at cursor", group: "Review", kw: "revision suggestion approve current", run: () => decideReviewAtCaret(true) },
+    { id: "review.rejectAtCaret", label: "Reject change at cursor", group: "Review", kw: "revision suggestion discard current", run: () => decideReviewAtCaret(false) },
+    { id: "review.acceptNext", label: "Accept change and move to next", group: "Review", kw: "revision suggestion approve next advance", shortcut: "⌘⌥⏎", run: () => decideReviewAndAdvance(true) },
+    { id: "review.rejectNext", label: "Reject change and move to next", group: "Review", kw: "revision suggestion discard next advance", shortcut: "⌘⌥⌫", run: () => decideReviewAndAdvance(false) },
     { id: "review.acceptAll", label: "Accept all changes", group: "Review", kw: "revision suggestion approve", run: () => reviewAcceptAll.click() },
     { id: "review.rejectAll", label: "Reject all changes", group: "Review", kw: "revision suggestion discard", run: () => reviewRejectAll.click() },
   ];

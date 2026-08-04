@@ -2744,7 +2744,54 @@ body.modal-open {
 .review-popover-meta { color: var(--muted); font-size: 11px; }
 .review-popover-body { margin: 8px 0; font-size: var(--fs-small); line-height: 1.45; white-space: pre-wrap; }
 .review-popover-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-.review-inline-bar { display: none !important; }
+/* Inline accept/reject card (review UX v2 Q2): a compact popover surfaced on
+   hover/press of a tracked-change marker on the canvas — author, one-line
+   summary, and ✔ Accept / ✗ Reject. Reuses the popover surface tokens so it
+   matches the rest of the editor chrome in light and dark themes. */
+.review-inline-card {
+  position: fixed;
+  z-index: 85;
+  width: max-content;
+  max-width: min(340px, calc(100vw - 24px));
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-popover);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-lg);
+  outline: none;
+}
+.review-inline-card:focus-visible { box-shadow: var(--shadow-lg), 0 0 0 2px var(--accent); }
+.review-inline-head { display: flex; align-items: center; gap: 8px; }
+.review-inline-dot { width: 10px; height: 10px; flex: 0 0 10px; border-radius: 50%; background: var(--accent-strong); }
+.review-inline-who { display: grid; gap: 1px; min-width: 0; }
+.review-inline-who strong { font-size: var(--fs-small); font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.review-inline-who small { color: var(--muted); font-size: var(--fs-caption); }
+.review-inline-body {
+  margin: 7px 0 9px;
+  font-size: var(--fs-small);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.review-inline-bar { display: flex; gap: 6px; }
+.review-inline-bar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 11px 4px 9px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  cursor: pointer;
+}
+.review-inline-bar button .ms { font-size: 16px; }
+.review-inline-bar button:hover { background: color-mix(in srgb, #188038 12%, var(--surface)); border-color: #188038; color: #137333; }
+.review-inline-bar button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.review-inline-bar button.danger:hover { background: color-mix(in srgb, #d93025 12%, var(--surface)); border-color: #d93025; color: #b3261e; }
 .review-mode-segmented { display: inline-flex; gap: 2px; padding: 2px; border-radius: 999px; background: var(--bg-2); }
 .review-mode-seg { display: inline-flex; align-items: center; gap: 4px; border: 1px solid transparent; border-radius: 999px; padding: 4px 8px; background: transparent; color: var(--muted); font: inherit; font-size: var(--fs-ribbon-caption); font-weight: 600; cursor: pointer; white-space: nowrap; }
 .review-mode-seg .ms { font-size: var(--fs-medium); }
@@ -2752,8 +2799,6 @@ body.modal-open {
 .review-mode-seg[data-review-mode="viewing"][aria-pressed="true"] { color: var(--ink); border-color: var(--accent); background: var(--accent-soft); }
 .review-mode-seg:disabled { opacity: 0.45; cursor: default; }
 .review-mode-seg:not(:disabled):not([aria-pressed="true"]):hover { background: var(--accent-soft); color: var(--ink); }
-.review-inline-bar button { border: 1px solid var(--line); border-radius: 999px; padding: 5px 9px; background: transparent; color: var(--ink); font: inherit; font-size: 11px; cursor: pointer; white-space: nowrap; }
-.review-inline-bar button:hover { background: var(--accent-soft); border-color: var(--accent); }
 .viewing-banner { border-color: color-mix(in srgb, var(--accent) 42%, var(--line)); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
 .viewing-banner .ms { color: var(--accent); }
 .suggesting-banner {
@@ -2967,13 +3012,13 @@ body.modal-open {
   display: grid;
   gap: 8px;
 }
-.review-reply-composer input,
+.review-reply-composer textarea,
 .review-margin-composer textarea {
   width: 100%;
-  min-height: 42px;
+  min-height: 34px;
   box-sizing: border-box;
   padding: 8px 12px;
-  border: 1px solid var(--accent);
+  border: 1px solid var(--line-strong);
   border-radius: 18px;
   outline: none;
   background: var(--surface);
@@ -2981,8 +3026,14 @@ body.modal-open {
   font: inherit;
   font-size: var(--fs-small);
   line-height: 1.45;
+  /* Height is driven by JS auto-grow (Q5); no manual resize handle, no
+     inner scrollbar until the cap is reached. */
+  resize: none;
+  overflow: hidden;
 }
-.review-margin-composer textarea { resize: vertical; }
+.review-reply-composer textarea:focus,
+.review-margin-composer textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.review-margin-composer textarea { min-height: 60px; }
 .review-composer-actions {
   display: flex;
   justify-content: flex-end;
