@@ -1405,6 +1405,81 @@ mod semantic_tests {
     }
 
     #[test]
+    fn table_style_band_sizes_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::BlockNode;
+        // A banded table style's stripe periods: two rows per horizontal band and
+        // three columns per vertical band. Both were dropped at import; now they
+        // are modeled on `row_band_size`/`col_band_size` and must round-trip.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:tbl>
+                <w:tblPr>
+                    <w:tblStyleRowBandSize w:val="2"/>
+                    <w:tblStyleColBandSize w:val="3"/>
+                </w:tblPr>
+                <w:tblGrid><w:gridCol w:w="5000"/></w:tblGrid>
+                <w:tr><w:tc><w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc></w:tr>
+            </w:tbl>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        let BlockNode::Table(table) = &m1.body()[0] else {
+            panic!("expected a table");
+        };
+        assert_eq!(table.properties.row_band_size, Some(2));
+        assert_eq!(table.properties.col_band_size, Some(3));
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(m1, m2, "table style band sizes survive write -> reopen");
+    }
+
+    #[test]
+    fn short_row_grid_skips_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, TableWidth, WidthType};
+        // A short row: it skips one grid column before its cell and two after,
+        // with preferred widths for each skipped span. gridBefore/gridAfter and
+        // wBefore/wAfter were dropped at import; now modeled and must round-trip.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:tbl>
+                <w:tblGrid>
+                    <w:gridCol w:w="2000"/><w:gridCol w:w="2000"/>
+                    <w:gridCol w:w="2000"/><w:gridCol w:w="2000"/>
+                </w:tblGrid>
+                <w:tr>
+                    <w:trPr>
+                        <w:gridBefore w:val="1"/>
+                        <w:gridAfter w:val="2"/>
+                        <w:wBefore w:type="dxa" w:w="2000"/>
+                        <w:wAfter w:type="pct" w:w="1000"/>
+                    </w:trPr>
+                    <w:tc><w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc>
+                </w:tr>
+            </w:tbl>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        let BlockNode::Table(table) = &m1.body()[0] else {
+            panic!("expected a table");
+        };
+        let row = &table.rows[0].properties;
+        assert_eq!(row.grid_before, Some(1));
+        assert_eq!(row.grid_after, Some(2));
+        assert_eq!(row.w_before, Some(TableWidth::dxa(2000)));
+        assert_eq!(
+            row.w_after,
+            Some(TableWidth {
+                value: 1000,
+                width_type: WidthType::Pct,
+            }),
+            "wAfter round-trips with its pct type",
+        );
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(m1, m2, "short-row grid skips survive write -> reopen");
+    }
+
+    #[test]
     fn writer_is_deterministic() {
         let xml = br#"<w:document xmlns:w="urn:w"><w:body>
             <w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;

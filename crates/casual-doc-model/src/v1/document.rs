@@ -1023,6 +1023,12 @@ impl Document {
         if let Some(height) = properties.height.value_twips {
             check_domain(height <= 31_680, "table.row.height")?;
         }
+        for width in [properties.w_before, properties.w_after]
+            .into_iter()
+            .flatten()
+        {
+            check_domain(width.is_valid(), "table.row.short_width")?;
+        }
         if let Some(spacing) = properties.cell_spacing_twips {
             check_domain((0..=31_680).contains(&spacing), "table.row.cell_spacing")?;
         }

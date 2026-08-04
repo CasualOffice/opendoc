@@ -3151,6 +3151,20 @@ impl BodyParser<'_> {
             b"bidiVisual" if self.tblpr_depth > 0 => self
                 .tables
                 .set_table_bidi_visual(is_true(attribute_value(element, b"val").as_deref())),
+            // Banded-style stripe periods (`w:tblStyleRowBandSize` /
+            // `w:tblStyleColBandSize`), each an unsigned count in `w:val`.
+            b"tblStyleRowBandSize" if self.tblpr_depth > 0 => {
+                match attribute_value(element, b"val").and_then(|value| value.parse::<u32>().ok()) {
+                    Some(size) => self.tables.set_table_row_band_size(size),
+                    None => self.reporter.report(b"tblStyleRowBandSize"),
+                }
+            }
+            b"tblStyleColBandSize" if self.tblpr_depth > 0 => {
+                match attribute_value(element, b"val").and_then(|value| value.parse::<u32>().ok()) {
+                    Some(size) => self.tables.set_table_col_band_size(size),
+                    None => self.reporter.report(b"tblStyleColBandSize"),
+                }
+            }
             b"jc" if self.tblpr_depth > 0 => match table_alignment(element) {
                 Some(alignment) => self.tables.set_table_alignment(alignment),
                 None => self.reporter.report(b"jc"),
@@ -3216,6 +3230,30 @@ impl BodyParser<'_> {
                 self.tables
                     .set_row_conditional_format(parse_cnf_style(element));
             }
+            // Short rows: grid columns skipped before/after the row's cells
+            // (`w:gridBefore` / `w:gridAfter`, unsigned counts in `w:val`) and the
+            // preferred width of each skipped span (`w:wBefore` / `w:wAfter`,
+            // typed like any table width).
+            b"gridBefore" if self.trpr_depth > 0 => {
+                match attribute_value(element, b"val").and_then(|value| value.parse::<u32>().ok()) {
+                    Some(count) => self.tables.set_row_grid_before(count),
+                    None => self.reporter.report(b"gridBefore"),
+                }
+            }
+            b"gridAfter" if self.trpr_depth > 0 => {
+                match attribute_value(element, b"val").and_then(|value| value.parse::<u32>().ok()) {
+                    Some(count) => self.tables.set_row_grid_after(count),
+                    None => self.reporter.report(b"gridAfter"),
+                }
+            }
+            b"wBefore" if self.trpr_depth > 0 => match parse_table_width(element) {
+                Some(width) => self.tables.set_row_w_before(width),
+                None => self.reporter.report(b"wBefore"),
+            },
+            b"wAfter" if self.trpr_depth > 0 => match parse_table_width(element) {
+                Some(width) => self.tables.set_row_w_after(width),
+                None => self.reporter.report(b"wAfter"),
+            },
             b"trHeight" if self.trpr_depth > 0 => {
                 let value = attribute_value(element, b"val")
                     .and_then(|value| value.parse::<u32>().ok())
