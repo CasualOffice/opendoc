@@ -1491,6 +1491,7 @@ mod tests {
                 cluster: 0,
             }],
             is_marker: false,
+            is_leader: false,
         };
         let mut list = DisplayList::new();
         list.push(PaintItem::Glyphs { run });

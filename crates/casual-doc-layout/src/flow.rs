@@ -4708,6 +4708,7 @@ pub(crate) fn shape_field_run(
     FieldRunShape {
         run: GlyphRun {
             is_marker: false,
+            is_leader: false,
             font: style.font,
             size: style.size,
             character_scale_percent: style.character_scale_percent,
@@ -4752,6 +4753,11 @@ struct FieldedSegment {
     width: Twip,
     ascent: Twip,
     descent: Twip,
+    /// The node byte offset just past this segment's text runs. Fields, tabs, and
+    /// breaks are zero-width for offset purposes (they contribute no model text), so
+    /// only run text advances it — matching the paragraph text being the
+    /// concatenation of its runs. Threads the caret offset space through the line.
+    end_byte: u32,
 }
 
 /// A field within a [`FieldedSegment`]: which of the segment's runs holds it, plus
@@ -4779,7 +4785,6 @@ fn shape_fielded_paragraph(
     let ctx = FieldedCtx {
         shaper,
         node: range.start.node,
-        base: range.start.offset,
         tab_stops,
         default_tab,
         constraints,
@@ -4806,13 +4811,18 @@ fn shape_fielded_paragraph(
     let mut out: Vec<Line> = Vec::new();
     let mut cursor_y = Twip::ZERO;
     let last = blocks.len().saturating_sub(1);
+    // The running caret byte offset across hard-break blocks (each a line). A hard
+    // break is zero-width for offset purposes, so a block starts where the previous
+    // one ended.
+    let mut base = range.start.offset;
     for (bi, (block_items, trailing)) in blocks.iter().enumerate() {
         let first_line_indent = if bi == 0 {
             constraints.first_line_indent
         } else {
             Twip::ZERO
         };
-        let mut line = layout_fielded_line(&ctx, block_items, first_line_indent);
+        let mut line = layout_fielded_line(&ctx, block_items, first_line_indent, base);
+        base = line.range.end.offset;
         for run in &mut line.runs {
             run.origin.y = run.origin.y + cursor_y;
         }
@@ -4840,7 +4850,6 @@ fn shape_fielded_paragraph(
 struct FieldedCtx<'a> {
     shaper: &'a dyn LineShaper,
     node: NodeId,
-    base: u32,
     tab_stops: &'a [TabStop],
     default_tab: Twip,
     constraints: LineConstraints,
@@ -4855,10 +4864,10 @@ fn layout_fielded_line(
     ctx: &FieldedCtx<'_>,
     items: &[&FlowItem<'_>],
     first_line_indent: Twip,
+    base: u32,
 ) -> Line {
     let shaper = ctx.shaper;
     let node = ctx.node;
-    let base = ctx.base;
     let tab_stops = ctx.tab_stops;
     let default_tab = ctx.default_tab;
     let constraints = ctx.constraints;
@@ -4887,10 +4896,19 @@ fn layout_fielded_line(
         }
     }
     let has_tab = segments.len() > 1;
+    // Thread the caret byte offset through the segments in visual/logical order so
+    // each shaped run's clusters and the line's range address the paragraph's real
+    // model text. Tabs between segments are zero-width for offset purposes.
+    let mut byte = base;
     let measured: Vec<FieldedSegment> = segments
         .iter()
-        .map(|seg| measure_fielded_segment(shaper, node, seg))
+        .map(|seg| {
+            let m = measure_fielded_segment(shaper, node, seg, byte);
+            byte = m.end_byte;
+            m
+        })
         .collect();
+    let end_byte = byte;
 
     let ascent = measured
         .iter()
@@ -4964,7 +4982,9 @@ fn layout_fielded_line(
         descent,
         height,
         clip: constraints.line_exact.is_some(),
-        range: ModelRange::new(ModelPos::new(node, base), ModelPos::new(node, base)),
+        // Span the block's real model text so a caret can address the line's label
+        // text and land past a trailing form field, not collapse to `[base, base)`.
+        range: ModelRange::new(ModelPos::new(node, base), ModelPos::new(node, end_byte)),
         line_break: LineBreak::ParagraphEnd,
         page_break_after: false,
         bars: Vec::new(),
@@ -5011,13 +5031,16 @@ fn measure_fielded_segment(
     shaper: &dyn LineShaper,
     node: NodeId,
     seg: &[&FlowItem<'_>],
+    base: u32,
 ) -> FieldedSegment {
     let mut runs: Vec<GlyphRun> = Vec::new();
     let mut fields: Vec<FieldPiece> = Vec::new();
     let mut pen = 0i32;
     let mut ascent = Twip::ZERO;
     let mut descent = Twip::ZERO;
-    let range = ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, 0));
+    // The running caret byte offset. A field's value is not model text, so a field
+    // does not advance it; only shaped run text does.
+    let mut byte = base;
 
     let mut i = 0;
     while i < seg.len() {
@@ -5050,6 +5073,11 @@ fn measure_fielded_segment(
                         _ => None,
                     })
                     .collect();
+                let group_len: u32 = styled.iter().map(|r| r.text.len() as u32).sum();
+                // Anchor the group's clusters at the running byte offset so a caret
+                // maps back to the paragraph's real model text (the shaper adds
+                // `range.start.offset` to every cluster it emits).
+                let range = ModelRange::new(ModelPos::new(node, byte), ModelPos::new(node, byte));
                 let layout = shaper.shape_paragraph(&styled, tabs::unwrapped_constraints(), range);
                 if let Some(line) = layout.lines.first() {
                     ascent = ascent.max(line.ascent);
@@ -5064,6 +5092,7 @@ fn measure_fielded_segment(
                     }
                     pen += group_w;
                 }
+                byte = byte.saturating_add(group_len);
             }
             // Images/tabs/breaks do not reach here (tabs split the segment; images
             // and breaks are handled by their own paths).
@@ -5077,6 +5106,7 @@ fn measure_fielded_segment(
         width: Twip(pen),
         ascent,
         descent,
+        end_byte: byte,
     }
 }
 
@@ -6665,6 +6695,7 @@ mod tests {
         let line = |baseline| Line {
             runs: vec![GlyphRun {
                 is_marker: false,
+                is_leader: false,
                 font: FontId(0),
                 size: Twip(100),
                 character_scale_percent: 100,
@@ -12597,5 +12628,78 @@ mod tests {
                 a: 255,
             },
         }
+    }
+
+    #[test]
+    fn a_form_field_paragraph_spans_its_label_text_range() {
+        // A form-field row ("Name: " + a FORMTEXT field, as on the loan form) must
+        // lay out with a caret range covering its real label text, not collapse to
+        // `[base, base)`. Otherwise the label is unaddressable and a click on the
+        // field's blank snaps to the paragraph start (`crate::hittest`). The field's
+        // value run is recorded in `line.fields`; its glyph clusters are zeroed, so
+        // it never anchors a caret.
+        use crate::text::{FieldKind, FieldStyle};
+
+        let node = NodeId::from_parts(7, 1).unwrap();
+        let label = StyledRun {
+            text: "Name: ".into(),
+            requested_family: None,
+            font: FontId(0),
+            size: Twip::from_points(11),
+            character_scale_percent: 100,
+            bold: false,
+            italic: false,
+            letter_spacing: Twip::ZERO,
+            color: [0, 0, 0, 255],
+            decoration: Decoration::default(),
+            highlight: None,
+            shading: None,
+            baseline_shift: Twip::ZERO,
+        };
+        let field_style = FieldStyle {
+            font: FontId(0),
+            size: Twip::from_points(11),
+            character_scale_percent: 100,
+            color: [0, 0, 0, 255],
+            bold: false,
+            italic: false,
+            letter_spacing: Twip::ZERO,
+            decoration: Decoration::default(),
+        };
+        let items = vec![
+            FlowItem::Run(label),
+            FlowItem::Field {
+                kind: FieldKind::Passthrough,
+                value: "     ".to_owned(),
+                style: field_style,
+            },
+        ];
+        let range = ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, 0));
+        let shaper = ParleyShaper::new();
+        let layout = shape_fielded_paragraph(
+            &shaper,
+            &items,
+            &[],
+            Twip(720),
+            LineConstraints::default(),
+            range,
+        );
+        assert_eq!(layout.lines.len(), 1);
+        let line = &layout.lines[0];
+        // "Name: " is 6 bytes → the line covers offsets [0, 6), not [0, 0).
+        assert_eq!(line.range.start.offset, 0);
+        assert_eq!(line.range.end.offset, 6, "line spans the real label text");
+        // The field value run is recorded as a marker (excluded from caret slots).
+        assert_eq!(line.fields.len(), 1);
+        let field_run = line.fields[0].run as usize;
+        // The label run's glyph clusters are the real byte offsets 0..=5.
+        let label_clusters: Vec<u32> = line
+            .runs
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != field_run)
+            .flat_map(|(_, r)| r.glyphs.iter().map(|g| g.cluster))
+            .collect();
+        assert_eq!(label_clusters, vec![0, 1, 2, 3, 4, 5]);
     }
 }

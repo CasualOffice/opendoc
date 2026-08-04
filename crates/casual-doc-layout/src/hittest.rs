@@ -536,7 +536,23 @@ fn stops_for(line: &Line, left: Twip) -> Vec<CaretStop> {
     };
 
     let mut stops = Vec::new();
-    for run in &line.runs {
+    for (run_idx, run) in line.runs.iter().enumerate() {
+        // A tab-leader fill (tiled dot/underscore glyphs) is decoration, not model
+        // text: every glyph carries the paragraph's start offset, so admitting it
+        // would scatter that one offset across the whole leader underline and make
+        // a click anywhere on the blank resolve to the paragraph start. Skip it —
+        // the tab's real caret positions come from the adjacent text runs.
+        if run.is_leader {
+            continue;
+        }
+        // A field's value run (a form field's placeholder/result, a PAGE number, …)
+        // is likewise not model text: `shape_field_run` zeroes its glyph clusters,
+        // so it would otherwise scatter the paragraph-start offset across the field's
+        // width. The field is addressed as a whole at its boundary offset, carried by
+        // the surrounding real text runs.
+        if line.fields.iter().any(|f| f.run as usize == run_idx) {
+            continue;
+        }
         let base = left + run.origin.x;
         if run.bidi_level % 2 == 0 {
             // Left-to-right: a slot at each glyph's left edge, then the run's
@@ -711,6 +727,7 @@ mod tests {
                 .collect();
             let run = GlyphRun {
                 is_marker: false,
+                is_leader: false,
                 font: FontId(0),
                 size: Twip(LINE_H),
                 character_scale_percent: 100,
@@ -768,6 +785,7 @@ mod tests {
             .collect();
         let run = GlyphRun {
             is_marker: false,
+            is_leader: false,
             font: FontId(0),
             size: Twip(LINE_H),
             character_scale_percent: 100,
@@ -1296,6 +1314,142 @@ mod tests {
                 .hit_test(page, center)
                 .unwrap_or_else(|| panic!("a hit for byte {off}"));
             assert_eq!(hit.pos, pos, "caret→hit round-trips at byte {off}");
+        }
+    }
+
+    /// Builds a "label + trailing form field" line (the loan-form pattern): six
+    /// real label glyphs at offsets 0..=5, then a field-value run whose glyph
+    /// clusters are all zeroed (as `shape_field_run` emits), recorded in
+    /// `line.fields`. The line's range spans the real label text `[0, 6)`.
+    fn fielded_label_para(id: u64) -> BlockFragment {
+        use crate::text::{FieldKind, FieldMarker, FieldStyle};
+        let n = node(id);
+        let label = GlyphRun {
+            is_marker: false,
+            is_leader: false,
+            font: FontId(0),
+            size: Twip(LINE_H),
+            character_scale_percent: 100,
+            color: [0, 0, 0, 255],
+            origin: Point::new(Twip::ZERO, Twip(LINE_H)),
+            bidi_level: 0,
+            decoration: Decoration::default(),
+            highlight: None,
+            shading: None,
+            glyphs: (0..6)
+                .map(|i| Glyph {
+                    id: 1,
+                    advance: Twip(ADV),
+                    cluster: i,
+                })
+                .collect(),
+        };
+        let field = GlyphRun {
+            is_marker: false,
+            is_leader: false,
+            font: FontId(0),
+            size: Twip(LINE_H),
+            character_scale_percent: 100,
+            color: [0, 0, 0, 255],
+            origin: Point::new(Twip(6 * ADV), Twip(LINE_H)),
+            bidi_level: 0,
+            decoration: Decoration::default(),
+            highlight: None,
+            shading: None,
+            // A field value's glyphs are not model text: `shape_field_run` zeroes
+            // their clusters, so all five sit at cluster 0.
+            glyphs: (0..5)
+                .map(|_| Glyph {
+                    id: 2,
+                    advance: Twip(ADV),
+                    cluster: 0,
+                })
+                .collect(),
+        };
+        let style = FieldStyle {
+            font: FontId(0),
+            size: Twip(LINE_H),
+            character_scale_percent: 100,
+            color: [0, 0, 0, 255],
+            bold: false,
+            italic: false,
+            letter_spacing: Twip::ZERO,
+            decoration: Decoration::default(),
+        };
+        let line = Line {
+            runs: vec![label, field],
+            ascent: Twip(LINE_H),
+            descent: Twip::ZERO,
+            height: Twip(LINE_H),
+            clip: false,
+            range: ModelRange::new(ModelPos::new(n, 0), ModelPos::new(n, 6)),
+            line_break: LineBreak::ParagraphEnd,
+            page_break_after: false,
+            bars: Vec::new(),
+            images: Vec::new(),
+            fields: vec![FieldMarker {
+                kind: FieldKind::Passthrough,
+                run: 1,
+                base_x: Twip(6 * ADV),
+                style,
+                value: "     ".to_owned(),
+            }],
+            notes: Vec::new(),
+            text_boxes: Vec::new(),
+            rules: Vec::new(),
+        };
+        BlockFragment::Paragraph {
+            id: n,
+            lines: LineLayout { lines: vec![line] },
+            box_metrics: BoxMetrics::default(),
+            break_control: BreakControl::default(),
+            decor: crate::block::ParagraphDecor::default(),
+        }
+    }
+
+    /// A click anywhere on a form field's blank (its zeroed-cluster value run)
+    /// resolves to the caret just past the label — never scattered back to the
+    /// paragraph start — and every label offset round-trips. Regression for the
+    /// loan-form "Person ordering" cells (label + FORMTEXT underline) where a
+    /// click landed at offset 0/1 and arrow navigation could not enter the label.
+    #[test]
+    fn a_click_on_a_form_field_lands_past_the_label_not_the_paragraph_start() {
+        let n = node(1);
+        let paginated = layout(&[fielded_label_para(1)]);
+        let snap = LayoutSnapshot::new(&paginated);
+        let y = Twip(MARGIN + LINE_H / 2);
+
+        // A click well into the field's blank (x past the label) → offset 6, the
+        // caret just past "Name: ", not offset 0 (the field-glyph pollution).
+        let on_field = Point::new(Twip(MARGIN + 9 * ADV), y);
+        let hit = snap.hit_test(1, on_field).expect("field click resolves");
+        assert_eq!(
+            hit.pos,
+            ModelPos::new(n, 6),
+            "a click on the form field lands past the label, not at the paragraph start"
+        );
+
+        // Every label offset (and the trailing boundary) round-trips caret↔hit, and
+        // the caret's x is monotonic across them — so Left/Right navigation visits
+        // the label in order rather than snapping to the field's collapsed column.
+        let mut last_x = i32::MIN;
+        for off in 0u32..=6 {
+            let pos = ModelPos::new(n, off);
+            let (page, rect) = snap
+                .caret_rect(pos)
+                .unwrap_or_else(|| panic!("a caret for offset {off}"));
+            let center = Point::new(rect.origin.x, Twip(rect.origin.y.raw() + LINE_H / 2));
+            assert_eq!(
+                snap.hit_test(page, center).unwrap().pos,
+                pos,
+                "offset {off} round-trips caret→hit"
+            );
+            let x = rect.origin.x.raw();
+            assert!(
+                x >= last_x,
+                "caret x is monotonic across offsets (offset {off})"
+            );
+            last_x = x;
         }
     }
 }
