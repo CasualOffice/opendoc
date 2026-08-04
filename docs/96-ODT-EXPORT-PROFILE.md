@@ -85,7 +85,9 @@ disappear from the report.
 - `Semantic` writes the implemented normalized subset and reports all loss.
 - `PreserveWhenSafe` currently writes the same semantic package and reports a
   matching or foreign source envelope as not retained; edit-tolerant ODF
-  preservation is a later checkpoint.
+  preservation (retaining referenced image bytes and safe unknown parts through a
+  semantic edit, and emitting `draw:frame` for `Drawing` nodes) is designed in
+  `97-ODT-EDIT-TOLERANT-PRESERVATION.md` and delivered in later checkpoints.
 - `ExactIfUnchanged` returns retained original ODT bytes only when the source
   format matches and the caller asserts the document is unchanged.
 
