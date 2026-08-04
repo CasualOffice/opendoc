@@ -4,11 +4,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Write};
 
 use casual_doc_model::v1::{
-    Alignment, BlockNode, BreakKind, Color, Definitions, Document, DocumentDefaults, GroupChild,
-    HeaderFooterKind, InlineNode, LevelJustification, LevelSuffix, Note, NoteId, NoteKind,
-    NoteReference, NumberFormat, NumberingInstanceId, Paragraph, ParagraphProperties, RevisionKind,
-    RunProperties, Table, TableCell, TableCellProperties, TableRow, TableRowProperties,
-    VerticalMerge,
+    Alignment, BlockNode, BreakKind, Color, Definitions, Document, DocumentDefaults, Extent,
+    GroupChild, HeaderFooterKind, InlineNode, LevelJustification, LevelSuffix, MediaId, Note,
+    NoteId, NoteKind, NoteReference, NumberFormat, NumberingInstanceId, Paragraph,
+    ParagraphProperties, RevisionKind, RunProperties, Table, TableCell, TableCellProperties,
+    TableRow, TableRowProperties, VerticalMerge,
 };
 use zip::CompressionMethod;
 use zip::write::{SimpleFileOptions, ZipWriter};
@@ -19,9 +19,12 @@ use crate::{
 };
 
 const CONTENT_HEADER: &str = r#"<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" office:version="1.4">"#;
+/// Content header for the preserving writer, which additionally emits
+/// `draw:frame`/`draw:image` and therefore declares the drawing/svg/xlink
+/// namespaces. Kept separate so plain semantic output stays byte-identical.
+const CONTENT_HEADER_PRESERVING: &str = r#"<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" office:version="1.4">"#;
 const BODY_PREFIX: &str = "<office:body><office:text>";
 const CONTENT_SUFFIX: &str = "</office:text></office:body></office:document-content>";
-const MANIFEST: &str = r#"<?xml version="1.0" encoding="UTF-8"?><manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.4"><manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.text" manifest:version="1.4"/><manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/><manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/><manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/></manifest:manifest>"#;
 
 /// Resource limits for deterministic ODT semantic export.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -373,6 +376,11 @@ struct Writer {
     note_depth: usize,
     text_bytes: usize,
     paragraphs_written: usize,
+    /// Media whose bytes are available to repackage (media id → package part
+    /// name). When a `Drawing`'s media is present, it is emitted as a
+    /// `draw:frame`; otherwise it degrades to an alt-text projection. Empty on
+    /// the plain semantic path.
+    available_media: BTreeMap<MediaId, String>,
     reporter: Reporter,
 }
 
@@ -399,6 +407,7 @@ impl Writer {
             note_depth: 0,
             text_bytes: 0,
             paragraphs_written: 0,
+            available_media: BTreeMap::new(),
             reporter: Reporter::new(limits.max_report_features),
         };
         writer.push(BODY_PREFIX)?;
@@ -992,7 +1001,15 @@ impl Writer {
                     self.write_inlines(&sdt.inlines, depth + 1)?;
                 }
                 InlineNode::Drawing(drawing) => {
-                    self.write_alt(drawing.descr.as_deref(), "odt.export.drawing")?
+                    if let Some(part_name) = self.available_media.get(&drawing.media).cloned() {
+                        self.write_draw_frame(
+                            &part_name,
+                            drawing.extent,
+                            drawing.descr.as_deref(),
+                        )?;
+                    } else {
+                        self.write_alt(drawing.descr.as_deref(), "odt.export.drawing")?;
+                    }
                 }
                 InlineNode::AnchoredDrawing(drawing) => {
                     self.write_alt(drawing.descr.as_deref(), "odt.export.anchored_drawing")?
@@ -1122,6 +1139,36 @@ impl Writer {
                     .record("odt.export.unreferenced_note", ModelOutcome::Omitted);
             }
         }
+    }
+
+    /// Emits an inline `draw:frame` referencing a retained package image part.
+    fn write_draw_frame(
+        &mut self,
+        part_name: &str,
+        extent: Option<Extent>,
+        descr: Option<&str>,
+    ) -> Result<(), OdfError> {
+        let max = self.limits.max_content_bytes;
+        self.push("<draw:frame")?;
+        if let Some(extent) = extent {
+            self.push(" svg:width=\"")?;
+            self.push(&emu_to_cm(extent.width_emu))?;
+            self.push("\" svg:height=\"")?;
+            self.push(&emu_to_cm(extent.height_emu))?;
+            self.push("\"")?;
+        }
+        self.push("><draw:image xlink:href=\"")?;
+        push_escaped_attribute(&mut self.xml, part_name, max)?;
+        self.push("\"/>")?;
+        if let Some(descr) = descr {
+            if !descr.chars().all(is_xml_character) {
+                return Err(OdfError::InvalidXmlCharacter);
+            }
+            self.push("<svg:title>")?;
+            self.push(&quick_xml::escape::escape(descr))?;
+            self.push("</svg:title>")?;
+        }
+        self.push("</draw:frame>")
     }
 
     fn write_alt(
@@ -1595,9 +1642,47 @@ fn push_bounded(output: &mut String, value: &str, allowed: usize) -> Result<(), 
 
 /// Writes a validated normalized document as a deterministic ODF 1.4 package.
 pub fn write_odt(document: &Document, limits: OdfExportLimits) -> Result<OdtExport, OdfError> {
+    write_odt_impl(document, limits, BTreeMap::new(), None, CONTENT_HEADER)
+}
+
+/// Writes a preserving ODF 1.4 package: `Drawing` nodes whose source image bytes
+/// are retained are re-emitted as `draw:frame`/`draw:image`, and those bytes are
+/// repackaged with manifest entries. A drawing whose bytes are not retained still
+/// degrades to the alt-text projection, so no dangling reference is written.
+pub fn write_odt_with_retained_parts(
+    document: &Document,
+    retained: &crate::OdfRetainedParts,
+    limits: OdfExportLimits,
+) -> Result<OdtExport, OdfError> {
+    let mut available_media = BTreeMap::new();
+    for (id, media) in document.definitions().media.iter() {
+        if retained
+            .parts
+            .contains_key(&crate::package::normalized_part_path(&media.part_name))
+        {
+            available_media.insert(*id, media.part_name.clone());
+        }
+    }
+    write_odt_impl(
+        document,
+        limits,
+        available_media,
+        Some(retained),
+        CONTENT_HEADER_PRESERVING,
+    )
+}
+
+fn write_odt_impl(
+    document: &Document,
+    limits: OdfExportLimits,
+    available_media: BTreeMap<MediaId, String>,
+    retained: Option<&crate::OdfRetainedParts>,
+    content_header: &str,
+) -> Result<OdtExport, OdfError> {
     limits.validate()?;
     document.validate().map_err(|_| OdfError::InvalidModel)?;
     let mut writer = Writer::new(limits)?;
+    writer.available_media = available_media;
     writer.register_numbering(document.definitions());
     writer.register_notes(document.definitions());
     let mut definition_remainder = document.definitions().clone();
@@ -1668,7 +1753,7 @@ pub fn write_odt(document: &Document, limits: OdfExportLimits) -> Result<OdtExpo
         &writer.list_styles,
         limits.max_content_bytes,
     )?;
-    let content_len = CONTENT_HEADER
+    let content_len = content_header
         .len()
         .checked_add(styles.len())
         .and_then(|value| value.checked_add(writer.xml.len()))
@@ -1688,7 +1773,7 @@ pub fn write_odt(document: &Document, limits: OdfExportLimits) -> Result<OdtExpo
         limits.max_content_bytes,
     )?;
     let mut content = String::with_capacity(content_len);
-    content.push_str(CONTENT_HEADER);
+    content.push_str(content_header);
     content.push_str(&styles);
     content.push_str(&writer.xml);
     let content = content.into_bytes();
@@ -1699,10 +1784,12 @@ pub fn write_odt(document: &Document, limits: OdfExportLimits) -> Result<OdtExpo
         .map(metadata_xml)
         .transpose()?;
     let page_styles = page_styles_xml(document, &master_page, &default_styles);
+    let empty_retained = crate::OdfRetainedParts::default();
     let bytes = package(
         &content,
         page_styles.as_deref(),
         metadata.as_deref(),
+        retained.unwrap_or(&empty_retained),
         limits,
     )?;
     Ok(OdtExport { bytes, report })
@@ -1712,14 +1799,13 @@ fn package(
     content: &[u8],
     page_styles: Option<&[u8]>,
     metadata: Option<&[u8]>,
+    retained: &crate::OdfRetainedParts,
     limits: OdfExportLimits,
 ) -> Result<Vec<u8>, OdfError> {
     let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
-    zip.start_file(
-        MIMETYPE_PART,
-        SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
-    )
-    .map_err(|_| OdfError::SerializationFailed)?;
+    let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+    zip.start_file(MIMETYPE_PART, stored)
+        .map_err(|_| OdfError::SerializationFailed)?;
     zip.write_all(ODT_MIME.as_bytes())
         .map_err(|_| OdfError::SerializationFailed)?;
     let deflated = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
@@ -1739,17 +1825,22 @@ fn package(
         zip.write_all(metadata)
             .map_err(|_| OdfError::SerializationFailed)?;
     }
+    // Retained parts are opaque bytes; store them verbatim in deterministic
+    // (sorted) order after the semantic parts, before the manifest.
+    for (name, part) in &retained.parts {
+        zip.start_file(name.as_str(), stored)
+            .map_err(|_| OdfError::SerializationFailed)?;
+        zip.write_all(&part.bytes)
+            .map_err(|_| OdfError::SerializationFailed)?;
+    }
     zip.start_file(MANIFEST_PART, deflated)
         .map_err(|_| OdfError::SerializationFailed)?;
-    let mut manifest = MANIFEST.to_owned();
-    if page_styles.is_none() {
-        manifest = manifest.replace("<manifest:file-entry manifest:full-path=\"styles.xml\" manifest:media-type=\"text/xml\"/>", "");
-    }
-    if metadata.is_none() {
-        manifest = manifest.replace("<manifest:file-entry manifest:full-path=\"meta.xml\" manifest:media-type=\"text/xml\"/>", "");
-    }
-    zip.write_all(manifest.as_bytes())
-        .map_err(|_| OdfError::SerializationFailed)?;
+    zip.write_all(&build_manifest(
+        page_styles.is_some(),
+        metadata.is_some(),
+        retained,
+    ))
+    .map_err(|_| OdfError::SerializationFailed)?;
     let bytes = zip
         .finish()
         .map_err(|_| OdfError::SerializationFailed)?
@@ -1760,6 +1851,43 @@ fn package(
         limits.max_package_bytes,
     )?;
     Ok(bytes)
+}
+
+/// Formats an EMU length as centimetres for `svg:width`/`svg:height` (1 cm =
+/// 360000 EMU), matching the deterministic geometry unit formatting.
+fn emu_to_cm(emu: i64) -> String {
+    format!("{:.4}cm", emu as f64 / 360_000.0)
+}
+
+/// Builds the manifest deterministically. With no styles/meta/retained parts this
+/// is byte-identical to prior releases (the fixed `MANIFEST` shape).
+fn build_manifest(
+    has_styles: bool,
+    has_metadata: bool,
+    retained: &crate::OdfRetainedParts,
+) -> Vec<u8> {
+    let mut manifest = String::from(
+        r#"<?xml version="1.0" encoding="UTF-8"?><manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.4"><manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.text" manifest:version="1.4"/><manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/>"#,
+    );
+    if has_styles {
+        manifest.push_str(
+            r#"<manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/>"#,
+        );
+    }
+    if has_metadata {
+        manifest.push_str(
+            r#"<manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/>"#,
+        );
+    }
+    for (name, part) in &retained.parts {
+        manifest.push_str("<manifest:file-entry manifest:full-path=\"");
+        manifest.push_str(&quick_xml::escape::escape(name));
+        manifest.push_str("\" manifest:media-type=\"");
+        manifest.push_str(&quick_xml::escape::escape(&part.media_type));
+        manifest.push_str("\"/>");
+    }
+    manifest.push_str("</manifest:manifest>");
+    manifest.into_bytes()
 }
 
 /// Deterministic styles.xml header/footer fragments keyed by page type.

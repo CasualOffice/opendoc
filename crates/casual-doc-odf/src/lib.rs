@@ -22,7 +22,7 @@ pub use content::{
     RetentionOutcome, import_content_xml, import_content_xml_with_cancellation,
 };
 pub use error::OdfError;
-pub use export::{OdfExportLimits, OdtExport, write_odt};
+pub use export::{OdfExportLimits, OdtExport, write_odt, write_odt_with_retained_parts};
 pub use manifest::ManifestEntry;
 pub use package::{
     CONTENT_PART, MANIFEST_PART, META_PART, MIMETYPE_PART, ODT_MIME, OdfPackageLimits,

@@ -83,11 +83,16 @@ disappear from the report.
 ## 4. Export modes
 
 - `Semantic` writes the implemented normalized subset and reports all loss.
-- `PreserveWhenSafe` currently writes the same semantic package and reports a
-  matching or foreign source envelope as not retained; edit-tolerant ODF
-  preservation (retaining referenced image bytes and safe unknown parts through a
-  semantic edit, and emitting `draw:frame` for `Drawing` nodes) is designed in
-  `97-ODT-EDIT-TOLERANT-PRESERVATION.md` and delivered in later checkpoints.
+- `PreserveWhenSafe` performs edit-tolerant preservation when a matching retained
+  source is present: `write_odt_with_retained_parts` re-emits `draw:frame` for
+  `Drawing` nodes whose source image bytes were retained and repackages those
+  bytes (byte-verbatim, stored) with deterministic manifest entries, so images
+  survive a semantic edit and reopen through the bounded admission layer as a byte
+  fixed point. A `Drawing` whose bytes are not retained still degrades to the
+  alt-text projection (no dangling reference). Without a matching retained source
+  it falls back to the plain semantic package. See
+  `97-ODT-EDIT-TOLERANT-PRESERVATION.md`; safe unknown-part carry is a later
+  checkpoint.
 - `ExactIfUnchanged` returns retained original ODT bytes only when the source
   format matches and the caller asserts the document is unchanged.
 

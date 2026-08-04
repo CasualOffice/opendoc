@@ -3,7 +3,7 @@
 use casual_doc_odf::{
     CompatibilityReport as OdfCompatibilityReport, ModelOutcome as OdfModelOutcome, ODT_MIME,
     OdfExportLimits, OdfImportLimits, OdfPackageLimits, OdfRetainedParts, OdtPackage,
-    RetentionOutcome as OdfRetentionOutcome, write_odt,
+    RetentionOutcome as OdfRetentionOutcome, write_odt, write_odt_with_retained_parts,
 };
 
 use crate::{
@@ -54,7 +54,7 @@ impl OdtAdapter {
                 can_import: true,
                 can_export: true,
                 exact_if_unchanged: true,
-                preserve_when_safe: false,
+                preserve_when_safe: true,
             },
             package_limits,
             import_limits,
@@ -155,8 +155,20 @@ impl FormatExporter for OdtAdapter {
                 )
             }
             ExportMode::Semantic | ExportMode::PreserveWhenSafe => {
-                let exported = write_odt(request.document, self.export_limits)
-                    .map_err(|error| AdapterError::new(format!("ODT semantic export: {error}")))?;
+                let preserving = request.mode == ExportMode::PreserveWhenSafe;
+                let retained = matching_source
+                    .map(|source| &source.retained)
+                    .filter(|r| !r.is_empty());
+                let exported = if preserving && let Some(retained) = retained {
+                    write_odt_with_retained_parts(request.document, retained, self.export_limits)
+                        .map_err(|error| {
+                            AdapterError::new(format!("ODT preserving export: {error}"))
+                        })?
+                } else {
+                    write_odt(request.document, self.export_limits).map_err(|error| {
+                        AdapterError::new(format!("ODT semantic export: {error}"))
+                    })?
+                };
                 let mut report = convert_report(&exported.report, false);
                 if !request.resources.is_empty() {
                     report.entries.push(export_loss(
@@ -164,18 +176,17 @@ impl FormatExporter for OdtAdapter {
                         request.resources.as_map().len(),
                     ));
                 }
-                if request.mode == ExportMode::PreserveWhenSafe && request.source.is_some() {
-                    report
-                        .entries
-                        .push(export_loss("odt.export.source_envelope", 1));
-                    // Retention is captured but the preserving writer that
-                    // re-emits it (doc 97, checkpoint 2) is not wired yet, so the
-                    // retained parts are disclosed as pending rather than lost.
-                    let retained = matching_source.map_or(0, |source| source.retained.parts.len());
-                    if retained != 0 {
+                if preserving {
+                    if let Some(retained) = retained {
+                        // The retained source parts were repackaged into the output.
+                        report.entries.push(export_preserved(
+                            "odt.export.retained_parts",
+                            retained.parts.len(),
+                        ));
+                    } else if request.source.is_some() {
                         report
                             .entries
-                            .push(export_loss("odt.export.retained_parts_pending", retained));
+                            .push(export_loss("odt.export.source_envelope", 1));
                     }
                 }
                 (exported.bytes, report, "1.4".to_owned())
@@ -202,6 +213,16 @@ fn export_loss(feature: &str, occurrences: usize) -> CompatibilityEntry {
         location: FeatureLocation::default(),
         model_outcome: ModelOutcome::Omitted,
         retention_outcome: RetentionOutcome::NotRetained,
+    }
+}
+
+fn export_preserved(feature: &str, occurrences: usize) -> CompatibilityEntry {
+    CompatibilityEntry {
+        feature: feature.to_owned(),
+        occurrences: u32::try_from(occurrences).unwrap_or(u32::MAX),
+        location: FeatureLocation::default(),
+        model_outcome: ModelOutcome::Mapped,
+        retention_outcome: RetentionOutcome::Preserved,
     }
 }
 
@@ -339,7 +360,8 @@ mod tests {
         assert_eq!(part.media_type, "image/png");
         assert_eq!(part.bytes, b"\x89PNG\r\nIMG");
 
-        // PreserveWhenSafe discloses the captured-but-not-yet-emitted parts.
+        // PreserveWhenSafe re-emits the image via the semantic (edit-tolerant)
+        // path and repackages the retained bytes.
         let exported = adapter
             .export(ExportRequest {
                 document: &imported.document,
@@ -350,8 +372,30 @@ mod tests {
             })
             .unwrap();
         assert!(exported.report.entries.iter().any(|entry| {
-            entry.feature == "odt.export.retained_parts_pending" && entry.occurrences == 1
+            entry.feature == "odt.export.retained_parts"
+                && entry.occurrences == 1
+                && entry.retention_outcome == RetentionOutcome::Preserved
         }));
+
+        // The written package reopens with the image reference intact...
+        let reopened = adapter
+            .import(ImportRequest {
+                bytes: &exported.bytes,
+                retain_source: true,
+            })
+            .unwrap();
+        assert_eq!(reopened.document.definitions().media.len(), 1);
+        // ...and re-preserving it is byte-identical (fixed point).
+        let reexported = adapter
+            .export(ExportRequest {
+                document: &reopened.document,
+                resources: &reopened.resources,
+                source: Some(&reopened.source),
+                source_unchanged: false,
+                mode: ExportMode::PreserveWhenSafe,
+            })
+            .unwrap();
+        assert_eq!(reexported.bytes, exported.bytes);
 
         // Without retention nothing is captured.
         let plain = adapter
@@ -418,7 +462,7 @@ mod tests {
         assert!(descriptor.can_import);
         assert!(descriptor.can_export);
         assert!(descriptor.exact_if_unchanged);
-        assert!(!descriptor.preserve_when_safe);
+        assert!(descriptor.preserve_when_safe);
         assert!(
             registry
                 .export_formats()

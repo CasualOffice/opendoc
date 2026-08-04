@@ -6,8 +6,9 @@ use zip::CompressionMethod;
 use zip::write::{FullFileOptions, ZipWriter};
 
 use crate::{
-    CONTENT_PART, MANIFEST_PART, MIMETYPE_PART, ODT_MIME, OdfError, OdfImportLimits,
-    OdfPackageLimits, OdfVersion, OdtPackage, STYLES_PART,
+    CONTENT_PART, MANIFEST_PART, MIMETYPE_PART, ODT_MIME, OdfError, OdfExportLimits,
+    OdfImportLimits, OdfPackageLimits, OdfVersion, OdtPackage, STYLES_PART, write_odt,
+    write_odt_with_retained_parts,
 };
 
 const CONTENT: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?>
@@ -691,6 +692,42 @@ fn manifest_media_type_is_authoritative_for_images() {
             .iter()
             .any(|entry| entry.feature == "odf.draw.image-missing-part")
     );
+}
+
+#[test]
+fn preserving_writer_emits_draw_frame_and_repackages_bytes() {
+    let bytes = image_package(
+        image_content("Pictures/pic.dat"),
+        r#"<m:file-entry m:full-path="Pictures/pic.dat" m:media-type="image/png"/>"#,
+        &[Entry {
+            name: "Pictures/pic.dat",
+            bytes: b"\x89PNG\r\n".to_vec(),
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        }],
+    );
+    let mut package = OdtPackage::open(&bytes, OdfPackageLimits::default()).unwrap();
+    let imported = package.import_document(OdfImportLimits::default()).unwrap();
+    let retained = package
+        .retained_media_parts(&imported.document, OdfImportLimits::default())
+        .unwrap();
+    let document = imported.document;
+
+    // Preserving writer: draw:frame + repackaged image bytes.
+    let preserved =
+        write_odt_with_retained_parts(&document, &retained, OdfExportLimits::default()).unwrap();
+    let mut out = OdtPackage::open(&preserved.bytes, OdfPackageLimits::default()).unwrap();
+    let content = String::from_utf8(out.read_part(CONTENT_PART).unwrap()).unwrap();
+    assert!(content.contains("<draw:frame"));
+    assert!(content.contains("xlink:href=\"Pictures/pic.dat\""));
+    assert_eq!(out.read_part("Pictures/pic.dat").unwrap(), b"\x89PNG\r\n");
+
+    // Plain semantic writer drops the image (no draw:frame, no picture part).
+    let semantic = write_odt(&document, OdfExportLimits::default()).unwrap();
+    let mut plain = OdtPackage::open(&semantic.bytes, OdfPackageLimits::default()).unwrap();
+    let plain_content = String::from_utf8(plain.read_part(CONTENT_PART).unwrap()).unwrap();
+    assert!(!plain_content.contains("draw:frame"));
+    assert!(plain.read_part("Pictures/pic.dat").is_err());
 }
 
 #[test]
