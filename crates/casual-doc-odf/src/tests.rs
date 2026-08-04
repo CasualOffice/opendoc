@@ -731,6 +731,34 @@ fn preserving_writer_emits_draw_frame_and_repackages_bytes() {
 }
 
 #[test]
+fn preserving_export_folds_multiline_alt_text() {
+    // A valid alt text with a newline must not abort the preserving export; it is
+    // folded to a single-line svg:title.
+    let content = "<office:document-content xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\" xmlns:draw=\"urn:oasis:names:tc:opendocument:xmlns:drawing:1.0\" xmlns:svg=\"urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" office:version=\"1.4\"><office:body><office:text><text:p><draw:frame><draw:image xlink:href=\"Pictures/pic.dat\"/><svg:title>line one\nline two</svg:title></draw:frame></text:p></office:text></office:body></office:document-content>".as_bytes().to_vec();
+    let bytes = image_package(
+        content,
+        r#"<m:file-entry m:full-path="Pictures/pic.dat" m:media-type="image/png"/>"#,
+        &[Entry {
+            name: "Pictures/pic.dat",
+            bytes: b"\x89PNG\r\n".to_vec(),
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        }],
+    );
+    let mut package = OdtPackage::open(&bytes, OdfPackageLimits::default()).unwrap();
+    let imported = package.import_document(OdfImportLimits::default()).unwrap();
+    let retained = package
+        .retained_media_parts(&imported.document, OdfImportLimits::default())
+        .unwrap();
+    let preserved =
+        write_odt_with_retained_parts(&imported.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    let mut out = OdtPackage::open(&preserved.bytes, OdfPackageLimits::default()).unwrap();
+    let out_content = String::from_utf8(out.read_part(CONTENT_PART).unwrap()).unwrap();
+    assert!(out_content.contains("<svg:title>line one line two</svg:title>"));
+}
+
+#[test]
 fn only_referenced_retained_parts_are_repackaged() {
     let bytes = image_package(
         image_content("Pictures/pic.dat"),

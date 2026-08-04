@@ -3,7 +3,8 @@
 use casual_doc_odf::{
     CompatibilityReport as OdfCompatibilityReport, ModelOutcome as OdfModelOutcome, ODT_MIME,
     OdfExportLimits, OdfImportLimits, OdfPackageLimits, OdfRetainedParts, OdtPackage,
-    RetentionOutcome as OdfRetentionOutcome, write_odt, write_odt_with_retained_parts,
+    RetentionOutcome as OdfRetentionOutcome, referenced_retained_parts, write_odt,
+    write_odt_with_retained_parts,
 };
 
 use crate::{
@@ -177,12 +178,19 @@ impl FormatExporter for OdtAdapter {
                     ));
                 }
                 if preserving {
-                    if let Some(retained) = retained {
-                        // The retained source parts were repackaged into the output.
-                        report.entries.push(export_preserved(
-                            "odt.export.retained_parts",
-                            retained.parts.len(),
-                        ));
+                    // Report exactly how many parts were repackaged (the subset
+                    // the current document references), not the whole source set.
+                    let carried = retained
+                        .map(|retained| {
+                            referenced_retained_parts(request.document, retained)
+                                .parts
+                                .len()
+                        })
+                        .unwrap_or(0);
+                    if carried != 0 {
+                        report
+                            .entries
+                            .push(export_preserved("odt.export.retained_parts", carried));
                     } else if request.source.is_some() {
                         report
                             .entries

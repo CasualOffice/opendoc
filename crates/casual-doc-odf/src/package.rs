@@ -590,9 +590,10 @@ impl<'a> OdtPackage<'a> {
             if retained.parts.len() >= limits.max_retained_parts {
                 break;
             }
-            // Never retain a part whose name collides with a regenerated semantic
-            // part or META-INF; repackaging it would emit a duplicate ZIP entry.
-            if is_reserved_part_name(&name) {
+            // Never retain a reserved/regenerated part or active-content path;
+            // repackaging one would emit a duplicate ZIP entry or resurrect
+            // blocked content.
+            if is_unsafe_retained_name(&name) {
                 continue;
             }
             let Some(full_path) = self
@@ -671,6 +672,13 @@ fn is_reserved_part_name(name: &str) -> bool {
         || name.starts_with("META-INF/")
         || name == "/"
         || name.ends_with('/')
+}
+
+/// Whether a part name must not be retained/repackaged: a reserved regenerated
+/// part, or an active-content path blocked by the package profile. Applied at
+/// both retention capture and (via the export helper) repackaging.
+pub(crate) fn is_unsafe_retained_name(name: &str) -> bool {
+    is_reserved_part_name(name) || is_active_content_path(name)
 }
 
 pub(crate) fn normalized_part_path(path: &str) -> String {

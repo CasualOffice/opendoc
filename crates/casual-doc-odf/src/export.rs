@@ -1161,12 +1161,27 @@ impl Writer {
         push_escaped_attribute(&mut self.xml, part_name, max)?;
         self.push("\"/>")?;
         if let Some(descr) = descr {
-            if !descr.chars().all(is_xml_character) {
-                return Err(OdfError::InvalidXmlCharacter);
+            // svg:title is single-line: fold tab/CR/LF to a space and drop any
+            // other non-XML character, degrading rather than aborting the export
+            // (the semantic alt-text path degrades the same input).
+            let sanitized: String = descr
+                .chars()
+                .filter_map(|character| {
+                    if matches!(character, '\t' | '\n' | '\r') {
+                        Some(' ')
+                    } else if is_xml_character(character) {
+                        Some(character)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            let trimmed = sanitized.trim();
+            if !trimmed.is_empty() {
+                self.push("<svg:title>")?;
+                self.push(&quick_xml::escape::escape(trimmed))?;
+                self.push("</svg:title>")?;
             }
-            self.push("<svg:title>")?;
-            self.push(&quick_xml::escape::escape(descr))?;
-            self.push("</svg:title>")?;
         }
         self.push("</draw:frame>")
     }
@@ -1655,16 +1670,16 @@ pub fn write_odt_with_retained_parts(
     limits: OdfExportLimits,
 ) -> Result<OdtExport, OdfError> {
     // Only media still referenced by the (possibly edited) document and actually
-    // retained are re-emitted and repackaged. The normalized part name is used
+    // retained are re-emitted and repackaged, and reserved/active-content names
+    // are excluded even on this public path. The normalized part name is used
     // consistently for the draw:frame href, the ZIP entry, and the manifest, so
     // no orphan parts are written and the output is a byte fixed point.
+    let used = referenced_retained_parts(document, retained);
     let mut available_media = BTreeMap::new();
-    let mut used = crate::OdfRetainedParts::default();
     for (id, media) in document.definitions().media.iter() {
         let name = crate::package::normalized_part_path(&media.part_name);
-        if let Some(part) = retained.parts.get(&name) {
-            available_media.insert(*id, name.clone());
-            used.parts.entry(name).or_insert_with(|| part.clone());
+        if used.parts.contains_key(&name) {
+            available_media.insert(*id, name);
         }
     }
     write_odt_impl(
@@ -1674,6 +1689,27 @@ pub fn write_odt_with_retained_parts(
         Some(&used),
         CONTENT_HEADER_PRESERVING,
     )
+}
+
+/// The subset of `retained` that `document`'s media actually references and that
+/// is safe to repackage (excludes reserved/regenerated and active-content part
+/// names), keyed by normalized part name. Exposed so a host can report exactly
+/// how many parts a preserving export will carry.
+pub fn referenced_retained_parts(
+    document: &Document,
+    retained: &crate::OdfRetainedParts,
+) -> crate::OdfRetainedParts {
+    let mut used = crate::OdfRetainedParts::default();
+    for (_, media) in document.definitions().media.iter() {
+        let name = crate::package::normalized_part_path(&media.part_name);
+        if crate::package::is_unsafe_retained_name(&name) {
+            continue;
+        }
+        if let Some(part) = retained.parts.get(&name) {
+            used.parts.entry(name).or_insert_with(|| part.clone());
+        }
+    }
+    used
 }
 
 fn write_odt_impl(
@@ -1860,7 +1896,11 @@ fn package(
 /// Formats an EMU length as centimetres for `svg:width`/`svg:height` (1 cm =
 /// 360000 EMU), matching the deterministic geometry unit formatting.
 fn emu_to_cm(emu: i64) -> String {
-    format!("{:.4}cm", emu as f64 / 360_000.0)
+    // Floor to 4 decimals so the re-parsed value never rounds *up* past the
+    // source — in particular a max-size extent stays within the model domain
+    // instead of being dropped on re-import.
+    let centimetres = (emu as f64 / 360_000.0 * 10_000.0).floor() / 10_000.0;
+    format!("{centimetres:.4}cm")
 }
 
 /// Builds the manifest deterministically. With no styles/meta/retained parts this
