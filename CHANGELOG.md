@@ -8,6 +8,38 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ## Unreleased
 
+### OpenDocument Text (ODT) fidelity — 2026-08-05
+
+The bounded ODT adapter (`casual-doc-odf`, `casual-doc-io::OdtAdapter`) gained
+several import/export families, each landed as a reviewed increment and disclosed
+against the profiles in `docs/95`/`docs/96`/`docs/97`. Still a bounded subset, not
+a general ODT support claim.
+
+- **Master-page header/footer**: `style:header`/`style:footer` (and the `-left`
+  even-page variants) map to schema-v1 `HeaderFooter` definitions and section
+  references and are re-emitted, as a byte + semantic fixed point.
+- **Document style defaults**: `office:styles` `style:default-style` (paragraph +
+  text families, including a paragraph default's run text-properties) map to the
+  model's `DocumentDefaults` cascade base and are re-emitted.
+- **List start-value overrides**: a `text:list-item` `text:start-value` maps to a
+  per-instance numbering start override (out-of-range/invalid values degrade the
+  item rather than failing the import).
+- **Embedded images**: an inline `draw:frame`+`draw:image` maps to a `Drawing`
+  node plus a reference-only `MediaReference` (no image bytes are decoded or held
+  in the model). `xlink:href` is validated as a safe internal package part —
+  external/linked URLs, traversal, absolute paths, drive letters, schemes, and
+  over-long/control-char names are blocked without fetching. The manifest is
+  authoritative for media type, and a missing image part is reported.
+- **Edit-tolerant preservation** (`docs/97`): under `retain_source`, referenced
+  image bytes are retained (bounded, opaque) in the source envelope; a
+  `PreserveWhenSafe` export now re-emits `draw:frame` and repackages those bytes
+  with deterministic manifest entries, so images survive a semantic edit and
+  reopen as a byte + semantic fixed point. Reserved/active-content and orphaned
+  parts are never repackaged. New public API: `OdfRetainedParts`, `RetainedPart`,
+  `OdtPackage::retained_media_parts`, `write_odt_with_retained_parts`,
+  `referenced_retained_parts`; new `OdfImportLimits` retained-part bounds; the ODT
+  adapter now advertises `preserve_when_safe`.
+
 ### Rendering fidelity — 2026-07-27
 
 Layout and rendering now consume the data the importer already models. Driven by
