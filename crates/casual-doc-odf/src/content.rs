@@ -691,6 +691,7 @@ fn parse_style_document(
     let mut styles = AutomaticStyles::new();
     let mut list_styles = ListStyles::new();
     let mut defaults = DefaultStyles::new();
+    let mut common_container = false;
 
     loop {
         check_cancelled(cancellation)?;
@@ -739,6 +740,7 @@ fn parse_style_document(
                     }
                     automatic_seen = true;
                     style_container_depth = Some(depth);
+                    common_container = false;
                     count_attributes_only(&element, &mut attributes, &mut attribute_bytes, limits)?;
                 } else if depth == 2
                     && include_common_styles
@@ -749,6 +751,7 @@ fn parse_style_document(
                     }
                     common_seen = true;
                     style_container_depth = Some(depth);
+                    common_container = true;
                     count_attributes_only(&element, &mut attributes, &mut attribute_bytes, limits)?;
                 } else if style_container_depth.is_some() {
                     process_style_element(
@@ -764,6 +767,7 @@ fn parse_style_document(
                         &mut defaults,
                         &mut open_list_style,
                         &mut list_styles,
+                        common_container,
                         false,
                         reporter,
                     )?;
@@ -817,6 +821,7 @@ fn parse_style_document(
                         &mut defaults,
                         &mut open_list_style,
                         &mut list_styles,
+                        common_container,
                         true,
                         reporter,
                     )?;
@@ -829,7 +834,7 @@ fn parse_style_document(
                     .as_ref()
                     .is_some_and(|style: &OpenStyle| style.depth == depth)
                 {
-                    finish_style(&mut open_style, &mut styles, &mut defaults)?;
+                    finish_style(&mut open_style, &mut styles, &mut defaults, reporter)?;
                 }
                 if open_list_style
                     .as_ref()
@@ -839,6 +844,7 @@ fn parse_style_document(
                 }
                 if style_container_depth == Some(depth) {
                     style_container_depth = None;
+                    common_container = false;
                 }
                 if depth == 1 {
                     if element.local_name().as_ref() != expected_root {
@@ -968,6 +974,7 @@ fn process_style_element(
     defaults: &mut DefaultStyles,
     open_list_style: &mut Option<OpenListStyle>,
     list_styles: &mut ListStyles,
+    common_container: bool,
     empty: bool,
     reporter: &mut Reporter,
 ) -> Result<(), OdfError> {
@@ -985,9 +992,26 @@ fn process_style_element(
             reporter,
         )?);
         if empty {
-            finish_style(open_style, styles, defaults)?;
+            finish_style(open_style, styles, defaults, reporter)?;
         }
     } else if depth == 3 && is_name(name, NamespaceKind::Style, b"default-style") {
+        // ODF only allows default-style inside the common `office:styles`;
+        // reject (report, do not capture) an invalid automatic-styles placement.
+        if !common_container {
+            count_and_report_attributes(
+                reader,
+                element,
+                attributes,
+                attribute_bytes,
+                limits,
+                reporter,
+            )?;
+            reporter.report(
+                "odf.style.default-style.placement".to_owned(),
+                ModelOutcome::Degraded,
+            );
+            return Ok(());
+        }
         if open_style.is_some() || open_list_style.is_some() {
             return Err(OdfError::MalformedContent);
         }
@@ -1001,7 +1025,7 @@ fn process_style_element(
             reporter,
         )?);
         if empty {
-            finish_style(open_style, styles, defaults)?;
+            finish_style(open_style, styles, defaults, reporter)?;
         }
     } else if depth == 3 && is_name(name, NamespaceKind::Text, b"list-style") {
         if open_style.is_some() || open_list_style.is_some() {
@@ -1368,14 +1392,23 @@ fn finish_style(
     open_style: &mut Option<OpenStyle>,
     styles: &mut AutomaticStyles,
     defaults: &mut DefaultStyles,
+    reporter: &mut Reporter,
 ) -> Result<(), OdfError> {
     let style = open_style.take().ok_or(OdfError::MalformedContent)?;
     let Some(family) = style.style.family else {
         return Ok(());
     };
     if style.is_default {
-        // One default per family; keep the first and ignore any duplicate.
-        defaults.entry(family).or_insert(style.style);
+        // One default per family; keep the first and report a conflicting
+        // duplicate rather than dropping it silently.
+        if let std::collections::btree_map::Entry::Vacant(entry) = defaults.entry(family) {
+            entry.insert(style.style);
+        } else {
+            reporter.report(
+                "odf.style.default-style.shadowed".to_owned(),
+                ModelOutcome::Degraded,
+            );
+        }
         return Ok(());
     }
     if styles.insert((family, style.name), style.style).is_some() {
@@ -1394,7 +1427,10 @@ fn read_text_style_properties(
     style: &mut OpenStyle,
     reporter: &mut Reporter,
 ) -> Result<(), OdfError> {
-    if style.style.family != Some(StyleFamily::Text) {
+    // A paragraph-family default-style carries the document's default run
+    // formatting (ODF 1.2 16.4), so defaults capture text-properties regardless
+    // of family; only a named non-text style rejects them.
+    if style.style.family != Some(StyleFamily::Text) && !style.is_default {
         count_and_report_attributes(
             reader,
             element,
@@ -4371,17 +4407,25 @@ fn build_document(
 /// document-wide cascade base. Returns `None` when no supported default property
 /// is present so an empty defaults bag is never attached.
 fn build_document_defaults(defaults: &DefaultStyles) -> Option<DocumentDefaults> {
-    let paragraph = defaults
-        .get(&StyleFamily::Paragraph)
+    let paragraph_default = defaults.get(&StyleFamily::Paragraph);
+    let text_default = defaults.get(&StyleFamily::Text);
+    let paragraph = paragraph_default
         .map(|style| ParagraphProperties {
             alignment: style.alignment,
             ..ParagraphProperties::default()
         })
         .filter(|properties| *properties != ParagraphProperties::default());
-    let run = defaults
-        .get(&StyleFamily::Text)
-        .map(|style| style.run_properties.clone())
-        .filter(|properties| *properties != RunProperties::default());
+    // Default run formatting can come from the paragraph default's text
+    // properties (the common producer layout) and/or a text default; the text
+    // default takes precedence where both set a field.
+    let mut run = RunProperties::default();
+    if let Some(style) = paragraph_default {
+        merge_run_properties(&mut run, &style.run_properties);
+    }
+    if let Some(style) = text_default {
+        merge_run_properties(&mut run, &style.run_properties);
+    }
+    let run = Some(run).filter(|properties| *properties != RunProperties::default());
     if paragraph.is_none() && run.is_none() {
         return None;
     }

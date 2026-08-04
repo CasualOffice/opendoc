@@ -546,6 +546,75 @@ fn document_default_styles_map_to_document_defaults() {
 }
 
 #[test]
+fn paragraph_default_text_properties_become_run_defaults() {
+    // LibreOffice/OpenOffice put the document base font in the paragraph-family
+    // default-style's text-properties; those must reach the run defaults.
+    let styles = br#"<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.4"><office:styles><style:default-style style:family="paragraph"><style:text-properties fo:font-weight="bold" fo:font-size="12pt"/></style:default-style></office:styles></office:document-styles>"#.to_vec();
+    let imported = OdtPackage::open(&package_with_styles(styles), OdfPackageLimits::default())
+        .unwrap()
+        .import_document(OdfImportLimits::default())
+        .unwrap();
+    imported.document.validate().unwrap();
+    let run = imported
+        .document
+        .definitions()
+        .document_defaults
+        .as_ref()
+        .and_then(|defaults| defaults.run.as_ref())
+        .expect("run defaults from paragraph default");
+    assert_eq!(run.bold, Some(true));
+    assert_eq!(run.size_half_points, Some(24));
+}
+
+#[test]
+fn duplicate_default_style_is_reported_first_wins() {
+    let styles = br#"<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.4"><office:styles><style:default-style style:family="text"><style:text-properties fo:font-weight="bold"/></style:default-style><style:default-style style:family="text"><style:text-properties fo:font-weight="normal"/></style:default-style></office:styles></office:document-styles>"#.to_vec();
+    let imported = OdtPackage::open(&package_with_styles(styles), OdfPackageLimits::default())
+        .unwrap()
+        .import_document(OdfImportLimits::default())
+        .unwrap();
+    // First default wins (bold=true), and the conflict is disclosed.
+    assert_eq!(
+        imported
+            .document
+            .definitions()
+            .document_defaults
+            .as_ref()
+            .unwrap()
+            .run
+            .as_ref()
+            .unwrap()
+            .bold,
+        Some(true)
+    );
+    assert!(
+        imported
+            .report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "odf.style.default-style.shadowed")
+    );
+}
+
+#[test]
+fn default_style_in_automatic_styles_is_rejected() {
+    // ODF forbids default-style in automatic-styles; it must not inject defaults.
+    let styles = br#"<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.4"><office:automatic-styles><style:default-style style:family="text"><style:text-properties fo:font-weight="bold"/></style:default-style></office:automatic-styles></office:document-styles>"#.to_vec();
+    let imported = OdtPackage::open(&package_with_styles(styles), OdfPackageLimits::default())
+        .unwrap()
+        .import_document(OdfImportLimits::default())
+        .unwrap();
+    assert!(imported.document.definitions().document_defaults.is_none());
+    assert!(
+        imported
+            .report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "odf.style.default-style.placement")
+    );
+}
+
+#[test]
 fn mimetype_must_be_first_stored_exact_and_without_extra_data() {
     let mut not_first = minimal_entries("1.4");
     not_first.swap(0, 1);
