@@ -3641,6 +3641,7 @@ function buildContextCommands(context) {
   const structuralReason = structuralEnabled
     ? ""
     : "This structural change cannot be tracked in Suggesting mode";
+  const inTable = !!context.table;
   const commands = [];
 
   // 1 — Clipboard: the universal primary actions, with leading icons.
@@ -3672,13 +3673,16 @@ function buildContextCommands(context) {
     );
   }
 
-  // 3 — Link: edit/remove when the click landed on a link, otherwise add.
+  // Annotations (link + comment) — contextual to the text/selection under the
+  // pointer. Assembled here, placed after the primary group for prose and after
+  // the table tools inside a cell.
+  const annotate = [];
   if (context.link) {
     const linkReason = context.suggesting
       ? "Link changes cannot be tracked in Suggesting mode"
       : "";
     if (context.link.url || context.link.targetNode != null) {
-      commands.push({
+      annotate.push({
         id: "link.open",
         label: "Open link",
         group: "annotate",
@@ -3686,7 +3690,7 @@ function buildContextCommands(context) {
         run: () => openContextLink(context.link),
       });
     }
-    commands.push(
+    annotate.push(
       {
         id: "link.edit",
         label: "Edit link…",
@@ -3706,7 +3710,7 @@ function buildContextCommands(context) {
       },
     );
   } else {
-    commands.push({
+    annotate.push({
       id: "link.add",
       label: "Add link…",
       group: "annotate",
@@ -3721,10 +3725,8 @@ function buildContextCommands(context) {
       run: () => editSelectionLink(),
     });
   }
-
-  // 4 — Comment: open the existing thread or start a new one.
   if (context.comment) {
-    commands.push({
+    annotate.push({
       id: "comment.open",
       label: "Open comment",
       group: "annotate",
@@ -3732,7 +3734,7 @@ function buildContextCommands(context) {
       run: () => focusReviewComment(context.comment),
     });
   } else {
-    commands.push({
+    annotate.push({
       id: "comment.add",
       label: "Add comment",
       group: "annotate",
@@ -3746,7 +3748,10 @@ function buildContextCommands(context) {
     });
   }
 
-  // 5 — Text styling, collapsed into a submenu so the root stays short.
+  // Text styling, list/indentation, and the paragraph dialog. Shared building
+  // blocks: on prose they are three top-level rows; inside a table cell they
+  // collapse into a single trailing "Format ▸" submenu so the table actions
+  // lead and the cell menu stays compact.
   const formatSubmenu = [
     pick("format.bold", { group: "style" }),
     pick("format.italic", { group: "style" }),
@@ -3756,15 +3761,6 @@ function buildContextCommands(context) {
     pick("format.subscript", { group: "script" }),
     pick("format.clear", { group: "clear" }),
   ].filter(Boolean);
-  commands.push({
-    id: "format.menu",
-    label: "Format text",
-    group: "arrange",
-    icon: "format",
-    submenu: formatSubmenu,
-  });
-
-  // 6 — List & indentation submenu (restart/continue only when numbered).
   const listSubmenu = [
     {
       id: "paragraph.bullets",
@@ -3817,191 +3813,214 @@ function buildContextCommands(context) {
       run: () => adjustIndentCommand(-360),
     },
   ];
-  commands.push({
-    id: "paragraph.list",
-    label: "List & indentation",
-    group: "arrange",
-    icon: "list",
-    submenu: listSubmenu,
-  });
-
-  // 7 — Paragraph dialog (the structural catch-all) stays a top-level row.
-  commands.push({
+  const paragraphProperties = {
     id: "paragraph.properties",
     label: "Paragraph properties…",
-    group: "arrange",
-    icon: "paragraph",
     enabled: structuralEnabled,
     disabledReason: structuralReason,
     run: () => toggleParagraphProperties(true),
+  };
+
+  if (!inTable) {
+    // Prose menu: annotations, then the text-arrangement rows.
+    commands.push(...annotate);
+    commands.push({
+      id: "format.menu",
+      label: "Format text",
+      group: "arrange",
+      icon: "format",
+      submenu: formatSubmenu,
+    });
+    commands.push({
+      id: "paragraph.list",
+      label: "List & indentation",
+      group: "arrange",
+      icon: "list",
+      submenu: listSubmenu,
+    });
+    commands.push({ ...paragraphProperties, group: "arrange", icon: "paragraph" });
+    return commands.filter(Boolean);
+  }
+
+  // 3 — Table cell: lead with the table tools (Insert / Delete / Merge / Split,
+  // then Select / Autofit & sort, then the property dialogs), matching Word's
+  // and Google Docs' table menus. The generic text-format rows are demoted to a
+  // single trailing "Format ▸" submenu.
+  const regular = context.table.regular;
+  const selectedTable = tableSelection
+    ? plainTableInfo(tableSelection.node)?.table
+    : "";
+  const hasTableSelection =
+    !!selectedTable && selectedTable === context.table.table;
+  const columnsReason = regular
+    ? structuralReason
+    : "Unavailable for merged or spanned tables";
+  const tableMutation = (id, label, run, options = {}) => ({
+    id,
+    label,
+    group: options.group ?? "op",
+    enabled:
+      structuralEnabled &&
+      (options.regular !== true || regular) &&
+      (options.enabled ?? true),
+    disabledReason:
+      !structuralEnabled
+        ? structuralReason
+        : options.regular === true && !regular
+          ? columnsReason
+          : options.enabled === false
+            ? options.disabledReason
+            : "",
+    danger: options.danger,
+    run,
   });
 
-  // 8 — Table target: Insert / Delete / Select / layout as submenus, matching
-  // Word's and Google Docs' table context menus, plus merge/split and the two
-  // property dialogs at the top level.
-  if (context.table) {
-    const regular = context.table.regular;
-    const selectedTable = tableSelection
-      ? plainTableInfo(tableSelection.node)?.table
-      : "";
-    const hasTableSelection =
-      !!selectedTable && selectedTable === context.table.table;
-    const columnsReason = regular
-      ? structuralReason
-      : "Unavailable for merged or spanned tables";
-    const tableMutation = (id, label, run, options = {}) => ({
-      id,
-      label,
-      group: options.group ?? "op",
-      enabled:
-        structuralEnabled &&
-        (options.regular !== true || regular) &&
-        (options.enabled ?? true),
-      disabledReason:
-        !structuralEnabled
-          ? structuralReason
-          : options.regular === true && !regular
-            ? columnsReason
-            : options.enabled === false
-              ? options.disabledReason
-              : "",
-      danger: options.danger,
-      run,
-    });
+  const insertSubmenu = [
+    tableMutation("table.insert.rowAbove", "Row above",
+      () => runEdit(() => doc.insertRow(context.anchor.node, false), { gate: true }),
+      { group: "row" }),
+    tableMutation("table.insert.rowBelow", "Row below",
+      () => runEdit(() => doc.insertRow(context.anchor.node, true), { gate: true }),
+      { group: "row" }),
+    tableMutation("table.insert.columnLeft", "Column left",
+      () => runEdit(() => doc.insertColumn(context.anchor.node, false), { gate: true }),
+      { regular: true, group: "col" }),
+    tableMutation("table.insert.columnRight", "Column right",
+      () => runEdit(() => doc.insertColumn(context.anchor.node, true), { gate: true }),
+      { regular: true, group: "col" }),
+  ];
+  const deleteSubmenu = [
+    tableMutation("table.delete.row", "Delete row",
+      () => runEdit(() => doc.deleteRow(context.anchor.node), { gate: true }),
+      { danger: true, group: "cell" }),
+    tableMutation("table.delete.column", "Delete column",
+      () => runEdit(() => doc.deleteColumn(context.anchor.node), { gate: true }),
+      { danger: true, regular: true, group: "cell" }),
+    tableMutation("table.delete.table", "Delete table",
+      () => runEdit(() => doc.deleteTable(context.anchor.node), { gate: true }),
+      { danger: true, group: "table" }),
+  ];
+  const selectSubmenu = [
+    {
+      id: "table.select.row",
+      label: "Select row",
+      group: "sel",
+      run: () => selectTableContext(context.anchor.node, "row"),
+    },
+    {
+      id: "table.select.column",
+      label: "Select column",
+      group: "sel",
+      enabled: regular,
+      disabledReason: regular ? "" : columnsReason,
+      run: () => selectTableContext(context.anchor.node, "column"),
+    },
+    {
+      id: "table.select.table",
+      label: "Select table",
+      group: "sel",
+      run: () => selectTableContext(context.anchor.node, "table"),
+    },
+  ];
+  const layoutSubmenu = [
+    tableMutation("table.distribute.rows", "Distribute rows",
+      () => runEdit(() => doc.distributeTableRows(context.anchor.node), { gate: true }),
+      {
+        regular: true,
+        group: "distribute",
+        enabled: ["exact", "atLeast"].includes(context.table.rowHeightRule),
+        disabledReason: "Rows need a fixed or minimum height before distribution",
+      }),
+    tableMutation("table.distribute.columns", "Distribute columns",
+      () => runEdit(() => doc.distributeTableColumns(context.anchor.node), { gate: true }),
+      { regular: true, group: "distribute" }),
+    tableMutation("table.sort.ascending", "Sort ascending",
+      () => runEdit(() => doc.sortTable(context.anchor.node, "ascending"), { gate: true }),
+      { regular: true, group: "sort" }),
+    tableMutation("table.sort.descending", "Sort descending",
+      () => runEdit(() => doc.sortTable(context.anchor.node, "descending"), { gate: true }),
+      { regular: true, group: "sort" }),
+  ];
 
-    const insertSubmenu = [
-      tableMutation("table.insert.rowAbove", "Row above",
-        () => runEdit(() => doc.insertRow(context.anchor.node, false), { gate: true }),
-        { group: "row" }),
-      tableMutation("table.insert.rowBelow", "Row below",
-        () => runEdit(() => doc.insertRow(context.anchor.node, true), { gate: true }),
-        { group: "row" }),
-      tableMutation("table.insert.columnLeft", "Column left",
-        () => runEdit(() => doc.insertColumn(context.anchor.node, false), { gate: true }),
-        { regular: true, group: "col" }),
-      tableMutation("table.insert.columnRight", "Column right",
-        () => runEdit(() => doc.insertColumn(context.anchor.node, true), { gate: true }),
-        { regular: true, group: "col" }),
-    ];
-    const deleteSubmenu = [
-      tableMutation("table.delete.row", "Delete row",
-        () => runEdit(() => doc.deleteRow(context.anchor.node), { gate: true }),
-        { danger: true, group: "cell" }),
-      tableMutation("table.delete.column", "Delete column",
-        () => runEdit(() => doc.deleteColumn(context.anchor.node), { gate: true }),
-        { danger: true, regular: true, group: "cell" }),
-      tableMutation("table.delete.table", "Delete table",
-        () => runEdit(() => doc.deleteTable(context.anchor.node), { gate: true }),
-        { danger: true, group: "table" }),
-    ];
-    const selectSubmenu = [
-      {
-        id: "table.select.row",
-        label: "Select row",
-        group: "sel",
-        run: () => selectTableContext(context.anchor.node, "row"),
+  commands.push(
+    {
+      id: "table.insert",
+      label: "Insert",
+      group: "table",
+      icon: "tableInsert",
+      submenu: insertSubmenu,
+    },
+    {
+      id: "table.delete",
+      label: "Delete",
+      group: "table",
+      icon: "tableDelete",
+      submenu: deleteSubmenu,
+    },
+    tableMutation("table.merge", "Merge cells",
+      async () => {
+        await runEdit(() =>
+          doc.mergeTableSelection(tableSelection.node, tableSelection.mode), { gate: true });
+        tableSelection = null;
       },
       {
-        id: "table.select.column",
-        label: "Select column",
-        group: "sel",
-        enabled: regular,
-        disabledReason: regular ? "" : columnsReason,
-        run: () => selectTableContext(context.anchor.node, "column"),
+        group: "table",
+        enabled: hasTableSelection,
+        disabledReason: "Select a row, column, or table before merging",
+      }),
+    tableMutation("table.split", "Split cell…",
+      () => toggleSplitCellDialog(true),
+      { group: "table" }),
+    {
+      id: "table.select",
+      label: "Select",
+      group: "table-select",
+      icon: "tableSelect",
+      submenu: selectSubmenu,
+    },
+    {
+      id: "table.layout",
+      label: "Autofit & sort",
+      group: "table-select",
+      icon: "tableLayout",
+      submenu: layoutSubmenu,
+    },
+    {
+      id: "table.cellFormat",
+      label: "Cell formatting…",
+      group: "table-properties",
+      icon: "paragraph",
+      enabled: structuralEnabled,
+      disabledReason: structuralReason,
+      run: () => {
+        selectRibbonTab("table");
+        tableBtn.click();
       },
-      {
-        id: "table.select.table",
-        label: "Select table",
-        group: "sel",
-        run: () => selectTableContext(context.anchor.node, "table"),
-      },
-    ];
-    const layoutSubmenu = [
-      tableMutation("table.distribute.rows", "Distribute rows",
-        () => runEdit(() => doc.distributeTableRows(context.anchor.node), { gate: true }),
-        {
-          regular: true,
-          group: "distribute",
-          enabled: ["exact", "atLeast"].includes(context.table.rowHeightRule),
-          disabledReason: "Rows need a fixed or minimum height before distribution",
-        }),
-      tableMutation("table.distribute.columns", "Distribute columns",
-        () => runEdit(() => doc.distributeTableColumns(context.anchor.node), { gate: true }),
-        { regular: true, group: "distribute" }),
-      tableMutation("table.sort.ascending", "Sort ascending",
-        () => runEdit(() => doc.sortTable(context.anchor.node, "ascending"), { gate: true }),
-        { regular: true, group: "sort" }),
-      tableMutation("table.sort.descending", "Sort descending",
-        () => runEdit(() => doc.sortTable(context.anchor.node, "descending"), { gate: true }),
-        { regular: true, group: "sort" }),
-    ];
+    },
+    {
+      id: "table.properties",
+      label: "Table properties…",
+      group: "table-properties",
+      icon: "settings",
+      enabled: structuralEnabled,
+      disabledReason: structuralReason,
+      run: () => toggleTableProperties(true),
+    },
+  );
 
-    commands.push(
-      {
-        id: "table.insert",
-        label: "Insert",
-        group: "table",
-        icon: "tableInsert",
-        submenu: insertSubmenu,
-      },
-      {
-        id: "table.delete",
-        label: "Delete",
-        group: "table",
-        icon: "tableDelete",
-        submenu: deleteSubmenu,
-      },
-      tableMutation("table.merge", "Merge cells",
-        async () => {
-          await runEdit(() =>
-            doc.mergeTableSelection(tableSelection.node, tableSelection.mode), { gate: true });
-          tableSelection = null;
-        },
-        {
-          group: "table",
-          enabled: hasTableSelection,
-          disabledReason: "Select a row, column, or table before merging",
-        }),
-      tableMutation("table.split", "Split cell…",
-        () => toggleSplitCellDialog(true),
-        { group: "table" }),
-      {
-        id: "table.select",
-        label: "Select",
-        group: "table-select",
-        icon: "tableSelect",
-        submenu: selectSubmenu,
-      },
-      {
-        id: "table.layout",
-        label: "Autofit & sort",
-        group: "table-select",
-        icon: "tableLayout",
-        submenu: layoutSubmenu,
-      },
-      {
-        id: "table.cellFormat",
-        label: "Cell formatting…",
-        group: "table-properties",
-        icon: "paragraph",
-        enabled: structuralEnabled,
-        disabledReason: structuralReason,
-        run: () => {
-          selectRibbonTab("table");
-          tableBtn.click();
-        },
-      },
-      {
-        id: "table.properties",
-        label: "Table properties…",
-        group: "table-properties",
-        icon: "settings",
-        enabled: structuralEnabled,
-        disabledReason: structuralReason,
-        run: () => toggleTableProperties(true),
-      },
-    );
-  }
+  // Annotations sit below the table tools, then the demoted text-format submenu.
+  commands.push(...annotate);
+  commands.push({
+    id: "format.menu",
+    label: "Format",
+    group: "format",
+    icon: "format",
+    submenu: [
+      ...formatSubmenu.map((entry) => ({ ...entry, group: "type" })),
+      ...listSubmenu.map((entry) => ({ ...entry, group: "list" })),
+      { ...paragraphProperties, group: "para" },
+    ],
+  });
   return commands.filter(Boolean);
 }
 
@@ -4108,10 +4127,13 @@ function renderMenuLevel(el, entries, depth) {
       caret.className = "menu-item-caret";
       caret.textContent = "›";
       button.appendChild(caret);
-    } else if (entry.shortcut || (entry.enabled === false && entry.disabledReason)) {
+    } else if (entry.shortcut) {
+      // Only the keyboard shortcut is ever shown on the right. Disabled rows are
+      // greyed in place with no reason text (Google Docs convention) so the menu
+      // never widens to fit an explanation; the reason stays as a hover title.
       const hint = document.createElement("span");
       hint.className = "menu-item-hint";
-      hint.textContent = entry.enabled === false ? entry.disabledReason : entry.shortcut;
+      hint.textContent = entry.shortcut;
       button.appendChild(hint);
     }
     button.addEventListener("mousemove", () => {

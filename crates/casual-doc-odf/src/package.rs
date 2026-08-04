@@ -438,6 +438,7 @@ impl<'a> OdtPackage<'a> {
                     endnote_props: NoteProperties::default(),
                     text_direction: geometry.text_direction,
                     bidi: false,
+                    section_change: None,
                 });
             }
 

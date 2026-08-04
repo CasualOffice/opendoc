@@ -18,17 +18,29 @@ use std::collections::HashMap;
 use std::io::Cursor;
 
 use casual_doc_layout::display::{DisplayList, PaintItem};
+// Kept on a separate `use` line (anti-conflict): the shape fill/outline/geometry
+// display types the shape paint path consumes (`Color` aliased to avoid clashing
+// with `tiny_skia::Color`).
+use casual_doc_layout::display::{
+    Color as DisplayColor, Fill, Gradient, GradientKind, ShapeGeometry, ShapeOutline,
+};
+// Separate `use` line to minimize import-block merge conflicts.
+use casual_doc_layout::display::ShapeTransform;
 use casual_doc_layout::font_registry::{DynFace, FontRegistry};
 use casual_doc_layout::text::{FontId, GlyphRun};
 use casual_doc_layout::units::{Point, Rect};
 use casual_doc_model::v1::{CROP_FULL, CropRect};
+// Kept on a separate `use` line (anti-conflict): the dash/line-end model types the
+// shape paint path consumes.
+use casual_doc_model::v1::{DashStyle, LineEnd, LineEndKind, LineEndSize};
 use skrifa::instance::{LocationRef, Size};
 use skrifa::metrics::Metrics;
 use skrifa::outline::{DrawSettings, OutlinePen};
 use skrifa::{FontRef, GlyphId, MetadataProvider};
 use tiny_skia::{
-    Color, FillRule, FilterQuality, IntRect, IntSize, Mask, Paint, PathBuilder, Pixmap,
-    PixmapPaint, Rect as SkRect, Stroke, Transform,
+    Color, FillRule, FilterQuality, GradientStop as SkGradientStop, IntRect, IntSize,
+    LinearGradient, Mask, Paint, PathBuilder, Pixmap, PixmapPaint, Point as SkPoint,
+    RadialGradient, Rect as SkRect, Shader, SpreadMode, Stroke, StrokeDash, Transform,
 };
 
 /// Secure per-image decode defaults from `docs/21-PARSER-LIMITS.md`.
@@ -181,6 +193,26 @@ pub fn render(
                     );
                 }
             }
+            PaintItem::Shape {
+                geometry,
+                fill,
+                stroke,
+                head_end,
+                tail_end,
+                transform,
+            } => {
+                render_shape(
+                    surface,
+                    geometry,
+                    fill.as_ref(),
+                    stroke.as_ref(),
+                    head_end.as_ref(),
+                    tail_end.as_ref(),
+                    dpi,
+                    clip_stack.last(),
+                    object_transform(transform.as_ref(), dpi),
+                );
+            }
             PaintItem::Glyphs { run } => {
                 render_glyph_run(run, surface, dpi, fonts, clip_stack.last());
             }
@@ -204,6 +236,7 @@ pub fn render(
                 media: id,
                 rect,
                 crop,
+                transform,
             } => {
                 render_image(
                     id,
@@ -213,6 +246,7 @@ pub fn render(
                     dpi,
                     media,
                     clip_stack.last(),
+                    object_transform(transform.as_ref(), dpi),
                 );
             }
             PaintItem::Line { from, to, stroke } => {
@@ -261,6 +295,7 @@ pub fn render(
 ///
 /// A degenerate box (zero/negative device size) renders nothing in either
 /// case; there is no area to paint into.
+#[allow(clippy::too_many_arguments)]
 fn render_image(
     media_id: &str,
     rect: Rect,
@@ -269,12 +304,13 @@ fn render_image(
     dpi: f32,
     media: &dyn MediaSource,
     clip: Option<&Mask>,
+    transform: Transform,
 ) {
     let Some(bytes) = media.media_bytes(media_id) else {
         return;
     };
     let Some(source) = decode_to_pixmap(bytes) else {
-        render_undecodable_placeholder(rect, surface, dpi, clip);
+        render_undecodable_placeholder(rect, surface, dpi, clip, transform);
         return;
     };
     // A crop (`a:srcRect`) selects a sub-rectangle of the SOURCE pixels; that
@@ -300,15 +336,22 @@ fn render_image(
         return;
     }
     // Scale the source pixmap to the destination box, then translate to its
-    // top-left; `draw_pixmap` maps pixmap space through this transform.
-    let transform = Transform::from_row(dw / src_w, 0.0, 0.0, dh / src_h, dx, dy);
+    // top-left; `draw_pixmap` maps pixmap space through this transform. The
+    // object transform (rotation/flip about the box center) is applied AFTER the
+    // placement, so the picture rotates in page space.
+    let placement = Transform::from_row(dw / src_w, 0.0, 0.0, dh / src_h, dx, dy);
     let paint = PixmapPaint {
         quality: FilterQuality::Bilinear,
         ..PixmapPaint::default()
     };
-    surface
-        .pixmap
-        .draw_pixmap(0, 0, source.as_ref(), &paint, transform, clip);
+    surface.pixmap.draw_pixmap(
+        0,
+        0,
+        source.as_ref(),
+        &paint,
+        transform.pre_concat(placement),
+        clip,
+    );
 }
 
 /// Extracts the visible source sub-rectangle described by an `a:srcRect` crop
@@ -352,6 +395,7 @@ fn render_undecodable_placeholder(
     surface: &mut Surface,
     dpi: f32,
     clip: Option<&Mask>,
+    transform: Transform,
 ) {
     let dx = rect.origin.x.to_device_px(dpi);
     let dy = rect.origin.y.to_device_px(dpi);
@@ -376,7 +420,7 @@ fn render_undecodable_placeholder(
         if let Some(path) = builder.finish() {
             surface
                 .pixmap
-                .stroke_path(&path, &paint, &stroke, Transform::identity(), clip);
+                .stroke_path(&path, &paint, &stroke, transform, clip);
         }
     }
 
@@ -389,7 +433,7 @@ fn render_undecodable_placeholder(
     if let Some(path) = cross.finish() {
         surface
             .pixmap
-            .stroke_path(&path, &paint, &stroke, Transform::identity(), clip);
+            .stroke_path(&path, &paint, &stroke, transform, clip);
     }
 }
 
@@ -812,6 +856,344 @@ fn paint_path(
             Transform::identity(),
             clip,
         );
+    }
+}
+
+/// Paints a floating DrawingML shape: its geometry filled (solid or gradient) and
+/// stroked (with a preset dash pattern), plus start/end arrowheads for a line.
+#[allow(clippy::too_many_arguments)]
+/// Builds the device-space affine transform for an object transform: a rotation
+/// and/or flips about the object's center (`a:xfrm`). Identity when the
+/// descriptor is absent or a no-op, so the common unrotated path is unchanged.
+///
+/// DrawingML applies `flipH`/`flipV` before `rot`, both about the center, so the
+/// matrix is `T(c) · R(rot) · Flip · T(-c)`.
+fn object_transform(transform: Option<&ShapeTransform>, dpi: f32) -> Transform {
+    let Some(t) = transform else {
+        return Transform::identity();
+    };
+    if t.rotation == 0 && !t.flip_h && !t.flip_v {
+        return Transform::identity();
+    }
+    let cx = t.center.x.to_device_px(dpi);
+    let cy = t.center.y.to_device_px(dpi);
+    let angle_deg = t.rotation as f32 / 60_000.0;
+    let sx = if t.flip_h { -1.0 } else { 1.0 };
+    let sy = if t.flip_v { -1.0 } else { 1.0 };
+    Transform::from_translate(cx, cy)
+        .pre_concat(Transform::from_rotate(angle_deg))
+        .pre_concat(Transform::from_scale(sx, sy))
+        .pre_concat(Transform::from_translate(-cx, -cy))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_shape(
+    surface: &mut Surface,
+    geometry: &ShapeGeometry,
+    fill: Option<&Fill>,
+    stroke: Option<&ShapeOutline>,
+    head_end: Option<&LineEnd>,
+    tail_end: Option<&LineEnd>,
+    dpi: f32,
+    clip: Option<&Mask>,
+    transform: Transform,
+) {
+    // Build the geometry path and its device-pixel bounds (the gradient extent).
+    let (path, bounds) = match geometry {
+        ShapeGeometry::Rect { rect } => (rect_path(*rect, dpi), device_bounds(*rect, dpi)),
+        ShapeGeometry::Ellipse { rect } => (ellipse_path(*rect, dpi), device_bounds(*rect, dpi)),
+        ShapeGeometry::RoundedRect { rect, radius } => (
+            rounded_rect_path(*rect, *radius, dpi),
+            device_bounds(*rect, dpi),
+        ),
+        ShapeGeometry::Polygon { points } => {
+            (polygon_path(points, dpi), polygon_bounds(points, dpi))
+        }
+        ShapeGeometry::Line { from, to } => {
+            let mut builder = PathBuilder::new();
+            builder.move_to(from.x.to_device_px(dpi), from.y.to_device_px(dpi));
+            builder.line_to(to.x.to_device_px(dpi), to.y.to_device_px(dpi));
+            (builder.finish(), None)
+        }
+    };
+    let Some(path) = path else {
+        return;
+    };
+
+    // Fill (solid or gradient), then stroke (dashable), then arrowheads.
+    if let Some(fill) = fill {
+        let mut paint = Paint::default();
+        match fill {
+            Fill::Solid(color) => {
+                paint.set_color_rgba8(color.r, color.g, color.b, color.a);
+            }
+            Fill::Gradient(gradient) => {
+                if let Some(bounds) = bounds
+                    && let Some(shader) = gradient_shader(gradient, bounds)
+                {
+                    paint.shader = shader;
+                } else if let Some(first) = fill_fallback_color(fill) {
+                    paint.set_color_rgba8(first.0, first.1, first.2, first.3);
+                }
+            }
+        }
+        paint.anti_alias = true;
+        surface
+            .pixmap
+            .fill_path(&path, &paint, FillRule::Winding, transform, clip);
+    }
+
+    if let Some(stroke) = stroke {
+        let mut paint = Paint::default();
+        paint.set_color_rgba8(
+            stroke.color.r,
+            stroke.color.g,
+            stroke.color.b,
+            stroke.color.a,
+        );
+        paint.anti_alias = true;
+        let width = stroke.width.max(1.0);
+        let sk_stroke = Stroke {
+            width,
+            dash: dash_pattern(stroke.dash, width),
+            ..Stroke::default()
+        };
+        surface
+            .pixmap
+            .stroke_path(&path, &paint, &sk_stroke, transform, clip);
+
+        // Arrowheads sit at the line's endpoints, oriented along the segment. The
+        // endpoints ride the same transform so a rotated/flipped line keeps its
+        // heads attached and correctly oriented.
+        if let ShapeGeometry::Line { from, to } = geometry {
+            let mut ends = [
+                SkPoint::from_xy(from.x.to_device_px(dpi), from.y.to_device_px(dpi)),
+                SkPoint::from_xy(to.x.to_device_px(dpi), to.y.to_device_px(dpi)),
+            ];
+            transform.map_points(&mut ends);
+            let [a, b] = ends;
+            if let Some(head) = head_end {
+                // The head sits at the start, pointing back along `b -> a`.
+                draw_arrowhead(surface, a, b, head, width, stroke.color, clip);
+            }
+            if let Some(tail) = tail_end {
+                // The tail sits at the end, pointing along `a -> b`.
+                draw_arrowhead(surface, b, a, tail, width, stroke.color, clip);
+            }
+        }
+    }
+}
+
+/// The device-pixel bounding rectangle of a twip rect (for a gradient extent).
+fn device_bounds(rect: Rect, dpi: f32) -> Option<SkRect> {
+    SkRect::from_xywh(
+        rect.origin.x.to_device_px(dpi),
+        rect.origin.y.to_device_px(dpi),
+        rect.size.width.to_device_px(dpi).max(0.0),
+        rect.size.height.to_device_px(dpi).max(0.0),
+    )
+}
+
+/// The device-pixel bounding rectangle of a polygon's vertices.
+fn polygon_bounds(points: &[Point], dpi: f32) -> Option<SkRect> {
+    let mut min_x = f32::INFINITY;
+    let mut min_y = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    let mut max_y = f32::NEG_INFINITY;
+    for point in points {
+        let x = point.x.to_device_px(dpi);
+        let y = point.y.to_device_px(dpi);
+        min_x = min_x.min(x);
+        min_y = min_y.min(y);
+        max_x = max_x.max(x);
+        max_y = max_y.max(y);
+    }
+    SkRect::from_xywh(
+        min_x,
+        min_y,
+        (max_x - min_x).max(0.0),
+        (max_y - min_y).max(0.0),
+    )
+}
+
+/// The first gradient stop's color, used as a flat fallback when the gradient
+/// extent is degenerate (a tiny-skia gradient needs a positive-size box).
+fn fill_fallback_color(fill: &Fill) -> Option<(u8, u8, u8, u8)> {
+    match fill {
+        Fill::Solid(color) => Some((color.r, color.g, color.b, color.a)),
+        Fill::Gradient(gradient) => gradient
+            .stops
+            .first()
+            .map(|stop| (stop.color.r, stop.color.g, stop.color.b, stop.color.a)),
+    }
+}
+
+/// Builds a tiny-skia gradient shader for `gradient` spanning `bounds`. A linear
+/// gradient's endpoints are the box center projected along the sweep angle to the
+/// box extent; a radial gradient is centered on the box. Returns `None` (the
+/// caller falls back to the first stop) if the stops or box are degenerate.
+fn gradient_shader(gradient: &Gradient, bounds: SkRect) -> Option<Shader<'static>> {
+    let stops: Vec<SkGradientStop> = gradient
+        .stops
+        .iter()
+        .map(|stop| {
+            SkGradientStop::new(
+                stop.position.clamp(0.0, 1.0),
+                Color::from_rgba8(stop.color.r, stop.color.g, stop.color.b, stop.color.a),
+            )
+        })
+        .collect();
+    if stops.len() < 2 {
+        return None;
+    }
+    let (cx, cy) = (
+        bounds.x() + bounds.width() / 2.0,
+        bounds.y() + bounds.height() / 2.0,
+    );
+    match gradient.kind {
+        GradientKind::Linear { angle_deg } => {
+            let radians = angle_deg.to_radians();
+            let (dx, dy) = (radians.cos(), radians.sin());
+            // Half-extent of the box projected onto the sweep direction.
+            let half = (bounds.width() / 2.0 * dx).abs() + (bounds.height() / 2.0 * dy).abs();
+            let half = half.max(0.5);
+            let start = SkPoint::from_xy(cx - dx * half, cy - dy * half);
+            let end = SkPoint::from_xy(cx + dx * half, cy + dy * half);
+            LinearGradient::new(start, end, stops, SpreadMode::Pad, Transform::identity())
+        }
+        GradientKind::Radial => {
+            let radius = (bounds.width().max(bounds.height()) / 2.0).max(0.5);
+            RadialGradient::new(
+                SkPoint::from_xy(cx, cy),
+                SkPoint::from_xy(cx, cy),
+                radius,
+                stops,
+                SpreadMode::Pad,
+                Transform::identity(),
+            )
+        }
+    }
+}
+
+/// The dash on/off array (device pixels) for a preset dash style at `width`, or
+/// `None` for a solid line. Ratios follow the OOXML preset dash conventions,
+/// scaled by the line width (with a floor so a hairline still dashes).
+fn dash_pattern(dash: DashStyle, width: f32) -> Option<StrokeDash> {
+    let unit = width.max(1.0);
+    let ratios: &[f32] = match dash {
+        DashStyle::Solid => return None,
+        DashStyle::Dot | DashStyle::SystemDot => &[1.0, 3.0],
+        DashStyle::Dash => &[4.0, 3.0],
+        DashStyle::LargeDash => &[8.0, 3.0],
+        DashStyle::DashDot => &[4.0, 3.0, 1.0, 3.0],
+        DashStyle::LargeDashDot => &[8.0, 3.0, 1.0, 3.0],
+        DashStyle::LargeDashDotDot => &[8.0, 3.0, 1.0, 3.0, 1.0, 3.0],
+        DashStyle::SystemDash => &[3.0, 1.0],
+        DashStyle::SystemDashDot => &[3.0, 1.0, 1.0, 1.0],
+        DashStyle::SystemDashDotDot => &[3.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+    };
+    let array: Vec<f32> = ratios.iter().map(|r| (r * unit).max(0.1)).collect();
+    StrokeDash::new(array, 0.0)
+}
+
+/// Draws a filled arrowhead at `tip`, oriented along the direction `tip - other`
+/// (the segment pointing outward from the shape toward `tip`), sized by the
+/// line-end kind and its width/length size tokens (relative to the line width).
+fn draw_arrowhead(
+    surface: &mut Surface,
+    tip: SkPoint,
+    other: SkPoint,
+    end: &LineEnd,
+    width: f32,
+    color: DisplayColor,
+    clip: Option<&Mask>,
+) {
+    if matches!(end.kind, LineEndKind::None) {
+        return;
+    }
+    let (dx, dy) = (tip.x - other.x, tip.y - other.y);
+    let len = (dx * dx + dy * dy).sqrt();
+    if len <= f32::EPSILON {
+        return;
+    }
+    // Unit vectors along the segment (`ux`) and perpendicular to it (`px`).
+    let (ux, uy) = (dx / len, dy / len);
+    let (px, py) = (-uy, ux);
+    let unit = width.max(1.0);
+    let half_w = unit * size_factor(end.width) * 1.5;
+    let length = unit * size_factor(end.length) * 3.0;
+    // The base sits `length` back from the tip along the segment.
+    let base = SkPoint::from_xy(tip.x - ux * length, tip.y - uy * length);
+    let left = SkPoint::from_xy(base.x + px * half_w, base.y + py * half_w);
+    let right = SkPoint::from_xy(base.x - px * half_w, base.y - py * half_w);
+
+    let mut builder = PathBuilder::new();
+    match end.kind {
+        LineEndKind::Triangle | LineEndKind::Arrow => {
+            builder.move_to(tip.x, tip.y);
+            builder.line_to(left.x, left.y);
+            builder.line_to(right.x, right.y);
+            builder.close();
+        }
+        LineEndKind::Stealth => {
+            // A concave "stealth" arrow: the base notches in toward the tip.
+            let notch = SkPoint::from_xy(tip.x - ux * length * 0.6, tip.y - uy * length * 0.6);
+            builder.move_to(tip.x, tip.y);
+            builder.line_to(left.x, left.y);
+            builder.line_to(notch.x, notch.y);
+            builder.line_to(right.x, right.y);
+            builder.close();
+        }
+        LineEndKind::Diamond => {
+            let far = SkPoint::from_xy(tip.x - ux * length * 2.0, tip.y - uy * length * 2.0);
+            builder.move_to(tip.x, tip.y);
+            builder.line_to(left.x, left.y);
+            builder.line_to(far.x, far.y);
+            builder.line_to(right.x, right.y);
+            builder.close();
+        }
+        LineEndKind::Oval => {
+            let radius = half_w.max(length / 2.0);
+            let center = SkPoint::from_xy(tip.x - ux * radius, tip.y - uy * radius);
+            if let Some(rect) = SkRect::from_xywh(
+                center.x - radius,
+                center.y - radius,
+                radius * 2.0,
+                radius * 2.0,
+            ) && let Some(oval) = PathBuilder::from_oval(rect)
+            {
+                fill_solid(surface, &oval, color, clip);
+            }
+            return;
+        }
+        LineEndKind::None => return,
+    }
+    if let Some(path) = builder.finish() {
+        fill_solid(surface, &path, color, clip);
+    }
+}
+
+/// Fills `path` with a flat color (used for arrowheads).
+fn fill_solid(
+    surface: &mut Surface,
+    path: &tiny_skia::Path,
+    color: DisplayColor,
+    clip: Option<&Mask>,
+) {
+    let mut paint = Paint::default();
+    paint.set_color_rgba8(color.r, color.g, color.b, color.a);
+    paint.anti_alias = true;
+    surface
+        .pixmap
+        .fill_path(path, &paint, FillRule::Winding, Transform::identity(), clip);
+}
+
+/// The size multiplier for a line-end width/length token (default medium).
+fn size_factor(size: Option<LineEndSize>) -> f32 {
+    match size {
+        Some(LineEndSize::Small) => 0.75,
+        None | Some(LineEndSize::Medium) => 1.0,
+        Some(LineEndSize::Large) => 1.5,
     }
 }
 
@@ -1434,6 +1816,7 @@ mod tests {
             media: "pic".to_owned(),
             rect,
             crop: None,
+            transform: None,
         });
         let mut surface = Surface::new(50, 50).unwrap();
         render(&list, &mut surface, 1440.0, &BundledFontSource, &media);
@@ -1455,6 +1838,7 @@ mod tests {
             media: "pic".to_owned(),
             rect,
             crop,
+            transform: None,
         });
         let mut surface = Surface::new(50, 50).unwrap();
         render(&list, &mut surface, 1440.0, &BundledFontSource, &media);
@@ -1618,6 +2002,7 @@ mod tests {
             media: "missing".to_owned(),
             rect,
             crop: None,
+            transform: None,
         });
         let mut surface = Surface::new(50, 50).unwrap();
         render(
@@ -1651,6 +2036,7 @@ mod tests {
             media: "junk".to_owned(),
             rect,
             crop: None,
+            transform: None,
         });
         let mut surface = Surface::new(50, 50).unwrap();
         render(&list, &mut surface, 1440.0, &BundledFontSource, &media);
@@ -1783,6 +2169,268 @@ mod tests {
         assert!(
             dark_pixel_count(&surface) > 100,
             "the OS fallback face rasterizes real CJK ink (not blank / not tofu)"
+        );
+    }
+
+    // --- Shape fill / outline / arrowhead rendering -----------------------------
+    //
+    // These sample exact device pixels at 1440 dpi (1 twip = 1 px), so the geometry
+    // is platform-independent; they are still gated off the Windows CI job to match
+    // the existing exact-geometry snapshot convention (shaping-free but conservative).
+
+    use casual_doc_layout::display::{
+        Color as ShapeColor, Fill as DisplayFill, Gradient, GradientKind, GradientStop,
+        ShapeGeometry, ShapeOutline,
+    };
+    use casual_doc_layout::units::{Rect as UnitRect, Size};
+    use casual_doc_model::v1::{DashStyle, LineEnd, LineEndKind};
+    // Separate `use` line to minimize import-block merge conflicts.
+    use casual_doc_layout::display::ShapeTransform;
+
+    fn shape_surface(list: &DisplayList, w: u32, h: u32) -> Surface {
+        let mut surface = Surface::new(w, h).unwrap();
+        render(
+            list,
+            &mut surface,
+            1440.0,
+            &SingleFontSource::new(ROBOTO_REGULAR),
+            &NoMediaSource,
+        );
+        surface
+    }
+
+    #[test]
+    #[cfg_attr(target_os = "windows", ignore)]
+    fn a_rotated_shape_paints_at_its_rotated_bounds() {
+        // A 40x8 red rect at (30,10), rotated 90° about its center (50,14): it
+        // becomes an 8x40 tall bar spanning x[46,54], y[-6,34]. A pixel deep in
+        // the rotated (tall) bar is red; a pixel inside the UNrotated (wide) bar
+        // but outside the rotated one is now background.
+        let mut list = DisplayList::new();
+        list.push(PaintItem::Shape {
+            geometry: ShapeGeometry::Rect {
+                rect: UnitRect::new(Point::new(Twip(30), Twip(10)), Size::new(Twip(40), Twip(8))),
+            },
+            fill: Some(DisplayFill::Solid(ShapeColor::rgb(220, 30, 30))),
+            stroke: None,
+            head_end: None,
+            tail_end: None,
+            transform: Some(ShapeTransform {
+                rotation: 90 * 60_000,
+                flip_h: false,
+                flip_v: false,
+                center: Point::new(Twip(50), Twip(14)),
+            }),
+        });
+        let surface = shape_surface(&list, 100, 60);
+        let inside_rotated = pixel_at(&surface, 100, 50, 30);
+        assert!(
+            inside_rotated[0] > 150 && inside_rotated[1] < 120 && inside_rotated[2] < 120,
+            "the rotated bar paints red where only a 90°-rotated rect reaches (got {inside_rotated:?})"
+        );
+        let was_unrotated = pixel_at(&surface, 100, 30, 14);
+        assert!(
+            was_unrotated[0] > 200 && was_unrotated[1] > 200 && was_unrotated[2] > 200,
+            "the unrotated footprint is now empty background (got {was_unrotated:?})"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(target_os = "windows", ignore)]
+    fn a_horizontally_flipped_image_swaps_left_and_right() {
+        // A 16x16 PNG (red left, blue right) blitted into the 20x20 box at
+        // (10,10), flipped horizontally about the box center (20,20): the box's
+        // LEFT edge now shows blue and its RIGHT edge red.
+        let red = [220, 30, 30, 255];
+        let blue = [30, 30, 220, 255];
+        let bytes = split_image(16, 16, red, blue);
+        let mut media = MapMediaSource::new();
+        media.insert("pic", bytes);
+        let mut list = DisplayList::new();
+        list.push(PaintItem::Image {
+            media: "pic".to_owned(),
+            rect: Rect::new(
+                Point::new(Twip(10), Twip(10)),
+                Size::new(Twip(20), Twip(20)),
+            ),
+            crop: None,
+            transform: Some(ShapeTransform {
+                rotation: 0,
+                flip_h: true,
+                flip_v: false,
+                center: Point::new(Twip(20), Twip(20)),
+            }),
+        });
+        let mut surface = Surface::new(50, 50).unwrap();
+        render(&list, &mut surface, 1440.0, &BundledFontSource, &media);
+        // The box spans device px [10,30)²; sample near its left and right edges.
+        let left_px = pixel_at(&surface, 50, 13, 20);
+        let right_px = pixel_at(&surface, 50, 27, 20);
+        assert!(
+            left_px[2] > 150 && left_px[0] < 120,
+            "flipH shows the blue (originally right) half at the box's left edge (got {left_px:?})"
+        );
+        assert!(
+            right_px[0] > 150 && right_px[2] < 120,
+            "and the red (originally left) half at the box's right edge (got {right_px:?})"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(target_os = "windows", ignore)]
+    fn linear_gradient_fill_ramps_from_start_to_end_color() {
+        // A 100x20 rect filled with a horizontal (angle 0°) red -> blue gradient.
+        let mut list = DisplayList::new();
+        list.push(PaintItem::Shape {
+            geometry: ShapeGeometry::Rect {
+                rect: UnitRect::new(Point::new(Twip(0), Twip(0)), Size::new(Twip(100), Twip(20))),
+            },
+            fill: Some(DisplayFill::Gradient(Gradient {
+                stops: vec![
+                    GradientStop {
+                        position: 0.0,
+                        color: ShapeColor::rgb(255, 0, 0),
+                    },
+                    GradientStop {
+                        position: 1.0,
+                        color: ShapeColor::rgb(0, 0, 255),
+                    },
+                ],
+                kind: GradientKind::Linear { angle_deg: 0.0 },
+            })),
+            stroke: None,
+            head_end: None,
+            tail_end: None,
+            transform: None,
+        });
+        let surface = shape_surface(&list, 100, 20);
+
+        let left = pixel_at(&surface, 100, 4, 10);
+        let right = pixel_at(&surface, 100, 95, 10);
+        assert!(
+            left[0] > 150 && left[2] < 100,
+            "the gradient start is red (got {left:?})"
+        );
+        assert!(
+            right[2] > 150 && right[0] < 100,
+            "the gradient end is blue (got {right:?})"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(target_os = "windows", ignore)]
+    fn radial_gradient_fill_differs_center_from_edge() {
+        // A 60x60 rect with a radial red-center -> blue-edge gradient.
+        let mut list = DisplayList::new();
+        list.push(PaintItem::Shape {
+            geometry: ShapeGeometry::Rect {
+                rect: UnitRect::new(Point::new(Twip(0), Twip(0)), Size::new(Twip(60), Twip(60))),
+            },
+            fill: Some(DisplayFill::Gradient(Gradient {
+                stops: vec![
+                    GradientStop {
+                        position: 0.0,
+                        color: ShapeColor::rgb(255, 0, 0),
+                    },
+                    GradientStop {
+                        position: 1.0,
+                        color: ShapeColor::rgb(0, 0, 255),
+                    },
+                ],
+                kind: GradientKind::Radial,
+            })),
+            stroke: None,
+            head_end: None,
+            tail_end: None,
+            transform: None,
+        });
+        let surface = shape_surface(&list, 60, 60);
+
+        let center = pixel_at(&surface, 60, 30, 30);
+        let edge = pixel_at(&surface, 60, 30, 2);
+        assert!(center[0] > 150, "the radial center is red (got {center:?})");
+        assert!(edge[2] > 150, "the radial edge is blue (got {edge:?})");
+    }
+
+    #[test]
+    #[cfg_attr(target_os = "windows", ignore)]
+    fn dashed_outline_leaves_gaps_a_solid_one_does_not() {
+        // A horizontal line stroked with a `dash` pattern: it is painted where a dash
+        // lands and blank in a gap, unlike a solid stroke.
+        let line = |dash| {
+            let mut list = DisplayList::new();
+            list.push(PaintItem::Shape {
+                geometry: ShapeGeometry::Line {
+                    from: Point::new(Twip(0), Twip(10)),
+                    to: Point::new(Twip(100), Twip(10)),
+                },
+                fill: None,
+                stroke: Some(ShapeOutline {
+                    color: ShapeColor::BLACK,
+                    width: 2.0,
+                    dash,
+                }),
+                head_end: None,
+                tail_end: None,
+                transform: None,
+            });
+            shape_surface(&list, 100, 20)
+        };
+        let dashed = line(DashStyle::Dash);
+        let solid = line(DashStyle::Solid);
+
+        // x=3 falls in the first "on" dash; x=11 falls in the first gap.
+        assert!(
+            pixel_at(&dashed, 100, 3, 10)[0] < 100,
+            "the first dash is painted"
+        );
+        assert!(
+            pixel_at(&dashed, 100, 11, 10)[0] > 200,
+            "the first gap is blank"
+        );
+        assert!(
+            pixel_at(&solid, 100, 11, 10)[0] < 100,
+            "a solid stroke paints the same span with no gap"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(target_os = "windows", ignore)]
+    fn arrowhead_paints_beyond_the_thin_line_at_the_endpoint() {
+        // A thin (2px) horizontal line with a large triangle tail arrowhead: the
+        // arrowhead fills pixels off the line's own thickness near the endpoint.
+        let mut list = DisplayList::new();
+        list.push(PaintItem::Shape {
+            geometry: ShapeGeometry::Line {
+                from: Point::new(Twip(10), Twip(30)),
+                to: Point::new(Twip(90), Twip(30)),
+            },
+            fill: None,
+            stroke: Some(ShapeOutline {
+                color: ShapeColor::BLACK,
+                width: 2.0,
+                dash: DashStyle::Solid,
+            }),
+            head_end: None,
+            tail_end: Some(LineEnd {
+                kind: LineEndKind::Triangle,
+                width: Some(casual_doc_model::v1::LineEndSize::Large),
+                length: Some(casual_doc_model::v1::LineEndSize::Large),
+            }),
+            transform: None,
+        });
+        let surface = shape_surface(&list, 100, 60);
+
+        // A point inside the arrowhead triangle but above the 2px line body.
+        assert!(
+            pixel_at(&surface, 100, 85, 28)[0] < 100,
+            "the arrowhead fills beyond the line thickness (got {:?})",
+            pixel_at(&surface, 100, 85, 28)
+        );
+        // A control point well above the arrowhead stays blank.
+        assert!(
+            pixel_at(&surface, 100, 85, 18)[0] > 200,
+            "outside the arrowhead stays blank"
         );
     }
 }

@@ -42,11 +42,8 @@ const FIDELITY = [
   },
   {
     family: "Lists & numbering",
-    note: "Bullet/numbered toggle, level, and style-inherited numbering render and edit. Per-instance level/start overrides, numStyleLink/styleLink indirection, and per-level restart are not yet resolved, and spelled-out formats (cardinalText/ordinalText) fall back to decimal. No multilevel gallery or checklist authoring.",
-    modeled: "partial",
-    rendered: "partial",
-    editable: "partial",
-    roundtrips: "full",
+    note: "Numbering is fully modeled: multiLevelType, per-level restart, level→pStyle links, numStyleLink/styleLink indirection, full per-instance level/start overrides, and the numFmt vocabulary (incl. spelled-out cardinalText/ordinalText) are typed and round-trip. Rendering resolves the common cases; per-instance overrides and spelled-out formats still fall back to decimal when painted, and there is no multilevel gallery or checklist authoring.",
+    modeled: "full", rendered: "partial", editable: "partial", roundtrips: "full",
   },
   {
     family: "Images & inline drawings",
@@ -58,11 +55,8 @@ const FIDELITY = [
   },
   {
     family: "Text boxes & shapes",
-    note: "Anchored DrawingML shapes retain bounded preset identities/adjustments; rectangles, lines, ellipses, rounded rectangles, triangles, right triangles, and diamonds render distinctly. Other preset/custom paths, non-text inline shapes, gradients, rotation, vertical text, and linked boxes remain partial. Not editable.",
-    modeled: "partial",
-    rendered: "partial",
-    editable: "none",
-    roundtrips: "partial",
+    note: "Shape geometry (bounded presets + adjustments), fill (solid and multi-stop gradient), outline (color/width/dash/arrowheads), rotation/flip, and the tight/through wrap contour are typed and round-trip. Custom geometry (custGeom paths) is retained verbatim, not typed — so semantic-mode round-trip stays partial for those. Rendering still paints only the common preset shapes distinctly; gradients, rotation, vertical text, and linked boxes are unpainted. Not editable.",
+    modeled: "full", rendered: "partial", editable: "none", roundtrips: "partial",
   },
   {
     family: "Headers & footers",
@@ -98,11 +92,8 @@ const FIDELITY = [
   },
   {
     family: "Math (OMML)",
-    note: "Raw OMML is preserved for export. Rows/text, fractions, sub/superscripts, radicals, and delimiters have a bounded typed model and deterministic inline rendering; other constructs use an explicit text placeholder. Not editable.",
-    modeled: "partial",
-    rendered: "partial",
-    editable: "none",
-    roundtrips: "full",
+    note: "The full OMML math element set is typed — rows/text, fractions, sub/superscripts and pre-scripts, radicals, delimiters, functions, n-ary operators, matrices, equation arrays, accents, bars, limits, group-characters, and box/border-box wrappers — and the raw OMML is preserved verbatim (rare constructs like phantom spacing stay raw-retained, still lossless). Rendering paints the common arms inline; box/border-box border rules and full Word-parity typesetting remain partial. Not editable.",
+    modeled: "full", rendered: "partial", editable: "none", roundtrips: "full",
   },
   {
     family: "Charts",

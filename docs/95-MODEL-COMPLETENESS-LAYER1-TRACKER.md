@@ -1,6 +1,6 @@
 # 95 — Model-Completeness (Layer 1) Tracker
 
-**Status:** Active. The typed-model completion pass — Layer 1 of a deliberate layering.
+**Status:** ✅ **COMPLETE.** The typed-model completion pass (Layer 1 of a deliberate layering) is done — every ubiquitous/common/occasional construct is typed and round-trips; a completeness-critic sweep of all 139 import disposition sites confirmed no common-or-above construct remains dropped (the remainder is niche and retained verbatim by the floor). The `modeled` column of the fidelity matrix (doc 18 / `webapp/src/fidelity.js`) has been advanced accordingly. Next layer: rendering fidelity (Layer 3).
 **Scope:** `casual-doc-model` (typed model) + `casual-doc-import` + `casual-doc-export` (round-trip). **No new rendering in this layer.**
 **Relates to:** doc 18 (support matrix — the `modeled` column is the exit criterion), doc 35 (disposition taxonomy — dropped / preserved-opaquely / not-retained), the rendering-fidelity audit (the layer that follows).
 
@@ -64,12 +64,18 @@ Derived from a 14-agent, evidence-cited model-completeness sweep, prevalence-ran
 | ✅ | Tracked property-change markers | `w:pPrChange`/`w:rPrChange`/`w:tblPrChange`/`w:trPrChange`/`w:tcPrChange`/`w:tblGridChange` | M |
 | ✅ | Paragraph text direction | `w:pPr/w:textDirection` | S |
 | ✅ | Clear tab | `w:tab@val=clear` (`TabAlignment::Clear`) | S |
-| 🔄 | Full per-instance level override | `w:lvlOverride/w:lvl` (full level, not just startOverride) | M |
-| 🔄 | Page-number format → enum | `w:pgNumType@fmt`/`@start` | S |
-| 🔄 | Section-properties revision | `w:sectPrChange` | M |
-| 🔄 | Wrap polygon | `wp:wrapPolygon` | M |
+| ✅ | Full per-instance level override | `w:lvlOverride/w:lvl` (full level, not just startOverride) | M |
+| ✅ | Page-number format → enum | `w:pgNumType@fmt`/`@start` | S |
+| ✅ | Section-properties revision | `w:sectPrChange` | M |
+| ✅ | Wrap polygon | `wp:wrapPolygon` | M |
 
-Legend: ✅ merged · 🔄 in flight · ⬜ not started. **All Tier 1 complete (21/21).** Tier 2: 15 merged, 4 in flight (`lvlOverride/lvl`, `pgNumType@fmt`→enum, `sectPrChange`, `wrapPolygon`), 0 not-started — **Layer 1 is closing out.** A completeness-critic sweep of the import disposition report is running to confirm no common construct remains dropped before the layer is declared done.
+Legend: ✅ merged · 🔄 in flight · ⬜ not started. **All Tier 1 complete (21/21). All Tier 2 complete (19/19).** Layer 1 is **done**.
+
+### Completeness-critic sweep result (definitive)
+
+A read-only sweep classified all 139 `reporter.report(...)` sites in `casual-doc-import` against the disposition taxonomy, then cross-checked each against the model on `main`. **No common-or-above construct remains unmodeled.** Every genuinely-unmodeled construct is occasional-or-niche and retained verbatim by the byte-floor:
+
+- **Niche, retained-not-typed (do NOT model):** `w:ruby`/`w:rt` phonetic text and `w:eastAsianLayout` (CJK-only), `w:effect` text animation (legacy), `w:background@themeColor` (rare theme variant), `w:fitText`, non-drop-cap `w:framePr`, and the ~43 dynamic catch-all sites (shape-geometry internals like `custGeom`/`gd`, sdt `dataBinding`/`lock`, unmapped `docProps`/`settings` toggles).
 
 ### Tier 3 — none.
 

@@ -2458,6 +2458,7 @@ impl WasmDocument {
                 overrides: vec![NumberingOverride {
                     level: current.level,
                     start: Some(1),
+                    definition: None,
                 }],
             },
         );

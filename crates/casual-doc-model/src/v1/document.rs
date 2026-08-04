@@ -350,72 +350,7 @@ impl Document {
 
     fn validate_sections(&self) -> Result<(), ModelError> {
         for section in &self.definitions.sections {
-            check_domain(
-                (1..=31_680).contains(&section.page_size.width_twips),
-                "section.page_size.width",
-            )?;
-            check_domain(
-                (1..=31_680).contains(&section.page_size.height_twips),
-                "section.page_size.height",
-            )?;
-            for margin in [
-                section.page_margins.top_twips,
-                section.page_margins.bottom_twips,
-                section.page_margins.start_twips,
-                section.page_margins.end_twips,
-            ] {
-                check_domain((0..=31_680).contains(&margin), "section.page_margins")?;
-            }
-            check_domain(
-                (1..=64).contains(&section.columns.count),
-                "section.column_count",
-            )?;
-            if let Some(space) = section.columns.space_twips {
-                check_domain((0..=31_680).contains(&space), "section.column_space")?;
-            }
-            if let Some(format) = &section.page_numbering.format {
-                check_domain(
-                    !format.is_empty() && format.len() <= 32,
-                    "section.page_numbering.format",
-                )?;
-            }
-            if let Some(start) = section.page_numbering.start {
-                check_domain(
-                    (0..=1_000_000).contains(&start),
-                    "section.page_numbering.start",
-                )?;
-            }
-            for value in [section.doc_grid.line_pitch, section.doc_grid.char_space]
-                .into_iter()
-                .flatten()
-            {
-                check_domain((0..=31_680).contains(&value), "section.doc_grid")?;
-            }
-            check_page_borders(&section.page_borders)?;
-            for value in [
-                section.line_numbering.count_by,
-                section.line_numbering.start,
-            ]
-            .into_iter()
-            .flatten()
-            {
-                check_domain((0..=32_767).contains(&value), "section.line_numbering")?;
-            }
-            if let Some(distance) = section.line_numbering.distance {
-                check_domain(
-                    (0..=31_680).contains(&distance),
-                    "section.line_numbering.distance",
-                )?;
-            }
-            for value in [section.paper_source.first, section.paper_source.other]
-                .into_iter()
-                .flatten()
-            {
-                check_domain((0..=32_767).contains(&value), "section.paper_source")?;
-            }
-            for props in [&section.footnote_props, &section.endnote_props] {
-                check_note_props(props)?;
-            }
+            check_section_domains(section)?;
             for header in &section.headers {
                 if !self.definitions.headers.contains_key(&header.reference) {
                     return Err(ModelError::DanglingHeaderFooterRef(
@@ -429,6 +364,13 @@ impl Document {
                         footer.reference.node_id(),
                     ));
                 }
+            }
+            // The `w:sectPrChange` prior snapshot: bound its metadata, then the prior
+            // section's own domains (a prior never carries a further change, and its
+            // historical header/footer references are not re-validated here).
+            if let Some(change) = &section.section_change {
+                check_prop_change_meta(change, "section.sectPrChange")?;
+                check_section_domains(&change.prior)?;
             }
         }
         Ok(())
@@ -609,34 +551,44 @@ impl Document {
                         level: numbering_override.level,
                     });
                 }
+                // A full `w:lvlOverride/w:lvl` redefinition is bounded exactly
+                // like an abstract level.
+                if let Some(definition) = &numbering_override.definition {
+                    self.validate_numbering_level(definition)?;
+                }
             }
         }
         // Level domain: level start values, format/text bounds, and per-level
         // property references.
         for (_, abstract_num) in self.definitions.abstract_numbering.iter() {
             for level in &abstract_num.levels {
-                check_domain(level.start <= 32_767, "numbering.level.start")?;
-                if let Some(NumberFormat::Other(token)) = &level.num_fmt {
-                    check_domain(
-                        !token.is_empty() && token.len() <= 64,
-                        "numbering.level.numFmt",
-                    )?;
-                }
-                if let Some(text) = &level.lvl_text {
-                    check_domain(text.len() <= 255, "numbering.level.lvlText")?;
-                }
-                if let Some(properties) = &level.paragraph_properties {
-                    self.check_paragraph_property_refs(properties)?;
-                }
-                if let Some(properties) = &level.run_properties {
-                    self.check_run_property_refs(properties)?;
-                }
-                if let Some(style) = level.style_ref
-                    && !self.style_exists(style)
-                {
-                    return Err(ModelError::DanglingStyleRef(style.node_id()));
-                }
+                self.validate_numbering_level(level)?;
             }
+        }
+        Ok(())
+    }
+
+    fn validate_numbering_level(&self, level: &NumberingLevel) -> Result<(), ModelError> {
+        check_domain(level.start <= 32_767, "numbering.level.start")?;
+        if let Some(NumberFormat::Other(token)) = &level.num_fmt {
+            check_domain(
+                !token.is_empty() && token.len() <= 64,
+                "numbering.level.numFmt",
+            )?;
+        }
+        if let Some(text) = &level.lvl_text {
+            check_domain(text.len() <= 255, "numbering.level.lvlText")?;
+        }
+        if let Some(properties) = &level.paragraph_properties {
+            self.check_paragraph_property_refs(properties)?;
+        }
+        if let Some(properties) = &level.run_properties {
+            self.check_run_property_refs(properties)?;
+        }
+        if let Some(style) = level.style_ref
+            && !self.style_exists(style)
+        {
+            return Err(ModelError::DanglingStyleRef(style.node_id()));
         }
         Ok(())
     }
@@ -2207,6 +2159,80 @@ fn check_note_props(props: &NoteProperties) -> Result<(), ModelError> {
     Ok(())
 }
 
+/// Validates a section's own value domains (page geometry, columns, page numbering,
+/// grid, borders, line numbering, paper source, note props) — the bounds that hold
+/// for a real section AND for a `w:sectPrChange` prior snapshot. Header/footer
+/// reference resolution is validated separately (only for real sections).
+fn check_section_domains(section: &SectionBoundary) -> Result<(), ModelError> {
+    check_domain(
+        (1..=31_680).contains(&section.page_size.width_twips),
+        "section.page_size.width",
+    )?;
+    check_domain(
+        (1..=31_680).contains(&section.page_size.height_twips),
+        "section.page_size.height",
+    )?;
+    for margin in [
+        section.page_margins.top_twips,
+        section.page_margins.bottom_twips,
+        section.page_margins.start_twips,
+        section.page_margins.end_twips,
+    ] {
+        check_domain((0..=31_680).contains(&margin), "section.page_margins")?;
+    }
+    check_domain(
+        (1..=64).contains(&section.columns.count),
+        "section.column_count",
+    )?;
+    if let Some(space) = section.columns.space_twips {
+        check_domain((0..=31_680).contains(&space), "section.column_space")?;
+    }
+    if let Some(NumberFormat::Other(token)) = &section.page_numbering.format {
+        check_domain(
+            !token.is_empty() && token.len() <= 64,
+            "section.page_numbering.format",
+        )?;
+    }
+    if let Some(start) = section.page_numbering.start {
+        check_domain(
+            (0..=1_000_000).contains(&start),
+            "section.page_numbering.start",
+        )?;
+    }
+    for value in [section.doc_grid.line_pitch, section.doc_grid.char_space]
+        .into_iter()
+        .flatten()
+    {
+        check_domain((0..=31_680).contains(&value), "section.doc_grid")?;
+    }
+    check_page_borders(&section.page_borders)?;
+    for value in [
+        section.line_numbering.count_by,
+        section.line_numbering.start,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        check_domain((0..=32_767).contains(&value), "section.line_numbering")?;
+    }
+    if let Some(distance) = section.line_numbering.distance {
+        check_domain(
+            (0..=31_680).contains(&distance),
+            "section.line_numbering.distance",
+        )?;
+    }
+    for value in [section.paper_source.first, section.paper_source.other]
+        .into_iter()
+        .flatten()
+    {
+        check_domain((0..=32_767).contains(&value), "section.paper_source")?;
+    }
+    for props in [&section.footnote_props, &section.endnote_props] {
+        check_note_props(props)?;
+    }
+    Ok(())
+}
+
 fn check_domain(condition: bool, property: &'static str) -> Result<(), ModelError> {
     if condition {
         Ok(())
@@ -2331,6 +2357,26 @@ fn validate_math_expression(expression: &MathExpression) -> Result<(), ModelErro
                 *text_bytes = text_bytes.saturating_add(character.len());
                 check_domain(*text_bytes <= MAX_MATH_BYTES, "math.expression.textBytes")?;
                 visit(base, depth + 1, nodes, text_bytes)?;
+            }
+            MathExpression::PreScript {
+                base,
+                subscript,
+                superscript,
+            } => {
+                check_domain(
+                    subscript.is_some() || superscript.is_some(),
+                    "math.expression.preScript",
+                )?;
+                visit(base, depth + 1, nodes, text_bytes)?;
+                if let Some(subscript) = subscript {
+                    visit(subscript, depth + 1, nodes, text_bytes)?;
+                }
+                if let Some(superscript) = superscript {
+                    visit(superscript, depth + 1, nodes, text_bytes)?;
+                }
+            }
+            MathExpression::BorderBox { content, .. } | MathExpression::Box { content } => {
+                visit(content, depth + 1, nodes, text_bytes)?;
             }
         }
         Ok(())
@@ -2470,6 +2516,24 @@ fn math_expression_size(expression: &MathExpression) -> (usize, usize) {
                 base.0.saturating_add(1),
                 base.1.saturating_add(character.len()),
             )
+        }
+        MathExpression::PreScript {
+            base,
+            subscript,
+            superscript,
+        } => {
+            let mut size = math_expression_size(base);
+            size.0 = size.0.saturating_add(1);
+            for script in [subscript, superscript].into_iter().flatten() {
+                let child = math_expression_size(script);
+                size.0 = size.0.saturating_add(child.0);
+                size.1 = size.1.saturating_add(child.1);
+            }
+            size
+        }
+        MathExpression::BorderBox { content, .. } | MathExpression::Box { content } => {
+            let content = math_expression_size(content);
+            (content.0.saturating_add(1), content.1)
         }
     }
 }

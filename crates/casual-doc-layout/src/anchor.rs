@@ -29,8 +29,13 @@ use casual_doc_model::v1::{
     SectionId, ShapeGeometry, ShapeStroke, VerticalAlign, VerticalAnchor, VerticalPosition,
     WordprocessingGroup, WrapDistances, WrapMode,
 };
+// Kept on a separate `use` line (anti-conflict): the outline dash style the anchor
+// stroke now carries through to paint.
+use casual_doc_model::v1::DashStyle;
 
 use crate::block::BlockFragment;
+// Separate `use` line to minimize import-block merge conflicts.
+use crate::display::ShapeTransform;
 use crate::flow::flow_anchored_text_box;
 use crate::page::{
     AnchorContent, AnchorStroke, AnchorZ, PaginatedLayout, PlacedAnchor, PlacedFragment,
@@ -580,11 +585,18 @@ fn collect_inlines(
                         content: AnchorContent::Image {
                             media,
                             crop: drawing.crop,
+                            border: shape_stroke(drawing.border),
                         },
                         rect,
                         behind_doc: drawing.anchor.behind_doc,
                         z,
                         descr: drawing.descr.clone(),
+                        transform: shape_transform(
+                            rect,
+                            drawing.flip_h,
+                            drawing.flip_v,
+                            drawing.rotation,
+                        ),
                     },
                 );
             }
@@ -616,7 +628,7 @@ fn collect_inlines(
                         node: Some(text_box.id),
                         content: AnchorContent::TextBox {
                             blocks: flowed.blocks,
-                            fill: text_box.fill.as_ref().map(|fill| rgba(fill.flat_color())),
+                            fill: text_box.fill.clone(),
                             border: text_box.border.map(text_box_stroke),
                             content_layout: flowed.content_layout,
                         },
@@ -624,6 +636,9 @@ fn collect_inlines(
                         behind_doc: anchor.behind_doc,
                         z,
                         descr: None,
+                        // Rotated text-box CONTENT is a follow-up; the box paints
+                        // axis-aligned for now.
+                        transform: None,
                     },
                 );
             }
@@ -735,11 +750,18 @@ fn place_group_children(
                         content: AnchorContent::Image {
                             media,
                             crop: picture.crop,
+                            border: shape_stroke(picture.border),
                         },
                         rect,
                         behind_doc,
                         z,
                         descr: picture.descr.clone(),
+                        transform: shape_transform(
+                            rect,
+                            picture.flip_h,
+                            picture.flip_v,
+                            picture.rotation,
+                        ),
                     },
                 );
             }
@@ -764,7 +786,7 @@ fn place_group_children(
                         node: None,
                         content: AnchorContent::TextBox {
                             blocks: flowed.blocks,
-                            fill: text_box.fill.as_ref().map(|fill| rgba(fill.flat_color())),
+                            fill: text_box.fill.clone(),
                             border: text_box.border.map(text_box_stroke),
                             content_layout: flowed.content_layout,
                         },
@@ -772,6 +794,9 @@ fn place_group_children(
                         behind_doc,
                         z,
                         descr: None,
+                        // Rotated text-box CONTENT is a follow-up; the box paints
+                        // axis-aligned for now.
+                        transform: None,
                     },
                 );
             }
@@ -793,15 +818,18 @@ fn place_group_children(
                                 .as_ref()
                                 .map_or([0, 0, 0, 255], |fill| rgba(fill.flat_color())),
                             width: Twip::ZERO,
+                            dash: DashStyle::Solid,
                         }),
+                        head_end: shape.stroke.and_then(|s| s.head_end),
+                        tail_end: shape.stroke.and_then(|s| s.tail_end),
                     },
                     ShapeGeometry::Ellipse => AnchorContent::Ellipse {
-                        fill: shape.fill.as_ref().map(|fill| rgba(fill.flat_color())),
+                        fill: shape.fill.clone(),
                         stroke: shape_stroke(shape.stroke),
                     },
                     ShapeGeometry::RoundRectangle => AnchorContent::RoundedRectangle {
                         radius: rounded_rectangle_radius(shape, rect),
-                        fill: shape.fill.as_ref().map(|fill| rgba(fill.flat_color())),
+                        fill: shape.fill.clone(),
                         stroke: shape_stroke(shape.stroke),
                     },
                     ShapeGeometry::Triangle => AnchorContent::Polygon {
@@ -813,7 +841,7 @@ fn place_group_children(
                             Point::new(rect.right(), rect.bottom()),
                             Point::new(rect.origin.x, rect.bottom()),
                         ],
-                        fill: shape.fill.as_ref().map(|fill| rgba(fill.flat_color())),
+                        fill: shape.fill.clone(),
                         stroke: shape_stroke(shape.stroke),
                     },
                     ShapeGeometry::RightTriangle => AnchorContent::Polygon {
@@ -822,7 +850,7 @@ fn place_group_children(
                             Point::new(rect.right(), rect.bottom()),
                             Point::new(rect.origin.x, rect.bottom()),
                         ],
-                        fill: shape.fill.as_ref().map(|fill| rgba(fill.flat_color())),
+                        fill: shape.fill.clone(),
                         stroke: shape_stroke(shape.stroke),
                     },
                     ShapeGeometry::Diamond => AnchorContent::Polygon {
@@ -844,11 +872,11 @@ fn place_group_children(
                                 rect.origin.y + Twip(rect.size.height.raw() / 2),
                             ),
                         ],
-                        fill: shape.fill.as_ref().map(|fill| rgba(fill.flat_color())),
+                        fill: shape.fill.clone(),
                         stroke: shape_stroke(shape.stroke),
                     },
                     ShapeGeometry::Rectangle | ShapeGeometry::Other => AnchorContent::Rectangle {
-                        fill: shape.fill.as_ref().map(|fill| rgba(fill.flat_color())),
+                        fill: shape.fill.clone(),
                         stroke: shape_stroke(shape.stroke),
                     },
                 };
@@ -862,6 +890,12 @@ fn place_group_children(
                         behind_doc,
                         z,
                         descr: None,
+                        transform: shape_transform(
+                            rect,
+                            shape.flip_h,
+                            shape.flip_v,
+                            shape.rotation,
+                        ),
                     },
                 );
             }
@@ -1071,10 +1105,36 @@ fn rgba(c: Rgba) -> [u8; 4] {
     [c.r, c.g, c.b, c.a]
 }
 
+/// Builds the paint transform for a float from its model `a:xfrm` fields,
+/// rotating/flipping about the (already-resolved) `rect`'s center. Returns `None`
+/// when the object is unrotated and unflipped (the common case) so it paints
+/// through the identity path.
+fn shape_transform(
+    rect: Rect,
+    flip_h: bool,
+    flip_v: bool,
+    rotation: Option<i32>,
+) -> Option<ShapeTransform> {
+    let rotation = rotation.unwrap_or(0);
+    if rotation == 0 && !flip_h && !flip_v {
+        return None;
+    }
+    Some(ShapeTransform {
+        rotation,
+        flip_h,
+        flip_v,
+        center: Point::new(
+            Twip(rect.origin.x.raw() + rect.size.width.raw() / 2),
+            Twip(rect.origin.y.raw() + rect.size.height.raw() / 2),
+        ),
+    })
+}
+
 fn shape_stroke(stroke: Option<ShapeStroke>) -> Option<AnchorStroke> {
     stroke.map(|s| AnchorStroke {
         color: rgba(s.color),
         width: emu_to_twip(s.width_emu),
+        dash: s.dash.unwrap_or(DashStyle::Solid),
     })
 }
 

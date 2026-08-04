@@ -1202,6 +1202,56 @@ mod semantic_tests {
     }
 
     #[test]
+    fn typed_prescript_borderbox_and_box_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, InlineNode, MathExpression};
+
+        // One paragraph carrying three equations, one per newly-typed OMML
+        // construct: a pre-sub/superscript (`m:sPre`), a border box with a hidden
+        // top edge and a horizontal strike (`m:borderBox`), and a logical grouping
+        // box (`m:box`). The retained OMML stays authoritative for export, so each
+        // must survive write -> reopen verbatim, and its typed projection must match
+        // on both sides of the round trip.
+        let xml = br#"<w:document xmlns:w="urn:w" xmlns:m="urn:m"><w:body><w:p>
+            <m:oMath><m:sPre><m:sub><m:r><m:t>i</m:t></m:r></m:sub><m:sup><m:r><m:t>j</m:t></m:r></m:sup><m:e><m:r><m:t>X</m:t></m:r></m:e></m:sPre></m:oMath>
+            <m:oMath><m:borderBox><m:borderBoxPr><m:hideTop m:val="1"/><m:strikeH m:val="1"/></m:borderBoxPr><m:e><m:r><m:t>x</m:t></m:r></m:e></m:borderBox></m:oMath>
+            <m:oMath><m:box><m:e><m:r><m:t>y</m:t></m:r></m:e></m:box></m:oMath>
+        </w:p></w:body></w:document>"#;
+
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(
+            m1, m2,
+            "the typed sPre/borderBox/box equations survive round trip"
+        );
+
+        let BlockNode::Paragraph(paragraph) = &m2.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let expressions: Vec<&MathExpression> = paragraph
+            .inlines
+            .iter()
+            .filter_map(|inline| match inline {
+                InlineNode::Math(math) => math.expression.as_ref(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(expressions.len(), 3, "one projection per equation");
+        assert!(matches!(
+            expressions[0],
+            MathExpression::PreScript {
+                subscript: Some(_),
+                superscript: Some(_),
+                ..
+            }
+        ));
+        assert!(matches!(
+            expressions[1],
+            MathExpression::BorderBox { borders, .. }
+                if borders.hide_top && borders.strike_horizontal && !borders.hide_bottom
+        ));
+        assert!(matches!(expressions[2], MathExpression::Box { .. }));
+    }
+
+    #[test]
     fn symbol_survives_the_semantic_round_trip() {
         // A run carrying a `w:sym` (a Wingdings glyph in the Private Use Area).
         // The symbol must import to a first-class `Symbol` node — not vanish into
@@ -3274,6 +3324,78 @@ mod semantic_tests {
     }
 
     #[test]
+    fn full_level_override_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::{LevelSuffix, NumberFormat};
+
+        // A `w:lvlOverride` carrying a full `w:lvl` (numFmt + lvlText + start +
+        // suff) — the instance fully redefines the level, not just its start.
+        // Both halves (import into overrides[..].definition, and re-emit) must
+        // hold, so write -> reopen is a fixed point.
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="3"/></w:numPr></w:pPr>
+                <w:r><w:t>item</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/></Relationships>"#;
+        let numbering = br#"<w:numbering xmlns:w="urn:w">
+            <w:abstractNum w:abstractNumId="0">
+                <w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl></w:abstractNum>
+            <w:num w:numId="3"><w:abstractNumId w:val="0"/>
+                <w:lvlOverride w:ilvl="0">
+                    <w:startOverride w:val="3"/>
+                    <w:lvl w:ilvl="0"><w:start w:val="3"/><w:numFmt w:val="lowerRoman"/><w:suff w:val="space"/><w:lvlText w:val="(%1)"/></w:lvl>
+                </w:lvlOverride>
+            </w:num>
+        </w:numbering>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/numbering.xml", numbering),
+        ]);
+        let mut src_package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let m1 = import_package(
+            &mut src_package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+
+        let (_, instance) = m1.definitions().numbering.iter().next().unwrap();
+        assert_eq!(instance.overrides.len(), 1);
+        let over = &instance.overrides[0];
+        assert_eq!(over.level, 0);
+        assert_eq!(over.start, Some(3));
+        let definition = over
+            .definition
+            .as_ref()
+            .expect("the full w:lvl redefinition is captured");
+        assert_eq!(definition.level, 0);
+        assert_eq!(definition.start, 3);
+        assert_eq!(definition.num_fmt, Some(NumberFormat::LowerRoman));
+        assert_eq!(definition.lvl_text.as_deref(), Some("(%1)"));
+        assert_eq!(definition.suff, Some(LevelSuffix::Space));
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+        let m2 = import_package(
+            &mut package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+        assert_eq!(m1, m2, "the full level override survives write -> reopen");
+    }
+
+    #[test]
     fn multi_level_type_and_lvl_restart_survive_the_semantic_round_trip() {
         use casual_doc_model::v1::MultiLevelType;
         let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/></Types>"#;
@@ -4000,12 +4122,68 @@ mod semantic_tests {
             section.section_type,
             Some(casual_doc_model::v1::SectionType::Continuous)
         );
+        // `w:pgNumType@w:fmt` is typed as the shared NumberFormat enum, not a string.
+        assert_eq!(
+            section.page_numbering.format,
+            Some(casual_doc_model::v1::NumberFormat::LowerRoman)
+        );
         assert_eq!(section.page_numbering.start, Some(3));
         let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
         let m2 = reopen(&bytes);
         assert_eq!(
             m1, m2,
             "expanded section properties survive write -> reopen"
+        );
+    }
+
+    #[test]
+    fn section_properties_change_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::NumberFormat;
+        // A `w:sectPrChange` (tracked change of section properties): the metadata
+        // (author/date/id) plus the prior `w:sectPr` snapshot (different page size,
+        // margins, and page-number format) must be captured and survive write ->
+        // reopen as a fixed point.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:r><w:t>x</w:t></w:r></w:p>
+            <w:sectPr>
+                <w:pgSz w:w="12240" w:h="15840"/>
+                <w:pgMar w:top="1440" w:bottom="1440" w:start="1440" w:end="1440"/>
+                <w:pgNumType w:fmt="decimal"/>
+                <w:sectPrChange w:author="alice" w:date="2020-01-02T03:04:05Z" w:id="7">
+                    <w:sectPr>
+                        <w:pgSz w:w="15840" w:h="12240"/>
+                        <w:pgMar w:top="720" w:bottom="720" w:start="720" w:end="720"/>
+                        <w:pgNumType w:fmt="lowerRoman"/>
+                    </w:sectPr>
+                </w:sectPrChange>
+            </w:sectPr>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        let section = &m1.definitions().sections[0];
+        let change = section
+            .section_change
+            .as_ref()
+            .expect("the section carries a sectPrChange");
+        assert_eq!(change.author.as_deref(), Some("alice"));
+        assert_eq!(change.date.as_deref(), Some("2020-01-02T03:04:05Z"));
+        assert_eq!(change.revision_id.as_deref(), Some("7"));
+        // The prior snapshot preserves the pre-change geometry and format.
+        assert_eq!(change.prior.page_size.width_twips, 15_840);
+        assert_eq!(change.prior.page_margins.top_twips, 720);
+        assert_eq!(
+            change.prior.page_numbering.format,
+            Some(NumberFormat::LowerRoman)
+        );
+        // The prior snapshot never itself carries a further change.
+        assert!(change.prior.section_change.is_none());
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(
+            m1, m2,
+            "the section-properties change survives write -> reopen unchanged"
         );
     }
 

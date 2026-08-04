@@ -1284,10 +1284,14 @@ body.modal-open {
   text-overflow: ellipsis;
 }
 
+/* Disabled rows are greyed in place (Google Docs style): the label, any
+   shortcut hint, and the leading icon all mute, and no reason text is shown. */
+.menu-item:disabled .menu-item-icon {
+  opacity: 0.4;
+}
+
 .menu-item:disabled .menu-item-hint {
-  max-width: 180px;
-  white-space: normal;
-  text-align: right;
+  color: var(--faint);
 }
 
 .menu-divider {

@@ -4681,6 +4681,7 @@ fn build_document(
             overrides.push(NumberingOverride {
                 level: *level,
                 start: Some(*start),
+                definition: None,
             });
         }
         definitions.abstract_numbering.insert(

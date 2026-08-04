@@ -18,6 +18,9 @@ use std::collections::HashMap;
 
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{SectionBoundary, SectionId};
+// Separate `use` line (kept out of the sorted block above) to avoid import-list
+// merge collisions with other agents editing this file.
+use casual_doc_model::v1::NumberFormat;
 
 use crate::block::{BlockFragment, BoxMetrics, BreakControl, CellFragment, ParagraphDecor};
 use crate::flow::shape_field_run;
@@ -1306,10 +1309,31 @@ fn page_number_labels_for(
             counter + 1
         };
         prev_section = Some(section);
-        let fmt = page_numbering.and_then(|n| n.format.as_deref());
+        let fmt = page_numbering
+            .and_then(|n| n.format.as_ref())
+            .map(page_number_format_token);
         labels.push(format_page_number(counter, fmt));
     }
     labels
+}
+
+/// The `ST_NumberFormat` token a typed [`NumberFormat`] renders as, so page-number
+/// formatting can reuse the token-driven [`format_page_number`].
+fn page_number_format_token(format: &NumberFormat) -> &str {
+    match format {
+        NumberFormat::Decimal => "decimal",
+        NumberFormat::Bullet => "bullet",
+        NumberFormat::LowerRoman => "lowerRoman",
+        NumberFormat::UpperRoman => "upperRoman",
+        NumberFormat::LowerLetter => "lowerLetter",
+        NumberFormat::UpperLetter => "upperLetter",
+        NumberFormat::Ordinal => "ordinal",
+        NumberFormat::CardinalText => "cardinalText",
+        NumberFormat::OrdinalText => "ordinalText",
+        NumberFormat::DecimalZero => "decimalZero",
+        NumberFormat::None => "none",
+        NumberFormat::Other(value) => value.as_str(),
+    }
 }
 
 /// Formats a page number per a `w:pgNumType/@w:fmt` token. Unknown/absent tokens
@@ -1522,8 +1546,8 @@ mod tests {
 
     fn numbering_section(id: u64, fmt: Option<&str>, start: Option<i32>) -> SectionBoundary {
         use casual_doc_model::v1::{
-            DocGrid, NoteProperties, PageBorders, PageMargins, PageNumbering, PageSize,
-            PaperSource, SectionColumns,
+            DocGrid, NoteProperties, NumberFormat, PageBorders, PageMargins, PageNumbering,
+            PageSize, PaperSource, SectionColumns,
         };
         SectionBoundary {
             id: SectionId::new(NodeId::from_parts(id, 1).unwrap()),
@@ -1553,7 +1577,13 @@ mod tests {
             title_page: None,
             vertical_alignment: None,
             page_numbering: PageNumbering {
-                format: fmt.map(str::to_owned),
+                format: fmt.map(|f| match f {
+                    "lowerRoman" => NumberFormat::LowerRoman,
+                    "upperRoman" => NumberFormat::UpperRoman,
+                    "lowerLetter" => NumberFormat::LowerLetter,
+                    "upperLetter" => NumberFormat::UpperLetter,
+                    other => NumberFormat::Other(other.to_owned()),
+                }),
                 start,
             },
             doc_grid: DocGrid::default(),
@@ -1565,6 +1595,7 @@ mod tests {
             endnote_props: NoteProperties::default(),
             text_direction: None,
             bidi: false,
+            section_change: None,
         }
     }
 
