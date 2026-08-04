@@ -10,9 +10,11 @@ authors.workspace = true
 publish = false
 
 [features]
-# Forwards to `casual-doc-layout/system-fonts`: enables the native OS font
-# fallback so examples/tests that render CJK/complex text pick up installed
-# system faces. OFF by default; compiled out on `wasm32`.
+# Explicit knob that forwards to `casual-doc-layout/system-fonts` (the native OS
+# font fallback). On native this is ALREADY enabled by default through the
+# `cfg(not(wasm32))` target dependency below, so the flag is only needed to force
+# the OS source on in an unusual build; it is compiled out on `wasm32` (the
+# browser path resolves fonts through the host-populated registry instead).
 system-fonts = ["casual-doc-layout/system-fonts"]
 
 [dependencies]
@@ -34,6 +36,14 @@ image = { version = "0.25", default-features = false, features = [
     "bmp",
     "tiff",
 ] }
+
+# Native/desktop default: the OS system-font fallback is always on, so a native
+# render of CJK / complex-script text resolves an installed OS face through the
+# registry seam instead of painting `.notdef` tofu (the desktop font strategy:
+# OS system fonts, bundled base always). Target-gated to `not(wasm32)`, so the
+# browser/WASM path is unaffected (it uses the host-populated registry instead).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+casual-doc-layout = { workspace = true, features = ["system-fonts"] }
 
 [dev-dependencies]
 casual-doc-import.workspace = true
