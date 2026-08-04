@@ -1021,6 +1021,31 @@ impl Writer {
         for (cell_index, cell) in row.cells.iter().enumerate() {
             let coordinate = (row_index, cell_index);
             let span = cell.properties.grid_span.unwrap_or(1);
+            if cell.properties.grid_span == Some(1) {
+                self.reporter
+                    .record("odt.export.table_cell_properties", ModelOutcome::Degraded);
+            }
+            // A vertically-merged continuation cell is written as covered markers
+            // that carry no properties: report anything it would drop (so no
+            // silent loss) and never register a style for it.
+            if cell.properties.vertical_merge == Some(VerticalMerge::Continue)
+                && merges.continuations.contains(&coordinate)
+            {
+                let mut remainder = cell.properties.clone();
+                remainder.grid_span = None;
+                remainder.vertical_merge = None;
+                if remainder != TableCellProperties::default() {
+                    self.reporter
+                        .record("odt.export.table_cell_properties", ModelOutcome::Omitted);
+                }
+                for _ in 0..span {
+                    self.push("<table:covered-table-cell/>")?;
+                }
+                continue;
+            }
+
+            // Primary/emitted cell: extract the supported cell style; only now is
+            // it registered and referenced.
             let mut remainder = cell.properties.clone();
             remainder.grid_span = None;
             remainder.vertical_merge = None;
@@ -1042,18 +1067,6 @@ impl Writer {
                 self.cell_styles.insert(cell_style);
                 name
             });
-            if cell.properties.grid_span == Some(1) {
-                self.reporter
-                    .record("odt.export.table_cell_properties", ModelOutcome::Degraded);
-            }
-            if cell.properties.vertical_merge == Some(VerticalMerge::Continue)
-                && merges.continuations.contains(&coordinate)
-            {
-                for _ in 0..span {
-                    self.push("<table:covered-table-cell/>")?;
-                }
-                continue;
-            }
 
             let row_span = merges.row_spans.get(&coordinate).copied().unwrap_or(1);
             if matches!(

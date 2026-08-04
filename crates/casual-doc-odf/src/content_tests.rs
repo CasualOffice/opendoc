@@ -205,6 +205,23 @@ fn overflow_and_malformed_paragraph_lengths_are_reported_not_panicking() {
 }
 
 #[test]
+fn transparent_and_automatic_cell_defaults_are_not_reported_degraded() {
+    // `fo:background-color="transparent"` and `style:vertical-align="automatic"`
+    // are the ODF defaults (no fill / no explicit alignment): recognized no-ops,
+    // not degradations.
+    let xml = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.4"><office:automatic-styles><style:style style:name="ce1" style:family="table-cell"><style:table-cell-properties fo:background-color="transparent" style:vertical-align="automatic"/></style:style></office:automatic-styles><office:body><office:text><table:table><table:table-column/><table:table-row><table:table-cell table:style-name="ce1"><text:p>a</text:p></table:table-cell></table:table-row></table:table></office:text></office:body></office:document-content>"#;
+    let import = import_content_xml(xml, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
+    import.document.validate().unwrap();
+    assert!(
+        !import.report.entries.iter().any(|entry| {
+            entry.feature == "odf.attribute.fo.background-color"
+                || entry.feature == "odf.attribute.style.vertical-align"
+        }),
+        "ODF-default cell values must not be reported degraded"
+    );
+}
+
+#[test]
 fn table_cell_shading_and_valign_round_trip_to_a_fixed_point() {
     use casual_doc_model::v1::CellVerticalAlignment;
     let body = r#"<table:table><table:table-column/><table:table-row><table:table-cell><text:p>a</text:p></table:table-cell></table:table-row></table:table>"#;

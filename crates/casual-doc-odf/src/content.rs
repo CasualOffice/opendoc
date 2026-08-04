@@ -1785,13 +1785,18 @@ fn read_table_cell_style_properties(
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
         let mapped = match (namespace_kind(&namespace), local.as_ref()) {
             (NamespaceKind::Fo, b"background-color") => {
-                // `transparent` is the default (no fill); only an RGB value maps.
-                match parse_rgb_color(&value) {
-                    Some(color) => {
-                        style.style.cell_shading_fill = Some(color);
-                        true
+                // `transparent` is the ODF default (no fill): a recognized no-op,
+                // not a degradation. Only an RGB value maps to a fill.
+                if value.trim().eq_ignore_ascii_case("transparent") {
+                    true
+                } else {
+                    match parse_rgb_color(&value) {
+                        Some(color) => {
+                            style.style.cell_shading_fill = Some(color);
+                            true
+                        }
+                        None => false,
                     }
-                    None => false,
                 }
             }
             (NamespaceKind::Style, b"vertical-align") => match value.trim() {
@@ -1807,6 +1812,9 @@ fn read_table_cell_style_properties(
                     style.style.cell_vertical_alignment = Some(CellVerticalAlignment::Bottom);
                     true
                 }
+                // `automatic` is the default (no explicit alignment): a
+                // recognized no-op rather than a degradation.
+                "automatic" => true,
                 _ => false,
             },
             _ => false,
