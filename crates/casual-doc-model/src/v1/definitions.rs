@@ -1056,6 +1056,24 @@ pub struct DocumentSettings {
     /// in document order. Additive: omitted when empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub compat: Vec<CompatSetting>,
+    /// `w:autoHyphenation` — automatically hyphenate the document.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub auto_hyphenation: bool,
+    /// `w:hyphenationZone` — the hyphenation zone in twips (the maximum space left
+    /// at a line's end before a word is hyphenated).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hyphenation_zone: Option<i32>,
+    /// `w:consecutiveHyphenLimit` — the maximum number of consecutive lines that
+    /// may end in a hyphen (`0` = no limit).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consecutive_hyphen_limit: Option<i32>,
+    /// `w:doNotHyphenateCaps` — do not hyphenate words in all capitals.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub do_not_hyphenate_caps: bool,
+    /// `w:displayBackgroundShape` — render the document's page background
+    /// (`w:background`). When off, the modeled background is not painted.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub display_background_shape: bool,
 }
 
 impl DocumentSettings {
