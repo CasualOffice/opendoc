@@ -1170,6 +1170,11 @@ pub struct AltChunk {
 pub struct ExternalTarget {
     /// The target URL (non-empty, at most 2048 bytes).
     pub url: String,
+    /// An in-target fragment (`w:hyperlink@w:anchor` alongside `r:id`): a named
+    /// location within the external target (e.g. a bookmark in another document).
+    /// Non-empty, at most 255 bytes; absent when the link carries no fragment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<String>,
 }
 
 /// An internal hyperlink target (a document bookmark anchor).
@@ -1937,6 +1942,14 @@ pub struct SdtProperties {
     /// control kind carries any. Validated to agree with `control_kind`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data: Option<SdtControlData>,
+    /// The building-block gallery name (`w:docPartObj/w:docPartGallery@w:val`), for
+    /// a [`SdtControlKind::BuildingBlockGallery`] control. Non-empty, <= 255 bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gallery: Option<String>,
+    /// The building-block category (`w:docPartObj/w:docPartCategory@w:val`), for a
+    /// [`SdtControlKind::BuildingBlockGallery`] control. Non-empty, <= 255 bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
 }
 
 /// The edit-lock behaviour of a content control (`w:lock@w:val`, `ST_Lock`).

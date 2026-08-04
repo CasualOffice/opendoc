@@ -4008,6 +4008,10 @@ fn write_inline(
                 HyperlinkTarget::External(ext) => {
                     let rid = ctx.rels.hyperlink(&ext.url);
                     el.push_attribute(("r:id", rid.as_str()));
+                    // An in-target fragment rides alongside the `r:id` base URL.
+                    if let Some(anchor) = &ext.anchor {
+                        el.push_attribute(("w:anchor", anchor.as_str()));
+                    }
                     if let Some(tip) = &link.tooltip {
                         el.push_attribute(("w:tooltip", tip.as_str()));
                     }
@@ -5725,6 +5729,22 @@ fn write_sdt_control(
                 _ => None,
             };
             write_sdt_checkbox(w, checkbox)?;
+        }
+        SdtControlKind::BuildingBlockGallery => {
+            let element = sdt_kind_element(kind);
+            if properties.gallery.is_none() && properties.category.is_none() {
+                w.write_event(Event::Empty(start(element))).map_err(pkg)?;
+            } else {
+                w.write_event(Event::Start(start(element))).map_err(pkg)?;
+                if let Some(gallery) = &properties.gallery {
+                    write_val_element(w, "w:docPartGallery", gallery)?;
+                }
+                if let Some(category) = &properties.category {
+                    write_val_element(w, "w:docPartCategory", category)?;
+                }
+                w.write_event(Event::End(BytesEnd::new(element)))
+                    .map_err(pkg)?;
+            }
         }
         _ => {
             w.write_event(Event::Empty(start(sdt_kind_element(kind))))

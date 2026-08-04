@@ -3599,12 +3599,29 @@ impl BodyParser<'_> {
                     properties.temporary = on;
                 }
             }
-            // Both building-block gallery forms collapse to one control kind, so the
-            // `w:docPartObj` vs `w:docPartList` distinction is reported as lost.
+            // Both building-block gallery forms collapse to one control kind. The
+            // modern `w:docPartObj` (with its gallery/category children) is fully
+            // captured; the legacy `w:docPartList`, normalized to `docPartObj` on
+            // export, has its form change reported.
             b"docPartObj" | b"docPartList" if self.sdt_prop_depth > 0 => {
-                self.reporter.report(local);
+                if local == b"docPartList" {
+                    self.reporter.report(local);
+                }
                 if let Some(properties) = self.current_sdt_properties() {
                     properties.control_kind = Some(SdtControlKind::BuildingBlockGallery);
+                }
+            }
+            // `w:docPartObj` children: the building-block gallery name and category.
+            b"docPartGallery" if self.sdt_prop_depth > 0 => {
+                let value = self.sdt_bounded_value(element, b"docPartGallery", 255);
+                if let Some(properties) = self.current_sdt_properties() {
+                    properties.gallery = value;
+                }
+            }
+            b"docPartCategory" if self.sdt_prop_depth > 0 => {
+                let value = self.sdt_bounded_value(element, b"docPartCategory", 255);
+                if let Some(properties) = self.current_sdt_properties() {
+                    properties.category = value;
                 }
             }
             b"alias" if self.sdt_prop_depth > 0 => {
@@ -5969,8 +5986,15 @@ impl BodyParser<'_> {
             if url.is_empty() || url.len() > 2048 {
                 return None;
             }
+            // An `@w:anchor` alongside `r:id` is an in-target fragment (a named
+            // location within the external target), not an internal bookmark.
+            let anchor = attribute_value(element, b"anchor")
+                .filter(|value| !value.is_empty() && value.len() <= 255);
             return Some((
-                HyperlinkTarget::External(ExternalTarget { url: url.clone() }),
+                HyperlinkTarget::External(ExternalTarget {
+                    url: url.clone(),
+                    anchor,
+                }),
                 tooltip,
             ));
         }
