@@ -25,6 +25,15 @@ const BAR_TAB_WIDTH: Twip = Twip(10);
 /// hairline, the same weight as a bar-tab rule.
 const COLUMN_SEPARATOR_WIDTH: Twip = Twip(10);
 
+/// Stroke width (twips) of the footnote separator rule — Word's ~0.5pt hairline
+/// between the body and the footnote band, the same weight as a column rule.
+const FOOTNOTE_SEPARATOR_WIDTH: Twip = Twip(10);
+
+/// Length (twips) of a *fresh* footnote separator: Word draws a short 2-inch
+/// left-aligned hairline above a note first placed on this page. A note continued
+/// from the previous page instead gets a full-band-width continuation rule.
+pub(crate) const FOOTNOTE_SEPARATOR_LENGTH: Twip = Twip(2_880);
+
 /// Stroke width (device px) of an inline text box's border (a hairline).
 /// Builds a display list for one paragraph's shaped lines, placed with the
 /// paragraph's top-left at `origin` (in twips). The shaper positions each glyph
@@ -250,6 +259,11 @@ pub fn compose_page(page: &Page) -> DisplayList {
     for placed in &page.placed {
         compose_fragment(&mut list, &placed.fragment, placed.rect.origin);
     }
+    // The footnote separator rule: Word draws a short hairline between the body
+    // and the footnote band (a full-band-width rule when the band continues a note
+    // from the previous page). Painted before the note bodies as non-text
+    // furniture — it never enters the caret/selection model.
+    compose_footnote_separators(&mut list, page);
     for placed in &page.footnotes {
         compose_fragment(&mut list, &placed.fragment, placed.rect.origin);
     }
@@ -265,6 +279,51 @@ pub fn compose_page(page: &Page) -> DisplayList {
         compose_anchor(&mut list, anchor);
     }
     list
+}
+
+/// Paints the footnote separator rule(s) at the top of a page's footnote band(s).
+///
+/// Word separates the body from the footnotes with a short (~2 inch) left-aligned
+/// hairline for a note first placed on the page, and a full-band-width rule when
+/// the band continues a note carried over from the previous page. Each physical
+/// band (one per column, keyed by its left edge) gets one rule at its top edge —
+/// the y where its first note fragment sits. The rule is layout furniture: it is
+/// emitted only into the display list, never into the caret/selection model.
+fn compose_footnote_separators(list: &mut DisplayList, page: &Page) {
+    if page.footnotes.is_empty() {
+        return;
+    }
+    // A page whose band originates no reference of its own is showing only notes
+    // continued from an earlier page, so its separator spans the full band width.
+    let continuation = !crate::notes::page_originates_footnote(page);
+
+    // Group the placed note fragments into physical bands by their left edge, and
+    // for each band take its top y and widest fragment as the band geometry.
+    let mut bands: std::collections::BTreeMap<Twip, (Twip, Twip)> =
+        std::collections::BTreeMap::new();
+    for placed in &page.footnotes {
+        let entry = bands
+            .entry(placed.rect.origin.x)
+            .or_insert((placed.rect.origin.y, placed.rect.size.width));
+        entry.0 = entry.0.min(placed.rect.origin.y);
+        entry.1 = entry.1.max(placed.rect.size.width);
+    }
+
+    for (x, (top, width)) in bands {
+        let length = if continuation {
+            width
+        } else {
+            FOOTNOTE_SEPARATOR_LENGTH.min(width)
+        };
+        list.push(PaintItem::Line {
+            from: Point::new(x, top),
+            to: Point::new(x + length, top),
+            stroke: Stroke {
+                color: Color::BLACK,
+                width: stroke_px(FOOTNOTE_SEPARATOR_WIDTH),
+            },
+        });
+    }
 }
 
 /// Paints a resolved page-border frame: each present edge as a filled band along

@@ -35,6 +35,8 @@ use casual_doc_model::v1::{
 };
 // Separate `use` line to minimize import-block merge conflicts.
 use casual_doc_model::v1::{BarPosition, GroupPosition, LimitPosition};
+// Separate `use` line (anti-conflict): the note's in-body auto-number mark.
+use casual_doc_model::v1::NoteNumberMark;
 // Separate `use` line (anti-conflict): the legacy form-field checkbox payload.
 use casual_doc_model::v1::FormFieldKind;
 
@@ -200,6 +202,11 @@ struct FlowCtx<'a> {
     /// Page-derived exclusions from body floats that intersect top-level body
     /// paragraphs. `None` on the initial pagination and in running content.
     paragraph_float_exclusions: Option<&'a ParagraphFloatExclusions>,
+    /// The 1-based ordinal of the note whose body is being flowed, so an in-body
+    /// auto-number mark (`w:footnoteRef`/`w:endnoteRef`) prints that note's number
+    /// (matching the reference marker). `None` outside a note body — the mark then
+    /// stays inert, exactly as before.
+    note_number: Option<usize>,
 }
 
 /// Builds a galley of block fragments from a document's body, shaped to fit
@@ -279,6 +286,7 @@ pub fn build_galley_with_report_view(
         text_scale: 100_000,
         line_spacing_reduction: 0,
         paragraph_float_exclusions: None,
+        note_number: None,
     };
     let (galley, _float_floor) = flow_blocks(document.body(), shaper, content_width, &mut ctx);
     (galley, report)
@@ -307,6 +315,30 @@ pub fn build_galley_for_blocks(
         content_width,
         None,
         ReviewView::Editing,
+        None,
+    )
+}
+
+/// Flows a note's own body blocks (`build_galley_for_blocks`), threading the
+/// note's 1-based `note_number` so its in-body auto-number mark
+/// (`w:footnoteRef`/`w:endnoteRef`) prints that number — the superscript ordinal
+/// Word puts ahead of the note text, matching the body reference marker.
+#[must_use]
+pub(crate) fn build_galley_for_note_blocks(
+    document: &Document,
+    shaper: &dyn LineShaper,
+    blocks: &[BlockNode],
+    content_width: Twip,
+    note_number: usize,
+) -> Vec<BlockFragment> {
+    build_galley_for_blocks_inner(
+        document,
+        shaper,
+        blocks,
+        content_width,
+        None,
+        ReviewView::Editing,
+        Some(note_number),
     )
 }
 
@@ -317,6 +349,7 @@ pub(crate) fn build_galley_for_blocks_inner(
     content_width: Twip,
     exclusions: Option<&ParagraphFloatExclusions>,
     review_view: ReviewView,
+    note_number: Option<usize>,
 ) -> Vec<BlockFragment> {
     let resolver = FontResolver::new();
     let mut report = FontResolutionReport::new();
@@ -342,6 +375,7 @@ pub(crate) fn build_galley_for_blocks_inner(
         text_scale: 100_000,
         line_spacing_reduction: 0,
         paragraph_float_exclusions: exclusions,
+        note_number,
     };
     flow_blocks(blocks, shaper, content_width, &mut ctx).0
 }
@@ -404,6 +438,7 @@ fn flow_running_blocks(
         text_scale,
         line_spacing_reduction,
         paragraph_float_exclusions: None,
+        note_number: None,
     };
     flow_blocks(blocks, shaper, content_width, &mut ctx).0
 }
@@ -469,6 +504,7 @@ pub fn build_galley_cached(
         text_scale: 100_000,
         line_spacing_reduction: 0,
         paragraph_float_exclusions: None,
+        note_number: None,
     };
     cache.begin_build(content_width);
     let mut galley = Vec::new();
@@ -2110,6 +2146,7 @@ fn block_intrinsic(
         text_scale: ctx.text_scale,
         line_spacing_reduction: ctx.line_spacing_reduction,
         paragraph_float_exclusions: None,
+        note_number: None,
     };
     let mut min = 0;
     let mut preferred = 0;
@@ -2733,11 +2770,16 @@ fn collect_items_with_measure<'a>(
                 out.push(FlowItem::Run(note_reference_run(reference, ctx)));
             }
             // The note's own auto-number mark (`w:footnoteRef`/`w:endnoteRef`),
-            // inside a note body. Painting its number needs the enclosing note's
-            // ordinal, which is not threaded into local inline flow; the mark is
-            // preserved in the model and round-trips. Omitting it here does not
-            // regress (the mark was previously dropped at import).
-            InlineNode::NoteNumberMark(_) => {}
+            // inside a note body: it prints the enclosing note's number ahead of
+            // the note text (Word's default note style — a superscript ordinal
+            // matching the body reference marker). `ctx.note_number` carries that
+            // ordinal when a note body is being flowed; outside a note body it is
+            // `None` and the mark stays inert (the model still round-trips it).
+            InlineNode::NoteNumberMark(mark) => {
+                if let Some(number) = ctx.note_number {
+                    out.push(FlowItem::Run(note_number_run(mark, number, ctx)));
+                }
+            }
             // `w:commentReference` is a zero-width model marker. Its visible
             // affordance belongs to the host review UI; shaping placeholder
             // text here changes line wrapping and leaks a superscript
@@ -2899,6 +2941,19 @@ fn note_reference_properties() -> RunProperties {
         vertical_alignment: Some(VerticalAlignment::Superscript),
         ..RunProperties::default()
     }
+}
+
+/// Builds the in-body note auto-number run: the note's own `number` printed with
+/// the mark's authored run formatting, forced to superscript (Word's default note
+/// style) unless the mark already specifies a vertical alignment. This mirrors
+/// [`note_reference_run`] so the note body's leading number matches the body-side
+/// reference marker.
+fn note_number_run(mark: &NoteNumberMark, number: usize, ctx: &mut FlowCtx) -> StyledRun<'static> {
+    let mut properties = mark.properties.clone();
+    if properties.vertical_alignment.is_none() {
+        properties.vertical_alignment = Some(VerticalAlignment::Superscript);
+    }
+    styled_owned_run(number.to_string(), &properties, ctx)
 }
 
 /// Converts a paragraph-local anchored object into its non-painting flow marker.
@@ -6566,6 +6621,7 @@ mod tests {
             text_scale: 100_000,
             line_spacing_reduction: 0,
             paragraph_float_exclusions: None,
+            note_number: None,
         };
         let mut items = Vec::new();
         collect_items(
@@ -6619,6 +6675,7 @@ mod tests {
             text_scale: 100_000,
             line_spacing_reduction: 0,
             paragraph_float_exclusions: None,
+            note_number: None,
         };
         let mut out = Vec::new();
         push_styled_runs(text, &properties, &mut ctx, &mut out);
@@ -9853,6 +9910,7 @@ mod tests {
                 text_scale: 100_000,
                 line_spacing_reduction: 0,
                 paragraph_float_exclusions: None,
+                note_number: None,
             };
             block_intrinsic(&[paragraph(700, inlines)], &ParleyShaper::new(), &ctx, None)
         }

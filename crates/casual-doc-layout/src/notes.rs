@@ -11,7 +11,7 @@ use casual_doc_model::v1::{Document, NoteId, NoteKind, SectionId};
 
 use crate::block::{BlockFragment, CellFragment};
 use crate::columns::{SectionRun, paginate_columns_with_reservations};
-use crate::flow::build_galley_for_blocks;
+use crate::flow::build_galley_for_note_blocks;
 use crate::page::{Page, PaginatedLayout, PlacedFragment};
 use crate::paginate::PageConfig;
 use crate::text::{LineLayout, LineShaper, NoteMarker};
@@ -106,10 +106,15 @@ fn build_footnote_galleys(
         .definitions()
         .footnotes
         .iter()
-        .map(|(id, note)| {
+        .enumerate()
+        .map(|(index, (id, note))| {
+            // The note's 1-based ordinal matches the body reference marker
+            // (`flow::note_ordinal`), so the in-body auto-number prints the same
+            // number Word shows at the reference.
+            let note_number = index + 1;
             (
                 *id,
-                build_galley_for_blocks(document, shaper, &note.blocks, width),
+                build_galley_for_note_blocks(document, shaper, &note.blocks, width, note_number),
             )
         })
         .collect()
@@ -295,6 +300,16 @@ fn stack_note_galleys(
     placed
 }
 
+/// Whether any body fragment on `page` references a footnote (i.e. the page owns
+/// at least one *fresh* note reference, versus a band made up solely of a note
+/// continued from an earlier page). The separator painter reads this to choose a
+/// short fresh-note rule over a full-width continuation rule. Read-only: it never
+/// changes placement or geometry.
+#[must_use]
+pub(crate) fn page_originates_footnote(page: &Page) -> bool {
+    !page_footnote_refs(page).is_empty()
+}
+
 fn page_footnote_refs(page: &Page) -> Vec<FootnoteRef> {
     let mut refs = Vec::new();
     for placed in &page.placed {
@@ -371,9 +386,16 @@ mod tests {
         SectionType, Table, TableCell, TableCellProperties, TableProperties, TableRow,
         TableRowProperties,
     };
+    // Separate `use` line (anti-conflict): the note's in-body auto-number mark.
+    use casual_doc_model::v1::NoteNumberMark;
 
+    use crate::compose::compose_page;
+    use crate::display::PaintItem;
     use crate::document_layout::{document_page_config, paginate_document};
+    use crate::flow::build_galley_for_note_blocks;
     use crate::shape::ParleyShaper;
+    use crate::text::{LineConstraints, LineLayout, LineShaper, StyledRun};
+    use std::cell::RefCell;
 
     fn node(id: u64) -> NodeId {
         NodeId::from_parts(id, 1).unwrap()
@@ -1146,6 +1168,147 @@ mod tests {
         assert!(
             endnote_body > final_body,
             "endnotes referenced in earlier sections append after the final body section"
+        );
+    }
+
+    /// A [`LineShaper`] that records the concatenated run text of each shaped
+    /// paragraph, delegating real layout to [`ParleyShaper`]. Lets a test observe
+    /// exactly what text the flow layer handed the shaper — here, whether the note
+    /// body's in-body auto-number is injected ahead of the note text.
+    struct RecordingShaper {
+        inner: ParleyShaper,
+        paragraphs: RefCell<Vec<String>>,
+    }
+
+    impl RecordingShaper {
+        fn new() -> Self {
+            Self {
+                inner: ParleyShaper::new(),
+                paragraphs: RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    impl LineShaper for RecordingShaper {
+        fn shape_paragraph(
+            &self,
+            runs: &[StyledRun<'_>],
+            constraints: LineConstraints,
+            range: crate::model::ModelRange,
+        ) -> LineLayout {
+            self.paragraphs
+                .borrow_mut()
+                .push(runs.iter().map(|run| run.text.as_ref()).collect());
+            self.inner.shape_paragraph(runs, constraints, range)
+        }
+    }
+
+    fn note_number_mark_paragraph(id: u64, text: &str) -> BlockNode {
+        BlockNode::Paragraph(Paragraph {
+            id: node(id),
+            properties: ParagraphProperties::default(),
+            inlines: vec![
+                InlineNode::NoteNumberMark(NoteNumberMark {
+                    id: node(id + 40_000),
+                    kind: NoteKind::Footnote,
+                    properties: RunProperties::default(),
+                }),
+                InlineNode::Run(Run {
+                    id: node(id + 10_000),
+                    properties: RunProperties::default(),
+                    text: text.to_string(),
+                }),
+            ],
+        })
+    }
+
+    #[test]
+    fn footnote_band_paints_a_separator_rule_at_its_top() {
+        let note = NoteId::new(node(2_101));
+        let mut definitions = Definitions::default();
+        definitions.footnotes.insert(
+            note,
+            Note {
+                blocks: vec![paragraph(2_102, "separator footnote body")],
+            },
+        );
+        let doc = document(vec![note_ref_paragraph(2_103, note)], definitions);
+        let shaper = ParleyShaper::new();
+
+        let layout = paginate_document(&doc, &shaper);
+        let page = &layout.pages[0];
+        assert!(
+            !page.footnotes.is_empty(),
+            "expected a placed footnote band"
+        );
+        let band_top = page.footnotes[0].rect.origin.y;
+        let band_x = page.footnotes[0].rect.origin.x;
+
+        let list = compose_page(page);
+        let separator = list.items.iter().find_map(|item| match item {
+            PaintItem::Line { from, to, .. }
+                if from.y == band_top && to.y == band_top && from.x == band_x =>
+            {
+                Some((*from, *to))
+            }
+            _ => None,
+        });
+        let (from, to) = separator.expect("footnote band paints a separator rule at its top");
+        assert!(
+            to.x > from.x,
+            "the separator is a non-empty horizontal hairline"
+        );
+        assert_eq!(
+            to.x - from.x,
+            crate::compose::FOOTNOTE_SEPARATOR_LENGTH,
+            "a freshly referenced note gets Word's short 2-inch separator"
+        );
+    }
+
+    #[test]
+    fn in_body_note_number_prefixes_the_note_body() {
+        let recorder = RecordingShaper::new();
+        let width = Twip(9_360);
+        let doc = document(vec![paragraph(2_290, "body")], Definitions::default());
+
+        let galley = build_galley_for_note_blocks(
+            &doc,
+            &recorder,
+            &[note_number_mark_paragraph(2_201, "auto numbered body")],
+            width,
+            7,
+        );
+        assert!(!galley.is_empty(), "the note body flows to a fragment");
+
+        let paragraphs = recorder.paragraphs.borrow();
+        let note_para = paragraphs
+            .last()
+            .expect("the note body paragraph was shaped");
+        assert!(
+            note_para.starts_with('7'),
+            "the in-body auto-number ({note_para:?}) prints the note's ordinal ahead of the text"
+        );
+        assert!(
+            note_para.contains("auto numbered body"),
+            "the note text still follows the injected number"
+        );
+    }
+
+    #[test]
+    fn in_body_note_number_is_inert_outside_a_note_body() {
+        let recorder = RecordingShaper::new();
+        let width = Twip(9_360);
+        let doc = document(
+            vec![note_number_mark_paragraph(2_301, "plain body")],
+            Definitions::default(),
+        );
+
+        // The ordinary body builder threads no note ordinal, so the mark stays inert.
+        let _ = crate::flow::build_galley(&doc, &recorder, width);
+        let paragraphs = recorder.paragraphs.borrow();
+        assert!(
+            paragraphs.iter().any(|para| para == "plain body"),
+            "outside a note body the auto-number mark injects no number"
         );
     }
 }
